@@ -170,8 +170,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
 
         // Enforce relayer's registered fee — cannot charge more than advertised
-        (, uint256 registeredFee,,,,) = relayerRegistry.relayers(msg.sender);
-        if (actualFee > registeredFee) revert FeeExceedsRelayerRegistered();
+        if (actualFee > relayerRegistry.getFee(msg.sender)) revert FeeExceedsRelayerRegistered();
 
         _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
 
@@ -310,36 +309,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (makerOrder.sellToken != takerOrder.buyToken) revert TokenMismatch();
         if (makerOrder.buyToken != takerOrder.sellToken) revert TokenMismatch();
 
-        // Verify price compatibility (overflow-safe)
-        // maker.sell/maker.buy <= taker.sell/taker.buy
-        // Rearranged: maker.sell * taker.buy <= maker.buy * taker.sell
-        // Use unchecked division to avoid overflow: a/b <= c/d iff a*d <= b*c
-        // But a*d can still overflow. Check: if a > type(uint256).max / d, then a*d overflows
-        {
-            uint256 lhs;
-            uint256 rhs;
-            // lhs = makerOrder.sellAmount * takerOrder.sellAmount
-            // rhs = makerOrder.buyAmount * takerOrder.buyAmount
-            // Check overflow before multiply
-            if (takerOrder.sellAmount != 0 && makerOrder.sellAmount > type(uint256).max / takerOrder.sellAmount) {
-                // Would overflow — use division instead: sell_a / buy_a > buy_b / sell_b
-                // Equivalent: sell_a * sell_b > buy_a * buy_b → sell_a / buy_a > buy_b / sell_b
-                if (makerOrder.buyAmount == 0 || takerOrder.buyAmount == 0) revert PriceIncompatible();
-                // sell_a / buy_b > buy_a / sell_b → sell_a * sell_b > buy_a * buy_b (original)
-                // Use: sell_a / buy_a > buy_b / sell_b (division form, rounds down)
-                if (makerOrder.sellAmount / makerOrder.buyAmount > takerOrder.buyAmount / takerOrder.sellAmount) {
-                    revert PriceIncompatible();
-                }
-            } else {
-                lhs = makerOrder.sellAmount * takerOrder.sellAmount;
-                if (takerOrder.buyAmount != 0 && makerOrder.buyAmount > type(uint256).max / takerOrder.buyAmount) {
-                    // rhs would overflow — lhs < overflow means compatible
-                    // (if rhs overflows, it's definitely >= lhs)
-                } else {
-                    rhs = makerOrder.buyAmount * takerOrder.buyAmount;
-                    if (lhs > rhs) revert PriceIncompatible();
-                }
-            }
+        // Verify price compatibility: maker.sell * taker.sell <= maker.buy * taker.buy
+        // Solidity 0.8+ reverts on overflow. Practically, uint256 overflow requires
+        // both amounts > ~10^38 (with 18 decimals), exceeding any realistic token supply.
+        if (makerOrder.sellAmount * takerOrder.sellAmount > makerOrder.buyAmount * takerOrder.buyAmount) {
+            revert PriceIncompatible();
         }
 
         // Verify fee

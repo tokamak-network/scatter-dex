@@ -131,6 +131,10 @@ contract RelayerRegistry {
 
     // ─── Views ───────────────────────────────────────────────────
 
+    function getFee(address relayer) external view returns (uint256) {
+        return relayers[relayer].fee;
+    }
+
     function isActiveRelayer(address relayer) external view returns (bool) {
         Relayer storage r = relayers[relayer];
         return r.active && r.exitRequestedAt == 0;
