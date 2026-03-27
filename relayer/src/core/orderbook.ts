@@ -1,14 +1,20 @@
 import { Order, SignedOrder, StoredOrder, pairKey } from "../types/order.js";
 
 export class Orderbook {
-  // pair => sell orders (sorted by price ascending — lowest sell price first)
   private sells = new Map<string, StoredOrder[]>();
-  // pair => buy orders (sorted by price descending — highest buy price first)
   private buys = new Map<string, StoredOrder[]>();
-  // maker => nonce => order (for lookup/cancel)
   private byMaker = new Map<string, Map<string, StoredOrder>>();
+  private pendingCount = 0;
+  private maxSize: number;
+
+  constructor(maxSize = 10_000) {
+    this.maxSize = maxSize;
+  }
 
   add(signed: SignedOrder): StoredOrder {
+    if (this.pendingCount >= this.maxSize) {
+      throw new Error("orderbook full");
+    }
     const { order } = signed;
     const pair = pairKey(order.sellToken, order.buyToken);
     const stored: StoredOrder = {
@@ -27,6 +33,7 @@ export class Orderbook {
       throw new Error("duplicate nonce");
     }
     this.byMaker.get(makerKey)!.set(nonceKey, stored);
+    this.pendingCount++;
 
     // Determine direction: is this order selling the "first" token in the sorted pair?
     // pairKey sorts tokens, so pair = "tokenLow-tokenHigh"
@@ -66,6 +73,7 @@ export class Orderbook {
     if (!stored) return;
 
     this.byMaker.get(makerKey)!.delete(nonceKey);
+    this.pendingCount--;
 
     const pair = pairKey(order.sellToken, order.buyToken);
     const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
@@ -110,13 +118,7 @@ export class Orderbook {
   }
 
   getOrderCount(): number {
-    let count = 0;
-    for (const orders of this.byMaker.values()) {
-      for (const o of orders.values()) {
-        if (o.status === "pending") count++;
-      }
-    }
-    return count;
+    return this.pendingCount;
   }
 
   // Remove expired orders (collect first, then remove to avoid mutation during iteration)

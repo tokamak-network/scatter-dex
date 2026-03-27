@@ -53,20 +53,29 @@ export function createOrderRoutes(
       // Try to find a match
       const match = matcher.findMatch(stored);
       if (match) {
+        // Immediately mark as matched to prevent race condition (C3)
+        match.maker.status = "matched";
+        match.taker.status = "matched";
+        orderbook.remove(match.maker.order);
+        orderbook.remove(match.taker.order);
+
         try {
           const txHash = await submitter.submitSettle(match);
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
-          orderbook.remove(match.maker.order);
-          orderbook.remove(match.taker.order);
 
           res.json({ status: "matched", txHash });
           return;
-        } catch (err: any) {
-          console.error("settle failed:", err.message);
-          res.status(500).json({ status: "settle_failed", error: err.message });
+        } catch (err: unknown) {
+          // Settle failed — return orders to book
+          match.maker.status = "pending";
+          match.taker.status = "pending";
+          orderbook.add({ order: match.maker.order, signature: match.maker.signature });
+          orderbook.add({ order: match.taker.order, signature: match.taker.signature });
+          console.error("settle failed:", err instanceof Error ? err.message : "unknown");
+          res.status(500).json({ status: "settle_failed", error: "settlement failed" });
           return;
         }
       }
