@@ -20,6 +20,7 @@ contract RelayerRegistry {
     address public treasury;
 
     mapping(address => Relayer) public relayers;
+    mapping(address => bool) private inList; // tracks if address was ever added to relayerList
     address[] public relayerList;
 
     // ─── Events ──────────────────────────────────────────────────
@@ -40,6 +41,7 @@ contract RelayerRegistry {
     error NotOwner();
     error ZeroAddress();
     error RelayerNotActive();
+    error BondTransferFailed();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -67,7 +69,11 @@ contract RelayerRegistry {
             active: true
         });
 
-        relayerList.push(msg.sender);
+        // Only add to list if first-time registration (prevent duplicates on re-register)
+        if (!inList[msg.sender]) {
+            relayerList.push(msg.sender);
+            inList[msg.sender] = true;
+        }
 
         emit RelayerRegistered(msg.sender, url, fee, msg.value);
     }
@@ -114,7 +120,7 @@ contract RelayerRegistry {
         r.bond = 0;
 
         (bool sent,) = msg.sender.call{value: bondToReturn}("");
-        require(sent, "bond transfer failed");
+        if (!sent) revert BondTransferFailed();
 
         emit RelayerExited(msg.sender, bondToReturn);
     }

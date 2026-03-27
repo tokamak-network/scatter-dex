@@ -46,7 +46,6 @@ contract ScatterSettlementTest is Test {
     MockToken public tokenA;
     MockToken public tokenB;
 
-    address relayerAddr = address(0xBEEF);
     address treasury = address(0x7777);
 
     uint256 makerKey = 0x1;
