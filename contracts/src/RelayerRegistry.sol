@@ -31,6 +31,7 @@ contract RelayerRegistry {
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -85,6 +86,7 @@ contract RelayerRegistry {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
+        if (msg.value == 0) revert InsufficientBond();
         r.bond += msg.value;
 
         emit BondAdded(msg.sender, msg.value);
@@ -172,6 +174,7 @@ contract RelayerRegistry {
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
     }
 }

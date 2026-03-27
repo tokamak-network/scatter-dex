@@ -960,7 +960,65 @@ scatter-dex/
 
 ---
 
-## 6. 성공 기준
+## 6. 보안 분석 (Security Audit)
+
+### 수정 완료
+
+```
+Critical:
+  ✓ C-1: 릴레이어 등록 fee 온체인 강제 (actualFee <= registered fee)
+  ✓ C-2: overflow-safe 가격 호환 검증 (큰 금액 overflow 방지)
+  ✓ C1-릴레이어: rate limiting (30 orders/min per IP)
+  ✓ C2-릴레이어: 오더북 최대 크기 제한 (10K) + 메모리 관리
+  ✓ C3-릴레이어: settle 전 즉시 matched 상태 변경 (race condition 방지)
+
+High:
+  ✓ H-4: 릴레이어 fee 상한 (MAX_FEE = 500 bps = 5%)
+  ✓ H1-릴레이어: body size limit (10kb) + claims 개수 제한 (10)
+  ✓ H2-릴레이어: parseOrder 입력 검증 (주소, 금액, sellToken≠buyToken)
+  ✓ H3-릴레이어: 에러 메시지에 내부 상태 누출 방지
+  ✓ H4-릴레이어: CORS 화이트리스트 (CORS_ORIGINS 환경변수)
+
+Medium:
+  ✓ M-5: transferOwnership + OwnershipTransferred 이벤트
+  ✓ M-6: protocolFeeBps 상한 50% (MAX_PROTOCOL_FEE = 5000)
+  ✓ I-5: Pausable (settle, claimRelease 긴급 정지)
+  ✓ L-5: addBond zero value 거부
+```
+
+### 의도적 미수정 (설계 결정)
+
+```
+H-1: settle 시 identity 재검증 안 함
+  → 이유: 인증 만료 후에도 이미 입금된 자금은 거래/claim/환불 가능해야 함.
+         재검증 시 인증 만료된 유저의 에스크로 자금이 영구 잠김.
+  → 결론: deposit 시점에만 인증 체크하는 것이 올바른 설계.
+
+H-2: secret 엔트로피 온체인 강제 없음
+  → 이유: 256-bit secret의 랜덤성은 온체인에서 검증 불가.
+  → 대응: 프론트엔드에서 crypto.getRandomValues()로 생성.
+         유저 가이드에 "256-bit 랜덤 secret 필수" 명시.
+
+H-3: 릴레이어 bond exit 중 미결 스케줄
+  → 이유: 릴레이어가 settle 후 바로 exit 요청 가능하지만,
+         7일 대기 기간이 있고, 슬래싱은 온체인 증명이 어려움.
+  → 대응: 보증금 + 평판 시스템으로 대체. 추후 슬래싱 메커니즘 검토.
+
+M-1: VaultSkills reentrancy 보호 없음
+  → 이유: ReentrancyGuard는 storage 슬롯을 사용하여
+         EIP-7702 delegator의 스토리지를 오염시킴.
+  → 대응: ScatterSettlement 자체에 nonReentrant 있음.
+         코드 코멘트에 위험 명시됨.
+
+M-4: getActiveRelayers 무한 루프
+  → 이유: view 함수로 온체인 상태에 영향 없음.
+         릴레이어 수가 현실적으로 수천 개 미만.
+  → 대응: 필요 시 페이지네이션 추가.
+```
+
+---
+
+## 7. 성공 기준
 
 ```
 MVP 완성 기준:
