@@ -4,9 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI, ERC20_ABI } from "@/lib/contracts";
+import { SETTLEMENT_ADDRESS } from "@/lib/config";
 import { Wallet } from "lucide-react";
-
-const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
 
 // Common token list — in production, fetch from a registry or user config
 const DEFAULT_TOKENS = (process.env.NEXT_PUBLIC_TOKEN_LIST || "").split(",").filter(Boolean);
@@ -23,14 +22,15 @@ export default function EscrowBalance() {
   const { account, readProvider } = useWallet();
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [customToken, setCustomToken] = useState("");
 
   const loadBalances = useCallback(async (tokens: string[]) => {
-    if (!account || !readProvider || !SETTLEMENT || tokens.length === 0) return;
+    if (!account || !readProvider || !SETTLEMENT_ADDRESS || tokens.length === 0) return;
     setLoading(true);
 
     try {
-      const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, readProvider);
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
       const results = await Promise.all(
         tokens.map(async (addr) => {
           try {
@@ -50,7 +50,7 @@ export default function EscrowBalance() {
 
       setBalances(results.filter((r): r is TokenBalance => r !== null));
     } catch (err: unknown) {
-      console.error("Failed to load balances:", err);
+      setError(err instanceof Error ? err.message : "Failed to load balances");
     } finally {
       setLoading(false);
     }
@@ -62,7 +62,9 @@ export default function EscrowBalance() {
 
   const addToken = () => {
     if (!customToken || !ethers.isAddress(customToken)) return;
-    const allTokens = [...new Set([...DEFAULT_TOKENS, ...balances.map((b) => b.address), customToken])];
+    const normalized = customToken.toLowerCase();
+    const existing = balances.map((b) => b.address.toLowerCase());
+    const allTokens = [...new Set([...DEFAULT_TOKENS.map((t) => t.toLowerCase()), ...existing, normalized])];
     loadBalances(allTokens);
     setCustomToken("");
   };
@@ -76,8 +78,14 @@ export default function EscrowBalance() {
         <h2 className="text-lg font-semibold text-white">Escrow Balances</h2>
       </div>
 
+      {!SETTLEMENT_ADDRESS && (
+        <p className="text-yellow-500 text-xs">Settlement address not configured.</p>
+      )}
+
       {loading ? (
         <p className="text-gray-500 text-sm">Loading...</p>
+      ) : error ? (
+        <p className="text-red-400 text-sm">{error}</p>
       ) : balances.length === 0 ? (
         <p className="text-gray-500 text-sm">No tokens tracked. Add a token address below.</p>
       ) : (

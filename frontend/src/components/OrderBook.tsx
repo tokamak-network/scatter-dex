@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { RelayerClient } from "@/lib/relayerApi";
 import { BarChart3 } from "lucide-react";
 
@@ -16,19 +16,20 @@ export default function OrderBook() {
   const [buys, setBuys] = useState<OrderEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const relayerUrl = typeof window !== "undefined"
     ? localStorage.getItem("scatter-relayer-url") || ""
     : "";
 
-  const loadOrderbook = async () => {
-    if (!relayerUrl || !pair) return;
+  const loadOrderbook = useCallback(async (pairValue: string) => {
+    if (!relayerUrl || !pairValue) return;
     setLoading(true);
     setError("");
 
     try {
       const client = new RelayerClient(relayerUrl);
-      const data = await client.getOrderbook(pair);
+      const data = await client.getOrderbook(pairValue);
       setSells(data.sells);
       setBuys(data.buys);
     } catch (err: unknown) {
@@ -36,11 +37,21 @@ export default function OrderBook() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [relayerUrl]);
 
+  // Debounce: wait 500ms after user stops typing before fetching
   useEffect(() => {
-    if (pair && relayerUrl) loadOrderbook();
-  }, [pair, relayerUrl]);
+    if (!pair || !relayerUrl) return;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      loadOrderbook(pair);
+    }, 500);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [pair, relayerUrl, loadOrderbook]);
 
   return (
     <div className="bg-gray-900 rounded-xl p-6 space-y-4">
@@ -71,8 +82,9 @@ export default function OrderBook() {
               <p className="text-xs text-gray-600">No sell orders</p>
             ) : (
               <div className="space-y-1">
-                {sells.map((o, i) => (
-                  <div key={i} className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
+                {sells.map((o) => (
+                  <div key={`${o.maker}-${o.sellAmount}-${o.buyAmount}`}
+                    className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
                     <span className="text-red-400">{o.sellAmount}</span>
                     <span className="text-gray-500">for {o.buyAmount}</span>
                   </div>
@@ -87,8 +99,9 @@ export default function OrderBook() {
               <p className="text-xs text-gray-600">No buy orders</p>
             ) : (
               <div className="space-y-1">
-                {buys.map((o, i) => (
-                  <div key={i} className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
+                {buys.map((o) => (
+                  <div key={`${o.maker}-${o.sellAmount}-${o.buyAmount}`}
+                    className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
                     <span className="text-green-400">{o.sellAmount}</span>
                     <span className="text-gray-500">for {o.buyAmount}</span>
                   </div>
