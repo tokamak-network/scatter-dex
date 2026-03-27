@@ -11,14 +11,21 @@ export class Matcher {
 
   /**
    * Find a matching pair for the given order.
-   * Price compatibility: maker.sellAmount * taker.sellAmount <= maker.buyAmount * taker.buyAmount
-   * Token compatibility: maker.sellToken == taker.buyToken && maker.buyToken == taker.sellToken
+   * Price compatibility (BigInt cross-multiplication, matches Solidity _validateSettle):
+   *   order.sellAmount * candidate.sellAmount <= order.buyAmount * candidate.buyAmount
+   * Token compatibility: order.sellToken == candidate.buyToken && order.buyToken == candidate.sellToken
    */
   findMatch(newOrder: StoredOrder): Match | null {
     const { order } = newOrder;
-    // Look for counterparty orders that sell what this order wants to buy
-    const pair = pairKey(order.buyToken, order.sellToken);
-    const candidates = this.orderbook.getSellOrders(pair);
+    const pair = pairKey(order.sellToken, order.buyToken);
+
+    // Determine which side the counterparty orders are on.
+    // If this order sells the lower-sorted token, it's on the sell side,
+    // so counterparty orders (selling the higher-sorted token) are on the buy side.
+    const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
+    const candidates = isSellSide
+      ? this.orderbook.getBuyOrders(pair)
+      : this.orderbook.getSellOrders(pair);
 
     for (const candidate of candidates) {
       if (candidate === newOrder) continue;
@@ -28,13 +35,10 @@ export class Matcher {
       if (candidate.order.sellToken.toLowerCase() !== order.buyToken.toLowerCase()) continue;
       if (candidate.order.buyToken.toLowerCase() !== order.sellToken.toLowerCase()) continue;
 
-      // Price compatibility (BigInt cross-multiplication, matches Solidity logic):
-      // maker's price (sell/buy) must be <= taker's price (sell/buy) from counterparty view
-      // i.e., maker.sellAmount * candidate.sellAmount <= maker.buyAmount * candidate.buyAmount
-      // This ensures maker doesn't overpay relative to what candidate offers
+      // Price compatibility (matches Solidity: maker.sell * taker.sell <= maker.buy * taker.buy)
       const compatible =
-        order.buyAmount * candidate.order.buyAmount <=
-        order.sellAmount * candidate.order.sellAmount;
+        order.sellAmount * candidate.order.sellAmount <=
+        order.buyAmount * candidate.order.buyAmount;
 
       if (!compatible) continue;
 

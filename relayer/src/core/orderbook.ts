@@ -28,28 +28,33 @@ export class Orderbook {
     }
     this.byMaker.get(makerKey)!.set(nonceKey, stored);
 
-    // Add to sell side
-    const sellList = this.sells.get(pair) || [];
-    sellList.push(stored);
-    // Sort by price ascending using BigInt cross-multiplication (no precision loss)
-    sellList.sort((a, b) => {
-      const lhs = a.order.sellAmount * b.order.buyAmount;
-      const rhs = b.order.sellAmount * a.order.buyAmount;
-      return lhs < rhs ? -1 : lhs > rhs ? 1 : 0;
-    });
-    this.sells.set(pair, sellList);
+    // Determine direction: is this order selling the "first" token in the sorted pair?
+    // pairKey sorts tokens, so pair = "tokenLow-tokenHigh"
+    const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
 
-    // Also add to buy side (from the counterparty's perspective)
-    const reversePair = pairKey(order.buyToken, order.sellToken);
-    const buyList = this.buys.get(reversePair) || [];
-    buyList.push(stored);
-    // Sort by buy price descending using BigInt cross-multiplication
-    buyList.sort((a, b) => {
-      const lhs = a.order.buyAmount * b.order.sellAmount;
-      const rhs = b.order.buyAmount * a.order.sellAmount;
-      return lhs > rhs ? -1 : lhs < rhs ? 1 : 0;
-    });
-    this.buys.set(reversePair, buyList);
+    if (isSellSide) {
+      // This order sells the lower-sorted token → goes to sell side
+      const sellList = this.sells.get(pair) || [];
+      // Sorted insertion (O(N)) — price ascending by sell/buy ratio
+      const idx = sellList.findIndex((existing) =>
+        stored.order.sellAmount * existing.order.buyAmount <
+        existing.order.sellAmount * stored.order.buyAmount
+      );
+      if (idx === -1) sellList.push(stored);
+      else sellList.splice(idx, 0, stored);
+      this.sells.set(pair, sellList);
+    } else {
+      // This order buys the lower-sorted token → goes to buy side
+      const buyList = this.buys.get(pair) || [];
+      // Sorted insertion (O(N)) — price descending by buy/sell ratio
+      const idx = buyList.findIndex((existing) =>
+        stored.order.buyAmount * existing.order.sellAmount >
+        existing.order.buyAmount * stored.order.sellAmount
+      );
+      if (idx === -1) buyList.push(stored);
+      else buyList.splice(idx, 0, stored);
+      this.buys.set(pair, buyList);
+    }
 
     return stored;
   }
@@ -62,18 +67,19 @@ export class Orderbook {
 
     this.byMaker.get(makerKey)!.delete(nonceKey);
 
-    // Remove from sell list
     const pair = pairKey(order.sellToken, order.buyToken);
-    const sellList = this.sells.get(pair);
-    if (sellList) {
-      this.sells.set(pair, sellList.filter((o) => o !== stored));
-    }
+    const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
 
-    // Remove from buy list
-    const reversePair = pairKey(order.buyToken, order.sellToken);
-    const buyList = this.buys.get(reversePair);
-    if (buyList) {
-      this.buys.set(reversePair, buyList.filter((o) => o !== stored));
+    if (isSellSide) {
+      const sellList = this.sells.get(pair);
+      if (sellList) {
+        this.sells.set(pair, sellList.filter((o) => o !== stored));
+      }
+    } else {
+      const buyList = this.buys.get(pair);
+      if (buyList) {
+        this.buys.set(pair, buyList.filter((o) => o !== stored));
+      }
     }
   }
 
