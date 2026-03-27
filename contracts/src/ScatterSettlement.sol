@@ -7,6 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IdentityGate} from "./IdentityGate.sol";
+import {RelayerRegistry} from "./RelayerRegistry.sol";
 
 contract ScatterSettlement is EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -39,6 +40,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error AmountOverflow();
     error ReleaseDelayOverflow();
     error SelfTrade();
+    error NotActiveRelayer();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -82,6 +84,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── State ───────────────────────────────────────────────────────
     IdentityGate public immutable identityGate;
+    RelayerRegistry public immutable relayerRegistry;
+
+    /// @notice Protocol fee in basis points (e.g., 10 = 0.1%). Taken from total fee.
+    uint256 public protocolFeeBps;
+    address public owner;
 
     // depositor => token => amount
     mapping(address => mapping(address => uint256)) public deposits;
@@ -100,10 +107,20 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event Claimed(uint256 indexed scheduleId, address indexed recipient, address indexed token, uint256 amount);
     event Refunded(uint256 indexed scheduleId, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
+    event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _identityGate) EIP712("ScatterSettlement", "1") {
+    constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps) EIP712("ScatterSettlement", "1") {
         identityGate = IdentityGate(_identityGate);
+        relayerRegistry = RelayerRegistry(_relayerRegistry);
+        protocolFeeBps = _protocolFeeBps;
+        owner = msg.sender;
+    }
+
+    function setProtocolFee(uint256 _protocolFeeBps) external {
+        if (msg.sender != owner) revert NotDepositor(); // reuse error
+        emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
+        protocolFeeBps = _protocolFeeBps;
     }
 
     // ─── Deposit & Withdraw ──────────────────────────────────────────
@@ -142,6 +159,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         Order calldata takerOrder,
         uint256 actualFee
     ) external nonReentrant {
+        // Verify caller is a registered active relayer
+        if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
+
         _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
 
         // Consume nonces
@@ -152,15 +172,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         deposits[makerOrder.maker][makerOrder.sellToken] -= makerOrder.sellAmount;
         deposits[takerOrder.maker][takerOrder.sellToken] -= takerOrder.sellAmount;
 
-        // Pay relayer fee
-        uint256 makerFee = (makerOrder.sellAmount * actualFee) / FEE_DENOMINATOR;
-        uint256 takerFee = (takerOrder.sellAmount * actualFee) / FEE_DENOMINATOR;
-        if (makerFee > 0) {
-            IERC20(makerOrder.sellToken).safeTransfer(msg.sender, makerFee);
-        }
-        if (takerFee > 0) {
-            IERC20(takerOrder.sellToken).safeTransfer(msg.sender, takerFee);
-        }
+        // Split fee: relayer + protocol
+        address treasury = relayerRegistry.treasury();
+        _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, actualFee, treasury);
+        _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, actualFee, treasury);
 
         // Create claim schedules
         uint256 matchId = scheduleCount;
@@ -239,6 +254,21 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Internal ────────────────────────────────────────────────────
+    function _splitAndPayFee(address token, uint256 sellAmount, uint256 feeRate, address treasury) internal {
+        uint256 totalFee = (sellAmount * feeRate) / FEE_DENOMINATOR;
+        if (totalFee == 0) return;
+
+        uint256 protocolCut = (totalFee * protocolFeeBps) / FEE_DENOMINATOR;
+        uint256 relayerCut = totalFee - protocolCut;
+
+        if (relayerCut > 0) {
+            IERC20(token).safeTransfer(msg.sender, relayerCut);
+        }
+        if (protocolCut > 0) {
+            IERC20(token).safeTransfer(treasury, protocolCut);
+        }
+    }
+
     function _validateSettle(
         bytes calldata makerSig,
         bytes calldata takerSig,

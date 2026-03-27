@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
+import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -54,7 +55,9 @@ contract IdentityGateTest is Test {
     function setUp() public {
         registry = new RealisticIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        settlement = new ScatterSettlement(address(gate));
+        RelayerRegistry rr = new RelayerRegistry(address(0x7777));
+        settlement = new ScatterSettlement(address(gate), address(rr), 0);
+        rr.register{value: 0.1 ether}("http://test", 0);
         token = new MockToken();
 
         // user1: verified until 30 days from now
@@ -279,7 +282,9 @@ contract IdentityGateTest is Test {
 
         RealisticIdentityRegistry reg = new RealisticIdentityRegistry();
         IdentityGate g = new IdentityGate(address(reg));
-        env.s = new ScatterSettlement(address(g));
+        RelayerRegistry rr2 = new RelayerRegistry(address(0x7777));
+        env.s = new ScatterSettlement(address(g), address(rr2), 0);
+        rr2.register{value: 0.1 ether}("http://test", 0);
 
         reg.setVerifiedUntil(env.u1, uint64(block.timestamp + expiry1));
         reg.setVerifiedUntil(env.u2, uint64(block.timestamp + expiry2));

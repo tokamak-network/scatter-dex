@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
+import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -40,9 +41,13 @@ contract MockIdentityRegistry is IIdentityRegistry {
 contract ScatterSettlementTest is Test {
     ScatterSettlement public settlement;
     IdentityGate public gate;
+    RelayerRegistry public relayerRegistry;
     MockIdentityRegistry public registry;
     MockToken public tokenA;
     MockToken public tokenB;
+
+    address relayerAddr = address(0xBEEF);
+    address treasury = address(0x7777);
 
     uint256 makerKey = 0x1;
     uint256 takerKey = 0x2;
@@ -62,13 +67,17 @@ contract ScatterSettlementTest is Test {
     function setUp() public {
         registry = new MockIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        settlement = new ScatterSettlement(address(gate));
+        relayerRegistry = new RelayerRegistry(treasury);
+        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
 
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
 
         registry.setVerified(maker, true);
         registry.setVerified(taker, true);
+
+        // Register default relayer (test contract itself acts as relayer)
+        relayerRegistry.register{value: 0.1 ether}("http://localhost", 30);
 
         tokenA.mint(maker, 100 ether);
         tokenB.mint(taker, 210_000e18);
@@ -375,12 +384,17 @@ contract ScatterSettlementTest is Test {
         bytes memory makerSig = _signOrder(makerKey, makerOrder);
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
-        address relayer = address(0xABCD);
-        vm.prank(relayer);
+        address feeRelayer = address(0xABCD);
+        vm.deal(feeRelayer, 1 ether);
+        vm.prank(feeRelayer);
+        relayerRegistry.register{value: 0.1 ether}("http://fee-relayer", 30);
+
+        vm.prank(feeRelayer);
         settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
 
-        assertEq(tokenA.balanceOf(relayer), 0.03 ether);
-        assertEq(tokenB.balanceOf(relayer), 63e18);
+        // No protocol fee (protocolFeeBps = 0 in setUp)
+        assertEq(tokenA.balanceOf(feeRelayer), 0.03 ether);
+        assertEq(tokenB.balanceOf(feeRelayer), 63e18);
     }
 
     function test_settle_fee_exceeds_max_reverts() public {
@@ -692,7 +706,10 @@ contract ScatterSettlementTest is Test {
         // Bob receives ETH to 1 address after 4 hours
         // Relayer charges 0.3% fee
 
-        address relayer = address(0xBEEF);
+        address e2eRelayer = address(0xBEEF);
+        vm.deal(e2eRelayer, 1 ether);
+        vm.prank(e2eRelayer);
+        relayerRegistry.register{value: 0.1 ether}("http://e2e-relayer", 30);
 
         // 1. Deposit
         vm.prank(maker);
@@ -758,14 +775,14 @@ contract ScatterSettlementTest is Test {
         bytes memory aliceSig = _signOrder(makerKey, aliceOrder);
         bytes memory bobSig = _signOrder(takerKey, bobOrder);
 
-        vm.prank(relayer);
+        vm.prank(e2eRelayer);
         settlement.settle(aliceSig, bobSig, aliceOrder, bobOrder, 30);
 
         // 4. Verify post-settle state
         assertEq(settlement.deposits(maker, address(tokenA)), 0, "alice escrow should be 0");
         assertEq(settlement.deposits(taker, address(tokenB)), 0, "bob escrow should be 0");
-        assertEq(tokenA.balanceOf(relayer), ethFee, "relayer ETH fee");
-        assertEq(tokenB.balanceOf(relayer), usdcFee, "relayer USDC fee");
+        assertEq(tokenA.balanceOf(e2eRelayer), ethFee, "relayer ETH fee");
+        assertEq(tokenB.balanceOf(e2eRelayer), usdcFee, "relayer USDC fee");
         assertEq(settlement.scheduleCount(), 4, "4 claim schedules");
 
         // 5. Time-delayed claims
@@ -797,10 +814,10 @@ contract ScatterSettlementTest is Test {
 
         // 6. Verify all funds distributed correctly
         uint256 totalUsdcOut = tokenB.balanceOf(recipientC) + tokenB.balanceOf(recipientD)
-            + tokenB.balanceOf(recipientE) + tokenB.balanceOf(relayer);
+            + tokenB.balanceOf(recipientE) + tokenB.balanceOf(e2eRelayer);
         assertEq(totalUsdcOut, 21_000e18, "total USDC conservation");
 
-        uint256 totalEthOut = tokenA.balanceOf(recipientF) + tokenA.balanceOf(relayer);
+        uint256 totalEthOut = tokenA.balanceOf(recipientF) + tokenA.balanceOf(e2eRelayer);
         assertEq(totalEthOut, 10 ether, "total ETH conservation");
     }
 
