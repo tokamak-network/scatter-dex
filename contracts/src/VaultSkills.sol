@@ -2,14 +2,21 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ScatterSettlement} from "./ScatterSettlement.sol";
 
 /// @notice EIP-7702 delegation target for batch operations.
-/// @dev Designed to be delegated to by an EOA via EIP-7702 (tx type 4).
-///      When delegated, `address(this)` is the EOA,
-///      so approve/deposit execute in the EOA's context.
-contract VaultSkills is ReentrancyGuard {
+/// @dev Stateless — no constructor, no storage slots. Designed to be delegated to
+///      by an EOA via EIP-7702 (tx type 4). When delegated, `address(this)` is the
+///      EOA, so approve/deposit execute in the EOA's context.
+///      Traditional ReentrancyGuard is intentionally omitted because it uses storage
+///      slots which would mutate the delegator's storage under EIP-7702 delegation.
+///      Only ScatterSettlement itself is protected by its own nonReentrant modifier;
+///      VaultSkills functions may still be re-entered via token hooks, and callers
+///      must not rely on VaultSkills being non-reentrant.
+contract VaultSkills {
+    using SafeERC20 for IERC20;
+
     struct TokenAmount {
         address token;
         uint256 amount;
@@ -20,7 +27,7 @@ contract VaultSkills is ReentrancyGuard {
     error ZeroAddress();
 
     /// @notice Approve + deposit a single token into ScatterSettlement in one call.
-    function approveAndDeposit(address settlement, address token, uint256 amount) external nonReentrant {
+    function approveAndDeposit(address settlement, address token, uint256 amount) external {
         if (settlement == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
@@ -28,7 +35,7 @@ contract VaultSkills is ReentrancyGuard {
     }
 
     /// @notice Batch approve + deposit multiple tokens.
-    function approveAndDepositMultiple(address settlement, TokenAmount[] calldata tokens) external nonReentrant {
+    function approveAndDepositMultiple(address settlement, TokenAmount[] calldata tokens) external {
         if (settlement == address(0)) revert ZeroAddress();
         if (tokens.length == 0) revert ArrayEmpty();
 
@@ -40,7 +47,7 @@ contract VaultSkills is ReentrancyGuard {
     }
 
     /// @notice Batch withdraw multiple tokens from ScatterSettlement.
-    function withdrawMultiple(address settlement, TokenAmount[] calldata tokens) external nonReentrant {
+    function withdrawMultiple(address settlement, TokenAmount[] calldata tokens) external {
         if (settlement == address(0)) revert ZeroAddress();
         if (tokens.length == 0) revert ArrayEmpty();
 
@@ -52,15 +59,15 @@ contract VaultSkills is ReentrancyGuard {
     }
 
     /// @dev Approve exact amount, deposit, then revoke any remaining allowance.
-    ///      Resets allowance to 0 before approve to support tokens like USDT
-    ///      that require zero allowance before setting a new non-zero value.
+    ///      Uses SafeERC20.forceApprove for non-standard tokens (USDT etc).
     function _safeApproveAndDeposit(address settlement, address token, uint256 amount) internal {
         IERC20 token_ = IERC20(token);
-        if (token_.allowance(address(this), settlement) != 0) {
-            token_.approve(settlement, 0);
-        }
-        token_.approve(settlement, amount);
+        token_.forceApprove(settlement, amount);
         ScatterSettlement(settlement).deposit(token, amount);
-        token_.approve(settlement, 0);
+        // Revoke leftover allowance to prevent token drain
+        uint256 remaining = token_.allowance(address(this), settlement);
+        if (remaining > 0) {
+            token_.forceApprove(settlement, 0);
+        }
     }
 }
