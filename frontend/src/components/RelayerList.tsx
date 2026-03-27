@@ -4,9 +4,8 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { RELAYER_REGISTRY_ABI } from "@/lib/contracts";
+import { RELAYER_REGISTRY_ADDRESS } from "@/lib/config";
 import { Globe, Shield, Coins } from "lucide-react";
-
-const REGISTRY = process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS || "";
 
 interface RelayerData {
   address: string;
@@ -24,12 +23,12 @@ export default function RelayerList() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!readProvider || !REGISTRY) return;
+    if (!readProvider) return;
 
     const load = async () => {
       setLoading(true);
       try {
-        const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, readProvider);
+        const registry = new ethers.Contract(RELAYER_REGISTRY_ADDRESS, RELAYER_REGISTRY_ABI, readProvider);
         const addresses: string[] = await registry.getActiveRelayers();
 
         const data = await Promise.all(

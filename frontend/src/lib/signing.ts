@@ -49,6 +49,10 @@ export async function signOrder(
   chainId: number,
   settlementAddress: string
 ): Promise<{ signature: string; orderData: any }> {
+  if (!ethers.isAddress(order.sellToken)) throw new Error("Invalid sellToken address");
+  if (!ethers.isAddress(order.buyToken)) throw new Error("Invalid buyToken address");
+  if (!ethers.isAddress(settlementAddress)) throw new Error("Invalid settlementAddress");
+
   const claims = order.claims.map((c) => ({
     claimHash: computeClaimHash(c.secret, c.recipient),
     amount: c.amount,
@@ -84,6 +88,7 @@ export async function signCancelMessage(
   address: string,
   nonce: number
 ): Promise<string> {
+  if (!ethers.isAddress(address)) throw new Error("Invalid address for cancel message");
   const message = `cancel:${address.toLowerCase()}:${nonce}`;
   return signer.signMessage(message);
 }

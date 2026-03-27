@@ -4,8 +4,7 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
-
-const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
+import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
 export default function ClaimList() {
   const { account, signer } = useWallet();
@@ -26,7 +25,7 @@ export default function ClaimList() {
       if (!secret) {
         throw new Error("Secret is required");
       }
-      const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, signer);
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
       // Secret hash must match how the sender computed claimHash:
       // claimHash = keccak256(abi.encodePacked(keccak256(secret_bytes), recipient))
       // claimRelease verifies: keccak256(abi.encodePacked(secret, msg.sender)) == claimHash
@@ -37,8 +36,9 @@ export default function ClaimList() {
       setStatus("success");
       setScheduleId("");
       setSecret("");
-    } catch (err: any) {
-      setError(err.reason || err.message || "Claim failed");
+    } catch (err: unknown) {
+      const e = err as { reason?: string; message?: string };
+      setError(e.reason || e.message || "Claim failed");
       setStatus("error");
     }
   };

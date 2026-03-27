@@ -1,20 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useWallet } from "@/lib/wallet";
 import { signOrder, ClaimInput } from "@/lib/signing";
 import { RelayerClient } from "@/lib/relayerApi";
 import { ethers } from "ethers";
 import { Plus, Trash2 } from "lucide-react";
+import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
 const ORDER_EXPIRY_SECONDS = 86400; // 1 day
 const DEFAULT_MAX_FEE = 30; // 0.3% basis points
 const DEFAULT_DELAY = 3600; // 1 hour
 
-let nonceCounter = Math.floor(Math.random() * 1_000_000);
-
 export default function OrderForm() {
   const { account, signer, chainId } = useWallet();
+  const nonceCounter = useRef(Math.floor(Math.random() * 1_000_000));
   const [sellToken, setSellToken] = useState("");
   const [buyToken, setBuyToken] = useState("");
   const [sellAmount, setSellAmount] = useState("");
@@ -26,8 +26,6 @@ export default function OrderForm() {
   const [status, setStatus] = useState<"idle" | "signing" | "submitting" | "success" | "error">("idle");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
-
-  const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
 
   const addClaim = () => {
     setClaims([...claims, { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY * 2, secret: "" }]);
@@ -49,6 +47,9 @@ export default function OrderForm() {
     setError("");
 
     try {
+      if (!ethers.isAddress(sellToken)) throw new Error("Invalid sell token address");
+      if (!ethers.isAddress(buyToken)) throw new Error("Invalid buy token address");
+
       const { signature, orderData } = await signOrder(
         signer,
         account,
@@ -59,14 +60,14 @@ export default function OrderForm() {
           buyAmount: ethers.parseEther(buyAmount).toString(),
           maxFee: DEFAULT_MAX_FEE,
           expiry: Math.floor(Date.now() / 1000) + ORDER_EXPIRY_SECONDS,
-          nonce: nonceCounter++,
+          nonce: nonceCounter.current++,
           claims: claims.map((c) => ({
             ...c,
             amount: ethers.parseEther(c.amount).toString(),
           })),
         },
         chainId,
-        SETTLEMENT
+        SETTLEMENT_ADDRESS
       );
 
       setStatus("submitting");
@@ -75,8 +76,8 @@ export default function OrderForm() {
 
       setResult(res.status === "matched" ? `Matched! TX: ${res.txHash}` : `Pending (nonce: ${res.nonce})`);
       setStatus("success");
-    } catch (err: any) {
-      setError(err.message || "Failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed");
       setStatus("error");
     }
   };

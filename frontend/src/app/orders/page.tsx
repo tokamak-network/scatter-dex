@@ -25,10 +25,15 @@ export default function OrdersPage() {
 
   const handleCancel = async (nonce: string) => {
     if (!signer || !account) return;
-    const sig = await signCancelMessage(signer, account, parseInt(nonce));
-    const client = new RelayerClient(relayerUrl);
-    await client.cancelOrder(account, parseInt(nonce), sig);
-    setOrders(orders.filter((o) => o.nonce !== nonce));
+    try {
+      const nonceNum = parseInt(nonce);
+      const sig = await signCancelMessage(signer, account, nonceNum);
+      const client = new RelayerClient(relayerUrl);
+      await client.cancelOrder(account, nonceNum, sig);
+      setOrders(orders.filter((o) => o.nonce !== nonce));
+    } catch (error) {
+      console.error("Failed to cancel order:", error);
+    }
   };
 
   if (!account) return <div className="max-w-4xl mx-auto px-4 py-8"><p className="text-gray-500">Connect wallet</p></div>;

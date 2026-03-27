@@ -4,8 +4,7 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { RELAYER_REGISTRY_ABI } from "@/lib/contracts";
-
-const REGISTRY = process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS || "";
+import { RELAYER_REGISTRY_ADDRESS } from "@/lib/config";
 
 export default function AdminPage() {
   const { account, signer } = useWallet();
@@ -21,14 +20,17 @@ export default function AdminPage() {
     setError("");
 
     try {
-      const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, signer);
-      const tx = await registry.register(url, parseInt(fee), {
+      const feeBps = parseInt(fee);
+      if (isNaN(feeBps)) throw new Error("Invalid fee value");
+      const registry = new ethers.Contract(RELAYER_REGISTRY_ADDRESS, RELAYER_REGISTRY_ABI, signer);
+      const tx = await registry.register(url, feeBps, {
         value: ethers.parseEther(bond),
       });
       await tx.wait();
       setStatus("success");
-    } catch (err: any) {
-      setError(err.reason || err.message || "Registration failed");
+    } catch (err: unknown) {
+      const e = err as { reason?: string; message?: string };
+      setError(e.reason || e.message ||"Registration failed");
       setStatus("error");
     }
   };
@@ -39,12 +41,13 @@ export default function AdminPage() {
     setError("");
 
     try {
-      const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, signer);
+      const registry = new ethers.Contract(RELAYER_REGISTRY_ADDRESS, RELAYER_REGISTRY_ABI, signer);
       const tx = await registry.requestExit();
       await tx.wait();
       setStatus("success");
-    } catch (err: any) {
-      setError(err.reason || err.message || "Exit request failed");
+    } catch (err: unknown) {
+      const e = err as { reason?: string; message?: string };
+      setError(e.reason || e.message ||"Exit request failed");
       setStatus("error");
     }
   };

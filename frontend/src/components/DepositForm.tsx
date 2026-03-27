@@ -4,8 +4,7 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI, ERC20_ABI } from "@/lib/contracts";
-
-const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
+import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
 export default function DepositForm() {
   const { account, signer } = useWallet();
@@ -20,24 +19,27 @@ export default function DepositForm() {
     setError("");
 
     try {
+      if (!ethers.isAddress(token)) throw new Error("Invalid token address");
+
       const tokenContract = new ethers.Contract(token, ERC20_ABI, signer);
       const decimals = await tokenContract.decimals();
       const weiAmount = ethers.parseUnits(amount, decimals);
 
       // Approve
-      const approveTx = await tokenContract.approve(SETTLEMENT, weiAmount);
+      const approveTx = await tokenContract.approve(SETTLEMENT_ADDRESS, weiAmount);
       await approveTx.wait();
 
       // Deposit
       setStatus("depositing");
-      const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, signer);
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
       const depositTx = await settlement.deposit(token, weiAmount);
       await depositTx.wait();
 
       setStatus("success");
       setAmount("");
-    } catch (err: any) {
-      setError(err.reason || err.message || "Transaction failed");
+    } catch (err: unknown) {
+      const e = err as { reason?: string; message?: string };
+      setError(e.reason || e.message || "Transaction failed");
       setStatus("error");
     }
   };
@@ -49,18 +51,21 @@ export default function DepositForm() {
     setError("");
 
     try {
+      if (!ethers.isAddress(token)) throw new Error("Invalid token address");
+
       const tokenContract = new ethers.Contract(token, ERC20_ABI, signer);
       const decimals = await tokenContract.decimals();
       const weiAmount = ethers.parseUnits(amount, decimals);
 
-      const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, signer);
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
       const tx = await settlement.withdraw(token, weiAmount);
       await tx.wait();
 
       setStatus("success");
       setAmount("");
-    } catch (err: any) {
-      setError(err.reason || err.message || "Transaction failed");
+    } catch (err: unknown) {
+      const e = err as { reason?: string; message?: string };
+      setError(e.reason || e.message || "Transaction failed");
       setStatus("error");
     }
   };

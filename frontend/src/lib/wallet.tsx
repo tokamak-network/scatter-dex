@@ -49,7 +49,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const accounts = await window.ethereum.request({ method: "eth_accounts" });
     if (accounts.length > 0) {
       setAccount(accounts[0]);
-      setSigner(await bp.getSigner());
+      try {
+        setSigner(await bp.getSigner());
+      } catch (e) {
+        console.error("Failed to get signer:", e);
+        setSigner(null);
+      }
       const network = await bp.getNetwork();
       setChainId(Number(network.chainId));
     }
