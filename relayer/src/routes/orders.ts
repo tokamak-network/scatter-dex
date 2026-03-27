@@ -107,8 +107,21 @@ export function createOrderRoutes(
     }
 
     // Verify the cancel signature is from the order maker
+    // Canonicalize nonce to prevent signature mismatch from different string representations
+    let canonicalNonce: bigint;
     try {
-      const message = `cancel:${address.toLowerCase()}:${nonce}`;
+      canonicalNonce = BigInt(nonce);
+      if (canonicalNonce < 0n) {
+        res.status(400).json({ error: "invalid nonce: must be non-negative" });
+        return;
+      }
+    } catch {
+      res.status(400).json({ error: "invalid nonce format" });
+      return;
+    }
+
+    try {
+      const message = `cancel:${address.toLowerCase()}:${canonicalNonce.toString()}`;
       const recovered = ethers.verifyMessage(message, signature);
       if (recovered.toLowerCase() !== address.toLowerCase()) {
         res.status(403).json({ error: "signature does not match order maker" });
@@ -119,7 +132,7 @@ export function createOrderRoutes(
       return;
     }
 
-    const cancelled = orderbook.cancel(address, BigInt(nonce));
+    const cancelled = orderbook.cancel(address, canonicalNonce);
     if (cancelled) {
       res.json({ status: "cancelled" });
     } else {

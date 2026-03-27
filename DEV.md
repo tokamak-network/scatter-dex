@@ -745,7 +745,7 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
   └─ RelayerRegistry 테스트 + 프로토콜 수수료 테스트
 ```
 
-#### Phase 5: 릴레이어 서버 (TypeScript) ⬜ 진행 예정
+#### Phase 5: 릴레이어 서버 (TypeScript) ✅ 완료 (admin API, Dockerfile 미구현)
 
 ```
 목표: 오프체인 매칭 엔진 + settle() 호출 서버
@@ -827,7 +827,7 @@ Phase 1: ScatterSettlement 코어            ✅ 완료
 Phase 2: zk-X509 연동                      ✅ 완료
 Phase 3: EIP-7702 스킬                     ✅ 완료
 Phase 4: 릴레이어 레지스트리 + 플랫폼 수수료  ✅ 완료 (테스트 추가 필요)
-Phase 5: 릴레이어 서버 (TypeScript)          ⬜ 진행 예정
+Phase 5: 릴레이어 서버 (TypeScript)          ✅ 완료 (admin API, Dockerfile 미구현)
 Phase 6: 프론트엔드 (플랫폼 UI)             ⬜ 진행 예정
 Phase 7: 테스트넷 배포 + E2E               ⬜ 진행 예정
 ```

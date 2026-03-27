@@ -11,8 +11,9 @@ export class Matcher {
 
   /**
    * Find a matching pair for the given order.
-   * Price compatibility: maker.sellAmount * taker.sellAmount <= maker.buyAmount * taker.buyAmount
-   * Token compatibility: maker.sellToken == taker.buyToken && maker.buyToken == taker.sellToken
+   * Price compatibility (BigInt cross-multiplication):
+   *   order.buyAmount * candidate.buyAmount <= order.sellAmount * candidate.sellAmount
+   * Token compatibility: order.sellToken == candidate.buyToken && order.buyToken == candidate.sellToken
    */
   findMatch(newOrder: StoredOrder): Match | null {
     const { order } = newOrder;
