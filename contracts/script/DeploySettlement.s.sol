@@ -12,6 +12,7 @@ import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 contract DeploySettlement is Script {
     function run() external {
         address registryAddr = vm.envAddress("IDENTITY_REGISTRY");
+        require(registryAddr != address(0), "DeploySettlement: IDENTITY_REGISTRY env var not set or is address(0)");
 
         vm.startBroadcast();
 

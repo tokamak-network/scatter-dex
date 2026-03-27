@@ -21,7 +21,7 @@ contract RealisticIdentityRegistry is IIdentityRegistry {
     }
 
     function isVerified(address user) external view override returns (bool) {
-        return _verifiedUntil[user] >= block.timestamp;
+        return !_paused && _verifiedUntil[user] >= block.timestamp;
     }
 
     function verifiedUntil(address user) external view override returns (uint64) {
@@ -105,6 +105,12 @@ contract IdentityGateTest is Test {
 
     function test_verifiedUntil_unverified_returns_zero() public view {
         assertEq(gate.verifiedUntil(unverified), 0);
+    }
+
+    function test_isVerified_paused() public {
+        assertTrue(gate.isVerified(user1));
+        registry.setPaused(true);
+        assertFalse(gate.isVerified(user1));
     }
 
     function test_registry_address() public view {
