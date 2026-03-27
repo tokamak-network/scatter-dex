@@ -467,6 +467,55 @@ contract ScatterSettlementTest is Test {
         new ScatterSettlement(address(0), address(relayerRegistry), 0);
     }
 
+    function test_pause_blocks_settle() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        settlement.setPaused(true);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.ContractPaused.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    function test_pause_blocks_claim() public {
+        _depositAndSettle();
+        vm.warp(block.timestamp + 3 hours);
+
+        settlement.setPaused(true);
+
+        vm.prank(recipientC);
+        vm.expectRevert(ScatterSettlement.ContractPaused.selector);
+        settlement.claimRelease(0, secret1);
+    }
+
+    function test_transferOwnership() public {
+        address newOwner = address(0xBBBB);
+        settlement.transferOwnership(newOwner);
+        assertEq(settlement.owner(), newOwner);
+    }
+
+    function test_transferOwnership_not_owner_reverts() public {
+        vm.prank(maker);
+        vm.expectRevert(ScatterSettlement.NotOwner.selector);
+        settlement.transferOwnership(maker);
+    }
+
+    function test_setProtocolFee_5000_boundary() public {
+        settlement.setProtocolFee(5000); // should pass (50%)
+        assertEq(settlement.protocolFeeBps(), 5000);
+    }
+
+    function test_setProtocolFee_5001_reverts() public {
+        vm.expectRevert(ScatterSettlement.FeeTooHigh.selector);
+        settlement.setProtocolFee(5001);
+    }
+
     function test_settle_unregistered_relayer_reverts() public {
         vm.prank(maker);
         settlement.deposit(address(tokenA), 10 ether);

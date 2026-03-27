@@ -198,4 +198,18 @@ contract RelayerRegistryTest is Test {
         registry.register{value: 0.1 ether}("http://relay1.com", 30);
         assertEq(registry.getFee(relayer1), 30);
     }
+
+    function test_addBond_zero_reverts() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
+        registry.addBond{value: 0}();
+    }
+
+    function test_transferOwnership_emits_event() public {
+        address newOwner = address(0x9999);
+        registry.transferOwnership(newOwner);
+        assertEq(registry.owner(), newOwner);
+    }
 }
