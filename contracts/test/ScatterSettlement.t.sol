@@ -26,6 +26,14 @@ contract MockIdentityRegistry is IIdentityRegistry {
     function isVerified(address user) external view override returns (bool) {
         return verified[user];
     }
+
+    function verifiedUntil(address) external pure override returns (uint64) {
+        return type(uint64).max;
+    }
+
+    function paused() external pure override returns (bool) {
+        return false;
+    }
 }
 
 // ─── Test Contract ───────────────────────────────────────────────
