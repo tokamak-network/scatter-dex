@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
+import { RPC_URL } from "./config";
 
 interface WalletState {
   account: string | null;
@@ -34,7 +35,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [readProvider, setReadProvider] = useState<ethers.JsonRpcProvider | null>(null);
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
-  const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+  const rpcUrl = RPC_URL;
 
   useEffect(() => {
     setReadProvider(new ethers.JsonRpcProvider(rpcUrl));

@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
+import { SETTLEMENT_ADDRESS } from "@/lib/config";
 import { Clock, Check, AlertCircle } from "lucide-react";
 
-const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
+const MAX_RECENT_SCHEDULES = 100;
+const REFUND_WINDOW = 7 * 24 * 3600;
 
 interface Schedule {
   id: number;
@@ -15,7 +17,7 @@ interface Schedule {
   releaseTime: number;
   claimed: boolean;
   depositor: string;
-  status: "claimable" | "locked" | "claimed" | "refundable";
+  status: "claimable" | "locked" | "claimed" | "refunded" | "refundable";
 }
 
 export default function ClaimScheduleList() {
@@ -25,55 +27,58 @@ export default function ClaimScheduleList() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!readProvider || !SETTLEMENT) return;
+    if (!readProvider) return;
 
     const loadSchedules = async () => {
       setLoading(true);
       setError("");
 
       try {
-        const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, readProvider);
+        const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
         const count = await settlement.scheduleCount();
         const total = Number(count);
 
-        // Scan recent schedules (last 100 max)
-        const start = Math.max(0, total - 100);
-        const results: Schedule[] = [];
+        const start = Math.max(0, total - MAX_RECENT_SCHEDULES);
 
-        for (let i = start; i < total; i++) {
-          try {
-            const [claimHash, token, releaseTime, claimed, depositor, amount] = await settlement.schedules(i);
-            if (amount === BigInt(0)) continue;
+        // Fetch all schedules in parallel
+        const promises = Array.from({ length: total - start }, (_, idx) => {
+          const i = start + idx;
+          return settlement.schedules(i).then(
+            ([, token, releaseTime, claimed, depositor, amount]: [string, string, bigint, boolean, string, bigint]) => {
+              if (amount === BigInt(0)) return null;
 
-            const now = Math.floor(Date.now() / 1000);
-            const rt = Number(releaseTime);
-            const REFUND_WINDOW = 7 * 24 * 3600;
+              const now = Math.floor(Date.now() / 1000);
+              const rt = Number(releaseTime);
 
-            let status: Schedule["status"];
-            if (claimed) {
-              status = "claimed";
-            } else if (now >= rt + REFUND_WINDOW) {
-              status = "refundable";
-            } else if (now >= rt) {
-              status = "claimable";
-            } else {
-              status = "locked";
+              let status: Schedule["status"];
+              if (claimed) {
+                status = "claimed";
+              } else if (now >= rt + REFUND_WINDOW) {
+                status = "refundable";
+              } else if (now >= rt) {
+                status = "claimable";
+              } else {
+                status = "locked";
+              }
+
+              return {
+                id: i,
+                token,
+                amount: ethers.formatEther(amount),
+                releaseTime: rt,
+                claimed,
+                depositor,
+                status,
+              } as Schedule;
+            },
+            (err: unknown) => {
+              console.warn(`Failed to load schedule #${i}:`, err);
+              return null;
             }
+          );
+        });
 
-            results.push({
-              id: i,
-              token,
-              amount: ethers.formatEther(amount),
-              releaseTime: rt,
-              claimed,
-              depositor,
-              status,
-            });
-          } catch {
-            // skip invalid schedules
-          }
-        }
-
+        const results = (await Promise.all(promises)).filter((s): s is Schedule => s !== null);
         setSchedules(results);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load schedules");
@@ -88,14 +93,14 @@ export default function ClaimScheduleList() {
   const handleRefund = async (scheduleId: number) => {
     if (!signer) return;
     try {
-      const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, signer);
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
       const tx = await settlement.refundUnclaimed(scheduleId);
       await tx.wait();
       setSchedules((prev) =>
-        prev.map((s) => (s.id === scheduleId ? { ...s, status: "claimed" as const, claimed: true } : s))
+        prev.map((s) => (s.id === scheduleId ? { ...s, status: "refunded" as const, claimed: true } : s))
       );
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Refund failed");
+      setError(err instanceof Error ? err.message : "Refund failed");
     }
   };
 
@@ -134,6 +139,7 @@ export default function ClaimScheduleList() {
               <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${
                 s.status === "claimable" ? "bg-green-900 text-green-400" :
                 s.status === "claimed" ? "bg-gray-700 text-gray-400" :
+                s.status === "refunded" ? "bg-gray-700 text-gray-400" :
                 s.status === "refundable" ? "bg-yellow-900 text-yellow-400" :
                 "bg-blue-900 text-blue-400"
               }`}>
