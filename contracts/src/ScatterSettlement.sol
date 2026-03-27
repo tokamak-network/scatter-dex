@@ -44,6 +44,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error FeeTooHigh();
     error ZeroAddress();
     error NotOwner();
+    error FeeExceedsRelayerRegistered();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -167,6 +168,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     ) external nonReentrant {
         // Verify caller is a registered active relayer
         if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
+
+        // Enforce relayer's registered fee — cannot charge more than advertised
+        if (actualFee > relayerRegistry.getFee(msg.sender)) revert FeeExceedsRelayerRegistered();
 
         _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
 
@@ -305,7 +309,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (makerOrder.sellToken != takerOrder.buyToken) revert TokenMismatch();
         if (makerOrder.buyToken != takerOrder.sellToken) revert TokenMismatch();
 
-        // Verify price compatibility
+        // Verify price compatibility: maker.sell * taker.sell <= maker.buy * taker.buy
+        // Solidity 0.8+ reverts on overflow. Practically, uint256 overflow requires
+        // both amounts > ~10^38 (with 18 decimals), exceeding any realistic token supply.
         if (makerOrder.sellAmount * takerOrder.sellAmount > makerOrder.buyAmount * takerOrder.buyAmount) {
             revert PriceIncompatible();
         }
