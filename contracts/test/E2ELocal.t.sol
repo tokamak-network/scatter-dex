@@ -82,12 +82,11 @@ contract E2ELocalTest is Test {
             weth.mint(traders[i], 1000 ether);
             usdc.mint(traders[i], 1_000_000e18);
             dai.mint(traders[i], 1_000_000e18);
-            vm.prank(traders[i]);
+            vm.startPrank(traders[i]);
             weth.approve(address(settlement), type(uint256).max);
-            vm.prank(traders[i]);
             usdc.approve(address(settlement), type(uint256).max);
-            vm.prank(traders[i]);
             dai.approve(address(settlement), type(uint256).max);
+            vm.stopPrank();
         }
 
         // Register 2 relayers
@@ -473,11 +472,11 @@ contract E2ELocalTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // TEST 7: 3-token circular trades (WETH→USDC→DAI→WETH)
+    // TEST 7: 3-token concurrent trades (WETH↔USDC + USDC↔DAI)
     // ═══════════════════════════════════════════════════════════════
 
     function test_e2e_three_token_trades() public {
-        // Alice: WETH→USDC, Bob: USDC→DAI, Charlie: DAI→WETH
+        // Two independent trades across 3 tokens, settled by different relayers
         vm.prank(alice);   settlement.deposit(address(weth), 5 ether);
         vm.prank(bob);     settlement.deposit(address(usdc), 10_500e18);
         vm.prank(charlie); settlement.deposit(address(usdc), 10_500e18); // for counter

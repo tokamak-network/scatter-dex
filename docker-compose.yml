@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   anvil:
-    image: ghcr.io/foundry-rs/foundry:latest
+    image: ghcr.io/foundry-rs/foundry:nightly-b5c4e2fe7ab1e22aaa4c1c22e53e3699e0823b2a
     entrypoint: ["anvil", "--host", "0.0.0.0"]
     ports:
       - "8545:8545"
@@ -13,7 +13,7 @@ services:
       retries: 10
 
   deployer:
-    image: ghcr.io/foundry-rs/foundry:latest
+    image: ghcr.io/foundry-rs/foundry:nightly-b5c4e2fe7ab1e22aaa4c1c22e53e3699e0823b2a
     depends_on:
       anvil:
         condition: service_healthy

@@ -205,10 +205,18 @@ describe("E2E Integration: Full Trade Flow", () => {
   it("Escrow should be depleted after settlement", async () => {
     const aliceWeth = await settlement.deposits(alice.address, WETH);
     const bobUsdc = await settlement.deposits(bob.address, USDC);
-    // If matched, escrow should be 0
-    // If not matched yet (relayer not active on-chain), escrow remains
-    expect(aliceWeth >= BigInt(0)).toBe(true);
-    expect(bobUsdc >= BigInt(0)).toBe(true);
+    // After successful match+settle, escrow should be 0
+    // If relayer is not registered on-chain, orders stay pending and escrow remains
+    const scheduleCount = await settlement.scheduleCount();
+    if (scheduleCount > BigInt(0)) {
+      // Settlement happened — escrow should be depleted
+      expect(aliceWeth).toBe(BigInt(0));
+      expect(bobUsdc).toBe(BigInt(0));
+    } else {
+      // No settlement yet — escrow should equal deposited amounts
+      expect(aliceWeth).toBe(ethers.parseEther("10"));
+      expect(bobUsdc).toBe(ethers.parseUnits("21000", 18));
+    }
   });
 
   // ─── Scenario 6: Order cancel via relayer ──────────────────
@@ -245,13 +253,13 @@ describe("E2E Integration: Full Trade Flow", () => {
 
     // Cancel with signed message
     const cancelSig = await alice.signMessage(`cancel:${alice.address.toLowerCase()}:9999`);
-    await relayer.cancelOrder(alice.address, 9999, cancelSig);
+    const cancelResult = await relayer.cancelOrder(alice.address, 9999, cancelSig);
+    expect(cancelResult.status).toBe("cancelled");
 
-    // Order should no longer be in pending list
+    // Verify order status is cancelled
     const orders = await relayer.getOrders(alice.address);
-    const cancelled = orders.find((o: any) => o.nonce === "9999");
-    if (cancelled) {
-      expect(cancelled.status).toBe("cancelled");
-    }
+    const cancelled = orders.find((o: { nonce: string }) => o.nonce === "9999");
+    expect(cancelled).toBeDefined();
+    expect(cancelled!.status).toBe("cancelled");
   });
 });

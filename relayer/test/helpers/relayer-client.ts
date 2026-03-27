@@ -7,7 +7,7 @@ export class RelayerClient {
     return res.json();
   }
 
-  async submitOrder(order: any, signature: string) {
+  async submitOrder(order: Record<string, unknown>, signature: string) {
     const res = await fetch(`${this.baseUrl}/api/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -26,7 +26,7 @@ export class RelayerClient {
     return res.json();
   }
 
-  async cancelOrder(address: string, nonce: number, signature: string) {
+  async cancelOrder(address: string, nonce: number, signature: string): Promise<{ status: string }> {
     const res = await fetch(`${this.baseUrl}/api/orders/${address}/${nonce}`, {
       method: "DELETE",
       headers: { "x-cancel-signature": signature },

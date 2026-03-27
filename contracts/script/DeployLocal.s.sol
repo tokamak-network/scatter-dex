@@ -25,10 +25,10 @@ contract MockToken is ERC20 {
 /// @dev Usage: forge script script/DeployLocal.s.sol --rpc-url http://localhost:8545 --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 contract DeployLocal is Script {
     function run() external {
-        address deployer = msg.sender;
         uint256 protocolFeeBps = 1000; // 10% of fee goes to treasury
 
         vm.startBroadcast();
+        address deployer = msg.sender;
 
         // 1. Mock identity registry (everyone is verified)
         MockIdentityRegistry identityRegistry = new MockIdentityRegistry();

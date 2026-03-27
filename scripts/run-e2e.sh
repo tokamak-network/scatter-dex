@@ -12,7 +12,7 @@ RPC="${RPC_URL:-http://localhost:8545}"
 RELAYER="${RELAYER_URL:-http://localhost:3001}"
 
 echo "Step 1: Check anvil..."
-if ! curl -s $RPC -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
+if ! curl -fsS "$RPC" -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
   echo "  ERROR: anvil not running at $RPC"
   echo "  Start with: anvil"
   exit 1
@@ -21,12 +21,12 @@ echo "  OK"
 
 echo ""
 echo "Step 2: Check relayer..."
-if ! curl -s $RELAYER/api/info > /dev/null 2>&1; then
+if ! curl -fsS "$RELAYER/api/info" > /dev/null 2>&1; then
   echo "  ERROR: relayer not running at $RELAYER"
   echo "  Start with: cd relayer && npm run dev"
   exit 1
 fi
-echo "  OK — $(curl -s $RELAYER/api/info | python3 -c 'import sys,json; d=json.load(sys.stdin); print(f"fee={d[\"fee\"]}bps, orders={d[\"orderCount\"]}")')"
+echo "  OK — $(curl -fsS "$RELAYER/api/info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'fee={d[\"fee\"]}bps, orders={d[\"orderCount\"]}')")"
 
 echo ""
 echo "Step 3: Run Foundry E2E tests..."
