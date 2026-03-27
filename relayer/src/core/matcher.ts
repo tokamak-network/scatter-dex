@@ -28,17 +28,19 @@ export class Matcher {
       if (candidate.order.sellToken.toLowerCase() !== order.buyToken.toLowerCase()) continue;
       if (candidate.order.buyToken.toLowerCase() !== order.sellToken.toLowerCase()) continue;
 
-      // Price compatibility
+      // Price compatibility (BigInt cross-multiplication, matches Solidity logic):
+      // maker's price (sell/buy) must be <= taker's price (sell/buy) from counterparty view
+      // i.e., maker.sellAmount * candidate.sellAmount <= maker.buyAmount * candidate.buyAmount
+      // This ensures maker doesn't overpay relative to what candidate offers
       const compatible =
-        order.sellAmount * candidate.order.sellAmount <=
-        order.buyAmount * candidate.order.buyAmount;
+        order.buyAmount * candidate.order.buyAmount <=
+        order.sellAmount * candidate.order.sellAmount;
 
       if (!compatible) continue;
 
-      // Amount compatibility: each side must be able to fill
-      // maker sells sellAmount, taker must buy at least that
-      if (candidate.order.buyAmount > order.sellAmount) continue;
-      if (order.buyAmount > candidate.order.sellAmount) continue;
+      // Amount compatibility: each side has enough to fill the other
+      if (candidate.order.sellAmount < order.buyAmount) continue;
+      if (order.sellAmount < candidate.order.buyAmount) continue;
 
       return { maker: newOrder, taker: candidate };
     }

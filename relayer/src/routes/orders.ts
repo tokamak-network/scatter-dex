@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { ethers } from "ethers";
 import { Orderbook } from "../core/orderbook.js";
 import { Matcher } from "../core/matcher.js";
 import { Submitter } from "../core/submitter.js";
@@ -65,6 +66,8 @@ export function createOrderRoutes(
           return;
         } catch (err: any) {
           console.error("settle failed:", err.message);
+          res.status(500).json({ status: "settle_failed", error: err.message });
+          return;
         }
       }
 
@@ -92,15 +95,31 @@ export function createOrderRoutes(
     );
   });
 
-  // DELETE /api/orders/:address/:nonce — cancel order (requires signature proof)
-  // Only the maker can cancel their own order by providing a signed cancel message
+  // DELETE /api/orders/:address/:nonce — cancel order
+  // Requires `signature` header: signed message "cancel:<address>:<nonce>"
   router.delete("/:address/:nonce", (req: Request, res: Response) => {
-    // For now, allow cancel by address match only
-    // In production, require a signed cancel message
-    const cancelled = orderbook.cancel(
-      req.params.address,
-      BigInt(req.params.nonce)
-    );
+    const { address, nonce } = req.params;
+    const signature = req.headers["x-cancel-signature"] as string;
+
+    if (!signature) {
+      res.status(401).json({ error: "missing x-cancel-signature header" });
+      return;
+    }
+
+    // Verify the cancel signature is from the order maker
+    try {
+      const message = `cancel:${address.toLowerCase()}:${nonce}`;
+      const recovered = ethers.verifyMessage(message, signature);
+      if (recovered.toLowerCase() !== address.toLowerCase()) {
+        res.status(403).json({ error: "signature does not match order maker" });
+        return;
+      }
+    } catch {
+      res.status(400).json({ error: "invalid signature" });
+      return;
+    }
+
+    const cancelled = orderbook.cancel(address, BigInt(nonce));
     if (cancelled) {
       res.json({ status: "cancelled" });
     } else {

@@ -31,11 +31,11 @@ export class Orderbook {
     // Add to sell side
     const sellList = this.sells.get(pair) || [];
     sellList.push(stored);
-    // Sort by price (sellAmount/buyAmount) ascending
+    // Sort by price ascending using BigInt cross-multiplication (no precision loss)
     sellList.sort((a, b) => {
-      const priceA = Number(a.order.sellAmount) / Number(a.order.buyAmount);
-      const priceB = Number(b.order.sellAmount) / Number(b.order.buyAmount);
-      return priceA - priceB;
+      const lhs = a.order.sellAmount * b.order.buyAmount;
+      const rhs = b.order.sellAmount * a.order.buyAmount;
+      return lhs < rhs ? -1 : lhs > rhs ? 1 : 0;
     });
     this.sells.set(pair, sellList);
 
@@ -43,11 +43,11 @@ export class Orderbook {
     const reversePair = pairKey(order.buyToken, order.sellToken);
     const buyList = this.buys.get(reversePair) || [];
     buyList.push(stored);
-    // Sort by buy price descending (highest price = most willing buyer)
+    // Sort by buy price descending using BigInt cross-multiplication
     buyList.sort((a, b) => {
-      const priceA = Number(a.order.buyAmount) / Number(a.order.sellAmount);
-      const priceB = Number(b.order.buyAmount) / Number(b.order.sellAmount);
-      return priceB - priceA;
+      const lhs = a.order.buyAmount * b.order.sellAmount;
+      const rhs = b.order.buyAmount * a.order.sellAmount;
+      return lhs > rhs ? -1 : lhs < rhs ? 1 : 0;
     });
     this.buys.set(reversePair, buyList);
 

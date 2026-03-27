@@ -36,11 +36,6 @@ export function pairKey(tokenA: string, tokenB: string): string {
   return `${a}-${b}`;
 }
 
-// Price as sellAmount/buyAmount ratio for comparison
-export function orderPrice(order: Order): number {
-  return Number(order.sellAmount) / Number(order.buyAmount);
-}
-
 // Parse order from JSON (string amounts → BigInt)
 export function parseOrder(raw: any): Order {
   return {

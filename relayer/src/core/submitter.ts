@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { Match } from "./matcher.js";
+import { Order } from "../types/order.js";
 import { config } from "../config.js";
 
 const SETTLEMENT_ABI = [
@@ -39,7 +40,7 @@ export class Submitter {
     return receipt.hash;
   }
 
-  private formatOrder(order: any) {
+  private formatOrder(order: Order) {
     return {
       maker: order.maker,
       sellToken: order.sellToken,
