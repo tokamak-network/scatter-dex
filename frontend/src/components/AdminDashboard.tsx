@@ -4,10 +4,9 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { RELAYER_REGISTRY_ABI } from "@/lib/contracts";
+import { RELAYER_REGISTRY_ADDRESS } from "@/lib/config";
 import { RelayerClient } from "@/lib/relayerApi";
 import { Activity, Coins, Server, TrendingUp } from "lucide-react";
-
-const REGISTRY = process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS || "";
 
 interface RelayerStatus {
   url: string;
@@ -36,7 +35,7 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!account || !readProvider || !REGISTRY) return;
+    if (!account || !readProvider) return;
 
     const load = async () => {
       setLoading(true);
@@ -44,27 +43,32 @@ export default function AdminDashboard() {
 
       try {
         // On-chain status
-        const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, readProvider);
+        const registry = new ethers.Contract(RELAYER_REGISTRY_ADDRESS, RELAYER_REGISTRY_ABI, readProvider);
         const [url, fee, bond, registeredAt, exitRequestedAt, active] = await registry.relayers(account);
-        setRelayerStatus({
+        const status: RelayerStatus = {
           url, fee: Number(fee), bond: ethers.formatEther(bond),
           registeredAt: Number(registeredAt),
           exitRequestedAt: Number(exitRequestedAt), active,
-        });
+        };
+        setRelayerStatus(status);
 
         // Wallet ETH balance (for gas)
         const bal = await readProvider.getBalance(account);
         setWalletBalance(ethers.formatEther(bal));
 
-        // Server info (if registered and has URL)
+        // Server info (if registered, active, and has a URL)
         if (active && url) {
           try {
             const client = new RelayerClient(url);
             const info = await client.getInfo();
             setServerInfo(info);
-          } catch {
+          } catch (err: unknown) {
+            console.warn("Failed to reach relayer server:", err);
             setServerInfo(null);
           }
+        } else {
+          // Clear stale serverInfo when relayer is inactive or has no URL
+          setServerInfo(null);
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load status");
@@ -79,6 +83,7 @@ export default function AdminDashboard() {
   if (!account) return null;
 
   const formatDate = (unix: number) => unix === 0 ? "—" : new Date(unix * 1000).toLocaleDateString();
+  const formatAddr = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 
   return (
     <div className="space-y-6">
@@ -141,10 +146,10 @@ export default function AdminDashboard() {
               <div className="space-y-2 text-xs text-gray-500">
                 <p>Version: <span className="text-white">{serverInfo.version}</span></p>
                 <p>Pending Orders: <span className="text-white">{serverInfo.orderCount}</span></p>
-                <p>Settlement: <span className="text-white font-mono">{serverInfo.settlement.slice(0, 14)}...</span></p>
+                <p>Settlement: <span className="text-white font-mono">{formatAddr(serverInfo.settlement)}</span></p>
               </div>
             </div>
-          ) : relayerStatus.active ? (
+          ) : relayerStatus.active && relayerStatus.url ? (
             <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-red-400" />
