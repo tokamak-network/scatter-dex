@@ -163,4 +163,39 @@ contract RelayerRegistryTest is Test {
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
         new RelayerRegistry(address(0));
     }
+
+    function test_register_fee_too_high_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.FeeTooHigh.selector);
+        registry.register{value: 0.1 ether}("http://example.com", 501);
+    }
+
+    function test_register_fee_at_max_succeeds() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://example.com", 500);
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_updateInfo_fee_too_high_reverts() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.FeeTooHigh.selector);
+        registry.updateInfo("http://new.url", 501);
+    }
+
+    function test_updateInfo_fee_at_max_succeeds() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        vm.prank(relayer1);
+        registry.updateInfo("http://new.url", 500);
+        (,uint256 fee,,,,) = registry.relayers(relayer1);
+        assertEq(fee, 500);
+    }
+
+    function test_getFee() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        assertEq(registry.getFee(relayer1), 30);
+    }
 }
