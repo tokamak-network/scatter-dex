@@ -9,9 +9,11 @@ import {ScatterSettlement} from "./ScatterSettlement.sol";
 /// @dev Stateless — no constructor, no storage slots. Designed to be delegated to
 ///      by an EOA via EIP-7702 (tx type 4). When delegated, `address(this)` is the
 ///      EOA, so approve/deposit execute in the EOA's context.
-///      ReentrancyGuard is intentionally omitted: it uses storage slots which would
-///      mutate the delegator's storage under EIP-7702 delegation. Reentrancy is
-///      already prevented by ScatterSettlement's own nonReentrant modifier.
+///      Traditional ReentrancyGuard is intentionally omitted because it uses storage
+///      slots which would mutate the delegator's storage under EIP-7702 delegation.
+///      Only ScatterSettlement itself is protected by its own nonReentrant modifier;
+///      VaultSkills functions may still be re-entered via token hooks, and callers
+///      must not rely on VaultSkills being non-reentrant.
 contract VaultSkills {
     using SafeERC20 for IERC20;
 
