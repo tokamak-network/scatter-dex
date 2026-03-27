@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {VaultSkills} from "../src/VaultSkills.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
@@ -65,22 +66,19 @@ contract VaultSkillsTest is Test {
     // ─── EIP-7702 Simulated (delegatecall from EOA context) ─────
 
     function test_approveAndDeposit_delegated() public {
-        // Simulate EIP-7702: set user's code to VaultSkills runtime code
         vm.etch(user, address(skills).code);
 
-        // Call user address which now executes VaultSkills code
-        // address(this) inside VaultSkills = user, so approve is from user
-        // settlement.deposit msg.sender = user (identity check passes)
         vm.prank(user);
         VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 10e18);
 
         assertEq(settlement.deposits(user, address(tokenA)), 10e18);
         assertEq(tokenA.balanceOf(user), 90e18);
+        // Verify allowance is revoked after deposit
+        assertEq(tokenA.allowance(user, address(settlement)), 0, "allowance should be 0 after deposit");
     }
 
     function test_approveAndDepositMultiple_delegated() public {
-        bytes memory skillsCode = address(skills).code;
-        vm.etch(user, skillsCode);
+        vm.etch(user, address(skills).code);
 
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](2);
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 10e18});
@@ -93,10 +91,12 @@ contract VaultSkillsTest is Test {
         assertEq(settlement.deposits(user, address(tokenB)), 20e18);
         assertEq(tokenA.balanceOf(user), 90e18);
         assertEq(tokenB.balanceOf(user), 80e18);
+        // Verify allowances revoked
+        assertEq(tokenA.allowance(user, address(settlement)), 0, "tokenA allowance should be 0");
+        assertEq(tokenB.allowance(user, address(settlement)), 0, "tokenB allowance should be 0");
     }
 
     function test_withdrawMultiple_delegated() public {
-        // First deposit normally
         vm.startPrank(user);
         tokenA.approve(address(settlement), 10e18);
         settlement.deposit(address(tokenA), 10e18);
@@ -104,9 +104,7 @@ contract VaultSkillsTest is Test {
         settlement.deposit(address(tokenB), 20e18);
         vm.stopPrank();
 
-        // Now etch and withdraw via VaultSkills
-        bytes memory skillsCode = address(skills).code;
-        vm.etch(user, skillsCode);
+        vm.etch(user, address(skills).code);
 
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](2);
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 5e18});
@@ -125,7 +123,6 @@ contract VaultSkillsTest is Test {
 
     function test_approveAndDeposit_zero_reverts() public {
         vm.etch(user, address(skills).code);
-
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAmount.selector);
         VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 0);
@@ -133,9 +130,7 @@ contract VaultSkillsTest is Test {
 
     function test_approveAndDepositMultiple_empty_reverts() public {
         vm.etch(user, address(skills).code);
-
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
-
         vm.prank(user);
         vm.expectRevert(VaultSkills.ArrayEmpty.selector);
         VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
@@ -143,7 +138,6 @@ contract VaultSkillsTest is Test {
 
     function test_approveAndDeposit_zero_address_reverts() public {
         vm.etch(user, address(skills).code);
-
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAddress.selector);
         VaultSkills(user).approveAndDeposit(address(0), address(tokenA), 10e18);
@@ -153,29 +147,55 @@ contract VaultSkillsTest is Test {
         address unverified = address(0x5678);
         tokenA.mint(unverified, 10e18);
         vm.etch(unverified, address(skills).code);
-
         vm.prank(unverified);
         vm.expectRevert(ScatterSettlement.NotVerified.selector);
         VaultSkills(unverified).approveAndDeposit(address(settlement), address(tokenA), 10e18);
     }
 
+    // ─── withdrawMultiple revert tests ───────────────────────────
+
+    function test_withdrawMultiple_zero_address_reverts() public {
+        vm.etch(user, address(skills).code);
+        VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](1);
+        tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 5e18});
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(user).withdrawMultiple(address(0), tokens);
+    }
+
+    function test_withdrawMultiple_empty_reverts() public {
+        vm.etch(user, address(skills).code);
+        VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ArrayEmpty.selector);
+        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+    }
+
+    function test_withdrawMultiple_zero_amount_reverts() public {
+        vm.etch(user, address(skills).code);
+        VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](1);
+        tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 0});
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAmount.selector);
+        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+    }
+
     // ─── Non-delegated (direct call) ─────────────────────────────
 
     function test_approveAndDeposit_direct_call() public {
-        // User approves VaultSkills to spend tokens
-        // VaultSkills approves settlement, but deposit is from VaultSkills not user
-        // This means VaultSkills needs to be verified — which it's not
-        // So direct call pattern doesn't work with identity gate
-        // This is expected: EIP-7702 delegation is the intended usage
+        // Direct call (non-delegated): VaultSkills contract itself is the caller.
+        // msg.sender to settlement = address(skills), NOT the user.
+        // This only works if VaultSkills address is verified AND holds the tokens.
+        // This is NOT the intended EIP-7702 flow — shown here for completeness.
 
         registry.setVerified(address(skills), true);
 
         vm.prank(user);
         tokenA.transfer(address(skills), 10e18);
 
-        // Skills contract calls deposit — msg.sender = skills
         skills.approveAndDeposit(address(settlement), address(tokenA), 10e18);
 
+        // Deposit is credited to VaultSkills contract, not the user
         assertEq(settlement.deposits(address(skills), address(tokenA)), 10e18);
     }
 }
