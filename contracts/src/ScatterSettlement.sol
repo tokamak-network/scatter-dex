@@ -41,6 +41,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error ReleaseDelayOverflow();
     error SelfTrade();
     error NotActiveRelayer();
+    error FeeTooHigh();
+    error ZeroAddress();
     error NotOwner();
 
     // ─── Data Structures ─────────────────────────────────────────────
@@ -112,6 +114,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps) EIP712("ScatterSettlement", "1") {
+        if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAddress();
+        if (_protocolFeeBps > FEE_DENOMINATOR) revert FeeTooHigh();
         identityGate = IdentityGate(_identityGate);
         relayerRegistry = RelayerRegistry(_relayerRegistry);
         protocolFeeBps = _protocolFeeBps;
@@ -120,6 +124,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     function setProtocolFee(uint256 _protocolFeeBps) external {
         if (msg.sender != owner) revert NotOwner();
+        if (_protocolFeeBps > FEE_DENOMINATOR) revert FeeTooHigh();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
     }
