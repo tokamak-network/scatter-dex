@@ -14,8 +14,11 @@ import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 contract DeploySettlement is Script {
     function run() external {
         address registryAddr = vm.envAddress("IDENTITY_REGISTRY");
+        require(registryAddr != address(0), "DeploySettlement: IDENTITY_REGISTRY not set or is address(0)");
         address treasuryAddr = vm.envAddress("TREASURY");
+        require(treasuryAddr != address(0), "DeploySettlement: TREASURY not set or is address(0)");
         uint256 protocolFeeBps = vm.envUint("PROTOCOL_FEE_BPS");
+        require(protocolFeeBps <= 10000, "DeploySettlement: PROTOCOL_FEE_BPS exceeds 100%");
 
         vm.startBroadcast();
 

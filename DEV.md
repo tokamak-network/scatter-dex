@@ -741,7 +741,7 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
   │   └─ 수수료 분리: 릴레이어 몫 + 프로토콜 몫 (treasury)
   └─ 배포 스크립트 업데이트 (RelayerRegistry + protocolFeeBps)
 
-미완료:
+완료:
   └─ RelayerRegistry 테스트 + 프로토콜 수수료 테스트
 ```
 

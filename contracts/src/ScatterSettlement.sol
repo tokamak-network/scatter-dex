@@ -41,6 +41,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error ReleaseDelayOverflow();
     error SelfTrade();
     error NotActiveRelayer();
+    error NotOwner();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -118,7 +119,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     function setProtocolFee(uint256 _protocolFeeBps) external {
-        if (msg.sender != owner) revert NotDepositor(); // reuse error
+        if (msg.sender != owner) revert NotOwner();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
     }
