@@ -53,10 +53,22 @@ export function parseOrder(raw: Record<string, unknown>): Order {
   if (!ADDRESS_RE.test(buyToken)) throw new Error("invalid buyToken address");
   if (sellToken.toLowerCase() === buyToken.toLowerCase()) throw new Error("sellToken == buyToken");
 
-  const sellAmount = BigInt(raw.sellAmount as string);
-  const buyAmount = BigInt(raw.buyAmount as string);
-  if (sellAmount <= BigInt(0)) throw new Error("sellAmount must be > 0");
-  if (buyAmount <= BigInt(0)) throw new Error("buyAmount must be > 0");
+  let sellAmount: bigint, buyAmount: bigint, maxFee: bigint, expiry: bigint, nonce: bigint;
+  try {
+    sellAmount = BigInt(raw.sellAmount as string);
+    buyAmount = BigInt(raw.buyAmount as string);
+    maxFee = BigInt(raw.maxFee as string);
+    expiry = BigInt(raw.expiry as string);
+    nonce = BigInt(raw.nonce as string);
+  } catch {
+    throw new Error("invalid numeric field");
+  }
+
+  if (sellAmount <= 0n) throw new Error("sellAmount must be > 0");
+  if (buyAmount <= 0n) throw new Error("buyAmount must be > 0");
+  if (maxFee < 0n) throw new Error("maxFee must be >= 0");
+  if (expiry < 0n) throw new Error("expiry must be >= 0");
+  if (nonce < 0n) throw new Error("nonce must be >= 0");
 
   const claims = raw.claims as Array<Record<string, unknown>>;
   if (!Array.isArray(claims) || claims.length === 0 || claims.length > MAX_CLAIMS) {
@@ -69,17 +81,24 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     buyToken,
     sellAmount,
     buyAmount,
-    maxFee: BigInt(raw.maxFee as string),
-    expiry: BigInt(raw.expiry as string),
-    nonce: BigInt(raw.nonce as string),
+    maxFee,
+    expiry,
+    nonce,
     claims: claims.map((c) => {
       if (!BYTES32_RE.test(c.claimHash as string)) throw new Error("invalid claimHash");
-      const amount = BigInt(c.amount as string);
-      if (amount <= BigInt(0)) throw new Error("claim amount must be > 0");
+      let amount: bigint, releaseDelay: bigint;
+      try {
+        amount = BigInt(c.amount as string);
+        releaseDelay = BigInt(c.releaseDelay as string);
+      } catch {
+        throw new Error("invalid claim numeric field");
+      }
+      if (amount <= 0n) throw new Error("claim amount must be > 0");
+      if (releaseDelay < 0n) throw new Error("releaseDelay must be >= 0");
       return {
         claimHash: c.claimHash as string,
         amount,
-        releaseDelay: BigInt(c.releaseDelay as string),
+        releaseDelay,
       };
     }),
   };

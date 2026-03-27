@@ -24,7 +24,9 @@ async function main() {
   const app = express();
 
   // Security: CORS whitelist
-  const allowedOrigins = process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3000"];
+  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3000"])
+    .map(s => s.trim())
+    .filter(Boolean);
   app.use(cors({ origin: allowedOrigins }));
 
   // Security: body size limit
@@ -43,7 +45,7 @@ async function main() {
     message: { error: "too many requests" },
   });
 
-  app.use("/api/orders", orderLimiter, createOrderRoutes(orderbook, matcher, submitter, chainId));
+  app.use("/api/orders", createOrderRoutes(orderbook, matcher, submitter, chainId, orderLimiter, readLimiter));
   app.use("/api/orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
 
@@ -65,6 +67,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal:", err.message);
+  console.error("Fatal:", err);
   process.exit(1);
 });
