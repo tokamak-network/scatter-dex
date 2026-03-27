@@ -35,10 +35,10 @@ export default function OrderForm() {
     setClaims(claims.filter((_, i) => i !== idx));
   };
 
-  const updateClaim = (idx: number, field: keyof ClaimInput, value: string | number) => {
-    const updated = [...claims];
-    (updated[idx] as any)[field] = value;
-    setClaims(updated);
+  const updateClaim = <K extends keyof ClaimInput>(idx: number, field: K, value: ClaimInput[K]) => {
+    setClaims(claims => claims.map((claim, i) =>
+      i === idx ? { ...claim, [field]: value } : claim
+    ));
   };
 
   const handleSubmit = async () => {

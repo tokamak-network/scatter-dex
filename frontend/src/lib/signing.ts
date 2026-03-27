@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import type { OrderData } from "./relayerApi";
 
 export interface ClaimInput {
   recipient: string;
@@ -48,7 +49,7 @@ export async function signOrder(
   order: OrderInput,
   chainId: number,
   settlementAddress: string
-): Promise<{ signature: string; orderData: any }> {
+): Promise<{ signature: string; orderData: OrderData }> {
   if (!ethers.isAddress(order.sellToken)) throw new Error("Invalid sellToken address");
   if (!ethers.isAddress(order.buyToken)) throw new Error("Invalid buyToken address");
   if (!ethers.isAddress(settlementAddress)) throw new Error("Invalid settlementAddress");

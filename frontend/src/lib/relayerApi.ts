@@ -19,6 +19,26 @@ export interface RelayerOrder {
   settleTxHash?: string;
 }
 
+export interface OrderData {
+  maker: string;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  buyAmount: string;
+  maxFee: number;
+  expiry: number;
+  nonce: number;
+  claims: { claimHash: string; amount: string; releaseDelay: number }[];
+}
+
+export interface OrderbookEntry {
+  maker: string;
+  sellAmount: string;
+  buyAmount: string;
+  nonce: string;
+  expiry: number;
+}
+
 export class RelayerClient {
   constructor(private baseUrl: string) {}
 
@@ -28,7 +48,7 @@ export class RelayerClient {
     return res.json();
   }
 
-  async submitOrder(order: any, signature: string): Promise<{ status: string; txHash?: string; nonce?: string }> {
+  async submitOrder(order: OrderData, signature: string): Promise<{ status: string; txHash?: string; nonce?: string }> {
     const res = await fetch(`${this.baseUrl}/api/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -58,7 +78,7 @@ export class RelayerClient {
     }
   }
 
-  async getOrderbook(pair: string): Promise<{ pair: string; sells: any[]; buys: any[] }> {
+  async getOrderbook(pair: string): Promise<{ pair: string; sells: OrderbookEntry[]; buys: OrderbookEntry[] }> {
     const res = await fetch(`${this.baseUrl}/api/orderbook/${pair}`);
     if (!res.ok) throw new Error(`Failed to get orderbook: ${res.statusText}`);
     return res.json();
