@@ -259,6 +259,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         uint256 totalFee = (sellAmount * feeRate) / FEE_DENOMINATOR;
         if (totalFee == 0) return;
 
+        // NOTE: integer division rounds protocolCut down (at most 1 wei loss).
+        // Relayer gets the remainder, so rounding favors the relayer.
         uint256 protocolCut = (totalFee * protocolFeeBps) / FEE_DENOMINATOR;
         uint256 relayerCut = totalFee - protocolCut;
 
