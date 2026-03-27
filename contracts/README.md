@@ -48,7 +48,8 @@ $ anvil
 ### Deploy
 
 ```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+$ IDENTITY_REGISTRY=0x... TREASURY=0x... PROTOCOL_FEE_BPS=1000 \
+  forge script script/DeploySettlement.s.sol:DeploySettlement --rpc-url <your_rpc_url> --broadcast --private-key <your_private_key>
 ```
 
 ### Cast

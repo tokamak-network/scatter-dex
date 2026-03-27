@@ -452,6 +452,21 @@ contract ScatterSettlementTest is Test {
         assertEq(tokenB.balanceOf(address(this)), usdcRelayer, "relayer USDC fee");
     }
 
+    function test_constructor_fee_too_high_reverts() public {
+        vm.expectRevert(ScatterSettlement.FeeTooHigh.selector);
+        new ScatterSettlement(address(gate), address(relayerRegistry), 10001);
+    }
+
+    function test_setProtocolFee_too_high_reverts() public {
+        vm.expectRevert(ScatterSettlement.FeeTooHigh.selector);
+        settlement.setProtocolFee(10001);
+    }
+
+    function test_constructor_zero_address_reverts() public {
+        vm.expectRevert(ScatterSettlement.ZeroAddress.selector);
+        new ScatterSettlement(address(0), address(relayerRegistry), 0);
+    }
+
     function test_settle_unregistered_relayer_reverts() public {
         vm.prank(maker);
         settlement.deposit(address(tokenA), 10 ether);

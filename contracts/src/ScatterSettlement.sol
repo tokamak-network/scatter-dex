@@ -42,6 +42,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error SelfTrade();
     error NotActiveRelayer();
     error FeeTooHigh();
+    error ZeroAddress();
     error NotOwner();
 
     // ─── Data Structures ─────────────────────────────────────────────
@@ -113,7 +114,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps) EIP712("ScatterSettlement", "1") {
-        if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAmount();
+        if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAddress();
         if (_protocolFeeBps > FEE_DENOMINATOR) revert FeeTooHigh();
         identityGate = IdentityGate(_identityGate);
         relayerRegistry = RelayerRegistry(_relayerRegistry);
