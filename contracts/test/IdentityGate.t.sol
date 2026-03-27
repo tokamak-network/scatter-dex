@@ -154,4 +154,199 @@ contract IdentityGateTest is Test {
         settlement.withdraw(address(token), 10e18);
         assertEq(token.balanceOf(user2), 100e18);
     }
+
+    function test_reverify_allows_deposit_again() public {
+        // user2 expires
+        vm.warp(block.timestamp + 2 hours);
+        assertFalse(gate.isVerified(user2));
+
+        vm.prank(user2);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
+        settlement.deposit(address(token), 5e18);
+
+        // Re-verify with new certificate (new expiry)
+        registry.setVerifiedUntil(user2, uint64(block.timestamp + 30 days));
+        assertTrue(gate.isVerified(user2));
+
+        // Now deposit works again
+        vm.prank(user2);
+        settlement.deposit(address(token), 5e18);
+        assertEq(settlement.deposits(user2, address(token)), 5e18);
+    }
+
+    // ─── E2E: Certificate Expiry During Trade Lifecycle ──────────
+
+    struct TradeEnv {
+        ScatterSettlement s;
+        address u1;
+        address u2;
+        uint256 u1Key;
+        uint256 u2Key;
+        MockToken tA;
+        MockToken tB;
+    }
+
+    function test_e2e_expiry_during_trade_lifecycle() public {
+        // Scenario: user2's certificate expires AFTER deposit + settle,
+        // but BEFORE claim time. Claims should still work.
+        TradeEnv memory env = _setupTwoTraders(30 days, 1 hours);
+
+        vm.prank(env.u1);
+        env.s.deposit(address(env.tA), 10e18);
+        vm.prank(env.u2);
+        env.s.deposit(address(env.tB), 20e18);
+
+        bytes32 sec1 = keccak256("s1");
+        bytes32 sec2 = keccak256("s2");
+        address recv1 = address(0xAAA);
+        address recv2 = address(0xBBB);
+
+        (ScatterSettlement.Order memory o1, ScatterSettlement.Order memory o2) =
+            _buildOrders(env, sec1, recv1, sec2, recv2, 3 hours);
+
+        env.s.settle(
+            _signOrder(env.s, env.u1Key, o1),
+            _signOrder(env.s, env.u2Key, o2),
+            o1, o2, 0
+        );
+
+        // user2 expires at t+1h, claims at t+3h
+        vm.warp(block.timestamp + 3 hours);
+
+        vm.prank(recv1);
+        env.s.claimRelease(0, sec1);
+        assertEq(env.tB.balanceOf(recv1), 20e18);
+
+        vm.prank(recv2);
+        env.s.claimRelease(1, sec2);
+        assertEq(env.tA.balanceOf(recv2), 10e18);
+    }
+
+    function test_e2e_expired_user_cannot_deposit_but_can_refund() public {
+        TradeEnv memory env = _setupTwoTraders(30 days, 1 hours);
+
+        vm.prank(env.u1);
+        env.s.deposit(address(env.tA), 10e18);
+        vm.prank(env.u2);
+        env.s.deposit(address(env.tB), 20e18);
+
+        (ScatterSettlement.Order memory o1, ScatterSettlement.Order memory o2) =
+            _buildOrders(env, keccak256("sec1"), address(0xCCC), keccak256("sec2"), address(0xDDD), 2 hours);
+
+        env.s.settle(
+            _signOrder(env.s, env.u1Key, o1),
+            _signOrder(env.s, env.u2Key, o2),
+            o1, o2, 0
+        );
+
+        // u2 expires
+        vm.warp(block.timestamp + 2 hours);
+
+        // u2 can NOT deposit more
+        env.tB.mint(env.u2, 10e18);
+        vm.prank(env.u2);
+        env.tB.approve(address(env.s), type(uint256).max);
+        vm.prank(env.u2);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
+        env.s.deposit(address(env.tB), 10e18);
+
+        // Nobody claims, wait for refund window
+        vm.warp(block.timestamp + 7 days);
+
+        // u2 can still refund + withdraw (no identity check)
+        vm.prank(env.u2);
+        env.s.refundUnclaimed(1);
+        assertEq(env.s.deposits(env.u2, address(env.tA)), 10e18);
+
+        vm.prank(env.u2);
+        env.s.withdraw(address(env.tA), 10e18);
+        assertEq(env.tA.balanceOf(env.u2), 10e18);
+    }
+
+    // ─── Internal Helpers ────────────────────────────────────────
+
+    function _setupTwoTraders(uint256 expiry1, uint256 expiry2) internal returns (TradeEnv memory env) {
+        env.u1Key = 0xB1;
+        env.u2Key = 0xB2;
+        env.u1 = vm.addr(env.u1Key);
+        env.u2 = vm.addr(env.u2Key);
+
+        RealisticIdentityRegistry reg = new RealisticIdentityRegistry();
+        IdentityGate g = new IdentityGate(address(reg));
+        env.s = new ScatterSettlement(address(g));
+
+        reg.setVerifiedUntil(env.u1, uint64(block.timestamp + expiry1));
+        reg.setVerifiedUntil(env.u2, uint64(block.timestamp + expiry2));
+
+        env.tA = new MockToken();
+        env.tB = new MockToken();
+        env.tA.mint(env.u1, 10e18);
+        env.tB.mint(env.u2, 20e18);
+        vm.prank(env.u1);
+        env.tA.approve(address(env.s), type(uint256).max);
+        vm.prank(env.u2);
+        env.tB.approve(address(env.s), type(uint256).max);
+    }
+
+    function _buildOrders(
+        TradeEnv memory env, bytes32 sec1, address recv1, bytes32 sec2, address recv2, uint256 delay
+    ) internal view returns (ScatterSettlement.Order memory o1, ScatterSettlement.Order memory o2) {
+        ScatterSettlement.ClaimInfo[] memory c1 = new ScatterSettlement.ClaimInfo[](1);
+        c1[0] = ScatterSettlement.ClaimInfo({
+            claimHash: keccak256(abi.encodePacked(sec1, recv1)),
+            amount: 20e18,
+            releaseDelay: delay
+        });
+        o1 = ScatterSettlement.Order({
+            maker: env.u1, sellToken: address(env.tA), buyToken: address(env.tB),
+            sellAmount: 10e18, buyAmount: 20e18, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: c1
+        });
+
+        ScatterSettlement.ClaimInfo[] memory c2 = new ScatterSettlement.ClaimInfo[](1);
+        c2[0] = ScatterSettlement.ClaimInfo({
+            claimHash: keccak256(abi.encodePacked(sec2, recv2)),
+            amount: 10e18,
+            releaseDelay: delay
+        });
+        o2 = ScatterSettlement.Order({
+            maker: env.u2, sellToken: address(env.tB), buyToken: address(env.tA),
+            sellAmount: 20e18, buyAmount: 10e18, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: c2
+        });
+    }
+
+    // ─── Helper ──────────────────────────────────────────────────
+
+    function _signOrder(ScatterSettlement s, uint256 pk, ScatterSettlement.Order memory order)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32[] memory claimHashes = new bytes32[](order.claims.length);
+        for (uint256 i = 0; i < order.claims.length; i++) {
+            claimHashes[i] = keccak256(
+                abi.encode(s.CLAIM_INFO_TYPEHASH(), order.claims[i].claimHash, order.claims[i].amount, order.claims[i].releaseDelay)
+            );
+        }
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                s.ORDER_TYPEHASH(), order.maker, order.sellToken, order.buyToken,
+                order.sellAmount, order.buyAmount, order.maxFee, order.expiry, order.nonce,
+                keccak256(abi.encodePacked(claimHashes))
+            )
+        );
+
+        bytes32 domainSep = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("ScatterSettlement"), keccak256("1"), block.chainid, address(s)
+            )
+        );
+
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+        (uint8 v, bytes32 r, bytes32 ss) = vm.sign(pk, digest);
+        return abi.encodePacked(r, ss, v);
+    }
 }
