@@ -130,6 +130,14 @@ contract VaultSkillsTest is Test {
         VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
     }
 
+    function test_approveAndDeposit_zero_address_reverts() public {
+        vm.etch(user, address(skills).code);
+
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(user).approveAndDeposit(address(0), address(tokenA), 10e18);
+    }
+
     function test_approveAndDeposit_unverified_reverts() public {
         address unverified = address(0x5678);
         tokenA.mint(unverified, 10e18);
