@@ -82,6 +82,7 @@ contract RelayerRegistry {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
+        if (msg.value == 0) revert InsufficientBond();
         r.bond += msg.value;
 
         emit BondAdded(msg.sender, msg.value);
@@ -162,8 +163,11 @@ contract RelayerRegistry {
         treasury = _treasury;
     }
 
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
     }
 }

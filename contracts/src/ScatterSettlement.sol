@@ -44,6 +44,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error FeeTooHigh();
     error ZeroAddress();
     error NotOwner();
+    error ContractPaused();
+    uint256 public constant MAX_PROTOCOL_FEE = 5000; // 50% of total fee
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -92,6 +94,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     /// @notice Protocol fee in basis points (e.g., 10 = 0.1%). Taken from total fee.
     uint256 public protocolFeeBps;
     address public owner;
+    bool public paused;
 
     // depositor => token => amount
     mapping(address => mapping(address => uint256)) public deposits;
@@ -111,11 +114,14 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event Refunded(uint256 indexed scheduleId, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event Paused(address account);
+    event Unpaused(address account);
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps) EIP712("ScatterSettlement", "1") {
         if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAddress();
-        if (_protocolFeeBps > FEE_DENOMINATOR) revert FeeTooHigh();
+        if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         identityGate = IdentityGate(_identityGate);
         relayerRegistry = RelayerRegistry(_relayerRegistry);
         protocolFeeBps = _protocolFeeBps;
@@ -124,9 +130,23 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     function setProtocolFee(uint256 _protocolFeeBps) external {
         if (msg.sender != owner) revert NotOwner();
-        if (_protocolFeeBps > FEE_DENOMINATOR) revert FeeTooHigh();
+        if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
+    }
+
+    function transferOwnership(address newOwner) external {
+        if (msg.sender != owner) revert NotOwner();
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function setPaused(bool _paused) external {
+        if (msg.sender != owner) revert NotOwner();
+        paused = _paused;
+        if (_paused) emit Paused(msg.sender);
+        else emit Unpaused(msg.sender);
     }
 
     // ─── Deposit & Withdraw ──────────────────────────────────────────
@@ -165,6 +185,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         Order calldata takerOrder,
         uint256 actualFee
     ) external nonReentrant {
+        if (paused) revert ContractPaused();
         // Verify caller is a registered active relayer
         if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
 
@@ -229,6 +250,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Claim ───────────────────────────────────────────────────────
     function claimRelease(uint256 scheduleId, bytes32 secret) external nonReentrant {
+        if (paused) revert ContractPaused();
         ClaimSchedule storage schedule = schedules[scheduleId];
         uint96 amt = schedule.amount;
         if (amt == 0) revert ScheduleNotFound();
