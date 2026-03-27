@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaultSkills} from "../src/VaultSkills.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
+import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -49,7 +50,9 @@ contract VaultSkillsTest is Test {
     function setUp() public {
         registry = new MockRegistry();
         gate = new IdentityGate(address(registry));
-        settlement = new ScatterSettlement(address(gate));
+        RelayerRegistry rr = new RelayerRegistry(address(0x7777));
+        settlement = new ScatterSettlement(address(gate), address(rr), 0);
+        rr.register{value: 0.1 ether}("http://test", 0);
         skills = new VaultSkills();
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
