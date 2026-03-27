@@ -2,6 +2,8 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+test = "test"
+script = "script"
 solc_version = "0.8.28"
 via_ir = false
 optimizer = true
@@ -11,3 +13,6 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
 ]
+
+# Exclude OZ internal test/fv files from compilation
+exclude_paths = ["lib/openzeppelin-contracts/test", "lib/openzeppelin-contracts/fv", "lib/openzeppelin-contracts/scripts"]

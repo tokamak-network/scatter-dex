@@ -36,6 +36,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error InvalidSecretOrAddress();
     error ClaimWindowNotExpired();
     error NotDepositor();
+    error AmountOverflow();
+    error ReleaseDelayOverflow();
+    error SelfTrade();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -93,9 +96,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // ─── Events ──────────────────────────────────────────────────────
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount);
-    event Settled(uint256 indexed matchId, uint256[] scheduleIds);
+    event Settled(uint256 indexed matchId, address indexed maker, address indexed taker, uint256[] scheduleIds);
     event Claimed(uint256 indexed scheduleId, address indexed recipient, address indexed token, uint256 amount);
     event Refunded(uint256 indexed scheduleId, address indexed depositor, uint256 amount);
+    event NonceCancelled(address indexed user, uint256 nonce);
 
     // ─── Constructor ─────────────────────────────────────────────────
     constructor(address _identityGate) EIP712("ScatterSettlement", "1") {
@@ -121,6 +125,13 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         IERC20(token).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, token, amount);
+    }
+
+    // ─── Cancel ──────────────────────────────────────────────────────
+    function cancelOrder(uint256 nonce) external {
+        if (nonces[msg.sender][nonce]) revert NonceConsumed();
+        nonces[msg.sender][nonce] = true;
+        emit NonceCancelled(msg.sender, nonce);
     }
 
     // ─── Settle ──────────────────────────────────────────────────────
@@ -161,11 +172,12 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
         // Maker receives taker's sellToken
         for (uint256 i; i < makerOrder.claims.length; ++i) {
+            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(makerOrder.claims[i], now48);
             schedules[sid] = ClaimSchedule({
                 claimHash: makerOrder.claims[i].claimHash,
                 token: takerOrder.sellToken,
-                amount: uint96(makerOrder.claims[i].amount),
-                releaseTime: now48 + uint48(makerOrder.claims[i].releaseDelay),
+                amount: safeAmt,
+                releaseTime: safeTime,
                 claimed: false,
                 depositor: makerOrder.maker
             });
@@ -176,11 +188,12 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         // Taker receives maker's sellToken
         uint256 makerLen = makerOrder.claims.length;
         for (uint256 i; i < takerOrder.claims.length; ++i) {
+            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(takerOrder.claims[i], now48);
             schedules[sid] = ClaimSchedule({
                 claimHash: takerOrder.claims[i].claimHash,
                 token: makerOrder.sellToken,
-                amount: uint96(takerOrder.claims[i].amount),
-                releaseTime: now48 + uint48(takerOrder.claims[i].releaseDelay),
+                amount: safeAmt,
+                releaseTime: safeTime,
                 claimed: false,
                 depositor: takerOrder.maker
             });
@@ -190,7 +203,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
         scheduleCount = sid;
 
-        emit Settled(matchId, scheduleIds);
+        emit Settled(matchId, makerOrder.maker, takerOrder.maker, scheduleIds);
     }
 
     // ─── Claim ───────────────────────────────────────────────────────
@@ -233,6 +246,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         Order calldata takerOrder,
         uint256 actualFee
     ) internal view {
+        // Verify not self-trade
+        if (makerOrder.maker == takerOrder.maker) revert SelfTrade();
+
         // Verify signatures
         bytes32 makerHash = _hashOrder(makerOrder);
         bytes32 takerHash = _hashOrder(takerOrder);
@@ -304,6 +320,12 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
                 )
             )
         );
+    }
+
+    function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal pure returns (uint96, uint48) {
+        if (claim.amount > type(uint96).max) revert AmountOverflow();
+        if (claim.releaseDelay > type(uint48).max - now48) revert ReleaseDelayOverflow();
+        return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }
 
     function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure {
