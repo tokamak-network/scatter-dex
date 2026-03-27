@@ -1084,4 +1084,46 @@ contract ScatterSettlementTest is Test {
             "fund conservation"
         );
     }
+
+    // ─── Tests: Fee enforcement & registry caps ──────────────────
+
+    function test_settle_fee_exceeds_relayer_registered_reverts() public {
+        // Relayer registered with fee=30 bps in setUp
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        // Create orders with maxFee=100 (allows up to 100 bps)
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 20_790e18, // 21000 - 1% fee = 20790
+            releaseDelay: 3 hours
+        });
+        ScatterSettlement.Order memory mo = ScatterSettlement.Order({
+            maker: maker, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: 10 ether, buyAmount: 21_000e18, maxFee: 100,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: mc
+        });
+
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 9.9 ether, // 10 - 1% = 9.9
+            releaseDelay: 4 hours
+        });
+        ScatterSettlement.Order memory to_ = ScatterSettlement.Order({
+            maker: taker, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: 21_000e18, buyAmount: 10 ether, maxFee: 100,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: tc
+        });
+
+        bytes memory ms = _signOrder(makerKey, mo);
+        bytes memory ts = _signOrder(takerKey, to_);
+
+        // actualFee=50 > registeredFee=30 → should revert
+        vm.expectRevert(ScatterSettlement.FeeExceedsRelayerRegistered.selector);
+        settlement.settle(ms, ts, mo, to_, 50);
+    }
 }

@@ -15,6 +15,7 @@ contract RelayerRegistry {
 
     uint256 public constant MIN_BOND = 0.1 ether;
     uint256 public constant EXIT_COOLDOWN = 7 days;
+    uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
     address public owner;
     address public treasury;
@@ -42,6 +43,7 @@ contract RelayerRegistry {
     error ZeroAddress();
     error RelayerNotActive();
     error BondTransferFailed();
+    error FeeTooHigh();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -59,6 +61,7 @@ contract RelayerRegistry {
     function register(string calldata url, uint256 fee) external payable {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (msg.value < MIN_BOND) revert InsufficientBond();
+        if (fee > MAX_FEE) revert FeeTooHigh();
 
         relayers[msg.sender] = Relayer({
             url: url,
@@ -90,6 +93,7 @@ contract RelayerRegistry {
     function updateInfo(string calldata url, uint256 fee) external {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
+        if (fee > MAX_FEE) revert FeeTooHigh();
 
         r.url = url;
         r.fee = fee;
@@ -126,6 +130,10 @@ contract RelayerRegistry {
     }
 
     // ─── Views ───────────────────────────────────────────────────
+
+    function getFee(address relayer) external view returns (uint256) {
+        return relayers[relayer].fee;
+    }
 
     function isActiveRelayer(address relayer) external view returns (bool) {
         Relayer storage r = relayers[relayer];
