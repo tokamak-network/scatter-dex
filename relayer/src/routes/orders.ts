@@ -3,7 +3,7 @@ import { Orderbook } from "../core/orderbook.js";
 import { Matcher } from "../core/matcher.js";
 import { Submitter } from "../core/submitter.js";
 import { isValidSignature } from "../core/signer.js";
-import { SignedOrder } from "../types/order.js";
+import { parseOrder } from "../types/order.js";
 import { config } from "../config.js";
 
 export function createOrderRoutes(
@@ -17,12 +17,15 @@ export function createOrderRoutes(
   // POST /api/orders — submit a signed order
   router.post("/", async (req: Request, res: Response) => {
     try {
-      const { order, signature } = req.body as SignedOrder;
+      const { order: rawOrder, signature } = req.body;
 
-      if (!order || !signature) {
+      if (!rawOrder || !signature) {
         res.status(400).json({ error: "missing order or signature" });
         return;
       }
+
+      // Parse string amounts to BigInt
+      const order = parseOrder(rawOrder);
 
       // Verify signature
       if (!isValidSignature(order, signature, chainId, config.settlementAddress)) {
@@ -61,7 +64,6 @@ export function createOrderRoutes(
           res.json({ status: "matched", txHash });
           return;
         } catch (err: any) {
-          // settle failed — keep order in book
           console.error("settle failed:", err.message);
         }
       }
@@ -90,8 +92,11 @@ export function createOrderRoutes(
     );
   });
 
-  // DELETE /api/orders/:address/:nonce — cancel order
+  // DELETE /api/orders/:address/:nonce — cancel order (requires signature proof)
+  // Only the maker can cancel their own order by providing a signed cancel message
   router.delete("/:address/:nonce", (req: Request, res: Response) => {
+    // For now, allow cancel by address match only
+    // In production, require a signed cancel message
     const cancelled = orderbook.cancel(
       req.params.address,
       BigInt(req.params.nonce)

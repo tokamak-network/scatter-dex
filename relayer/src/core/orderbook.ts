@@ -113,20 +113,23 @@ export class Orderbook {
     return count;
   }
 
-  // Remove expired orders
+  // Remove expired orders (collect first, then remove to avoid mutation during iteration)
   purgeExpired(): number {
     const now = BigInt(Math.floor(Date.now() / 1000));
-    let removed = 0;
+    const toRemove: Order[] = [];
 
     for (const [, orders] of this.byMaker) {
       for (const [, stored] of orders) {
         if (stored.status === "pending" && stored.order.expiry <= now) {
           stored.status = "expired";
-          this.remove(stored.order);
-          removed++;
+          toRemove.push(stored.order);
         }
       }
     }
-    return removed;
+
+    for (const order of toRemove) {
+      this.remove(order);
+    }
+    return toRemove.length;
   }
 }

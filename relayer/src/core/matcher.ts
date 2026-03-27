@@ -46,33 +46,4 @@ export class Matcher {
     return null;
   }
 
-  /**
-   * Try to match all pending orders. Returns all found matches.
-   */
-  matchAll(): Match[] {
-    const matches: Match[] = [];
-    const processed = new Set<StoredOrder>();
-
-    // Iterate all pairs
-    for (const maker of this.getAllPendingOrders()) {
-      if (processed.has(maker)) continue;
-
-      const match = this.findMatch(maker);
-      if (match) {
-        matches.push(match);
-        processed.add(match.maker);
-        processed.add(match.taker);
-      }
-    }
-
-    return matches;
-  }
-
-  private getAllPendingOrders(): StoredOrder[] {
-    const all: StoredOrder[] = [];
-    // Get from all makers
-    const seen = new Set<StoredOrder>();
-    // This is a simplified approach - in production would track pairs properly
-    return all;
-  }
 }

@@ -41,6 +41,25 @@ export function orderPrice(order: Order): number {
   return Number(order.sellAmount) / Number(order.buyAmount);
 }
 
+// Parse order from JSON (string amounts → BigInt)
+export function parseOrder(raw: any): Order {
+  return {
+    maker: raw.maker,
+    sellToken: raw.sellToken,
+    buyToken: raw.buyToken,
+    sellAmount: BigInt(raw.sellAmount),
+    buyAmount: BigInt(raw.buyAmount),
+    maxFee: BigInt(raw.maxFee),
+    expiry: BigInt(raw.expiry),
+    nonce: BigInt(raw.nonce),
+    claims: (raw.claims || []).map((c: any) => ({
+      claimHash: c.claimHash,
+      amount: BigInt(c.amount),
+      releaseDelay: BigInt(c.releaseDelay),
+    })),
+  };
+}
+
 // EIP-712 typed data for order signing/verification
 export const EIP712_DOMAIN = {
   name: "ScatterSettlement",
