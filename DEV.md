@@ -741,7 +741,7 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
   │   └─ 수수료 분리: 릴레이어 몫 + 프로토콜 몫 (treasury)
   └─ 배포 스크립트 업데이트 (RelayerRegistry + protocolFeeBps)
 
-완료:
+미완료:
   └─ RelayerRegistry 테스트 + 프로토콜 수수료 테스트
 ```
 
@@ -760,11 +760,17 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
   ├─ 매칭 엔진 (가격/수량 호환 탐색)
   ├─ EIP-712 서명 검증
   ├─ settle() 트랜잭션 제출 (가스비 대납)
+  ├─ 관리자 API
+  │   ├─ GET /api/admin/status — 서버 상태 (업타임, 메모리, 체인 연결)
+  │   ├─ GET /api/admin/stats — 통계 (주문 건수, 체결 건수, 누적 수수료)
+  │   ├─ GET /api/admin/balance — 릴레이어 지갑 잔액
+  │   └─ GET /api/admin/settlements — settle 이력 (tx hash, 성공/실패)
+  ├─ Docker 배포 지원 (Dockerfile)
   └─ 테스트
 
 기술 스택: Express + ethers.js v6 + vitest
 
-결과물: 독립 실행 가능한 릴레이어 서버
+결과물: 독립 실행 가능한 릴레이어 서버 + 관리자 API
 ```
 
 #### Phase 6: 프론트엔드 (플랫폼 UI) ⬜ 진행 예정
@@ -789,9 +795,15 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
   │   ├─ 릴레이어별 주문 목록
   │   ├─ 체결 상태 (매칭 대기 / 체결 완료 / 취소)
   │   └─ claim 상태 (수령 가능 / 수령 완료 / 만료)
-  └─ 수취자 claim 화면
+  ├─ 수취자 claim 화면
+  └─ 릴레이어 관리자 대시보드
+      ├─ 서버 상태 (업타임, 연결된 체인, RPC 상태)
+      ├─ 주문 현황 (대기 / 체결 / 취소 건수)
+      ├─ 수익 (누적 수수료 수령량, 토큰별)
+      ├─ 지갑 잔액 (가스비용 ETH 잔고, 부족 시 알림)
+      └─ settle 이력 (tx hash, 성공/실패, 가스 소모)
 
-결과물: 동작하는 플랫폼 Web UI
+결과물: 동작하는 플랫폼 Web UI + 릴레이어 관리 대시보드
 ```
 
 #### Phase 7: 테스트넷 배포 + E2E ⬜ 진행 예정
