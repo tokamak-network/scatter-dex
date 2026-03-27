@@ -1,0 +1,976 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Test, console} from "forge-std/Test.sol";
+import {ScatterSettlement} from "../src/ScatterSettlement.sol";
+import {IdentityGate} from "../src/IdentityGate.sol";
+import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+// ─── Mock Contracts ──────────────────────────────────────────────
+contract MockToken is ERC20 {
+    constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+contract MockIdentityRegistry is IIdentityRegistry {
+    mapping(address => bool) public verified;
+
+    function setVerified(address user, bool status) external {
+        verified[user] = status;
+    }
+
+    function isVerified(address user) external view override returns (bool) {
+        return verified[user];
+    }
+}
+
+// ─── Test Contract ───────────────────────────────────────────────
+contract ScatterSettlementTest is Test {
+    ScatterSettlement public settlement;
+    IdentityGate public gate;
+    MockIdentityRegistry public registry;
+    MockToken public tokenA;
+    MockToken public tokenB;
+
+    uint256 makerKey = 0x1;
+    uint256 takerKey = 0x2;
+    address maker = vm.addr(makerKey);
+    address taker = vm.addr(takerKey);
+
+    address recipientC = address(0xC);
+    address recipientD = address(0xD);
+    address recipientE = address(0xE);
+    address recipientF = address(0xF);
+
+    bytes32 secret1 = keccak256("secret1");
+    bytes32 secret2 = keccak256("secret2");
+    bytes32 secret3 = keccak256("secret3");
+    bytes32 secret4 = keccak256("secret4");
+
+    function setUp() public {
+        registry = new MockIdentityRegistry();
+        gate = new IdentityGate(address(registry));
+        settlement = new ScatterSettlement(address(gate));
+
+        tokenA = new MockToken("Token A", "TKA");
+        tokenB = new MockToken("Token B", "TKB");
+
+        registry.setVerified(maker, true);
+        registry.setVerified(taker, true);
+
+        tokenA.mint(maker, 100 ether);
+        tokenB.mint(taker, 210_000e18);
+
+        vm.prank(maker);
+        tokenA.approve(address(settlement), type(uint256).max);
+        vm.prank(taker);
+        tokenB.approve(address(settlement), type(uint256).max);
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────
+
+    function _claimHash(bytes32 secret, address recipient) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(secret, recipient));
+    }
+
+    function _signOrder(uint256 privateKey, ScatterSettlement.Order memory order) internal view returns (bytes memory) {
+        bytes32 digest = _hashOrder(order);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _hashOrder(ScatterSettlement.Order memory order) internal view returns (bytes32) {
+        bytes32[] memory claimHashes = new bytes32[](order.claims.length);
+        for (uint256 i = 0; i < order.claims.length; i++) {
+            claimHashes[i] = keccak256(
+                abi.encode(
+                    settlement.CLAIM_INFO_TYPEHASH(),
+                    order.claims[i].claimHash,
+                    order.claims[i].amount,
+                    order.claims[i].releaseDelay
+                )
+            );
+        }
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                settlement.ORDER_TYPEHASH(),
+                order.maker,
+                order.sellToken,
+                order.buyToken,
+                order.sellAmount,
+                order.buyAmount,
+                order.maxFee,
+                order.expiry,
+                order.nonce,
+                keccak256(abi.encodePacked(claimHashes))
+            )
+        );
+
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("ScatterSettlement"),
+                keccak256("1"),
+                block.chainid,
+                address(settlement)
+            )
+        );
+
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function _createBasicOrders()
+        internal
+        view
+        returns (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder)
+    {
+        ScatterSettlement.ClaimInfo[] memory makerClaims = new ScatterSettlement.ClaimInfo[](3);
+        makerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 7000e18,
+            releaseDelay: 3 hours
+        });
+        makerClaims[1] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret2, recipientD),
+            amount: 8000e18,
+            releaseDelay: 6 hours
+        });
+        makerClaims[2] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret3, recipientE),
+            amount: 6000e18,
+            releaseDelay: 9 hours
+        });
+
+        makerOrder = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 10 ether,
+            buyAmount: 21_000e18,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: makerClaims
+        });
+
+        ScatterSettlement.ClaimInfo[] memory takerClaims = new ScatterSettlement.ClaimInfo[](1);
+        takerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 10 ether,
+            releaseDelay: 4 hours
+        });
+
+        takerOrder = ScatterSettlement.Order({
+            maker: taker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 21_000e18,
+            buyAmount: 10 ether,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: takerClaims
+        });
+    }
+
+    function _depositAndSettle()
+        internal
+        returns (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder)
+    {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (makerOrder, takerOrder) = _createBasicOrders();
+
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    // ─── Tests: Deposit & Withdraw ───────────────────────────────
+
+    function test_deposit() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        assertEq(settlement.deposits(maker, address(tokenA)), 10 ether);
+        assertEq(tokenA.balanceOf(address(settlement)), 10 ether);
+    }
+
+    function test_deposit_unverified_reverts() public {
+        address unverified = address(0x999);
+        tokenA.mint(unverified, 10 ether);
+        vm.startPrank(unverified);
+        tokenA.approve(address(settlement), 10 ether);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.stopPrank();
+    }
+
+    function test_deposit_zero_reverts() public {
+        vm.prank(maker);
+        vm.expectRevert(ScatterSettlement.ZeroAmount.selector);
+        settlement.deposit(address(tokenA), 0);
+    }
+
+    function test_withdraw() public {
+        vm.startPrank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        settlement.withdraw(address(tokenA), 4 ether);
+        vm.stopPrank();
+
+        assertEq(settlement.deposits(maker, address(tokenA)), 6 ether);
+        assertEq(tokenA.balanceOf(maker), 94 ether);
+    }
+
+    function test_withdraw_insufficient_reverts() public {
+        vm.startPrank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.expectRevert(ScatterSettlement.InsufficientBalance.selector);
+        settlement.withdraw(address(tokenA), 11 ether);
+        vm.stopPrank();
+    }
+
+    // ─── Tests: Settle ───────────────────────────────────────────
+
+    function test_settle_basic() public {
+        (ScatterSettlement.Order memory makerOrder,) = _depositAndSettle();
+
+        assertEq(settlement.deposits(maker, address(tokenA)), 0);
+        assertEq(settlement.deposits(taker, address(tokenB)), 0);
+        assertEq(settlement.scheduleCount(), 4);
+
+        // Verify maker's first claim schedule
+        (bytes32 ch, address tok, uint48 rt, bool claimed, address dep, uint96 amt) = settlement.schedules(0);
+        assertEq(ch, makerOrder.claims[0].claimHash);
+        assertEq(tok, address(tokenB));
+        assertEq(amt, uint96(7000e18));
+        assertEq(rt, uint48(block.timestamp + 3 hours));
+        assertFalse(claimed);
+        assertEq(dep, maker);
+    }
+
+    function test_settle_nonce_replay_reverts() public {
+        _depositAndSettle();
+
+        tokenA.mint(maker, 10 ether);
+        tokenB.mint(taker, 21_000e18);
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    function test_settle_expired_order_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(ScatterSettlement.OrderExpired.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    function test_settle_insufficient_escrow_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.InsufficientEscrow.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    function test_settle_invalid_signature_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory badSig = _signOrder(takerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
+        settlement.settle(badSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    // ─── Tests: Fee ──────────────────────────────────────────────
+
+    function test_settle_with_fee() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory makerClaims = new ScatterSettlement.ClaimInfo[](1);
+        // 21000 * 30/10000 = 63 fee, distributable = 20937
+        makerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 20_937e18,
+            releaseDelay: 3 hours
+        });
+
+        ScatterSettlement.Order memory makerOrder = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 10 ether,
+            buyAmount: 21_000e18,
+            maxFee: 30,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: makerClaims
+        });
+
+        ScatterSettlement.ClaimInfo[] memory takerClaims = new ScatterSettlement.ClaimInfo[](1);
+        // 10 ETH * 30/10000 = 0.03 ETH fee, distributable = 9.97
+        takerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 9.97 ether,
+            releaseDelay: 4 hours
+        });
+
+        ScatterSettlement.Order memory takerOrder = ScatterSettlement.Order({
+            maker: taker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 21_000e18,
+            buyAmount: 10 ether,
+            maxFee: 30,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: takerClaims
+        });
+
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        address relayer = address(0xABCD);
+        vm.prank(relayer);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+
+        assertEq(tokenA.balanceOf(relayer), 0.03 ether);
+        assertEq(tokenB.balanceOf(relayer), 63e18);
+    }
+
+    function test_settle_fee_exceeds_max_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.FeeExceedsMax.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+    }
+
+    // ─── Tests: Claim ────────────────────────────────────────────
+
+    function test_claim_basic() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours);
+
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        assertEq(tokenB.balanceOf(recipientC), 7000e18);
+
+        (,,,bool claimed,,) = settlement.schedules(0);
+        assertTrue(claimed);
+    }
+
+    function test_claim_all_recipients() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(recipientD);
+        settlement.claimRelease(1, secret2);
+
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(recipientE);
+        settlement.claimRelease(2, secret3);
+
+        vm.prank(recipientF);
+        settlement.claimRelease(3, secret4);
+
+        assertEq(tokenB.balanceOf(recipientC), 7000e18);
+        assertEq(tokenB.balanceOf(recipientD), 8000e18);
+        assertEq(tokenB.balanceOf(recipientE), 6000e18);
+        assertEq(tokenA.balanceOf(recipientF), 10 ether);
+    }
+
+    function test_claim_before_release_reverts() public {
+        _depositAndSettle();
+
+        vm.prank(recipientC);
+        vm.expectRevert(ScatterSettlement.NotYetReleasable.selector);
+        settlement.claimRelease(0, secret1);
+    }
+
+    function test_claim_wrong_secret_reverts() public {
+        _depositAndSettle();
+        vm.warp(block.timestamp + 3 hours);
+
+        vm.prank(recipientC);
+        vm.expectRevert(ScatterSettlement.InvalidSecretOrAddress.selector);
+        settlement.claimRelease(0, keccak256("wrong_secret"));
+    }
+
+    function test_claim_wrong_address_reverts() public {
+        _depositAndSettle();
+        vm.warp(block.timestamp + 3 hours);
+
+        vm.prank(address(0xA77AC8E4));
+        vm.expectRevert(ScatterSettlement.InvalidSecretOrAddress.selector);
+        settlement.claimRelease(0, secret1);
+    }
+
+    function test_claim_double_claim_reverts() public {
+        _depositAndSettle();
+        vm.warp(block.timestamp + 3 hours);
+
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        vm.prank(recipientC);
+        vm.expectRevert(ScatterSettlement.AlreadyClaimed.selector);
+        settlement.claimRelease(0, secret1);
+    }
+
+    // ─── Tests: Refund ───────────────────────────────────────────
+
+    function test_refund_after_expiry() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours + 7 days);
+
+        vm.prank(maker);
+        settlement.refundUnclaimed(0);
+
+        assertEq(settlement.deposits(maker, address(tokenB)), 7000e18);
+
+        vm.prank(maker);
+        settlement.withdraw(address(tokenB), 7000e18);
+        assertEq(tokenB.balanceOf(maker), 7000e18);
+    }
+
+    function test_refund_before_expiry_reverts() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours + 6 days);
+
+        vm.prank(maker);
+        vm.expectRevert(ScatterSettlement.ClaimWindowNotExpired.selector);
+        settlement.refundUnclaimed(0);
+    }
+
+    function test_refund_not_depositor_reverts() public {
+        _depositAndSettle();
+        vm.warp(block.timestamp + 3 hours + 7 days);
+
+        vm.prank(address(0x999));
+        vm.expectRevert(ScatterSettlement.NotDepositor.selector);
+        settlement.refundUnclaimed(0);
+    }
+
+    function test_refund_already_claimed_reverts() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(maker);
+        vm.expectRevert(ScatterSettlement.AlreadyClaimed.selector);
+        settlement.refundUnclaimed(0);
+    }
+
+    // ─── Tests: Partial claim + refund ───────────────────────────
+
+    function test_partial_claim_and_refund() public {
+        _depositAndSettle();
+
+        vm.warp(block.timestamp + 3 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        vm.warp(block.timestamp + 7 days + 6 hours);
+
+        vm.prank(maker);
+        settlement.refundUnclaimed(1);
+
+        assertEq(tokenB.balanceOf(recipientC), 7000e18);
+        assertEq(settlement.deposits(maker, address(tokenB)), 8000e18);
+    }
+
+    // ─── Tests: Cancel Order ───────────────────────────────────────
+
+    function test_cancel_order() public {
+        settlement.cancelOrder(42);
+        assertTrue(settlement.nonces(address(this), 42));
+    }
+
+    function test_cancel_already_consumed_reverts() public {
+        settlement.cancelOrder(42);
+        vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
+        settlement.cancelOrder(42);
+    }
+
+    function test_cancel_prevents_settle() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        // Maker cancels nonce 1 before settle
+        vm.prank(maker);
+        settlement.cancelOrder(1);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    // ─── Tests: Self-Trade ───────────────────────────────────────
+
+    function test_settle_self_trade_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        tokenB.mint(maker, 21_000e18);
+        vm.prank(maker);
+        tokenB.approve(address(settlement), type(uint256).max);
+        vm.prank(maker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory claims1 = new ScatterSettlement.ClaimInfo[](1);
+        claims1[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 21_000e18,
+            releaseDelay: 3 hours
+        });
+
+        ScatterSettlement.Order memory order1 = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 10 ether,
+            buyAmount: 21_000e18,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: claims1
+        });
+
+        ScatterSettlement.ClaimInfo[] memory claims2 = new ScatterSettlement.ClaimInfo[](1);
+        claims2[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret2, recipientD),
+            amount: 10 ether,
+            releaseDelay: 4 hours
+        });
+
+        // Same maker for both orders
+        ScatterSettlement.Order memory order2 = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 21_000e18,
+            buyAmount: 10 ether,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 2,
+            claims: claims2
+        });
+
+        bytes memory sig1 = _signOrder(makerKey, order1);
+        bytes memory sig2 = _signOrder(makerKey, order2);
+
+        vm.expectRevert(ScatterSettlement.SelfTrade.selector);
+        settlement.settle(sig1, sig2, order1, order2, 0);
+    }
+
+    // ─── Tests: Price Compatibility ──────────────────────────────
+
+    function test_settle_price_incompatible_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory makerClaims = new ScatterSettlement.ClaimInfo[](1);
+        makerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 21_000e18,
+            releaseDelay: 3 hours
+        });
+
+        ScatterSettlement.Order memory makerOrder = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 10 ether,
+            buyAmount: 21_000e18,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: makerClaims
+        });
+
+        ScatterSettlement.ClaimInfo[] memory takerClaims = new ScatterSettlement.ClaimInfo[](1);
+        takerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 10 ether,
+            releaseDelay: 4 hours
+        });
+
+        ScatterSettlement.Order memory takerOrder = ScatterSettlement.Order({
+            maker: taker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 15_000e18,
+            buyAmount: 10 ether,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: takerClaims
+        });
+
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        vm.expectRevert(ScatterSettlement.ClaimsSumMismatch.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
+    // ─── E2E: Full Scenario (Paper Section 3.4) ──────────────────
+
+    function test_e2e_full_scenario() public {
+        // === Setup: Alice sells 10 ETH @ 2100, Bob buys 10 ETH @ 2100 ===
+        // Alice = maker, Bob = taker
+        // Alice receives USDC split to 3 addresses over 3-9 hours
+        // Bob receives ETH to 1 address after 4 hours
+        // Relayer charges 0.3% fee
+
+        address relayer = address(0xBEEF);
+
+        // 1. Deposit
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        // 2. Create orders with fee
+        uint256 usdcFee = (21_000e18 * 30) / 10000; // 63 USDC
+        uint256 usdcDistributable = 21_000e18 - usdcFee; // 20937 USDC
+        uint256 ethFee = (10 ether * 30) / 10000; // 0.03 ETH
+        uint256 ethDistributable = 10 ether - ethFee; // 9.97 ETH
+
+        ScatterSettlement.ClaimInfo[] memory aliceClaims = new ScatterSettlement.ClaimInfo[](3);
+        aliceClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 7000e18,
+            releaseDelay: 3 hours
+        });
+        aliceClaims[1] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret2, recipientD),
+            amount: 8000e18,
+            releaseDelay: 6 hours
+        });
+        aliceClaims[2] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret3, recipientE),
+            amount: usdcDistributable - 7000e18 - 8000e18, // 5937 USDC
+            releaseDelay: 9 hours
+        });
+
+        ScatterSettlement.Order memory aliceOrder = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 10 ether,
+            buyAmount: 21_000e18,
+            maxFee: 30,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: aliceClaims
+        });
+
+        ScatterSettlement.ClaimInfo[] memory bobClaims = new ScatterSettlement.ClaimInfo[](1);
+        bobClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: ethDistributable,
+            releaseDelay: 4 hours
+        });
+
+        ScatterSettlement.Order memory bobOrder = ScatterSettlement.Order({
+            maker: taker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 21_000e18,
+            buyAmount: 10 ether,
+            maxFee: 30,
+            expiry: block.timestamp + 1 days,
+            nonce: 1,
+            claims: bobClaims
+        });
+
+        // 3. Sign & settle
+        bytes memory aliceSig = _signOrder(makerKey, aliceOrder);
+        bytes memory bobSig = _signOrder(takerKey, bobOrder);
+
+        vm.prank(relayer);
+        settlement.settle(aliceSig, bobSig, aliceOrder, bobOrder, 30);
+
+        // 4. Verify post-settle state
+        assertEq(settlement.deposits(maker, address(tokenA)), 0, "alice escrow should be 0");
+        assertEq(settlement.deposits(taker, address(tokenB)), 0, "bob escrow should be 0");
+        assertEq(tokenA.balanceOf(relayer), ethFee, "relayer ETH fee");
+        assertEq(tokenB.balanceOf(relayer), usdcFee, "relayer USDC fee");
+        assertEq(settlement.scheduleCount(), 4, "4 claim schedules");
+
+        // 5. Time-delayed claims
+        uint256 settleTime = block.timestamp;
+
+        // t+3h: recipientC claims 7000 USDC
+        vm.warp(settleTime + 3 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+        assertEq(tokenB.balanceOf(recipientC), 7000e18);
+
+        // t+4h: recipientF claims 9.97 ETH
+        vm.warp(settleTime + 4 hours);
+        vm.prank(recipientF);
+        settlement.claimRelease(3, secret4);
+        assertEq(tokenA.balanceOf(recipientF), ethDistributable);
+
+        // t+6h: recipientD claims 8000 USDC
+        vm.warp(settleTime + 6 hours);
+        vm.prank(recipientD);
+        settlement.claimRelease(1, secret2);
+        assertEq(tokenB.balanceOf(recipientD), 8000e18);
+
+        // t+9h: recipientE claims remaining USDC
+        vm.warp(settleTime + 9 hours);
+        vm.prank(recipientE);
+        settlement.claimRelease(2, secret3);
+        assertEq(tokenB.balanceOf(recipientE), usdcDistributable - 7000e18 - 8000e18);
+
+        // 6. Verify all funds distributed correctly
+        uint256 totalUsdcOut = tokenB.balanceOf(recipientC) + tokenB.balanceOf(recipientD)
+            + tokenB.balanceOf(recipientE) + tokenB.balanceOf(relayer);
+        assertEq(totalUsdcOut, 21_000e18, "total USDC conservation");
+
+        uint256 totalEthOut = tokenA.balanceOf(recipientF) + tokenA.balanceOf(relayer);
+        assertEq(totalEthOut, 10 ether, "total ETH conservation");
+    }
+
+    // ─── E2E: Multiple Concurrent Trades ─────────────────────────
+
+    function test_e2e_concurrent_trades() public {
+        // Two independent trades happening simultaneously
+        // Trade 1: maker sells 5 TKA for 10500 TKB
+        // Trade 2: maker sells 5 TKA for 10500 TKB (different nonce)
+
+        uint256 trader2Key = 0x3;
+        address trader2 = vm.addr(trader2Key);
+        registry.setVerified(trader2, true);
+        tokenB.mint(trader2, 10_500e18);
+        vm.prank(trader2);
+        tokenB.approve(address(settlement), type(uint256).max);
+
+        // Deposits
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 10_500e18);
+        vm.prank(trader2);
+        settlement.deposit(address(tokenB), 10_500e18);
+
+        // Trade 1: maker(5 ETH) <-> taker(10500 USDC)
+        ScatterSettlement.ClaimInfo[] memory claims1m = new ScatterSettlement.ClaimInfo[](1);
+        claims1m[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 10_500e18,
+            releaseDelay: 2 hours
+        });
+        ScatterSettlement.Order memory order1m = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 5 ether,
+            buyAmount: 10_500e18,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 10,
+            claims: claims1m
+        });
+
+        ScatterSettlement.ClaimInfo[] memory claims1t = new ScatterSettlement.ClaimInfo[](1);
+        claims1t[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret2, recipientD),
+            amount: 5 ether,
+            releaseDelay: 3 hours
+        });
+        ScatterSettlement.Order memory order1t = ScatterSettlement.Order({
+            maker: taker,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 10_500e18,
+            buyAmount: 5 ether,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 10,
+            claims: claims1t
+        });
+
+        // Trade 2: maker(5 ETH) <-> trader2(10500 USDC)
+        ScatterSettlement.ClaimInfo[] memory claims2m = new ScatterSettlement.ClaimInfo[](1);
+        claims2m[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret3, recipientE),
+            amount: 10_500e18,
+            releaseDelay: 5 hours
+        });
+        ScatterSettlement.Order memory order2m = ScatterSettlement.Order({
+            maker: maker,
+            sellToken: address(tokenA),
+            buyToken: address(tokenB),
+            sellAmount: 5 ether,
+            buyAmount: 10_500e18,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 11,
+            claims: claims2m
+        });
+
+        ScatterSettlement.ClaimInfo[] memory claims2t = new ScatterSettlement.ClaimInfo[](1);
+        claims2t[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 5 ether,
+            releaseDelay: 6 hours
+        });
+        ScatterSettlement.Order memory order2t = ScatterSettlement.Order({
+            maker: trader2,
+            sellToken: address(tokenB),
+            buyToken: address(tokenA),
+            sellAmount: 10_500e18,
+            buyAmount: 5 ether,
+            maxFee: 0,
+            expiry: block.timestamp + 1 days,
+            nonce: 10,
+            claims: claims2t
+        });
+
+        // Settle both trades
+        settlement.settle(
+            _signOrder(makerKey, order1m),
+            _signOrder(takerKey, order1t),
+            order1m, order1t, 0
+        );
+        settlement.settle(
+            _signOrder(makerKey, order2m),
+            _signOrder(trader2Key, order2t),
+            order2m, order2t, 0
+        );
+
+        // Verify escrows depleted
+        assertEq(settlement.deposits(maker, address(tokenA)), 0);
+        assertEq(settlement.scheduleCount(), 4);
+
+        // Claims at different times — all mixed in the contract
+        uint256 settleTime = block.timestamp;
+
+        vm.warp(settleTime + 2 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        vm.warp(settleTime + 3 hours);
+        vm.prank(recipientD);
+        settlement.claimRelease(1, secret2);
+
+        vm.warp(settleTime + 5 hours);
+        vm.prank(recipientE);
+        settlement.claimRelease(2, secret3);
+
+        vm.warp(settleTime + 6 hours);
+        vm.prank(recipientF);
+        settlement.claimRelease(3, secret4);
+
+        // All recipients got their tokens
+        assertEq(tokenB.balanceOf(recipientC), 10_500e18);
+        assertEq(tokenA.balanceOf(recipientD), 5 ether);
+        assertEq(tokenB.balanceOf(recipientE), 10_500e18);
+        assertEq(tokenA.balanceOf(recipientF), 5 ether);
+    }
+
+    // ─── E2E: Refund Flow ────────────────────────────────────────
+
+    function test_e2e_partial_claim_then_refund_then_withdraw() public {
+        _depositAndSettle();
+
+        uint256 settleTime = block.timestamp;
+
+        // recipientC claims at t+3h
+        vm.warp(settleTime + 3 hours);
+        vm.prank(recipientC);
+        settlement.claimRelease(0, secret1);
+
+        // recipientD and recipientE never claim
+        // Wait for refund window on schedule 1 (6h delay + 7d)
+        vm.warp(settleTime + 6 hours + 7 days);
+        vm.prank(maker);
+        settlement.refundUnclaimed(1); // 8000 USDC back to escrow
+
+        // Wait for refund window on schedule 2 (9h delay + 7d)
+        vm.warp(settleTime + 9 hours + 7 days);
+        vm.prank(maker);
+        settlement.refundUnclaimed(2); // 6000 USDC back to escrow
+
+        // Maker withdraws refunded funds
+        assertEq(settlement.deposits(maker, address(tokenB)), 14_000e18);
+        vm.prank(maker);
+        settlement.withdraw(address(tokenB), 14_000e18);
+        assertEq(tokenB.balanceOf(maker), 14_000e18);
+
+        // recipientC got their share
+        assertEq(tokenB.balanceOf(recipientC), 7000e18);
+
+        // Total: 7000 (claimed) + 14000 (refunded) = 21000 (original)
+        assertEq(
+            tokenB.balanceOf(recipientC) + tokenB.balanceOf(maker),
+            21_000e18,
+            "fund conservation"
+        );
+    }
+}
