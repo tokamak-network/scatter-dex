@@ -20,9 +20,19 @@ export default function ClaimList() {
     setError("");
 
     try {
+      if (!scheduleId || isNaN(Number(scheduleId))) {
+        throw new Error("Invalid schedule ID");
+      }
+      if (!secret) {
+        throw new Error("Secret is required");
+      }
       const settlement = new ethers.Contract(SETTLEMENT, SETTLEMENT_ABI, signer);
-      const secretHash = ethers.keccak256(ethers.toUtf8Bytes(secret));
-      const tx = await settlement.claimRelease(BigInt(scheduleId), secretHash);
+      // Secret hash must match how the sender computed claimHash:
+      // claimHash = keccak256(abi.encodePacked(keccak256(secret_bytes), recipient))
+      // claimRelease verifies: keccak256(abi.encodePacked(secret, msg.sender)) == claimHash
+      // So we pass the keccak256 of the user's password as the secret bytes32
+      const secretBytes = ethers.keccak256(ethers.toUtf8Bytes(secret));
+      const tx = await settlement.claimRelease(BigInt(scheduleId), secretBytes);
       await tx.wait();
       setStatus("success");
       setScheduleId("");

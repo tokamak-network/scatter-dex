@@ -84,7 +84,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = async () => {
     if (!window.ethereum) {
-      alert("MetaMask not found");
+      console.error("MetaMask not found");
       return;
     }
     const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });

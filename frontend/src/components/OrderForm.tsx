@@ -7,6 +7,12 @@ import { RelayerClient } from "@/lib/relayerApi";
 import { ethers } from "ethers";
 import { Plus, Trash2 } from "lucide-react";
 
+const ORDER_EXPIRY_SECONDS = 86400; // 1 day
+const DEFAULT_MAX_FEE = 30; // 0.3% basis points
+const DEFAULT_DELAY = 3600; // 1 hour
+
+let nonceCounter = Math.floor(Math.random() * 1_000_000);
+
 export default function OrderForm() {
   const { account, signer, chainId } = useWallet();
   const [sellToken, setSellToken] = useState("");
@@ -15,7 +21,7 @@ export default function OrderForm() {
   const [buyAmount, setBuyAmount] = useState("");
   const [relayerUrl, setRelayerUrl] = useState("");
   const [claims, setClaims] = useState<ClaimInput[]>([
-    { recipient: "", amount: "", releaseDelay: 3600, secret: "" },
+    { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY, secret: "" },
   ]);
   const [status, setStatus] = useState<"idle" | "signing" | "submitting" | "success" | "error">("idle");
   const [result, setResult] = useState("");
@@ -24,7 +30,7 @@ export default function OrderForm() {
   const SETTLEMENT = process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS || "";
 
   const addClaim = () => {
-    setClaims([...claims, { recipient: "", amount: "", releaseDelay: 7200, secret: "" }]);
+    setClaims([...claims, { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY * 2, secret: "" }]);
   };
 
   const removeClaim = (idx: number) => {
@@ -51,9 +57,9 @@ export default function OrderForm() {
           buyToken,
           sellAmount: ethers.parseEther(sellAmount).toString(),
           buyAmount: ethers.parseEther(buyAmount).toString(),
-          maxFee: 30,
-          expiry: Math.floor(Date.now() / 1000) + 86400,
-          nonce: Date.now(),
+          maxFee: DEFAULT_MAX_FEE,
+          expiry: Math.floor(Date.now() / 1000) + ORDER_EXPIRY_SECONDS,
+          nonce: nonceCounter++,
           claims: claims.map((c) => ({
             ...c,
             amount: ethers.parseEther(c.amount).toString(),

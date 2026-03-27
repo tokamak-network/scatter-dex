@@ -21,33 +21,40 @@ export default function RelayerList() {
   const [relayers, setRelayers] = useState<RelayerData[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!readProvider || !REGISTRY) return;
 
     const load = async () => {
       setLoading(true);
-      const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, readProvider);
-      const addresses: string[] = await registry.getActiveRelayers();
+      try {
+        const registry = new ethers.Contract(REGISTRY, RELAYER_REGISTRY_ABI, readProvider);
+        const addresses: string[] = await registry.getActiveRelayers();
 
-      const data = await Promise.all(
-        addresses.map(async (addr) => {
-          const [url, fee, bond, registeredAt] = await registry.relayers(addr);
-          return {
-            address: addr,
-            url,
-            fee: Number(fee),
-            bond: ethers.formatEther(bond),
-            registeredAt: Number(registeredAt),
-          };
-        })
-      );
+        const data = await Promise.all(
+          addresses.map(async (addr) => {
+            const [url, fee, bond, registeredAt] = await registry.relayers(addr);
+            return {
+              address: addr,
+              url,
+              fee: Number(fee),
+              bond: ethers.formatEther(bond),
+              registeredAt: Number(registeredAt),
+            };
+          })
+        );
 
-      setRelayers(data);
-      setLoading(false);
+        setRelayers(data);
+        setError("");
 
-      const saved = localStorage.getItem("scatter-relayer-url");
-      if (saved) setSelected(saved);
+        const saved = localStorage.getItem("scatter-relayer-url");
+        if (saved) setSelected(saved);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load relayers");
+      } finally {
+        setLoading(false);
+      }
     };
 
     load();
@@ -59,6 +66,7 @@ export default function RelayerList() {
   };
 
   if (loading) return <p className="text-gray-500 text-sm">Loading relayers...</p>;
+  if (error) return <p className="text-red-400 text-sm">{error}</p>;
 
   return (
     <div className="space-y-3">

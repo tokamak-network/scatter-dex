@@ -11,7 +11,7 @@ export default function DepositForm() {
   const { account, signer } = useWallet();
   const [token, setToken] = useState("");
   const [amount, setAmount] = useState("");
-  const [status, setStatus] = useState<"idle" | "approving" | "depositing" | "success" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "approving" | "depositing" | "withdrawing" | "success" | "error">("idle");
   const [error, setError] = useState("");
 
   const handleDeposit = async () => {
@@ -44,7 +44,8 @@ export default function DepositForm() {
 
   const handleWithdraw = async () => {
     if (!signer || !account) return;
-    setStatus("depositing");
+    if (!token || !amount) return;
+    setStatus("withdrawing");
     setError("");
 
     try {
@@ -89,17 +90,17 @@ export default function DepositForm() {
       <div className="flex gap-3">
         <button
           onClick={handleDeposit}
-          disabled={status === "approving" || status === "depositing"}
+          disabled={status !== "idle" && status !== "success" && status !== "error"}
           className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 transition"
         >
           {status === "approving" ? "Approving..." : status === "depositing" ? "Depositing..." : "Deposit"}
         </button>
         <button
           onClick={handleWithdraw}
-          disabled={status === "approving" || status === "depositing"}
+          disabled={status !== "idle" && status !== "success" && status !== "error"}
           className="flex-1 bg-gray-700 text-white py-2 rounded-lg text-sm font-medium hover:bg-gray-600 disabled:opacity-50 transition"
         >
-          Withdraw
+          {status === "withdrawing" ? "Withdrawing..." : "Withdraw"}
         </button>
       </div>
 

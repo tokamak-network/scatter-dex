@@ -74,7 +74,7 @@ export async function signOrder(
     claims,
   };
 
-  const signature = await (signer as ethers.Wallet).signTypedData(domain, EIP712_TYPES, orderData);
+  const signature = await signer.signTypedData(domain, EIP712_TYPES, orderData);
 
   return { signature, orderData };
 }
