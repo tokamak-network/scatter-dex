@@ -27,8 +27,12 @@ export class Matcher {
       ? this.orderbook.getBuyOrders(pair)
       : this.orderbook.getSellOrders(pair);
 
+    const now = BigInt(Math.floor(Date.now() / 1000));
+
     for (const candidate of candidates) {
       if (candidate === newOrder) continue;
+      if (candidate.status !== "pending") continue;
+      if (candidate.order.expiry <= now) continue;
       if (candidate.order.maker.toLowerCase() === order.maker.toLowerCase()) continue;
 
       // Token check
