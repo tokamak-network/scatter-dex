@@ -397,6 +397,78 @@ contract ScatterSettlementTest is Test {
         assertEq(tokenB.balanceOf(feeRelayer), 63e18);
     }
 
+    function test_settle_with_protocol_fee() public {
+        // Set protocol fee to 3000 bps (30% of total fee goes to treasury)
+        settlement.setProtocolFee(3000);
+
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory makerClaims = new ScatterSettlement.ClaimInfo[](1);
+        makerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret1, recipientC),
+            amount: 20_937e18,
+            releaseDelay: 3 hours
+        });
+        ScatterSettlement.Order memory makerOrder = ScatterSettlement.Order({
+            maker: maker, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: 10 ether, buyAmount: 21_000e18, maxFee: 30,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: makerClaims
+        });
+
+        ScatterSettlement.ClaimInfo[] memory takerClaims = new ScatterSettlement.ClaimInfo[](1);
+        takerClaims[0] = ScatterSettlement.ClaimInfo({
+            claimHash: _claimHash(secret4, recipientF),
+            amount: 9.97 ether,
+            releaseDelay: 4 hours
+        });
+        ScatterSettlement.Order memory takerOrder = ScatterSettlement.Order({
+            maker: taker, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: 21_000e18, buyAmount: 10 ether, maxFee: 30,
+            expiry: block.timestamp + 1 days, nonce: 1, claims: takerClaims
+        });
+
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        // settle from test contract (registered relayer)
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+
+        // ETH fee: 0.03 ETH total. Protocol 30% = 0.009, Relayer 70% = 0.021
+        uint256 ethTotalFee = 0.03 ether;
+        uint256 ethProtocol = (ethTotalFee * 3000) / 10000; // 0.009
+        uint256 ethRelayer = ethTotalFee - ethProtocol; // 0.021
+
+        assertEq(tokenA.balanceOf(treasury), ethProtocol, "treasury ETH fee");
+        assertEq(tokenA.balanceOf(address(this)), ethRelayer, "relayer ETH fee");
+
+        // USDC fee: 63 USDC total. Protocol 30% = 18.9, Relayer 70% = 44.1
+        uint256 usdcTotalFee = 63e18;
+        uint256 usdcProtocol = (usdcTotalFee * 3000) / 10000;
+        uint256 usdcRelayer = usdcTotalFee - usdcProtocol;
+
+        assertEq(tokenB.balanceOf(treasury), usdcProtocol, "treasury USDC fee");
+        assertEq(tokenB.balanceOf(address(this)), usdcRelayer, "relayer USDC fee");
+    }
+
+    function test_settle_unregistered_relayer_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        (ScatterSettlement.Order memory makerOrder, ScatterSettlement.Order memory takerOrder) = _createBasicOrders();
+        bytes memory makerSig = _signOrder(makerKey, makerOrder);
+        bytes memory takerSig = _signOrder(takerKey, takerOrder);
+
+        // Call from unregistered address
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(ScatterSettlement.NotActiveRelayer.selector);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+    }
+
     function test_settle_fee_exceeds_max_reverts() public {
         vm.prank(maker);
         settlement.deposit(address(tokenA), 10 ether);
