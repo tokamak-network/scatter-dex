@@ -207,9 +207,23 @@ contract RelayerRegistryTest is Test {
         registry.addBond{value: 0}();
     }
 
-    function test_transferOwnership_emits_event() public {
+    function test_transferOwnership_two_step() public {
         address newOwner = address(0x9999);
         registry.transferOwnership(newOwner);
+        // Owner not changed yet
+        assertEq(registry.owner(), address(this));
+        assertEq(registry.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        registry.acceptOwnership();
         assertEq(registry.owner(), newOwner);
+        assertEq(registry.pendingOwner(), address(0));
+    }
+
+    function test_acceptOwnership_not_pending_reverts() public {
+        registry.transferOwnership(address(0x9999));
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.NotPendingOwner.selector);
+        registry.acceptOwnership();
     }
 }
