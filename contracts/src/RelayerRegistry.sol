@@ -189,8 +189,9 @@ contract RelayerRegistry {
 
     function acceptOwnership() external {
         if (msg.sender != pendingOwner) revert NotPendingOwner();
-        emit OwnershipTransferred(owner, msg.sender);
+        address oldOwner = owner;
         owner = msg.sender;
         pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
     }
 }
