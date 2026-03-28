@@ -7,6 +7,7 @@ import { RelayerClient, RelayerOrder } from "@/lib/relayerApi";
 import { signCancelMessage } from "@/lib/signing";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 
 // Maps to ScatterSettlement.NonceState enum: 0=Unused, 1=Settled, 2=Cancelled
 const NONCE_STATE_LABELS = ["unused", "settled", "cancelled"] as const;
@@ -36,21 +37,22 @@ export default function OrdersPage() {
         const client = new RelayerClient(relayerUrl);
         const relayerOrders = await client.getOrders(account);
 
-        // Enrich with on-chain nonce state if provider available
-        // TODO: batch via Multicall for accounts with many orders to avoid RPC rate limits
-        if (readProvider) {
-          const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-          const enriched = await Promise.all(
-            relayerOrders.map(async (o) => {
-              try {
-                const stateNum = await settlement.nonces(account, o.nonce);
-                const onChainState = NONCE_STATE_LABELS[Number(stateNum)] || "unused";
-                return { ...o, onChainState } as EnrichedOrder;
-              } catch {
-                return { ...o } as EnrichedOrder;
-              }
-            })
-          );
+        // Enrich with on-chain nonce state via Multicall batch
+        if (readProvider && relayerOrders.length > 0) {
+          const iface = new ethers.Interface(SETTLEMENT_ABI);
+          const requests = relayerOrders.map((o) => ({
+            target: SETTLEMENT_ADDRESS,
+            callData: encodeCall(iface, "nonces", [account, o.nonce]),
+          }));
+          const results = await multicall(readProvider, requests);
+          const enriched = relayerOrders.map((o, i) => {
+            if (results[i].success) {
+              const decoded = decodeResult(iface, "nonces", results[i].returnData);
+              const onChainState = NONCE_STATE_LABELS[Number(decoded[0])] || "unused";
+              return { ...o, onChainState } as EnrichedOrder;
+            }
+            return { ...o } as EnrichedOrder;
+          });
           setOrders(enriched);
         } else {
           setOrders(relayerOrders);

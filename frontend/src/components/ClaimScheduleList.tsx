@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Clock, Check, AlertCircle } from "lucide-react";
 
 const REFUND_WINDOW = 7 * 24 * 3600;
@@ -53,15 +54,22 @@ export default function ClaimScheduleList() {
           }
         }
 
-        // Fetch schedule data for each claimHash
-        const promises = allClaimHashes.map(async (claimHash) => {
+        // Fetch schedule data for all claimHashes via Multicall batch
+        const iface = new ethers.Interface(SETTLEMENT_ABI);
+        const requests = allClaimHashes.map((ch) => ({
+          target: SETTLEMENT_ADDRESS,
+          callData: encodeCall(iface, "schedules", [ch]),
+        }));
+        const mcResults = await multicall(readProvider, requests);
+
+        const now = Math.floor(Date.now() / 1000);
+        const results = allClaimHashes.map((claimHash, i) => {
+          if (!mcResults[i].success) return null;
           try {
-            const [token, releaseTime, claimed, depositor, amount] =
-              await settlement.schedules(claimHash);
+            const decoded = decodeResult(iface, "schedules", mcResults[i].returnData);
+            const [token, releaseTime, claimed, depositor, amount] = decoded;
 
             if (amount === BigInt(0)) return null;
-
-            const now = Math.floor(Date.now() / 1000);
             const rt = Number(releaseTime);
 
             let status: Schedule["status"];
@@ -88,9 +96,7 @@ export default function ClaimScheduleList() {
           } catch {
             return null;
           }
-        });
-
-        const results = (await Promise.all(promises)).filter((s): s is Schedule => s !== null);
+        }).filter((s): s is Schedule => s !== null);
         setSchedules(results);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load schedules");

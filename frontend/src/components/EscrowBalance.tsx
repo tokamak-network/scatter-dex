@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI, ERC20_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Wallet } from "lucide-react";
 
 // Common token list — in production, fetch from a registry or user config
@@ -30,23 +31,36 @@ export default function EscrowBalance() {
     setLoading(true);
 
     try {
-      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-      const results = await Promise.all(
-        tokens.map(async (addr) => {
-          try {
-            const token = new ethers.Contract(addr, ERC20_ABI, readProvider);
-            const [symbol, decimals, escrow, wallet] = await Promise.all([
-              token.symbol(),
-              token.decimals(),
-              settlement.deposits(account, addr),
-              token.balanceOf(account),
-            ]);
-            return { address: addr, symbol, decimals: Number(decimals), escrow, wallet };
-          } catch {
-            return null;
-          }
-        })
-      );
+      const settlementIface = new ethers.Interface(SETTLEMENT_ABI);
+      const erc20Iface = new ethers.Interface(ERC20_ABI);
+
+      // Batch all calls: per token = symbol + decimals + deposits + balanceOf = 4 calls
+      const requests = tokens.flatMap((addr) => [
+        { target: addr, callData: encodeCall(erc20Iface, "symbol", []) },
+        { target: addr, callData: encodeCall(erc20Iface, "decimals", []) },
+        { target: SETTLEMENT_ADDRESS, callData: encodeCall(settlementIface, "deposits", [account, addr]) },
+        { target: addr, callData: encodeCall(erc20Iface, "balanceOf", [account]) },
+      ]);
+
+      const mcResults = await multicall(readProvider, requests);
+
+      const results = tokens.map((addr, i) => {
+        const base = i * 4;
+        try {
+          if (!mcResults[base].success || !mcResults[base + 1].success) return null;
+          const symbol = decodeResult(erc20Iface, "symbol", mcResults[base].returnData)[0] as string;
+          const decimals = Number(decodeResult(erc20Iface, "decimals", mcResults[base + 1].returnData)[0]);
+          const escrow = mcResults[base + 2].success
+            ? (decodeResult(settlementIface, "deposits", mcResults[base + 2].returnData)[0] as bigint)
+            : BigInt(0);
+          const wallet = mcResults[base + 3].success
+            ? (decodeResult(erc20Iface, "balanceOf", mcResults[base + 3].returnData)[0] as bigint)
+            : BigInt(0);
+          return { address: addr, symbol, decimals, escrow, wallet };
+        } catch {
+          return null;
+        }
+      });
 
       setBalances(results.filter((r): r is TokenBalance => r !== null));
     } catch (err: unknown) {
