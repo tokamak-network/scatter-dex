@@ -140,7 +140,7 @@ export async function signGaslessClaim(
     relayer: string;
     relayerTip: string; // wei string
     deadline: number;
-    nonce: number;
+    nonce: bigint;
   },
   chainId: number,
   settlementAddress: string

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { signGaslessClaim, toSecretBytes } from "@/lib/signing";
-import { SETTLEMENT_ABI } from "@/lib/contracts";
+import { SETTLEMENT_ABI, ERC20_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
 const DEFAULT_DEADLINE_SECONDS = 3600; // 1 hour from now
@@ -43,17 +43,19 @@ export default function GaslessClaimForm() {
       const claimHash = ethers.keccak256(
         ethers.solidityPacked(["bytes32", "address"], [secretBytes, account])
       );
-      const [, releaseTime, claimed, , amount] = await settlement.schedules(claimHash);
+      const [token, releaseTime, claimed, , amount] = await settlement.schedules(claimHash);
       if (amount === BigInt(0)) throw new Error("No claim found for this secret + your address");
       if (claimed) throw new Error("Already claimed");
       if (Math.floor(Date.now() / 1000) < Number(releaseTime)) throw new Error("Claim not yet unlocked");
 
-      // Get gasless nonce
-      const nonce = await settlement.gaslessNonces(account);
+      // Query token decimals for accurate tip conversion
+      const tokenContract = new ethers.Contract(token, ERC20_ABI, readProvider);
+      const decimals = await tokenContract.decimals();
+
+      // Get gasless nonce (BigInt — do not convert to Number)
+      const nonce: bigint = await settlement.gaslessNonces(account);
       const deadline = Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS;
-      // NOTE: parseEther assumes 18 decimals. For tokens with different decimals
-      // (e.g., USDC = 6), the frontend should query token.decimals() and use parseUnits.
-      const tipWei = ethers.parseEther(relayerTip).toString();
+      const tipWei = ethers.parseUnits(relayerTip, decimals).toString();
 
       const signature = await signGaslessClaim(
         signer,
@@ -63,7 +65,7 @@ export default function GaslessClaimForm() {
           relayer: relayerAddress,
           relayerTip: tipWei,
           deadline,
-          nonce: Number(nonce),
+          nonce,
         },
         chainId,
         SETTLEMENT_ADDRESS
