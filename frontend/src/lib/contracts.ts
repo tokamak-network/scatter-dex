@@ -3,6 +3,7 @@ export const SETTLEMENT_ABI = [
   "function withdraw(address token, uint256 amount) external",
   "function cancelOrder(uint256 nonce) external",
   "function claimRelease(bytes32 secret) external",
+  "function claimReleaseFor(bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline, bytes recipientSig) external",
   "function refundUnclaimed(bytes32 claimHash) external",
   "function deposits(address user, address token) external view returns (uint256)",
   "function schedules(bytes32 claimHash) external view returns (address token, uint48 releaseTime, bool claimed, address depositor, uint96 amount)",
@@ -11,6 +12,7 @@ export const SETTLEMENT_ABI = [
   "event Withdrawn(address indexed user, address indexed token, uint256 amount)",
   "event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes)",
   "event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount)",
+  "event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed token, address relayer, uint256 recipientAmount, uint256 relayerTip)",
   "event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount)",
 ];
 

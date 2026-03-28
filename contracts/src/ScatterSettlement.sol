@@ -51,6 +51,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error TokenNotWhitelisted();
     error ReleaseDelayTooShort();
     error NotPendingOwner();
+    error TipExceedsAmount();
+    error SignatureExpired();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -90,6 +92,12 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         "Order(address maker,address sellToken,address buyToken,uint256 sellAmount,uint256 buyAmount,uint256 maxFee,uint256 expiry,uint256 nonce,ClaimInfo[] claims)ClaimInfo(bytes32 claimHash,uint256 amount,uint256 releaseDelay)"
     );
 
+    bytes32 public constant GASLESS_CLAIM_TYPEHASH =
+        keccak256("GaslessClaim(bytes32 secret,address recipient,address relayer,uint256 relayerTip,uint256 deadline,uint256 nonce)");
+
+    bytes32 public constant CANCEL_GASLESS_CLAIM_TYPEHASH =
+        keccak256("CancelGaslessClaim(address recipient,uint256 nonce)");
+
     // ─── State ───────────────────────────────────────────────────────
     IdentityGate public immutable identityGate;
     RelayerRegistry public immutable relayerRegistry;
@@ -112,12 +120,18 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // token => whitelisted
     mapping(address => bool) public whitelistedTokens;
 
+    // recipient => gasless claim nonce (incremented on successful claimReleaseFor and on cancel,
+    // so each gasless claim signature is single-use and cancel invalidates all outstanding signatures)
+    mapping(address => uint256) public gaslessNonces;
+
     // ─── Events ──────────────────────────────────────────────────────
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount);
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes);
     event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount);
+    event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed token, address relayer, uint256 recipientAmount, uint256 relayerTip);
+    event GaslessClaimCancelled(address indexed recipient, uint256 newNonce);
     event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
@@ -263,16 +277,67 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
         bytes32 claimHash = keccak256(abi.encodePacked(secret, msg.sender));
-        ClaimSchedule storage schedule = schedules[claimHash];
-        uint96 amt = schedule.amount;
-        if (amt == 0) revert ScheduleNotFound();
-        if (schedule.claimed) revert AlreadyClaimed();
-        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
 
-        schedule.claimed = true;
-        IERC20(schedule.token).safeTransfer(msg.sender, amt);
+        IERC20(token).safeTransfer(msg.sender, amt);
+        emit Claimed(claimHash, msg.sender, token, amt);
+    }
 
-        emit Claimed(claimHash, msg.sender, schedule.token, amt);
+    /// @notice Gasless claim — a relayer calls on behalf of the recipient.
+    /// @dev The recipient signs an EIP-712 message binding the specific relayer, tip, and deadline.
+    ///      Only the designated relayer (msg.sender) can submit this signature — prevents
+    ///      mempool tip theft by other relayers. The relayer pays gas and receives `relayerTip`.
+    ///      To revoke: call cancelGaslessClaimFor() which increments the nonce.
+    /// @param secret The secret shared by the depositor
+    /// @param recipient The intended recipient (whose address is bound in claimHash)
+    /// @param relayerTip Amount (in claim token) paid to msg.sender as gas compensation
+    /// @param deadline Unix timestamp after which this signature is no longer valid
+    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, recipient, relayer, relayerTip, deadline, nonce)
+    function claimReleaseFor(
+        bytes32 secret,
+        address recipient,
+        uint256 relayerTip,
+        uint256 deadline,
+        bytes calldata recipientSig
+    ) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (block.timestamp > deadline) revert SignatureExpired();
+
+        uint256 currentNonce = gaslessNonces[recipient];
+        bytes32 structHash = keccak256(abi.encode(
+            GASLESS_CLAIM_TYPEHASH, secret, recipient, msg.sender, relayerTip, deadline, currentNonce
+        ));
+        if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
+
+        gaslessNonces[recipient] = currentNonce + 1;
+
+        bytes32 claimHash = keccak256(abi.encodePacked(secret, recipient));
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
+        if (relayerTip > amt) revert TipExceedsAmount();
+
+        uint256 recipientAmount = uint256(amt) - relayerTip;
+        if (recipientAmount > 0) {
+            IERC20(token).safeTransfer(recipient, recipientAmount);
+        }
+        if (relayerTip > 0) {
+            IERC20(token).safeTransfer(msg.sender, relayerTip);
+        }
+
+        emit ClaimedFor(claimHash, recipient, msg.sender, token, recipientAmount, relayerTip);
+    }
+
+    /// @notice Cancel all outstanding gasless claim signatures for a recipient.
+    /// @dev Anyone can call this with a valid signature from the recipient.
+    ///      Increments the recipient's nonce, invalidating all prior signatures.
+    ///      The recipient signs a CancelGaslessClaim message off-chain, and any
+    ///      third party (friend, another relayer) submits it — no ETH needed by recipient.
+    function cancelGaslessClaimFor(address recipient, bytes calldata recipientSig) external {
+        uint256 currentNonce = gaslessNonces[recipient];
+        bytes32 structHash = keccak256(abi.encode(CANCEL_GASLESS_CLAIM_TYPEHASH, recipient, currentNonce));
+        if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
+
+        gaslessNonces[recipient] = currentNonce + 1;
+        emit GaslessClaimCancelled(recipient, currentNonce + 1);
     }
 
     // ─── Refund (no pause check — refunds must always work to prevent fund lockup) ──
@@ -291,6 +356,18 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Internal ────────────────────────────────────────────────────
+
+    /// @dev Shared validation for claimRelease and claimReleaseFor.
+    function _validateAndMarkClaimed(bytes32 claimHash) internal returns (uint96 amt, address token) {
+        ClaimSchedule storage schedule = schedules[claimHash];
+        amt = schedule.amount;
+        if (amt == 0) revert ScheduleNotFound();
+        if (schedule.claimed) revert AlreadyClaimed();
+        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        schedule.claimed = true;
+        token = schedule.token;
+    }
+
     function _createSchedules(
         Order calldata makerOrder,
         Order calldata takerOrder
