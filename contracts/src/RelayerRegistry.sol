@@ -22,6 +22,7 @@ contract RelayerRegistry {
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
     address public owner;
+    address public pendingOwner;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
@@ -35,6 +36,7 @@ contract RelayerRegistry {
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     // ─── Errors ──────────────────────────────────────────────────
@@ -49,6 +51,7 @@ contract RelayerRegistry {
     error RelayerNotActive();
     error BondTransferFailed();
     error FeeTooHigh();
+    error NotPendingOwner();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -99,6 +102,7 @@ contract RelayerRegistry {
     function updateInfo(string calldata url, uint256 fee) external {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
+        if (r.exitRequestedAt > 0) revert AlreadyExiting();
         if (fee > MAX_FEE) revert FeeTooHigh();
 
         r.url = url;
@@ -184,7 +188,15 @@ contract RelayerRegistry {
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address oldOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
     }
 }

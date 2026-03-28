@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, RequestHandler } from "express";
 import { ethers } from "ethers";
 import { Orderbook } from "../core/orderbook.js";
 import { Matcher } from "../core/matcher.js";
@@ -11,11 +11,14 @@ export function createOrderRoutes(
   orderbook: Orderbook,
   matcher: Matcher,
   submitter: Submitter,
-  chainId: bigint
+  chainId: bigint,
+  writeLimiter?: RequestHandler,
+  readLimiter?: RequestHandler,
 ): Router {
   const router = Router();
 
-  // POST /api/orders — submit a signed order
+  // POST /api/orders — submit a signed order (write rate limit)
+  if (writeLimiter) router.post("/", writeLimiter);
   router.post("/", async (req: Request, res: Response) => {
     try {
       const { order: rawOrder, signature } = req.body;
@@ -53,20 +56,33 @@ export function createOrderRoutes(
       // Try to find a match
       const match = matcher.findMatch(stored);
       if (match) {
+        // Immediately mark as matched to prevent race condition (C3)
+        match.maker.status = "matched";
+        match.taker.status = "matched";
+        orderbook.remove(match.maker.order);
+        orderbook.remove(match.taker.order);
+
         try {
           const txHash = await submitter.submitSettle(match);
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
-          orderbook.remove(match.maker.order);
-          orderbook.remove(match.taker.order);
 
           res.json({ status: "matched", txHash });
           return;
-        } catch (err: any) {
-          console.error("settle failed:", err.message);
-          res.status(500).json({ status: "settle_failed", error: err.message });
+        } catch (err: unknown) {
+          // Settle failed — try to return orders to book
+          match.maker.status = "pending";
+          match.taker.status = "pending";
+          try {
+            orderbook.add({ order: match.maker.order, signature: match.maker.signature });
+            orderbook.add({ order: match.taker.order, signature: match.taker.signature });
+          } catch (readdErr) {
+            console.error("failed to re-add orders after settle failure:", readdErr);
+          }
+          console.error("settle failed:", err instanceof Error ? err.message : "unknown");
+          res.status(500).json({ status: "settle_failed", error: "settlement failed" });
           return;
         }
       }
@@ -77,7 +93,8 @@ export function createOrderRoutes(
     }
   });
 
-  // GET /api/orders/:address — get orders by maker
+  // GET /api/orders/:address — get orders by maker (read rate limit)
+  if (readLimiter) router.get("/:address", readLimiter);
   router.get("/:address", (req: Request, res: Response) => {
     const orders = orderbook.getOrdersByMaker(req.params.address);
     res.json(
@@ -95,7 +112,7 @@ export function createOrderRoutes(
     );
   });
 
-  // DELETE /api/orders/:address/:nonce — cancel order
+  // DELETE /api/orders/:address/:nonce — cancel order (read rate limit)
   // Requires `signature` header: signed message "cancel:<address>:<nonce>"
   router.delete("/:address/:nonce", (req: Request, res: Response) => {
     const { address, nonce } = req.params;
