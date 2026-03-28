@@ -47,13 +47,13 @@ export async function multicall(
     }
   }
 
-  try {
-    const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
+  const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
 
-    // Chunk into batches of MAX_BATCH_SIZE
-    const allResults: MulticallResult[] = [];
-    for (let i = 0; i < requests.length; i += MAX_BATCH_SIZE) {
-      const chunk = requests.slice(i, i + MAX_BATCH_SIZE);
+  // Chunk into batches of MAX_BATCH_SIZE, with per-chunk fallback
+  const allResults: MulticallResult[] = [];
+  for (let i = 0; i < requests.length; i += MAX_BATCH_SIZE) {
+    const chunk = requests.slice(i, i + MAX_BATCH_SIZE);
+    try {
       const calls = chunk.map((r) => ({
         target: r.target,
         allowFailure: true,
@@ -61,22 +61,23 @@ export async function multicall(
       }));
       const results: { success: boolean; returnData: string }[] = await mc.aggregate3.staticCall(calls);
       allResults.push(...results.map((r) => ({ success: r.success, returnData: r.returnData })));
+    } catch (err) {
+      // Per-chunk fallback — only retries this chunk, not already-successful ones
+      console.warn(`[multicall] Chunk ${i / MAX_BATCH_SIZE} failed, falling back to individual calls:`, err);
+      const fallbackResults = await Promise.all(
+        chunk.map(async (r) => {
+          try {
+            const result = await provider.call({ to: r.target, data: r.callData });
+            return { success: true, returnData: result } as MulticallResult;
+          } catch {
+            return { success: false, returnData: "0x" } as MulticallResult;
+          }
+        })
+      );
+      allResults.push(...fallbackResults);
     }
-    return allResults;
-  } catch (err) {
-    // Multicall3 unavailable (local testnet) — fall back to individual calls
-    console.warn("[multicall] Multicall3 unavailable, falling back to individual calls:", err);
-    return Promise.all(
-      requests.map(async (r) => {
-        try {
-          const result = await provider.call({ to: r.target, data: r.callData });
-          return { success: true, returnData: result };
-        } catch {
-          return { success: false, returnData: "0x" };
-        }
-      })
-    );
   }
+  return allResults;
 }
 
 /**

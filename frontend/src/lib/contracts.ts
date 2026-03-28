@@ -1,3 +1,5 @@
+import { ethers } from "ethers";
+
 export const SETTLEMENT_ABI = [
   "function deposit(address token, uint256 amount) external",
   "function withdraw(address token, uint256 amount) external",
@@ -45,7 +47,6 @@ export const ERC20_ABI = [
 ];
 
 // Pre-parsed interfaces — avoids re-parsing ABI on every render cycle
-import { ethers } from "ethers";
 export const SETTLEMENT_IFACE = new ethers.Interface(SETTLEMENT_ABI);
 export const RELAYER_REGISTRY_IFACE = new ethers.Interface(RELAYER_REGISTRY_ABI);
 export const ERC20_IFACE = new ethers.Interface(ERC20_ABI);
