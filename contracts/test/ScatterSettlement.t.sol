@@ -1505,4 +1505,165 @@ contract ScatterSettlementTest is Test {
         vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
         settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, claimSig);
     }
+
+    // ─── Tests: Coverage Boost ──────────────────────────────────────
+
+    function test_gasless_claim_wrong_relayer_reverts() public {
+        uint256 recvKey = 0xABC;
+        address recv = vm.addr(recvKey);
+        bytes32 freshSecret = keccak256("wrong-relayer-secret");
+
+        tokenA.mint(maker, 10 ether);
+        tokenB.mint(taker, 21_000e18);
+        vm.prank(maker); settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker); settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(freshSecret, recv), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = _makeOrder(maker, 10 ether, 21_000e18, 0, 600, mc);
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("wr-taker"), address(0xEEE)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 600, tc);
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        vm.warp(block.timestamp + 4 hours);
+
+        // Sign for address(this) as relayer, but submit from a different address
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), 100e18, deadline);
+
+        // Different msg.sender → signature mismatch
+        vm.prank(address(0xBAD));
+        vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
+        settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, sig);
+    }
+
+    function test_gasless_claim_nonce_replay_reverts() public {
+        // This test verifies that replaying the exact same gasless claim signature
+        // (same secret, same params) fails after the nonce has been incremented.
+        uint256 recvKey = 0xABC;
+        address recv = vm.addr(recvKey);
+        bytes32 freshSecret = keccak256("nonce-replay-secret");
+
+        tokenA.mint(maker, 10 ether);
+        tokenB.mint(taker, 21_000e18);
+        vm.prank(maker); settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker); settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(freshSecret, recv), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = _makeOrder(maker, 10 ether, 21_000e18, 0, 610, mc);
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("nr-t1"), address(0xF1)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 610, tc);
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        vm.warp(block.timestamp + 4 hours);
+
+        // First gasless claim succeeds (nonce=0)
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), 0, deadline);
+        settlement.claimReleaseFor(freshSecret, recv, 0, deadline, sig);
+
+        // Replay exact same signature with exact same params → nonce is now 1, sig was for nonce 0
+        vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
+        settlement.claimReleaseFor(freshSecret, recv, 0, deadline, sig);
+    }
+
+    function test_refund_works_during_pause() public {
+        vm.prank(maker); settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker); settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        bytes32 secret = keccak256("pause-refund");
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(secret, recipientC), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = _makeOrder(maker, 10 ether, 21_000e18, 0, 700, mc);
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("pr-taker"), address(0xDDD)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 700, tc);
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+
+        // Pause the contract
+        settlement.setPaused(true);
+
+        // Warp past refund window
+        vm.warp(block.timestamp + 3 hours + 7 days + 1);
+
+        // Refund should still work during pause (fund safety guarantee)
+        bytes32 ch = _claimHash(secret, recipientC);
+        vm.prank(maker);
+        settlement.refundUnclaimed(ch);
+
+        // Verify refund credited to escrow
+        assertEq(settlement.deposits(maker, address(tokenB)), 21_000e18);
+    }
+
+    function test_settle_duplicate_claimHash_reverts() public {
+        vm.prank(maker); settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker); settlement.deposit(address(tokenB), 21_000e18);
+
+        bytes32 duplicateSecret = keccak256("duplicate-test");
+        bytes32 ch = _claimHash(duplicateSecret, recipientC);
+
+        // Two claims with the same claimHash — amounts sum to buyAmount/distributable (no fee)
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](2);
+        mc[0] = ScatterSettlement.ClaimInfo(ch, 11_000e18, 3 hours);
+        mc[1] = ScatterSettlement.ClaimInfo(ch, 10_000e18, 3 hours); // duplicate claimHash!
+        ScatterSettlement.Order memory mo = _makeOrder(maker, 10 ether, 21_000e18, 0, 800, mc);
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("dup-taker"), address(0xAAA)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 800, tc);
+
+        bytes memory ms = _signOrder(makerKey, mo);
+        bytes memory ts = _signOrder(takerKey, to_);
+
+        vm.expectRevert(ScatterSettlement.DuplicateClaimHash.selector);
+        settlement.settle(ms, ts, mo, to_, 0);
+    }
+
+    function test_claim_verifies_token_balance() public {
+        vm.prank(maker); settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker); settlement.deposit(address(tokenB), 21_000e18);
+
+        bytes32 secret = keccak256("balance-check");
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(secret, recipientC), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = _makeOrder(maker, 10 ether, 21_000e18, 0, 900, mc);
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("bc-taker"), address(0xBBB)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 900, tc);
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        vm.warp(block.timestamp + 4 hours);
+
+        uint256 balBefore = tokenB.balanceOf(recipientC);
+        vm.prank(recipientC);
+        settlement.claimRelease(secret);
+        uint256 balAfter = tokenB.balanceOf(recipientC);
+
+        assertEq(balAfter - balBefore, 21_000e18, "Recipient should receive exact claim amount");
+    }
+
+    // ─── Helpers for compact test setup ─────────────────────────────
+
+    function _makeOrder(address mk, uint256 sellAmt, uint256 buyAmt, uint256 maxFee, uint256 nonce, ScatterSettlement.ClaimInfo[] memory claims)
+        internal view returns (ScatterSettlement.Order memory)
+    {
+        return ScatterSettlement.Order({
+            maker: mk, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: sellAmt, buyAmount: buyAmt, maxFee: maxFee,
+            expiry: block.timestamp + 1 days, nonce: nonce, claims: claims
+        });
+    }
+
+    function _makeOrder2(address mk, uint256 sellAmt, uint256 buyAmt, uint256 maxFee, uint256 nonce, ScatterSettlement.ClaimInfo[] memory claims)
+        internal view returns (ScatterSettlement.Order memory)
+    {
+        return ScatterSettlement.Order({
+            maker: mk, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: sellAmt, buyAmount: buyAmt, maxFee: maxFee,
+            expiry: block.timestamp + 1 days, nonce: nonce, claims: claims
+        });
+    }
 }
