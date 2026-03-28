@@ -3,6 +3,10 @@ pragma solidity ^0.8.28;
 
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers stake a bond to register. Bond is returned after a cooldown on exit.
+///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
+///      failed settle() attempts. Consider adding slashing for repeated violations.
+///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
+///      registries, off-chain indexing via events is recommended instead.
 contract RelayerRegistry {
     struct Relayer {
         string url;
@@ -18,6 +22,7 @@ contract RelayerRegistry {
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
     address public owner;
+    address public pendingOwner;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
@@ -31,6 +36,8 @@ contract RelayerRegistry {
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -44,6 +51,7 @@ contract RelayerRegistry {
     error RelayerNotActive();
     error BondTransferFailed();
     error FeeTooHigh();
+    error NotPendingOwner();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -85,6 +93,7 @@ contract RelayerRegistry {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
+        if (msg.value == 0) revert InsufficientBond();
         r.bond += msg.value;
 
         emit BondAdded(msg.sender, msg.value);
@@ -93,6 +102,7 @@ contract RelayerRegistry {
     function updateInfo(string calldata url, uint256 fee) external {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
+        if (r.exitRequestedAt > 0) revert AlreadyExiting();
         if (fee > MAX_FEE) revert FeeTooHigh();
 
         r.url = url;
@@ -140,6 +150,12 @@ contract RelayerRegistry {
         return r.active && r.exitRequestedAt == 0;
     }
 
+    /// @notice Single-call getter for settlement validation — avoids 3 separate external calls.
+    function getSettlementInfo(address relayer) external view returns (bool isActive, uint256 fee, address treasury_) {
+        Relayer storage r = relayers[relayer];
+        return (r.active && r.exitRequestedAt == 0, r.fee, treasury);
+    }
+
     function getRelayerCount() external view returns (uint256) {
         return relayerList.length;
     }
@@ -172,6 +188,15 @@ contract RelayerRegistry {
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address oldOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
     }
 }

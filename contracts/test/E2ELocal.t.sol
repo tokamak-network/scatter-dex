@@ -75,6 +75,10 @@ contract E2ELocalTest is Test {
         usdc = new MockToken("USDC", "USDC");
         dai = new MockToken("DAI", "DAI");
 
+        settlement.setTokenWhitelist(address(weth), true);
+        settlement.setTokenWhitelist(address(usdc), true);
+        settlement.setTokenWhitelist(address(dai), true);
+
         // Verify all traders
         address[5] memory traders = [alice, bob, charlie, diana, eve];
         for (uint i; i < 5; i++) {
@@ -171,8 +175,6 @@ contract E2ELocalTest is Test {
         // Verify escrows depleted
         assertEq(settlement.deposits(alice, address(weth)), 0);
         assertEq(settlement.deposits(bob, address(usdc)), 0);
-        assertEq(settlement.scheduleCount(), 4);
-
         // Verify fee split (10% protocol, 90% relayer)
         uint256 wethProtocol = (bobFee * 1000) / 10000;
         uint256 usdcProtocol = (aliceFee * 1000) / 10000;
@@ -186,22 +188,22 @@ contract E2ELocalTest is Test {
 
         vm.warp(t0 + 3 hours);
         vm.prank(recv1);
-        settlement.claimRelease(0, s1);
+        settlement.claimRelease(s1);
         assertEq(usdc.balanceOf(recv1), 7000e18);
 
         vm.warp(t0 + 4 hours);
         vm.prank(recv4);
-        settlement.claimRelease(3, s4);
+        settlement.claimRelease(s4);
         assertEq(weth.balanceOf(recv4), 10 ether - bobFee);
 
         vm.warp(t0 + 6 hours);
         vm.prank(recv2);
-        settlement.claimRelease(1, s2);
+        settlement.claimRelease(s2);
         assertEq(usdc.balanceOf(recv2), 8000e18);
 
         vm.warp(t0 + 9 hours);
         vm.prank(recv3);
-        settlement.claimRelease(2, s3);
+        settlement.claimRelease(s3);
 
         // Conservation check
         uint256 totalUsdc = usdc.balanceOf(recv1) + usdc.balanceOf(recv2) + usdc.balanceOf(recv3)
@@ -266,18 +268,16 @@ contract E2ELocalTest is Test {
         vm.prank(relayer2);
         settlement.settle(s2a, s2b, o2a, o2b, 0);
 
-        assertEq(settlement.scheduleCount(), 4);
-
         // Claims at different times
         uint256 t0 = block.timestamp;
         vm.warp(t0 + 2 hours);
-        vm.prank(recv1); settlement.claimRelease(0, s1);
+        vm.prank(recv1); settlement.claimRelease(s1);
         vm.warp(t0 + 3 hours);
-        vm.prank(recv2); settlement.claimRelease(1, s2);
+        vm.prank(recv2); settlement.claimRelease(s2);
         vm.warp(t0 + 4 hours);
-        vm.prank(recv3); settlement.claimRelease(2, s3);
+        vm.prank(recv3); settlement.claimRelease(s3);
         vm.warp(t0 + 5 hours);
-        vm.prank(recv4); settlement.claimRelease(3, s4);
+        vm.prank(recv4); settlement.claimRelease(s4);
 
         assertEq(usdc.balanceOf(recv1), 10_500e18);
         assertEq(weth.balanceOf(recv2), 5 ether);
@@ -360,16 +360,16 @@ contract E2ELocalTest is Test {
         // recv1 claims
         vm.warp(t0 + 2 hours);
         vm.prank(recv1);
-        settlement.claimRelease(0, s1);
+        settlement.claimRelease(s1);
 
         // recv2 and recv3 never claim → refund after expiry
         vm.warp(t0 + 4 hours + 7 days);
         vm.prank(alice);
-        settlement.refundUnclaimed(1);
+        settlement.refundUnclaimed(_claimHash(s2, recv2));
 
         vm.warp(t0 + 6 hours + 7 days);
         vm.prank(alice);
-        settlement.refundUnclaimed(2);
+        settlement.refundUnclaimed(_claimHash(s3, recv3));
 
         // Alice withdraws refunded USDC
         assertEq(settlement.deposits(alice, address(usdc)), 14_000e18);
@@ -462,12 +462,12 @@ contract E2ELocalTest is Test {
         // Attacker sees secret in mempool, tries to claim from wrong address
         address attacker = address(0xBAD);
         vm.prank(attacker);
-        vm.expectRevert(ScatterSettlement.InvalidSecretOrAddress.selector);
-        settlement.claimRelease(0, s1);
+        vm.expectRevert(ScatterSettlement.ScheduleNotFound.selector);
+        settlement.claimRelease(s1);
 
         // Real recipient can claim
         vm.prank(recv1);
-        settlement.claimRelease(0, s1);
+        settlement.claimRelease(s1);
         assertEq(usdc.balanceOf(recv1), 10_500e18);
     }
 
@@ -529,10 +529,10 @@ contract E2ELocalTest is Test {
 
         // All 4 claims
         uint256 t0 = block.timestamp;
-        vm.warp(t0 + 2 hours); vm.prank(recv1); settlement.claimRelease(0, s1);
-        vm.warp(t0 + 3 hours); vm.prank(recv2); settlement.claimRelease(1, s2);
-        vm.warp(t0 + 4 hours); vm.prank(recv3); settlement.claimRelease(2, s3);
-        vm.warp(t0 + 5 hours); vm.prank(recv4); settlement.claimRelease(3, s4);
+        vm.warp(t0 + 2 hours); vm.prank(recv1); settlement.claimRelease(s1);
+        vm.warp(t0 + 3 hours); vm.prank(recv2); settlement.claimRelease(s2);
+        vm.warp(t0 + 4 hours); vm.prank(recv3); settlement.claimRelease(s3);
+        vm.warp(t0 + 5 hours); vm.prank(recv4); settlement.claimRelease(s4);
 
         assertEq(usdc.balanceOf(recv1), 10_500e18);
         assertEq(weth.balanceOf(recv2), 5 ether);

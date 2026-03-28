@@ -67,6 +67,16 @@ contract RelayerRegistryTest is Test {
         assertEq(fee, 20);
     }
 
+    function test_updateInfo_while_exiting_reverts() public {
+        vm.startPrank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        registry.requestExit();
+
+        vm.expectRevert(RelayerRegistry.AlreadyExiting.selector);
+        registry.updateInfo("http://new.com", 20);
+        vm.stopPrank();
+    }
+
     function test_addBond() public {
         vm.prank(relayer1);
         registry.register{value: 0.1 ether}("http://relay1.com", 30);
@@ -197,5 +207,33 @@ contract RelayerRegistryTest is Test {
         vm.prank(relayer1);
         registry.register{value: 0.1 ether}("http://relay1.com", 30);
         assertEq(registry.getFee(relayer1), 30);
+    }
+
+    function test_addBond_zero_reverts() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", 30);
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
+        registry.addBond{value: 0}();
+    }
+
+    function test_transferOwnership_two_step() public {
+        address newOwner = address(0x9999);
+        registry.transferOwnership(newOwner);
+        // Owner not changed yet
+        assertEq(registry.owner(), address(this));
+        assertEq(registry.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        registry.acceptOwnership();
+        assertEq(registry.owner(), newOwner);
+        assertEq(registry.pendingOwner(), address(0));
+    }
+
+    function test_acceptOwnership_not_pending_reverts() public {
+        registry.transferOwnership(address(0x9999));
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.NotPendingOwner.selector);
+        registry.acceptOwnership();
     }
 }

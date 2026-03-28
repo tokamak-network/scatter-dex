@@ -7,11 +7,10 @@ import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 import { Clock, Check, AlertCircle } from "lucide-react";
 
-const MAX_RECENT_SCHEDULES = 100;
 const REFUND_WINDOW = 7 * 24 * 3600;
 
 interface Schedule {
-  id: number;
+  claimHash: string;
   token: string;
   amount: string;
   releaseTime: number;
@@ -35,47 +34,60 @@ export default function ClaimScheduleList() {
 
       try {
         const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-        const count = await settlement.scheduleCount();
-        const total = Number(count);
 
-        const start = Math.max(0, total - MAX_RECENT_SCHEDULES);
+        // Query Settled events to discover claimHashes
+        const settledFilter = settlement.filters.Settled();
+        const currentBlock = await readProvider.getBlockNumber();
+        const fromBlock = Math.max(0, currentBlock - 10000);
+        const events = await settlement.queryFilter(settledFilter, fromBlock);
 
-        // Fetch all schedules in parallel
-        const promises = Array.from({ length: total - start }, (_, idx) => {
-          const i = start + idx;
-          return settlement.schedules(i).then(
-            ([, token, releaseTime, claimed, depositor, amount]: [string, string, bigint, boolean, string, bigint]) => {
-              if (amount === BigInt(0)) return null;
+        const allClaimHashes: string[] = [];
+        for (const event of events) {
+          const parsed = settlement.interface.parseLog({
+            topics: event.topics as string[],
+            data: event.data,
+          });
+          if (parsed) {
+            const hashes = parsed.args.claimHashes as string[];
+            allClaimHashes.push(...hashes);
+          }
+        }
 
-              const now = Math.floor(Date.now() / 1000);
-              const rt = Number(releaseTime);
+        // Fetch schedule data for each claimHash
+        const promises = allClaimHashes.map(async (claimHash) => {
+          try {
+            const [token, releaseTime, claimed, depositor, amount] =
+              await settlement.schedules(claimHash);
 
-              let status: Schedule["status"];
-              if (claimed) {
-                status = "claimed";
-              } else if (now >= rt + REFUND_WINDOW) {
-                status = "refundable";
-              } else if (now >= rt) {
-                status = "claimable";
-              } else {
-                status = "locked";
-              }
+            if (amount === BigInt(0)) return null;
 
-              return {
-                id: i,
-                token,
-                amount: ethers.formatEther(amount),
-                releaseTime: rt,
-                claimed,
-                depositor,
-                status,
-              } as Schedule;
-            },
-            (err: unknown) => {
-              console.warn(`Failed to load schedule #${i}:`, err);
-              return null;
+            const now = Math.floor(Date.now() / 1000);
+            const rt = Number(releaseTime);
+
+            let status: Schedule["status"];
+            if (claimed) {
+              status = "claimed";
+            } else if (now >= rt + REFUND_WINDOW) {
+              status = "refundable";
+            } else if (now >= rt) {
+              status = "claimable";
+            } else {
+              status = "locked";
             }
-          );
+
+            return {
+              claimHash,
+              token,
+              // TODO: fetch token decimals for accurate display (assumes 18 for now)
+              amount: ethers.formatEther(amount),
+              releaseTime: rt,
+              claimed,
+              depositor,
+              status,
+            } as Schedule;
+          } catch {
+            return null;
+          }
         });
 
         const results = (await Promise.all(promises)).filter((s): s is Schedule => s !== null);
@@ -90,14 +102,14 @@ export default function ClaimScheduleList() {
     loadSchedules();
   }, [readProvider]);
 
-  const handleRefund = async (scheduleId: number) => {
+  const handleRefund = async (claimHash: string) => {
     if (!signer) return;
     try {
       const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
-      const tx = await settlement.refundUnclaimed(scheduleId);
+      const tx = await settlement.refundUnclaimed(claimHash);
       await tx.wait();
       setSchedules((prev) =>
-        prev.map((s) => (s.id === scheduleId ? { ...s, status: "refunded" as const, claimed: true } : s))
+        prev.map((s) => (s.claimHash === claimHash ? { ...s, status: "refunded" as const, claimed: true } : s))
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Refund failed");
@@ -133,9 +145,9 @@ export default function ClaimScheduleList() {
 
       <div className="space-y-2">
         {schedules.map((s) => (
-          <div key={s.id} className="bg-gray-800 rounded-lg px-4 py-3">
+          <div key={s.claimHash} className="bg-gray-800 rounded-lg px-4 py-3">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-mono text-gray-400">#{s.id}</span>
+              <span className="text-sm font-mono text-gray-400">{s.claimHash.slice(0, 14)}...</span>
               <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${
                 s.status === "claimable" ? "bg-green-900 text-green-400" :
                 s.status === "claimed" ? "bg-gray-700 text-gray-400" :
@@ -155,7 +167,7 @@ export default function ClaimScheduleList() {
               <p>Depositor: {s.depositor.slice(0, 10)}...</p>
             </div>
             {s.status === "refundable" && s.depositor.toLowerCase() === account?.toLowerCase() && (
-              <button onClick={() => handleRefund(s.id)}
+              <button onClick={() => handleRefund(s.claimHash)}
                 className="mt-2 text-xs text-yellow-400 hover:text-yellow-300">
                 Refund to Escrow
               </button>
