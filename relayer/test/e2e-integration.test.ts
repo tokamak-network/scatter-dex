@@ -20,6 +20,8 @@ const SETTLEMENT_ADDRESS = process.env.SETTLEMENT_ADDRESS || "0xCf7Ed3AccA5a467e
 const ALICE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const BOB_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
+// NOTE: Deploy script (DeployLocal.s.sol) must call setTokenWhitelist() for WETH/USDC
+// after contract deployment for these tests to pass.
 const SETTLEMENT_ABI = [
   "function deposit(address token, uint256 amount) external",
   "function withdraw(address token, uint256 amount) external",
@@ -209,6 +211,7 @@ describe("E2E Integration: Full Trade Flow", () => {
     // If relayer is not registered on-chain, orders stay pending and escrow remains
     // Check if settlement happened by querying Settled events
     const settledFilter = settlement.filters.Settled();
+    // NOTE: queryFilter is unbounded — acceptable for fresh anvil instances in e2e tests
     const events = await settlement.queryFilter(settledFilter);
     if (events.length > 0) {
       // Settlement happened — escrow should be depleted

@@ -161,6 +161,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Deposit & Withdraw ──────────────────────────────────────────
     function deposit(address token, uint256 amount) external nonReentrant {
+        if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (!identityGate.isVerified(msg.sender)) revert NotVerified();
         if (amount == 0) revert ZeroAmount();
@@ -262,6 +263,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         uint256 totalClaims = makerOrder.claims.length + takerOrder.claims.length;
         claimHashes = new bytes32[](totalClaims);
         uint48 now48 = uint48(block.timestamp);
+
+        // claimHash is permanently consumed — amount is never cleared after claim/refund.
+        // Depositors must use a unique random secret per recipient per trade.
 
         // Maker receives taker's sellToken
         for (uint256 i; i < makerOrder.claims.length; ++i) {

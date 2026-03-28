@@ -163,8 +163,9 @@ Phase 4: Claim         — Recipients claim funds with secret after time delay (
 ### 4.2 Data Structures
 
 ```
+// ClaimSchedule is stored as mapping(claimHash => ClaimSchedule)
+// claimHash is used as the mapping key, not stored in the struct.
 ClaimSchedule {
-    bytes32 claimHash;      // H(secret, recipientAddress)
     address token;          // Token to be claimed
     uint256 amount;         // Amount to be claimed
     uint256 releaseTime;    // Earliest claim time (block.timestamp + delay)
@@ -236,47 +237,48 @@ Any party with valid order data calls settle(makerSig, takerSig, makerOrder, tak
     consume nonces (prevent replay / duplicate settle from other relayers)
 
     for each claim in makerOrder.claims:
-        create ClaimSchedule {
-            claimHash: claim.claimHash,
+        schedules[claim.claimHash] = ClaimSchedule {
             token: takerOrder.sellToken,    // maker receives taker's token
             amount: claim.amount,
             releaseTime: now + claim.releaseDelay,
-            claimExpiry: now + claim.releaseDelay + REFUND_WINDOW,
             claimed: false
         }
     // symmetric for taker's claims
 
-    emit Settled(matchId, claimScheduleIds[])
+    emit Settled(maker, taker, claimHashes[])
 ```
 
 **Phase 4: Claim**
 
 ```
-Recipient R calls claimRelease(scheduleId, secret):
-    schedule = schedules[scheduleId]
+Recipient R calls claimRelease(secret):
+    claimHash = H(secret, msg.sender)
+    schedule = schedules[claimHash]
+    require schedule.amount > 0
     require block.timestamp >= schedule.releaseTime
     require !schedule.claimed
-    require H(secret, msg.sender) == schedule.claimHash
 
     schedule.claimed = true
     transfer(schedule.token, schedule.amount, msg.sender)
 
-    emit Claimed(scheduleId, msg.sender, schedule.token, schedule.amount)
+    emit Claimed(claimHash, msg.sender, schedule.token, schedule.amount)
 ```
 
 **Phase 5: Refund (if unclaimed)**
 
 ```
-Original depositor calls refundUnclaimed(scheduleId):
-    schedule = schedules[scheduleId]
-    require block.timestamp >= schedule.claimExpiry
+Original depositor calls refundUnclaimed(claimHash):
+    schedule = schedules[claimHash]
+    require schedule.amount > 0
+    require block.timestamp >= schedule.releaseTime + REFUND_WINDOW
     require !schedule.claimed
+    require msg.sender == schedule.depositor
 
     schedule.claimed = true  // prevent double-refund
-    escrow[originalDepositor][schedule.token] += schedule.amount
+    escrow[schedule.depositor][schedule.token] += schedule.amount
     // funds return to depositor's escrow, can then withdraw()
 
-    emit Refunded(scheduleId, originalDepositor, schedule.amount)
+    emit Refunded(claimHash, schedule.depositor, schedule.amount)
 ```
 
 **Fund Recovery Guarantee**: At no point can user funds be permanently locked. Before settlement: `withdraw()`. After settlement: recipients claim, or depositor calls `refundUnclaimed()` after expiry.
@@ -431,9 +433,9 @@ But adversary does NOT know:
 
 *Pre-image resistance*: Given `claimHash`, an adversary cannot recover `(secret, recipient)` due to the pre-image resistance of the hash function (Keccak-256).
 
-*Front-running resistance*: When a recipient submits `claimRelease(id, secret)`, the secret is visible in the mempool. However, the contract verifies `H(secret, msg.sender) == claimHash`, binding the claim to a specific address. An attacker who copies the secret cannot claim because `H(secret, attacker_address) ≠ claimHash`.
+*Front-running resistance*: When a recipient submits `claimRelease(secret)`, the secret is visible in the mempool. However, the contract derives `claimHash = H(secret, msg.sender)` and looks up the schedule by that key, binding the claim to a specific address. An attacker who copies the secret cannot claim because `H(secret, attacker_address)` maps to a different (nonexistent) schedule.
 
-*Replay resistance*: Each claim schedule has a unique `scheduleId` and a `claimed` flag, preventing double-claiming.
+*Replay resistance*: Each claim schedule is keyed by a unique `claimHash` and has a `claimed` flag, preventing double-claiming.
 
 ---
 

@@ -37,7 +37,9 @@ export default function ClaimScheduleList() {
 
         // Query Settled events to discover claimHashes
         const settledFilter = settlement.filters.Settled();
-        const events = await settlement.queryFilter(settledFilter, -10000);
+        const currentBlock = await readProvider.getBlockNumber();
+        const fromBlock = Math.max(0, currentBlock - 10000);
+        const events = await settlement.queryFilter(settledFilter, fromBlock);
 
         const allClaimHashes: string[] = [];
         for (const event of events) {
@@ -76,6 +78,7 @@ export default function ClaimScheduleList() {
             return {
               claimHash,
               token,
+              // TODO: fetch token decimals for accurate display (assumes 18 for now)
               amount: ethers.formatEther(amount),
               releaseTime: rt,
               claimed,

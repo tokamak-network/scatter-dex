@@ -361,6 +361,10 @@ contract GasBenchmarkTest is Test {
         console.log("Total deposits:       ", gas_[0] + gas_[1]);
         console.log("Total claims:         ", gas_[3] + gas_[4] + gas_[5] + gas_[6]);
         console.log("GRAND TOTAL:          ", gas_[0] + gas_[1] + gas_[2] + gas_[3] + gas_[4] + gas_[5] + gas_[6]);
+
+        // Gas regression bounds — fail if settle exceeds 350K or total exceeds 650K
+        assertLt(gas_[2], 350_000, "settle gas regression");
+        assertLt(gas_[0] + gas_[1] + gas_[2] + gas_[3] + gas_[4] + gas_[5] + gas_[6], 650_000, "total gas regression");
     }
 
     // ═══════════════════════════════════════════════════════════════
