@@ -1,5 +1,3 @@
-"use client";
-
 import ScatterDashboard from "@/components/ScatterDashboard";
 import EscrowBalance from "@/components/EscrowBalance";
 

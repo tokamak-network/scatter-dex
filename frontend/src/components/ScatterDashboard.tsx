@@ -17,6 +17,7 @@ interface ClaimSchedule {
 }
 
 interface Settlement {
+  id: string; // txHash:logIndex — unique key
   txHash: string;
   blockNumber: number;
   maker: string;
@@ -27,6 +28,18 @@ interface Settlement {
 }
 
 const REFUND_WINDOW = 7 * 24 * 3600;
+// Scan last ~2 days of blocks (assuming ~2s block time on L2)
+const EVENT_SCAN_BLOCKS = 50_000;
+
+function formatTime(seconds: number): string {
+  if (seconds <= 0) return "Now";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
 
 export default function ScatterDashboard() {
   const { account, readProvider } = useWallet();
@@ -40,10 +53,10 @@ export default function ScatterDashboard() {
     s.claims.some((c) => !c.claimed && now < c.releaseTime)
   );
   useEffect(() => {
-    if (!hasActiveClaims) return;
+    if (!account || !hasActiveClaims) return;
     const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(interval);
-  }, [hasActiveClaims]);
+  }, [account, hasActiveClaims]);
 
   const loadDashboard = useCallback(async () => {
     if (!account || !readProvider) return;
@@ -55,25 +68,27 @@ export default function ScatterDashboard() {
 
       // Query Settled events where user is maker or taker
       const currentBlock = await readProvider.getBlockNumber();
-      const fromBlock = Math.max(0, currentBlock - 50000);
+      const fromBlock = Math.max(0, currentBlock - EVENT_SCAN_BLOCKS);
 
       const [makerEvents, takerEvents] = await Promise.all([
         settlement.queryFilter(settlement.filters.Settled(account, null), fromBlock),
         settlement.queryFilter(settlement.filters.Settled(null, account), fromBlock),
       ]);
 
-      // Deduplicate by tx hash
+      // Deduplicate by txHash:logIndex (same tx may contain multiple Settled events)
       const seen = new Set<string>();
       const allEvents: { event: ethers.EventLog; role: "maker" | "taker" }[] = [];
       for (const e of makerEvents as ethers.EventLog[]) {
-        if (!seen.has(e.transactionHash)) {
-          seen.add(e.transactionHash);
+        const key = `${e.transactionHash}:${e.index}`;
+        if (!seen.has(key)) {
+          seen.add(key);
           allEvents.push({ event: e, role: "maker" });
         }
       }
       for (const e of takerEvents as ethers.EventLog[]) {
-        if (!seen.has(e.transactionHash)) {
-          seen.add(e.transactionHash);
+        const key = `${e.transactionHash}:${e.index}`;
+        if (!seen.has(key)) {
+          seen.add(key);
           allEvents.push({ event: e, role: "taker" });
         }
       }
@@ -86,6 +101,7 @@ export default function ScatterDashboard() {
         });
         if (!parsed) return [];
         return [{
+          id: `${event.transactionHash}:${event.index}`,
           txHash: event.transactionHash,
           blockNumber: event.blockNumber,
           maker: parsed.args.maker as string,
@@ -120,7 +136,9 @@ export default function ScatterDashboard() {
               claimed: claimed as boolean,
               depositor,
             });
-          } catch { /* skip */ }
+          } catch (err) {
+            console.warn(`[dashboard] Failed to decode schedule ${ch}:`, err);
+          }
         });
       }
 
@@ -136,6 +154,7 @@ export default function ScatterDashboard() {
       // Build settlement objects
       const result: Settlement[] = parsedEvents
         .map((e) => ({
+          id: e.id,
           txHash: e.txHash,
           blockNumber: e.blockNumber,
           maker: e.maker,
@@ -202,7 +221,7 @@ export default function ScatterDashboard() {
 
       {/* Settlement Cards */}
       {settlements.map((s) => (
-        <SettlementCard key={s.txHash} settlement={s} now={now} />
+        <SettlementCard key={s.id} settlement={s} now={now} />
       ))}
 
       {!loading && settlements.length === 0 && (
@@ -308,16 +327,6 @@ function ClaimProgressBar({
     : 100;
 
   const timeLeft = claim.releaseTime - now;
-  const formatTime = (seconds: number) => {
-    if (seconds <= 0) return "Now";
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m ${s}s`;
-    return `${s}s`;
-  };
-
   const status = claim.claimed
     ? "claimed"
     : now >= claim.releaseTime + REFUND_WINDOW
