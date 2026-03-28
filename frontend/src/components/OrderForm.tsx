@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useWallet } from "@/lib/wallet";
 import { signOrder, ClaimInput, generateSecret, buildClaimLink } from "@/lib/signing";
 import { RelayerClient } from "@/lib/relayerApi";
@@ -28,6 +28,12 @@ export default function OrderForm() {
   const [error, setError] = useState("");
   const [claimLinks, setClaimLinks] = useState<{ recipient: string; link: string; secret: string }[]>([]);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (copiedIdx === null) return;
+    const timer = setTimeout(() => setCopiedIdx(null), 2000);
+    return () => clearTimeout(timer);
+  }, [copiedIdx]);
 
   const addClaim = () => {
     setClaims([...claims, { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY * 2, secret: generateSecret() }]);
@@ -166,7 +172,10 @@ export default function OrderForm() {
                     <input readOnly value={cl.link}
                       className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 font-mono" />
                     <button
-                      onClick={() => { navigator.clipboard.writeText(cl.link); setCopiedIdx(idx); setTimeout(() => setCopiedIdx(null), 2000); }}
+                      onClick={async () => {
+                        try { await navigator.clipboard.writeText(cl.link); setCopiedIdx(idx); }
+                        catch { alert("Failed to copy. Please copy manually."); }
+                      }}
                       className="text-gray-400 hover:text-white p-1"
                       title="Copy link">
                       {copiedIdx === idx ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}

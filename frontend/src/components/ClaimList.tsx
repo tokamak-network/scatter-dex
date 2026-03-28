@@ -33,14 +33,15 @@ function ClaimListInner() {
   }, [searchParams]);
 
   // Preview claim status with debounce to avoid excessive RPC calls
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
     if (!secret || !account || !readProvider) {
       setPreview(null);
       return;
     }
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {
         const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
@@ -65,12 +66,14 @@ function ClaimListInner() {
 
         setPreview({
           token,
+          // TODO: fetch token decimals for accurate display (assumes 18 for now)
           amount: ethers.formatEther(amount),
           releaseTime: rt,
           claimed,
           status: claimStatus,
         });
-      } catch {
+      } catch (err) {
+        console.error("Failed to fetch claim preview:", err);
         setPreview(null);
       }
     }, 500);
@@ -144,7 +147,7 @@ function ClaimListInner() {
 
       <button
         onClick={handleClaim}
-        disabled={status === "claiming" || preview?.status !== "claimable"}
+        disabled={status === "claiming" || (preview !== null && preview.status !== "claimable")}
         className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-500 disabled:opacity-50 transition"
       >
         {status === "claiming" ? "Claiming..." : "Claim"}

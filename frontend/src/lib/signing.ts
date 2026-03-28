@@ -15,7 +15,8 @@ export function generateSecret(): string {
 
 /** Build a claim link that the recipient can open to claim funds */
 export function buildClaimLink(secret: string): string {
-  const base = typeof window !== "undefined" ? window.location.origin : "";
+  const base = process.env.NEXT_PUBLIC_APP_URL
+    || (typeof window !== "undefined" ? window.location.origin : "");
   return `${base}/claim?secret=${encodeURIComponent(secret)}`;
 }
 
@@ -55,7 +56,12 @@ const EIP712_TYPES = {
  * If secret is a human-readable password string, hash it first.
  */
 export function toSecretBytes(secret: string): string {
-  if (secret.startsWith("0x") && secret.length === 66) return secret;
+  if (secret.startsWith("0x")) {
+    if (!ethers.isHexString(secret, 32)) {
+      throw new Error("Secret must be a valid 32-byte hex string (0x-prefixed, 66 chars)");
+    }
+    return ethers.hexlify(secret);
+  }
   return ethers.keccak256(ethers.toUtf8Bytes(secret));
 }
 
