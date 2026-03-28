@@ -14,6 +14,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant REFUND_WINDOW = 7 days;
+    uint256 public constant MIN_RELEASE_DELAY = 1 hours;
     uint256 public constant MAX_CLAIMS_PER_ORDER = 10;
     uint256 public constant FEE_DENOMINATOR = 10000;
     uint256 public constant MAX_PROTOCOL_FEE = 5000; // 50% of total fee
@@ -48,6 +49,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error ContractPaused();
     error DuplicateClaimHash();
     error TokenNotWhitelisted();
+    error ReleaseDelayTooShort();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -152,6 +154,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         emit TokenWhitelistUpdated(token, allowed);
     }
 
+    /// @notice Emergency pause/unpause. Unpause takes effect immediately.
+    /// @dev For production, consider placing owner behind a Timelock contract
+    ///      to add an unpause delay, mitigating owner key compromise. See audit L-2.
     function setPaused(bool _paused) external {
         if (msg.sender != owner) revert NotOwner();
         paused = _paused;
@@ -160,6 +165,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Deposit & Withdraw ──────────────────────────────────────────
+
+    /// @notice Deposit tokens into escrow. Only whitelisted tokens accepted.
     function deposit(address token, uint256 amount) external nonReentrant {
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (!identityGate.isVerified(msg.sender)) revert NotVerified();
@@ -171,6 +178,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         emit Deposited(msg.sender, token, amount);
     }
 
+    /// @notice Withdraw unmatched escrow funds.
+    /// @dev No identity check — intentional. Users must always be able to recover
+    ///      their funds even after certificate expiry or revocation, to prevent
+    ///      permanent fund lockup. See security audit M-4.
     function withdraw(address token, uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (deposits[msg.sender][token] < amount) revert InsufficientBalance();
@@ -189,6 +200,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Settle ──────────────────────────────────────────────────────
+
+    /// @notice Settle a matched maker-taker order pair.
+    /// @dev Fee (actualFee bps) is deducted from BOTH sides' sellAmount independently.
+    ///      E.g., actualFee=30 → 0.3% from maker's sellToken AND 0.3% from taker's sellToken.
+    ///      Users sign maxFee acknowledging this per-side deduction. See audit M-5.
     function settle(
         bytes calldata makerSig,
         bytes calldata takerSig,
@@ -224,6 +240,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Claim ───────────────────────────────────────────────────────
+
+    /// @notice Claim funds using the secret provided by the depositor.
+    /// @dev claimHash = keccak256(secret, msg.sender) is computed internally.
+    ///      Each (secret, recipient) pair can only be used once — depositors must
+    ///      generate a unique random secret per claim to avoid collisions. See audit M-3.
     function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
         bytes32 claimHash = keccak256(abi.encodePacked(secret, msg.sender));
@@ -403,6 +424,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal pure returns (uint96, uint48) {
         if (claim.amount > type(uint96).max) revert AmountOverflow();
+        if (claim.releaseDelay < MIN_RELEASE_DELAY) revert ReleaseDelayTooShort();
         if (claim.releaseDelay > type(uint48).max - now48) revert ReleaseDelayOverflow();
         return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }

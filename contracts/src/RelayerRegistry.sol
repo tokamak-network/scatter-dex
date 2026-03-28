@@ -3,6 +3,10 @@ pragma solidity ^0.8.28;
 
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers stake a bond to register. Bond is returned after a cooldown on exit.
+///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
+///      failed settle() attempts. Consider adding slashing for repeated violations.
+///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
+///      registries, off-chain indexing via events is recommended instead.
 contract RelayerRegistry {
     struct Relayer {
         string url;

@@ -783,6 +783,36 @@ contract ScatterSettlementTest is Test {
 
     // ─── Tests: Price Compatibility ──────────────────────────────
 
+    function test_settle_release_delay_too_short_reverts() public {
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(secret1, recipientC), 21_000e18, 30 minutes); // too short
+
+        ScatterSettlement.Order memory mo = ScatterSettlement.Order({
+            maker: maker, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: 10 ether, buyAmount: 21_000e18, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 900, claims: mc
+        });
+
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(secret2, recipientD), 10 ether, 3 hours);
+
+        ScatterSettlement.Order memory to_ = ScatterSettlement.Order({
+            maker: taker, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: 21_000e18, buyAmount: 10 ether, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 900, claims: tc
+        });
+
+        bytes memory makerSig = _signOrder(makerKey, mo);
+        bytes memory takerSig = _signOrder(takerKey, to_);
+        vm.expectRevert(ScatterSettlement.ReleaseDelayTooShort.selector);
+        settlement.settle(makerSig, takerSig, mo, to_, 0);
+    }
+
     function test_settle_price_incompatible_reverts() public {
         vm.prank(maker);
         settlement.deposit(address(tokenA), 10 ether);
