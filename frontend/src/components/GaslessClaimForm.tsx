@@ -35,47 +35,49 @@ export default function GaslessClaimForm() {
       if (!secret) throw new Error("Secret is required");
       if (!ethers.isAddress(relayerAddress)) throw new Error("Invalid relayer address");
 
+      if (!readProvider) throw new Error("No provider available");
+
       // Check claim exists and is claimable
-      if (readProvider) {
-        const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-        const secretBytes = toSecretBytes(secret);
-        const claimHash = ethers.keccak256(
-          ethers.solidityPacked(["bytes32", "address"], [secretBytes, account])
-        );
-        const [, releaseTime, claimed, , amount] = await settlement.schedules(claimHash);
-        if (amount === BigInt(0)) throw new Error("No claim found for this secret + your address");
-        if (claimed) throw new Error("Already claimed");
-        if (Math.floor(Date.now() / 1000) < Number(releaseTime)) throw new Error("Claim not yet unlocked");
+      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
+      const secretBytes = toSecretBytes(secret);
+      const claimHash = ethers.keccak256(
+        ethers.solidityPacked(["bytes32", "address"], [secretBytes, account])
+      );
+      const [, releaseTime, claimed, , amount] = await settlement.schedules(claimHash);
+      if (amount === BigInt(0)) throw new Error("No claim found for this secret + your address");
+      if (claimed) throw new Error("Already claimed");
+      if (Math.floor(Date.now() / 1000) < Number(releaseTime)) throw new Error("Claim not yet unlocked");
 
-        // Get gasless nonce
-        const nonce = await settlement.gaslessNonces(account);
-        const deadline = Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS;
-        const tipWei = ethers.parseEther(relayerTip).toString();
+      // Get gasless nonce
+      const nonce = await settlement.gaslessNonces(account);
+      const deadline = Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS;
+      // NOTE: parseEther assumes 18 decimals. For tokens with different decimals
+      // (e.g., USDC = 6), the frontend should query token.decimals() and use parseUnits.
+      const tipWei = ethers.parseEther(relayerTip).toString();
 
-        const signature = await signGaslessClaim(
-          signer,
-          {
-            secret,
-            recipient: account,
-            relayer: relayerAddress,
-            relayerTip: tipWei,
-            deadline,
-            nonce: Number(nonce),
-          },
-          chainId,
-          SETTLEMENT_ADDRESS
-        );
-
-        setSignedRequest({
-          secret: toSecretBytes(secret),
+      const signature = await signGaslessClaim(
+        signer,
+        {
+          secret,
           recipient: account,
           relayer: relayerAddress,
           relayerTip: tipWei,
           deadline,
-          signature,
-        });
-        setStatus("preview");
-      }
+          nonce: Number(nonce),
+        },
+        chainId,
+        SETTLEMENT_ADDRESS
+      );
+
+      setSignedRequest({
+        secret: secretBytes,
+        recipient: account,
+        relayer: relayerAddress,
+        relayerTip: tipWei,
+        deadline,
+        signature,
+      });
+      setStatus("preview");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Signing failed");
       setStatus("error");
