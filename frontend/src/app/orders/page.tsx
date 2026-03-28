@@ -37,6 +37,7 @@ export default function OrdersPage() {
         const relayerOrders = await client.getOrders(account);
 
         // Enrich with on-chain nonce state if provider available
+        // TODO: batch via Multicall for accounts with many orders to avoid RPC rate limits
         if (readProvider) {
           const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
           const enriched = await Promise.all(
@@ -68,20 +69,28 @@ export default function OrdersPage() {
     if (!signer || !account) return;
     try {
       const nonceNum = parseInt(nonce);
-      const sig = await signCancelMessage(signer, account, nonceNum);
-      const client = new RelayerClient(relayerUrl);
-      await client.cancelOrder(account, nonceNum, sig);
 
-      // Also cancel on-chain for guaranteed finality
+      // On-chain cancel first — this is the authoritative cancellation
       const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
       const tx = await settlement.cancelOrder(nonceNum);
       await tx.wait();
 
-      setOrders(orders.map((o) =>
-        o.nonce === nonce
-          ? { ...o, status: "cancelled" as const, onChainState: "cancelled" as const }
-          : o
-      ));
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.nonce === nonce
+            ? { ...o, status: "cancelled" as const, onChainState: "cancelled" as const }
+            : o
+        )
+      );
+
+      // Best-effort relayer cancel — not critical since on-chain is already done
+      try {
+        const sig = await signCancelMessage(signer, account, nonceNum);
+        const client = new RelayerClient(relayerUrl);
+        await client.cancelOrder(account, nonceNum, sig);
+      } catch {
+        // Relayer cancel failed — acceptable, on-chain cancel is authoritative
+      }
     } catch (error) {
       console.error("Failed to cancel order:", error);
     }
