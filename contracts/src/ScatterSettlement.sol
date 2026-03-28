@@ -92,7 +92,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     );
 
     bytes32 public constant GASLESS_CLAIM_TYPEHASH =
-        keccak256("GaslessClaim(bytes32 secret,uint256 relayerTip)");
+        keccak256("GaslessClaim(bytes32 secret,address recipient,uint256 relayerTip)");
 
     // ─── State ───────────────────────────────────────────────────────
     IdentityGate public immutable identityGate;
@@ -268,16 +268,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
         bytes32 claimHash = keccak256(abi.encodePacked(secret, msg.sender));
-        ClaimSchedule storage schedule = schedules[claimHash];
-        uint96 amt = schedule.amount;
-        if (amt == 0) revert ScheduleNotFound();
-        if (schedule.claimed) revert AlreadyClaimed();
-        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
 
-        schedule.claimed = true;
-        IERC20(schedule.token).safeTransfer(msg.sender, amt);
-
-        emit Claimed(claimHash, msg.sender, schedule.token, amt);
+        IERC20(token).safeTransfer(msg.sender, amt);
+        emit Claimed(claimHash, msg.sender, token, amt);
     }
 
     /// @notice Gasless claim — a relayer calls on behalf of the recipient.
@@ -287,7 +281,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     /// @param secret The secret shared by the depositor
     /// @param recipient The intended recipient (whose address is bound in claimHash)
     /// @param relayerTip Amount (in claim token) paid to msg.sender as gas compensation
-    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, relayerTip)
+    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, recipient, relayerTip)
     function claimReleaseFor(
         bytes32 secret,
         address recipient,
@@ -297,29 +291,21 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (paused) revert ContractPaused();
 
         // Verify recipient's EIP-712 signature authorizing this claim + tip
-        bytes32 structHash = keccak256(abi.encode(GASLESS_CLAIM_TYPEHASH, secret, relayerTip));
-        bytes32 digest = _hashTypedDataV4(structHash);
-        if (ECDSA.recover(digest, recipientSig) != recipient) revert InvalidSignature();
+        bytes32 structHash = keccak256(abi.encode(GASLESS_CLAIM_TYPEHASH, secret, recipient, relayerTip));
+        if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
 
-        // Look up schedule by claimHash
         bytes32 claimHash = keccak256(abi.encodePacked(secret, recipient));
-        ClaimSchedule storage schedule = schedules[claimHash];
-        uint96 amt = schedule.amount;
-        if (amt == 0) revert ScheduleNotFound();
-        if (schedule.claimed) revert AlreadyClaimed();
-        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
         if (relayerTip > amt) revert TipExceedsAmount();
-
-        schedule.claimed = true;
 
         // Split: recipient gets (amount - tip), relayer gets tip
         uint256 recipientAmount = uint256(amt) - relayerTip;
-        IERC20(schedule.token).safeTransfer(recipient, recipientAmount);
+        IERC20(token).safeTransfer(recipient, recipientAmount);
         if (relayerTip > 0) {
-            IERC20(schedule.token).safeTransfer(msg.sender, relayerTip);
+            IERC20(token).safeTransfer(msg.sender, relayerTip);
         }
 
-        emit ClaimedFor(claimHash, recipient, msg.sender, schedule.token, recipientAmount, relayerTip);
+        emit ClaimedFor(claimHash, recipient, msg.sender, token, recipientAmount, relayerTip);
     }
 
     // ─── Refund (no pause check — refunds must always work to prevent fund lockup) ──
@@ -338,6 +324,18 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     // ─── Internal ────────────────────────────────────────────────────
+
+    /// @dev Shared validation for claimRelease and claimReleaseFor.
+    function _validateAndMarkClaimed(bytes32 claimHash) internal returns (uint96 amt, address token) {
+        ClaimSchedule storage schedule = schedules[claimHash];
+        amt = schedule.amount;
+        if (amt == 0) revert ScheduleNotFound();
+        if (schedule.claimed) revert AlreadyClaimed();
+        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        schedule.claimed = true;
+        token = schedule.token;
+    }
+
     function _createSchedules(
         Order calldata makerOrder,
         Order calldata takerOrder

@@ -1222,9 +1222,9 @@ contract ScatterSettlementTest is Test {
 
     // ─── Tests: Gasless Claim ──────────────────────────────────────
 
-    function _signGaslessClaim(uint256 privateKey, bytes32 secret, uint256 relayerTip) internal view returns (bytes memory) {
+    function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, uint256 relayerTip) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
-            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, relayerTip)
+            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip)
         );
         bytes32 domainSeparator = keccak256(
             abi.encode(
@@ -1279,7 +1279,7 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         // Relayer (this test contract) claims on behalf of recv
-        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, tip);
+        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, recv, tip);
         settlement.claimReleaseFor(freshSecret, recv, tip, recipientSig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18 - tip, "recipient receives amount minus tip");
@@ -1318,7 +1318,7 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         // Zero tip — altruistic relayer
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, 0);
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 0);
         settlement.claimReleaseFor(freshSecret, recv, 0, sig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18, "recipient gets full amount");
@@ -1357,7 +1357,7 @@ contract ScatterSettlementTest is Test {
 
         // Attacker signs instead of recipient — wrong signer
         uint256 attackerKey = 0xBAD;
-        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, 100e18);
+        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, recv, 100e18);
         vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
         settlement.claimReleaseFor(freshSecret, recv, 100e18, badSig);
     }
@@ -1395,7 +1395,7 @@ contract ScatterSettlementTest is Test {
 
         // Tip > claim amount
         uint256 excessiveTip = 22_000e18;
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, excessiveTip);
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, excessiveTip);
         vm.expectRevert(ScatterSettlement.TipExceedsAmount.selector);
         settlement.claimReleaseFor(freshSecret, recv, excessiveTip, sig);
     }
