@@ -35,11 +35,15 @@ export default function ScatterDashboard() {
   const [error, setError] = useState("");
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
 
-  // Real-time clock for progress bars
+  // Real-time clock for progress bars — only active when there are unlocking claims
+  const hasActiveClaims = settlements.some((s) =>
+    s.claims.some((c) => !c.claimed && now < c.releaseTime)
+  );
   useEffect(() => {
+    if (!hasActiveClaims) return;
     const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasActiveClaims]);
 
   const loadDashboard = useCallback(async () => {
     if (!account || !readProvider) return;
@@ -75,24 +79,25 @@ export default function ScatterDashboard() {
       }
 
       // Parse events and collect all claimHashes
-      const parsedEvents = allEvents.map(({ event, role }) => {
+      const parsedEvents = allEvents.flatMap(({ event, role }) => {
         const parsed = settlement.interface.parseLog({
           topics: event.topics as string[],
           data: event.data,
         });
-        return {
+        if (!parsed) return [];
+        return [{
           txHash: event.transactionHash,
           blockNumber: event.blockNumber,
-          maker: parsed!.args.maker as string,
-          taker: parsed!.args.taker as string,
-          claimHashes: parsed!.args.claimHashes as string[],
+          maker: parsed.args.maker as string,
+          taker: parsed.args.taker as string,
+          claimHashes: parsed.args.claimHashes as string[],
           role,
-        };
+        }];
       });
 
       // Batch fetch all schedules via Multicall
       const allClaimHashes = parsedEvents.flatMap((e) => e.claimHashes);
-      let scheduleMap = new Map<string, ClaimSchedule>();
+      const scheduleMap = new Map<string, ClaimSchedule>();
 
       if (allClaimHashes.length > 0) {
         const requests = allClaimHashes.map((ch) => ({
@@ -119,7 +124,7 @@ export default function ScatterDashboard() {
         });
       }
 
-      // Fetch block timestamps for settlements
+      // Fetch block timestamps for settlements (getBlock is RPC-level, not batchable via Multicall)
       const blocks = await Promise.all(
         [...new Set(parsedEvents.map((e) => e.blockNumber))].map(async (bn) => {
           const block = await readProvider.getBlock(bn);
@@ -250,6 +255,7 @@ function SettlementCard({ settlement, now }: { settlement: Settlement; now: numb
                     : "bg-gray-600 text-gray-300"
                 }`}
                 style={{ width: `${Math.max(pct, 5)}%` }}
+                // TODO: fetch token decimals for accurate display (assumes 18 for now)
                 title={`${ethers.formatEther(claim.amount)} tokens — ${
                   claim.claimed ? "claimed" : now >= claim.releaseTime ? "claimable" : "locked"
                 }`}
@@ -324,6 +330,7 @@ function ClaimProgressBar({
     <div className="bg-gray-900 rounded-lg p-3">
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-gray-400">
+          {/* TODO: fetch token decimals for accurate display (assumes 18 for now) */}
           Split #{index + 1} — {ethers.formatEther(claim.amount)} tokens
         </span>
         <span className={`text-[10px] px-1.5 py-0.5 rounded ${
