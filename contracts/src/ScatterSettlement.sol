@@ -94,7 +94,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     );
 
     bytes32 public constant GASLESS_CLAIM_TYPEHASH =
-        keccak256("GaslessClaim(bytes32 secret,address recipient,uint256 relayerTip,uint256 deadline,uint256 nonce)");
+        keccak256("GaslessClaim(bytes32 secret,address recipient,address relayer,uint256 relayerTip,uint256 deadline,uint256 nonce)");
 
     bytes32 public constant CANCEL_GASLESS_CLAIM_TYPEHASH =
         keccak256("CancelGaslessClaim(address recipient,uint256 nonce)");
@@ -284,16 +284,15 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     /// @notice Gasless claim — a relayer calls on behalf of the recipient.
-    /// @dev The recipient signs an EIP-712 message authorizing the claim, tip, and deadline.
-    ///      The relayer pays gas and receives `relayerTip` from the claim amount as compensation.
-    ///      This preserves privacy: the recipient never needs ETH for gas.
-    ///      To revoke: call cancelGaslessClaimFor() which increments the nonce,
-    ///      invalidating all outstanding signatures. Deadline provides a fallback expiry.
+    /// @dev The recipient signs an EIP-712 message binding the specific relayer, tip, and deadline.
+    ///      Only the designated relayer (msg.sender) can submit this signature — prevents
+    ///      mempool tip theft by other relayers. The relayer pays gas and receives `relayerTip`.
+    ///      To revoke: call cancelGaslessClaimFor() which increments the nonce.
     /// @param secret The secret shared by the depositor
     /// @param recipient The intended recipient (whose address is bound in claimHash)
     /// @param relayerTip Amount (in claim token) paid to msg.sender as gas compensation
     /// @param deadline Unix timestamp after which this signature is no longer valid
-    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, recipient, relayerTip, deadline, nonce)
+    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, recipient, relayer, relayerTip, deadline, nonce)
     function claimReleaseFor(
         bytes32 secret,
         address recipient,
@@ -306,7 +305,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
         uint256 currentNonce = gaslessNonces[recipient];
         bytes32 structHash = keccak256(abi.encode(
-            GASLESS_CLAIM_TYPEHASH, secret, recipient, relayerTip, deadline, currentNonce
+            GASLESS_CLAIM_TYPEHASH, secret, recipient, msg.sender, relayerTip, deadline, currentNonce
         ));
         if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
 
@@ -317,7 +316,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (relayerTip > amt) revert TipExceedsAmount();
 
         uint256 recipientAmount = uint256(amt) - relayerTip;
-        IERC20(token).safeTransfer(recipient, recipientAmount);
+        if (recipientAmount > 0) {
+            IERC20(token).safeTransfer(recipient, recipientAmount);
+        }
         if (relayerTip > 0) {
             IERC20(token).safeTransfer(msg.sender, relayerTip);
         }

@@ -1222,10 +1222,10 @@ contract ScatterSettlementTest is Test {
 
     // ─── Tests: Gasless Claim ──────────────────────────────────────
 
-    function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline) internal view returns (bytes memory) {
+    function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, address relayer, uint256 relayerTip, uint256 deadline) internal view returns (bytes memory) {
         uint256 nonce = settlement.gaslessNonces(recipient);
         bytes32 structHash = keccak256(
-            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip, deadline, nonce)
+            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayer, relayerTip, deadline, nonce)
         );
         bytes32 domainSeparator = keccak256(
             abi.encode(
@@ -1242,10 +1242,6 @@ contract ScatterSettlementTest is Test {
     }
 
     function test_gasless_claim_basic() public {
-        _depositAndSettle();
-
-        vm.warp(block.timestamp + 3 hours);
-
         // Fresh setup with known private key recipient
         uint256 recvKey = 0xABC;
         address recv = vm.addr(recvKey);
@@ -1281,7 +1277,7 @@ contract ScatterSettlementTest is Test {
 
         // Relayer (this test contract) claims on behalf of recv
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, recv, tip, deadline);
+        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), tip, deadline);
         settlement.claimReleaseFor(freshSecret, recv, tip, deadline, recipientSig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18 - tip, "recipient receives amount minus tip");
@@ -1321,7 +1317,7 @@ contract ScatterSettlementTest is Test {
 
         // Zero tip — altruistic relayer
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 0, deadline);
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), 0, deadline);
         settlement.claimReleaseFor(freshSecret, recv, 0, deadline, sig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18, "recipient gets full amount");
@@ -1361,7 +1357,7 @@ contract ScatterSettlementTest is Test {
         // Attacker signs instead of recipient — wrong signer
         uint256 attackerKey = 0xBAD;
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, recv, 100e18, deadline);
+        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, recv, address(this), 100e18, deadline);
         vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
         settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, badSig);
     }
@@ -1400,7 +1396,7 @@ contract ScatterSettlementTest is Test {
         // Tip > claim amount
         uint256 excessiveTip = 22_000e18;
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, excessiveTip, deadline);
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), excessiveTip, deadline);
         vm.expectRevert(ScatterSettlement.TipExceedsAmount.selector);
         settlement.claimReleaseFor(freshSecret, recv, excessiveTip, deadline, sig);
     }
@@ -1438,7 +1434,7 @@ contract ScatterSettlementTest is Test {
 
         // Sign with deadline in the past
         uint256 deadline = block.timestamp - 1;
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 100e18, deadline);
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), 100e18, deadline);
         vm.expectRevert(ScatterSettlement.SignatureExpired.selector);
         settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, sig);
     }
@@ -1492,7 +1488,7 @@ contract ScatterSettlementTest is Test {
 
         // 1. Recipient signs a gasless claim (nonce=0)
         uint256 deadline = block.timestamp + 1 hours;
-        bytes memory claimSig = _signGaslessClaim(recvKey, freshSecret, recv, 100e18, deadline);
+        bytes memory claimSig = _signGaslessClaim(recvKey, freshSecret, recv, address(this), 100e18, deadline);
 
         // 2. Recipient cancels — friend submits cancel signature
         bytes memory cancelSig = _signCancelGasless(recvKey, recv);
