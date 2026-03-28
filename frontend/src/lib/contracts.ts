@@ -7,7 +7,7 @@ export const SETTLEMENT_ABI = [
   "function refundUnclaimed(bytes32 claimHash) external",
   "function deposits(address user, address token) external view returns (uint256)",
   "function schedules(bytes32 claimHash) external view returns (address token, uint48 releaseTime, bool claimed, address depositor, uint96 amount)",
-  "function nonces(address user, uint256 nonce) external view returns (bool)",
+  "function nonces(address user, uint256 nonce) external view returns (uint8)",
   "event Deposited(address indexed user, address indexed token, uint256 amount)",
   "event Withdrawn(address indexed user, address indexed token, uint256 amount)",
   "event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes)",

@@ -273,6 +273,11 @@ contract ScatterSettlementTest is Test {
         assertEq(rt, uint48(block.timestamp + 3 hours));
         assertFalse(claimed);
         assertEq(dep, maker);
+
+        // Verify nonces are marked as Settled (1), not just consumed
+        // NonceState: 0=Unused, 1=Settled, 2=Cancelled
+        assertEq(uint8(settlement.nonces(maker, makerOrder.nonce)), 1, "maker nonce should be Settled");
+        assertEq(uint8(settlement.nonces(taker, 1)), 1, "taker nonce should be Settled");
     }
 
     function test_settle_nonce_replay_reverts() public {
@@ -712,7 +717,8 @@ contract ScatterSettlementTest is Test {
 
     function test_cancel_order() public {
         settlement.cancelOrder(42);
-        assertTrue(settlement.nonces(address(this), 42));
+        // NonceState: 0=Unused, 1=Settled, 2=Cancelled
+        assertEq(uint8(settlement.nonces(address(this), 42)), 2);
     }
 
     function test_cancel_already_consumed_reverts() public {
