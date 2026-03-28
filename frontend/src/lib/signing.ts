@@ -49,9 +49,18 @@ const EIP712_TYPES = {
   ],
 };
 
+/**
+ * Compute claimHash matching the contract: keccak256(abi.encodePacked(secret, recipient))
+ * If secret is a raw hex bytes32 (0x..., 66 chars), use it directly.
+ * If secret is a human-readable password string, hash it first.
+ */
+export function toSecretBytes(secret: string): string {
+  if (secret.startsWith("0x") && secret.length === 66) return secret;
+  return ethers.keccak256(ethers.toUtf8Bytes(secret));
+}
+
 export function computeClaimHash(secret: string, recipient: string): string {
-  const secretBytes = ethers.keccak256(ethers.toUtf8Bytes(secret));
-  return ethers.keccak256(ethers.solidityPacked(["bytes32", "address"], [secretBytes, recipient]));
+  return ethers.keccak256(ethers.solidityPacked(["bytes32", "address"], [toSecretBytes(secret), recipient]));
 }
 
 export async function signOrder(

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
+import { toSecretBytes } from "@/lib/signing";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
@@ -15,7 +16,7 @@ interface ClaimPreview {
   status: "claimable" | "locked" | "claimed" | "not_found";
 }
 
-export default function ClaimList() {
+function ClaimListInner() {
   const { account, signer, readProvider } = useWallet();
   const searchParams = useSearchParams();
   const [secret, setSecret] = useState("");
@@ -31,19 +32,19 @@ export default function ClaimList() {
     }
   }, [searchParams]);
 
-  // Preview claim status when secret + account are available
+  // Preview claim status with debounce to avoid excessive RPC calls
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   useEffect(() => {
     if (!secret || !account || !readProvider) {
       setPreview(null);
       return;
     }
 
-    const loadPreview = async () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
       try {
         const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-        const secretBytes = secret.startsWith("0x")
-          ? secret
-          : ethers.keccak256(ethers.toUtf8Bytes(secret));
+        const secretBytes = toSecretBytes(secret);
         const claimHash = ethers.keccak256(
           ethers.solidityPacked(["bytes32", "address"], [secretBytes, account])
         );
@@ -72,9 +73,9 @@ export default function ClaimList() {
       } catch {
         setPreview(null);
       }
-    };
+    }, 500);
 
-    loadPreview();
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [secret, account, readProvider]);
 
   const handleClaim = async () => {
@@ -85,10 +86,7 @@ export default function ClaimList() {
     try {
       if (!secret) throw new Error("Secret is required");
       const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
-      const secretBytes = secret.startsWith("0x")
-        ? secret
-        : ethers.keccak256(ethers.toUtf8Bytes(secret));
-      const tx = await settlement.claimRelease(secretBytes);
+      const tx = await settlement.claimRelease(toSecretBytes(secret));
       await tx.wait();
       setStatus("success");
       setSecret("");
@@ -155,5 +153,13 @@ export default function ClaimList() {
       {status === "success" && <p className="text-green-400 text-sm">Claimed successfully!</p>}
       {status === "error" && <p className="text-red-400 text-sm">{error}</p>}
     </div>
+  );
+}
+
+export default function ClaimList() {
+  return (
+    <Suspense fallback={<p className="text-gray-500 text-sm">Loading...</p>}>
+      <ClaimListInner />
+    </Suspense>
   );
 }
