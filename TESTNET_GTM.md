@@ -50,6 +50,7 @@ Build a **[My Scatter Status Board]** that visually shows:
 - [x] Gasless claim frontend UI — PR #27
 - [x] Paper enhancement (Dual-CA, MLS model, formal proofs) — PR #23
 - [x] All security issues resolved (H-1/2, M-1/3/4/5, L-1/2/3/4)
+- [x] Multicall3 batch query optimization — PR #26
 
 ### Phase 1: Core Demo (Week 1-2)
 - [ ] Deploy ScatterSettlement + RelayerRegistry + IdentityGate to Base Sepolia
@@ -61,7 +62,7 @@ Build a **[My Scatter Status Board]** that visually shows:
 - [ ] My Scatter Dashboard with split visualization
 - [ ] Time-delay progress bars
 - [ ] Mock zk-X509 badge flow
-- [ ] Multicall batch query optimization
+- [x] ~~Multicall batch query optimization~~ (done in PR #26)
 
 ### Phase 3: Community Testing (Week 5-6)
 - [ ] Public testnet launch announcement
