@@ -53,7 +53,7 @@ By concentrating all privacy guarantees in the settlement layer, we eliminate th
 
 This paper makes the following contributions:
 
-1. **Scatter Settlement Mechanism**: We define a new settlement primitive that achieves transaction unlinkability through seven-dimensional dissociation, requiring only hash-locks and time-locks — no zero-knowledge proofs.
+1. **Scatter Settlement Mechanism**: We define a new settlement primitive (the mechanism is called *Scatter Settlement*; the DEX system implementing it is called *ScatterDEX*) that achieves transaction unlinkability through seven-dimensional dissociation, requiring only hash-locks and time-locks — no zero-knowledge proofs.
 
 2. **Formal Anonymity Model**: We provide a mathematical framework for analyzing the anonymity set size as a function of system parameters (TVL, transaction rate, split count, time delay), and prove bounds on adversarial linking advantage.
 
@@ -102,7 +102,7 @@ Our approach differs fundamentally: rather than applying symmetric compliance to
 
 ### 2.6 Relayer Trust and Collusion in Off-chain DEXs
 
-In 0x Protocol [6] and CoW Protocol [7], relayers (or solvers) operate anonymously and possess full visibility into order data. If compromised, these anonymous intermediaries can leak trade details with no accountability. Prior analyses of MEV and order flow exploitation [10, 18, 20] have extensively studied adversarial relayer behavior but focus on front-running and sandwich attacks rather than privacy leakage from relayer collusion.
+In 0x Protocol [6] and CoW Protocol [7], relayers (or solvers) operate anonymously and possess full visibility into order data. If compromised, these anonymous intermediaries can leak trade details with no accountability. Prior analyses of MEV and order flow exploitation [10, 11, 18, 20] have extensively studied adversarial relayer behavior but focus on front-running and sandwich attacks rather than privacy leakage from relayer collusion.
 
 Our work addresses this gap by introducing a **regulated relayer model** inspired by traditional intermediary structures — particularly the real estate Multiple Listing Service (MLS), where agents cooperate on listings while remaining individually accountable. The Dual-CA architecture (Section 3.2) formalizes this by requiring relayers to be publicly identified legal entities, shifting the trust model from anonymous infrastructure to accountable intermediaries.
 
@@ -150,21 +150,20 @@ This design achieves the paper's central thesis: **privacy and compliance coexis
 **Registration Flow:**
 
 ```
-Relayer Registration:
-  1. Operator obtains certificate from Relayer CA
-     (e.g., licensed financial intermediary, registered legal entity)
-  2. Operator calls RelayerRegistry.register(cert, stake)
-     - Contract verifies certificate via Relayer CA root
+Relayer Registration (current implementation + planned CA extension):
+  1. Operator calls RelayerRegistry.register(url, fee) with staked ETH
      - Contract verifies minimum stake requirement
-     - Organization name, jurisdiction stored on-chain (publicly queryable)
+     - URL and fee schedule stored on-chain (publicly queryable)
+  2. [Planned] Relayer CA certificate verification: organization name,
+     jurisdiction, and license stored on-chain via extended register(cert, url, fee)
   3. Users query RelayerRegistry to inspect relayer identities
      before selecting which relayer(s) to route orders to
 
-User Registration:
-  1. User obtains certificate from User CA
-     (e.g., KYC-verified individual)
-  2. User calls IdentityGate.verify(zkProof)
-     - Contract verifies ZK proof of valid certificate
+User Registration (current implementation + planned CA extension):
+  1. User completes verification with the underlying Identity Registry
+     (e.g., via zk-X509 proof submission to an IIdentityRegistry implementation)
+  2. On-chain contracts call IdentityGate.isVerified(user)
+     - IdentityGate is a read-only wrapper around the Identity Registry
      - No identity fields revealed on-chain
 ```
 
@@ -221,13 +220,12 @@ Phase 5: Refund        — Depositor reclaims unclaimed funds after expiry (on-c
 ### 4.2 Data Structures
 
 ```
-ClaimSchedule {
-    bytes32 claimHash;      // H(secret, recipientAddress)
-    address token;          // Token to be claimed
-    uint256 amount;         // Amount to be claimed
-    uint256 releaseTime;    // Earliest claim time (block.timestamp + delay)
-    uint256 claimExpiry;    // Deadline for claim; after this, depositor can refund
-    bool    claimed;        // Claim status
+// claimHash is used as the mapping key: mapping(bytes32 => ClaimSchedule)
+// This eliminates one storage slot, packing ClaimSchedule into 2 slots.
+ClaimSchedule {                         // Packed into 2 storage slots
+    address token;    uint48 releaseTime; bool claimed;  // slot 0 (27 bytes)
+    address depositor; uint96 amount;   // slot 1 (32 bytes)
+    // claimExpiry is derived as releaseTime + REFUND_WINDOW (not stored)
 }
 
 Order {                     // EIP-712 signed, off-chain only
@@ -239,7 +237,7 @@ Order {                     // EIP-712 signed, off-chain only
     uint256 maxFee;         // Max relayer fee in basis points (e.g., 30 = 0.3%)
     uint256 expiry;
     uint256 nonce;
-    Claim[] claims;         // [{claimHash, amount, releaseDelay}, ...]
+    ClaimInfo[] claims;     // [{claimHash, amount, releaseDelay}, ...]
 }
 ```
 
@@ -279,16 +277,23 @@ Depositor can withdraw unmatched funds at any time:
 **Phase 3: Settle**
 
 ```
-Any party with valid order data calls settle(makerSig, takerSig, makerOrder, takerOrder):
+Registered active relayer calls settle(makerSig, takerSig, makerOrder, takerOrder, actualFee):
+    require RelayerRegistry.isActiveRelayer(msg.sender)
+    require actualFee <= RelayerRegistry.getFee(msg.sender)  // relayer's registered fee cap
     verify EIP-712 signatures
     verify nonces not yet consumed
-    verify price compatibility: makerOrder.buyAmount/sellAmount ≤ takerOrder.sellAmount/buyAmount
+    verify price compatibility: makerOrder.sellAmount * takerOrder.sellAmount
+                                <= makerOrder.buyAmount * takerOrder.buyAmount
     verify escrow balances sufficient
 
-    // Calculate and deduct relayer fee (capped by user-signed maxFee)
-    makerFee = makerOrder.sellAmount * actualFee / 10000
-    require actualFee <= makerOrder.maxFee
-    transfer(makerFee, msg.sender)  // fee to relayer (settle caller)
+    // Calculate and split fees on BOTH sides (capped by user-signed maxFee)
+    require actualFee <= makerOrder.maxFee AND actualFee <= takerOrder.maxFee
+    for each side (maker, taker):
+        totalFee = sellAmount * actualFee / 10000
+        protocolCut = totalFee * protocolFeeBps / 10000
+        relayerCut = totalFee - protocolCut
+        transfer(relayerCut, msg.sender)        // relayer share
+        transfer(protocolCut, PROTOCOL_TREASURY) // protocol share
 
     deduct escrow[maker][sellToken] -= makerOrder.sellAmount
     deduct escrow[taker][sellToken] -= takerOrder.sellAmount
@@ -298,12 +303,13 @@ Any party with valid order data calls settle(makerSig, takerSig, makerOrder, tak
         create ClaimSchedule {
             claimHash: claim.claimHash,
             token: takerOrder.sellToken,    // maker receives taker's token
-            amount: claim.amount,
-            releaseTime: now + claim.releaseDelay,
-            claimExpiry: now + claim.releaseDelay + REFUND_WINDOW,
-            claimed: false
+            amount: uint96(claim.amount),
+            releaseTime: uint48(now + claim.releaseDelay),
+            claimed: false,
+            depositor: makerOrder.maker
         }
     // symmetric for taker's claims
+    // Note: claimExpiry is derived as releaseTime + REFUND_WINDOW, not stored
 
     emit Settled(matchId, claimScheduleIds[])
 ```
@@ -314,50 +320,66 @@ Scatter Settlement supports two claim modes to preserve recipient privacy:
 
 **Mode A — Direct Claim** (recipient has gas):
 ```
-Recipient R calls claimRelease(scheduleId, secret):
-    schedule = schedules[scheduleId]
-    require block.timestamp >= schedule.releaseTime
+Recipient R calls claimRelease(secret):
+    claimHash = H(secret, msg.sender)
+    schedule = schedules[claimHash]       // claimHash is the mapping key
+    require schedule.amount > 0
     require !schedule.claimed
-    require H(secret, msg.sender) == schedule.claimHash
+    require block.timestamp >= schedule.releaseTime
 
     schedule.claimed = true
     transfer(schedule.token, schedule.amount, msg.sender)
 
-    emit Claimed(scheduleId, msg.sender, schedule.token, schedule.amount)
+    emit Claimed(claimHash, msg.sender, schedule.token, schedule.amount)
 ```
 
 **Mode B — Gasless Meta-Transaction Claim** (recipient has no gas):
 
-A fresh recipient address has no ETH for gas. Funding it from an existing wallet creates an on-chain link that destroys privacy. To solve this, the contract supports meta-transaction claims where **any third-party gas payer** (a dedicated Gas Relay service such as Gelato/Biconomy, an ERC-4337 Paymaster, or any willing EOA) submits the transaction on behalf of the recipient:
+A fresh recipient address has no ETH for gas. Funding it from an existing wallet creates an on-chain link that destroys privacy. To solve this, the contract supports EIP-712 meta-transaction claims where a designated gas payer submits the transaction on behalf of the recipient:
 
 ```
-Recipient R signs off-chain: claimRequest = {scheduleId, secret, recipient, gasFeeAmount}
-Any gas payer G calls claimReleaseFor(scheduleId, secret, recipient, gasFeeAmount, recipientSig):
-    verify recipientSig over (scheduleId, secret, recipient, gasFeeAmount)
-    require H(secret, recipient) == schedule.claimHash
+Recipient R signs EIP-712 off-chain:
+    GaslessClaim { secret, recipient, relayer, relayerTip, deadline, nonce }
 
-    schedule.claimed = true
-    transfer(schedule.token, schedule.amount - gasFeeAmount, recipient)  // net to recipient
-    transfer(schedule.token, gasFeeAmount, msg.sender)                  // gas compensation to G
+Designated relayer G calls claimReleaseFor(secret, recipient, relayerTip, deadline, recipientSig):
+    require block.timestamp <= deadline
+    verify EIP-712 recipientSig over (secret, recipient, msg.sender, relayerTip, deadline, nonce)
+    require signer == recipient
+    increment gaslessNonces[recipient]
 
-    emit Claimed(scheduleId, recipient, schedule.token, schedule.amount)
+    claimHash = H(secret, recipient)
+    schedule = schedules[claimHash]
+    validate and mark claimed
+
+    transfer(schedule.token, schedule.amount - relayerTip, recipient)  // net to recipient
+    transfer(schedule.token, relayerTip, msg.sender)                   // gas compensation
+
+    emit ClaimedFor(claimHash, recipient, msg.sender, token, recipientAmount, relayerTip)
 ```
 
-The gas payer G is **not** the relayer — relayers match orders and call `settle()`, which is a separate role. G is any party willing to submit the claim transaction in exchange for a small token-denominated fee. The recipient pays this compensation from the claimed tokens (e.g., USDC), eliminating the need to fund the fresh address with ETH. This preserves the address isolation property: the fresh recipient address never needs to receive ETH from any external source.
+**Security properties of Mode B:**
+- **Relayer binding**: The recipient's signature binds to a specific `msg.sender` (relayer), preventing mempool tip theft by other parties
+- **Deadline**: Time-bounded signatures prevent indefinite replay
+- **Nonce**: `gaslessNonces[recipient]` prevents signature reuse; recipients can cancel via `cancelGaslessClaimFor()`
+- **Tip cap**: `relayerTip` cannot exceed the claim amount
+
+The gas payer may be any registered relayer or dedicated gas relay service. The recipient pays compensation from claimed tokens (e.g., USDC), eliminating the need to fund the fresh address with ETH. This preserves the address isolation property: the fresh recipient address never needs to receive ETH from any external source.
 
 **Phase 5: Refund (if unclaimed)**
 
 ```
-Original depositor calls refundUnclaimed(scheduleId):
-    schedule = schedules[scheduleId]
-    require block.timestamp >= schedule.claimExpiry
+Original depositor calls refundUnclaimed(claimHash):
+    schedule = schedules[claimHash]
+    require schedule.amount > 0
     require !schedule.claimed
+    require block.timestamp >= schedule.releaseTime + REFUND_WINDOW
+    require msg.sender == schedule.depositor
 
     schedule.claimed = true  // prevent double-refund
-    escrow[originalDepositor][schedule.token] += schedule.amount
+    escrow[schedule.depositor][schedule.token] += schedule.amount
     // funds return to depositor's escrow, can then withdraw()
 
-    emit Refunded(scheduleId, originalDepositor, schedule.amount)
+    emit Refunded(claimHash, schedule.depositor, schedule.amount)
 ```
 
 **Fund Recovery Guarantee**: At no point can user funds be permanently locked. Before settlement: `withdraw()`. After settlement: recipients claim, or depositor calls `refundUnclaimed()` after expiry.
@@ -394,13 +416,13 @@ Oracle Manipulation Vulnerable        N/A            N/A
 
 ### 5.2 Why Limit Orderbooks Resist MEV
 
-**Theorem 3.** In a limit orderbook with fixed-price orders, sandwich attacks provide zero expected profit.
+**Theorem 5.1.** In a limit orderbook with fixed-price orders, sandwich attacks provide zero expected profit.
 
 *Proof sketch*: A sandwich attack profits by moving the price up (front-run buy), letting the victim trade at a worse price, then moving the price down (back-run sell) [10, 19]. In a limit orderbook, a buy order at price P executes at exactly P regardless of other orders. There is no price impact curve to exploit. An attacker who places a sell order at P-1 merely sells at a worse price, losing money. □
 
 ### 5.3 Why Off-chain Orders Prevent Front-running
 
-**Theorem 4.** An adversary with access to the L2 mempool cannot front-run orders in our architecture.
+**Theorem 5.2.** An adversary with access to the L2 mempool cannot front-run orders in our architecture.
 
 *Proof sketch*: Orders exist as off-chain EIP-712 signatures transmitted to relayers via private channels. The only on-chain transactions are `deposit()` (reveals intent to trade but not direction, price, or counterparty) and `settle()` (reveals matched result after both parties committed). By the time `settle()` appears in the mempool, the trade is already matched and both parties' escrow is locked. □
 
@@ -464,7 +486,7 @@ where |AS| is the anonymity set size and ε(λ) is negligible in the security pa
 
 Let T be the set of token types and k be the average number of splits per order. For a claim `c = (token_B, amount, t_claim)`, the anonymity set |AS(c)| is bounded by Omega(N * (1 - 1/|T|)), as cross-token conversions allow deposits of any token to be the source of a claim for another token.
 
-**Theorem 1.** For any PPT adversary A playing `Game_UNLINK` with on-chain omniscience, the advantage is bounded by:
+**Theorem 6.1.** For any PPT adversary A playing `Game_UNLINK` with on-chain omniscience, the advantage is bounded by:
 
 ```
 Adv_UNLINK(A) ≤ ε_pre + ε_amount + ε_timing + ε_addr
@@ -474,11 +496,11 @@ Adv_UNLINK(A) ≤ ε_pre + ε_amount + ε_timing + ε_addr
 
 **Game 0:** The real `Game_UNLINK(A, λ)`.
 
-**Game 1 (ClaimHash Indistinguishability):** We replace `claimHash` with a random oracle output. By the pre-image resistance of Keccak-256 (Section 6.1), the transition difference is bounded by ε_pre = q^2/2^256, which is negligible.
+**Game 1 (ClaimHash Indistinguishability):** Under the Random Oracle Model, we replace `claimHash = H(secret, recipient)` with the output of an ideal random oracle H_ro. Since secret is drawn uniformly at random and unknown to the adversary (Section 6.1), Keccak-256 outputs are indistinguishable from random. The transition difference is bounded by ε_pre = O(q^2/2^256) for q oracle queries, which is negligible.
 
 **Game 2 (Amount Decorrelation):** The adversary attempts to correlate deposit amounts with claim amounts.
 
-**Lemma 1 (Amount Entropy).** Let S = {s_1, ..., s_k} be the split amounts where each s_i is drawn from a continuous distribution over (0, V) subject to Sigma(s_i) = V. The entropy of the split configuration is:
+**Lemma 6.1 (Amount Entropy).** Let S = {s_1, ..., s_k} be the split amounts where each s_i is drawn from a continuous distribution over (0, V) subject to sum_{i=1}^{k} s_i = V. The entropy of the split configuration is:
 
 ```
 H(S) = (k-1) * log_2(V) - log_2((k-1)!)
@@ -560,7 +582,7 @@ A relayer necessarily knows order content (tokens, amounts, prices, claimHash va
 | Front-run orders | **No** | Settlement requires both maker and taker EIP-712 signatures |
 | Charge excessive fees | **No** | Capped by user-signed `maxFee` |
 
-**The critical insight**: The relayer can link a depositor's *on-chain address* to a set of claimHash values. But the *recipients* claim using fresh addresses, and `claimHash = H(secret, recipient)` conceals the recipient until claim time. The relayer learns "address 0xAlice created a trade that produced claims," but the physical destination of funds (cold storage, merchant, counterparty) remains opaque behind fresh addresses. This is analogous to a real estate agent knowing "the seller listed a property" — the agent cannot determine who ultimately occupies the house if the buyer uses a new legal entity.
+**The critical insight**: The relayer can link a depositor's *on-chain address* to a set of claimHash values. But the *recipients* claim using fresh addresses, and `claimHash = H(secret, recipient)` conceals the recipient until claim time. The relayer learns "address 0xAlice created a trade that produced claims," but the physical destination of funds (cold storage, merchant, counterparty) remains opaque behind fresh addresses [16, 29]. This is analogous to a real estate agent knowing "the seller listed a property" — the agent cannot determine who ultimately occupies the house if the buyer uses a new legal entity.
 
 #### 6.5.3 Formal Collusion Analysis
 
@@ -586,7 +608,7 @@ Game_COLLUSION(A, L, λ):
   claimHash remains hidden until claim time (fresh address).
 ```
 
-**Theorem 2 (Residual Privacy under Collusion).** Assume a user routes their order to a single relayer chosen uniformly at random from R active relayers. With m colluding relayers:
+**Theorem 6.2 (Residual Privacy under Collusion).** Assume a user routes their order to a single relayer chosen uniformly at random from R active relayers. With m colluding relayers:
 
 ```
 Adv_COLLUSION(A) ≤ m / R
@@ -614,7 +636,7 @@ Reputational: Users actively choose relayers by track record
               A single leak event destroys future order flow
 ```
 
-Our formal model (Definition 5, Theorem 2) analyzes the worst-case adversarial relayer. In practice, the MLS cooperation model (Section 6.5.1) and Dual-CA accountability (Section 3.2) provide economic and legal deterrence that keep the practical collusion probability well below the theoretical m/R bound. ■
+Our formal model (Definition 5, Theorem 6.2) analyzes the worst-case adversarial relayer. In practice, the MLS cooperation model (Section 6.5.1) and Dual-CA accountability (Section 3.2) provide economic and legal deterrence that keep the practical collusion probability well below the theoretical m/R bound. ■
 
 **Comparative Collusion Resistance:**
 
@@ -708,9 +730,11 @@ This separation of concerns means relayers can freely cooperate, share order flo
 | Relayer model | N/A | Anonymous | Anonymous | N/A | **Public (Dual-CA) + MLS cooperation** |
 | Identity check | None | None | None | None | **Dual-CA (User masked / Relayer public)** |
 | MEV resistance | None | Partial | Full | Partial | **Sandwich + front-run immune** |
-| Gas per trade | ~150K | ~100K | ~500K+ | ~300K+ | **~569K** |
+| Gas per trade* | ~150K | ~100K | ~500K+ | ~300K+ | **~569K** |
 | ZK circuits needed | 0 | 0 | 0 (MPC) | Many | **0** |
 | Audit surface | Small | Small | Large (MPC) | Large (ZK) | **Small** |
+
+*\*Gas per trade: Values for Uniswap and 0x represent single swap operations. Values for Renegade and Railgun represent single private transfers (~300K+ per operation). ScatterDEX's ~569K represents a full end-to-end trade with 4 claims. For an apples-to-apples comparison of equivalent end-to-end trade scenarios, see Section 8.2 where Tornado Cash totals ~2.2M and Railgun totals ~1.7M gas.*
 
 ### 7.2 DEX Architecture Evolution
 
@@ -742,9 +766,9 @@ We position our work as a "Gen 5" DEX that learns from Gen 3's off-chain efficie
 
 We implement Scatter Settlement as a Solidity smart contract (Solidity 0.8.28, optimizer enabled at 200 runs) using the Foundry framework. The implementation consists of:
 
-- `ScatterSettlement.sol`: Core settlement contract (~407 lines)
-- `IdentityGate.sol`: User zk-X509 authentication via User CA (max masking) (~27 lines)
-- `RelayerRegistry.sol`: Relayer zk-X509 certification via Relayer CA (min masking), staking, and lifecycle management (~180 lines)
+- `ScatterSettlement.sol`: Core settlement contract (~385 lines)
+- `IdentityGate.sol`: Read-only access gate delegating to an external `IIdentityRegistry`; the zk-X509 User CA verification is assumed to be provided by the registry implementation (~27 lines)
+- `RelayerRegistry.sol`: Relayer registration, staking, fee management, and lifecycle; the Relayer CA certificate verification and on-chain identity storage described in Section 3.2 are designed as external components to be integrated (~180 lines)
 - EIP-712 order signing library
 
 ### 8.2 Gas Cost Comparison
@@ -762,7 +786,7 @@ Gas costs measured via Foundry's `gasleft()` instrumentation on a local EVM (Sol
 | **Total (1 trade, 4 claims)** | **~569K gas** | **~2.2M gas** | **~1.7M gas** |
 | Privacy approach | Hash-lock + time-lock | ZK Merkle proof | zk-SNARK |
 
-The dominant cost is `settle()` at ~286K gas, driven primarily by 8 storage writes (4 claim schedules × 2 packed storage slots each). Key optimization: using `claimHash` as the mapping key eliminates one storage slot per schedule. Scatter Settlement is **~67–74% cheaper** than ZK-based alternatives.
+The dominant cost is `settle()` at ~286K gas, driven primarily by 8 storage writes (4 claim schedules × 2 packed storage slots each). Key optimization: `claimHash` is used as the `mapping(bytes32 => ClaimSchedule)` key instead of being stored in the struct, reducing each schedule from 3 storage slots to 2. Combined with a single batched `getSettlementInfo()` call to `RelayerRegistry`, this saves ~110K gas per settlement vs an unoptimized version. Scatter Settlement is **~67–74% cheaper** than ZK-based alternatives.
 
 ### 8.3 Anonymity Set Comparison
 
@@ -926,13 +950,13 @@ Gas (K)
 
 ### 9.1 Limitations
 
-**Off-chain data visibility**: Relayers necessarily possess EIP-712 signed order data including `claimHash` values — this is required for order matching. As analyzed in Section 6.5, a relayer can link a depositor's *address* to a set of claimHash values via `ecrecover`. However, as Section 6.5.2 demonstrates, this knowledge does not compromise user privacy in practice: recipients claim via fresh addresses, funds cannot be stolen or redirected, and the relayer cannot identify the real-world entity behind a fresh address. The relayer's knowledge of order data is analogous to a real estate agent knowing listing details — necessary for the service, but not a privacy threat when the buyer uses a new legal entity (Section 6.5.1). Multi-relayer partitioning (Theorem 2, m/R bound), fresh address isolation, and Dual-CA legal accountability (Section 3.2) provide layered defense.
+**Off-chain data visibility**: Relayers necessarily possess EIP-712 signed order data including `claimHash` values — this is required for order matching. As analyzed in Section 6.5, a relayer can link a depositor's *address* to a set of claimHash values via `ecrecover`. However, as Section 6.5.2 demonstrates, this knowledge does not compromise user privacy in practice: recipients claim via fresh addresses, funds cannot be stolen or redirected, and the relayer cannot identify the real-world entity behind a fresh address. The relayer's knowledge of order data is analogous to a real estate agent knowing listing details — necessary for the service, but not a privacy threat when the buyer uses a new legal entity (Section 6.5.1). Multi-relayer partitioning (Theorem 6.2, m/R bound), fresh address isolation, and Dual-CA legal accountability (Section 3.2) provide layered defense.
 
 **Low-traffic vulnerability**: With very few concurrent users, statistical analysis may narrow the anonymity set significantly. Protocol-level mitigations (minimum delays, batching) help but cannot fully resolve this fundamental limitation shared by all privacy systems.
 
 **Recipient address revelation**: While claimHash conceals the recipient pre-claim, the claim transaction itself reveals the recipient address. Post-claim, the address is permanently visible on-chain. Fresh single-use addresses mitigate real-world identity exposure but require careful UX design.
 
-**Gas funding for fresh addresses**: A fresh recipient address has no ETH for gas fees. Naively funding it from an existing wallet creates an on-chain link that destroys the privacy gained from address separation. Scatter Settlement addresses this via gasless meta-transaction claims (Section 4.3, Phase 4 Mode B): the recipient signs a claim request off-chain, a relayer submits it on their behalf, and gas compensation is deducted from the claimed tokens. This eliminates the need for the fresh address to ever receive ETH from an external source, preserving the address isolation property.
+**Gas funding for fresh addresses**: A fresh recipient address has no ETH for gas fees. Naively funding it from an existing wallet creates an on-chain link that destroys the privacy gained from address separation. Scatter Settlement addresses this via gasless meta-transaction claims (Section 4.3, Phase 4 Mode B): the recipient signs an EIP-712 claim request off-chain binding a specific gas payer, that gas payer submits it on their behalf, and gas compensation (relayerTip) is deducted from the claimed tokens. This eliminates the need for the fresh address to ever receive ETH from an external source, preserving the address isolation property.
 
 ### 9.2 Comparison with ZK-based Approaches
 
@@ -946,7 +970,7 @@ Scatter Settlement:      Statistical guarantee, traffic-dependent
                          But: no ZK needed, cheap gas, simple implementation
 ```
 
-This is analogous to the distinction between information-theoretic and computational security [12] — both are valid approaches with different trade-off profiles. Recent surveys [23] confirm that the DeFi ecosystem increasingly favors practical privacy solutions over theoretically optimal but gas-prohibitive alternatives.
+This is analogous to the distinction between information-theoretic and computational security [12, 17] — both are valid approaches with different trade-off profiles. Recent surveys [23] confirm that the DeFi ecosystem increasingly favors practical privacy solutions over theoretically optimal but gas-prohibitive alternatives.
 
 ### 9.3 Regulatory Implications
 
@@ -966,9 +990,9 @@ This "compliant privacy" model may represent a viable middle ground in the ongoi
 
 We presented Scatter Settlement, a settlement mechanism that achieves transaction unlinkability through seven-dimensional dissociation without relying on zero-knowledge proofs. Our construction uses only hash-locks and time-locks — well-understood cryptographic primitives — to dissociate deposits from withdrawals across token type, amount, address, time, transaction mixing, pre-claim concealment, and recipient consent. Empirical evaluation demonstrates **~67-74% gas cost reduction** compared to ZK-based alternatives while maintaining comparable privacy guarantees under realistic traffic conditions.
 
-Our formal analysis (Theorem 1) shows that the anonymity set grows with cross-token traffic volume, providing a natural "network effect" for privacy. The combination of limit orderbooks with off-chain matching and delayed settlement provides structural sandwich and front-running immunity — an additional benefit arising naturally from the privacy-first design.
+Our formal analysis (Theorem 6.1) shows that the anonymity set grows with cross-token traffic volume, providing a natural "network effect" for privacy. The combination of limit orderbooks with off-chain matching and delayed settlement provides structural sandwich and front-running immunity — an additional benefit arising naturally from the privacy-first design.
 
-A key architectural contribution is the **multi-relayer MLS (Multiple Listing Service) model**, where relayers cooperate to maximize matching liquidity — analogous to real estate agents sharing listings. Unlike prior systems where relayer cooperation degrades privacy, Scatter Settlement's privacy is structurally guaranteed by `claimHash` and fresh recipient addresses, making relayer cooperation a feature rather than a threat (Theorem 2).
+A key architectural contribution is the **multi-relayer MLS (Multiple Listing Service) model**, where relayers cooperate to maximize matching liquidity — analogous to real estate agents sharing listings. Unlike prior systems where relayer cooperation degrades privacy, Scatter Settlement's privacy is structurally guaranteed by `claimHash` and fresh recipient addresses, making relayer cooperation a feature rather than a threat (Theorem 6.2).
 
 To reconcile privacy with regulatory compliance, we introduced the **Dual-CA architecture**: a privacy-preserving User CA (masked identity) paired with an accountability-maximizing Relayer CA (public legal entity). This positions relayers as regulated intermediaries with post-hoc disclosure obligations to law enforcement — providing a legal investigation channel without a cryptographic backdoor. Critically, this avoids the fate of Tornado Cash (sanctioned as an entire protocol due to absent intermediary accountability) by placing compliance responsibility on identifiable relayer entities rather than the protocol itself.
 
