@@ -31,8 +31,11 @@ export default function EscrowBalance() {
     setLoading(true);
 
     try {
+      // Filter invalid addresses before encoding to prevent batch failure
+      const validTokens = tokens.filter((addr) => ethers.isAddress(addr));
+
       // Batch all calls: per token = symbol + decimals + deposits + balanceOf = 4 calls
-      const requests = tokens.flatMap((addr) => [
+      const requests = validTokens.flatMap((addr) => [
         { target: addr, callData: encodeCall(ERC20_IFACE, "symbol", []) },
         { target: addr, callData: encodeCall(ERC20_IFACE, "decimals", []) },
         { target: SETTLEMENT_ADDRESS, callData: encodeCall(SETTLEMENT_IFACE, "deposits", [account, addr]) },
@@ -41,18 +44,17 @@ export default function EscrowBalance() {
 
       const mcResults = await multicall(readProvider, requests);
 
-      const results = tokens.map((addr, i) => {
+      const results = validTokens.map((addr, i) => {
         const base = i * 4;
         try {
+          // symbol + decimals are required — skip token entirely if they fail
           if (!mcResults[base].success || !mcResults[base + 1].success) return null;
+          // deposits + balanceOf failure → also skip (don't show misleading 0)
+          if (!mcResults[base + 2].success || !mcResults[base + 3].success) return null;
           const symbol = decodeResult(ERC20_IFACE, "symbol", mcResults[base].returnData)[0] as string;
           const decimals = Number(decodeResult(ERC20_IFACE, "decimals", mcResults[base + 1].returnData)[0]);
-          const escrow = mcResults[base + 2].success
-            ? (decodeResult(SETTLEMENT_IFACE, "deposits", mcResults[base + 2].returnData)[0] as bigint)
-            : BigInt(0);
-          const wallet = mcResults[base + 3].success
-            ? (decodeResult(ERC20_IFACE, "balanceOf", mcResults[base + 3].returnData)[0] as bigint)
-            : BigInt(0);
+          const escrow = decodeResult(SETTLEMENT_IFACE, "deposits", mcResults[base + 2].returnData)[0] as bigint;
+          const wallet = decodeResult(ERC20_IFACE, "balanceOf", mcResults[base + 3].returnData)[0] as bigint;
           return { address: addr, symbol, decimals, escrow, wallet };
         } catch {
           return null;

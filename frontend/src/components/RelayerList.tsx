@@ -39,6 +39,7 @@ export default function RelayerList() {
         }));
         const mcResults = await multicall(readProvider, requests);
 
+        const failedCount = mcResults.filter((r) => !r.success).length;
         const data = addresses.map((addr, i) => {
           if (!mcResults[i].success) return null;
           const decoded = decodeResult(RELAYER_REGISTRY_IFACE, "relayers", mcResults[i].returnData);
@@ -53,7 +54,7 @@ export default function RelayerList() {
         }).filter((r): r is RelayerData => r !== null);
 
         setRelayers(data);
-        setError("");
+        setError(failedCount > 0 ? `${failedCount} relayer(s) failed to load` : "");
 
         const saved = localStorage.getItem("scatter-relayer-url");
         if (saved) setSelected(saved);

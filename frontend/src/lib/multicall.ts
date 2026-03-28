@@ -11,7 +11,6 @@ const MULTICALL3_ABI = [
 export interface MulticallRequest {
   target: string;
   callData: string;
-  allowFailure?: boolean;
 }
 
 export interface MulticallResult {
@@ -25,6 +24,9 @@ const MAX_BATCH_SIZE = 100;
 /**
  * Batch multiple read-only contract calls into a single RPC request via Multicall3.
  * Automatically chunks large batches. Falls back to individual calls if Multicall3 is unavailable.
+ *
+ * All calls use allowFailure=true semantics — failed calls return { success: false }
+ * instead of reverting the entire batch. Callers must check `result.success` per item.
  */
 export async function multicall(
   provider: ethers.Provider,
@@ -54,15 +56,16 @@ export async function multicall(
       const chunk = requests.slice(i, i + MAX_BATCH_SIZE);
       const calls = chunk.map((r) => ({
         target: r.target,
-        allowFailure: r.allowFailure ?? true,
+        allowFailure: true,
         callData: r.callData,
       }));
       const results: { success: boolean; returnData: string }[] = await mc.aggregate3.staticCall(calls);
       allResults.push(...results.map((r) => ({ success: r.success, returnData: r.returnData })));
     }
     return allResults;
-  } catch {
+  } catch (err) {
     // Multicall3 unavailable (local testnet) — fall back to individual calls
+    console.warn("[multicall] Multicall3 unavailable, falling back to individual calls:", err);
     return Promise.all(
       requests.map(async (r) => {
         try {
