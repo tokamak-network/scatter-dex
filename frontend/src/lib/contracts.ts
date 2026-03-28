@@ -12,7 +12,7 @@ export const SETTLEMENT_ABI = [
   "event Withdrawn(address indexed user, address indexed token, uint256 amount)",
   "event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes)",
   "event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount)",
-  "event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed relayer, address token, uint256 recipientAmount, uint256 relayerTip)",
+  "event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed token, address relayer, uint256 recipientAmount, uint256 relayerTip)",
   "event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount)",
 ];
 

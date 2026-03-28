@@ -53,7 +53,6 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error NotPendingOwner();
     error TipExceedsAmount();
     error SignatureExpired();
-    error InvalidNonce();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -121,7 +120,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // token => whitelisted
     mapping(address => bool) public whitelistedTokens;
 
-    // recipient => gasless claim nonce (incremented on cancel to invalidate outstanding signatures)
+    // recipient => gasless claim nonce (incremented on successful claimReleaseFor and on cancel,
+    // so each gasless claim signature is single-use and cancel invalidates all outstanding signatures)
     mapping(address => uint256) public gaslessNonces;
 
     // ─── Events ──────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes);
     event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount);
-    event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed relayer, address token, uint256 recipientAmount, uint256 relayerTip);
+    event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed token, address relayer, uint256 recipientAmount, uint256 relayerTip);
     event GaslessClaimCancelled(address indexed recipient, uint256 newNonce);
     event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
