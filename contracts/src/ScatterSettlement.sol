@@ -48,6 +48,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error ContractPaused();
     error DuplicateClaimHash();
     error TokenNotWhitelisted();
+    error NotPendingOwner();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -94,6 +95,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     /// @notice Protocol fee in basis points (e.g., 10 = 0.1%). Taken from total fee.
     uint256 public protocolFeeBps;
     address public owner;
+    address public pendingOwner;
     bool public paused;
 
     // depositor => token => amount
@@ -117,6 +119,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event Paused(address account);
     event Unpaused(address account);
@@ -141,8 +144,16 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     function transferOwnership(address newOwner) external {
         if (msg.sender != owner) revert NotOwner();
         if (newOwner == address(0)) revert ZeroAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address oldOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
     }
 
     function setTokenWhitelist(address token, bool allowed) external {
