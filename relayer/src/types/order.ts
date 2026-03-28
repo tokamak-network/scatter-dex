@@ -26,7 +26,7 @@ export type OrderStatus = "pending" | "matched" | "settled" | "cancelled" | "exp
 export interface StoredOrder extends SignedOrder {
   status: OrderStatus;
   submittedAt: number;
-  matchId?: string;
+  claimHashes?: string[];
   settleTxHash?: string;
 }
 

@@ -24,8 +24,8 @@ const SETTLEMENT_ABI = [
   "function deposit(address token, uint256 amount) external",
   "function withdraw(address token, uint256 amount) external",
   "function deposits(address user, address token) external view returns (uint256)",
-  "function scheduleCount() external view returns (uint256)",
-  "function claimRelease(uint256 scheduleId, bytes32 secret) external",
+  "function claimRelease(bytes32 secret) external",
+  "event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes)",
 ];
 
 const ERC20_ABI = [
@@ -207,8 +207,10 @@ describe("E2E Integration: Full Trade Flow", () => {
     const bobUsdc = await settlement.deposits(bob.address, USDC);
     // After successful match+settle, escrow should be 0
     // If relayer is not registered on-chain, orders stay pending and escrow remains
-    const scheduleCount = await settlement.scheduleCount();
-    if (scheduleCount > BigInt(0)) {
+    // Check if settlement happened by querying Settled events
+    const settledFilter = settlement.filters.Settled();
+    const events = await settlement.queryFilter(settledFilter);
+    if (events.length > 0) {
       // Settlement happened — escrow should be depleted
       expect(aliceWeth).toBe(BigInt(0));
       expect(bobUsdc).toBe(BigInt(0));

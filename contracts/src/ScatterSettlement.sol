@@ -35,7 +35,6 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error ScheduleNotFound();
     error AlreadyClaimed();
     error NotYetReleasable();
-    error InvalidSecretOrAddress();
     error ClaimWindowNotExpired();
     error NotDepositor();
     error AmountOverflow();
@@ -47,6 +46,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error NotOwner();
     error FeeExceedsRelayerRegistered();
     error ContractPaused();
+    error DuplicateClaimHash();
+    error TokenNotWhitelisted();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -67,17 +68,15 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         ClaimInfo[] claims;
     }
 
-    // Packed: 3 storage slots (down from 6)
-    // Slot 0: claimHash (bytes32)
-    // Slot 1: token (20) + releaseTime (6) + claimed (1) = 27 bytes
-    // Slot 2: depositor (20) + amount (12) = 32 bytes
+    // Packed: 2 storage slots (claimHash used as mapping key instead of stored in struct)
+    // Slot 0: token (20) + releaseTime (6) + claimed (1) = 27 bytes
+    // Slot 1: depositor (20) + amount (12) = 32 bytes
     struct ClaimSchedule {
-        bytes32 claimHash;       // slot 0
-        address token;           // slot 1: 20 bytes
-        uint48 releaseTime;      // slot 1: 6 bytes
-        bool claimed;            // slot 1: 1 byte
-        address depositor;       // slot 2: 20 bytes
-        uint96 amount;           // slot 2: 12 bytes
+        address token;           // slot 0: 20 bytes
+        uint48 releaseTime;      // slot 0: 6 bytes
+        bool claimed;            // slot 0: 1 byte
+        address depositor;       // slot 1: 20 bytes
+        uint96 amount;           // slot 1: 12 bytes
     }
 
     // ─── EIP-712 TypeHashes ──────────────────────────────────────────
@@ -100,19 +99,22 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // depositor => token => amount
     mapping(address => mapping(address => uint256)) public deposits;
 
-    // scheduleId => ClaimSchedule
-    mapping(uint256 => ClaimSchedule) public schedules;
-    uint256 public scheduleCount;
+    // claimHash => ClaimSchedule (claimHash is the key, not stored in struct)
+    mapping(bytes32 => ClaimSchedule) public schedules;
 
     // maker => nonce => consumed
     mapping(address => mapping(uint256 => bool)) public nonces;
 
+    // token => whitelisted
+    mapping(address => bool) public whitelistedTokens;
+
     // ─── Events ──────────────────────────────────────────────────────
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount);
-    event Settled(uint256 indexed matchId, address indexed maker, address indexed taker, uint256[] scheduleIds);
-    event Claimed(uint256 indexed scheduleId, address indexed recipient, address indexed token, uint256 amount);
-    event Refunded(uint256 indexed scheduleId, address indexed depositor, uint256 amount);
+    event TokenWhitelistUpdated(address indexed token, bool allowed);
+    event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes);
+    event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount);
+    event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
@@ -143,6 +145,13 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         owner = newOwner;
     }
 
+    function setTokenWhitelist(address token, bool allowed) external {
+        if (msg.sender != owner) revert NotOwner();
+        if (token == address(0)) revert ZeroAddress();
+        whitelistedTokens[token] = allowed;
+        emit TokenWhitelistUpdated(token, allowed);
+    }
+
     function setPaused(bool _paused) external {
         if (msg.sender != owner) revert NotOwner();
         paused = _paused;
@@ -152,6 +161,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Deposit & Withdraw ──────────────────────────────────────────
     function deposit(address token, uint256 amount) external nonReentrant {
+        if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (!identityGate.isVerified(msg.sender)) revert NotVerified();
         if (amount == 0) revert ZeroAmount();
 
@@ -187,11 +197,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         uint256 actualFee
     ) external nonReentrant {
         if (paused) revert ContractPaused();
-        // Verify caller is a registered active relayer
-        if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
 
-        // Enforce relayer's registered fee — cannot charge more than advertised
-        if (actualFee > relayerRegistry.getFee(msg.sender)) revert FeeExceedsRelayerRegistered();
+        // Single external call replaces isActiveRelayer() + getFee() + treasury()
+        (bool isActive, uint256 relayerFee, address treasury) = relayerRegistry.getSettlementInfo(msg.sender);
+        if (!isActive) revert NotActiveRelayer();
+        if (actualFee > relayerFee) revert FeeExceedsRelayerRegistered();
 
         _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
 
@@ -203,76 +213,35 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         deposits[makerOrder.maker][makerOrder.sellToken] -= makerOrder.sellAmount;
         deposits[takerOrder.maker][takerOrder.sellToken] -= takerOrder.sellAmount;
 
-        // Split fee: relayer + protocol
-        address treasury = relayerRegistry.treasury();
-        _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, actualFee, treasury);
-        _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, actualFee, treasury);
+        // Split fee: relayer + protocol (cache protocolFeeBps to avoid repeated SLOAD)
+        uint256 cachedProtocolFeeBps = protocolFeeBps;
+        _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, actualFee, treasury, cachedProtocolFeeBps);
+        _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, actualFee, treasury, cachedProtocolFeeBps);
 
-        // Create claim schedules
-        uint256 matchId = scheduleCount;
-        uint256 totalClaims = makerOrder.claims.length + takerOrder.claims.length;
-        uint256[] memory scheduleIds = new uint256[](totalClaims);
-
-        uint256 sid = scheduleCount;
-        uint48 now48 = uint48(block.timestamp);
-
-        // Maker receives taker's sellToken
-        for (uint256 i; i < makerOrder.claims.length; ++i) {
-            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(makerOrder.claims[i], now48);
-            schedules[sid] = ClaimSchedule({
-                claimHash: makerOrder.claims[i].claimHash,
-                token: takerOrder.sellToken,
-                amount: safeAmt,
-                releaseTime: safeTime,
-                claimed: false,
-                depositor: makerOrder.maker
-            });
-            scheduleIds[i] = sid;
-            ++sid;
-        }
-
-        // Taker receives maker's sellToken
-        uint256 makerLen = makerOrder.claims.length;
-        for (uint256 i; i < takerOrder.claims.length; ++i) {
-            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(takerOrder.claims[i], now48);
-            schedules[sid] = ClaimSchedule({
-                claimHash: takerOrder.claims[i].claimHash,
-                token: makerOrder.sellToken,
-                amount: safeAmt,
-                releaseTime: safeTime,
-                claimed: false,
-                depositor: takerOrder.maker
-            });
-            scheduleIds[makerLen + i] = sid;
-            ++sid;
-        }
-
-        scheduleCount = sid;
-
-        emit Settled(matchId, makerOrder.maker, takerOrder.maker, scheduleIds);
+        // Create claim schedules and emit
+        bytes32[] memory claimHashes = _createSchedules(makerOrder, takerOrder);
+        emit Settled(makerOrder.maker, takerOrder.maker, claimHashes);
     }
 
     // ─── Claim ───────────────────────────────────────────────────────
-    function claimRelease(uint256 scheduleId, bytes32 secret) external nonReentrant {
+    function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
-        ClaimSchedule storage schedule = schedules[scheduleId];
+        bytes32 claimHash = keccak256(abi.encodePacked(secret, msg.sender));
+        ClaimSchedule storage schedule = schedules[claimHash];
         uint96 amt = schedule.amount;
         if (amt == 0) revert ScheduleNotFound();
         if (schedule.claimed) revert AlreadyClaimed();
         if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
-        if (keccak256(abi.encodePacked(secret, msg.sender)) != schedule.claimHash) {
-            revert InvalidSecretOrAddress();
-        }
 
         schedule.claimed = true;
         IERC20(schedule.token).safeTransfer(msg.sender, amt);
 
-        emit Claimed(scheduleId, msg.sender, schedule.token, amt);
+        emit Claimed(claimHash, msg.sender, schedule.token, amt);
     }
 
-    // ─── Refund ──────────────────────────────────────────────────────
-    function refundUnclaimed(uint256 scheduleId) external nonReentrant {
-        ClaimSchedule storage schedule = schedules[scheduleId];
+    // ─── Refund (no pause check — refunds must always work to prevent fund lockup) ──
+    function refundUnclaimed(bytes32 claimHash) external nonReentrant {
+        ClaimSchedule storage schedule = schedules[claimHash];
         uint96 amt = schedule.amount;
         if (amt == 0) revert ScheduleNotFound();
         if (schedule.claimed) revert AlreadyClaimed();
@@ -282,17 +251,57 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         schedule.claimed = true;
         deposits[schedule.depositor][schedule.token] += amt;
 
-        emit Refunded(scheduleId, schedule.depositor, amt);
+        emit Refunded(claimHash, schedule.depositor, amt);
     }
 
     // ─── Internal ────────────────────────────────────────────────────
-    function _splitAndPayFee(address token, uint256 sellAmount, uint256 feeRate, address treasury) internal {
+    function _createSchedules(
+        Order calldata makerOrder,
+        Order calldata takerOrder
+    ) internal returns (bytes32[] memory claimHashes) {
+        uint256 totalClaims = makerOrder.claims.length + takerOrder.claims.length;
+        claimHashes = new bytes32[](totalClaims);
+        uint48 now48 = uint48(block.timestamp);
+
+        // Maker receives taker's sellToken
+        for (uint256 i; i < makerOrder.claims.length; ++i) {
+            bytes32 ch = makerOrder.claims[i].claimHash;
+            if (schedules[ch].amount != 0) revert DuplicateClaimHash();
+            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(makerOrder.claims[i], now48);
+            schedules[ch] = ClaimSchedule({
+                token: takerOrder.sellToken,
+                amount: safeAmt,
+                releaseTime: safeTime,
+                claimed: false,
+                depositor: makerOrder.maker
+            });
+            claimHashes[i] = ch;
+        }
+
+        // Taker receives maker's sellToken
+        uint256 makerLen = makerOrder.claims.length;
+        for (uint256 i; i < takerOrder.claims.length; ++i) {
+            bytes32 ch = takerOrder.claims[i].claimHash;
+            if (schedules[ch].amount != 0) revert DuplicateClaimHash();
+            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(takerOrder.claims[i], now48);
+            schedules[ch] = ClaimSchedule({
+                token: makerOrder.sellToken,
+                amount: safeAmt,
+                releaseTime: safeTime,
+                claimed: false,
+                depositor: takerOrder.maker
+            });
+            claimHashes[makerLen + i] = ch;
+        }
+    }
+
+    function _splitAndPayFee(address token, uint256 sellAmount, uint256 feeRate, address treasury, uint256 cachedProtocolFeeBps) internal {
         uint256 totalFee = (sellAmount * feeRate) / FEE_DENOMINATOR;
         if (totalFee == 0) return;
 
         // NOTE: integer division rounds protocolCut down (at most 1 wei loss).
         // Relayer gets the remainder, so rounding favors the relayer.
-        uint256 protocolCut = (totalFee * protocolFeeBps) / FEE_DENOMINATOR;
+        uint256 protocolCut = (totalFee * cachedProtocolFeeBps) / FEE_DENOMINATOR;
         uint256 relayerCut = totalFee - protocolCut;
 
         if (relayerCut > 0) {
@@ -330,6 +339,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         // Verify token compatibility
         if (makerOrder.sellToken != takerOrder.buyToken) revert TokenMismatch();
         if (makerOrder.buyToken != takerOrder.sellToken) revert TokenMismatch();
+
+        // Verify tokens are whitelisted
+        if (!whitelistedTokens[makerOrder.sellToken]) revert TokenNotWhitelisted();
+        if (!whitelistedTokens[makerOrder.buyToken]) revert TokenNotWhitelisted();
 
         // Verify price compatibility: maker.sell * taker.sell <= maker.buy * taker.buy
         // Solidity 0.8+ reverts on overflow. Practically, uint256 overflow requires

@@ -142,6 +142,12 @@ contract RelayerRegistry {
         return r.active && r.exitRequestedAt == 0;
     }
 
+    /// @notice Single-call getter for settlement validation — avoids 3 separate external calls.
+    function getSettlementInfo(address relayer) external view returns (bool isActive, uint256 fee, address treasury_) {
+        Relayer storage r = relayers[relayer];
+        return (r.active && r.exitRequestedAt == 0, r.fee, treasury);
+    }
+
     function getRelayerCount() external view returns (uint256) {
         return relayerList.length;
     }
