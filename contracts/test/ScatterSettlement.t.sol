@@ -1222,9 +1222,9 @@ contract ScatterSettlementTest is Test {
 
     // ─── Tests: Gasless Claim ──────────────────────────────────────
 
-    function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, uint256 relayerTip) internal view returns (bytes memory) {
+    function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
-            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip)
+            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip, deadline)
         );
         bytes32 domainSeparator = keccak256(
             abi.encode(
@@ -1279,8 +1279,9 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         // Relayer (this test contract) claims on behalf of recv
-        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, recv, tip);
-        settlement.claimReleaseFor(freshSecret, recv, tip, recipientSig);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory recipientSig = _signGaslessClaim(recvKey, freshSecret, recv, tip, deadline);
+        settlement.claimReleaseFor(freshSecret, recv, tip, deadline, recipientSig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18 - tip, "recipient receives amount minus tip");
         assertEq(tokenB.balanceOf(address(this)), tip, "relayer receives tip");
@@ -1318,8 +1319,9 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         // Zero tip — altruistic relayer
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 0);
-        settlement.claimReleaseFor(freshSecret, recv, 0, sig);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 0, deadline);
+        settlement.claimReleaseFor(freshSecret, recv, 0, deadline, sig);
 
         assertEq(tokenB.balanceOf(recv), 21_000e18, "recipient gets full amount");
     }
@@ -1357,9 +1359,10 @@ contract ScatterSettlementTest is Test {
 
         // Attacker signs instead of recipient — wrong signer
         uint256 attackerKey = 0xBAD;
-        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, recv, 100e18);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory badSig = _signGaslessClaim(attackerKey, freshSecret, recv, 100e18, deadline);
         vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
-        settlement.claimReleaseFor(freshSecret, recv, 100e18, badSig);
+        settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, badSig);
     }
 
     function test_gasless_claim_tip_exceeds_amount_reverts() public {
@@ -1395,8 +1398,47 @@ contract ScatterSettlementTest is Test {
 
         // Tip > claim amount
         uint256 excessiveTip = 22_000e18;
-        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, excessiveTip);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, excessiveTip, deadline);
         vm.expectRevert(ScatterSettlement.TipExceedsAmount.selector);
-        settlement.claimReleaseFor(freshSecret, recv, excessiveTip, sig);
+        settlement.claimReleaseFor(freshSecret, recv, excessiveTip, deadline, sig);
+    }
+
+    function test_gasless_claim_expired_deadline_reverts() public {
+        uint256 recvKey = 0xABC;
+        address recv = vm.addr(recvKey);
+        bytes32 freshSecret = keccak256("expired-deadline");
+
+        tokenA.mint(maker, 10 ether);
+        tokenB.mint(taker, 21_000e18);
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(freshSecret, recv), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = ScatterSettlement.Order({
+            maker: maker, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: 10 ether, buyAmount: 21_000e18, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 504, claims: mc
+        });
+
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("expired-taker"), address(0xBBB)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = ScatterSettlement.Order({
+            maker: taker, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: 21_000e18, buyAmount: 10 ether, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 504, claims: tc
+        });
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        vm.warp(block.timestamp + 3 hours);
+
+        // Sign with deadline in the past
+        uint256 deadline = block.timestamp - 1;
+        bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 100e18, deadline);
+        vm.expectRevert(ScatterSettlement.SignatureExpired.selector);
+        settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, sig);
     }
 }
