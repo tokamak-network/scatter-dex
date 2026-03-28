@@ -95,6 +95,7 @@ contract RelayerRegistry {
     function updateInfo(string calldata url, uint256 fee) external {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
+        if (r.exitRequestedAt > 0) revert AlreadyExiting();
         if (fee > MAX_FEE) revert FeeTooHigh();
 
         r.url = url;
