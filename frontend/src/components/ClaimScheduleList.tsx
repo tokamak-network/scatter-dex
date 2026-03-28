@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
-import { SETTLEMENT_ABI } from "@/lib/contracts";
+import { SETTLEMENT_ABI, SETTLEMENT_IFACE } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Clock, Check, AlertCircle } from "lucide-react";
@@ -55,10 +55,9 @@ export default function ClaimScheduleList() {
         }
 
         // Fetch schedule data for all claimHashes via Multicall batch
-        const iface = new ethers.Interface(SETTLEMENT_ABI);
         const requests = allClaimHashes.map((ch) => ({
           target: SETTLEMENT_ADDRESS,
-          callData: encodeCall(iface, "schedules", [ch]),
+          callData: encodeCall(SETTLEMENT_IFACE, "schedules", [ch]),
         }));
         const mcResults = await multicall(readProvider, requests);
 
@@ -66,7 +65,7 @@ export default function ClaimScheduleList() {
         const results = allClaimHashes.map((claimHash, i) => {
           if (!mcResults[i].success) return null;
           try {
-            const decoded = decodeResult(iface, "schedules", mcResults[i].returnData);
+            const decoded = decodeResult(SETTLEMENT_IFACE, "schedules", mcResults[i].returnData);
             const [token, releaseTime, claimed, depositor, amount] = decoded;
 
             if (amount === BigInt(0)) return null;

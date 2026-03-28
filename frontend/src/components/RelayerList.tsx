@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
-import { RELAYER_REGISTRY_ABI } from "@/lib/contracts";
+import { RELAYER_REGISTRY_ABI, RELAYER_REGISTRY_IFACE } from "@/lib/contracts";
 import { RELAYER_REGISTRY_ADDRESS } from "@/lib/config";
 import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Globe, Shield, Coins } from "lucide-react";
@@ -33,16 +33,15 @@ export default function RelayerList() {
         const addresses: string[] = await registry.getActiveRelayers();
 
         // Batch all relayer lookups via Multicall
-        const iface = new ethers.Interface(RELAYER_REGISTRY_ABI);
         const requests = addresses.map((addr) => ({
           target: RELAYER_REGISTRY_ADDRESS,
-          callData: encodeCall(iface, "relayers", [addr]),
+          callData: encodeCall(RELAYER_REGISTRY_IFACE, "relayers", [addr]),
         }));
         const mcResults = await multicall(readProvider, requests);
 
         const data = addresses.map((addr, i) => {
           if (!mcResults[i].success) return null;
-          const decoded = decodeResult(iface, "relayers", mcResults[i].returnData);
+          const decoded = decodeResult(RELAYER_REGISTRY_IFACE, "relayers", mcResults[i].returnData);
           const [url, fee, bond, registeredAt] = decoded;
           return {
             address: addr,

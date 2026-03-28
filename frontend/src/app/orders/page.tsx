@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { RelayerClient, RelayerOrder } from "@/lib/relayerApi";
 import { signCancelMessage } from "@/lib/signing";
-import { SETTLEMENT_ABI } from "@/lib/contracts";
+import { SETTLEMENT_ABI, SETTLEMENT_IFACE } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 
@@ -39,15 +39,14 @@ export default function OrdersPage() {
 
         // Enrich with on-chain nonce state via Multicall batch
         if (readProvider && relayerOrders.length > 0) {
-          const iface = new ethers.Interface(SETTLEMENT_ABI);
           const requests = relayerOrders.map((o) => ({
             target: SETTLEMENT_ADDRESS,
-            callData: encodeCall(iface, "nonces", [account, o.nonce]),
+            callData: encodeCall(SETTLEMENT_IFACE, "nonces", [account, o.nonce]),
           }));
           const results = await multicall(readProvider, requests);
           const enriched = relayerOrders.map((o, i) => {
             if (results[i].success) {
-              const decoded = decodeResult(iface, "nonces", results[i].returnData);
+              const decoded = decodeResult(SETTLEMENT_IFACE, "nonces", results[i].returnData);
               const onChainState = NONCE_STATE_LABELS[Number(decoded[0])] || "unused";
               return { ...o, onChainState } as EnrichedOrder;
             }

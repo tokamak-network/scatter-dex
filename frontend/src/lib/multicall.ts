@@ -19,9 +19,12 @@ export interface MulticallResult {
   returnData: string;
 }
 
+// Max calls per batch to avoid gas limit / RPC response size issues
+const MAX_BATCH_SIZE = 100;
+
 /**
  * Batch multiple read-only contract calls into a single RPC request via Multicall3.
- * Falls back to individual calls if Multicall3 is unavailable.
+ * Automatically chunks large batches. Falls back to individual calls if Multicall3 is unavailable.
  */
 export async function multicall(
   provider: ethers.Provider,
@@ -44,13 +47,20 @@ export async function multicall(
 
   try {
     const mc = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
-    const calls = requests.map((r) => ({
-      target: r.target,
-      allowFailure: r.allowFailure ?? true,
-      callData: r.callData,
-    }));
-    const results: { success: boolean; returnData: string }[] = await mc.aggregate3.staticCall(calls);
-    return results.map((r) => ({ success: r.success, returnData: r.returnData }));
+
+    // Chunk into batches of MAX_BATCH_SIZE
+    const allResults: MulticallResult[] = [];
+    for (let i = 0; i < requests.length; i += MAX_BATCH_SIZE) {
+      const chunk = requests.slice(i, i + MAX_BATCH_SIZE);
+      const calls = chunk.map((r) => ({
+        target: r.target,
+        allowFailure: r.allowFailure ?? true,
+        callData: r.callData,
+      }));
+      const results: { success: boolean; returnData: string }[] = await mc.aggregate3.staticCall(calls);
+      allResults.push(...results.map((r) => ({ success: r.success, returnData: r.returnData })));
+    }
+    return allResults;
   } catch {
     // Multicall3 unavailable (local testnet) — fall back to individual calls
     return Promise.all(
