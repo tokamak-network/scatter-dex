@@ -51,6 +51,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error TokenNotWhitelisted();
     error ReleaseDelayTooShort();
     error NotPendingOwner();
+    error TipExceedsAmount();
 
     // ─── Data Structures ─────────────────────────────────────────────
     struct ClaimInfo {
@@ -90,6 +91,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         "Order(address maker,address sellToken,address buyToken,uint256 sellAmount,uint256 buyAmount,uint256 maxFee,uint256 expiry,uint256 nonce,ClaimInfo[] claims)ClaimInfo(bytes32 claimHash,uint256 amount,uint256 releaseDelay)"
     );
 
+    bytes32 public constant GASLESS_CLAIM_TYPEHASH =
+        keccak256("GaslessClaim(bytes32 secret,uint256 relayerTip)");
+
     // ─── State ───────────────────────────────────────────────────────
     IdentityGate public immutable identityGate;
     RelayerRegistry public immutable relayerRegistry;
@@ -118,6 +122,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes);
     event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount);
+    event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed relayer, address token, uint256 recipientAmount, uint256 relayerTip);
     event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
@@ -273,6 +278,48 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         IERC20(schedule.token).safeTransfer(msg.sender, amt);
 
         emit Claimed(claimHash, msg.sender, schedule.token, amt);
+    }
+
+    /// @notice Gasless claim — a relayer calls on behalf of the recipient.
+    /// @dev The recipient signs an EIP-712 message authorizing the claim and the relayer tip.
+    ///      The relayer pays gas and receives `relayerTip` from the claim amount as compensation.
+    ///      This preserves privacy: the recipient never needs ETH for gas.
+    /// @param secret The secret shared by the depositor
+    /// @param recipient The intended recipient (whose address is bound in claimHash)
+    /// @param relayerTip Amount (in claim token) paid to msg.sender as gas compensation
+    /// @param recipientSig EIP-712 signature from recipient authorizing (secret, relayerTip)
+    function claimReleaseFor(
+        bytes32 secret,
+        address recipient,
+        uint256 relayerTip,
+        bytes calldata recipientSig
+    ) external nonReentrant {
+        if (paused) revert ContractPaused();
+
+        // Verify recipient's EIP-712 signature authorizing this claim + tip
+        bytes32 structHash = keccak256(abi.encode(GASLESS_CLAIM_TYPEHASH, secret, relayerTip));
+        bytes32 digest = _hashTypedDataV4(structHash);
+        if (ECDSA.recover(digest, recipientSig) != recipient) revert InvalidSignature();
+
+        // Look up schedule by claimHash
+        bytes32 claimHash = keccak256(abi.encodePacked(secret, recipient));
+        ClaimSchedule storage schedule = schedules[claimHash];
+        uint96 amt = schedule.amount;
+        if (amt == 0) revert ScheduleNotFound();
+        if (schedule.claimed) revert AlreadyClaimed();
+        if (block.timestamp < schedule.releaseTime) revert NotYetReleasable();
+        if (relayerTip > amt) revert TipExceedsAmount();
+
+        schedule.claimed = true;
+
+        // Split: recipient gets (amount - tip), relayer gets tip
+        uint256 recipientAmount = uint256(amt) - relayerTip;
+        IERC20(schedule.token).safeTransfer(recipient, recipientAmount);
+        if (relayerTip > 0) {
+            IERC20(schedule.token).safeTransfer(msg.sender, relayerTip);
+        }
+
+        emit ClaimedFor(claimHash, recipient, msg.sender, schedule.token, recipientAmount, relayerTip);
     }
 
     // ─── Refund (no pause check — refunds must always work to prevent fund lockup) ──
