@@ -1223,8 +1223,9 @@ contract ScatterSettlementTest is Test {
     // ─── Tests: Gasless Claim ──────────────────────────────────────
 
     function _signGaslessClaim(uint256 privateKey, bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline) internal view returns (bytes memory) {
+        uint256 nonce = settlement.gaslessNonces(recipient);
         bytes32 structHash = keccak256(
-            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip, deadline)
+            abi.encode(settlement.GASLESS_CLAIM_TYPEHASH(), secret, recipient, relayerTip, deadline, nonce)
         );
         bytes32 domainSeparator = keccak256(
             abi.encode(
@@ -1440,5 +1441,66 @@ contract ScatterSettlementTest is Test {
         bytes memory sig = _signGaslessClaim(recvKey, freshSecret, recv, 100e18, deadline);
         vm.expectRevert(ScatterSettlement.SignatureExpired.selector);
         settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, sig);
+    }
+
+    function _signCancelGasless(uint256 privateKey, address recipient) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(settlement.CANCEL_GASLESS_CLAIM_TYPEHASH(), recipient, settlement.gaslessNonces(recipient))
+        );
+        bytes32 domainSep = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("ScatterSettlement"), keccak256("1"),
+                block.chainid, address(settlement)
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_gasless_cancel_invalidates_signature() public {
+        uint256 recvKey = 0xABC;
+        address recv = vm.addr(recvKey);
+        bytes32 freshSecret = keccak256("cancel-test");
+
+        tokenA.mint(maker, 10 ether);
+        tokenB.mint(taker, 21_000e18);
+        vm.prank(maker);
+        settlement.deposit(address(tokenA), 10 ether);
+        vm.prank(taker);
+        settlement.deposit(address(tokenB), 21_000e18);
+
+        ScatterSettlement.ClaimInfo[] memory mc = new ScatterSettlement.ClaimInfo[](1);
+        mc[0] = ScatterSettlement.ClaimInfo(_claimHash(freshSecret, recv), 21_000e18, 3 hours);
+        ScatterSettlement.Order memory mo = ScatterSettlement.Order({
+            maker: maker, sellToken: address(tokenA), buyToken: address(tokenB),
+            sellAmount: 10 ether, buyAmount: 21_000e18, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 505, claims: mc
+        });
+
+        ScatterSettlement.ClaimInfo[] memory tc = new ScatterSettlement.ClaimInfo[](1);
+        tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("cancel-taker"), address(0xCCC)), 10 ether, 3 hours);
+        ScatterSettlement.Order memory to_ = ScatterSettlement.Order({
+            maker: taker, sellToken: address(tokenB), buyToken: address(tokenA),
+            sellAmount: 21_000e18, buyAmount: 10 ether, maxFee: 0,
+            expiry: block.timestamp + 1 days, nonce: 505, claims: tc
+        });
+
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        vm.warp(block.timestamp + 3 hours);
+
+        // 1. Recipient signs a gasless claim (nonce=0)
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory claimSig = _signGaslessClaim(recvKey, freshSecret, recv, 100e18, deadline);
+
+        // 2. Recipient cancels — friend submits cancel signature
+        bytes memory cancelSig = _signCancelGasless(recvKey, recv);
+        settlement.cancelGaslessClaimFor(recv, cancelSig);
+        assertEq(settlement.gaslessNonces(recv), 1);
+
+        // 3. Old claim signature (nonce=0) is now invalid
+        vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
+        settlement.claimReleaseFor(freshSecret, recv, 100e18, deadline, claimSig);
     }
 }
