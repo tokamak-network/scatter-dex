@@ -55,6 +55,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error SignatureExpired();
 
     // ─── Data Structures ─────────────────────────────────────────────
+    enum NonceState { Unused, Settled, Cancelled }
+
     struct ClaimInfo {
         bytes32 claimHash; // keccak256(abi.encodePacked(secret, recipient))
         uint256 amount;
@@ -114,8 +116,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // claimHash => ClaimSchedule (claimHash is the key, not stored in struct)
     mapping(bytes32 => ClaimSchedule) public schedules;
 
-    // maker => nonce => consumed
-    mapping(address => mapping(uint256 => bool)) public nonces;
+    // maker => nonce => state (Unused / Settled / Cancelled)
+    mapping(address => mapping(uint256 => NonceState)) public nonces;
 
     // token => whitelisted
     mapping(address => bool) public whitelistedTokens;
@@ -223,8 +225,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     // ─── Cancel ──────────────────────────────────────────────────────
     function cancelOrder(uint256 nonce) external {
-        if (nonces[msg.sender][nonce]) revert NonceConsumed();
-        nonces[msg.sender][nonce] = true;
+        if (nonces[msg.sender][nonce] != NonceState.Unused) revert NonceConsumed();
+        nonces[msg.sender][nonce] = NonceState.Cancelled;
         emit NonceCancelled(msg.sender, nonce);
     }
 
@@ -251,8 +253,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
 
         // Consume nonces
-        nonces[makerOrder.maker][makerOrder.nonce] = true;
-        nonces[takerOrder.maker][takerOrder.nonce] = true;
+        nonces[makerOrder.maker][makerOrder.nonce] = NonceState.Settled;
+        nonces[takerOrder.maker][takerOrder.nonce] = NonceState.Settled;
 
         // Deduct escrow
         deposits[makerOrder.maker][makerOrder.sellToken] -= makerOrder.sellAmount;
@@ -445,8 +447,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
         if (ECDSA.recover(takerHash, takerSig) != takerOrder.maker) revert InvalidSignature();
 
         // Verify nonces
-        if (nonces[makerOrder.maker][makerOrder.nonce]) revert NonceConsumed();
-        if (nonces[takerOrder.maker][takerOrder.nonce]) revert NonceConsumed();
+        if (nonces[makerOrder.maker][makerOrder.nonce] != NonceState.Unused) revert NonceConsumed();
+        if (nonces[takerOrder.maker][takerOrder.nonce] != NonceState.Unused) revert NonceConsumed();
 
         // Verify expiry
         if (block.timestamp > makerOrder.expiry) revert OrderExpired();
