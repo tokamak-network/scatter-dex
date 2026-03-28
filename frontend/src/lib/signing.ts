@@ -51,8 +51,8 @@ const EIP712_TYPES = {
 };
 
 /**
- * Compute claimHash matching the contract: keccak256(abi.encodePacked(secret, recipient))
- * If secret is a raw hex bytes32 (0x..., 66 chars), use it directly.
+ * Convert secret to bytes32 matching the contract.
+ * If secret is a raw hex bytes32 (0x..., 66 chars), use it directly (after validation).
  * If secret is a human-readable password string, hash it first.
  */
 export function toSecretBytes(secret: string): string {
@@ -118,4 +118,48 @@ export async function signCancelMessage(
   if (!ethers.isAddress(address)) throw new Error("Invalid address for cancel message");
   const message = `cancel:${address.toLowerCase()}:${nonce}`;
   return signer.signMessage(message);
+}
+
+const GASLESS_CLAIM_TYPES = {
+  GaslessClaim: [
+    { name: "secret", type: "bytes32" },
+    { name: "recipient", type: "address" },
+    { name: "relayer", type: "address" },
+    { name: "relayerTip", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+  ],
+};
+
+/** Sign a gasless claim request as the recipient */
+export async function signGaslessClaim(
+  signer: ethers.Signer,
+  params: {
+    secret: string;
+    recipient: string;
+    relayer: string;
+    relayerTip: string; // wei string
+    deadline: number;
+    nonce: bigint;
+  },
+  chainId: number,
+  settlementAddress: string
+): Promise<string> {
+  const domain = {
+    name: "ScatterSettlement",
+    version: "1",
+    chainId,
+    verifyingContract: settlementAddress,
+  };
+
+  const secretBytes = toSecretBytes(params.secret);
+
+  return signer.signTypedData(domain, GASLESS_CLAIM_TYPES, {
+    secret: secretBytes,
+    recipient: params.recipient,
+    relayer: params.relayer,
+    relayerTip: params.relayerTip,
+    deadline: params.deadline,
+    nonce: params.nonce,
+  });
 }
