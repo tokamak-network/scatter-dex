@@ -44,6 +44,13 @@ Build a **[My Scatter Status Board]** that visually shows:
 
 ## 3. Testnet Milestones
 
+### Completed
+- [x] Gasless claim contract (claimReleaseFor) — PR #22
+- [x] Claim link generation + auto-fill + preview — PR #25
+- [x] Gasless claim frontend UI — PR #27
+- [x] Paper enhancement (Dual-CA, MLS model, formal proofs) — PR #23
+- [x] All security issues resolved (H-1/2, M-1/3/4/5, L-1/2/3/4)
+
 ### Phase 1: Core Demo (Week 1-2)
 - [ ] Deploy ScatterSettlement + RelayerRegistry + IdentityGate to Base Sepolia
 - [ ] Deploy mock IdentityRegistry (testnet-only certificate issuer)
@@ -54,7 +61,7 @@ Build a **[My Scatter Status Board]** that visually shows:
 - [ ] My Scatter Dashboard with split visualization
 - [ ] Time-delay progress bars
 - [ ] Mock zk-X509 badge flow
-- [ ] Gasless claim integration (claimReleaseFor)
+- [ ] Multicall batch query optimization
 
 ### Phase 3: Community Testing (Week 5-6)
 - [ ] Public testnet launch announcement
