@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
-import { RELAYER_REGISTRY_ABI } from "@/lib/contracts";
+import { RELAYER_REGISTRY_ABI, RELAYER_REGISTRY_IFACE } from "@/lib/contracts";
 import { RELAYER_REGISTRY_ADDRESS } from "@/lib/config";
+import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Globe, Shield, Coins } from "lucide-react";
 
 interface RelayerData {
@@ -31,21 +32,29 @@ export default function RelayerList() {
         const registry = new ethers.Contract(RELAYER_REGISTRY_ADDRESS, RELAYER_REGISTRY_ABI, readProvider);
         const addresses: string[] = await registry.getActiveRelayers();
 
-        const data = await Promise.all(
-          addresses.map(async (addr) => {
-            const [url, fee, bond, registeredAt] = await registry.relayers(addr);
-            return {
-              address: addr,
-              url,
-              fee: Number(fee),
-              bond: ethers.formatEther(bond),
-              registeredAt: Number(registeredAt),
-            };
-          })
-        );
+        // Batch all relayer lookups via Multicall
+        const requests = addresses.map((addr) => ({
+          target: RELAYER_REGISTRY_ADDRESS,
+          callData: encodeCall(RELAYER_REGISTRY_IFACE, "relayers", [addr]),
+        }));
+        const mcResults = await multicall(readProvider, requests);
+
+        const failedCount = mcResults.filter((r) => !r.success).length;
+        const data = addresses.map((addr, i) => {
+          if (!mcResults[i].success) return null;
+          const decoded = decodeResult(RELAYER_REGISTRY_IFACE, "relayers", mcResults[i].returnData);
+          const [url, fee, bond, registeredAt] = decoded;
+          return {
+            address: addr,
+            url,
+            fee: Number(fee),
+            bond: ethers.formatEther(bond),
+            registeredAt: Number(registeredAt),
+          };
+        }).filter((r): r is RelayerData => r !== null);
 
         setRelayers(data);
-        setError("");
+        setError(failedCount > 0 ? `${failedCount} relayer(s) failed to load` : "");
 
         const saved = localStorage.getItem("scatter-relayer-url");
         if (saved) setSelected(saved);

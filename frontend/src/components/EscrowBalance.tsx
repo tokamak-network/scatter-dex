@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
-import { SETTLEMENT_ABI, ERC20_ABI } from "@/lib/contracts";
+import { SETTLEMENT_IFACE, ERC20_IFACE } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Wallet } from "lucide-react";
 
 // Common token list — in production, fetch from a registry or user config
@@ -30,23 +31,35 @@ export default function EscrowBalance() {
     setLoading(true);
 
     try {
-      const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
-      const results = await Promise.all(
-        tokens.map(async (addr) => {
-          try {
-            const token = new ethers.Contract(addr, ERC20_ABI, readProvider);
-            const [symbol, decimals, escrow, wallet] = await Promise.all([
-              token.symbol(),
-              token.decimals(),
-              settlement.deposits(account, addr),
-              token.balanceOf(account),
-            ]);
-            return { address: addr, symbol, decimals: Number(decimals), escrow, wallet };
-          } catch {
-            return null;
-          }
-        })
-      );
+      // Filter invalid addresses before encoding to prevent batch failure
+      const validTokens = tokens.filter((addr) => ethers.isAddress(addr));
+
+      // Batch all calls: per token = symbol + decimals + deposits + balanceOf = 4 calls
+      const requests = validTokens.flatMap((addr) => [
+        { target: addr, callData: encodeCall(ERC20_IFACE, "symbol", []) },
+        { target: addr, callData: encodeCall(ERC20_IFACE, "decimals", []) },
+        { target: SETTLEMENT_ADDRESS, callData: encodeCall(SETTLEMENT_IFACE, "deposits", [account, addr]) },
+        { target: addr, callData: encodeCall(ERC20_IFACE, "balanceOf", [account]) },
+      ]);
+
+      const mcResults = await multicall(readProvider, requests);
+
+      const results = validTokens.map((addr, i) => {
+        const base = i * 4;
+        try {
+          // symbol + decimals are required — skip token entirely if they fail
+          if (!mcResults[base].success || !mcResults[base + 1].success) return null;
+          // deposits + balanceOf failure → also skip (don't show misleading 0)
+          if (!mcResults[base + 2].success || !mcResults[base + 3].success) return null;
+          const symbol = decodeResult(ERC20_IFACE, "symbol", mcResults[base].returnData)[0] as string;
+          const decimals = Number(decodeResult(ERC20_IFACE, "decimals", mcResults[base + 1].returnData)[0]);
+          const escrow = decodeResult(SETTLEMENT_IFACE, "deposits", mcResults[base + 2].returnData)[0] as bigint;
+          const wallet = decodeResult(ERC20_IFACE, "balanceOf", mcResults[base + 3].returnData)[0] as bigint;
+          return { address: addr, symbol, decimals, escrow, wallet };
+        } catch {
+          return null;
+        }
+      });
 
       setBalances(results.filter((r): r is TokenBalance => r !== null));
     } catch (err: unknown) {
