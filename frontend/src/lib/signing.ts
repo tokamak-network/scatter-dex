@@ -5,7 +5,18 @@ export interface ClaimInput {
   recipient: string;
   amount: string; // wei string
   releaseDelay: number; // seconds
-  secret: string; // user-chosen password
+  secret: string; // user-chosen password or auto-generated
+}
+
+/** Generate a cryptographically random secret for a claim */
+export function generateSecret(): string {
+  return ethers.hexlify(ethers.randomBytes(32));
+}
+
+/** Build a claim link that the recipient can open to claim funds */
+export function buildClaimLink(secret: string): string {
+  const base = typeof window !== "undefined" ? window.location.origin : "";
+  return `${base}/claim?secret=${encodeURIComponent(secret)}`;
 }
 
 export interface OrderInput {

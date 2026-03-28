@@ -1,16 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
+interface ClaimPreview {
+  token: string;
+  amount: string;
+  releaseTime: number;
+  claimed: boolean;
+  status: "claimable" | "locked" | "claimed" | "not_found";
+}
+
 export default function ClaimList() {
-  const { account, signer } = useWallet();
+  const { account, signer, readProvider } = useWallet();
+  const searchParams = useSearchParams();
   const [secret, setSecret] = useState("");
-  const [status, setStatus] = useState<"idle" | "claiming" | "success" | "error">("idle");
+  const [preview, setPreview] = useState<ClaimPreview | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "claiming" | "success" | "error">("idle");
   const [error, setError] = useState("");
+
+  // Auto-fill secret from URL parameter (?secret=0x...)
+  useEffect(() => {
+    const urlSecret = searchParams.get("secret");
+    if (urlSecret) {
+      setSecret(urlSecret);
+    }
+  }, [searchParams]);
+
+  // Preview claim status when secret + account are available
+  useEffect(() => {
+    if (!secret || !account || !readProvider) {
+      setPreview(null);
+      return;
+    }
+
+    const loadPreview = async () => {
+      try {
+        const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, readProvider);
+        const secretBytes = secret.startsWith("0x")
+          ? secret
+          : ethers.keccak256(ethers.toUtf8Bytes(secret));
+        const claimHash = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "address"], [secretBytes, account])
+        );
+
+        const [token, releaseTime, claimed, , amount] = await settlement.schedules(claimHash);
+
+        if (amount === BigInt(0)) {
+          setPreview({ token: "", amount: "0", releaseTime: 0, claimed: false, status: "not_found" });
+          return;
+        }
+
+        const now = Math.floor(Date.now() / 1000);
+        const rt = Number(releaseTime);
+        let claimStatus: ClaimPreview["status"];
+        if (claimed) claimStatus = "claimed";
+        else if (now >= rt) claimStatus = "claimable";
+        else claimStatus = "locked";
+
+        setPreview({
+          token,
+          amount: ethers.formatEther(amount),
+          releaseTime: rt,
+          claimed,
+          status: claimStatus,
+        });
+      } catch {
+        setPreview(null);
+      }
+    };
+
+    loadPreview();
+  }, [secret, account, readProvider]);
 
   const handleClaim = async () => {
     if (!signer) return;
@@ -18,24 +83,30 @@ export default function ClaimList() {
     setError("");
 
     try {
-      if (!secret) {
-        throw new Error("Secret is required");
-      }
+      if (!secret) throw new Error("Secret is required");
       const settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
-      // Secret hash must match how the sender computed claimHash:
-      // claimHash = keccak256(abi.encodePacked(keccak256(secret_bytes), recipient))
-      // claimRelease computes: keccak256(abi.encodePacked(secret, msg.sender)) internally
-      // So we pass the keccak256 of the user's password as the secret bytes32
-      const secretBytes = ethers.keccak256(ethers.toUtf8Bytes(secret));
+      const secretBytes = secret.startsWith("0x")
+        ? secret
+        : ethers.keccak256(ethers.toUtf8Bytes(secret));
       const tx = await settlement.claimRelease(secretBytes);
       await tx.wait();
       setStatus("success");
       setSecret("");
+      setPreview(null);
     } catch (err: unknown) {
       const e = err as { reason?: string; message?: string };
       setError(e.reason || e.message || "Claim failed");
       setStatus("error");
     }
+  };
+
+  const timeRemaining = (releaseTime: number) => {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = releaseTime - now;
+    if (diff <= 0) return "Now";
+    const hours = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    return `${hours}h ${mins}m`;
   };
 
   if (!account) return <p className="text-gray-500 text-sm">Connect wallet to claim</p>;
@@ -46,15 +117,36 @@ export default function ClaimList() {
 
       <input
         type="password"
-        placeholder="Secret (password from sender)"
+        placeholder="Secret (from sender's claim link)"
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
         className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder:text-gray-500"
       />
 
+      {/* Claim Preview */}
+      {preview && preview.status !== "not_found" && (
+        <div className="bg-gray-800 rounded-lg p-3 space-y-1">
+          <p className="text-xs text-gray-400">Claim Preview</p>
+          <p className="text-sm text-white">{preview.amount} tokens</p>
+          <p className="text-xs text-gray-500">Token: {preview.token.slice(0, 10)}...</p>
+          <p className={`text-xs ${
+            preview.status === "claimable" ? "text-green-400" :
+            preview.status === "locked" ? "text-blue-400" :
+            "text-gray-400"
+          }`}>
+            {preview.status === "claimable" && "Ready to claim!"}
+            {preview.status === "locked" && `Unlocks in ${timeRemaining(preview.releaseTime)}`}
+            {preview.status === "claimed" && "Already claimed"}
+          </p>
+        </div>
+      )}
+      {preview && preview.status === "not_found" && (
+        <p className="text-xs text-yellow-400">No claim found for this secret + your address</p>
+      )}
+
       <button
         onClick={handleClaim}
-        disabled={status === "claiming"}
+        disabled={status === "claiming" || preview?.status !== "claimable"}
         className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-500 disabled:opacity-50 transition"
       >
         {status === "claiming" ? "Claiming..." : "Claim"}

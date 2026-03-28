@@ -2,10 +2,10 @@
 
 import { useState, useRef } from "react";
 import { useWallet } from "@/lib/wallet";
-import { signOrder, ClaimInput } from "@/lib/signing";
+import { signOrder, ClaimInput, generateSecret, buildClaimLink } from "@/lib/signing";
 import { RelayerClient } from "@/lib/relayerApi";
 import { ethers } from "ethers";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Copy, Check } from "lucide-react";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
 
 const ORDER_EXPIRY_SECONDS = 86400; // 1 day
@@ -21,14 +21,16 @@ export default function OrderForm() {
   const [buyAmount, setBuyAmount] = useState("");
   const [relayerUrl, setRelayerUrl] = useState("");
   const [claims, setClaims] = useState<ClaimInput[]>([
-    { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY, secret: "" },
+    { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY, secret: generateSecret() },
   ]);
   const [status, setStatus] = useState<"idle" | "signing" | "submitting" | "success" | "error">("idle");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
+  const [claimLinks, setClaimLinks] = useState<{ recipient: string; link: string; secret: string }[]>([]);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const addClaim = () => {
-    setClaims([...claims, { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY * 2, secret: "" }]);
+    setClaims([...claims, { recipient: "", amount: "", releaseDelay: DEFAULT_DELAY * 2, secret: generateSecret() }]);
   };
 
   const removeClaim = (idx: number) => {
@@ -75,6 +77,14 @@ export default function OrderForm() {
       const res = await client.submitOrder(orderData, signature);
 
       setResult(res.status === "matched" ? `Matched! TX: ${res.txHash}` : `Pending (nonce: ${res.nonce})`);
+
+      // Generate claim links for each recipient
+      const links = claims.map((c) => ({
+        recipient: c.recipient,
+        secret: c.secret,
+        link: buildClaimLink(c.secret),
+      }));
+      setClaimLinks(links);
       setStatus("success");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed");
@@ -131,9 +141,8 @@ export default function OrderForm() {
               <input placeholder="Delay (sec)" type="number" value={c.releaseDelay}
                 onChange={(e) => updateClaim(idx, "releaseDelay", parseInt(e.target.value) || 0)}
                 className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder:text-gray-600" />
-              <input placeholder="Secret" value={c.secret}
-                onChange={(e) => updateClaim(idx, "secret", e.target.value)}
-                className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder:text-gray-600" />
+              <input placeholder="Secret (auto)" value={c.secret.slice(0, 10) + "..."} readOnly title={c.secret}
+                className="bg-gray-900 border border-gray-600 rounded px-3 py-1.5 text-xs text-gray-500 cursor-not-allowed" />
             </div>
           </div>
         ))}
@@ -144,7 +153,32 @@ export default function OrderForm() {
         {status === "signing" ? "Signing..." : status === "submitting" ? "Submitting..." : "Sign & Submit Order"}
       </button>
 
-      {status === "success" && <p className="text-green-400 text-sm">{result}</p>}
+      {status === "success" && (
+        <div className="space-y-3">
+          <p className="text-green-400 text-sm">{result}</p>
+          {claimLinks.length > 0 && (
+            <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+              <h3 className="text-sm font-medium text-yellow-400">Share these claim links with recipients:</h3>
+              {claimLinks.map((cl, idx) => (
+                <div key={idx} className="bg-gray-900 rounded p-3 space-y-1">
+                  <p className="text-xs text-gray-500">Recipient {idx + 1}: {cl.recipient.slice(0, 10)}...</p>
+                  <div className="flex items-center gap-2">
+                    <input readOnly value={cl.link}
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 font-mono" />
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(cl.link); setCopiedIdx(idx); setTimeout(() => setCopiedIdx(null), 2000); }}
+                      className="text-gray-400 hover:text-white p-1"
+                      title="Copy link">
+                      {copiedIdx === idx ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-red-400">These links contain secrets. Share only with intended recipients.</p>
+            </div>
+          )}
+        </div>
+      )}
       {status === "error" && <p className="text-red-400 text-sm">{error}</p>}
     </div>
   );
