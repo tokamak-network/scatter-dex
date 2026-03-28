@@ -20,10 +20,16 @@ export default function Home() {
         </p>
 
         {account ? (
-          <Link href="/trade"
-            className="inline-block bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-medium hover:bg-blue-500 transition">
-            Start Trading
-          </Link>
+          <div className="flex gap-4 justify-center">
+            <Link href="/trade"
+              className="inline-block bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-medium hover:bg-blue-500 transition">
+              Start Trading
+            </Link>
+            <Link href="/dashboard"
+              className="inline-block bg-gray-700 text-white px-8 py-3 rounded-xl text-lg font-medium hover:bg-gray-600 transition">
+              My Dashboard
+            </Link>
+          </div>
         ) : (
           <button onClick={connect}
             className="bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-medium hover:bg-blue-500 transition">
