@@ -506,7 +506,7 @@ Adv_UNLINK(A) ≤ ε_pre + ε_amount + ε_timing + ε_addr
 H(S) = (k-1) * log_2(V) - log_2((k-1)!)
 ```
 
-For k = 3, V = 21000: H(S) ~ 28.7 bits, requiring ~4.4 * 10^8 guesses. Viewed combinatorially across N concurrent deposits, the probability of correctly partitioning the claims is:
+For k = 3, V = 21000: H(S) ~ 27.7 bits, requiring ~2.2 * 10^8 guesses. Viewed combinatorially across N concurrent deposits, the probability of correctly partitioning the claims is:
 
 ```
 ε_amount ≤ 1/C(N*k, k)
