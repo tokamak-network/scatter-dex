@@ -365,7 +365,7 @@ Designated relayer G calls claimReleaseFor(secret, recipient, relayerTip, deadli
 
 The gas payer may be any registered relayer or dedicated gas relay service. The recipient pays compensation from claimed tokens (e.g., USDC), eliminating the need to fund the fresh address with ETH. This preserves the address isolation property: the fresh recipient address never needs to receive ETH from any external source.
 
-**Relayer token risk mitigation**: To prevent griefing via illiquid or worthless tokens, gas payers autonomously maintain a whitelist of accepted fee tokens (e.g., USDC, ETH, WBTC, TON) for gasless claims. Gas payers may also utilize off-chain oracle pricing to dynamically adjust the required `relayerTip` to ensure adequate compensation for the ETH gas cost. Claims denominated in non-whitelisted tokens can still be executed via Mode A (direct claim by the recipient).
+**Relayer token risk mitigation**: To prevent griefing via illiquid or worthless tokens, gas payers autonomously maintain a whitelist of accepted fee tokens (e.g., USDC, USDT, ETH, WBTC, TON) for gasless claims. Gas payers may also utilize off-chain oracle pricing to dynamically adjust the required `relayerTip` to ensure adequate compensation for the ETH gas cost. Claims denominated in non-whitelisted tokens can still be executed via Mode A (direct claim by the recipient).
 
 **Phase 5: Refund (if unclaimed)**
 
