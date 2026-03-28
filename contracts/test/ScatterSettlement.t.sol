@@ -712,7 +712,8 @@ contract ScatterSettlementTest is Test {
 
     function test_cancel_order() public {
         settlement.cancelOrder(42);
-        assertTrue(settlement.nonces(address(this), 42));
+        // NonceState: 0=Unused, 1=Settled, 2=Cancelled
+        assertEq(uint8(settlement.nonces(address(this), 42)), 2);
     }
 
     function test_cancel_already_consumed_reverts() public {
