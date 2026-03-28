@@ -166,8 +166,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     }
 
     /// @notice Emergency pause/unpause. Unpause takes effect immediately.
-    /// @dev For production, consider placing owner behind a Timelock contract
-    ///      to add an unpause delay, mitigating owner key compromise. See audit L-2.
+    /// @dev In this reference implementation, `owner` can both pause and unpause.
+    ///      For production, a common pattern is to:
+    ///      - keep a fast-acting "pause guardian" (not timelocked) that can pause immediately, and
+    ///      - put `owner` / governance behind a Timelock for unpauses and other admin actions.
+    ///      If `owner` is timelocked, ensure a separate immediate pause authority remains. See audit L-2.
     function setPaused(bool _paused) external {
         if (msg.sender != owner) revert NotOwner();
         paused = _paused;
@@ -254,7 +257,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     // ─── Claim ───────────────────────────────────────────────────────
 
     /// @notice Claim funds using the secret provided by the depositor.
-    /// @dev claimHash = keccak256(secret, msg.sender) is computed internally.
+    /// @dev claimHash = keccak256(abi.encodePacked(secret, msg.sender)) is computed internally.
     ///      Each (secret, recipient) pair can only be used once — depositors must
     ///      generate a unique random secret per claim to avoid collisions. See audit M-3.
     function claimRelease(bytes32 secret) external nonReentrant {
