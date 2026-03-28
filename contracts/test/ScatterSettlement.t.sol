@@ -72,6 +72,9 @@ contract ScatterSettlementTest is Test {
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
 
+        settlement.setTokenWhitelist(address(tokenA), true);
+        settlement.setTokenWhitelist(address(tokenB), true);
+
         registry.setVerified(maker, true);
         registry.setVerified(taker, true);
 
@@ -261,11 +264,10 @@ contract ScatterSettlementTest is Test {
 
         assertEq(settlement.deposits(maker, address(tokenA)), 0);
         assertEq(settlement.deposits(taker, address(tokenB)), 0);
-        assertEq(settlement.scheduleCount(), 4);
 
         // Verify maker's first claim schedule
-        (bytes32 ch, address tok, uint48 rt, bool claimed, address dep, uint96 amt) = settlement.schedules(0);
-        assertEq(ch, makerOrder.claims[0].claimHash);
+        bytes32 ch = _claimHash(secret1, recipientC);
+        (address tok, uint48 rt, bool claimed, address dep, uint96 amt) = settlement.schedules(ch);
         assertEq(tok, address(tokenB));
         assertEq(amt, uint96(7000e18));
         assertEq(rt, uint48(block.timestamp + 3 hours));
@@ -491,7 +493,7 @@ contract ScatterSettlementTest is Test {
 
         vm.prank(recipientC);
         vm.expectRevert(ScatterSettlement.ContractPaused.selector);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
     }
 
     function test_transferOwnership() public {
@@ -554,11 +556,11 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         assertEq(tokenB.balanceOf(recipientC), 7000e18);
 
-        (,,,bool claimed,,) = settlement.schedules(0);
+        (,,bool claimed,,) = settlement.schedules(_claimHash(secret1, recipientC));
         assertTrue(claimed);
     }
 
@@ -567,18 +569,18 @@ contract ScatterSettlementTest is Test {
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(recipientD);
-        settlement.claimRelease(1, secret2);
+        settlement.claimRelease(secret2);
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(recipientE);
-        settlement.claimRelease(2, secret3);
+        settlement.claimRelease(secret3);
 
         vm.prank(recipientF);
-        settlement.claimRelease(3, secret4);
+        settlement.claimRelease(secret4);
 
         assertEq(tokenB.balanceOf(recipientC), 7000e18);
         assertEq(tokenB.balanceOf(recipientD), 8000e18);
@@ -591,7 +593,7 @@ contract ScatterSettlementTest is Test {
 
         vm.prank(recipientC);
         vm.expectRevert(ScatterSettlement.NotYetReleasable.selector);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
     }
 
     function test_claim_wrong_secret_reverts() public {
@@ -599,8 +601,8 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(recipientC);
-        vm.expectRevert(ScatterSettlement.InvalidSecretOrAddress.selector);
-        settlement.claimRelease(0, keccak256("wrong_secret"));
+        vm.expectRevert(ScatterSettlement.ScheduleNotFound.selector);
+        settlement.claimRelease(keccak256("wrong_secret"));
     }
 
     function test_claim_wrong_address_reverts() public {
@@ -608,8 +610,8 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(address(0xA77AC8E4));
-        vm.expectRevert(ScatterSettlement.InvalidSecretOrAddress.selector);
-        settlement.claimRelease(0, secret1);
+        vm.expectRevert(ScatterSettlement.ScheduleNotFound.selector);
+        settlement.claimRelease(secret1);
     }
 
     function test_claim_double_claim_reverts() public {
@@ -617,11 +619,11 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         vm.prank(recipientC);
         vm.expectRevert(ScatterSettlement.AlreadyClaimed.selector);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
     }
 
     // ─── Tests: Refund ───────────────────────────────────────────
@@ -632,7 +634,7 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours + 7 days);
 
         vm.prank(maker);
-        settlement.refundUnclaimed(0);
+        settlement.refundUnclaimed(_claimHash(secret1, recipientC));
 
         assertEq(settlement.deposits(maker, address(tokenB)), 7000e18);
 
@@ -648,7 +650,7 @@ contract ScatterSettlementTest is Test {
 
         vm.prank(maker);
         vm.expectRevert(ScatterSettlement.ClaimWindowNotExpired.selector);
-        settlement.refundUnclaimed(0);
+        settlement.refundUnclaimed(_claimHash(secret1, recipientC));
     }
 
     function test_refund_not_depositor_reverts() public {
@@ -657,7 +659,7 @@ contract ScatterSettlementTest is Test {
 
         vm.prank(address(0x999));
         vm.expectRevert(ScatterSettlement.NotDepositor.selector);
-        settlement.refundUnclaimed(0);
+        settlement.refundUnclaimed(_claimHash(secret1, recipientC));
     }
 
     function test_refund_already_claimed_reverts() public {
@@ -665,12 +667,12 @@ contract ScatterSettlementTest is Test {
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         vm.warp(block.timestamp + 7 days);
         vm.prank(maker);
         vm.expectRevert(ScatterSettlement.AlreadyClaimed.selector);
-        settlement.refundUnclaimed(0);
+        settlement.refundUnclaimed(_claimHash(secret1, recipientC));
     }
 
     // ─── Tests: Partial claim + refund ───────────────────────────
@@ -680,12 +682,12 @@ contract ScatterSettlementTest is Test {
 
         vm.warp(block.timestamp + 3 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         vm.warp(block.timestamp + 7 days + 6 hours);
 
         vm.prank(maker);
-        settlement.refundUnclaimed(1);
+        settlement.refundUnclaimed(_claimHash(secret2, recipientD));
 
         assertEq(tokenB.balanceOf(recipientC), 7000e18);
         assertEq(settlement.deposits(maker, address(tokenB)), 8000e18);
@@ -918,33 +920,31 @@ contract ScatterSettlementTest is Test {
         assertEq(settlement.deposits(taker, address(tokenB)), 0, "bob escrow should be 0");
         assertEq(tokenA.balanceOf(e2eRelayer), ethFee, "relayer ETH fee");
         assertEq(tokenB.balanceOf(e2eRelayer), usdcFee, "relayer USDC fee");
-        assertEq(settlement.scheduleCount(), 4, "4 claim schedules");
-
         // 5. Time-delayed claims
         uint256 settleTime = block.timestamp;
 
         // t+3h: recipientC claims 7000 USDC
         vm.warp(settleTime + 3 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
         assertEq(tokenB.balanceOf(recipientC), 7000e18);
 
         // t+4h: recipientF claims 9.97 ETH
         vm.warp(settleTime + 4 hours);
         vm.prank(recipientF);
-        settlement.claimRelease(3, secret4);
+        settlement.claimRelease(secret4);
         assertEq(tokenA.balanceOf(recipientF), ethDistributable);
 
         // t+6h: recipientD claims 8000 USDC
         vm.warp(settleTime + 6 hours);
         vm.prank(recipientD);
-        settlement.claimRelease(1, secret2);
+        settlement.claimRelease(secret2);
         assertEq(tokenB.balanceOf(recipientD), 8000e18);
 
         // t+9h: recipientE claims remaining USDC
         vm.warp(settleTime + 9 hours);
         vm.prank(recipientE);
-        settlement.claimRelease(2, secret3);
+        settlement.claimRelease(secret3);
         assertEq(tokenB.balanceOf(recipientE), usdcDistributable - 7000e18 - 8000e18);
 
         // 6. Verify all funds distributed correctly
@@ -1066,26 +1066,25 @@ contract ScatterSettlementTest is Test {
 
         // Verify escrows depleted
         assertEq(settlement.deposits(maker, address(tokenA)), 0);
-        assertEq(settlement.scheduleCount(), 4);
 
         // Claims at different times — all mixed in the contract
         uint256 settleTime = block.timestamp;
 
         vm.warp(settleTime + 2 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         vm.warp(settleTime + 3 hours);
         vm.prank(recipientD);
-        settlement.claimRelease(1, secret2);
+        settlement.claimRelease(secret2);
 
         vm.warp(settleTime + 5 hours);
         vm.prank(recipientE);
-        settlement.claimRelease(2, secret3);
+        settlement.claimRelease(secret3);
 
         vm.warp(settleTime + 6 hours);
         vm.prank(recipientF);
-        settlement.claimRelease(3, secret4);
+        settlement.claimRelease(secret4);
 
         // All recipients got their tokens
         assertEq(tokenB.balanceOf(recipientC), 10_500e18);
@@ -1104,18 +1103,18 @@ contract ScatterSettlementTest is Test {
         // recipientC claims at t+3h
         vm.warp(settleTime + 3 hours);
         vm.prank(recipientC);
-        settlement.claimRelease(0, secret1);
+        settlement.claimRelease(secret1);
 
         // recipientD and recipientE never claim
         // Wait for refund window on schedule 1 (6h delay + 7d)
         vm.warp(settleTime + 6 hours + 7 days);
         vm.prank(maker);
-        settlement.refundUnclaimed(1); // 8000 USDC back to escrow
+        settlement.refundUnclaimed(_claimHash(secret2, recipientD)); // 8000 USDC back to escrow
 
         // Wait for refund window on schedule 2 (9h delay + 7d)
         vm.warp(settleTime + 9 hours + 7 days);
         vm.prank(maker);
-        settlement.refundUnclaimed(2); // 6000 USDC back to escrow
+        settlement.refundUnclaimed(_claimHash(secret3, recipientE)); // 6000 USDC back to escrow
 
         // Maker withdraws refunded funds
         assertEq(settlement.deposits(maker, address(tokenB)), 14_000e18);

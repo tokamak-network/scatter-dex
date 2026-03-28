@@ -60,6 +60,8 @@ contract IdentityGateTest is Test {
         rr.register{value: 0.1 ether}("http://test", 0);
         token = new MockToken();
 
+        settlement.setTokenWhitelist(address(token), true);
+
         // user1: verified until 30 days from now
         registry.setVerifiedUntil(user1, uint64(block.timestamp + 30 days));
 
@@ -223,11 +225,11 @@ contract IdentityGateTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(recv1);
-        env.s.claimRelease(0, sec1);
+        env.s.claimRelease(sec1);
         assertEq(env.tB.balanceOf(recv1), 20e18);
 
         vm.prank(recv2);
-        env.s.claimRelease(1, sec2);
+        env.s.claimRelease(sec2);
         assertEq(env.tA.balanceOf(recv2), 10e18);
     }
 
@@ -264,7 +266,7 @@ contract IdentityGateTest is Test {
 
         // u2 can still refund + withdraw (no identity check)
         vm.prank(env.u2);
-        env.s.refundUnclaimed(1);
+        env.s.refundUnclaimed(keccak256(abi.encodePacked(keccak256("sec2"), address(0xDDD))));
         assertEq(env.s.deposits(env.u2, address(env.tA)), 10e18);
 
         vm.prank(env.u2);
@@ -291,6 +293,8 @@ contract IdentityGateTest is Test {
 
         env.tA = new MockToken();
         env.tB = new MockToken();
+        env.s.setTokenWhitelist(address(env.tA), true);
+        env.s.setTokenWhitelist(address(env.tB), true);
         env.tA.mint(env.u1, 10e18);
         env.tB.mint(env.u2, 20e18);
         vm.prank(env.u1);

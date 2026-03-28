@@ -57,6 +57,9 @@ contract VaultSkillsTest is Test {
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
 
+        settlement.setTokenWhitelist(address(tokenA), true);
+        settlement.setTokenWhitelist(address(tokenB), true);
+
         registry.setVerified(user, true);
         tokenA.mint(user, 100e18);
         tokenB.mint(user, 100e18);
