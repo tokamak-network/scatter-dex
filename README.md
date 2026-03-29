@@ -42,6 +42,8 @@ docs/            Research paper
 
 Starts anvil, deploys contracts, launches relayer + frontend. Open http://localhost:3000.
 
+> **Note:** Local dev uses a `MockIdentityRegistry` that approves all users. In production, `IdentityGate` connects to an external **zk-X509 Identity Registry** for KYC/AML compliance. See `script/DeploySettlement.s.sol` for production deployment with a real registry address.
+
 ### Manual Setup
 
 ```bash
