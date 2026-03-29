@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers stake a bond to register. Bond is returned after a cooldown on exit.
 ///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
 ///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
 ///      registries, off-chain indexing via events is recommended instead.
-contract RelayerRegistry {
+contract RelayerRegistry is Ownable2Step {
     struct Relayer {
         string url;
         uint256 fee; // basis points
@@ -21,8 +24,6 @@ contract RelayerRegistry {
     uint256 public constant EXIT_COOLDOWN = 7 days;
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
-    address public owner;
-    address public pendingOwner;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
@@ -36,8 +37,6 @@ contract RelayerRegistry {
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -46,21 +45,18 @@ contract RelayerRegistry {
     error ExitNotRequested();
     error CooldownNotPassed();
     error AlreadyExiting();
-    error NotOwner();
     error ZeroAddress();
     error RelayerNotActive();
     error BondTransferFailed();
     error FeeTooHigh();
-    error NotPendingOwner();
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
+    /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
+    function renounceOwnership() public pure override {
+        revert("disabled");
     }
 
-    constructor(address _treasury) {
+    constructor(address _treasury) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
-        owner = msg.sender;
         treasury = _treasury;
     }
 
@@ -186,17 +182,4 @@ contract RelayerRegistry {
         treasury = _treasury;
     }
 
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroAddress();
-        pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner, newOwner);
-    }
-
-    function acceptOwnership() external {
-        if (msg.sender != pendingOwner) revert NotPendingOwner();
-        address oldOwner = owner;
-        owner = msg.sender;
-        pendingOwner = address(0);
-        emit OwnershipTransferred(oldOwner, msg.sender);
-    }
 }

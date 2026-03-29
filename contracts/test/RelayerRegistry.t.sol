@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 
 contract RelayerRegistryTest is Test {
@@ -165,7 +166,7 @@ contract RelayerRegistryTest is Test {
 
     function test_setTreasury_not_owner_reverts() public {
         vm.prank(relayer1);
-        vm.expectRevert(RelayerRegistry.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
         registry.setTreasury(address(0x9999));
     }
 
@@ -233,7 +234,7 @@ contract RelayerRegistryTest is Test {
     function test_acceptOwnership_not_pending_reverts() public {
         registry.transferOwnership(address(0x9999));
         vm.prank(relayer1);
-        vm.expectRevert(RelayerRegistry.NotPendingOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
         registry.acceptOwnership();
     }
 }
