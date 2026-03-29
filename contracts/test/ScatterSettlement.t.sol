@@ -529,6 +529,16 @@ contract ScatterSettlementTest is Test {
         settlement.acceptOwnership();
     }
 
+    function test_renounceOwnership_reverts() public {
+        vm.expectRevert(ScatterSettlement.RenounceOwnershipDisabled.selector);
+        settlement.renounceOwnership();
+    }
+
+    function test_transferOwnership_zero_address_reverts() public {
+        vm.expectRevert(ScatterSettlement.ZeroAddress.selector);
+        settlement.transferOwnership(address(0));
+    }
+
     function test_setProtocolFee_5000_boundary() public {
         settlement.setProtocolFee(5000); // should pass (50%)
         assertEq(settlement.protocolFeeBps(), 5000);

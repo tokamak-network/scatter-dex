@@ -49,10 +49,17 @@ contract RelayerRegistry is Ownable2Step {
     error RelayerNotActive();
     error BondTransferFailed();
     error FeeTooHigh();
+    error RenounceOwnershipDisabled();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
     function renounceOwnership() public pure override {
-        revert("disabled");
+        revert RenounceOwnershipDisabled();
+    }
+
+    /// @dev Override to reject zero-address transfers, preserving the original contract's behavior.
+    function transferOwnership(address newOwner) public override {
+        if (newOwner == address(0)) revert ZeroAddress();
+        super.transferOwnership(newOwner);
     }
 
     constructor(address _treasury) Ownable(msg.sender) {

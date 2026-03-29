@@ -53,6 +53,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     error ReleaseDelayTooShort();
     error TipExceedsAmount();
     error SignatureExpired();
+    error RenounceOwnershipDisabled();
 
     // ─── Data Structures ─────────────────────────────────────────────
     enum NonceState { Unused, Settled, Cancelled }
@@ -152,7 +153,13 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
     function renounceOwnership() public pure override {
-        revert("disabled");
+        revert RenounceOwnershipDisabled();
+    }
+
+    /// @dev Override to reject zero-address transfers, preserving the original contract's behavior.
+    function transferOwnership(address newOwner) public override {
+        if (newOwner == address(0)) revert ZeroAddress();
+        super.transferOwnership(newOwner);
     }
 
     function setProtocolFee(uint256 _protocolFeeBps) external onlyOwner {

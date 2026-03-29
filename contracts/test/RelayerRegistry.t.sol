@@ -237,4 +237,14 @@ contract RelayerRegistryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
         registry.acceptOwnership();
     }
+
+    function test_renounceOwnership_reverts() public {
+        vm.expectRevert(RelayerRegistry.RenounceOwnershipDisabled.selector);
+        registry.renounceOwnership();
+    }
+
+    function test_transferOwnership_zero_address_reverts() public {
+        vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
+        registry.transferOwnership(address(0));
+    }
 }
