@@ -17,20 +17,42 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Wait for a URL to respond, with timeout
+wait_for() {
+  local url="$1" name="$2" max="$3"
+  local i=0
+  while ! curl -s "$url" > /dev/null 2>&1; do
+    i=$((i + 1))
+    if [ "$i" -ge "$max" ]; then
+      echo "  ERROR: $name failed to start (waited ${max}s)"
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+# Check if a port is already in use
+check_port() {
+  local port="$1" name="$2"
+  if lsof -i :"$port" > /dev/null 2>&1; then
+    echo "ERROR: port $port is already in use ($name). Kill the existing process first."
+    exit 1
+  fi
+}
+
 echo "=== ScatterDEX Local Dev Environment ==="
 echo ""
+
+# ── Pre-flight checks ────────────────────────────────────────
+check_port 8545 "anvil"
+check_port 3001 "relayer"
+check_port 3000 "frontend"
 
 # ── 1. Start anvil ────────────────────────────────────────────
 echo "[1/4] Starting anvil..."
 anvil --silent &
 PIDS+=($!)
-sleep 2
-
-if ! curl -s "$RPC_URL" -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
-  echo "  ERROR: anvil failed to start"
-  exit 1
-fi
+wait_for "$RPC_URL" "anvil" 10
 echo "  anvil running on $RPC_URL (PID ${PIDS[-1]})"
 
 # ── 2. Deploy contracts ──────────────────────────────────────
@@ -77,7 +99,7 @@ EOF
 cd "$ROOT_DIR/relayer"
 npm run dev > /dev/null 2>&1 &
 PIDS+=($!)
-sleep 2
+wait_for "http://localhost:3001/api/info" "relayer" 15
 echo "  relayer running on http://localhost:3001 (PID ${PIDS[-1]})"
 
 # ── 4. Start frontend ────────────────────────────────────────
@@ -91,8 +113,10 @@ NEXT_PUBLIC_TOKEN_LIST=$WETH,$USDC
 EOF
 
 cd "$ROOT_DIR/frontend"
-npm run dev &
+npm run dev > /dev/null 2>&1 &
 PIDS+=($!)
+wait_for "http://localhost:3000" "frontend" 30
+echo "  frontend running on http://localhost:3000 (PID ${PIDS[-1]})"
 
 echo ""
 echo "========================================"
@@ -113,5 +137,6 @@ echo ""
 echo "  Press Ctrl+C to stop all services."
 echo ""
 
-# Wait for any child to exit
+# Keep alive — disable set -e so wait doesn't exit on child signal
+set +e
 wait
