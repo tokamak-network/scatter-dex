@@ -76,4 +76,4 @@ docker-compose up
 
 ## License
 
-Licensed under the [Business Source License 1.1](LICENSE). Non-production use (research, auditing, contributions) is permitted. Production use requires a commercial license from Tokamak Network Pte. Ltd. Each version converts to GPLv2+ four years after release. Contact legal@tokamak.network for licensing.
+This project is provided under the [Business Source License 1.1](LICENSE) with additional patent provisions. Non-production use (research, auditing, contributions) is permitted. Production use requires a commercial license from Tokamak Network Pte. Ltd. Converts to GPLv2+ on the Change Date specified in LICENSE. See the LICENSE file for full terms. Contact legal@tokamak.network for licensing.

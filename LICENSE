@@ -5,25 +5,17 @@ Parameters
 Licensor:             Tokamak Network Pte. Ltd.
 Licensed Work:        ScatterDEX
                       The Licensed Work is (c) 2026 Tokamak Network Pte. Ltd.
-Additional Use Grant: You may use the Licensed Work for non-production purposes
-                      only, including:
-                      (a) personal, academic, and research use;
-                      (b) security auditing and testing;
-                      (c) contributing improvements back to the Licensed Work
-                          via pull requests to the official repository.
-
-                      You may NOT use the Licensed Work, or any substantial
-                      portion thereof, for any Production Use without a
-                      separate commercial license from the Licensor.
-
-                      "Production Use" means deploying the Licensed Work,
-                      or any derivative thereof, to process real financial
-                      transactions on any blockchain network (mainnet or
-                      equivalent), whether or not for profit.
-
-Change Date:          Four years from the date of each release of the
-                      Licensed Work (i.e., each version becomes available
-                      under the Change License four years after its release).
+Additional Use Grant: You may use the Licensed Work for non-production
+                      purposes only, including personal, academic, research
+                      use, security auditing, testing, and contributing
+                      improvements back to the official repository.
+Use Limitation:       Production Use. "Production Use" means deploying the
+                      Licensed Work, or any derivative thereof, to process
+                      real financial transactions on any blockchain network
+                      (mainnet or equivalent), whether or not for profit.
+                      Production Use requires a separate commercial license
+                      from the Licensor.
+Change Date:          2030-03-29
 Change License:       GNU General Public License v2.0 or later
 
 Notice
