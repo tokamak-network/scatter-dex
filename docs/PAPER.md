@@ -6,7 +6,7 @@
 
 ## Abstract
 
-We present **Scatter Settlement**, a novel settlement mechanism for decentralized exchanges (DEXs) that achieves transaction unlinkability without relying on heavy zero-knowledge proof systems. Our approach decouples trade execution from settlement and introduces a multi-dimensional dissociation scheme combining (1) cross-token conversion, (2) amount splitting, (3) temporal dispersion, (4) address separation, (5) transaction mixing, (6) pre-claim address concealment via hash-locks, and (7) explicit recipient consent. By storing only `claimHash = H(secret, recipient)` on-chain, neither the recipient address nor the claim secret is revealed until the moment of withdrawal. We formally define the **anonymity set** of Scatter Settlement as a function of contract TVL, concurrent transactions, split count, and time delay, and prove that an adversary's advantage in linking deposits to withdrawals is negligible under moderate-to-high traffic conditions (≥100 deposits/hour). To reconcile privacy with regulatory compliance, we introduce a **Dual-CA (Certificate Authority) architecture** with opposing disclosure policies: a privacy-preserving User CA (maximum identity masking) and an accountability-maximizing Relayer CA (minimum masking), positioning relayers as publicly identified intermediaries with post-hoc disclosure obligations to law enforcement. Relayers cooperate in a **multi-relayer MLS (Multiple Listing Service) model** to maximize matching liquidity, which — unlike prior systems — does not degrade user privacy because privacy is structurally guaranteed by claimHash and fresh recipient addresses. Our evaluation on Ethereum L1 and L2 shows that Scatter Settlement achieves comparable privacy guarantees to ZK-based mixing protocols at **~67–74% lower gas cost**, while maintaining full compatibility with KYC/AML compliance. Notably, because Scatter Settlement requires only hash-locks and time-locks — no ZK proof verification — it is practically deployable even on L1, where current gas prices (as low as ~0.14 Gwei in March 2025) bring the total cost of a full privacy trade to under $0.16.
+We present **Scatter Settlement**, a novel settlement mechanism for decentralized exchanges (DEXs) that achieves transaction unlinkability without relying on heavy zero-knowledge proof systems. Our approach decouples trade execution from settlement and introduces a multi-dimensional dissociation scheme combining (1) cross-token conversion, (2) amount splitting, (3) temporal dispersion, (4) address separation, (5) transaction mixing, (6) pre-claim address concealment via hash-locks, and (7) explicit recipient consent. By storing only `claimHash = H(secret, recipient)` on-chain, neither the recipient address nor the claim secret is revealed until the moment of withdrawal. We formally define the **anonymity set** of Scatter Settlement as a function of contract TVL, concurrent transactions, split count, and time delay, and prove that an adversary's advantage in linking deposits to withdrawals is negligible under moderate-to-high traffic conditions (≥100 deposits/hour). To reconcile privacy with regulatory compliance, we introduce a **Dual-CA (Certificate Authority) architecture** with opposing disclosure policies: a privacy-preserving User CA (maximum identity masking) and an accountability-maximizing Relayer CA (minimum masking), positioning relayers as publicly identified intermediaries with post-hoc disclosure obligations to law enforcement. Relayers cooperate in a **multi-relayer MLS (Multiple Listing Service) model** to maximize matching liquidity, which — unlike prior systems — does not degrade user privacy because privacy is structurally guaranteed by claimHash and fresh recipient addresses. Our evaluation on Ethereum L1 and L2 shows that Scatter Settlement achieves comparable privacy guarantees to ZK-based mixing protocols at **~67–74% lower gas cost** (compared against equivalent end-to-end private trade operations including deposit, settlement, and withdrawal phases), while maintaining full compatibility with KYC/AML compliance. Notably, because Scatter Settlement requires only hash-locks and time-locks — no ZK proof verification — it is practically deployable even on L1, where observed gas prices (as low as ~0.14 Gwei in March 2025 [39]) bring the total cost of a full privacy trade to under $0.16.
 
 **Keywords:** DEX, privacy, unlinkability, hash-lock, settlement, anonymity set, compliance
 
@@ -432,7 +432,7 @@ Oracle Manipulation Vulnerable        N/A            N/A
 
 **Theorem 5.2.** An adversary with access to the mempool cannot front-run orders in our architecture.
 
-*Proof sketch*: Orders exist as off-chain EIP-712 signatures transmitted to relayers via private channels. The only on-chain transactions are `deposit()` (reveals intent to trade but not direction, price, or counterparty) and `settle()` (reveals matched result after both parties committed). By the time `settle()` appears in the mempool, the trade is already matched and both parties' escrow is locked. □
+*Proof sketch*: Orders exist as off-chain EIP-712 signatures transmitted to relayers via private channels. The only on-chain transactions are `deposit()` (which locks funds in neutral escrow without revealing trade intent, direction, price, or counterparty) and `settle()` (which reveals the matched result after both parties committed). By the time `settle()` appears in the mempool, the trade is already matched and both parties' escrow is locked. □
 
 ### 5.4 Delayed Settlement as MEV Shield
 
@@ -528,7 +528,7 @@ For N = 50, k = 3: ε_amount ~ 1.81 * 10^{-6}.
 ε_timing ≤ k * Delta_granularity / (N * (Delta_max - Delta_min))
 ```
 
-For Ethereum L2 (2s block time), N = 50, and a 6-hour delay range: ε_timing ~ 5.56 × 10⁻⁶. For Ethereum L1 (12s block time), the coarser granularity reduces the adversary's timing resolution, yielding ε_timing ~ 9.26 × 10⁻⁷ — the L2 calculation above is therefore a conservative upper bound applicable to both L1 and L2.
+For Ethereum L2 (2s block time), N = 50, k = 3, and a 6-hour delay range (21,600s): ε_timing ≤ 3 × 2 / (50 × 21,600) ~ 5.56 × 10⁻⁶. For Ethereum L1 (12s block time): ε_timing ≤ 3 × 12 / (50 × 21,600) ~ 3.33 × 10⁻⁵. The coarser L1 block time provides slightly more timing information to the adversary, but both values remain negligible — well below the 10⁻³ threshold for practical linkability.
 
 **Game 4 (Address Independence):** Fresh recipient addresses per claim are computationally indistinguishable from random under the ECDLP assumption on secp256k1 (ε_addr ≤ negl(λ)).
 
@@ -706,7 +706,7 @@ Scatter Settlement's privacy does NOT depend on hiding information from relayers
 Mechanism 1 — claimHash concealment:
   On-chain observers see only claimHash until claim time.
   Recipient address is never revealed until the moment of withdrawal.
-  → Protects against passive on-chain adversaries (Section 6.3)
+  → Protects against passive on-chain adversaries (Section 6.1)
 
 Mechanism 2 — Fresh address isolation:
   Recipients claim using single-use addresses with no on-chain history.
@@ -797,15 +797,17 @@ The dominant cost is `settle()` at ~286K gas, driven primarily by 8 storage writ
 
 #### 8.2.1 L1 Mainnet Cost Analysis
 
-A critical advantage of Scatter Settlement's ZK-free design is practical deployability on Ethereum L1 mainnet. As of March 2025, Ethereum L1 gas prices have dropped significantly due to network optimizations and migration of high-frequency activity to L2s. At observed gas prices of ~0.14 Gwei (ETH ≈ $1,991):
+A critical advantage of Scatter Settlement's ZK-free design is practical deployability on Ethereum L1 mainnet. As of March 2025, Ethereum L1 gas prices have dropped significantly due to network optimizations and migration of high-frequency activity to L2s. Using a spot gas price of 0.1423 Gwei observed on Ethereum mainnet (Etherscan tx `0x6e8cf0...b636eb`, March 29, 2025 [39]) with ETH ≈ $1,991:
 
 | Operation | Gas Used | L1 Cost (ETH) | L1 Cost (USD) |
 |-----------|----------|---------------|---------------|
-| Deposit (maker, cold) | 81,174 | 0.0000115 ETH | $0.023 |
+| Deposit (maker, cold) | 81,174 | 0.0000116 ETH | $0.023 |
 | Deposit (taker, cold) | 69,677 | 0.0000099 ETH | $0.020 |
 | Settle (3+1 claims) | 285,857 | 0.0000407 ETH | $0.081 |
 | Claim (×4) | 132,588 | 0.0000189 ETH | $0.038 |
 | **Full trade total** | **569,296** | **~0.000081 ETH** | **~$0.16** |
+
+*Note: Gas prices are volatile; the values above represent a low-end spot observation. At the 7-day median gas price of ~3 Gwei (March 2025), the full trade cost would be ~$3.40 — still 67–74% cheaper than ZK-based alternatives at the same gas price.*
 
 For comparison at the same gas price: Tornado Cash (~2.2M gas) costs ~$0.63 and Railgun (~1.7M gas) costs ~$0.48 per equivalent trade. This means Scatter Settlement on L1 is cheaper than ZK-based alternatives would be even on L2 at moderate gas prices.
 
@@ -1120,6 +1122,8 @@ We believe Scatter Settlement demonstrates that meaningful financial privacy, re
 [37] Herlihy, M. "Atomic Cross-Chain Swaps." ACM PODC, 2018.
 
 [38] Thyagarajan, S., Malavolta, G., Moreno-Sanchez, P. "Universal Atomic Swaps: Secure Exchange of Coins Across All Blockchains." IEEE S&P, 2022.
+
+[39] Etherscan. "Transaction 0x6e8cf00092bde9046e10262567680f4c84250b91858b5d35c0bacc3eb2b636eb — Gas Price 0.142311626 Gwei." https://etherscan.io/tx/0x6e8cf00092bde9046e10262567680f4c84250b91858b5d35c0bacc3eb2b636eb, March 29, 2025.
 
 ---
 
