@@ -2,10 +2,12 @@
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_DIR="$ROOT_DIR/.dev-logs"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 RPC_URL="http://localhost:8545"
 MOCK_MODE=false
 PIDS=()
+CLEANED_UP=false
 
 usage() {
   echo "Usage: $0 [--mock]"
@@ -24,28 +26,31 @@ for arg in "$@"; do
 done
 
 cleanup() {
+  if [ "$CLEANED_UP" = true ]; then return; fi
+  CLEANED_UP=true
   echo ""
   echo "Shutting down..."
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null
-  echo "Done."
+  echo "Done. Logs saved in $LOG_DIR/"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 
-# Wait for a URL to respond, with timeout
+# Wait for a URL to respond, with timeout. Returns 1 on failure.
 wait_for() {
   local url="$1" name="$2" max="$3"
   local i=0
-  while ! curl -s "$url" > /dev/null 2>&1; do
+  while ! curl -fsS "$url" > /dev/null 2>&1; do
     i=$((i + 1))
     if [ "$i" -ge "$max" ]; then
       echo "  ERROR: $name failed to start (waited ${max}s)"
-      exit 1
+      return 1
     fi
     sleep 1
   done
+  return 0
 }
 
 # Check if a port is already in use
@@ -56,6 +61,9 @@ check_port() {
     exit 1
   fi
 }
+
+# Create log directory
+mkdir -p "$LOG_DIR"
 
 echo "=== ScatterDEX Local Dev Environment ==="
 echo ""
@@ -71,9 +79,12 @@ if [ "$MOCK_MODE" = true ]; then
 
   echo "[1/4] Starting anvil..."
   anvil --silent &
-  PIDS+=($!)
-  wait_for "$RPC_URL" "anvil" 10
-  echo "  anvil running on $RPC_URL (PID ${PIDS[-1]})"
+  last_pid=$!
+  PIDS+=("$last_pid")
+  if ! wait_for "$RPC_URL" "anvil" 10; then
+    exit 1
+  fi
+  echo "  anvil running on $RPC_URL (PID $last_pid)"
 
   echo ""
   echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
@@ -86,6 +97,12 @@ if [ "$MOCK_MODE" = true ]; then
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
 
+  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ]; then
+    echo "  ERROR: deployment failed (missing one or more contract addresses)"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  fi
+
 else
   # ── Integration mode: connect to existing anvil with zk-X509 ──
   echo "Mode: INTEGRATION (zk-X509 required)"
@@ -93,7 +110,7 @@ else
 
   # Verify anvil is running
   echo "[1/4] Checking anvil..."
-  if ! curl -s "$RPC_URL" -X POST -H "Content-Type: application/json" \
+  if ! curl -fsS "$RPC_URL" -X POST -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
     echo "  ERROR: anvil is not running at $RPC_URL"
     echo "  Start zk-X509 local environment first. See:"
@@ -133,7 +150,6 @@ else
   echo "[2/4] Deploying contracts (real IdentityGate)..."
   cd "$ROOT_DIR/contracts"
 
-  TREASURY="$( cast address-zero 2>/dev/null || echo "0x7777777777777777777777777777777777777777" )"
   # Use deployer as treasury for local dev
   TREASURY="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
@@ -146,38 +162,29 @@ else
   SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "ScatterSettlement deployed:" | awk '{print $NF}')
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry deployed:" | awk '{print $NF}')
 
-  # Deploy mock tokens for local testing
-  echo "  Deploying test tokens..."
-  WETH=$(forge create --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" \
-    --constructor-args "Wrapped ETH" "WETH" \
-    src/test-helpers/MockToken.sol:MockToken 2>&1 | grep "Deployed to:" | awk '{print $3}' || echo "")
-
-  # If no MockToken helper, use cast to deploy a minimal ERC20
-  if [ -z "$WETH" ]; then
-    echo "  Note: No test tokens deployed. Set WETH/USDC manually or use --mock mode."
-    WETH=""
-    USDC=""
+  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ]; then
+    echo "  ERROR: deployment failed (missing contract addresses)"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
   fi
+
+  # No test tokens in integration mode
+  WETH=""
+  USDC=""
 
   # Register deployer as relayer
   echo "  Registering deployer as relayer..."
   cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3001" 30 \
-    --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-fi
-
-if [ -z "$SETTLEMENT" ]; then
-  echo "  ERROR: deployment failed"
-  echo "$DEPLOY_OUTPUT"
-  exit 1
+    --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
 fi
 
 # Whitelist tokens (if available)
 if [ -n "$WETH" ] && [ -n "$USDC" ]; then
   echo "  Whitelisting tokens..."
   cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$WETH" true \
-    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null
   cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$USDC" true \
-    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null
 fi
 
 echo "  Settlement:       $SETTLEMENT"
@@ -197,10 +204,15 @@ PORT=3001
 EOF
 
 cd "$ROOT_DIR/relayer"
-npm run dev > /dev/null 2>&1 &
-PIDS+=($!)
-wait_for "http://localhost:3001/api/info" "relayer" 15
-echo "  relayer running on http://localhost:3001 (PID ${PIDS[-1]})"
+npm run dev > "$LOG_DIR/relayer.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:3001/api/info" "relayer" 15; then
+  echo "  Last 20 lines of relayer log:"
+  tail -20 "$LOG_DIR/relayer.log" 2>/dev/null
+  exit 1
+fi
+echo "  relayer running on http://localhost:3001 (PID $last_pid)"
 
 # ── 4. Start frontend ────────────────────────────────────────
 echo ""
@@ -216,10 +228,15 @@ NEXT_PUBLIC_TOKEN_LIST=$TOKEN_LIST
 EOF
 
 cd "$ROOT_DIR/frontend"
-npm run dev > /dev/null 2>&1 &
-PIDS+=($!)
-wait_for "http://localhost:3000" "frontend" 30
-echo "  frontend running on http://localhost:3000 (PID ${PIDS[-1]})"
+npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:3000" "frontend" 30; then
+  echo "  Last 20 lines of frontend log:"
+  tail -20 "$LOG_DIR/frontend.log" 2>/dev/null
+  exit 1
+fi
+echo "  frontend running on http://localhost:3000 (PID $last_pid)"
 
 echo ""
 echo "========================================"
@@ -241,6 +258,8 @@ echo "  Settlement:       $SETTLEMENT"
 echo "  RelayerRegistry:  $RELAYER_REGISTRY"
 [ -n "$WETH" ] && echo "  WETH:             $WETH"
 [ -n "$USDC" ] && echo "  USDC:             $USDC"
+echo ""
+echo "  Logs:      $LOG_DIR/"
 echo ""
 if [ "$MOCK_MODE" = true ]; then
   echo "  Test accounts (anvil defaults):"

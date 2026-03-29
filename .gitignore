@@ -1,3 +1,4 @@
 .next/
 contracts/broadcast/
 contracts/cache/
+.dev-logs/
