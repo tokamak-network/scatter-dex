@@ -6,10 +6,12 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IdentityGate} from "./IdentityGate.sol";
 import {RelayerRegistry} from "./RelayerRegistry.sol";
 
-contract ScatterSettlement is EIP712, ReentrancyGuard {
+contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
 
     // ─── Constants ───────────────────────────────────────────────────
@@ -44,15 +46,14 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     error NotActiveRelayer();
     error FeeTooHigh();
     error ZeroAddress();
-    error NotOwner();
     error FeeExceedsRelayerRegistered();
     error ContractPaused();
     error DuplicateClaimHash();
     error TokenNotWhitelisted();
     error ReleaseDelayTooShort();
-    error NotPendingOwner();
     error TipExceedsAmount();
     error SignatureExpired();
+    error RenounceOwnershipDisabled();
 
     // ─── Data Structures ─────────────────────────────────────────────
     enum NonceState { Unused, Settled, Cancelled }
@@ -106,8 +107,6 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
 
     /// @notice Protocol fee in basis points (e.g., 10 = 0.1%). Taken from total fee.
     uint256 public protocolFeeBps;
-    address public owner;
-    address public pendingOwner;
     bool public paused;
 
     // depositor => token => amount
@@ -137,45 +136,39 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     event Refunded(bytes32 indexed claimHash, address indexed depositor, uint256 amount);
     event NonceCancelled(address indexed user, uint256 nonce);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event Paused(address account);
     event Unpaused(address account);
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps) EIP712("ScatterSettlement", "1") {
+    constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps)
+        EIP712("ScatterSettlement", "1")
+        Ownable(msg.sender)
+    {
         if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAddress();
         if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         identityGate = IdentityGate(_identityGate);
         relayerRegistry = RelayerRegistry(_relayerRegistry);
         protocolFeeBps = _protocolFeeBps;
-        owner = msg.sender;
     }
 
-    function setProtocolFee(uint256 _protocolFeeBps) external {
-        if (msg.sender != owner) revert NotOwner();
+    /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
+    function renounceOwnership() public pure override {
+        revert RenounceOwnershipDisabled();
+    }
+
+    /// @dev Override to reject zero-address transfers, preserving the original contract's behavior.
+    function transferOwnership(address newOwner) public override {
+        if (newOwner == address(0)) revert ZeroAddress();
+        super.transferOwnership(newOwner);
+    }
+
+    function setProtocolFee(uint256 _protocolFeeBps) external onlyOwner {
         if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
     }
 
-    function transferOwnership(address newOwner) external {
-        if (msg.sender != owner) revert NotOwner();
-        if (newOwner == address(0)) revert ZeroAddress();
-        pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner, newOwner);
-    }
-
-    function acceptOwnership() external {
-        if (msg.sender != pendingOwner) revert NotPendingOwner();
-        address oldOwner = owner;
-        owner = msg.sender;
-        pendingOwner = address(0);
-        emit OwnershipTransferred(oldOwner, msg.sender);
-    }
-
-    function setTokenWhitelist(address token, bool allowed) external {
-        if (msg.sender != owner) revert NotOwner();
+    function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
         emit TokenWhitelistUpdated(token, allowed);
@@ -187,8 +180,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard {
     ///      - keep a fast-acting "pause guardian" (not timelocked) that can pause immediately, and
     ///      - put `owner` / governance behind a Timelock for unpauses and other admin actions.
     ///      If `owner` is timelocked, ensure a separate immediate pause authority remains. See audit L-2.
-    function setPaused(bool _paused) external {
-        if (msg.sender != owner) revert NotOwner();
+    function setPaused(bool _paused) external onlyOwner {
         paused = _paused;
         if (_paused) emit Paused(msg.sender);
         else emit Unpaused(msg.sender);
