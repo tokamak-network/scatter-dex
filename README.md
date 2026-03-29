@@ -34,33 +34,24 @@ docs/            Research paper
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, anvil, cast)
 - Node.js >= 18
 
-### Local Dev (all-in-one)
+### Full Local Dev (with zk-X509)
+
+ScatterDEX requires a **zk-X509 Identity Registry** for user verification. For the full setup with both systems on a shared anvil, see **[docs/local-setup.md](docs/local-setup.md)**.
 
 ```bash
-./scripts/dev.sh
+# After zk-X509 is deployed on anvil:
+IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 ```
 
-Starts anvil, deploys contracts, launches relayer + frontend. Open http://localhost:3000.
+### Quick Start (mock mode)
 
-> **Note:** Local dev uses a `MockIdentityRegistry` that approves all users. In production, `IdentityGate` connects to an external **zk-X509 Identity Registry** for KYC/AML compliance. See `script/DeploySettlement.s.sol` for production deployment with a real registry address.
-
-### Manual Setup
+For rapid development without zk-X509 (identity verification bypassed):
 
 ```bash
-# 1. Start anvil
-anvil
-
-# 2. Deploy contracts
-cd contracts
-forge script script/DeployLocal.s.sol --rpc-url http://localhost:8545 \
-  --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
-# 3. Start relayer
-cd relayer && npm install && npm run dev
-
-# 4. Start frontend
-cd frontend && npm install && npm run dev
+./scripts/dev.sh --mock
 ```
+
+Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches relayer + frontend. Open http://localhost:3000.
 
 ### Run Tests
 
