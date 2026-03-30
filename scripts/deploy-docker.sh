@@ -23,6 +23,20 @@ echo "RPC is ready."
 
 cd /contracts
 
+# ── Shared helper ────────────────────────────────────────────
+whitelist_tokens() {
+  local settlement="$1" weth="$2" usdc="$3"
+  if [ -z "$weth" ] || [ -z "$usdc" ]; then
+    echo "ERROR: Failed to parse token addresses (WETH='$weth', USDC='$usdc')"
+    exit 1
+  fi
+  echo "Whitelisting WETH=$weth USDC=$usdc"
+  cast send "$settlement" "setTokenWhitelist(address,bool)" "$weth" true \
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+  cast send "$settlement" "setTokenWhitelist(address,bool)" "$usdc" true \
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+}
+
 if [ -n "${IDENTITY_REGISTRY:-}" ]; then
   # ── Integration mode: use real zk-X509 Dual-CA IdentityRegistries ──
   if [ -z "${RELAYER_IDENTITY_REGISTRY:-}" ]; then
@@ -52,10 +66,23 @@ if [ -n "${IDENTITY_REGISTRY:-}" ]; then
   cast send "$RELAYER_REGISTRY" "register(string,uint256)" "$RELAYER_URL" 30 \
     --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
 
+  # Deploy test tokens (not included in DeploySettlement)
+  echo ""
+  echo "=== Deploying test tokens ==="
+  TOKEN_OUTPUT=$(forge script script/DeployTestTokens.s.sol:DeployTestTokens \
+    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+  echo "$TOKEN_OUTPUT"
+
+  WETH=$(echo "$TOKEN_OUTPUT" | grep "WETH:" | awk '{print $NF}')
+  USDC=$(echo "$TOKEN_OUTPUT" | grep "USDC:" | awk '{print $NF}')
+
+  whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
+
   cat > "$OUTPUT_FILE" <<EOF
 SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
+NEXT_PUBLIC_TOKEN_LIST=$WETH,$USDC
 IDENTITY_REGISTRY=$IDENTITY_REGISTRY
 EOF
 
@@ -73,11 +100,7 @@ else
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
 
-  # Whitelist tokens
-  cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$WETH" true \
-    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
-  cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$USDC" true \
-    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+  whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
 
   cat > "$OUTPUT_FILE" <<EOF
 SETTLEMENT_ADDRESS=$SETTLEMENT

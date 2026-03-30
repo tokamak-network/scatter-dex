@@ -6,19 +6,13 @@ import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {MockToken} from "./DeployTestTokens.sol";
 
 /// @dev Mock identity registry that verifies everyone (for local testing)
 contract MockIdentityRegistry is IIdentityRegistry {
     function isVerified(address) external pure override returns (bool) { return true; }
     function verifiedUntil(address) external pure override returns (uint64) { return type(uint64).max; }
     function paused() external pure override returns (bool) { return false; }
-}
-
-/// @dev Mock ERC20 token for local testing
-contract MockToken is ERC20 {
-    constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
 }
 
 /// @notice Deploy everything for local E2E testing on anvil.
