@@ -9,7 +9,7 @@ ScatterDEX requires a **zk-X509 Identity Registry** for user verification. This 
 
 ## Quick Start (Mock Mode)
 
-No zk-X509 needed. Uses `MockIdentityRegistry` that approves all users.
+No zk-X509 needed. Uses `MockIdentityRegistry` that approves all users and relayers (Dual-CA mock).
 
 ```bash
 docker compose --profile mock up
@@ -23,18 +23,21 @@ Connects to the zk-X509 Docker environment already running on your machine.
 
 ### Step 1: Start zk-X509
 
-Follow the [zk-X509 Local Setup Guide](https://github.com/tokamak-network/zk-X509/blob/main/docs/local-setup.md) to start its Docker environment. This brings up anvil and deploys the IdentityRegistry.
+Follow the [zk-X509 Local Setup Guide](https://github.com/tokamak-network/zk-X509/blob/main/docs/local-setup.md) to start its Docker environment. This brings up anvil, deploys the RegistryFactory, and creates two IdentityRegistry instances (User CA + Relayer CA).
 
 ### Step 2: Start ScatterDEX
 
 ```bash
-IDENTITY_REGISTRY=0x... \
+IDENTITY_REGISTRY=0x...           \
+RELAYER_IDENTITY_REGISTRY=0x...   \
 RPC_URL=http://host.docker.internal:8545 \
 NEXT_PUBLIC_RPC_URL=http://localhost:8545 \
 docker compose up
 ```
 
-> Replace `0x...` with the IdentityRegistry proxy address from zk-X509's deploy output.
+> Replace `0x...` with the IdentityRegistry proxy addresses from zk-X509's deploy output:
+> - `IDENTITY_REGISTRY` — User CA registry (max masking, `minDisclosureMask=0x00`)
+> - `RELAYER_IDENTITY_REGISTRY` — Relayer CA registry (min masking, `minDisclosureMask=0x0F`)
 
 ## Services
 
@@ -49,5 +52,6 @@ docker compose up
 | Problem | Solution |
 |---------|----------|
 | deployer fails to connect | Mock mode: ensure `--profile mock` is set. Integration: check zk-X509 Docker is running |
-| `NotVerified` when depositing | Register the user wallet via zk-X509 |
+| `NotVerified` when depositing | Register the user wallet via zk-X509 (User CA) |
+| `NotVerified` when registering relayer | Register the relayer via zk-X509 (Relayer CA) |
 | Port conflict with zk-X509 frontend | zk-X509 frontend를 다른 포트로 실행: `PORT=3002` |

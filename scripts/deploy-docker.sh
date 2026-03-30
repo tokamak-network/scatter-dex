@@ -17,10 +17,18 @@ echo "RPC is ready."
 cd /contracts
 
 if [ -n "${IDENTITY_REGISTRY:-}" ]; then
-  # ── Integration mode: use real zk-X509 IdentityRegistry ──
-  echo "Mode: INTEGRATION (IdentityRegistry=$IDENTITY_REGISTRY)"
+  # ── Integration mode: use real zk-X509 Dual-CA IdentityRegistries ──
+  if [ -z "${RELAYER_IDENTITY_REGISTRY:-}" ]; then
+    echo "ERROR: RELAYER_IDENTITY_REGISTRY is required in integration mode."
+    exit 1
+  fi
+
+  echo "Mode: INTEGRATION (Dual-CA)"
+  echo "  User CA:    $IDENTITY_REGISTRY"
+  echo "  Relayer CA: $RELAYER_IDENTITY_REGISTRY"
 
   DEPLOY_OUTPUT=$(IDENTITY_REGISTRY="$IDENTITY_REGISTRY" \
+    RELAYER_IDENTITY_REGISTRY="$RELAYER_IDENTITY_REGISTRY" \
     TREASURY="$DEPLOYER_ADDR" \
     PROTOCOL_FEE_BPS="${PROTOCOL_FEE_BPS:-1000}" \
     forge script script/DeploySettlement.s.sol:DeploySettlement \

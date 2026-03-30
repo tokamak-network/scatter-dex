@@ -24,6 +24,7 @@ services:
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
       - IDENTITY_REGISTRY=${IDENTITY_REGISTRY:-}
+      - RELAYER_IDENTITY_REGISTRY=${RELAYER_IDENTITY_REGISTRY:-}
 
   # ── Relayer ─────────────────────────────────────────────────
   relayer:
