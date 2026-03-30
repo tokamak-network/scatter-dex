@@ -50,7 +50,11 @@ export function parseMetaAddress(metaAddress: string): {
   viewingPubKey: Uint8Array;
 } {
   // Format: "st:eth:0x<33 bytes spending><33 bytes viewing>" (compressed)
-  const hex = metaAddress.replace("st:eth:0x", "");
+  const prefix = "st:eth:0x";
+  if (!metaAddress.startsWith(prefix)) {
+    throw new Error("Invalid meta-address prefix (expected st:eth:0x...)");
+  }
+  const hex = metaAddress.slice(prefix.length);
   if (hex.length !== 132) {
     throw new Error("Invalid meta-address length (expected 66 bytes compressed)");
   }
@@ -111,15 +115,16 @@ export function deriveStealthPrivateKey(
   viewingKey: string,
   ephemeralPubKeyHex: string
 ): string {
-  const epk = hexToBytes(ephemeralPubKeyHex.replace("0x", ""));
+  const strip0x = (h: string) => h.startsWith("0x") ? h.slice(2) : h;
+  const epk = hexToBytes(strip0x(ephemeralPubKeyHex));
 
   // Shared secret: v * R (ECDH) — same as sender computed r * V
   const R = POINT.fromHex(epk);
-  const sharedPoint = R.multiply(bytesToBigInt(hexToBytes(viewingKey)));
+  const sharedPoint = R.multiply(bytesToBigInt(hexToBytes(strip0x(viewingKey))));
   const sharedSecret = keccak_256(sharedPoint.toRawBytes(true));
 
   // Stealth private key: s + H(sharedSecret) mod n
-  const s = bytesToBigInt(hexToBytes(spendingKey));
+  const s = bytesToBigInt(hexToBytes(strip0x(spendingKey)));
   const offset = bytesToBigInt(sharedSecret);
   const stealthPrivKey = (s + offset) % secp256k1.CURVE.n;
 
@@ -145,7 +150,11 @@ export function stealthWallet(
  * Build a stealth claim link with secret and ephemeral public key.
  */
 export function buildStealthClaimLink(secret: string, ephemeralPubKey: string): string {
-  return `/claim?secret=${secret}&epk=${ephemeralPubKey}`;
+  const origin =
+    typeof window !== "undefined" && window.location && window.location.origin
+      ? window.location.origin
+      : "";
+  return `${origin}/claim?secret=${encodeURIComponent(secret)}&epk=${encodeURIComponent(ephemeralPubKey)}`;
 }
 
 /**

@@ -45,12 +45,12 @@
 - `frontend/src/lib/stealth.ts` — 신규: stealth address 생성/스캔
 - `frontend/src/components/OrderForm.tsx` — meta-address 입력 → stealth 생성
 - `frontend/src/app/claim/page.tsx` — stealth key 유도 + claim
-- `relayer/` — ephemeralPubKey 저장/전달
+- `relayer/` — ephemeralPubKey 저장/전달 *(Phase 1 미구현, 향후 작업)*
 
 ### 의존성
 
 - EIP-5564 stealth address 표준
-- secp256k1 elliptic curve 연산 (ethers.js로 가능)
+- secp256k1 elliptic curve 연산: `@noble/curves/secp256k1`, 해시: `@noble/hashes` (프론트엔드에서 사용; ethers.js는 EC 연산에 사용하지 않음)
 
 ## Phase 2: ZK Settle (컨트랙트 변경)
 

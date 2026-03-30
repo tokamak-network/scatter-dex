@@ -1,6 +1,6 @@
 # Design: Stealth Address for Claim Recipients
 
-**Status: PLANNED**
+**Status: IN PROGRESS**
 
 ## Summary
 
@@ -21,11 +21,11 @@
 
 ## Changes Required
 
-- [ ] Stealth address 생성 라이브러리 (프론트엔드)
+- [x] Stealth address 생성 라이브러리 (프론트엔드) — `frontend/src/lib/stealth.ts`
 - [ ] Ephemeral pubkey 게시 메커니즘 (온체인 또는 오프체인)
 - [ ] 수신자 스캐닝 로직 (자기에게 온 stealth 주소 탐색)
-- [ ] OrderForm에서 meta-address 입력 → stealth address 자동 생성
-- [ ] Claim 페이지에서 stealth key 유도 + claim
+- [x] OrderForm에서 meta-address 입력 → stealth address 자동 생성
+- [x] Claim 페이지에서 stealth key 유도 + claim
 
 ## Open Questions
 

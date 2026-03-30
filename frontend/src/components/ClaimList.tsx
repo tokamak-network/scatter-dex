@@ -9,6 +9,9 @@ import { SETTLEMENT_ABI } from "@/lib/contracts";
 import { SETTLEMENT_ADDRESS, RPC_URL } from "@/lib/config";
 import { stealthWallet } from "@/lib/stealth";
 
+// Reuse a single provider instance to avoid creating a new one on every claim
+const stealthProvider = new ethers.JsonRpcProvider(RPC_URL);
+
 interface ClaimPreview {
   token: string;
   amount: string;
@@ -55,7 +58,8 @@ function ClaimListInner() {
         const w = stealthWallet(spendingKey, viewingKey, ephemeralPubKey);
         claimAddress = w.address;
         setStealthAddr(w.address);
-      } catch {
+      } catch (err) {
+        console.error("Failed to derive stealth wallet:", err);
         setStealthAddr("");
       }
     } else if (!stealthMode) {
@@ -114,10 +118,11 @@ function ClaimListInner() {
       if (!secret) throw new Error("Secret is required");
 
       let claimSigner: ethers.Signer;
-      if (stealthMode && spendingKey && viewingKey && ephemeralPubKey) {
-        // Use stealth wallet for claiming
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
-        claimSigner = stealthWallet(spendingKey, viewingKey, ephemeralPubKey, provider);
+      if (stealthMode) {
+        if (!spendingKey || !viewingKey || !ephemeralPubKey) {
+          throw new Error("Stealth claim requires spending key, viewing key, and ephemeral public key");
+        }
+        claimSigner = stealthWallet(spendingKey, viewingKey, ephemeralPubKey, stealthProvider);
       } else {
         if (!signer) throw new Error("Wallet not connected");
         claimSigner = signer;
@@ -180,7 +185,7 @@ function ClaimListInner() {
           {stealthAddr && (
             <p className="text-xs text-gray-500">Stealth address: {stealthAddr.slice(0, 10)}...{stealthAddr.slice(-8)}</p>
           )}
-          <p className="text-xs text-gray-600">Stealth address has no ETH — use Gasless Claim below for gas-free claiming.</p>
+          <p className="text-xs text-gray-600">Stealth address has no ETH — you may need to fund it with gas before claiming. Gasless stealth claiming is not yet supported.</p>
         </div>
       )}
 
@@ -216,7 +221,7 @@ function ClaimListInner() {
 
       <button
         onClick={handleClaim}
-        disabled={status === "claiming" || (preview !== null && preview.status !== "claimable")}
+        disabled={status === "claiming" || (preview !== null && preview.status !== "claimable") || (stealthMode && (!spendingKey || !viewingKey || !ephemeralPubKey))}
         className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-500 disabled:opacity-50 transition"
       >
         {status === "claiming" ? "Claiming..." : "Claim"}
