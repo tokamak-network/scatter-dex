@@ -71,6 +71,66 @@ docker compose up -d
 
 This starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and Relayer CA), mock tokens, relayer, and frontend in one terminal. Press `Ctrl+C` to stop all services.
 
+### Manual Setup (Mock Mode, step by step)
+
+If you want to understand each step or customize the process:
+
+**1. Start anvil:**
+
+```bash
+anvil
+```
+
+**2. Deploy contracts:**
+
+```bash
+cd contracts
+forge script script/DeployLocal.s.sol:DeployLocal \
+  --rpc-url http://localhost:8545 --broadcast \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+Note the addresses from the output (ScatterSettlement, RelayerRegistry, WETH, USDC).
+
+**3. Whitelist tokens:**
+
+```bash
+cast send <SETTLEMENT> "setTokenWhitelist(address,bool)" <WETH> true \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  --rpc-url http://localhost:8545
+
+cast send <SETTLEMENT> "setTokenWhitelist(address,bool)" <USDC> true \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  --rpc-url http://localhost:8545
+```
+
+**4. Start relayer:**
+
+```bash
+cd relayer
+cat > .env <<EOF
+RPC_URL=http://localhost:8545
+RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+SETTLEMENT_ADDRESS=<SETTLEMENT>
+RELAYER_FEE=30
+PORT=3001
+EOF
+npm run dev
+```
+
+**5. Start frontend:**
+
+```bash
+cd frontend
+cat > .env.local <<EOF
+NEXT_PUBLIC_SETTLEMENT_ADDRESS=<SETTLEMENT>
+NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
+NEXT_PUBLIC_RPC_URL=http://localhost:8545
+NEXT_PUBLIC_TOKEN_LIST=<WETH>,<USDC>
+EOF
+npm run dev
+```
+
 ### Integration Mode
 
 **Step 1:** Start anvil:
