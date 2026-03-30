@@ -8,11 +8,11 @@ declare global {
   }
 }
 
-function getEnv(key: string): string | undefined {
-  if (typeof window !== "undefined" && window.__ENV__?.[key]) {
-    return window.__ENV__[key];
+export function getEnv(key: string): string | undefined {
+  if (typeof window !== "undefined") {
+    return window.__ENV__?.[key] || undefined;
   }
-  return process.env[key];
+  return typeof process !== "undefined" ? process.env[key] : undefined;
 }
 
 function requireEnv(key: string): string {
