@@ -2,7 +2,7 @@ services:
   # ── Anvil (mock mode only) ──────────────────────────────────
   # Integration mode skips this — uses zk-X509's anvil instead.
   anvil:
-    image: ghcr.io/foundry-rs/foundry:latest
+    image: ghcr.io/foundry-rs/foundry:stable
     profiles: ["mock"]
     entrypoint: ["anvil", "--host", "0.0.0.0"]
     ports:
@@ -15,7 +15,7 @@ services:
 
   # ── Contract deployer ───────────────────────────────────────
   deployer:
-    image: ghcr.io/foundry-rs/foundry:latest
+    image: ghcr.io/foundry-rs/foundry:stable
     user: root
     volumes:
       - ./contracts:/contracts
@@ -44,7 +44,7 @@ services:
       - RELAYER_FEE=30
       - PORT=3001
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/api/info', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 3s
       timeout: 5s
       retries: 15
@@ -59,7 +59,7 @@ services:
       - "3000:3000"
     volumes:
       - shared:/shared:ro
-    entrypoint: ["sh", "-c", "export $(cat /shared/addresses.env | xargs) && export NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545} && exec npx next dev"]
+    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && export NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545} && exec npx next dev"]
     environment:
       - NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545}
 
