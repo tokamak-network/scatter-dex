@@ -8,9 +8,16 @@ DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 OUTPUT_FILE="/shared/addresses.env"
 
-echo "Waiting for RPC at $RPC_URL..."
+MAX_RPC_WAIT="${MAX_RPC_WAIT:-60}"
+echo "Waiting for RPC at $RPC_URL (timeout: ${MAX_RPC_WAIT}s)..."
+elapsed=0
 until cast block-number --rpc-url "$RPC_URL" > /dev/null 2>&1; do
   sleep 1
+  elapsed=$((elapsed + 1))
+  if [ "$elapsed" -ge "$MAX_RPC_WAIT" ]; then
+    echo "ERROR: RPC not ready after ${MAX_RPC_WAIT}s at $RPC_URL"
+    exit 1
+  fi
 done
 echo "RPC is ready."
 
@@ -39,9 +46,11 @@ if [ -n "${IDENTITY_REGISTRY:-}" ]; then
   SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "ScatterSettlement deployed:" | awk '{print $NF}')
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry deployed:" | awk '{print $NF}')
 
-  # Register deployer as relayer
-  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://relayer:3001" 30 \
-    --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" || true
+  # Register deployer as relayer (use localhost URL reachable from browser)
+  RELAYER_URL="${RELAYER_URL:-http://localhost:3001}"
+  echo "Registering relayer at $RELAYER_URL..."
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "$RELAYER_URL" 30 \
+    --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
 
   cat > "$OUTPUT_FILE" <<EOF
 SETTLEMENT_ADDRESS=$SETTLEMENT

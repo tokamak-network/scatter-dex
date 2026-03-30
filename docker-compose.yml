@@ -20,7 +20,7 @@ services:
       - ./contracts:/contracts
       - ./scripts/deploy-docker.sh:/deploy.sh
       - shared:/shared
-    entrypoint: ["sh", "/deploy.sh"]
+    entrypoint: ["bash", "/deploy.sh"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
       - IDENTITY_REGISTRY=${IDENTITY_REGISTRY:-}
@@ -36,7 +36,7 @@ services:
       - "3001:3001"
     volumes:
       - shared:/shared:ro
-    entrypoint: ["sh", "-c", ". /shared/addresses.env && exec npx tsx src/index.ts"]
+    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npx tsx src/index.ts"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
       - RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -58,7 +58,7 @@ services:
       - "3000:3000"
     volumes:
       - shared:/shared:ro
-    entrypoint: ["sh", "-c", ". /shared/addresses.env && exec npm run dev"]
+    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npm run dev"]
     environment:
       - NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545}
 

@@ -54,4 +54,4 @@ docker compose up
 | deployer fails to connect | Mock mode: ensure `--profile mock` is set. Integration: check zk-X509 Docker is running |
 | `NotVerified` when depositing | Register the user wallet via zk-X509 (User CA) |
 | `NotVerified` when registering relayer | Register the relayer via zk-X509 (Relayer CA) |
-| Port conflict with zk-X509 frontend | zk-X509 frontend를 다른 포트로 실행: `PORT=3002` |
+| Port conflict with zk-X509 frontend | Run the zk-X509 frontend on a different port: `PORT=3002 make up` |
