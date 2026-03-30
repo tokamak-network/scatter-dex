@@ -19,7 +19,12 @@ interface TokenBalance {
   wallet: bigint;
 }
 
-export default function EscrowBalance() {
+interface EscrowBalanceProps {
+  compact?: boolean;
+  onBalanceChange?: (hasBalance: boolean) => void;
+}
+
+export default function EscrowBalance({ compact, onBalanceChange }: EscrowBalanceProps = {}) {
   const { account, readProvider } = useWallet();
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,7 +66,9 @@ export default function EscrowBalance() {
         }
       });
 
-      setBalances(results.filter((r): r is TokenBalance => r !== null));
+      const valid = results.filter((r): r is TokenBalance => r !== null);
+      setBalances(valid);
+      onBalanceChange?.(valid.some(b => b.escrow > BigInt(0)));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load balances");
     } finally {
@@ -83,6 +90,25 @@ export default function EscrowBalance() {
   };
 
   if (!account) return null;
+
+  if (compact) {
+    return (
+      <div className="bg-gray-900/50 border border-gray-800 rounded-xl px-4 py-3">
+        <div className="flex items-center gap-4 flex-wrap">
+          <span className="text-xs text-gray-400 font-medium">Escrow:</span>
+          {balances.length === 0 ? (
+            <span className="text-xs text-gray-500">No tokens deposited</span>
+          ) : (
+            balances.map((b) => (
+              <span key={b.address} className="text-xs text-white">
+                {b.symbol} <span className={b.escrow > BigInt(0) ? "text-green-400" : "text-gray-500"}>{ethers.formatUnits(b.escrow, b.decimals)}</span>
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-gray-900 rounded-xl p-6 space-y-4">

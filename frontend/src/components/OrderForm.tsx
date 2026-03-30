@@ -6,17 +6,25 @@ import { signOrder, ClaimInput, generateSecret, buildClaimLink } from "@/lib/sig
 import { RelayerClient } from "@/lib/relayerApi";
 import { ethers } from "ethers";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
-import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { SETTLEMENT_ADDRESS, getEnv } from "@/lib/config";
+import Link from "next/link";
 
 const ORDER_EXPIRY_SECONDS = 86400; // 1 day
 const DEFAULT_MAX_FEE = 30; // 0.3% basis points
 const DEFAULT_DELAY = 3600; // 1 hour
 
-export default function OrderForm() {
+const DEFAULT_TOKENS = (getEnv("NEXT_PUBLIC_TOKEN_LIST") || "").split(",").filter(Boolean);
+
+interface OrderFormProps {
+  selectedPrice?: { sellAmount: string; buyAmount: string } | null;
+  onPriceConsumed?: () => void;
+}
+
+export default function OrderForm({ selectedPrice, onPriceConsumed }: OrderFormProps) {
   const { account, signer, chainId } = useWallet();
   const nonceCounter = useRef(Math.floor(Math.random() * 1_000_000));
-  const [sellToken, setSellToken] = useState("");
-  const [buyToken, setBuyToken] = useState("");
+  const [sellToken, setSellToken] = useState(DEFAULT_TOKENS[0] || "");
+  const [buyToken, setBuyToken] = useState(DEFAULT_TOKENS[1] || "");
   const [sellAmount, setSellAmount] = useState("");
   const [buyAmount, setBuyAmount] = useState("");
   const [relayerUrl, setRelayerUrl] = useState("");
@@ -28,6 +36,26 @@ export default function OrderForm() {
   const [error, setError] = useState("");
   const [claimLinks, setClaimLinks] = useState<{ recipient: string; link: string; secret: string }[]>([]);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+
+  // Auto-load relayer URL from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("scatter-relayer-url");
+    if (saved) setRelayerUrl(saved);
+  }, []);
+
+  // Fill price from OrderBook selection
+  useEffect(() => {
+    if (selectedPrice) {
+      try {
+        setSellAmount(ethers.formatEther(selectedPrice.sellAmount));
+        setBuyAmount(ethers.formatEther(selectedPrice.buyAmount));
+      } catch {
+        setSellAmount(selectedPrice.sellAmount);
+        setBuyAmount(selectedPrice.buyAmount);
+      }
+      onPriceConsumed?.();
+    }
+  }, [selectedPrice, onPriceConsumed]);
 
   useEffect(() => {
     if (copiedIdx === null) return;
@@ -51,6 +79,7 @@ export default function OrderForm() {
 
   const handleSubmit = async () => {
     if (!signer || !account || !chainId) return;
+    if (!relayerUrl) { setError("Select a relayer first"); setStatus("error"); return; }
     setStatus("signing");
     setError("");
 
@@ -84,7 +113,6 @@ export default function OrderForm() {
 
       setResult(res.status === "matched" ? `Matched! TX: ${res.txHash}` : `Pending (nonce: ${res.nonce})`);
 
-      // Generate claim links for each recipient
       const links = claims.map((c) => ({
         recipient: c.recipient,
         secret: c.secret,
@@ -104,6 +132,18 @@ export default function OrderForm() {
     <div className="bg-gray-900 rounded-xl p-6 space-y-4">
       <h2 className="text-lg font-semibold text-white">New Order</h2>
 
+      {/* Relayer status */}
+      {relayerUrl ? (
+        <div className="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2">
+          <span className="text-xs text-gray-400">Relayer</span>
+          <span className="text-xs text-green-400 font-mono">{relayerUrl}</span>
+        </div>
+      ) : (
+        <Link href="/relayers" className="block bg-yellow-900/30 border border-yellow-700 rounded-lg px-3 py-2 text-xs text-yellow-400 hover:bg-yellow-900/50 transition text-center">
+          Select a relayer first &rarr;
+        </Link>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <input placeholder="Sell token (0x...)" value={sellToken} onChange={(e) => setSellToken(e.target.value)}
           className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500" />
@@ -114,10 +154,6 @@ export default function OrderForm() {
         <input placeholder="Buy amount" value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)}
           className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500" />
       </div>
-
-      <input placeholder="Relayer URL (e.g., http://localhost:3001)" value={relayerUrl}
-        onChange={(e) => setRelayerUrl(e.target.value)}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500" />
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -154,7 +190,7 @@ export default function OrderForm() {
         ))}
       </div>
 
-      <button onClick={handleSubmit} disabled={status === "signing" || status === "submitting"}
+      <button onClick={handleSubmit} disabled={status === "signing" || status === "submitting" || !relayerUrl}
         className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-500 disabled:opacity-50 transition">
         {status === "signing" ? "Signing..." : status === "submitting" ? "Submitting..." : "Sign & Submit Order"}
       </button>

@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RelayerClient } from "@/lib/relayerApi";
+import { ethers } from "ethers";
 import { BarChart3 } from "lucide-react";
+import { getEnv } from "@/lib/config";
 
 interface OrderEntry {
   maker: string;
@@ -10,7 +12,13 @@ interface OrderEntry {
   buyAmount: string;
 }
 
-export default function OrderBook() {
+interface OrderBookProps {
+  onPriceSelect?: (sellAmount: string, buyAmount: string) => void;
+}
+
+const DEFAULT_TOKENS = (getEnv("NEXT_PUBLIC_TOKEN_LIST") || "").split(",").filter(Boolean);
+
+export default function OrderBook({ onPriceSelect }: OrderBookProps) {
   const [pair, setPair] = useState("");
   const [sells, setSells] = useState<OrderEntry[]>([]);
   const [buys, setBuys] = useState<OrderEntry[]>([]);
@@ -21,6 +29,13 @@ export default function OrderBook() {
   const relayerUrl = typeof window !== "undefined"
     ? localStorage.getItem("scatter-relayer-url") || ""
     : "";
+
+  // Auto-set pair from token list
+  useEffect(() => {
+    if (!pair && DEFAULT_TOKENS.length >= 2) {
+      setPair(`${DEFAULT_TOKENS[0]}-${DEFAULT_TOKENS[1]}`.toLowerCase());
+    }
+  }, [pair]);
 
   const loadOrderbook = useCallback(async (pairValue: string) => {
     if (!relayerUrl || !pairValue) return;
@@ -39,7 +54,6 @@ export default function OrderBook() {
     }
   }, [relayerUrl]);
 
-  // Debounce: wait 500ms after user stops typing before fetching
   useEffect(() => {
     if (!pair || !relayerUrl) return;
 
@@ -52,6 +66,15 @@ export default function OrderBook() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [pair, relayerUrl, loadOrderbook]);
+
+  const formatAmount = (wei: string) => {
+    try { return parseFloat(ethers.formatEther(wei)).toFixed(4); }
+    catch { return wei; }
+  };
+
+  const handleRowClick = (entry: OrderEntry) => {
+    onPriceSelect?.(entry.sellAmount, entry.buyAmount);
+  };
 
   return (
     <div className="bg-gray-900 rounded-xl p-6 space-y-4">
@@ -74,42 +97,44 @@ export default function OrderBook() {
       {loading && <p className="text-gray-500 text-sm">Loading...</p>}
       {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {!loading && !error && (sells.length > 0 || buys.length > 0) && (
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <h3 className="text-xs font-medium text-red-400 mb-2 uppercase">Sells (Asks)</h3>
-            {sells.length === 0 ? (
-              <p className="text-xs text-gray-600">No sell orders</p>
-            ) : (
-              <div className="space-y-1">
-                {sells.map((o) => (
-                  <div key={`${o.maker}-${o.sellAmount}-${o.buyAmount}`}
-                    className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
-                    <span className="text-red-400">{o.sellAmount}</span>
-                    <span className="text-gray-500">for {o.buyAmount}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <h3 className="text-xs font-medium text-green-400 mb-2 uppercase">Buys (Bids)</h3>
-            {buys.length === 0 ? (
-              <p className="text-xs text-gray-600">No buy orders</p>
-            ) : (
-              <div className="space-y-1">
-                {buys.map((o) => (
-                  <div key={`${o.maker}-${o.sellAmount}-${o.buyAmount}`}
-                    className="flex justify-between text-xs bg-gray-800 rounded px-3 py-1.5">
-                    <span className="text-green-400">{o.sellAmount}</span>
-                    <span className="text-gray-500">for {o.buyAmount}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <h3 className="text-xs font-medium text-red-400 mb-2 uppercase">Sells (Asks)</h3>
+          {sells.length === 0 ? (
+            <p className="text-xs text-gray-600">No sell orders</p>
+          ) : (
+            <div className="space-y-1">
+              {sells.map((o, i) => (
+                <button key={i} onClick={() => handleRowClick(o)}
+                  className="w-full flex justify-between text-xs bg-gray-800 hover:bg-gray-700 rounded px-3 py-1.5 transition cursor-pointer text-left">
+                  <span className="text-red-400">{formatAmount(o.sellAmount)}</span>
+                  <span className="text-gray-500">for {formatAmount(o.buyAmount)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        <div>
+          <h3 className="text-xs font-medium text-green-400 mb-2 uppercase">Buys (Bids)</h3>
+          {buys.length === 0 ? (
+            <p className="text-xs text-gray-600">No buy orders</p>
+          ) : (
+            <div className="space-y-1">
+              {buys.map((o, i) => (
+                <button key={i} onClick={() => handleRowClick(o)}
+                  className="w-full flex justify-between text-xs bg-gray-800 hover:bg-gray-700 rounded px-3 py-1.5 transition cursor-pointer text-left">
+                  <span className="text-green-400">{formatAmount(o.sellAmount)}</span>
+                  <span className="text-gray-500">for {formatAmount(o.buyAmount)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {onPriceSelect && (sells.length > 0 || buys.length > 0) && (
+        <p className="text-xs text-gray-600 text-center">Click an order to fill price</p>
       )}
     </div>
   );
