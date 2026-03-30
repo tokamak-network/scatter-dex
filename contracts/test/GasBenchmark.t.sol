@@ -48,7 +48,9 @@ contract GasBenchmarkTest is Test {
     function setUp() public {
         registry = new BenchIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        relayerRegistry = new RelayerRegistry(treasury);
+        BenchIdentityRegistry relayerIdRegistry = new BenchIdentityRegistry();
+        relayerIdRegistry.setVerified(address(this), true);
+        relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
 
         tokenA = new BenchToken("Token A", "TKA");

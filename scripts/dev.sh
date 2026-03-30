@@ -122,29 +122,52 @@ else
   check_port 3001 "relayer"
   check_port 3000 "frontend"
 
-  # Get IdentityRegistry address
+  # Get User IdentityRegistry address
   if [ -z "$IDENTITY_REGISTRY" ]; then
     echo ""
     echo "  IDENTITY_REGISTRY not set."
-    echo "  Enter the zk-X509 IdentityRegistry proxy address:"
+    echo "  Enter the zk-X509 User CA IdentityRegistry proxy address:"
     read -r -p "  > " IDENTITY_REGISTRY
   fi
 
   if [ -z "$IDENTITY_REGISTRY" ]; then
     echo "  ERROR: IDENTITY_REGISTRY is required in integration mode."
-    echo "  Usage: IDENTITY_REGISTRY=0x... $0"
+    echo "  Usage: IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... $0"
     echo "  Or use: $0 --mock"
     exit 1
   fi
 
-  # Verify the registry contract exists
+  # Get Relayer IdentityRegistry address
+  if [ -z "$RELAYER_IDENTITY_REGISTRY" ]; then
+    echo ""
+    echo "  RELAYER_IDENTITY_REGISTRY not set."
+    echo "  Enter the zk-X509 Relayer CA IdentityRegistry proxy address:"
+    read -r -p "  > " RELAYER_IDENTITY_REGISTRY
+  fi
+
+  if [ -z "$RELAYER_IDENTITY_REGISTRY" ]; then
+    echo "  ERROR: RELAYER_IDENTITY_REGISTRY is required in integration mode."
+    echo "  Usage: IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... $0"
+    echo "  Or use: $0 --mock"
+    exit 1
+  fi
+
+  # Verify the registry contracts exist
   CODE=$(cast code "$IDENTITY_REGISTRY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0x")
   if [ "$CODE" = "0x" ]; then
     echo "  ERROR: No contract found at $IDENTITY_REGISTRY"
     echo "  Deploy zk-X509 contracts first."
     exit 1
   fi
-  echo "  IdentityRegistry: $IDENTITY_REGISTRY"
+  echo "  IdentityRegistry (User CA):    $IDENTITY_REGISTRY"
+
+  CODE=$(cast code "$RELAYER_IDENTITY_REGISTRY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0x")
+  if [ "$CODE" = "0x" ]; then
+    echo "  ERROR: No contract found at $RELAYER_IDENTITY_REGISTRY"
+    echo "  Deploy zk-X509 Relayer CA registry first."
+    exit 1
+  fi
+  echo "  IdentityRegistry (Relayer CA): $RELAYER_IDENTITY_REGISTRY"
 
   echo ""
   echo "[2/4] Deploying contracts (real IdentityGate)..."
@@ -154,6 +177,7 @@ else
   TREASURY="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
   DEPLOY_OUTPUT=$(IDENTITY_REGISTRY="$IDENTITY_REGISTRY" \
+    RELAYER_IDENTITY_REGISTRY="$RELAYER_IDENTITY_REGISTRY" \
     TREASURY="$TREASURY" \
     PROTOCOL_FEE_BPS=1000 \
     forge script script/DeploySettlement.s.sol:DeploySettlement \

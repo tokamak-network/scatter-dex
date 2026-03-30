@@ -50,7 +50,9 @@ contract VaultSkillsTest is Test {
     function setUp() public {
         registry = new MockRegistry();
         gate = new IdentityGate(address(registry));
-        RelayerRegistry rr = new RelayerRegistry(address(0x7777));
+        MockRegistry relayerIdRegistry = new MockRegistry();
+        relayerIdRegistry.setVerified(address(this), true);
+        RelayerRegistry rr = new RelayerRegistry(address(0x7777), address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(rr), 0);
         rr.register{value: 0.1 ether}("http://test", 0);
         skills = new VaultSkills();

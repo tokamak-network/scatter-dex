@@ -55,7 +55,10 @@ contract IdentityGateTest is Test {
     function setUp() public {
         registry = new RealisticIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        RelayerRegistry rr = new RelayerRegistry(address(0x7777));
+        // Relayer CA: use a separate mock registry that auto-verifies the test contract
+        RealisticIdentityRegistry relayerIdRegistry = new RealisticIdentityRegistry();
+        relayerIdRegistry.setVerifiedUntil(address(this), type(uint64).max);
+        RelayerRegistry rr = new RelayerRegistry(address(0x7777), address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(rr), 0);
         rr.register{value: 0.1 ether}("http://test", 0);
         token = new MockToken();
@@ -284,7 +287,9 @@ contract IdentityGateTest is Test {
 
         RealisticIdentityRegistry reg = new RealisticIdentityRegistry();
         IdentityGate g = new IdentityGate(address(reg));
-        RelayerRegistry rr2 = new RelayerRegistry(address(0x7777));
+        RealisticIdentityRegistry relayerIdReg = new RealisticIdentityRegistry();
+        relayerIdReg.setVerifiedUntil(address(this), type(uint64).max);
+        RelayerRegistry rr2 = new RelayerRegistry(address(0x7777), address(relayerIdReg));
         env.s = new ScatterSettlement(address(g), address(rr2), 0);
         rr2.register{value: 0.1 ether}("http://test", 0);
 

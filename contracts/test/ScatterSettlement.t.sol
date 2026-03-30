@@ -44,6 +44,7 @@ contract ScatterSettlementTest is Test {
     IdentityGate public gate;
     RelayerRegistry public relayerRegistry;
     MockIdentityRegistry public registry;
+    MockIdentityRegistry public relayerIdRegistry;
     MockToken public tokenA;
     MockToken public tokenB;
 
@@ -67,7 +68,9 @@ contract ScatterSettlementTest is Test {
     function setUp() public {
         registry = new MockIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        relayerRegistry = new RelayerRegistry(treasury);
+        relayerIdRegistry = new MockIdentityRegistry();
+        relayerIdRegistry.setVerified(address(this), true);
+        relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
 
         tokenA = new MockToken("Token A", "TKA");
@@ -393,6 +396,7 @@ contract ScatterSettlementTest is Test {
 
         address feeRelayer = address(0xABCD);
         vm.deal(feeRelayer, 1 ether);
+        relayerIdRegistry.setVerified(feeRelayer, true);
         vm.prank(feeRelayer);
         relayerRegistry.register{value: 0.1 ether}("http://fee-relayer", 30);
 
@@ -907,6 +911,7 @@ contract ScatterSettlementTest is Test {
 
         address e2eRelayer = address(0xBEEF);
         vm.deal(e2eRelayer, 1 ether);
+        relayerIdRegistry.setVerified(e2eRelayer, true);
         vm.prank(e2eRelayer);
         relayerRegistry.register{value: 0.1 ether}("http://e2e-relayer", 30);
 

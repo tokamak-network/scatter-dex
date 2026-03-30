@@ -15,6 +15,8 @@ contract DeploySettlement is Script {
     function run() external {
         address registryAddr = vm.envAddress("IDENTITY_REGISTRY");
         require(registryAddr != address(0), "DeploySettlement: IDENTITY_REGISTRY not set or is address(0)");
+        address relayerRegistryAddr = vm.envAddress("RELAYER_IDENTITY_REGISTRY");
+        require(relayerRegistryAddr != address(0), "DeploySettlement: RELAYER_IDENTITY_REGISTRY not set or is address(0)");
         address treasuryAddr = vm.envAddress("TREASURY");
         require(treasuryAddr != address(0), "DeploySettlement: TREASURY not set or is address(0)");
         uint256 protocolFeeBps = vm.envUint("PROTOCOL_FEE_BPS");
@@ -25,7 +27,7 @@ contract DeploySettlement is Script {
         IdentityGate gate = new IdentityGate(registryAddr);
         console.log("IdentityGate deployed:", address(gate));
 
-        RelayerRegistry relayerRegistry = new RelayerRegistry(treasuryAddr);
+        RelayerRegistry relayerRegistry = new RelayerRegistry(treasuryAddr, relayerRegistryAddr);
         console.log("RelayerRegistry deployed:", address(relayerRegistry));
 
         ScatterSettlement settlement = new ScatterSettlement(

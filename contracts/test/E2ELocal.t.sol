@@ -26,6 +26,7 @@ contract E2ELocalTest is Test {
     RelayerRegistry relayerRegistry;
     IdentityGate gate;
     MockRegistry idRegistry;
+    MockRegistry relayerIdRegistry;
     MockToken weth;
     MockToken usdc;
     MockToken dai;
@@ -68,7 +69,10 @@ contract E2ELocalTest is Test {
 
         idRegistry = new MockRegistry();
         gate = new IdentityGate(address(idRegistry));
-        relayerRegistry = new RelayerRegistry(treasury);
+        relayerIdRegistry = new MockRegistry();
+        relayerIdRegistry.setVerified(relayer1, true);
+        relayerIdRegistry.setVerified(relayer2, true);
+        relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 1000); // 10% protocol fee
 
         weth = new MockToken("WETH", "WETH");
@@ -389,6 +393,7 @@ contract E2ELocalTest is Test {
     function test_e2e_relayer_lifecycle() public {
         address newRelayer = address(0xBB);
         vm.deal(newRelayer, 5 ether);
+        relayerIdRegistry.setVerified(newRelayer, true);
 
         // Register
         vm.prank(newRelayer);

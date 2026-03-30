@@ -30,16 +30,19 @@ contract DeployLocal is Script {
         vm.startBroadcast();
         address deployer = msg.sender;
 
-        // 1. Mock identity registry (everyone is verified)
-        MockIdentityRegistry identityRegistry = new MockIdentityRegistry();
-        console.log("MockIdentityRegistry:", address(identityRegistry));
+        // 1. Mock identity registries (Dual-CA: User CA + Relayer CA)
+        MockIdentityRegistry userIdentityRegistry = new MockIdentityRegistry();
+        console.log("MockIdentityRegistry (User CA):", address(userIdentityRegistry));
 
-        // 2. Identity gate
-        IdentityGate gate = new IdentityGate(address(identityRegistry));
+        MockIdentityRegistry relayerIdentityRegistry = new MockIdentityRegistry();
+        console.log("MockIdentityRegistry (Relayer CA):", address(relayerIdentityRegistry));
+
+        // 2. Identity gate (User CA)
+        IdentityGate gate = new IdentityGate(address(userIdentityRegistry));
         console.log("IdentityGate:", address(gate));
 
-        // 3. Relayer registry
-        RelayerRegistry relayerRegistry = new RelayerRegistry(deployer); // deployer = treasury
+        // 3. Relayer registry (Relayer CA)
+        RelayerRegistry relayerRegistry = new RelayerRegistry(deployer, address(relayerIdentityRegistry));
         console.log("RelayerRegistry:", address(relayerRegistry));
 
         // 4. Settlement

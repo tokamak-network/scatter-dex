@@ -4,17 +4,43 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
+import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+
+contract MockRelayerIdentityRegistry is IIdentityRegistry {
+    mapping(address => bool) public verified;
+
+    function setVerified(address user, bool status) external {
+        verified[user] = status;
+    }
+
+    function isVerified(address user) external view override returns (bool) {
+        return verified[user];
+    }
+
+    function verifiedUntil(address) external pure override returns (uint64) {
+        return type(uint64).max;
+    }
+
+    function paused() external pure override returns (bool) {
+        return false;
+    }
+}
 
 contract RelayerRegistryTest is Test {
     RelayerRegistry public registry;
+    MockRelayerIdentityRegistry public identityRegistry;
     address treasury = address(0x7777);
     address relayer1 = address(0xA1);
     address relayer2 = address(0xA2);
 
     function setUp() public {
-        registry = new RelayerRegistry(treasury);
+        identityRegistry = new MockRelayerIdentityRegistry();
+        registry = new RelayerRegistry(treasury, address(identityRegistry));
         vm.deal(relayer1, 10 ether);
         vm.deal(relayer2, 10 ether);
+        // Verify relayers by default so existing tests pass
+        identityRegistry.setVerified(relayer1, true);
+        identityRegistry.setVerified(relayer2, true);
     }
 
     // ─── Registration ────────────────────────────────────────────
@@ -172,7 +198,21 @@ contract RelayerRegistryTest is Test {
 
     function test_constructor_zero_treasury_reverts() public {
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
-        new RelayerRegistry(address(0));
+        new RelayerRegistry(address(0), address(identityRegistry));
+    }
+
+    function test_constructor_zero_identity_registry_reverts() public {
+        vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
+        new RelayerRegistry(treasury, address(0));
+    }
+
+    function test_register_unverified_reverts() public {
+        address unverified = address(0xBEEF);
+        vm.deal(unverified, 10 ether);
+        // NOT calling identityRegistry.setVerified(unverified, true)
+        vm.prank(unverified);
+        vm.expectRevert(RelayerRegistry.NotVerified.selector);
+        registry.register{value: 0.1 ether}("http://unverified.com", 30);
     }
 
     function test_register_fee_too_high_reverts() public {
