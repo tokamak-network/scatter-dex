@@ -8,6 +8,12 @@ DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 OUTPUT_FILE="/shared/addresses.env"
 
+# Ensure shared volume is writable
+if [ ! -w /shared ]; then
+  echo "ERROR: /shared is not writable"
+  exit 1
+fi
+
 MAX_RPC_WAIT="${MAX_RPC_WAIT:-60}"
 echo "Waiting for RPC at $RPC_URL (timeout: ${MAX_RPC_WAIT}s)..."
 elapsed=0

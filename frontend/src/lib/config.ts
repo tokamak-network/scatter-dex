@@ -1,5 +1,25 @@
+// Runtime config that works in both server and client (Docker) environments.
+// Server: reads from process.env (set by Docker entrypoint).
+// Client: reads from window.__ENV__ (injected by layout.tsx <script> tag).
+
+declare global {
+  interface Window {
+    __ENV__?: Record<string, string>;
+  }
+}
+
+export function getEnv(key: string): string | undefined {
+  if (typeof window !== "undefined" && window.__ENV__ && key in window.__ENV__) {
+    return window.__ENV__[key];
+  }
+  if (typeof process !== "undefined" && typeof process.env !== "undefined") {
+    return process.env[key];
+  }
+  return undefined;
+}
+
 function requireEnv(key: string): string {
-  const value = process.env[key];
+  const value = getEnv(key);
   if (!value) {
     throw new Error(`${key} is not set`);
   }
@@ -8,4 +28,4 @@ function requireEnv(key: string): string {
 
 export const SETTLEMENT_ADDRESS = requireEnv("NEXT_PUBLIC_SETTLEMENT_ADDRESS");
 export const RELAYER_REGISTRY_ADDRESS = requireEnv("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS");
-export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+export const RPC_URL = getEnv("NEXT_PUBLIC_RPC_URL") || "http://localhost:8545";
