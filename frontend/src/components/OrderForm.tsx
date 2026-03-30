@@ -7,6 +7,7 @@ import { RelayerClient } from "@/lib/relayerApi";
 import { ethers } from "ethers";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
 import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { isMetaAddress, generateStealthAddress, buildStealthClaimLink } from "@/lib/stealth";
 
 const ORDER_EXPIRY_SECONDS = 86400; // 1 day
 const DEFAULT_MAX_FEE = 30; // 0.3% basis points
@@ -58,6 +59,18 @@ export default function OrderForm() {
       if (!ethers.isAddress(sellToken)) throw new Error("Invalid sell token address");
       if (!ethers.isAddress(buyToken)) throw new Error("Invalid buy token address");
 
+      // Resolve recipients: meta-address → stealth address, plain address → as-is
+      const resolvedClaims = claims.map((c, i) => {
+        if (isMetaAddress(c.recipient)) {
+          const { stealthAddress, ephemeralPubKey } = generateStealthAddress(c.recipient);
+          return { ...c, recipient: stealthAddress, _epk: ephemeralPubKey, _isStealth: true as const };
+        }
+        if (!ethers.isAddress(c.recipient)) {
+          throw new Error(`Recipient ${i + 1}: invalid address or meta-address`);
+        }
+        return { ...c, _epk: "", _isStealth: false as const };
+      });
+
       const { signature, orderData } = await signOrder(
         signer,
         account,
@@ -69,9 +82,11 @@ export default function OrderForm() {
           maxFee: DEFAULT_MAX_FEE,
           expiry: Math.floor(Date.now() / 1000) + ORDER_EXPIRY_SECONDS,
           nonce: nonceCounter.current++,
-          claims: claims.map((c) => ({
-            ...c,
+          claims: resolvedClaims.map((c) => ({
+            recipient: c.recipient,
             amount: ethers.parseEther(c.amount).toString(),
+            releaseDelay: c.releaseDelay,
+            secret: c.secret,
           })),
         },
         chainId,
@@ -84,11 +99,13 @@ export default function OrderForm() {
 
       setResult(res.status === "matched" ? `Matched! TX: ${res.txHash}` : `Pending (nonce: ${res.nonce})`);
 
-      // Generate claim links for each recipient
-      const links = claims.map((c) => ({
+      // Generate claim links — stealth claims include ephemeralPubKey
+      const links = resolvedClaims.map((c) => ({
         recipient: c.recipient,
         secret: c.secret,
-        link: buildClaimLink(c.secret),
+        link: c._isStealth
+          ? buildStealthClaimLink(c.secret, c._epk)
+          : buildClaimLink(c.secret),
       }));
       setClaimLinks(links);
       setStatus("success");
@@ -137,7 +154,7 @@ export default function OrderForm() {
                 </button>
               )}
             </div>
-            <input placeholder="Address (0x...)" value={c.recipient}
+            <input placeholder="Address (0x...) or meta-address (st:eth:0x...)" value={c.recipient}
               onChange={(e) => updateClaim(idx, "recipient", e.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder:text-gray-600" />
             <div className="grid grid-cols-3 gap-2">
