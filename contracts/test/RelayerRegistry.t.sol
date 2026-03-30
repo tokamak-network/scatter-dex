@@ -4,37 +4,17 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
-
-contract MockRelayerIdentityRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-
-    function setVerified(address user, bool status) external {
-        verified[user] = status;
-    }
-
-    function isVerified(address user) external view override returns (bool) {
-        return verified[user];
-    }
-
-    function verifiedUntil(address) external pure override returns (uint64) {
-        return type(uint64).max;
-    }
-
-    function paused() external pure override returns (bool) {
-        return false;
-    }
-}
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 
 contract RelayerRegistryTest is Test {
     RelayerRegistry public registry;
-    MockRelayerIdentityRegistry public identityRegistry;
+    MockIdentityRegistry public identityRegistry;
     address treasury = address(0x7777);
     address relayer1 = address(0xA1);
     address relayer2 = address(0xA2);
 
     function setUp() public {
-        identityRegistry = new MockRelayerIdentityRegistry();
+        identityRegistry = new MockIdentityRegistry();
         registry = new RelayerRegistry(treasury, address(identityRegistry));
         vm.deal(relayer1, 10 ether);
         vm.deal(relayer2, 10 ether);

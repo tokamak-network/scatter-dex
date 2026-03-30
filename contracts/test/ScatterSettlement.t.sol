@@ -6,7 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // ─── Mock Contracts ──────────────────────────────────────────────
@@ -15,26 +15,6 @@ contract MockToken is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
-    }
-}
-
-contract MockIdentityRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-
-    function setVerified(address user, bool status) external {
-        verified[user] = status;
-    }
-
-    function isVerified(address user) external view override returns (bool) {
-        return verified[user];
-    }
-
-    function verifiedUntil(address) external pure override returns (uint64) {
-        return type(uint64).max;
-    }
-
-    function paused() external pure override returns (bool) {
-        return false;
     }
 }
 

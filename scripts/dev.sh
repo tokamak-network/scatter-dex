@@ -122,51 +122,42 @@ else
   check_port 3001 "relayer"
   check_port 3000 "frontend"
 
-  # Get User IdentityRegistry address
-  if [ -z "$IDENTITY_REGISTRY" ]; then
-    echo ""
-    echo "  IDENTITY_REGISTRY not set."
-    echo "  Enter the zk-X509 User CA IdentityRegistry proxy address:"
-    read -r -p "  > " IDENTITY_REGISTRY
-  fi
+  # Helper: prompt for a registry address if not set, verify contract exists
+  require_registry() {
+    local var_name="$1" prompt_text="$2" error_hint="$3"
+    eval "local val=\$$var_name"
 
-  if [ -z "$IDENTITY_REGISTRY" ]; then
-    echo "  ERROR: IDENTITY_REGISTRY is required in integration mode."
-    echo "  Usage: IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... $0"
-    echo "  Or use: $0 --mock"
-    exit 1
-  fi
+    if [ -z "$val" ]; then
+      echo ""
+      echo "  $var_name not set."
+      echo "  $prompt_text"
+      read -r -p "  > " val
+      eval "$var_name=\"$val\""
+    fi
 
-  # Get Relayer IdentityRegistry address
-  if [ -z "$RELAYER_IDENTITY_REGISTRY" ]; then
-    echo ""
-    echo "  RELAYER_IDENTITY_REGISTRY not set."
-    echo "  Enter the zk-X509 Relayer CA IdentityRegistry proxy address:"
-    read -r -p "  > " RELAYER_IDENTITY_REGISTRY
-  fi
+    if [ -z "$val" ]; then
+      echo "  ERROR: $var_name is required in integration mode."
+      echo "  Usage: IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... $0"
+      echo "  Or use: $0 --mock"
+      exit 1
+    fi
 
-  if [ -z "$RELAYER_IDENTITY_REGISTRY" ]; then
-    echo "  ERROR: RELAYER_IDENTITY_REGISTRY is required in integration mode."
-    echo "  Usage: IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... $0"
-    echo "  Or use: $0 --mock"
-    exit 1
-  fi
+    CODE=$(cast code "$val" --rpc-url "$RPC_URL" 2>/dev/null || echo "0x")
+    if [ "$CODE" = "0x" ]; then
+      echo "  ERROR: No contract found at $val"
+      echo "  $error_hint"
+      exit 1
+    fi
+  }
 
-  # Verify the registry contracts exist
-  CODE=$(cast code "$IDENTITY_REGISTRY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0x")
-  if [ "$CODE" = "0x" ]; then
-    echo "  ERROR: No contract found at $IDENTITY_REGISTRY"
-    echo "  Deploy zk-X509 contracts first."
-    exit 1
-  fi
+  require_registry "IDENTITY_REGISTRY" \
+    "Enter the zk-X509 User CA IdentityRegistry proxy address:" \
+    "Deploy zk-X509 contracts first."
   echo "  IdentityRegistry (User CA):    $IDENTITY_REGISTRY"
 
-  CODE=$(cast code "$RELAYER_IDENTITY_REGISTRY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0x")
-  if [ "$CODE" = "0x" ]; then
-    echo "  ERROR: No contract found at $RELAYER_IDENTITY_REGISTRY"
-    echo "  Deploy zk-X509 Relayer CA registry first."
-    exit 1
-  fi
+  require_registry "RELAYER_IDENTITY_REGISTRY" \
+    "Enter the zk-X509 Relayer CA IdentityRegistry proxy address:" \
+    "Deploy zk-X509 Relayer CA registry first."
   echo "  IdentityRegistry (Relayer CA): $RELAYER_IDENTITY_REGISTRY"
 
   echo ""

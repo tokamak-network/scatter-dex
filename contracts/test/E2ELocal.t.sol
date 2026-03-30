@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockToken is ERC20 {
@@ -13,20 +13,12 @@ contract MockToken is ERC20 {
     function mint(address to, uint256 amt) external { _mint(to, amt); }
 }
 
-contract MockRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-    function setVerified(address u, bool v) external { verified[u] = v; }
-    function isVerified(address u) external view override returns (bool) { return verified[u]; }
-    function verifiedUntil(address) external pure override returns (uint64) { return type(uint64).max; }
-    function paused() external pure override returns (bool) { return false; }
-}
-
 contract E2ELocalTest is Test {
     ScatterSettlement settlement;
     RelayerRegistry relayerRegistry;
     IdentityGate gate;
-    MockRegistry idRegistry;
-    MockRegistry relayerIdRegistry;
+    MockIdentityRegistry idRegistry;
+    MockIdentityRegistry relayerIdRegistry;
     MockToken weth;
     MockToken usdc;
     MockToken dai;
@@ -67,9 +59,9 @@ contract E2ELocalTest is Test {
         diana = vm.addr(dianaKey);
         eve = vm.addr(eveKey);
 
-        idRegistry = new MockRegistry();
+        idRegistry = new MockIdentityRegistry();
         gate = new IdentityGate(address(idRegistry));
-        relayerIdRegistry = new MockRegistry();
+        relayerIdRegistry = new MockIdentityRegistry();
         relayerIdRegistry.setVerified(relayer1, true);
         relayerIdRegistry.setVerified(relayer2, true);
         relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));

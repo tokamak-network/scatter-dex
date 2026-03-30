@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract BenchToken is ERC20 {
@@ -13,19 +13,11 @@ contract BenchToken is ERC20 {
     function mint(address to, uint256 amount) external { _mint(to, amount); }
 }
 
-contract BenchIdentityRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-    function setVerified(address user, bool status) external { verified[user] = status; }
-    function isVerified(address user) external view override returns (bool) { return verified[user]; }
-    function verifiedUntil(address) external pure override returns (uint64) { return type(uint64).max; }
-    function paused() external pure override returns (bool) { return false; }
-}
-
 contract GasBenchmarkTest is Test {
     ScatterSettlement public settlement;
     IdentityGate public gate;
     RelayerRegistry public relayerRegistry;
-    BenchIdentityRegistry public registry;
+    MockIdentityRegistry public registry;
     BenchToken public tokenA;
     BenchToken public tokenB;
 
@@ -46,9 +38,9 @@ contract GasBenchmarkTest is Test {
     bytes32 secret4 = keccak256("secret4");
 
     function setUp() public {
-        registry = new BenchIdentityRegistry();
+        registry = new MockIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        BenchIdentityRegistry relayerIdRegistry = new BenchIdentityRegistry();
+        MockIdentityRegistry relayerIdRegistry = new MockIdentityRegistry();
         relayerIdRegistry.setVerified(address(this), true);
         relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);

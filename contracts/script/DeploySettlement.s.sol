@@ -8,15 +8,16 @@ import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 
 /// @notice Deploys IdentityGate + RelayerRegistry + ScatterSettlement.
 /// @dev Usage:
-///   IDENTITY_REGISTRY=0x... TREASURY=0x... PROTOCOL_FEE_BPS=1000 \
+///   IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... \
+///   TREASURY=0x... PROTOCOL_FEE_BPS=1000 \
 ///   forge script script/DeploySettlement.s.sol \
 ///     --rpc-url $RPC_URL --broadcast --private-key $DEPLOYER_KEY
 contract DeploySettlement is Script {
     function run() external {
         address registryAddr = vm.envAddress("IDENTITY_REGISTRY");
         require(registryAddr != address(0), "DeploySettlement: IDENTITY_REGISTRY not set or is address(0)");
-        address relayerRegistryAddr = vm.envAddress("RELAYER_IDENTITY_REGISTRY");
-        require(relayerRegistryAddr != address(0), "DeploySettlement: RELAYER_IDENTITY_REGISTRY not set or is address(0)");
+        address relayerIdentityRegistryAddr = vm.envAddress("RELAYER_IDENTITY_REGISTRY");
+        require(relayerIdentityRegistryAddr != address(0), "DeploySettlement: RELAYER_IDENTITY_REGISTRY not set or is address(0)");
         address treasuryAddr = vm.envAddress("TREASURY");
         require(treasuryAddr != address(0), "DeploySettlement: TREASURY not set or is address(0)");
         uint256 protocolFeeBps = vm.envUint("PROTOCOL_FEE_BPS");
@@ -27,7 +28,7 @@ contract DeploySettlement is Script {
         IdentityGate gate = new IdentityGate(registryAddr);
         console.log("IdentityGate deployed:", address(gate));
 
-        RelayerRegistry relayerRegistry = new RelayerRegistry(treasuryAddr, relayerRegistryAddr);
+        RelayerRegistry relayerRegistry = new RelayerRegistry(treasuryAddr, relayerIdentityRegistryAddr);
         console.log("RelayerRegistry deployed:", address(relayerRegistry));
 
         ScatterSettlement settlement = new ScatterSettlement(
