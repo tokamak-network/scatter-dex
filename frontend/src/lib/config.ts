@@ -9,10 +9,13 @@ declare global {
 }
 
 export function getEnv(key: string): string | undefined {
-  if (typeof window !== "undefined") {
-    return window.__ENV__?.[key] || undefined;
+  if (typeof window !== "undefined" && window.__ENV__ && key in window.__ENV__) {
+    return window.__ENV__[key];
   }
-  return typeof process !== "undefined" ? process.env[key] : undefined;
+  if (typeof process !== "undefined" && typeof process.env !== "undefined") {
+    return process.env[key];
+  }
+  return undefined;
 }
 
 function requireEnv(key: string): string {
