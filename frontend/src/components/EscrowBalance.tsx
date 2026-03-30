@@ -9,7 +9,12 @@ import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Wallet } from "lucide-react";
 
 // Common token list — in production, fetch from a registry or user config
-const DEFAULT_TOKENS = (process.env.NEXT_PUBLIC_TOKEN_LIST || "").split(",").filter(Boolean);
+function getTokenList(): string[] {
+  const raw = (typeof window !== "undefined" && window.__ENV__?.NEXT_PUBLIC_TOKEN_LIST)
+    || process.env.NEXT_PUBLIC_TOKEN_LIST || "";
+  return raw.split(",").filter(Boolean);
+}
+const DEFAULT_TOKENS = getTokenList();
 
 interface TokenBalance {
   address: string;
