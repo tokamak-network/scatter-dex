@@ -6,7 +6,7 @@ import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
-import {MockToken} from "./DeployTestTokens.sol";
+import {MockToken} from "./DeployTestTokens.s.sol";
 
 /// @dev Mock identity registry that verifies everyone (for local testing)
 contract MockIdentityRegistry is IIdentityRegistry {

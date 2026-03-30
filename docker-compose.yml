@@ -2,7 +2,7 @@ services:
   # ── Anvil (mock mode only) ──────────────────────────────────
   # Integration mode skips this — uses zk-X509's anvil instead.
   anvil:
-    image: ghcr.io/foundry-rs/foundry:nightly-b5c4e2fe7ab1e22aaa4c1c22e53e3699e0823b2a
+    image: ghcr.io/foundry-rs/foundry:latest
     profiles: ["mock"]
     entrypoint: ["anvil", "--host", "0.0.0.0"]
     ports:
@@ -15,7 +15,8 @@ services:
 
   # ── Contract deployer ───────────────────────────────────────
   deployer:
-    image: ghcr.io/foundry-rs/foundry:nightly-b5c4e2fe7ab1e22aaa4c1c22e53e3699e0823b2a
+    image: ghcr.io/foundry-rs/foundry:latest
+    user: root
     volumes:
       - ./contracts:/contracts
       - ./scripts/deploy-docker.sh:/deploy.sh
@@ -43,10 +44,10 @@ services:
       - RELAYER_FEE=30
       - PORT=3001
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/info"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/api/info', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
       interval: 3s
       timeout: 5s
-      retries: 10
+      retries: 15
 
   # ── Frontend ────────────────────────────────────────────────
   frontend:
