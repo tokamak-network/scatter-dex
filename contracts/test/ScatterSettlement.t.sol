@@ -6,7 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // ─── Mock Contracts ──────────────────────────────────────────────
@@ -18,32 +18,13 @@ contract MockToken is ERC20 {
     }
 }
 
-contract MockIdentityRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-
-    function setVerified(address user, bool status) external {
-        verified[user] = status;
-    }
-
-    function isVerified(address user) external view override returns (bool) {
-        return verified[user];
-    }
-
-    function verifiedUntil(address) external pure override returns (uint64) {
-        return type(uint64).max;
-    }
-
-    function paused() external pure override returns (bool) {
-        return false;
-    }
-}
-
 // ─── Test Contract ───────────────────────────────────────────────
 contract ScatterSettlementTest is Test {
     ScatterSettlement public settlement;
     IdentityGate public gate;
     RelayerRegistry public relayerRegistry;
     MockIdentityRegistry public registry;
+    MockIdentityRegistry public relayerIdRegistry;
     MockToken public tokenA;
     MockToken public tokenB;
 
@@ -67,7 +48,9 @@ contract ScatterSettlementTest is Test {
     function setUp() public {
         registry = new MockIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        relayerRegistry = new RelayerRegistry(treasury);
+        relayerIdRegistry = new MockIdentityRegistry();
+        relayerIdRegistry.setVerified(address(this), true);
+        relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
 
         tokenA = new MockToken("Token A", "TKA");
@@ -393,6 +376,7 @@ contract ScatterSettlementTest is Test {
 
         address feeRelayer = address(0xABCD);
         vm.deal(feeRelayer, 1 ether);
+        relayerIdRegistry.setVerified(feeRelayer, true);
         vm.prank(feeRelayer);
         relayerRegistry.register{value: 0.1 ether}("http://fee-relayer", 30);
 
@@ -907,6 +891,7 @@ contract ScatterSettlementTest is Test {
 
         address e2eRelayer = address(0xBEEF);
         vm.deal(e2eRelayer, 1 ether);
+        relayerIdRegistry.setVerified(e2eRelayer, true);
         vm.prank(e2eRelayer);
         relayerRegistry.register{value: 0.1 ether}("http://e2e-relayer", 30);
 

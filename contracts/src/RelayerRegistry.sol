@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers stake a bond to register. Bond is returned after a cooldown on exit.
@@ -24,6 +25,7 @@ contract RelayerRegistry is Ownable2Step {
     uint256 public constant EXIT_COOLDOWN = 7 days;
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
+    IIdentityRegistry public immutable identityRegistry;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
@@ -49,6 +51,7 @@ contract RelayerRegistry is Ownable2Step {
     error RelayerNotActive();
     error BondTransferFailed();
     error FeeTooHigh();
+    error NotVerified();
     error RenounceOwnershipDisabled();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
@@ -62,9 +65,11 @@ contract RelayerRegistry is Ownable2Step {
         super.transferOwnership(newOwner);
     }
 
-    constructor(address _treasury) Ownable(msg.sender) {
+    constructor(address _treasury, address _identityRegistry) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
+        if (_identityRegistry == address(0)) revert ZeroAddress();
         treasury = _treasury;
+        identityRegistry = IIdentityRegistry(_identityRegistry);
     }
 
     // ─── Registration ────────────────────────────────────────────
@@ -73,6 +78,7 @@ contract RelayerRegistry is Ownable2Step {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (msg.value < MIN_BOND) revert InsufficientBond();
         if (fee > MAX_FEE) revert FeeTooHigh();
+        if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
 
         relayers[msg.sender] = Relayer({
             url: url,

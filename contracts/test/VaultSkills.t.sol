@@ -6,7 +6,7 @@ import {VaultSkills} from "../src/VaultSkills.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
-import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockToken is ERC20 {
@@ -17,40 +17,22 @@ contract MockToken is ERC20 {
     }
 }
 
-contract MockRegistry is IIdentityRegistry {
-    mapping(address => bool) public verified;
-
-    function setVerified(address user, bool status) external {
-        verified[user] = status;
-    }
-
-    function isVerified(address user) external view override returns (bool) {
-        return verified[user];
-    }
-
-    function verifiedUntil(address) external pure override returns (uint64) {
-        return type(uint64).max;
-    }
-
-    function paused() external pure override returns (bool) {
-        return false;
-    }
-}
-
 contract VaultSkillsTest is Test {
     VaultSkills public skills;
     ScatterSettlement public settlement;
     IdentityGate public gate;
-    MockRegistry public registry;
+    MockIdentityRegistry public registry;
     MockToken public tokenA;
     MockToken public tokenB;
 
     address user = address(0x1234);
 
     function setUp() public {
-        registry = new MockRegistry();
+        registry = new MockIdentityRegistry();
         gate = new IdentityGate(address(registry));
-        RelayerRegistry rr = new RelayerRegistry(address(0x7777));
+        MockIdentityRegistry relayerIdRegistry = new MockIdentityRegistry();
+        relayerIdRegistry.setVerified(address(this), true);
+        RelayerRegistry rr = new RelayerRegistry(address(0x7777), address(relayerIdRegistry));
         settlement = new ScatterSettlement(address(gate), address(rr), 0);
         rr.register{value: 0.1 ether}("http://test", 0);
         skills = new VaultSkills();
