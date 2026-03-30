@@ -33,7 +33,7 @@ endif
 
 # ─── Management ──────────────────────────────────────────────
 down:
-	docker compose --profile mock down
+	docker compose --profile mock down 2>/dev/null || docker compose down
 
 ps:
 	docker compose ps
@@ -42,7 +42,7 @@ logs:
 	docker compose logs -f
 
 clean:
-	docker compose --profile mock down -v
+	docker compose --profile mock down -v 2>/dev/null || docker compose down -v
 
 # ─── Contract Tests ──────────────────────────────────────────
 test:
