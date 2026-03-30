@@ -23,9 +23,22 @@ echo "RPC is ready."
 
 cd /contracts
 
-# ── Step 1: Deploy core contracts ────────────────────────────
+# ── Shared helper ────────────────────────────────────────────
+whitelist_tokens() {
+  local settlement="$1" weth="$2" usdc="$3"
+  if [ -z "$weth" ] || [ -z "$usdc" ]; then
+    echo "ERROR: Failed to parse token addresses (WETH='$weth', USDC='$usdc')"
+    exit 1
+  fi
+  echo "Whitelisting WETH=$weth USDC=$usdc"
+  cast send "$settlement" "setTokenWhitelist(address,bool)" "$weth" true \
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+  cast send "$settlement" "setTokenWhitelist(address,bool)" "$usdc" true \
+    --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
+}
+
 if [ -n "${IDENTITY_REGISTRY:-}" ]; then
-  # Integration mode: use real zk-X509 Dual-CA IdentityRegistries
+  # ── Integration mode: use real zk-X509 Dual-CA IdentityRegistries ──
   if [ -z "${RELAYER_IDENTITY_REGISTRY:-}" ]; then
     echo "ERROR: RELAYER_IDENTITY_REGISTRY is required in integration mode."
     exit 1
@@ -53,10 +66,28 @@ if [ -n "${IDENTITY_REGISTRY:-}" ]; then
   cast send "$RELAYER_REGISTRY" "register(string,uint256)" "$RELAYER_URL" 30 \
     --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
 
-  EXTRA_ENV="IDENTITY_REGISTRY=$IDENTITY_REGISTRY"
+  # Deploy test tokens (not included in DeploySettlement)
+  echo ""
+  echo "=== Deploying test tokens ==="
+  TOKEN_OUTPUT=$(forge script script/DeployTestTokens.s.sol:DeployTestTokens \
+    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+  echo "$TOKEN_OUTPUT"
+
+  WETH=$(echo "$TOKEN_OUTPUT" | grep "WETH:" | awk '{print $NF}')
+  USDC=$(echo "$TOKEN_OUTPUT" | grep "USDC:" | awk '{print $NF}')
+
+  whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
+
+  cat > "$OUTPUT_FILE" <<EOF
+SETTLEMENT_ADDRESS=$SETTLEMENT
+NEXT_PUBLIC_SETTLEMENT_ADDRESS=$SETTLEMENT
+NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
+NEXT_PUBLIC_TOKEN_LIST=$WETH,$USDC
+IDENTITY_REGISTRY=$IDENTITY_REGISTRY
+EOF
 
 else
-  # Mock mode: deploy everything including MockIdentityRegistry
+  # ── Mock mode: deploy everything including MockIdentityRegistry ──
   echo "Mode: MOCK (standalone)"
 
   DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
@@ -66,36 +97,19 @@ else
 
   SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "ScatterSettlement:" | awk '{print $NF}')
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
 
-  EXTRA_ENV=""
-fi
+  whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
 
-# ── Step 2: Deploy test tokens (shared by both modes) ───────
-echo ""
-echo "=== Deploying test tokens ==="
-TOKEN_OUTPUT=$(forge script script/DeployTestTokens.s.sol:DeployTestTokens \
-  --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
-echo "$TOKEN_OUTPUT"
-
-WETH=$(echo "$TOKEN_OUTPUT" | grep "WETH:" | awk '{print $NF}')
-USDC=$(echo "$TOKEN_OUTPUT" | grep "USDC:" | awk '{print $NF}')
-
-# ── Step 3: Whitelist tokens ────────────────────────────────
-cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$WETH" true \
-  --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
-cast send "$SETTLEMENT" "setTokenWhitelist(address,bool)" "$USDC" true \
-  --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL"
-
-# ── Step 4: Write addresses ─────────────────────────────────
-cat > "$OUTPUT_FILE" <<EOF
+  cat > "$OUTPUT_FILE" <<EOF
 SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
 NEXT_PUBLIC_TOKEN_LIST=$WETH,$USDC
-${EXTRA_ENV}
 EOF
-# Remove blank lines from env file
-sed -i '/^$/d' "$OUTPUT_FILE"
+
+fi
 
 echo ""
 echo "=== Addresses written to $OUTPUT_FILE ==="

@@ -11,7 +11,7 @@ contract MockToken is ERC20 {
 }
 
 /// @notice Deploy mock WETH/USDC tokens and mint to anvil test accounts.
-/// @dev Used by both mock and integration Docker modes.
+/// @dev Called by deploy-docker.sh for integration mode. Mock mode uses DeployLocal.s.sol instead.
 contract DeployTestTokens is Script {
     function run() external {
         vm.startBroadcast();
@@ -24,7 +24,7 @@ contract DeployTestTokens is Script {
         address bob = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;   // anvil #1
 
         weth.mint(alice, 1000 ether);
-        usdc.mint(alice, 1_000_000e18);
+        usdc.mint(alice, 1_000_000e18); // Mock uses 18 decimals (real USDC uses 6)
         weth.mint(bob, 1000 ether);
         usdc.mint(bob, 1_000_000e18);
 
