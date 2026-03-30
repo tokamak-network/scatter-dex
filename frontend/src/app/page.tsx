@@ -47,8 +47,8 @@ export default function Home() {
         ].map(({ icon: Icon, title, desc }) => (
           <div key={title} className="bg-gray-900 rounded-xl p-6 border border-gray-800">
             <Icon className="w-8 h-8 text-blue-400 mb-3" />
-            <h3 className="text-lg font-semibold mb-1">{title}</h3>
-            <p className="text-sm text-gray-500">{desc}</p>
+            <h3 className="text-lg font-semibold text-white mb-1">{title}</h3>
+            <p className="text-sm text-gray-400">{desc}</p>
           </div>
         ))}
       </div>

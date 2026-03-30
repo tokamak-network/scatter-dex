@@ -4,12 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/lib/wallet";
 import { SETTLEMENT_IFACE, ERC20_IFACE } from "@/lib/contracts";
-import { SETTLEMENT_ADDRESS } from "@/lib/config";
+import { SETTLEMENT_ADDRESS, getEnv } from "@/lib/config";
 import { multicall, encodeCall, decodeResult } from "@/lib/multicall";
 import { Wallet } from "lucide-react";
 
 // Common token list — in production, fetch from a registry or user config
-const DEFAULT_TOKENS = (process.env.NEXT_PUBLIC_TOKEN_LIST || "").split(",").filter(Boolean);
+const DEFAULT_TOKENS = (getEnv("NEXT_PUBLIC_TOKEN_LIST") || "").split(",").filter(Boolean);
 
 interface TokenBalance {
   address: string;
