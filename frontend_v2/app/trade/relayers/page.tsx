@@ -1,16 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, Activity, BarChart3 } from "lucide-react";
-import { useRelayers, fetchOrderbook, type RelayerInfo, type RelayerOrderbook } from "../../lib/useRelayers";
+import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { SETTLEMENT_ABI } from "../../lib/contracts";
 import { getSettlementAddress, RPC_URL } from "../../lib/config";
+import { shortenAddress } from "../../lib/utils";
 
-function shortenAddress(addr: string): string {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
+const provider = new ethers.JsonRpcProvider(RPC_URL);
 
 function formatBond(bond: bigint): string {
   const val = Number(ethers.formatEther(bond));
@@ -35,8 +34,12 @@ function buildPairOptions(tokens: TokenInfo[]) {
   const pairs: { label: string; value: string }[] = [];
   for (let i = 0; i < erc20.length; i++) {
     for (let j = i + 1; j < erc20.length; j++) {
-      const [a, b] = [erc20[i].address.toLowerCase(), erc20[j].address.toLowerCase()].sort();
-      pairs.push({ label: `${erc20[i].symbol}/${erc20[j].symbol}`, value: `${a}-${b}` });
+      const [tokenLow, tokenHigh] = [erc20[i], erc20[j]].sort((t1, t2) =>
+        t1.address.toLowerCase().localeCompare(t2.address.toLowerCase()),
+      );
+      const a = tokenLow.address.toLowerCase();
+      const b = tokenHigh.address.toLowerCase();
+      pairs.push({ label: `${tokenLow.symbol}/${tokenHigh.symbol}`, value: `${a}-${b}` });
     }
   }
   return pairs;
@@ -56,24 +59,34 @@ function aggregateOrderbook(
   const dA = tA?.decimals ?? 18;
   const dB = tB?.decimals ?? 18;
 
-  const calcPrice = (sellAmt: string, buyAmt: string, sDec: number, bDec: number) => {
-    const s = Number(ethers.formatUnits(sellAmt, sDec));
-    const b = Number(ethers.formatUnits(buyAmt, bDec));
-    return s > 0 ? (b / s).toFixed(2) : "0";
+  const formatPrice = (val: number): string => {
+    if (val === 0) return "0";
+    if (val >= 1) return val.toFixed(4);
+    const digits = Math.max(4, -Math.floor(Math.log10(Math.abs(val))) + 4);
+    return val.toFixed(digits);
+  };
+
+  // price = quote (tB) per base (tA)
+  const calcPrice = (baseAmt: string, quoteAmt: string, baseDec: number, quoteDec: number) => {
+    const base = Number(ethers.formatUnits(baseAmt, baseDec));
+    const quote = Number(ethers.formatUnits(quoteAmt, quoteDec));
+    return base > 0 ? formatPrice(quote / base) : "0";
   };
 
   const askMap = new Map<string, number>();
   const bidMap = new Map<string, number>();
 
   for (const ob of orderbooks) {
+    // sells: maker sells tA to buy tB → price = buyAmount(tB) / sellAmount(tA)
     for (const o of ob.sells) {
       const price = calcPrice(o.sellAmount, o.buyAmount, dA, dB);
       const qty = Number(ethers.formatUnits(o.sellAmount, dA));
       askMap.set(price, (askMap.get(price) ?? 0) + qty);
     }
+    // buys: maker sells tB to buy tA → price = sellAmount(tB) / buyAmount(tA)
     for (const o of ob.buys) {
-      const price = calcPrice(o.sellAmount, o.buyAmount, dB, dA);
-      const qty = Number(ethers.formatUnits(o.sellAmount, dB));
+      const price = calcPrice(o.buyAmount, o.sellAmount, dA, dB);
+      const qty = Number(ethers.formatUnits(o.buyAmount, dA));
       bidMap.set(price, (bidMap.get(price) ?? 0) + qty);
     }
   }
@@ -167,7 +180,6 @@ function RecentSettlements() {
   useEffect(() => {
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
         const settlement = new ethers.Contract(getSettlementAddress(), SETTLEMENT_ABI, provider);
         const filter = settlement.filters.Settled();
         const blockNumber = await provider.getBlockNumber();
@@ -274,8 +286,8 @@ export default function RelayersPage() {
   const symA = findToken(pts[0])?.symbol ?? "?";
   const symB = findToken(pts[1])?.symbol ?? "?";
 
-  const onlineRelayers = relayers.filter((r) => r.online);
-  const selected = selectedIdx !== null ? relayers[selectedIdx] : null;
+  const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
+  const selected = useMemo(() => selectedIdx !== null ? relayers[selectedIdx] : null, [selectedIdx, relayers]);
 
   // Fetch orderbooks from all online relayers (or single selected)
   const loadOrderbooks = useCallback(async (pair: string) => {
@@ -286,27 +298,26 @@ export default function RelayersPage() {
 
     await Promise.allSettled(
       targets.map(async (r) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
         try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 3000);
           const res = await fetch(`${r.url}/api/orderbook/${pair}`, { signal: controller.signal });
-          clearTimeout(timeout);
           if (res.ok) results.set(r.address, await res.json());
-        } catch { /* skip failed */ }
+        } catch { /* skip failed */ } finally {
+          clearTimeout(timeout);
+        }
       })
     );
 
     setOrderbooks(results);
     setObLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, relayers]);
+  }, [selected, onlineRelayers]);
 
   useEffect(() => {
     if (pairOptions.length > 0 && relayers.length > 0) {
       loadOrderbooks(pairOptions[activePairIdx]?.value ?? "");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePairIdx, selectedIdx, relayers]);
+  }, [activePairIdx, pairOptions, relayers, loadOrderbooks]);
 
   const selectPair = (idx: number) => {
     setActivePairIdx(idx);

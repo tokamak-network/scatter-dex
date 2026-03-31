@@ -5,6 +5,8 @@ import { ethers } from "ethers";
 import { RELAYER_REGISTRY_ABI } from "./contracts";
 import { getRelayerRegistryAddress, RPC_URL } from "./config";
 
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+
 export interface RelayerOnChain {
   address: string;
   url: string;
@@ -45,7 +47,6 @@ export function useRelayers() {
       setLoading(true);
       setError(null);
 
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
       const registry = new ethers.Contract(
         getRelayerRegistryAddress(),
         RELAYER_REGISTRY_ABI,
@@ -74,16 +75,17 @@ export function useRelayers() {
       // Probe each relayer's API (with timeout)
       const results: RelayerInfo[] = await Promise.all(
         onChainData.map(async (r) => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 3000);
           try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
             const res = await fetch(`${r.url}/api/info`, { signal: controller.signal });
-            clearTimeout(timeout);
             if (!res.ok) return { ...r, online: false };
             const api: RelayerApiInfo = await res.json();
             return { ...r, api, online: true };
           } catch {
             return { ...r, online: false };
+          } finally {
+            clearTimeout(timeout);
           }
         })
       );
