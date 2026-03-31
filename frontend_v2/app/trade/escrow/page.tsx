@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ethers } from "ethers";
-import { Coins, Landmark, Loader2, AlertCircle, CheckCircle, Wallet, Check, Copy } from "lucide-react";
+import { Coins, Landmark, Loader2, AlertCircle, Wallet, Check, Copy } from "lucide-react";
 import type { TxStatus } from "./useEscrow";
 import { useWallet } from "../../lib/wallet";
 import { useEscrow } from "./useEscrow";
@@ -14,7 +14,7 @@ function formatBalance(value: bigint, decimals: number): string {
 
 export default function EscrowPage() {
   const { account, connect } = useWallet();
-  const { balances, loading, tokens, deposit, withdraw, txStatus, txError, txHash, txAction, resetTx } = useEscrow();
+  const { balances, loading, tokens, deposit, withdraw, txStatus, txError, txHash, txAction } = useEscrow();
 
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
@@ -348,13 +348,15 @@ export default function EscrowPage() {
                     Waiting for confirmation...
                   </div>
                 )}
-                {txAction === "withdraw" && (txStatus === "success" || txStatus === "error") && txHash && (
-                  <div className={`text-xs p-3 rounded-md ${
-                    txStatus === "success" ? "bg-tertiary/5 text-tertiary" : "bg-error/5 text-error"
-                  }`}>
-                    <div className="font-semibold mb-1">
-                      {txStatus === "success" ? "Transaction confirmed" : "Transaction failed"}
-                    </div>
+                {txAction === "withdraw" && txStatus === "error" && txError && (
+                  <div className="text-xs p-3 rounded-md bg-error/5 text-error">
+                    <div className="font-semibold mb-1">Transaction failed</div>
+                    <div className="truncate">{txError}</div>
+                  </div>
+                )}
+                {txAction === "withdraw" && txStatus === "success" && txHash && (
+                  <div className="text-xs p-3 rounded-md bg-tertiary/5 text-tertiary">
+                    <div className="font-semibold mb-1">Transaction confirmed</div>
                     <TxHashDisplay hash={txHash} />
                   </div>
                 )}
@@ -377,18 +379,22 @@ interface TxProgressBarProps {
 }
 
 function TxProgressBar({ status, isNative, error, txHash }: TxProgressBarProps) {
-  // Native tokens: single step (Deposit). ERC20: two steps (Authorize → Deposit).
+  // Native tokens: two steps (Wrap → Deposit). ERC20: two steps (Authorize → Deposit).
   // "Authorize" covers both EIP-7702 delegation (first time) and ERC20 approve (fallback).
   const steps = isNative
-    ? [{ key: "depositing", label: "Deposit" }]
+    ? [
+        { key: "authorizing", label: "Wrap ETH" },
+        { key: "depositing", label: "Deposit" },
+      ]
     : [
         { key: "authorizing", label: "Authorize" },
         { key: "depositing", label: "Deposit" },
       ];
 
   const stepOrder = steps.map((s) => s.key);
-  const activeIdx = stepOrder.indexOf(status);
-  // success/error: all steps done
+  const rawIdx = stepOrder.indexOf(status);
+  // Track the last active step for error display
+  const activeIdx = rawIdx >= 0 ? rawIdx : (status === "error" ? steps.length - 1 : -1);
   const isComplete = status === "success";
   const isFailed = status === "error";
 
@@ -494,10 +500,14 @@ function TxProgressBar({ status, isNative, error, txHash }: TxProgressBarProps) 
 function TxHashDisplay({ hash }: { hash: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(hash);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(hash);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API may be unavailable in insecure contexts
+    }
   };
 
   return (

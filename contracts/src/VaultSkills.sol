@@ -26,8 +26,6 @@ contract VaultSkills {
     error ZeroAmount();
     error ArrayEmpty();
     error ZeroAddress();
-    error ETHTransferFailed();
-
     /// @notice Approve + deposit a single token into ScatterSettlement in one call.
     function approveAndDeposit(address settlement, address token, uint256 amount) external {
         if (settlement == address(0)) revert ZeroAddress();
@@ -70,15 +68,16 @@ contract VaultSkills {
         }
     }
 
-    /// @notice Withdraw WETH from Settlement, unwrap to ETH, send to caller.
+    /// @notice Withdraw WETH from Settlement, unwrap to ETH.
+    /// @dev Under EIP-7702 delegation, address(this) IS the EOA.
+    ///      After IWETH.withdraw(), ETH is already at address(this) (the EOA).
+    ///      No explicit ETH transfer needed.
     function withdrawAndUnwrap(address settlement, address weth, uint256 amount) external {
         if (settlement == address(0) || weth == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
         ScatterSettlement(settlement).withdraw(weth, amount);
         IWETH(weth).withdraw(amount);
-        (bool ok,) = msg.sender.call{value: amount}("");
-        if (!ok) revert ETHTransferFailed();
     }
 
     /// @dev Needed to receive ETH from WETH.withdraw()

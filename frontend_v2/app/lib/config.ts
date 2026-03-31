@@ -1,6 +1,8 @@
-// Runtime config that works in both server and client (Docker) environments.
+// Runtime config for both server and client environments.
 // Server: reads from process.env (set by Docker entrypoint).
-// Client: reads from window.__ENV__ (injected by layout.tsx <script> tag).
+// Client: Next.js inlines NEXT_PUBLIC_* at build time via the ENV_MAP below.
+//         window.__ENV__ is reserved for future Docker runtime injection but
+//         is not currently used — build-time inlining handles all client config.
 
 declare global {
   interface Window {

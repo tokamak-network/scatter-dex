@@ -6,7 +6,7 @@
 
 ## Design Reference
 
-`/Users/zena/Downloads/stitch/` — "Kinetic Ether" 디자인 시스템 기반
+Kinetic Ether design assets (external) — "Kinetic Ether" 디자인 시스템 기반
 
 ### 디자인 원칙 (DESIGN.md 요약)
 

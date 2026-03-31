@@ -42,7 +42,11 @@ async function trySendCalls(
       calls,
     }]);
     return result; // bundle ID
-  } catch {
+  } catch (e: unknown) {
+    // User rejected the request — rethrow so caller can surface the error
+    if (typeof e === "object" && e !== null && "code" in e && (e as { code: number }).code === 4001) {
+      throw e;
+    }
     return null; // wallet doesn't support EIP-5792 or chain doesn't support 7702
   }
 }
@@ -65,8 +69,12 @@ async function waitForCalls(
         throw new Error("Batch transaction failed");
       }
     } catch (e) {
-      // If getCallsStatus not supported, just wait and hope
       if ((e as Error).message?.includes("Batch transaction failed")) throw e;
+      // "method not found" means wallet doesn't support getCallsStatus — return early
+      const msg = (e as Error).message?.toLowerCase() ?? "";
+      if (msg.includes("method not found") || msg.includes("not supported") || msg.includes("does not exist")) {
+        return;
+      }
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -173,6 +181,13 @@ export function useEscrow() {
             const bundleId = await trySendCalls(provider, account, chainId, calls);
             if (bundleId) {
               await waitForCalls(provider, bundleId);
+              setTxHash(bundleId);
+              try {
+                const callsStatus = await provider.send("wallet_getCallsStatus", [bundleId]);
+                if (callsStatus?.receipts?.[0]?.transactionHash) {
+                  setTxHash(callsStatus.receipts[0].transactionHash);
+                }
+              } catch { /* best effort */ }
               setTxStatus("success");
               await fetchBalances();
               return;
@@ -198,6 +213,13 @@ export function useEscrow() {
           const bundleId = await trySendCalls(provider, account, chainId, calls);
           if (bundleId) {
             await waitForCalls(provider, bundleId);
+            setTxHash(bundleId);
+            try {
+              const callsStatus = await provider.send("wallet_getCallsStatus", [bundleId]);
+              if (callsStatus?.receipts?.[0]?.transactionHash) {
+                setTxHash(callsStatus.receipts[0].transactionHash);
+              }
+            } catch { /* best effort */ }
             setTxStatus("success");
             await fetchBalances();
             return;

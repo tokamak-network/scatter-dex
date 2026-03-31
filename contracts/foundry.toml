@@ -20,7 +20,6 @@ skip = ["lib/openzeppelin-contracts/test/**", "lib/openzeppelin-contracts/fv/**"
 [lint]
 exclude_lints = [
     "screaming-snake-case-immutable",
-    "unused-import",
     "erc20-unchecked-transfer",
     "unsafe-typecast",
 ]

@@ -4,6 +4,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { ethers } from "ethers";
 import { RPC_URL } from "./config";
 
+const READ_PROVIDER = new ethers.JsonRpcProvider(RPC_URL);
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Window {
@@ -42,32 +44,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
-  const [readProvider, setReadProvider] = useState<ethers.JsonRpcProvider | null>(null);
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
-  const rpcUrl = RPC_URL;
-
-  useEffect(() => {
-    setReadProvider(new ethers.JsonRpcProvider(rpcUrl));
-  }, [rpcUrl]);
+  const readProvider = READ_PROVIDER;
 
   const setupProvider = useCallback(async () => {
     if (typeof window === "undefined" || !window.ethereum) return;
 
-    const bp = new ethers.BrowserProvider(window.ethereum);
-    setProvider(bp);
+    try {
+      const bp = new ethers.BrowserProvider(window.ethereum);
+      setProvider(bp);
 
-    const accounts = await window.ethereum.request({ method: "eth_accounts" });
-    if (accounts.length > 0) {
-      setAccount(accounts[0]);
-      try {
-        setSigner(await bp.getSigner());
-      } catch (e) {
-        console.error("Failed to get signer:", e);
-        setSigner(null);
+      const accounts = await window.ethereum.request({ method: "eth_accounts" });
+      if (accounts.length > 0) {
+        setAccount(accounts[0]);
+        try {
+          setSigner(await bp.getSigner());
+        } catch (e) {
+          console.error("Failed to get signer:", e);
+          setSigner(null);
+        }
+        const network = await bp.getNetwork();
+        setChainId(Number(network.chainId));
       }
-      const network = await bp.getNetwork();
-      setChainId(Number(network.chainId));
+    } catch (e) {
+      console.error("Failed to setup provider:", e);
     }
   }, []);
 
@@ -79,6 +80,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (accounts.length === 0) {
           setAccount(null);
           setSigner(null);
+          setChainId(null);
         } else {
           setAccount(accounts[0]);
           setupProvider();

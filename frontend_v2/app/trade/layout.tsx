@@ -46,7 +46,7 @@ export default function TradeLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 ml-64 p-8 max-w-[1600px]">{children}</main>
+      <section className="flex-1 ml-64 p-8 max-w-[1600px]">{children}</section>
     </div>
   );
 }
