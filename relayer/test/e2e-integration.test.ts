@@ -610,15 +610,19 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
   // ─── Group 4: Edge Cases ──────────────────────────────────
   describe("Group 4: Edge Cases", () => {
 
-    it("sellToken == buyToken rejected by relayer", async () => {
-      const { status } = await submitOrder({
+    it("sellToken == buyToken is allowed (scheduled transfer)", async () => {
+      // Same-token orders are valid — enables scheduled transfers
+      // Signature will be invalid (dummy), but the parse step should pass
+      const { status, body } = await submitOrder({
         maker: addr.alice, sellToken: WETH, buyToken: WETH,
         sellAmount: "1000", buyAmount: "1000", maxFee: "100",
-        expiry: (Math.floor(Date.now() / 1000) + 86400).toString(),
+        expiry: "9999999999",
         nonce: "4001",
         claims: [{ claimHash: ethers.hexlify(ethers.randomBytes(32)), amount: "1000", releaseDelay: "3600" }],
       }, "0x" + "00".repeat(65));
+      // Should fail on signature validation, NOT on "sellToken == buyToken"
       expect(status).toBe(400);
+      expect(body.error).toBe("invalid signature");
     });
 
     it("Zero sellAmount rejected", async () => {
