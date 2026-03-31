@@ -70,7 +70,11 @@ contract DeployLocal is Script {
         usdc.mint(bob, 1_000_000e18);
         console.log("Minted USDC to Alice and Bob");
 
-        // 9. Register deployer as relayer
+        // 9. Set min release delay to 1 second for local testing
+        settlement.setMinReleaseDelay(1);
+        console.log("Set minReleaseDelay to 1 second");
+
+        // 10. Register deployer as relayer
         relayerRegistry.register{value: 0.1 ether}("http://localhost:3001", 30);
         console.log("Deployer registered as relayer");
 

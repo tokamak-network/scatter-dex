@@ -16,7 +16,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant REFUND_WINDOW = 7 days;
-    uint256 public constant MIN_RELEASE_DELAY = 1 hours;
+    uint256 public minReleaseDelay = 1 hours;
     uint256 public constant MAX_CLAIMS_PER_ORDER = 10;
     uint256 public constant FEE_DENOMINATOR = 10000;
     uint256 public constant MAX_PROTOCOL_FEE = 5000; // 50% of total fee
@@ -166,6 +166,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
+    }
+
+    function setMinReleaseDelay(uint256 _delay) external onlyOwner {
+        minReleaseDelay = _delay;
     }
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
@@ -547,9 +551,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         );
     }
 
-    function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal pure returns (uint96, uint48) {
+    function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal view returns (uint96, uint48) {
         if (claim.amount > type(uint96).max) revert AmountOverflow();
-        if (claim.releaseDelay < MIN_RELEASE_DELAY) revert ReleaseDelayTooShort();
+        if (claim.releaseDelay < minReleaseDelay) revert ReleaseDelayTooShort();
         if (claim.releaseDelay > type(uint48).max - now48) revert ReleaseDelayOverflow();
         return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }

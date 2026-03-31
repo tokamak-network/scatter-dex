@@ -26,7 +26,7 @@ const EXPIRY_SECONDS: Record<ExpiryOption, number> = {
 };
 
 const MAX_CLAIMS = 10; // matches MAX_CLAIMS_PER_ORDER in ScatterSettlement
-const MIN_RELEASE_DELAY = 3600; // 1 hour — matches MIN_RELEASE_DELAY in contract
+const MIN_RELEASE_DELAY = 1; // 1 second — configurable via setMinReleaseDelay() on contract
 
 interface ClaimRow {
   id: number;
@@ -72,6 +72,9 @@ export default function OrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
+  // Same-token mode = scheduled transfer
+  const isSameToken = sellToken && buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
+
   // Which token the user receives
   const receiveToken = side === "sell" ? buyToken : sellToken;
 
@@ -88,19 +91,23 @@ export default function OrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
-  // Distributable amount — what the user actually receives after fee.
-  // In the contract: makerFee is deducted from maker's sell (affects taker's receive),
-  // takerFee is deducted from taker's sell (affects maker's receive).
-  // When "both" (cover_taker): takerFee=0, so user receives full buyAmount.
+  // Distributable amount — what recipients can claim after all fees.
+  // "My side only": takerFee deducted from counterparty's sell → reduces your receive
+  // "Cover both sides": makerFee is your total cost → reduces your effective value
   const distributable = useMemo(() => {
     if (!amount || !price) return 0;
     const amt = parseFloat(amount);
     const p = parseFloat(price);
-    // buyAmount = what user expects to receive
     const buyAmt = side === "buy" ? amt : amt * p;
-    // Fee on the receive side: "mine" → baseBps, "both" → 0 (taker pays nothing)
-    const receiveFeeRate = feeMode === "both" ? 0 : (parseInt(maxFee) || 0);
-    return buyAmt * (1 - receiveFeeRate / 10000);
+    const baseBps = parseInt(maxFee) || 0;
+    if (feeMode === "both") {
+      // You cover both: your fee = 2×baseBps on sell side. Effective distributable = buyAmt - makerFee equivalent.
+      const sellAmt = side === "buy" ? amt * p : amt;
+      const makerFeeAmt = sellAmt * baseBps * 2 / 10000;
+      return buyAmt - makerFeeAmt;
+    }
+    // My side only: takerFee deducted from counterparty's sell → reduces your receive
+    return buyAmt * (1 - baseBps / 10000);
   }, [amount, price, maxFee, feeMode, side]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
@@ -506,28 +513,33 @@ export default function OrderPage() {
             const buyAmt = side === "buy" ? amt : total;
             const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
             const takerFeeAmt = buyAmt * takerFeeBps / 10000;
-            const recvAmt = buyAmt - takerFeeAmt;
+            // Effective receive: for "cover both", deduct your makerFee cost
+            const recvAmt = isBoth ? buyAmt - makerFeeAmt : buyAmt - takerFeeAmt;
 
             return (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-on-surface-variant">From escrow</span>
+                  <span className="text-on-surface-variant">You send</span>
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
                 <div className="flex justify-between text-error/80">
-                  <span>Your fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both sides" : ""})</span>
+                  <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""})</span>
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                {!isBoth && (
-                  <div className="flex justify-between text-on-surface-variant/70">
-                    <span>Taker fee ({(takerFeeBps / 100).toFixed(2)}%)</span>
-                    <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
-                  </div>
-                )}
+                <div className="flex justify-between text-on-surface-variant/60">
+                  <span>Counterparty receives</span>
+                  <span className="font-mono">{(sellAmt - makerFeeAmt).toFixed(4)} {sellSym}</span>
+                </div>
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>You receive</span>
                   <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
                 </div>
+                {!isBoth && takerFeeAmt > 0 && (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant/50">
+                    <span>Taker fee deducted</span>
+                    <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
                   <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
                   <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
@@ -553,9 +565,22 @@ export default function OrderPage() {
                 disabled={claims.length >= MAX_CLAIMS}
                 className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS && `(max ${MAX_CLAIMS})`}
+                <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS ? `(max ${MAX_CLAIMS})` : ""}
               </button>
             </div>
+
+            {isSameToken && (
+              <div className="flex items-start gap-2.5 p-3 rounded-lg bg-tertiary/10 border border-tertiary/20 text-xs mb-3">
+                <AlertCircle className="w-4 h-4 text-tertiary flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-tertiary mb-0.5">Scheduled Transfer</div>
+                  <div className="text-on-surface-variant/70">
+                    Same-token order — your {sellToken?.symbol} will be sent to recipients below via time-locked claims.
+                    Requires a matching order from a <span className="font-semibold text-on-surface">different address</span> to settle.
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               {claims.map((c, idx) => (
@@ -696,7 +721,7 @@ export default function OrderPage() {
             ) : status === "submitting" ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
             ) : (
-              <><Lock className="w-4 h-4" /> Sign & Submit to Relayer</>
+              <><Lock className="w-4 h-4" /> {isSameToken ? "Sign & Submit Transfer" : "Sign & Submit to Relayer"}</>
             )}
           </button>
           <div className="flex gap-2">
