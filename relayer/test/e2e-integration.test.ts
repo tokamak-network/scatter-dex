@@ -145,10 +145,21 @@ async function advanceTime(provider: ethers.JsonRpcProvider, seconds: number) {
   await provider.send("evm_mine", []);
 }
 
+/** Get fresh nonce via direct RPC — bypasses ethers v6 caching */
+async function rpcNonce(address: string): Promise<number> {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "eth_getTransactionCount", params: [address, "latest"], id: 1 }),
+  });
+  const { result } = await res.json();
+  return parseInt(result, 16);
+}
+
 async function depositWETH(wallet: ethers.Wallet, amount: bigint) {
   const weth = new ethers.Contract(WETH, WETH_ABI, wallet);
   const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
-  let nonce = await wallet.getNonce("latest");
+  let nonce = await rpcNonce(wallet.address);
   await (await weth.deposit({ value: amount, nonce: nonce++ })).wait();
   await (await weth.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
   await (await stl.deposit(WETH, amount, { nonce })).wait();
@@ -158,10 +169,9 @@ async function mintAndDepositUSDC(wallet: ethers.Wallet, amount: bigint, deploye
   const usdcDeployer = new ethers.Contract(USDC, ERC20_ABI, deployerWallet);
   const usdcWallet = new ethers.Contract(USDC, ERC20_ABI, wallet);
   const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
-  // Deployer mint uses deployer's nonce
-  await (await usdcDeployer.mint(wallet.address, amount, { nonce: await deployerWallet.getNonce("latest") })).wait();
-  // Wallet approve + deposit
-  let nonce = await wallet.getNonce("latest");
+  const dNonce = await rpcNonce(deployerWallet.address);
+  await (await usdcDeployer.mint(wallet.address, amount, { nonce: dNonce })).wait();
+  let nonce = await rpcNonce(wallet.address);
   await (await usdcWallet.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
   await (await stl.deposit(USDC, amount, { nonce })).wait();
 }
@@ -218,7 +228,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Alice deposits 10 WETH to escrow", async () => {
       const amount = ethers.parseEther("10");
-      await depositWETH(alice, amount);
+      await depositWETH(alice,amount);
       const balance = await settlement.deposits(addr.alice, WETH);
       expect(balance).toBe(amount);
     });
@@ -292,9 +302,13 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Claim with correct secret succeeds after release delay", async () => {
+      // Mine an extra block to ensure timestamp is fully applied
+      await provider.send("evm_mine", []);
+
       const settlementCharlie = settlement.connect(charlie);
       const usdcBefore = await new ethers.Contract(USDC, ERC20_ABI, provider).balanceOf(addr.charlie);
-      const tx = await settlementCharlie.claimRelease(g1AliceSecret);
+      const nonce = await rpcNonce(addr.charlie);
+      const tx = await settlementCharlie.claimRelease(g1AliceSecret, { nonce });
       await tx.wait();
       const usdcAfter = await new ethers.Contract(USDC, ERC20_ABI, provider).balanceOf(addr.charlie);
       expect(usdcAfter - usdcBefore).toBe(ethers.parseUnits("20937", 18));
@@ -308,7 +322,8 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     it("Bob's recipient (Dave) claims WETH", async () => {
       const settlementDave = settlement.connect(dave);
       const wethBefore = await new ethers.Contract(WETH, WETH_ABI, provider).balanceOf(addr.dave);
-      const tx = await settlementDave.claimRelease(g1BobSecret);
+      const nonce = await rpcNonce(addr.dave);
+      const tx = await settlementDave.claimRelease(g1BobSecret, { nonce });
       await tx.wait();
       const wethAfter = await new ethers.Contract(WETH, WETH_ABI, provider).balanceOf(addr.dave);
       expect(wethAfter - wethBefore).toBe(ethers.parseEther("9.97"));
@@ -316,7 +331,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Gasless claim via claimReleaseFor", async () => {
       // New trade: Alice sells 1 WETH, Bob sells 2100 USDC
-      await depositWETH(alice, ethers.parseEther("1"));
+      await depositWETH(alice,ethers.parseEther("1"));
       await mintAndDepositUSDC(bob, ethers.parseUnits("2100", 18), deployer);
 
       const secret = ethers.keccak256(ethers.toUtf8Bytes("gasless-secret"));
@@ -367,7 +382,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Refund unclaimed after REFUND_WINDOW (7 days)", async () => {
       // New trade for refund test
-      await depositWETH(alice, ethers.parseEther("1"));
+      await depositWETH(alice,ethers.parseEther("1"));
       await mintAndDepositUSDC(bob, ethers.parseUnits("2100", 18), deployer);
 
       const secret = ethers.keccak256(ethers.toUtf8Bytes("refund-secret"));
@@ -407,7 +422,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Refund before window expires reverts", async () => {
       // New trade
-      await depositWETH(alice, ethers.parseEther("1"));
+      await depositWETH(alice,ethers.parseEther("1"));
       await mintAndDepositUSDC(bob, ethers.parseUnits("2100", 18), deployer);
 
       const secret = ethers.keccak256(ethers.toUtf8Bytes("refund-early-secret"));
@@ -449,7 +464,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Three-way trading: Alice<->Bob and Charlie<->Dave settle independently", async () => {
       // Fund
-      await depositWETH(alice, ethers.parseEther("5"));
+      await depositWETH(alice,ethers.parseEther("5"));
       await mintAndDepositUSDC(bob, ethers.parseUnits("10500", 18), deployer);
       await depositWETH(charlie, ethers.parseEther("3"));
       await mintAndDepositUSDC(dave, ethers.parseUnits("6300", 18), deployer);
@@ -510,7 +525,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
     it("Orderbook shows correctly sorted sell and buy sides", async () => {
       // Fund Alice with more WETH for multiple orders
-      await depositWETH(alice, ethers.parseEther("10"));
+      await depositWETH(alice,ethers.parseEther("10"));
       await depositWETH(charlie, ethers.parseEther("10"));
 
       const s1 = ethers.keccak256(ethers.toUtf8Bytes("g3-ob-1"));
@@ -613,7 +628,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
   describe("Group 5: Order Cancellation", () => {
 
     it("Cancel a pending order", async () => {
-      await depositWETH(alice, ethers.parseEther("1"));
+      await depositWETH(alice,ethers.parseEther("1"));
       const s = ethers.keccak256(ethers.toUtf8Bytes("g5-cancel"));
       const order = buildOrder({
         maker: addr.alice, sellToken: WETH, buyToken: USDC,
