@@ -99,10 +99,10 @@ function buildOrder(opts: {
   };
 }
 
-async function signOrder(signer: ethers.Signer, order: ReturnType<typeof buildOrder>, chainId: bigint) {
+async function signOrder(wallet: ethers.Wallet, order: ReturnType<typeof buildOrder>, chainId: bigint) {
   const domain = { ...EIP712_DOMAIN, chainId, verifyingContract: SETTLEMENT_ADDRESS };
   const parsed = parseOrder(order);
-  return (signer as any).signTypedData(domain, EIP712_TYPES, {
+  return wallet.signTypedData(domain, EIP712_TYPES, {
     ...parsed,
     claims: parsed.claims.map(c => ({ claimHash: c.claimHash, amount: c.amount, releaseDelay: c.releaseDelay })),
   });
@@ -145,33 +145,35 @@ async function advanceTime(provider: ethers.JsonRpcProvider, seconds: number) {
   await provider.send("evm_mine", []);
 }
 
-async function depositWETH(signer: ethers.Signer, amount: bigint) {
-  const weth = new ethers.Contract(WETH, WETH_ABI, signer);
-  const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
-  await (await weth.deposit({ value: amount })).wait();
-  await (await weth.approve(SETTLEMENT_ADDRESS, amount)).wait();
-  await (await stl.deposit(WETH, amount)).wait();
+async function depositWETH(wallet: ethers.Wallet, amount: bigint) {
+  const weth = new ethers.Contract(WETH, WETH_ABI, wallet);
+  const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
+  let nonce = await wallet.getNonce();
+  await (await weth.deposit({ value: amount, nonce: nonce++ })).wait();
+  await (await weth.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
+  await (await stl.deposit(WETH, amount, { nonce })).wait();
 }
 
-async function mintAndDepositUSDC(signer: ethers.Signer, amount: bigint, deployerSigner: ethers.Signer) {
-  const recipientAddr = await signer.getAddress();
-  const usdcDeployer = new ethers.Contract(USDC, ERC20_ABI, deployerSigner);
-  const usdcWallet = new ethers.Contract(USDC, ERC20_ABI, signer);
-  const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, signer);
-  await (await usdcDeployer.mint(recipientAddr, amount)).wait();
-  await (await usdcWallet.approve(SETTLEMENT_ADDRESS, amount)).wait();
-  await (await stl.deposit(USDC, amount)).wait();
+async function mintAndDepositUSDC(wallet: ethers.Wallet, amount: bigint, deployerWallet: ethers.Wallet) {
+  const usdcDeployer = new ethers.Contract(USDC, ERC20_ABI, deployerWallet);
+  const usdcWallet = new ethers.Contract(USDC, ERC20_ABI, wallet);
+  const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
+  // Deployer mint uses deployer's nonce
+  await (await usdcDeployer.mint(wallet.address, amount, { nonce: await deployerWallet.getNonce() })).wait();
+  // Wallet approve + deposit
+  let nonce = await wallet.getNonce();
+  await (await usdcWallet.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
+  await (await stl.deposit(USDC, amount, { nonce })).wait();
 }
 
 // ─── Tests ───────────────────────────────────────────────────
 describe("E2E Integration: ScatterDEX Relayer", () => {
   let provider: ethers.JsonRpcProvider;
-  let deployer: ethers.Signer;
-  let alice: ethers.Signer;
-  let bob: ethers.Signer;
-  let charlie: ethers.Signer;
-  let dave: ethers.Signer;
-  // Store addresses separately since NonceManager doesn't expose .address synchronously
+  let deployer: ethers.Wallet;
+  let alice: ethers.Wallet;
+  let bob: ethers.Wallet;
+  let charlie: ethers.Wallet;
+  let dave: ethers.Wallet;
   const addr: Record<string, string> = {};
   let settlement: ethers.Contract;
   let chainId: bigint;
@@ -184,22 +186,16 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
   beforeAll(async () => {
     provider = new ethers.JsonRpcProvider(RPC_URL);
-    // Use NonceManager to prevent ethers v6 nonce caching issues with Anvil auto-mining
-    const deployerW = new ethers.Wallet(DEPLOYER_KEY, provider);
-    const aliceW = new ethers.Wallet(ALICE_KEY, provider);
-    const bobW = new ethers.Wallet(BOB_KEY, provider);
-    const charlieW = new ethers.Wallet(CHARLIE_KEY, provider);
-    const daveW = new ethers.Wallet(DAVE_KEY, provider);
-    deployer = new ethers.NonceManager(deployerW);
-    alice = new ethers.NonceManager(aliceW);
-    bob = new ethers.NonceManager(bobW);
-    charlie = new ethers.NonceManager(charlieW);
-    dave = new ethers.NonceManager(daveW);
-    addr.deployer = deployerW.address;
-    addr.alice = aliceW.address;
-    addr.bob = bobW.address;
-    addr.charlie = charlieW.address;
-    addr.dave = daveW.address;
+    deployer = new ethers.Wallet(DEPLOYER_KEY, provider);
+    alice = new ethers.Wallet(ALICE_KEY, provider);
+    bob = new ethers.Wallet(BOB_KEY, provider);
+    charlie = new ethers.Wallet(CHARLIE_KEY, provider);
+    dave = new ethers.Wallet(DAVE_KEY, provider);
+    addr.deployer = deployer.address;
+    addr.alice = alice.address;
+    addr.bob = bob.address;
+    addr.charlie = charlie.address;
+    addr.dave = dave.address;
     settlement = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, alice);
     chainId = (await provider.getNetwork()).chainId;
 
@@ -359,7 +355,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       const deadline = Math.floor(Date.now() / 1000) + 7200;
       const gaslessNonce = await settlement.gaslessNonces(recipient);
       const domain = { ...EIP712_DOMAIN, chainId, verifyingContract: SETTLEMENT_ADDRESS };
-      const recipientSig = await (charlie as any).signTypedData(domain, GASLESS_CLAIM_TYPES, {
+      const recipientSig = await charlie.signTypedData(domain, GASLESS_CLAIM_TYPES, {
         secret, recipient, relayer: addr.deployer, relayerTip: tip, deadline, nonce: gaslessNonce,
       });
 
@@ -443,8 +439,8 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       // The refund window is 7 days AFTER release time. We need to NOT exceed that.
       // Since we just settled, releaseTime = now + 3600. We DON'T advance time here (already past release from previous advances).
       // Actually: let's just try to refund immediately - the claim window hasn't expired for this specific claim.
-      const settlementBob = settlement.connect(bob);
-      await expect(settlementBob.refundUnclaimed(claimHash)).rejects.toThrow();
+      const settlementAlice2 = settlement.connect(alice);
+      await expect(settlementAlice2.refundUnclaimed(claimHash)).rejects.toThrow();
     });
   });
 
@@ -628,7 +624,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       });
       await submitOrder(order, await signOrder(alice, order, chainId));
 
-      const cancelSig = await (alice as any).signMessage(`cancel:${addr.alice.toLowerCase()}:5001`);
+      const cancelSig = await alice.signMessage(`cancel:${addr.alice.toLowerCase()}:5001`);
       const { body } = await cancelOrder(addr.alice, 5001, cancelSig);
       expect(body.status).toBe("cancelled");
     });
@@ -642,17 +638,19 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Cancelled order doesn't match with counter order", async () => {
-      await mintAndDepositUSDC(bob, ethers.parseUnits("2100", 18), deployer);
+      // Use a unique price point that won't match other pending orders
+      await mintAndDepositUSDC(bob, ethers.parseUnits("9999", 18), deployer);
       const s = ethers.keccak256(ethers.toUtf8Bytes("g5-no-match"));
       const bobOrder = buildOrder({
         maker: addr.bob, sellToken: USDC, buyToken: WETH,
-        sellAmount: ethers.parseUnits("2100", 18).toString(),
+        sellAmount: ethers.parseUnits("9999", 18).toString(),
         buyAmount: ethers.parseEther("1").toString(),
-        nonce: "5001",
+        nonce: "5003",
         claims: [{ claimHash: makeClaimHash(s, addr.alice), amount: ethers.parseEther("0.997").toString(), releaseDelay: "3600" }],
       });
       const { body } = await submitOrder(bobOrder, await signOrder(bob, bobOrder, chainId));
-      expect(body.status).toBe("pending"); // Alice's order was cancelled, no match
+      // Alice's 5001 was cancelled. Bob's unique price shouldn't match other pending sells.
+      expect(body.status).toBe("pending");
     });
 
     it("Cancel with wrong signer → 403", async () => {
@@ -666,13 +664,13 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       });
       await submitOrder(order, await signOrder(alice, order, chainId));
 
-      const bobCancelSig = await (bob as any).signMessage(`cancel:${addr.alice.toLowerCase()}:5002`);
+      const bobCancelSig = await bob.signMessage(`cancel:${addr.alice.toLowerCase()}:5002`);
       const { status } = await cancelOrder(addr.alice, 5002, bobCancelSig);
       expect(status).toBe(403);
     });
 
     it("Cancel non-existent order → 404", async () => {
-      const sig = await (alice as any).signMessage(`cancel:${addr.alice.toLowerCase()}:99999`);
+      const sig = await alice.signMessage(`cancel:${addr.alice.toLowerCase()}:99999`);
       const { status } = await cancelOrder(addr.alice, 99999, sig);
       expect(status).toBe(404);
     });
