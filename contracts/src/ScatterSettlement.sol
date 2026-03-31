@@ -270,7 +270,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     ///      generate a unique random secret per claim to avoid collisions. See audit M-3.
     function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
-        bytes32 claimHash = keccak256(abi.encodePacked(secret, msg.sender));
+        bytes32 claimHash;
+        assembly { mstore(0x00, secret) mstore(0x20, shl(96, caller())) claimHash := keccak256(0x00, 0x34) }
         (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
 
         IERC20(token).safeTransfer(msg.sender, amt);
@@ -298,14 +299,27 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (block.timestamp > deadline) revert SignatureExpired();
 
         uint256 currentNonce = gaslessNonces[recipient];
-        bytes32 structHash = keccak256(abi.encode(
-            GASLESS_CLAIM_TYPEHASH, secret, recipient, msg.sender, relayerTip, deadline, currentNonce
-        ));
+        bytes32 structHash;
+        {
+            bytes32 th = GASLESS_CLAIM_TYPEHASH;
+            assembly {
+                let p := mload(0x40)
+                mstore(p, th)
+                mstore(add(p, 0x20), secret)
+                mstore(add(p, 0x40), recipient)
+                mstore(add(p, 0x60), caller())
+                mstore(add(p, 0x80), relayerTip)
+                mstore(add(p, 0xa0), deadline)
+                mstore(add(p, 0xc0), currentNonce)
+                structHash := keccak256(p, 0xe0)
+            }
+        }
         if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
 
         gaslessNonces[recipient] = currentNonce + 1;
 
-        bytes32 claimHash = keccak256(abi.encodePacked(secret, recipient));
+        bytes32 claimHash;
+        assembly { mstore(0x00, secret) mstore(0x20, shl(96, recipient)) claimHash := keccak256(0x00, 0x34) }
         (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
         if (relayerTip > amt) revert TipExceedsAmount();
 
@@ -317,7 +331,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
             IERC20(token).safeTransfer(msg.sender, relayerTip);
         }
 
-        emit ClaimedFor(claimHash, recipient, msg.sender, token, recipientAmount, relayerTip);
+        emit ClaimedFor(claimHash, recipient, token, msg.sender, recipientAmount, relayerTip);
     }
 
     /// @notice Cancel all outstanding gasless claim signatures for a recipient.
@@ -327,7 +341,15 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     ///      third party (friend, another relayer) submits it — no ETH needed by recipient.
     function cancelGaslessClaimFor(address recipient, bytes calldata recipientSig) external {
         uint256 currentNonce = gaslessNonces[recipient];
-        bytes32 structHash = keccak256(abi.encode(CANCEL_GASLESS_CLAIM_TYPEHASH, recipient, currentNonce));
+        bytes32 cancelTypeHash = CANCEL_GASLESS_CLAIM_TYPEHASH;
+        bytes32 structHash;
+        assembly {
+            let p := mload(0x40)
+            mstore(p, cancelTypeHash)
+            mstore(add(p, 0x20), recipient)
+            mstore(add(p, 0x40), currentNonce)
+            structHash := keccak256(p, 0x60)
+        }
         if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
 
         gaslessNonces[recipient] = currentNonce + 1;

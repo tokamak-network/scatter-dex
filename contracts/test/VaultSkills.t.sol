@@ -7,6 +7,7 @@ import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockToken is ERC20 {
@@ -24,6 +25,7 @@ contract VaultSkillsTest is Test {
     MockIdentityRegistry public registry;
     MockToken public tokenA;
     MockToken public tokenB;
+    MockWETH public weth;
 
     address user = address(0x1234);
 
@@ -38,13 +40,16 @@ contract VaultSkillsTest is Test {
         skills = new VaultSkills();
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
+        weth = new MockWETH();
 
         settlement.setTokenWhitelist(address(tokenA), true);
         settlement.setTokenWhitelist(address(tokenB), true);
+        settlement.setTokenWhitelist(address(weth), true);
 
         registry.setVerified(user, true);
         tokenA.mint(user, 100e18);
         tokenB.mint(user, 100e18);
+        vm.deal(user, 100 ether);
     }
 
     // ─── EIP-7702 Simulated (delegatecall from EOA context) ─────
@@ -53,7 +58,7 @@ contract VaultSkillsTest is Test {
         vm.etch(user, address(skills).code);
 
         vm.prank(user);
-        VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 10e18);
+        VaultSkills(payable(user)).approveAndDeposit(address(settlement), address(tokenA), 10e18);
 
         assertEq(settlement.deposits(user, address(tokenA)), 10e18);
         assertEq(tokenA.balanceOf(user), 90e18);
@@ -69,7 +74,7 @@ contract VaultSkillsTest is Test {
         tokens[1] = VaultSkills.TokenAmount({token: address(tokenB), amount: 20e18});
 
         vm.prank(user);
-        VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).approveAndDepositMultiple(address(settlement), tokens);
 
         assertEq(settlement.deposits(user, address(tokenA)), 10e18);
         assertEq(settlement.deposits(user, address(tokenB)), 20e18);
@@ -95,7 +100,7 @@ contract VaultSkillsTest is Test {
         tokens[1] = VaultSkills.TokenAmount({token: address(tokenB), amount: 10e18});
 
         vm.prank(user);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
 
         assertEq(settlement.deposits(user, address(tokenA)), 5e18);
         assertEq(settlement.deposits(user, address(tokenB)), 10e18);
@@ -109,7 +114,7 @@ contract VaultSkillsTest is Test {
         vm.etch(user, address(skills).code);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAmount.selector);
-        VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 0);
+        VaultSkills(payable(user)).approveAndDeposit(address(settlement), address(tokenA), 0);
     }
 
     function test_approveAndDepositMultiple_empty_reverts() public {
@@ -117,14 +122,14 @@ contract VaultSkillsTest is Test {
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ArrayEmpty.selector);
-        VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).approveAndDepositMultiple(address(settlement), tokens);
     }
 
     function test_approveAndDeposit_zero_address_reverts() public {
         vm.etch(user, address(skills).code);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAddress.selector);
-        VaultSkills(user).approveAndDeposit(address(0), address(tokenA), 10e18);
+        VaultSkills(payable(user)).approveAndDeposit(address(0), address(tokenA), 10e18);
     }
 
     function test_approveAndDeposit_unverified_reverts() public {
@@ -133,7 +138,7 @@ contract VaultSkillsTest is Test {
         vm.etch(unverified, address(skills).code);
         vm.prank(unverified);
         vm.expectRevert(ScatterSettlement.NotVerified.selector);
-        VaultSkills(unverified).approveAndDeposit(address(settlement), address(tokenA), 10e18);
+        VaultSkills(payable(unverified)).approveAndDeposit(address(settlement), address(tokenA), 10e18);
     }
 
     // ─── withdrawMultiple revert tests ───────────────────────────
@@ -144,7 +149,7 @@ contract VaultSkillsTest is Test {
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 5e18});
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAddress.selector);
-        VaultSkills(user).withdrawMultiple(address(0), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(0), tokens);
     }
 
     function test_withdrawMultiple_empty_reverts() public {
@@ -152,7 +157,7 @@ contract VaultSkillsTest is Test {
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ArrayEmpty.selector);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
     }
 
     function test_withdrawMultiple_zero_amount_reverts() public {
@@ -161,7 +166,79 @@ contract VaultSkillsTest is Test {
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 0});
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAmount.selector);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
+    }
+
+    // ─── wrapAndDeposit tests ─────────────────────────────────────
+
+    function test_wrapAndDeposit_delegated() public {
+        vm.etch(user, address(skills).code);
+
+        uint256 ethBefore = user.balance;
+        vm.prank(user);
+        VaultSkills(payable(user)).wrapAndDeposit{value: 5 ether}(address(settlement), address(weth));
+
+        assertEq(settlement.deposits(user, address(weth)), 5 ether);
+        assertEq(user.balance, ethBefore - 5 ether);
+        assertEq(weth.balanceOf(user), 0, "WETH should be fully deposited, none left");
+    }
+
+    function test_wrapAndDeposit_zero_value_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAmount.selector);
+        VaultSkills(payable(user)).wrapAndDeposit{value: 0}(address(settlement), address(weth));
+    }
+
+    function test_wrapAndDeposit_zero_settlement_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(payable(user)).wrapAndDeposit{value: 1 ether}(address(0), address(weth));
+    }
+
+    function test_wrapAndDeposit_zero_weth_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(payable(user)).wrapAndDeposit{value: 1 ether}(address(settlement), address(0));
+    }
+
+    // ─── withdrawAndUnwrap tests ────────────────────────────────
+
+    function test_withdrawAndUnwrap_delegated() public {
+        // First: deposit WETH into settlement via wrapAndDeposit
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        VaultSkills(payable(user)).wrapAndDeposit{value: 10 ether}(address(settlement), address(weth));
+
+        uint256 ethBefore = user.balance;
+        vm.prank(user);
+        VaultSkills(payable(user)).withdrawAndUnwrap(address(settlement), address(weth), 4 ether);
+
+        assertEq(settlement.deposits(user, address(weth)), 6 ether, "remaining escrow");
+        assertEq(user.balance, ethBefore + 4 ether, "ETH returned to EOA");
+    }
+
+    function test_withdrawAndUnwrap_zero_amount_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAmount.selector);
+        VaultSkills(payable(user)).withdrawAndUnwrap(address(settlement), address(weth), 0);
+    }
+
+    function test_withdrawAndUnwrap_zero_settlement_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(payable(user)).withdrawAndUnwrap(address(0), address(weth), 1 ether);
+    }
+
+    function test_withdrawAndUnwrap_zero_weth_reverts() public {
+        vm.etch(user, address(skills).code);
+        vm.prank(user);
+        vm.expectRevert(VaultSkills.ZeroAddress.selector);
+        VaultSkills(payable(user)).withdrawAndUnwrap(address(settlement), address(0), 1 ether);
     }
 
     // ─── Non-delegated (direct call) ─────────────────────────────

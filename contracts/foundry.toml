@@ -14,5 +14,13 @@ remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
 ]
 
-# Exclude OZ internal test/fv files from compilation
-exclude_paths = ["lib/openzeppelin-contracts/test", "lib/openzeppelin-contracts/fv", "lib/openzeppelin-contracts/scripts"]
+# Skip OZ internal test/fv/scripts that have unresolvable imports
+skip = ["lib/openzeppelin-contracts/test/**", "lib/openzeppelin-contracts/fv/**", "lib/openzeppelin-contracts/scripts/**"]
+
+[lint]
+exclude_lints = [
+    "screaming-snake-case-immutable",
+    "erc20-unchecked-transfer",
+    "unsafe-typecast",
+]
+

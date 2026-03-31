@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ScatterSettlement} from "./ScatterSettlement.sol";
+import {IWETH} from "./interfaces/IWETH.sol";
 
 /// @notice EIP-7702 delegation target for batch operations.
 /// @dev Stateless — no constructor, no storage slots. Designed to be delegated to
@@ -25,7 +26,6 @@ contract VaultSkills {
     error ZeroAmount();
     error ArrayEmpty();
     error ZeroAddress();
-
     /// @notice Approve + deposit a single token into ScatterSettlement in one call.
     function approveAndDeposit(address settlement, address token, uint256 amount) external {
         if (settlement == address(0)) revert ZeroAddress();
@@ -46,6 +46,16 @@ contract VaultSkills {
         }
     }
 
+    /// @notice Wrap ETH → WETH, then approve + deposit into Settlement.
+    /// @dev User sends ETH via msg.value. Internally wraps to WETH and deposits.
+    function wrapAndDeposit(address settlement, address weth) external payable {
+        if (settlement == address(0) || weth == address(0)) revert ZeroAddress();
+        if (msg.value == 0) revert ZeroAmount();
+
+        IWETH(weth).deposit{value: msg.value}();
+        _safeApproveAndDeposit(settlement, weth, msg.value);
+    }
+
     /// @notice Batch withdraw multiple tokens from ScatterSettlement.
     function withdrawMultiple(address settlement, TokenAmount[] calldata tokens) external {
         if (settlement == address(0)) revert ZeroAddress();
@@ -57,6 +67,21 @@ contract VaultSkills {
             ScatterSettlement(settlement).withdraw(tokens[i].token, tokens[i].amount);
         }
     }
+
+    /// @notice Withdraw WETH from Settlement, unwrap to ETH.
+    /// @dev Under EIP-7702 delegation, address(this) IS the EOA.
+    ///      After IWETH.withdraw(), ETH is already at address(this) (the EOA).
+    ///      No explicit ETH transfer needed.
+    function withdrawAndUnwrap(address settlement, address weth, uint256 amount) external {
+        if (settlement == address(0) || weth == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+
+        ScatterSettlement(settlement).withdraw(weth, amount);
+        IWETH(weth).withdraw(amount);
+    }
+
+    /// @dev Needed to receive ETH from WETH.withdraw()
+    receive() external payable {}
 
     /// @dev Approve exact amount, deposit, then revoke any remaining allowance.
     ///      Uses SafeERC20.forceApprove for non-standard tokens (USDT etc).
