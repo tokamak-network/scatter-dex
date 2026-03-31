@@ -84,18 +84,19 @@ export default function OrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
-  // Distributable amount — net sell converted at order price
+  // Distributable amount — what the user actually receives after fee.
+  // In the contract: makerFee is deducted from maker's sell (affects taker's receive),
+  // takerFee is deducted from taker's sell (affects maker's receive).
+  // When "both" (cover_taker): takerFee=0, so user receives full buyAmount.
   const distributable = useMemo(() => {
     if (!amount || !price) return 0;
     const amt = parseFloat(amount);
     const p = parseFloat(price);
-    const total = amt * p;
-    const effectiveBps = (parseInt(maxFee) || 0) * (feeMode === "both" ? 2 : 1);
-    // Fee is on sellAmount (Buy: USDC, Sell: WETH)
-    const sellAmt = side === "buy" ? total : amt;
-    const netSell = sellAmt - (sellAmt * effectiveBps / 10000);
-    // Convert net sell to receive token: Buy → WETH, Sell → USDC
-    return side === "buy" ? netSell / p : netSell * p;
+    // buyAmount = what user expects to receive
+    const buyAmt = side === "buy" ? amt : amt * p;
+    // Fee on the receive side: "mine" → baseBps, "both" → 0 (taker pays nothing)
+    const receiveFeeRate = feeMode === "both" ? 0 : (parseInt(maxFee) || 0);
+    return buyAmt * (1 - receiveFeeRate / 10000);
   }, [amount, price, maxFee, feeMode, side]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
@@ -185,7 +186,7 @@ export default function OrderPage() {
       const amountBig = ethers.parseUnits(amount, sellDecimals);
       const priceBig = ethers.parseUnits(price, buyDecimals);
       // crossAmount = amount * price (scaled to buyDecimals)
-      const crossAmount = (amountBig * priceBig) / (BigInt(10) ** BigInt(sellDecimals));
+      const crossAmount = (amountBig * priceBig) / (10n ** BigInt(sellDecimals));
 
       const sellAmount = side === "sell" ? amountBig.toString() : crossAmount.toString();
       const buyAmount = side === "sell" ? crossAmount.toString() : amountBig.toString();
@@ -235,21 +236,27 @@ export default function OrderPage() {
         };
       });
 
-      // Validate / auto-distribute claim amounts
+      // Compute on-chain distributable: buyAmount minus takerFee
+      // (takerFee is applied to counterparty's sell, which is what this user receives)
       const buyAmountBig = BigInt(buyAmount);
+      const takerFeeBps = feeMode === "both" ? 0n : BigInt(parseInt(maxFee) || 30);
+      const takerFeeAmt = (buyAmountBig * takerFeeBps) / 10000n;
+      const distributableBig = buyAmountBig - takerFeeAmt;
+
+      // Validate / auto-distribute claim amounts against distributable
       const filledSum = claimInputs.reduce(
-        (sum, c) => sum + (c.amount ? BigInt(c.amount) : BigInt(0)), BigInt(0)
+        (sum, c) => sum + (c.amount ? BigInt(c.amount) : 0n), 0n
       );
       const emptyCount = claimInputs.filter((c) => !c.amount).length;
 
       if (emptyCount > 0) {
-        if (filledSum > buyAmountBig) {
-          throw new Error("Sum of specified claim amounts exceeds order buy amount");
+        if (filledSum > distributableBig) {
+          throw new Error("Sum of specified claim amounts exceeds distributable amount");
         }
         // Distribute remaining amount evenly among empty claims
-        const remaining = buyAmountBig - filledSum;
+        const remaining = distributableBig - filledSum;
         const perEmpty = remaining / BigInt(emptyCount);
-        let distributed = BigInt(0);
+        let distributed = 0n;
         claimInputs.forEach((c, i) => {
           if (!c.amount) {
             // Last empty claim gets remainder to avoid rounding dust
@@ -259,11 +266,11 @@ export default function OrderPage() {
           }
         });
       } else {
-        // All amounts specified — verify sum matches
-        if (filledSum !== buyAmountBig) {
+        // All amounts specified — verify sum does not exceed distributable
+        if (filledSum > distributableBig) {
           throw new Error(
             `Sum of claim amounts (${ethers.formatUnits(filledSum, receiveToken?.decimals ?? 18)}) ` +
-            `does not match order buy amount (${ethers.formatUnits(buyAmountBig, receiveToken?.decimals ?? 18)})`
+            `exceeds distributable (${ethers.formatUnits(distributableBig, receiveToken?.decimals ?? 18)})`
           );
         }
       }
@@ -482,14 +489,19 @@ export default function OrderPage() {
             const amt = parseFloat(amount);
             const baseBps = parseInt(maxFee) || 0;
             const isBoth = feeMode === "both";
-            const effectiveBps = baseBps * (isBoth ? 2 : 1);
+
+            // makerFee (on your sell) — affects what counterparty receives
+            const makerFeeBps = isBoth ? baseBps * 2 : baseBps;
+            // takerFee (on counterparty's sell) — affects what you receive
+            const takerFeeBps = isBoth ? 0 : baseBps;
 
             const sellAmt = side === "buy" ? total : amt;
             const sellSym = side === "buy" ? buyToken?.symbol : sellToken?.symbol;
-            const feeAmt = sellAmt * effectiveBps / 10000;
-            const netSell = sellAmt - feeAmt;
-            const recvAmt = side === "buy" ? netSell / parseFloat(price) : netSell * parseFloat(price);
+            const makerFeeAmt = sellAmt * makerFeeBps / 10000;
+            const buyAmt = side === "buy" ? amt : total;
             const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
+            const takerFeeAmt = buyAmt * takerFeeBps / 10000;
+            const recvAmt = buyAmt - takerFeeAmt;
 
             return (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
@@ -498,14 +510,16 @@ export default function OrderPage() {
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
                 <div className="flex justify-between text-error/80">
-                  <span>Fee ({(effectiveBps / 100).toFixed(2)}%{isBoth ? ` — maker ${(baseBps / 100).toFixed(2)}% + taker ${(baseBps / 100).toFixed(2)}%` : ""})</span>
-                  <span className="font-mono">−{feeAmt.toFixed(4)} {sellSym}</span>
+                  <span>Your fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both sides" : ""})</span>
+                  <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                <div className="flex justify-between border-t border-outline-variant/10 pt-1">
-                  <span className="text-on-surface-variant">Net to trade</span>
-                  <span className="font-mono text-on-surface">{netSell.toFixed(4)} {sellSym}</span>
-                </div>
-                <div className="flex justify-between font-bold text-tertiary pt-0.5">
+                {!isBoth && (
+                  <div className="flex justify-between text-on-surface-variant/70">
+                    <span>Taker fee ({(takerFeeBps / 100).toFixed(2)}%)</span>
+                    <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>You receive</span>
                   <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
                 </div>

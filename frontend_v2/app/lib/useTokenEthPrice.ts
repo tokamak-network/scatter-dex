@@ -51,6 +51,7 @@ export function useTokenEthPrice(
   useEffect(() => {
     if (!tokenAddress || tokenDecimals == null || !chainId || !provider) {
       setEthPerToken(null);
+      setLoading(false);
       return;
     }
 
@@ -60,6 +61,7 @@ export function useTokenEthPrice(
     const wethAddr = configWeth || chainWeth;
     if (wethAddr && tokenAddress.toLowerCase() === wethAddr.toLowerCase()) {
       setEthPerToken(1);
+      setLoading(false);
       return;
     }
 
@@ -67,6 +69,7 @@ export function useTokenEthPrice(
     if (!quoterAddr || !wethAddr) {
       // Unsupported chain (e.g. localhost) — can't quote
       setEthPerToken(null);
+      setLoading(false);
       return;
     }
 

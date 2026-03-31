@@ -70,7 +70,9 @@ export default function PricePanel({
   useEffect(() => {
     if (!sellTokenAddress || !buyTokenAddress || !relayerUrl || sellDecimals == null || buyDecimals == null) return;
     let cancelled = false;
-    const pair = `${sellTokenAddress}-${buyTokenAddress}`;
+    // Sort addresses to match relayer's pairKey() convention
+    const [addrA, addrB] = [sellTokenAddress, buyTokenAddress].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const pair = `${addrA}-${addrB}`;
     const client = new RelayerClient(relayerUrl);
 
     const fetchBook = async () => {
@@ -209,21 +211,21 @@ export default function PricePanel({
 
         {/* Asks */}
         <div className="max-h-[140px] overflow-y-auto flex flex-col-reverse">
-          {bookAsks.length > 0 ? bookAsks.map((a, i) => {
-            const maxAmt = Math.max(...bookAsks.map((x) => x.amount), 1);
-            return (
+          {bookAsks.length > 0 ? (() => {
+            const maxAskAmt = Math.max(...bookAsks.map((x) => x.amount), 1);
+            return bookAsks.map((a, i) => (
               <button
                 key={`ask-${i}`}
                 onClick={() => handleSelect(a.price)}
                 className="relative grid grid-cols-3 px-0 py-[3px] text-[11px] font-mono hover:bg-error/10 transition-colors"
               >
-                <div className="absolute inset-y-0 right-0 bg-error/8" style={{ width: `${(a.amount / maxAmt) * 100}%` }} />
+                <div className="absolute inset-y-0 right-0 bg-error/8" style={{ width: `${(a.amount / maxAskAmt) * 100}%` }} />
                 <span className="relative text-error">{a.price.toFixed(4)}</span>
                 <span className="relative text-right text-on-surface-variant">{a.amount.toFixed(4)}</span>
                 <span className="relative text-right text-on-surface-variant">{(a.price * a.amount).toFixed(2)}</span>
               </button>
-            );
-          }) : (
+            ));
+          })() : (
             <div className="py-2 text-[10px] text-on-surface-variant/50 text-center">No asks</div>
           )}
         </div>
@@ -246,21 +248,21 @@ export default function PricePanel({
 
         {/* Bids */}
         <div className="max-h-[140px] overflow-y-auto">
-          {bookBids.length > 0 ? bookBids.map((b, i) => {
-            const maxAmt = Math.max(...bookBids.map((x) => x.amount), 1);
-            return (
+          {bookBids.length > 0 ? (() => {
+            const maxBidAmt = Math.max(...bookBids.map((x) => x.amount), 1);
+            return bookBids.map((b, i) => (
               <button
                 key={`bid-${i}`}
                 onClick={() => handleSelect(b.price)}
                 className="relative grid grid-cols-3 px-0 py-[3px] text-[11px] font-mono w-full text-left hover:bg-tertiary/10 transition-colors"
               >
-                <div className="absolute inset-y-0 right-0 bg-tertiary/8" style={{ width: `${(b.amount / maxAmt) * 100}%` }} />
+                <div className="absolute inset-y-0 right-0 bg-tertiary/8" style={{ width: `${(b.amount / maxBidAmt) * 100}%` }} />
                 <span className="relative text-tertiary">{b.price.toFixed(4)}</span>
                 <span className="relative text-right text-on-surface-variant">{b.amount.toFixed(4)}</span>
                 <span className="relative text-right text-on-surface-variant">{(b.price * b.amount).toFixed(2)}</span>
               </button>
-            );
-          }) : (
+            ));
+          })() : (
             <div className="py-2 text-[10px] text-on-surface-variant/50 text-center">No bids</div>
           )}
         </div>

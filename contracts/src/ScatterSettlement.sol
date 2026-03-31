@@ -245,7 +245,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (makerFee > relayerFee) revert FeeExceedsRelayerRegistered();
         if (takerFee > relayerFee) revert FeeExceedsRelayerRegistered();
 
-        _validateSettle(makerSig, takerSig, makerOrder, takerOrder, makerFee, takerFee);
+        (uint256 makerDust, uint256 takerDust) = _validateSettle(makerSig, takerSig, makerOrder, takerOrder, makerFee, takerFee);
 
         // Consume nonces
         nonces[makerOrder.maker][makerOrder.nonce] = NonceState.Settled;
@@ -259,6 +259,16 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         uint256 cachedProtocolFeeBps = protocolFeeBps;
         _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, makerFee, treasury, cachedProtocolFeeBps);
         _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, takerFee, treasury, cachedProtocolFeeBps);
+
+        // Pay dust from favorable trades to relayer (prevents funds from being locked)
+        // makerDust: unclaimed remainder from taker's sell token (maker's receive side)
+        // takerDust: unclaimed remainder from maker's sell token (taker's receive side)
+        if (makerDust > 0) {
+            IERC20(takerOrder.sellToken).safeTransfer(msg.sender, makerDust);
+        }
+        if (takerDust > 0) {
+            IERC20(makerOrder.sellToken).safeTransfer(msg.sender, takerDust);
+        }
 
         // Create claim schedules and emit
         bytes32[] memory claimHashes = _createSchedules(makerOrder, takerOrder);
@@ -454,7 +464,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         Order calldata takerOrder,
         uint256 makerFee,
         uint256 takerFee
-    ) internal view {
+    ) internal view returns (uint256 makerDust, uint256 takerDust) {
         // Verify not self-trade
         if (makerOrder.maker == takerOrder.maker) revert SelfTrade();
 
@@ -496,9 +506,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (takerClaimsLen == 0 || takerClaimsLen > MAX_CLAIMS_PER_ORDER) revert InvalidClaimCount();
 
         // Verify claim amounts — maker receives from taker's sell (minus taker's fee),
-        // taker receives from maker's sell (minus maker's fee)
-        _verifyClaims(makerOrder.claims, takerOrder.sellAmount, takerFee);
-        _verifyClaims(takerOrder.claims, makerOrder.sellAmount, makerFee);
+        // taker receives from maker's sell (minus maker's fee).
+        // Dust from favorable trades is returned and paid to the relayer.
+        makerDust = _verifyClaims(makerOrder.claims, takerOrder.sellAmount, takerFee);
+        takerDust = _verifyClaims(takerOrder.claims, makerOrder.sellAmount, makerFee);
 
         // Verify escrow
         if (deposits[makerOrder.maker][makerOrder.sellToken] < makerOrder.sellAmount) revert InsufficientEscrow();
@@ -544,8 +555,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     }
 
     /// @dev Claims must sum to ≤ distributable (receiveAmount − fee).
-    ///      Any remainder (dust) stays in escrow and can be refunded after REFUND_WINDOW.
-    function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure {
+    ///      Any remainder (dust) from favorable trades is returned and paid to the relayer.
+    function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure returns (uint256 dust) {
         uint256 fee = (receiveAmount * feeRate) / FEE_DENOMINATOR;
         uint256 distributable = receiveAmount - fee;
         uint256 totalClaimed;
@@ -554,5 +565,6 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
             totalClaimed += claims[i].amount;
         }
         if (totalClaimed > distributable) revert ClaimsSumMismatch();
+        dust = distributable - totalClaimed;
     }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 
 // ── Mainnet price lookup by token symbol ────────────────────────────
@@ -122,6 +122,10 @@ async function quoteCurve(
  * Fetches mainnet price for the given symbol pair from multiple DEX sources.
  * Includes fee tier info and marks the recommended source.
  */
+// Module-level singleton provider — reused across hook mounts to avoid
+// excessive connections and rate limiting.
+const mainnetProvider = new ethers.JsonRpcProvider(MAINNET_RPC);
+
 export function useMainnetPrice(
   sellSymbol: string | undefined,
   buySymbol: string | undefined,
@@ -132,11 +136,6 @@ export function useMainnetPrice(
   const [prices, setPrices] = useState<DexPrice[]>(
     sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: true })),
   );
-
-  const providerRef = useRef<ethers.JsonRpcProvider | null>(null);
-  if (!providerRef.current) {
-    providerRef.current = new ethers.JsonRpcProvider(MAINNET_RPC);
-  }
 
   useEffect(() => {
     if (!sellSymbol || !buySymbol) return;
@@ -162,7 +161,7 @@ export function useMainnetPrice(
       setPrices((prev) => prev.map((p) => ({ ...p, loading: true })));
 
       const oneToken = ethers.parseUnits("1", sell.decimals);
-      const provider = providerRef.current!;
+      const provider = mainnetProvider;
 
       const settled = await Promise.allSettled([
         // QuoterV2-based DEXes
@@ -171,14 +170,14 @@ export function useMainnetPrice(
         ),
         // Curve
         quoteCurve(provider, sell.address, buy.address, oneToken, buy.decimals),
-        // Upbit
+        // Upbit — proxied via /api/upbit to avoid CORS restrictions
         (async (): Promise<{ price: number; netPrice: number; fee: string } | null> => {
           const sU = sellKey.replace("WETH", "ETH");
           const bU = buyKey.replace("WETH", "ETH");
           const markets = [sU, bU].filter((s) => s !== "USDT" && s !== "USDC").map((s) => `USDT-${s}`);
           if (markets.length === 0) return { price: 1, netPrice: 1, fee: "0%" };
           const res = await fetch(
-            `https://api.upbit.com/v1/ticker?markets=${markets.join(",")}`,
+            `/api/upbit?markets=${markets.join(",")}`,
             { signal: AbortSignal.timeout(5000) },
           );
           if (!res.ok) return null;
