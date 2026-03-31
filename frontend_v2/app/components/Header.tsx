@@ -11,7 +11,6 @@ const navLinks = [
   { href: "/trade", label: "Trade" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/claim", label: "Claim" },
-  { href: "/relayers", label: "Relayers" },
 ];
 
 function shortenAddress(addr: string) {
