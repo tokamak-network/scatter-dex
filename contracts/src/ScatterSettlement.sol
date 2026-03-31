@@ -543,6 +543,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }
 
+    /// @dev Claims must sum to ≤ distributable (receiveAmount − fee).
+    ///      Any remainder (dust) stays in escrow and can be refunded after REFUND_WINDOW.
     function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure {
         uint256 fee = (receiveAmount * feeRate) / FEE_DENOMINATOR;
         uint256 distributable = receiveAmount - fee;
@@ -551,6 +553,6 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
             if (claims[i].amount == 0) revert ZeroClaimAmount();
             totalClaimed += claims[i].amount;
         }
-        if (totalClaimed != distributable) revert ClaimsSumMismatch();
+        if (totalClaimed > distributable) revert ClaimsSumMismatch();
     }
 }

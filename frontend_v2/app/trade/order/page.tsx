@@ -98,11 +98,12 @@ export default function OrderPage() {
     return receiveAmt - (receiveAmt * effectiveBps / 10000);
   }, [amount, price, maxFee, feeMode]);
 
-  // Fill remaining amount for a specific claim
+  // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
   const fillRest = (id: number) => {
     const othersTotal = claims.reduce((sum, c) => c.id === id ? sum : sum + (parseFloat(c.amount) || 0), 0);
     const rest = Math.max(0, distributable - othersTotal);
-    updateClaim(id, "amount", rest > 0 ? rest.toFixed(6) : "0");
+    const floored = Math.floor(rest * 10000) / 10000; // truncate to 4 decimals
+    updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
   // Gas estimation
@@ -567,6 +568,16 @@ export default function OrderPage() {
                   <span>Claims total: {claimTotal} {receiveToken.symbol}</span>
                   <span>Distributable: {distributable > 0 ? distributable.toFixed(4) : "—"} {receiveToken.symbol}</span>
                 </div>
+                {distributable > 0 && claimTotal > 0 && claimTotal <= distributable && (
+                  <div className="text-[10px] flex justify-between">
+                    <span className="text-on-surface-variant">
+                      Remaining: {(distributable - claimTotal).toFixed(4)} {receiveToken.symbol}
+                    </span>
+                    {distributable - claimTotal > 0 && distributable - claimTotal < distributable * 0.001 && (
+                      <span className="text-on-surface-variant/50">dust → relayer</span>
+                    )}
+                  </div>
+                )}
                 {amount && price && claimTotal > 0 && (() => {
                   const orderTotal = parseFloat(amount) * parseFloat(price);
                   const feeAmount = orderTotal * (parseInt(maxFee || "0") * (feeMode === "both" ? 2 : 1)) / 10000;
