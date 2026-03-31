@@ -53,7 +53,7 @@ contract VaultSkillsTest is Test {
         vm.etch(user, address(skills).code);
 
         vm.prank(user);
-        VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 10e18);
+        VaultSkills(payable(user)).approveAndDeposit(address(settlement), address(tokenA), 10e18);
 
         assertEq(settlement.deposits(user, address(tokenA)), 10e18);
         assertEq(tokenA.balanceOf(user), 90e18);
@@ -69,7 +69,7 @@ contract VaultSkillsTest is Test {
         tokens[1] = VaultSkills.TokenAmount({token: address(tokenB), amount: 20e18});
 
         vm.prank(user);
-        VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).approveAndDepositMultiple(address(settlement), tokens);
 
         assertEq(settlement.deposits(user, address(tokenA)), 10e18);
         assertEq(settlement.deposits(user, address(tokenB)), 20e18);
@@ -95,7 +95,7 @@ contract VaultSkillsTest is Test {
         tokens[1] = VaultSkills.TokenAmount({token: address(tokenB), amount: 10e18});
 
         vm.prank(user);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
 
         assertEq(settlement.deposits(user, address(tokenA)), 5e18);
         assertEq(settlement.deposits(user, address(tokenB)), 10e18);
@@ -109,7 +109,7 @@ contract VaultSkillsTest is Test {
         vm.etch(user, address(skills).code);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAmount.selector);
-        VaultSkills(user).approveAndDeposit(address(settlement), address(tokenA), 0);
+        VaultSkills(payable(user)).approveAndDeposit(address(settlement), address(tokenA), 0);
     }
 
     function test_approveAndDepositMultiple_empty_reverts() public {
@@ -117,14 +117,14 @@ contract VaultSkillsTest is Test {
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ArrayEmpty.selector);
-        VaultSkills(user).approveAndDepositMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).approveAndDepositMultiple(address(settlement), tokens);
     }
 
     function test_approveAndDeposit_zero_address_reverts() public {
         vm.etch(user, address(skills).code);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAddress.selector);
-        VaultSkills(user).approveAndDeposit(address(0), address(tokenA), 10e18);
+        VaultSkills(payable(user)).approveAndDeposit(address(0), address(tokenA), 10e18);
     }
 
     function test_approveAndDeposit_unverified_reverts() public {
@@ -133,7 +133,7 @@ contract VaultSkillsTest is Test {
         vm.etch(unverified, address(skills).code);
         vm.prank(unverified);
         vm.expectRevert(ScatterSettlement.NotVerified.selector);
-        VaultSkills(unverified).approveAndDeposit(address(settlement), address(tokenA), 10e18);
+        VaultSkills(payable(unverified)).approveAndDeposit(address(settlement), address(tokenA), 10e18);
     }
 
     // ─── withdrawMultiple revert tests ───────────────────────────
@@ -144,7 +144,7 @@ contract VaultSkillsTest is Test {
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 5e18});
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAddress.selector);
-        VaultSkills(user).withdrawMultiple(address(0), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(0), tokens);
     }
 
     function test_withdrawMultiple_empty_reverts() public {
@@ -152,7 +152,7 @@ contract VaultSkillsTest is Test {
         VaultSkills.TokenAmount[] memory tokens = new VaultSkills.TokenAmount[](0);
         vm.prank(user);
         vm.expectRevert(VaultSkills.ArrayEmpty.selector);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
     }
 
     function test_withdrawMultiple_zero_amount_reverts() public {
@@ -161,7 +161,7 @@ contract VaultSkillsTest is Test {
         tokens[0] = VaultSkills.TokenAmount({token: address(tokenA), amount: 0});
         vm.prank(user);
         vm.expectRevert(VaultSkills.ZeroAmount.selector);
-        VaultSkills(user).withdrawMultiple(address(settlement), tokens);
+        VaultSkills(payable(user)).withdrawMultiple(address(settlement), tokens);
     }
 
     // ─── Non-delegated (direct call) ─────────────────────────────
