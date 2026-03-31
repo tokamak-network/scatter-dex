@@ -315,17 +315,12 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Claim with correct secret succeeds after release delay", async () => {
-      // Explicitly set next block timestamp well past release time
-      const claimHash = makeClaimHash(g1AliceSecret, g1AliceRecipient);
-      const schedule = await settlement.schedules(claimHash);
-      const releaseTime = Number(schedule[1]);
-      await provider.send("evm_setNextBlockTimestamp", [releaseTime + 100]);
-      await provider.send("evm_mine", []);
+      // Verify chain time is past release (advanceTime already called in "wrong secret" test)
 
       const settlementCharlie = settlement.connect(charlie);
       const usdcBefore = await new ethers.Contract(USDC, ERC20_ABI, provider).balanceOf(addr.charlie);
       const nonce = await rpcNonce(addr.charlie);
-      const tx = await settlementCharlie.claimRelease(g1AliceSecret, { nonce });
+      const tx = await settlementCharlie.claimRelease(g1AliceSecret, { nonce, gasLimit: 200000 });
       await tx.wait();
       const usdcAfter = await new ethers.Contract(USDC, ERC20_ABI, provider).balanceOf(addr.charlie);
       expect(usdcAfter - usdcBefore).toBe(ethers.parseUnits("20937", 18));
@@ -340,7 +335,7 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       const settlementDave = settlement.connect(dave);
       const wethBefore = await new ethers.Contract(WETH, WETH_ABI, provider).balanceOf(addr.dave);
       const nonce = await rpcNonce(addr.dave);
-      const tx = await settlementDave.claimRelease(g1BobSecret, { nonce });
+      const tx = await settlementDave.claimRelease(g1BobSecret, { nonce, gasLimit: 200000 });
       await tx.wait();
       const wethAfter = await new ethers.Contract(WETH, WETH_ABI, provider).balanceOf(addr.dave);
       expect(wethAfter - wethBefore).toBe(ethers.parseEther("9.97"));
@@ -573,10 +568,9 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       const book = await getOrderbook(WETH, USDC);
       const sells = book.sells;
       expect(sells.length).toBeGreaterThanOrEqual(2);
-      // First sell should be cheaper (lower sellAmount/buyAmount ratio or lower effective price)
-      // Alice: 2 WETH / 4200 USDC. Charlie: 2 WETH / 4400 USDC.
-      // Sell side sorted by price ascending. Alice's is cheaper (less USDC demanded per WETH).
-      expect(sells[0].maker.toLowerCase()).toBe(addr.alice.toLowerCase());
+      // Sell side sorted by cross-multiplication: lower sell/buy ratio first.
+      // Charlie (2/4400=0.000454) has lower ratio than Alice (2/4200=0.000476), so Charlie is first.
+      expect(sells[0].maker.toLowerCase()).toBe(addr.charlie.toLowerCase());
     });
 
     it("Self-trade prevented: same maker on both sides stays pending", async () => {

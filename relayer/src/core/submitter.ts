@@ -46,13 +46,17 @@ export class Submitter {
       takerFee = BigInt(config.relayerFee) * 2n;
     }
 
+    // Use fresh nonce via direct RPC to avoid ethers v6 caching
+    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "latest"]);
+    const nonce = parseInt(hexNonce, 16);
     const tx = await this.contract.settle(
       maker.signature,
       taker.signature,
       makerOrder,
       takerOrder,
       makerFee,
-      takerFee
+      takerFee,
+      { nonce }
     );
 
     const receipt = await tx.wait();
