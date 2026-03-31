@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, Save, FolderOpen } from "lucide-react";
+import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, AlertCircle, Save, FolderOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getSettlementAddress, getEnv } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -25,6 +25,8 @@ const EXPIRY_SECONDS: Record<ExpiryOption, number> = {
 };
 
 const RELAYER_URL = getEnv("NEXT_PUBLIC_RELAYER_URL") || "http://localhost:3001";
+const MAX_CLAIMS = 10; // matches MAX_CLAIMS_PER_ORDER in ScatterSettlement
+const MIN_RELEASE_DELAY = 3600; // 1 hour — matches MIN_RELEASE_DELAY in contract
 
 interface ClaimRow {
   id: number;
@@ -35,11 +37,10 @@ interface ClaimRow {
   delayUnit: "min" | "hr" | "day";
 }
 
-let nextClaimId = 1;
-
 export default function OrderPage() {
   const { account, chainId, signer } = useWallet();
   const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
+  const nextClaimId = useRef(1);
 
   // Token pair
   const [sellTokenIdx, setSellTokenIdx] = useState(0);
@@ -55,7 +56,7 @@ export default function OrderPage() {
 
   // Claims (multiple recipients)
   const [claims, setClaims] = useState<ClaimRow[]>([
-    { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
+    { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
 
   // Submission
@@ -106,7 +107,8 @@ export default function OrderPage() {
   };
 
   const addClaim = () => {
-    setClaims([...claims, { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+    if (claims.length >= MAX_CLAIMS) return;
+    setClaims([...claims, { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
   };
 
   const removeClaim = (id: number) => {
@@ -152,7 +154,7 @@ export default function OrderPage() {
           if (d.maxFee) setMaxFee(d.maxFee);
           if (d.feeMode) setFeeMode(d.feeMode);
           if (d.claims?.length) {
-            nextClaimId = Math.max(...d.claims.map((c: ClaimRow) => c.id)) + 1;
+            nextClaimId.current = Math.max(...d.claims.map((c: ClaimRow) => c.id)) + 1;
             setClaims(d.claims);
           }
         } catch { /* ignore corrupt file */ }
@@ -178,33 +180,45 @@ export default function OrderPage() {
       const sellDecimals = orderSellToken.decimals;
       const buyDecimals = orderBuyToken.decimals;
 
-      const sellAmount = side === "sell"
-        ? ethers.parseUnits(amount, sellDecimals).toString()
-        : ethers.parseUnits((parseFloat(amount) * parseFloat(price)).toFixed(Math.min(buyDecimals, 18)), buyDecimals).toString();
-      const buyAmount = side === "sell"
-        ? ethers.parseUnits((parseFloat(amount) * parseFloat(price)).toFixed(Math.min(buyDecimals, 18)), buyDecimals).toString()
-        : ethers.parseUnits(amount, buyDecimals).toString();
+      // Use BigInt arithmetic to avoid floating-point precision errors.
+      // Compute cross amount: amount * price using integer math at combined precision.
+      const amountBig = ethers.parseUnits(amount, sellDecimals);
+      const priceBig = ethers.parseUnits(price, buyDecimals);
+      // crossAmount = amount * price (scaled to buyDecimals)
+      const crossAmount = (amountBig * priceBig) / (10n ** BigInt(sellDecimals));
+
+      const sellAmount = side === "sell" ? amountBig.toString() : crossAmount.toString();
+      const buyAmount = side === "sell" ? crossAmount.toString() : amountBig.toString();
 
       // Build claims
       const links: string[] = [];
-      const claimInputs: ClaimInput[] = claims.map((c) => {
+      const claimInputs: ClaimInput[] = claims.map((c, index) => {
         const secret = generateSecret();
         let recipient: string;
         let ephemeralPubKey: string | undefined;
 
-        if (c.mode === "stealth" && c.address && isMetaAddress(c.address)) {
+        if (!c.address) {
+          // No recipient specified: default to self
+          recipient = account;
+        } else if (c.mode === "stealth" && isMetaAddress(c.address)) {
           const stealth = generateStealthAddress(c.address);
           recipient = stealth.stealthAddress;
           ephemeralPubKey = stealth.ephemeralPubKey;
-        } else if (c.address && ethers.isAddress(c.address)) {
+        } else if (ethers.isAddress(c.address)) {
           recipient = c.address;
         } else {
-          recipient = account; // self
+          throw new Error(`Invalid recipient address for claim #${index + 1}`);
+        }
+
+        // Validate releaseDelay (converted to seconds)
+        const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
+        if (delaySec < MIN_RELEASE_DELAY) {
+          throw new Error(`Release delay for claim #${index + 1} must be at least ${MIN_RELEASE_DELAY / 3600} hour(s)`);
         }
 
         const claimAmount = c.amount
           ? ethers.parseUnits(c.amount, receiveToken?.decimals ?? 18).toString()
-          : buyAmount; // default: full amount to single recipient
+          : ""; // will be filled after validation
 
         // Build claim link
         if (ephemeralPubKey) {
@@ -216,10 +230,47 @@ export default function OrderPage() {
         return {
           recipient,
           amount: claimAmount,
-          releaseDelay: (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60),
+          releaseDelay: Math.max(MIN_RELEASE_DELAY, (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60)),
           secret,
         };
       });
+
+      // Validate / auto-distribute claim amounts
+      const buyAmountBig = BigInt(buyAmount);
+      const filledSum = claimInputs.reduce(
+        (sum, c) => sum + (c.amount ? BigInt(c.amount) : 0n), 0n
+      );
+      const emptyCount = claimInputs.filter((c) => !c.amount).length;
+
+      if (emptyCount > 0) {
+        if (filledSum > buyAmountBig) {
+          throw new Error("Sum of specified claim amounts exceeds order buy amount");
+        }
+        // Distribute remaining amount evenly among empty claims
+        const remaining = buyAmountBig - filledSum;
+        const perEmpty = remaining / BigInt(emptyCount);
+        let distributed = 0n;
+        claimInputs.forEach((c, i) => {
+          if (!c.amount) {
+            // Last empty claim gets remainder to avoid rounding dust
+            const isLast = claimInputs.slice(i + 1).every((x) => x.amount);
+            c.amount = isLast ? (remaining - distributed).toString() : perEmpty.toString();
+            distributed += BigInt(c.amount);
+          }
+        });
+      } else {
+        // All amounts specified — verify sum matches
+        if (filledSum !== buyAmountBig) {
+          throw new Error(
+            `Sum of claim amounts (${ethers.formatUnits(filledSum, receiveToken?.decimals ?? 18)}) ` +
+            `does not match order buy amount (${ethers.formatUnits(buyAmountBig, receiveToken?.decimals ?? 18)})`
+          );
+        }
+      }
+
+      // Use crypto-random nonce to avoid collisions at millisecond precision
+      const nonceBuf = crypto.getRandomValues(new Uint8Array(6));
+      const nonce = Number(BigInt("0x" + [...nonceBuf].map(b => b.toString(16).padStart(2, "0")).join("")));
 
       const orderInput: OrderInput = {
         sellToken: orderSellToken.address,
@@ -228,7 +279,7 @@ export default function OrderPage() {
         buyAmount,
         maxFee: (parseInt(maxFee) || 30) * (feeMode === "both" ? 2 : 1),
         expiry: Math.floor(Date.now() / 1000) + EXPIRY_SECONDS[expiry],
-        nonce: Date.now(),
+        nonce,
         claims: claimInputs,
       };
 
@@ -478,8 +529,12 @@ export default function OrderPage() {
                   </span>
                 )}
               </h3>
-              <button onClick={addClaim} className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold">
-                <Plus className="w-3.5 h-3.5" /> Add
+              <button
+                onClick={addClaim}
+                disabled={claims.length >= MAX_CLAIMS}
+                className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS && `(max ${MAX_CLAIMS})`}
               </button>
             </div>
 

@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { ethers } from "ethers";
 import { useSearchParams } from "next/navigation";
 import { Shield, Download, Copy, Check, Eye, EyeOff, Loader2, Lock, Wallet, Zap, AlertCircle } from "lucide-react";
 import { useWallet } from "../lib/wallet";
-import { getSettlementAddress } from "../lib/config";
+import { getSettlementAddress, getEnv } from "../lib/config";
 import { SETTLEMENT_ABI } from "../lib/contracts";
 import { generateMetaAddress, deriveStealthPrivateKey, stealthWallet } from "../lib/stealth";
-import { toSecretBytes } from "../lib/signing";
+import { toSecretBytes, signGaslessClaim } from "../lib/signing";
+import { RelayerClient } from "../lib/relayerApi";
 import type { MetaAddress } from "../lib/stealth";
+
+const RELAYER_URL = getEnv("NEXT_PUBLIC_RELAYER_URL") || "http://localhost:3001";
 
 type ClaimMethod = "standard" | "stealth" | "gasless";
 
@@ -44,14 +47,7 @@ function ClaimPageInner() {
   const [claimStatus, setClaimStatus] = useState<"idle" | "claiming" | "success" | "error">("idle");
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
-
-  // Auto-preview when URL has secret
-  useEffect(() => {
-    if (searchParams.get("secret") && readProvider) {
-      handlePreview();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readProvider]);
+  const [decimalWarning, setDecimalWarning] = useState(false);
 
   // ─── Stealth Meta-Address Generation ────────────────────────
 
@@ -89,11 +85,15 @@ function ClaimPageInner() {
 
   // ─── Claim Preview ─────────────────────────────────────────
 
-  const handlePreview = async () => {
-    if (!secretInput || !readProvider || !account) return;
+  const handlePreview = useCallback(async () => {
+    if (!secretInput || !readProvider) return;
+    // Allow preview without wallet if stealth keys + epk are available
+    if (!account && !(epk && meta)) return;
+
     setPreviewLoading(true);
     setPreviewError(null);
     setPreview(null);
+    setDecimalWarning(false);
 
     try {
       const settlementAddr = getSettlementAddress();
@@ -103,12 +103,14 @@ function ClaimPageInner() {
       const secretBytes = toSecretBytes(secretInput);
 
       // Determine recipient address
-      let recipient = account;
+      let recipient: string;
       if (epk && meta) {
         // Stealth: derive the stealth address
         const privKey = deriveStealthPrivateKey(meta.spendingKey, meta.viewingKey, epk);
         const wallet = new ethers.Wallet(privKey);
         recipient = wallet.address;
+      } else {
+        recipient = account!;
       }
 
       const claimHash = ethers.keccak256(
@@ -124,7 +126,10 @@ function ClaimPageInner() {
         try {
           const token = new ethers.Contract(schedule.token, ["function decimals() view returns (uint8)"], readProvider);
           decimals = Number(await token.decimals());
-        } catch { /* fallback to 18 */ }
+        } catch {
+          // Could not verify token decimals — show warning
+          setDecimalWarning(true);
+        }
 
         setPreview({
           token: schedule.token,
@@ -138,12 +143,19 @@ function ClaimPageInner() {
     } finally {
       setPreviewLoading(false);
     }
-  };
+  }, [secretInput, readProvider, account, epk, meta]);
+
+  // Auto-preview when URL has secret
+  useEffect(() => {
+    if (searchParams.get("secret") && readProvider && (account || (epk && meta))) {
+      handlePreview();
+    }
+  }, [searchParams, readProvider, account, epk, meta, handlePreview]);
 
   // ─── Claim Execution ───────────────────────────────────────
 
   const handleClaim = async () => {
-    if (!signer || !secretInput) return;
+    if (!secretInput) return;
     setClaimStatus("claiming");
     setClaimError(null);
     setClaimTxHash(null);
@@ -152,17 +164,82 @@ function ClaimPageInner() {
       const settlementAddr = getSettlementAddress();
       const secretBytes = toSecretBytes(secretInput);
 
-      // If stealth, derive the stealth wallet; otherwise use connected signer
-      const claimSigner = (claimMethod === "stealth" && epk && meta && readProvider)
-        ? stealthWallet(meta.spendingKey, meta.viewingKey, epk, readProvider)
-        : signer;
+      if (claimMethod === "gasless") {
+        // ─── Gasless Claim: EIP-712 signature + relayer submission ───
+        if (!signer || !account) throw new Error("Connect wallet to sign gasless claim");
 
-      const settlement = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, claimSigner);
-      const tx = await settlement.claimRelease(secretBytes);
-      await tx.wait();
+        const relayer = new RelayerClient(RELAYER_URL);
+        const relayerInfo = await relayer.getInfo();
 
-      setClaimTxHash(tx.hash);
-      setClaimStatus("success");
+        // Determine recipient
+        let recipient = account;
+        if (epk && meta) {
+          const privKey = deriveStealthPrivateKey(meta.spendingKey, meta.viewingKey, epk);
+          recipient = new ethers.Wallet(privKey).address;
+        }
+
+        // Query gasless nonce from contract
+        const settlement = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, readProvider ?? signer);
+        const gaslessNonce = await settlement.gaslessNonces(recipient);
+
+        const chainId = Number((await signer.provider!.getNetwork()).chainId);
+        const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour deadline
+        const relayerTip = "0"; // minimal tip — relayer decides acceptance
+
+        // Sign the gasless claim with the recipient signer (stealth or connected)
+        const claimSigner = (epk && meta && readProvider)
+          ? stealthWallet(meta.spendingKey, meta.viewingKey, epk, readProvider)
+          : signer;
+
+        const recipientAddr = await claimSigner.getAddress();
+        const signature = await signGaslessClaim(
+          claimSigner,
+          {
+            secret: secretInput,
+            recipient: recipientAddr,
+            relayer: relayerInfo.address,
+            relayerTip,
+            deadline,
+            nonce: BigInt(gaslessNonce),
+          },
+          chainId,
+          settlementAddr
+        );
+
+        // Submit to relayer for execution via claimReleaseFor
+        const res = await fetch(`${RELAYER_URL}/api/claim-gasless`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            secret: secretBytes,
+            recipient: recipientAddr,
+            relayerTip,
+            deadline,
+            signature,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Gasless claim submission failed");
+        }
+        const result = await res.json();
+        setClaimTxHash(result.txHash || "submitted");
+        setClaimStatus("success");
+      } else {
+        // ─── Standard / Stealth direct claim ───
+        if (!signer) throw new Error("Connect wallet to claim");
+
+        const claimSigner = (claimMethod === "stealth" && epk && meta && readProvider)
+          ? stealthWallet(meta.spendingKey, meta.viewingKey, epk, readProvider)
+          : signer;
+
+        const settlement = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, claimSigner);
+        const tx = await settlement.claimRelease(secretBytes);
+        await tx.wait();
+
+        setClaimTxHash(tx.hash);
+        setClaimStatus("success");
+      }
     } catch (e) {
       setClaimStatus("error");
       setClaimError(e instanceof Error ? e.message : "Claim failed");
@@ -254,7 +331,7 @@ function ClaimPageInner() {
                       if (data.metaAddress && data.spendingKey && data.viewingKey) {
                         setMeta(data as MetaAddress);
                       }
-                    } catch { /* invalid file */ }
+                    } catch { setPreviewError("Invalid JSON key file. Please upload a valid stealth key file."); }
                   };
                   reader.readAsText(file);
                 }}
@@ -291,7 +368,7 @@ function ClaimPageInner() {
                 </div>
                 <button
                   onClick={handlePreview}
-                  disabled={!secretInput || !readProvider || !account || previewLoading}
+                  disabled={!secretInput || !readProvider || (!account && !(epk && meta)) || previewLoading}
                   className="px-5 py-3 bg-surface-bright text-primary border border-primary/20 rounded-md font-semibold text-sm hover:bg-primary/10 transition-all disabled:opacity-50"
                 >
                   {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Preview"}
@@ -329,6 +406,13 @@ function ClaimPageInner() {
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {decimalWarning && preview && (
+              <div className="text-xs p-3 rounded-md bg-warning/5 text-yellow-500 mb-5 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                Could not verify token decimals — amount shown assumes 18 decimals and may be inaccurate.
               </div>
             )}
 
