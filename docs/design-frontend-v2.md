@@ -126,7 +126,7 @@ Order {
 4. [x] 랜딩 페이지 구현
 5. [x] Trade/Escrow 페이지 구현 (실제 컨트랙트 연동, ETH wrap, EIP-5792)
 6. [x] Trade/Order 페이지 구현 (multi-recipient scatter, EIP-712 서명)
-7. [ ] Claim/Stealth 페이지 — Stealth Meta-Address 생성 + Claim 실행
+7. [x] Claim/Stealth 페이지 — Stealth Meta-Address 생성 + Claim 실행
 8. [ ] Trade/Book 페이지 — 오더북, Trade History
 9. [ ] Dashboard 페이지 — 에스크로 잔액, Claims, Settlements
 10. [ ] Relayers 페이지
