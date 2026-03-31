@@ -225,24 +225,27 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     // ─── Settle ──────────────────────────────────────────────────────
 
     /// @notice Settle a matched maker-taker order pair.
-    /// @dev Fee (actualFee bps) is deducted from BOTH sides' sellAmount independently.
-    ///      E.g., actualFee=30 → 0.3% from maker's sellToken AND 0.3% from taker's sellToken.
-    ///      Users sign maxFee acknowledging this per-side deduction. See audit M-5.
+    /// @dev Fees are split: makerFee is deducted from maker's sellAmount,
+    ///      takerFee is deducted from taker's sellAmount.
+    ///      Each fee must be ≤ the respective order's maxFee and ≤ relayer's registered fee.
+    ///      This allows the order creator to absorb the full fee (e.g., makerFee=60, takerFee=0).
     function settle(
         bytes calldata makerSig,
         bytes calldata takerSig,
         Order calldata makerOrder,
         Order calldata takerOrder,
-        uint256 actualFee
+        uint256 makerFee,
+        uint256 takerFee
     ) external nonReentrant {
         if (paused) revert ContractPaused();
 
         // Single external call replaces isActiveRelayer() + getFee() + treasury()
         (bool isActive, uint256 relayerFee, address treasury) = relayerRegistry.getSettlementInfo(msg.sender);
         if (!isActive) revert NotActiveRelayer();
-        if (actualFee > relayerFee) revert FeeExceedsRelayerRegistered();
+        if (makerFee > relayerFee) revert FeeExceedsRelayerRegistered();
+        if (takerFee > relayerFee) revert FeeExceedsRelayerRegistered();
 
-        _validateSettle(makerSig, takerSig, makerOrder, takerOrder, actualFee);
+        (uint256 makerDust, uint256 takerDust) = _validateSettle(makerSig, takerSig, makerOrder, takerOrder, makerFee, takerFee);
 
         // Consume nonces
         nonces[makerOrder.maker][makerOrder.nonce] = NonceState.Settled;
@@ -254,8 +257,18 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
         // Split fee: relayer + protocol (cache protocolFeeBps to avoid repeated SLOAD)
         uint256 cachedProtocolFeeBps = protocolFeeBps;
-        _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, actualFee, treasury, cachedProtocolFeeBps);
-        _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, actualFee, treasury, cachedProtocolFeeBps);
+        _splitAndPayFee(makerOrder.sellToken, makerOrder.sellAmount, makerFee, treasury, cachedProtocolFeeBps);
+        _splitAndPayFee(takerOrder.sellToken, takerOrder.sellAmount, takerFee, treasury, cachedProtocolFeeBps);
+
+        // Pay dust from favorable trades to relayer (prevents funds from being locked)
+        // makerDust: unclaimed remainder from taker's sell token (maker's receive side)
+        // takerDust: unclaimed remainder from maker's sell token (taker's receive side)
+        if (makerDust > 0) {
+            IERC20(takerOrder.sellToken).safeTransfer(msg.sender, makerDust);
+        }
+        if (takerDust > 0) {
+            IERC20(makerOrder.sellToken).safeTransfer(msg.sender, takerDust);
+        }
 
         // Create claim schedules and emit
         bytes32[] memory claimHashes = _createSchedules(makerOrder, takerOrder);
@@ -449,8 +462,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         bytes calldata takerSig,
         Order calldata makerOrder,
         Order calldata takerOrder,
-        uint256 actualFee
-    ) internal view {
+        uint256 makerFee,
+        uint256 takerFee
+    ) internal view returns (uint256 makerDust, uint256 takerDust) {
         // Verify not self-trade
         if (makerOrder.maker == takerOrder.maker) revert SelfTrade();
 
@@ -477,15 +491,13 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (!whitelistedTokens[makerOrder.buyToken]) revert TokenNotWhitelisted();
 
         // Verify price compatibility: maker.sell * taker.sell <= maker.buy * taker.buy
-        // Solidity 0.8+ reverts on overflow. Practically, uint256 overflow requires
-        // both amounts > ~10^38 (with 18 decimals), exceeding any realistic token supply.
         if (makerOrder.sellAmount * takerOrder.sellAmount > makerOrder.buyAmount * takerOrder.buyAmount) {
             revert PriceIncompatible();
         }
 
-        // Verify fee
-        if (actualFee > makerOrder.maxFee) revert FeeExceedsMax();
-        if (actualFee > takerOrder.maxFee) revert FeeExceedsMax();
+        // Verify fees — each side's fee must be ≤ their signed maxFee
+        if (makerFee > makerOrder.maxFee) revert FeeExceedsMax();
+        if (takerFee > takerOrder.maxFee) revert FeeExceedsMax();
 
         // Verify claim counts
         uint256 makerClaimsLen = makerOrder.claims.length;
@@ -493,9 +505,11 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (makerClaimsLen == 0 || makerClaimsLen > MAX_CLAIMS_PER_ORDER) revert InvalidClaimCount();
         if (takerClaimsLen == 0 || takerClaimsLen > MAX_CLAIMS_PER_ORDER) revert InvalidClaimCount();
 
-        // Verify claim amounts
-        _verifyClaims(makerOrder.claims, takerOrder.sellAmount, actualFee);
-        _verifyClaims(takerOrder.claims, makerOrder.sellAmount, actualFee);
+        // Verify claim amounts — maker receives from taker's sell (minus taker's fee),
+        // taker receives from maker's sell (minus maker's fee).
+        // Dust from favorable trades is returned and paid to the relayer.
+        makerDust = _verifyClaims(makerOrder.claims, takerOrder.sellAmount, takerFee);
+        takerDust = _verifyClaims(takerOrder.claims, makerOrder.sellAmount, makerFee);
 
         // Verify escrow
         if (deposits[makerOrder.maker][makerOrder.sellToken] < makerOrder.sellAmount) revert InsufficientEscrow();
@@ -540,7 +554,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }
 
-    function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure {
+    /// @dev Claims must sum to ≤ distributable (receiveAmount − fee).
+    ///      Any remainder (dust) from favorable trades is returned and paid to the relayer.
+    function _verifyClaims(ClaimInfo[] calldata claims, uint256 receiveAmount, uint256 feeRate) internal pure returns (uint256 dust) {
         uint256 fee = (receiveAmount * feeRate) / FEE_DENOMINATOR;
         uint256 distributable = receiveAmount - fee;
         uint256 totalClaimed;
@@ -548,6 +564,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
             if (claims[i].amount == 0) revert ZeroClaimAmount();
             totalClaimed += claims[i].amount;
         }
-        if (totalClaimed != distributable) revert ClaimsSumMismatch();
+        if (totalClaimed > distributable) revert ClaimsSumMismatch();
+        dust = distributable - totalClaimed;
     }
 }

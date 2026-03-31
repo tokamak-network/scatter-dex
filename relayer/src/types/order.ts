@@ -28,6 +28,7 @@ export interface StoredOrder extends SignedOrder {
   submittedAt: number;
   claimHashes?: string[];
   settleTxHash?: string;
+  feeMode?: "cover_taker";
 }
 
 // Token pair key: "0xTokenA-0xTokenB" (lowercase, sorted)

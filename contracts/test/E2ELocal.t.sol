@@ -166,7 +166,7 @@ contract E2ELocalTest is Test {
         bytes memory sigA = _signOrder(aliceKey, ao);
         bytes memory sigB = _signOrder(bobKey, bo);
         vm.prank(relayer1);
-        settlement.settle(sigA, sigB, ao, bo, 30);
+        settlement.settle(sigA, sigB, ao, bo, 30, 30);
 
         // Verify escrows depleted
         assertEq(settlement.deposits(alice, address(weth)), 0);
@@ -260,9 +260,9 @@ contract E2ELocalTest is Test {
         bytes memory s2a = _signOrder(charlieKey, o2a);
         bytes memory s2b = _signOrder(dianaKey, o2b);
         vm.prank(relayer1);
-        settlement.settle(s1a, s1b, o1a, o1b, 0);
+        settlement.settle(s1a, s1b, o1a, o1b, 0, 0);
         vm.prank(relayer2);
-        settlement.settle(s2a, s2b, o2a, o2b, 0);
+        settlement.settle(s2a, s2b, o2a, o2b, 0, 0);
 
         // Claims at different times
         uint256 t0 = block.timestamp;
@@ -310,12 +310,12 @@ contract E2ELocalTest is Test {
 
         // Relayer 1 settles first → success
         vm.prank(relayer1);
-        settlement.settle(sigA, sigB, oa, ob, 0);
+        settlement.settle(sigA, sigB, oa, ob, 0, 0);
 
         // Relayer 2 tries same orders → nonce consumed
         vm.prank(relayer2);
         vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
-        settlement.settle(sigA, sigB, oa, ob, 0);
+        settlement.settle(sigA, sigB, oa, ob, 0, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -348,7 +348,7 @@ contract E2ELocalTest is Test {
             bytes memory sa = _signOrder(aliceKey, ao);
             bytes memory sb = _signOrder(bobKey, bo);
             vm.prank(relayer1);
-            settlement.settle(sa, sb, ao, bo, 0);
+            settlement.settle(sa, sb, ao, bo, 0, 0);
         }
 
         uint256 t0 = block.timestamp;
@@ -451,7 +451,7 @@ contract E2ELocalTest is Test {
             bytes memory sa = _signOrder(aliceKey, ao);
             bytes memory sb = _signOrder(bobKey, bo);
             vm.prank(relayer1);
-            settlement.settle(sa, sb, ao, bo, 0);
+            settlement.settle(sa, sb, ao, bo, 0, 0);
         }
 
         vm.warp(block.timestamp + 1 hours);
@@ -519,9 +519,9 @@ contract E2ELocalTest is Test {
             bytes memory sc = _signOrder(charlieKey, o3);
             bytes memory sd = _signOrder(dianaKey, o4);
             vm.prank(relayer1);
-            settlement.settle(sa, sb, o1, o2, 0);
+            settlement.settle(sa, sb, o1, o2, 0, 0);
             vm.prank(relayer2);
-            settlement.settle(sc, sd, o3, o4, 0);
+            settlement.settle(sc, sd, o3, o4, 0, 0);
         }
 
         // All 4 claims

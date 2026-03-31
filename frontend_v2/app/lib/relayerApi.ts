@@ -48,11 +48,11 @@ export class RelayerClient {
     return res.json();
   }
 
-  async submitOrder(order: OrderData, signature: string): Promise<{ status: string; txHash?: string; nonce?: string }> {
+  async submitOrder(order: OrderData, signature: string, feeMode?: "cover_taker"): Promise<{ status: string; txHash?: string; nonce?: string }> {
     const res = await fetch(`${this.baseUrl}/api/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order, signature }),
+      body: JSON.stringify({ order, signature, ...(feeMode && { feeMode }) }),
     });
     if (!res.ok) {
       const err = await res.json();
