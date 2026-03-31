@@ -21,7 +21,7 @@ export function createOrderRoutes(
   if (writeLimiter) router.post("/", writeLimiter);
   router.post("/", async (req: Request, res: Response) => {
     try {
-      const { order: rawOrder, signature } = req.body;
+      const { order: rawOrder, signature, feeMode } = req.body;
 
       if (!rawOrder || !signature) {
         res.status(400).json({ error: "missing order or signature" });
@@ -52,6 +52,11 @@ export function createOrderRoutes(
 
       // Add to orderbook
       const stored = orderbook.add({ order, signature });
+
+      // Store fee mode if provided
+      if (feeMode === "cover_taker") {
+        stored.feeMode = feeMode;
+      }
 
       // Try to find a match
       const match = matcher.findMatch(stored);

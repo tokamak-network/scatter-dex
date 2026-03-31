@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ethers } from "ethers";
 import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2 } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -10,6 +10,8 @@ import { signOrder, generateSecret, buildClaimLink } from "../../lib/signing";
 import type { OrderInput, ClaimInput } from "../../lib/signing";
 import { RelayerClient } from "../../lib/relayerApi";
 import { isMetaAddress, generateStealthAddress, buildStealthClaimLink } from "../../lib/stealth";
+import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
+import PricePanel from "../../components/PricePanel";
 
 type Side = "buy" | "sell";
 type ExpiryOption = "1H" | "1D" | "1W" | "GTC";
@@ -49,6 +51,7 @@ export default function OrderPage() {
   const [price, setPrice] = useState("");
   const [expiry, setExpiry] = useState<ExpiryOption>("1D");
   const [maxFee, setMaxFee] = useState("30");
+  const [feeMode, setFeeMode] = useState<"mine" | "both">("mine");
 
   // Claims (multiple recipients)
   const [claims, setClaims] = useState<ClaimRow[]>([
@@ -67,6 +70,13 @@ export default function OrderPage() {
   // Which token the user receives
   const receiveToken = side === "sell" ? buyToken : sellToken;
 
+  // Fee is deducted from sellToken — get its ETH price for display
+  const feeToken = side === "sell" ? sellToken : buyToken;
+  const providerRef = signer?.provider ?? null;
+  const { ethPerToken: feeTokenEthPrice } = useTokenEthPrice(
+    feeToken?.address, feeToken?.decimals, chainId ?? undefined, providerRef,
+  );
+
   // Total value
   const totalValue = useMemo(() => {
     if (!amount || !price) return "";
@@ -79,6 +89,52 @@ export default function OrderPage() {
   const claimTotal = useMemo(() => {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
+
+  // Distributable amount (receive amount - fee)
+  const distributable = useMemo(() => {
+    if (!amount || !price) return 0;
+    const receiveAmt = parseFloat(amount) * parseFloat(price);
+    const effectiveBps = (parseInt(maxFee) || 0) * (feeMode === "both" ? 2 : 1);
+    return receiveAmt - (receiveAmt * effectiveBps / 10000);
+  }, [amount, price, maxFee, feeMode]);
+
+  // Fill remaining amount for a specific claim
+  const fillRest = (id: number) => {
+    const othersTotal = claims.reduce((sum, c) => c.id === id ? sum : sum + (parseFloat(c.amount) || 0), 0);
+    const rest = Math.max(0, distributable - othersTotal);
+    updateClaim(id, "amount", rest > 0 ? rest.toFixed(6) : "0");
+  };
+
+  // Gas estimation
+  const [gasPrice, setGasPrice] = useState<bigint | null>(null);
+  useEffect(() => {
+    if (!signer) return;
+    const fetchGas = async () => {
+      try {
+        const provider = signer.provider;
+        if (provider) {
+          const feeData = await provider.getFeeData();
+          setGasPrice(feeData.gasPrice ?? null);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchGas();
+    const interval = setInterval(fetchGas, 30_000);
+    return () => clearInterval(interval);
+  }, [signer]);
+
+  // Gas constants from GasBenchmark.t.sol: settle(3+1)=286,815 gas
+  // Base ≈ 200k (EIP-712 hash×2, ECDSA.recover×2, fee split+transfer×2, nonce SSTORE×2, escrow SSTORE×2)
+  // Per claim ≈ 22k (schedule SSTORE + hash check)
+  const gasEstimate = useMemo(() => {
+    const BASE_GAS = BigInt(200_000);
+    const PER_CLAIM_GAS = BigInt(22_000);
+    const totalGas = BASE_GAS + PER_CLAIM_GAS * BigInt(claims.length);
+    if (!gasPrice) return { totalGas, ethCost: null };
+    const costWei = totalGas * gasPrice;
+    const ethCost = parseFloat(ethers.formatEther(costWei));
+    return { totalGas, ethCost };
+  }, [claims.length, gasPrice]);
 
   const addClaim = () => {
     setClaims([...claims, { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "3600" }]);
@@ -157,7 +213,7 @@ export default function OrderPage() {
         buyToken: orderBuyToken.address,
         sellAmount,
         buyAmount,
-        maxFee: parseInt(maxFee) || 30,
+        maxFee: (parseInt(maxFee) || 30) * (feeMode === "both" ? 2 : 1),
         expiry: Math.floor(Date.now() / 1000) + EXPIRY_SECONDS[expiry],
         nonce: Date.now(),
         claims: claimInputs,
@@ -167,7 +223,7 @@ export default function OrderPage() {
 
       setStatus("submitting");
       const relayer = new RelayerClient(RELAYER_URL);
-      await relayer.submitOrder(orderData, signature);
+      await relayer.submitOrder(orderData, signature, feeMode === "both" ? "cover_taker" : undefined);
 
       setClaimLinks(links);
       setStatus("success");
@@ -238,8 +294,8 @@ export default function OrderPage() {
             </div>
           </div>
 
-          {/* Amount + Price + Fee + Expiry */}
-          <div className="grid grid-cols-4 gap-4">
+          {/* Amount + Price + Mini Orderbook */}
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Amount</label>
               <input
@@ -261,21 +317,81 @@ export default function OrderPage() {
                 </div>
               )}
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Max Fee (bps)</label>
-              <input
-                type="number" value={maxFee} onChange={(e) => setMaxFee(e.target.value)}
-                className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 text-lg font-mono"
-              />
-              {amount && maxFee && (
-                <div className="text-[10px] text-on-surface-variant">
-                  Fee: ~{(parseFloat(amount) * parseInt(maxFee) / 10000).toFixed(4)} {side === "sell" ? sellToken?.symbol : buyToken?.symbol}
+          </div>
+
+          {/* Fee + Expiry */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Relay Fee</label>
+              {/* Fee mode: mine only vs both sides */}
+              <div className="flex bg-surface-container-high rounded-md p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setFeeMode("mine")}
+                  className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${
+                    feeMode === "mine" ? "bg-surface-bright text-on-surface" : "text-on-surface-variant"
+                  }`}
+                >My side only</button>
+                <button
+                  type="button"
+                  onClick={() => setFeeMode("both")}
+                  className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${
+                    feeMode === "both" ? "bg-surface-bright text-on-surface" : "text-on-surface-variant"
+                  }`}
+                >Cover both sides</button>
+              </div>
+              {/* Fee rate presets */}
+              <div className="flex gap-1.5">
+                {[
+                  { label: "0.1%", bps: "10" },
+                  { label: "0.3%", bps: "30" },
+                  { label: "0.5%", bps: "50" },
+                  { label: "1%", bps: "100" },
+                ].map((opt) => (
+                  <button
+                    key={opt.bps}
+                    type="button"
+                    onClick={() => setMaxFee(opt.bps)}
+                    className={`flex-1 py-2 rounded-md text-xs font-bold transition-all ${
+                      maxFee === opt.bps
+                        ? "bg-primary text-on-primary"
+                        : "bg-surface-container-low text-on-surface-variant hover:bg-surface-bright"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setMaxFee("")}
+                  className={`flex-1 py-2 rounded-md text-xs font-bold transition-all ${
+                    !["10", "30", "50", "100"].includes(maxFee)
+                      ? "bg-primary text-on-primary"
+                      : "bg-surface-container-low text-on-surface-variant hover:bg-surface-bright"
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+              {!["10", "30", "50", "100"].includes(maxFee) && (
+                <div className="relative">
+                  <input
+                    type="number" value={maxFee} onChange={(e) => setMaxFee(e.target.value)}
+                    placeholder="bps (1 bps = 0.01%)"
+                    className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 pr-16 text-sm font-mono"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-on-surface-variant font-mono">
+                    {maxFee ? `${(parseInt(maxFee) / 100).toFixed(2)}%` : ""}
+                  </span>
                 </div>
               )}
+              {feeMode === "both" && (
+                <p className="text-[9px] text-tertiary">Taker pays 0% — you cover the full relay fee</p>
+              )}
             </div>
-            <div className="space-y-1">
+            <div className="space-y-2">
               <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Expires</label>
-              <div className="flex gap-1">
+              <div className="flex gap-1.5">
                 {(["1H", "1D", "1W", "GTC"] as ExpiryOption[]).map((opt) => (
                   <button
                     key={opt} onClick={() => setExpiry(opt)}
@@ -289,6 +405,77 @@ export default function OrderPage() {
               </div>
             </div>
           </div>
+
+          {/* Fee Breakdown */}
+          {amount && maxFee && (() => {
+            const baseBps = parseInt(maxFee) || 0;
+            const isBoth = feeMode === "both";
+            // Cover both sides → your effective rate doubles (your share + taker's share)
+            const effectiveBps = isBoth ? baseBps * 2 : baseBps;
+            // Fee is on sellAmount: buy mode → amount×price (USDC), sell mode → amount (WETH)
+            const sellAmt = side === "buy"
+              ? parseFloat(amount) * parseFloat(price || "0")
+              : parseFloat(amount);
+            const feeAmt = sellAmt * effectiveBps / 10000;
+            const basePct = (baseBps / 100).toFixed(2);
+            const effectivePct = (effectiveBps / 100).toFixed(2);
+            const feeInEth = feeTokenEthPrice !== null ? feeAmt * feeTokenEthPrice : null;
+            const isEthToken = feeToken?.symbol === "ETH" || feeToken?.symbol === "WETH";
+            const relayerNet = feeInEth !== null && gasEstimate.ethCost !== null
+              ? feeInEth - gasEstimate.ethCost : null;
+            return (
+              <div className="bg-surface-container-low/50 rounded-lg px-4 py-3 space-y-2.5">
+                {/* Total */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-on-surface">Your Fee</span>
+                  <div className="text-right">
+                    <div className="text-base font-bold font-mono text-primary">
+                      {feeAmt.toFixed(4)} {feeToken?.symbol}
+                    </div>
+                    {!isEthToken && feeInEth !== null && (
+                      <div className="text-[10px] font-mono text-on-surface-variant">
+                        ≈ {feeInEth.toFixed(6)} ETH
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Fee distribution */}
+                <div className="space-y-1.5 text-[11px]">
+                  {isBoth ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-on-surface-variant">Your rate</span>
+                        <span className="font-mono text-on-surface">{effectivePct}% <span className="text-on-surface-variant">({basePct}% × 2)</span></span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-on-surface-variant">Taker rate</span>
+                        <span className="font-mono text-tertiary">0% — included in your fee</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-on-surface-variant">Your rate</span>
+                        <span className="font-mono text-on-surface">{basePct}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-on-surface-variant">Taker rate</span>
+                        <span className="font-mono text-on-surface">{basePct}% (taker pays own)</span>
+                      </div>
+                    </>
+                  )}
+
+                </div>
+
+                <p className="text-[9px] text-on-surface-variant/50">
+                  {isBoth
+                    ? "You pay the full relay fee. Taker is not charged. Higher fee = faster pickup."
+                    : "Fee is deducted from both sides of the trade. Higher fee = faster relay pickup."}
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Recipients (Claims) */}
           <div className="pt-4 border-t border-outline-variant/10">
@@ -340,15 +527,25 @@ export default function OrderPage() {
                       />
                     </div>
                     <div className="col-span-3">
-                      <input
-                        type="text" inputMode="decimal" value={c.amount}
-                        onChange={(e) => updateClaim(c.id, "amount", e.target.value)}
-                        placeholder="Amount"
-                        className="w-full bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
-                      />
+                      <div className="flex gap-1">
+                        <input
+                          type="text" inputMode="decimal" value={c.amount}
+                          onChange={(e) => updateClaim(c.id, "amount", e.target.value)}
+                          placeholder="Amount"
+                          className="flex-1 min-w-0 bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => fillRest(c.id)}
+                          className="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-md hover:bg-primary/20 transition-colors flex-shrink-0"
+                          title="Fill remaining amount after fee"
+                        >
+                          Rest
+                        </button>
+                      </div>
                     </div>
                     <div className="col-span-3">
-                      <div className="flex items-center gap-1 bg-surface-container-low border border-outline-variant/20 rounded-md p-2">
+                      <div className="flex items-center gap-1 bg-surface-container-low border border-outline-variant/20 rounded-md p-2" title="Release delay — time after settlement before recipient can claim (seconds)">
                         <Clock className="w-3 h-3 text-on-surface-variant flex-shrink-0" />
                         <input
                           type="number" value={c.delay}
@@ -356,6 +553,7 @@ export default function OrderPage() {
                           className="w-full bg-transparent border-none p-0 text-xs font-mono focus:ring-0 text-on-surface"
                           placeholder="3600"
                         />
+                        <span className="text-[9px] text-on-surface-variant flex-shrink-0">sec</span>
                       </div>
                     </div>
                   </div>
@@ -367,11 +565,11 @@ export default function OrderPage() {
               <div className="mt-2 space-y-1">
                 <div className="text-[10px] text-on-surface-variant flex justify-between">
                   <span>Claims total: {claimTotal} {receiveToken.symbol}</span>
-                  {totalValue && <span>Order total: {totalValue} {receiveToken.symbol}</span>}
+                  <span>Distributable: {distributable > 0 ? distributable.toFixed(4) : "—"} {receiveToken.symbol}</span>
                 </div>
                 {amount && price && claimTotal > 0 && (() => {
                   const orderTotal = parseFloat(amount) * parseFloat(price);
-                  const feeAmount = orderTotal * parseInt(maxFee || "0") / 10000;
+                  const feeAmount = orderTotal * (parseInt(maxFee || "0") * (feeMode === "both" ? 2 : 1)) / 10000;
                   const available = orderTotal - feeAmount;
                   if (claimTotal > available) {
                     return (
@@ -389,7 +587,7 @@ export default function OrderPage() {
           {/* Submit */}
           {(() => {
             const orderTotal = (parseFloat(amount) || 0) * (parseFloat(price) || 0);
-            const feeAmount = orderTotal * (parseInt(maxFee) || 0) / 10000;
+            const feeAmount = orderTotal * ((parseInt(maxFee) || 0) * (feeMode === "both" ? 2 : 1)) / 10000;
             const claimsExceed = claimTotal > 0 && claimTotal > orderTotal - feeAmount;
             return (
           <button
@@ -443,57 +641,20 @@ export default function OrderPage() {
         )}
       </div>
 
-      {/* Right: Order Summary */}
-      <div className="w-full xl:w-[300px]">
-        <div className="bg-surface-container-high rounded-xl p-5 border border-outline-variant/10 sticky top-20">
-          <h3 className="font-headline font-bold text-sm text-on-surface mb-3">Order Summary</h3>
-          <div className="space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Side</span>
-              <span className={`font-bold ${side === "buy" ? "text-tertiary" : "text-error"}`}>{side.toUpperCase()}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Pair</span>
-              <span className="font-mono text-on-surface">{sellToken?.symbol}/{buyToken?.symbol}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Amount</span>
-              <span className="font-mono text-on-surface">{amount || "—"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Price</span>
-              <span className="font-mono text-on-surface">{price || "—"}</span>
-            </div>
-            {totalValue && (
-              <div className="flex justify-between">
-                <span className="text-on-surface-variant">Total</span>
-                <span className="font-mono text-on-surface">{totalValue}</span>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Expiry</span>
-              <span className="font-mono text-on-surface">{expiry}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-on-surface-variant">Recipients</span>
-              <span className="font-mono text-on-surface">{claims.length}</span>
-            </div>
-            <div className="pt-2 border-t border-outline-variant/10 space-y-1">
-              <div className="flex justify-between font-bold">
-                <span className="text-primary">Max Fee</span>
-                <span className="text-on-surface">{maxFee} bps</span>
-              </div>
-              {amount && price && maxFee && (
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-on-surface-variant">Fee amount</span>
-                  <span className="font-mono text-on-surface">
-                    ~{((parseFloat(amount) || 0) * (parseFloat(price) || 0) * (parseInt(maxFee) || 0) / 10000).toFixed(4)}{" "}
-                    {side === "sell" ? sellToken?.symbol : buyToken?.symbol}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
+      {/* Right: Price Reference + Orderbook */}
+      <div className="w-full xl:w-[340px]">
+        <div className="sticky top-20">
+          <PricePanel
+            sellSymbol={sellToken?.symbol}
+            buySymbol={buyToken?.symbol}
+            sellTokenAddress={sellToken?.address}
+            buyTokenAddress={buyToken?.address}
+            sellDecimals={sellToken?.decimals}
+            buyDecimals={buyToken?.decimals}
+            relayerUrl={RELAYER_URL}
+            side={side}
+            onSelectPrice={setPrice}
+          />
         </div>
       </div>
     </div>

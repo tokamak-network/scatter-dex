@@ -221,7 +221,7 @@ contract IdentityGateTest is Test {
         env.s.settle(
             _signOrder(env.s, env.u1Key, o1),
             _signOrder(env.s, env.u2Key, o2),
-            o1, o2, 0
+            o1, o2, 0, 0
         );
 
         // user2 expires at t+1h, claims at t+3h
@@ -250,7 +250,7 @@ contract IdentityGateTest is Test {
         env.s.settle(
             _signOrder(env.s, env.u1Key, o1),
             _signOrder(env.s, env.u2Key, o2),
-            o1, o2, 0
+            o1, o2, 0, 0
         );
 
         // u2 expires

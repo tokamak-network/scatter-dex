@@ -195,7 +195,7 @@ contract ScatterSettlementTest is Test {
         bytes memory makerSig = _signOrder(makerKey, makerOrder);
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     // ─── Tests: Deposit & Withdraw ───────────────────────────────
@@ -279,7 +279,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     function test_settle_expired_order_reverts() public {
@@ -294,7 +294,7 @@ contract ScatterSettlementTest is Test {
 
         vm.warp(block.timestamp + 2 days);
         vm.expectRevert(ScatterSettlement.OrderExpired.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     function test_settle_insufficient_escrow_reverts() public {
@@ -306,7 +306,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.InsufficientEscrow.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     function test_settle_invalid_signature_reverts() public {
@@ -320,7 +320,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.InvalidSignature.selector);
-        settlement.settle(badSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(badSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     // ─── Tests: Fee ──────────────────────────────────────────────
@@ -381,7 +381,7 @@ contract ScatterSettlementTest is Test {
         relayerRegistry.register{value: 0.1 ether}("http://fee-relayer", 30);
 
         vm.prank(feeRelayer);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30, 30);
 
         // No protocol fee (protocolFeeBps = 0 in setUp)
         assertEq(tokenA.balanceOf(feeRelayer), 0.03 ether);
@@ -425,7 +425,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         // settle from test contract (registered relayer)
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30, 30);
 
         // ETH fee: 0.03 ETH total. Protocol 30% = 0.009, Relayer 70% = 0.021
         uint256 ethTotalFee = 0.03 ether;
@@ -472,7 +472,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.ContractPaused.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     function test_pause_blocks_claim() public {
@@ -546,7 +546,7 @@ contract ScatterSettlementTest is Test {
         // Call from unregistered address
         vm.prank(address(0xDEAD));
         vm.expectRevert(ScatterSettlement.NotActiveRelayer.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     function test_settle_fee_exceeds_max_reverts() public {
@@ -560,7 +560,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.FeeExceedsMax.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 30, 30);
     }
 
     // ─── Tests: Claim ────────────────────────────────────────────
@@ -737,7 +737,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.NonceConsumed.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     // ─── Tests: Self-Trade ───────────────────────────────────────
@@ -794,7 +794,7 @@ contract ScatterSettlementTest is Test {
         bytes memory sig2 = _signOrder(makerKey, order2);
 
         vm.expectRevert(ScatterSettlement.SelfTrade.selector);
-        settlement.settle(sig1, sig2, order1, order2, 0);
+        settlement.settle(sig1, sig2, order1, order2, 0, 0);
     }
 
     // ─── Tests: Price Compatibility ──────────────────────────────
@@ -826,7 +826,7 @@ contract ScatterSettlementTest is Test {
         bytes memory makerSig = _signOrder(makerKey, mo);
         bytes memory takerSig = _signOrder(takerKey, to_);
         vm.expectRevert(ScatterSettlement.ReleaseDelayTooShort.selector);
-        settlement.settle(makerSig, takerSig, mo, to_, 0);
+        settlement.settle(makerSig, takerSig, mo, to_, 0, 0);
     }
 
     function test_settle_price_incompatible_reverts() public {
@@ -877,7 +877,7 @@ contract ScatterSettlementTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         vm.expectRevert(ScatterSettlement.ClaimsSumMismatch.selector);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
     // ─── E2E: Full Scenario (Paper Section 3.4) ──────────────────
@@ -960,7 +960,7 @@ contract ScatterSettlementTest is Test {
         bytes memory bobSig = _signOrder(takerKey, bobOrder);
 
         vm.prank(e2eRelayer);
-        settlement.settle(aliceSig, bobSig, aliceOrder, bobOrder, 30);
+        settlement.settle(aliceSig, bobSig, aliceOrder, bobOrder, 30, 30);
 
         // 4. Verify post-settle state
         assertEq(settlement.deposits(maker, address(tokenA)), 0, "alice escrow should be 0");
@@ -1103,12 +1103,12 @@ contract ScatterSettlementTest is Test {
         settlement.settle(
             _signOrder(makerKey, order1m),
             _signOrder(takerKey, order1t),
-            order1m, order1t, 0
+            order1m, order1t, 0, 0
         );
         settlement.settle(
             _signOrder(makerKey, order2m),
             _signOrder(trader2Key, order2t),
-            order2m, order2t, 0
+            order2m, order2t, 0, 0
         );
 
         // Verify escrows depleted
@@ -1219,7 +1219,7 @@ contract ScatterSettlementTest is Test {
 
         // actualFee=50 > registeredFee=30 → should revert
         vm.expectRevert(ScatterSettlement.FeeExceedsRelayerRegistered.selector);
-        settlement.settle(ms, ts, mo, to_, 50);
+        settlement.settle(ms, ts, mo, to_, 50, 50);
     }
 
     // ─── Tests: Gasless Claim ──────────────────────────────────────
@@ -1273,7 +1273,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 500, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
 
         vm.warp(block.timestamp + 3 hours);
 
@@ -1314,7 +1314,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 501, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 3 hours);
 
         // Zero tip — altruistic relayer
@@ -1353,7 +1353,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 502, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 3 hours);
 
         // Attacker signs instead of recipient — wrong signer
@@ -1392,7 +1392,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 503, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 3 hours);
 
         // Tip > claim amount
@@ -1431,7 +1431,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 504, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 3 hours);
 
         // Sign with deadline in the past
@@ -1485,7 +1485,7 @@ contract ScatterSettlementTest is Test {
             expiry: block.timestamp + 1 days, nonce: 505, claims: tc
         });
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 3 hours);
 
         // 1. Recipient signs a gasless claim (nonce=0)
@@ -1521,7 +1521,7 @@ contract ScatterSettlementTest is Test {
         tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("wr-taker"), address(0xEEE)), 10 ether, 3 hours);
         ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 600, tc);
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 4 hours);
 
         // Sign for address(this) as relayer, but submit from a different address
@@ -1553,7 +1553,7 @@ contract ScatterSettlementTest is Test {
         tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("nr-t1"), address(0xF1)), 10 ether, 3 hours);
         ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 610, tc);
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 4 hours);
 
         // First gasless claim succeeds (nonce=0)
@@ -1578,7 +1578,7 @@ contract ScatterSettlementTest is Test {
         tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("pr-taker"), address(0xDDD)), 10 ether, 3 hours);
         ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 700, tc);
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
 
         // Pause the contract
         settlement.setPaused(true);
@@ -1615,7 +1615,7 @@ contract ScatterSettlementTest is Test {
         bytes memory ts = _signOrder(takerKey, to_);
 
         vm.expectRevert(ScatterSettlement.DuplicateClaimHash.selector);
-        settlement.settle(ms, ts, mo, to_, 0);
+        settlement.settle(ms, ts, mo, to_, 0, 0);
     }
 
     function test_claim_verifies_token_balance() public {
@@ -1630,7 +1630,7 @@ contract ScatterSettlementTest is Test {
         tc[0] = ScatterSettlement.ClaimInfo(_claimHash(keccak256("bc-taker"), address(0xBBB)), 10 ether, 3 hours);
         ScatterSettlement.Order memory to_ = _makeOrder2(taker, 21_000e18, 10 ether, 0, 900, tc);
 
-        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0);
+        settlement.settle(_signOrder(makerKey, mo), _signOrder(takerKey, to_), mo, to_, 0, 0);
         vm.warp(block.timestamp + 4 hours);
 
         uint256 balBefore = tokenB.balanceOf(recipientC);

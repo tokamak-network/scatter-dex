@@ -181,7 +181,7 @@ contract GasBenchmarkTest is Test {
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
         uint256 gasBefore = gasleft();
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
         uint256 gasUsed = gasBefore - gasleft();
         console.log("SETTLE (3+1 claims):", gasUsed);
     }
@@ -218,7 +218,7 @@ contract GasBenchmarkTest is Test {
 
         bytes memory makerSig = _signOrder(makerKey, makerOrder);
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
 
         // Claim: recipientC claims schedule 0 after releaseTime
         vm.warp(block.timestamp + 3 hours);
@@ -260,7 +260,7 @@ contract GasBenchmarkTest is Test {
 
         bytes memory makerSig = _signOrder(makerKey, makerOrder);
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
-        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+        settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
 
         // Refund schedule 0 after REFUND_WINDOW
         vm.warp(block.timestamp + 3 hours + 7 days + 1);
@@ -316,7 +316,7 @@ contract GasBenchmarkTest is Test {
             bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
             gas_[2] = gasleft();
-            settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0);
+            settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
             gas_[2] = gas_[2] - gasleft();
         }
 
