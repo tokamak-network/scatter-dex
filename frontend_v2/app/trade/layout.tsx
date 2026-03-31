@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, ArrowLeftRight, BookOpen } from "lucide-react";
+import { Shield, ArrowLeftRight, BookOpen, Radio } from "lucide-react";
 
 const sidebarLinks = [
   { href: "/trade/escrow", label: "Escrow", icon: Shield },
   { href: "/trade/order", label: "Order", icon: ArrowLeftRight },
   { href: "/trade/book", label: "Book", icon: BookOpen },
+  { href: "/trade/relayers", label: "Relayers", icon: Radio },
 ];
 
 export default function TradeLayout({ children }: { children: React.ReactNode }) {

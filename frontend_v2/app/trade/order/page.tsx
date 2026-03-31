@@ -186,7 +186,7 @@ export default function OrderPage() {
       const amountBig = ethers.parseUnits(amount, sellDecimals);
       const priceBig = ethers.parseUnits(price, buyDecimals);
       // crossAmount = amount * price (scaled to buyDecimals)
-      const crossAmount = (amountBig * priceBig) / (10n ** BigInt(sellDecimals));
+      const crossAmount = (amountBig * priceBig) / (BigInt(10) ** BigInt(sellDecimals));
 
       const sellAmount = side === "sell" ? amountBig.toString() : crossAmount.toString();
       const buyAmount = side === "sell" ? crossAmount.toString() : amountBig.toString();
@@ -239,13 +239,13 @@ export default function OrderPage() {
       // Compute on-chain distributable: buyAmount minus takerFee
       // (takerFee is applied to counterparty's sell, which is what this user receives)
       const buyAmountBig = BigInt(buyAmount);
-      const takerFeeBps = feeMode === "both" ? 0n : BigInt(parseInt(maxFee) || 30);
-      const takerFeeAmt = (buyAmountBig * takerFeeBps) / 10000n;
+      const takerFeeBps = feeMode === "both" ? BigInt(0) : BigInt(parseInt(maxFee) || 30);
+      const takerFeeAmt = (buyAmountBig * takerFeeBps) / BigInt(10000);
       const distributableBig = buyAmountBig - takerFeeAmt;
 
       // Validate / auto-distribute claim amounts against distributable
       const filledSum = claimInputs.reduce(
-        (sum, c) => sum + (c.amount ? BigInt(c.amount) : 0n), 0n
+        (sum, c) => sum + (c.amount ? BigInt(c.amount) : BigInt(0)), BigInt(0)
       );
       const emptyCount = claimInputs.filter((c) => !c.amount).length;
 
@@ -256,7 +256,7 @@ export default function OrderPage() {
         // Distribute remaining amount evenly among empty claims
         const remaining = distributableBig - filledSum;
         const perEmpty = remaining / BigInt(emptyCount);
-        let distributed = 0n;
+        let distributed = BigInt(0);
         claimInputs.forEach((c, i) => {
           if (!c.amount) {
             // Last empty claim gets remainder to avoid rounding dust
