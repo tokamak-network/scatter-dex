@@ -27,18 +27,19 @@ export class Orderbook {
       try {
         this.addInternal(stored);
         loaded++;
-      } catch {
-        // skip duplicates or invalid orders
+      } catch (err) {
+        console.warn(`Skipped restoring order ${stored.order.maker}:${stored.order.nonce}: ${err instanceof Error ? err.message : "unknown"}`);
       }
     }
     return loaded;
   }
 
-  add(signed: SignedOrder): StoredOrder {
+  add(signed: SignedOrder, feeMode?: "cover_taker"): StoredOrder {
     const stored: StoredOrder = {
       ...signed,
       status: "pending",
       submittedAt: Date.now(),
+      feeMode,
     };
     this.addInternal(stored);
     this.db?.save(stored);

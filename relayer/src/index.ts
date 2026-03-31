@@ -64,13 +64,23 @@ async function main() {
     }
   }, 60_000);
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     console.log(`ScatterDEX Relayer running on port ${config.port}`);
     console.log(`Chain ID: ${chainId}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
     console.log(`Settlement: ${config.settlementAddress}`);
     console.log(`Fee: ${config.relayerFee} bps`);
   });
+
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log("Shutting down...");
+    server.close();
+    db.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 main().catch((err) => {

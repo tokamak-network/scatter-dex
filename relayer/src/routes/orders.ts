@@ -50,13 +50,8 @@ export function createOrderRoutes(
         return;
       }
 
-      // Add to orderbook
-      const stored = orderbook.add({ order, signature });
-
-      // Store fee mode if provided
-      if (feeMode === "cover_taker") {
-        stored.feeMode = feeMode;
-      }
+      // Add to orderbook (with feeMode so it's persisted to DB immediately)
+      const stored = orderbook.add({ order, signature }, feeMode === "cover_taker" ? "cover_taker" : undefined);
 
       // Try to find a match
       const match = matcher.findMatch(stored);
@@ -83,8 +78,8 @@ export function createOrderRoutes(
           match.maker.status = "pending";
           match.taker.status = "pending";
           try {
-            orderbook.add({ order: match.maker.order, signature: match.maker.signature });
-            orderbook.add({ order: match.taker.order, signature: match.taker.signature });
+            orderbook.add({ order: match.maker.order, signature: match.maker.signature }, match.maker.feeMode);
+            orderbook.add({ order: match.taker.order, signature: match.taker.signature }, match.taker.feeMode);
           } catch (readdErr) {
             console.error("failed to re-add orders after settle failure:", readdErr);
           }

@@ -9,6 +9,7 @@ export class OrderDB {
   private insertOrder!: ReturnType<Database.Database["prepare"]>;
   private insertClaim!: ReturnType<Database.Database["prepare"]>;
   private deleteClaims!: ReturnType<Database.Database["prepare"]>;
+  private updateStatusStmt!: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -26,6 +27,10 @@ export class OrderDB {
       VALUES (@maker, @nonce, @idx, @claimHash, @amount, @releaseDelay)
     `);
     this.deleteClaims = this.db.prepare(`DELETE FROM claims WHERE maker = @maker AND nonce = @nonce`);
+    this.updateStatusStmt = this.db.prepare(`
+      UPDATE orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx)
+      WHERE maker = @maker AND nonce = @nonce
+    `);
   }
 
   private migrate(): void {
@@ -102,10 +107,7 @@ export class OrderDB {
   }
 
   updateStatus(maker: string, nonce: bigint, status: OrderStatus, settleTxHash?: string): void {
-    this.db.prepare(`
-      UPDATE orders SET status = @status, settle_tx = @settleTx
-      WHERE maker = @maker AND nonce = @nonce
-    `).run({
+    this.updateStatusStmt.run({
       maker: maker.toLowerCase(),
       nonce: nonce.toString(),
       status,
