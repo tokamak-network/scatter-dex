@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { Orderbook } from "./core/orderbook.js";
 import { Matcher } from "./core/matcher.js";
 import { Submitter } from "./core/submitter.js";
+import { OrderDB } from "./core/db.js";
 import { createOrderRoutes } from "./routes/orders.js";
 import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
@@ -17,7 +18,13 @@ async function main() {
   const network = await provider.getNetwork();
   const chainId = network.chainId;
 
+  const db = new OrderDB();
   const orderbook = new Orderbook(MAX_ORDERBOOK_SIZE);
+  orderbook.setDB(db);
+  const restored = orderbook.loadFromDB();
+  if (restored > 0) {
+    console.log(`Restored ${restored} pending orders from DB`);
+  }
   const matcher = new Matcher(orderbook);
   const submitter = new Submitter();
 

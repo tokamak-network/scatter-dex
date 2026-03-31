@@ -73,6 +73,8 @@ export function createOrderRoutes(
           match.maker.settleTxHash = txHash;
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
+          orderbook.persistStatus(match.maker.order.maker, match.maker.order.nonce, "settled", txHash);
+          orderbook.persistStatus(match.taker.order.maker, match.taker.order.nonce, "settled", txHash);
 
           res.json({ status: "matched", txHash });
           return;
