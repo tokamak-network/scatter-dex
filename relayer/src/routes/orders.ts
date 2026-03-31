@@ -50,22 +50,20 @@ export function createOrderRoutes(
         return;
       }
 
-      // Add to orderbook
-      const stored = orderbook.add({ order, signature });
-
-      // Store fee mode if provided
-      if (feeMode === "cover_taker") {
-        stored.feeMode = feeMode;
-      }
+      // Add to orderbook (with feeMode so it's persisted to DB immediately)
+      const stored = orderbook.add({ order, signature }, feeMode === "cover_taker" ? "cover_taker" : undefined);
 
       // Try to find a match
       const match = matcher.findMatch(stored);
       if (match) {
-        // Immediately mark as matched to prevent race condition (C3)
+        // Immediately mark as matched and persist to DB to prevent
+        // duplicate settlement attempts if the process crashes mid-settle
         match.maker.status = "matched";
         match.taker.status = "matched";
         orderbook.remove(match.maker.order);
         orderbook.remove(match.taker.order);
+        orderbook.persistStatus(match.maker.order.maker, match.maker.order.nonce, "matched");
+        orderbook.persistStatus(match.taker.order.maker, match.taker.order.nonce, "matched");
 
         try {
           const txHash = await submitter.submitSettle(match);
@@ -73,6 +71,8 @@ export function createOrderRoutes(
           match.maker.settleTxHash = txHash;
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
+          orderbook.persistStatus(match.maker.order.maker, match.maker.order.nonce, "settled", txHash);
+          orderbook.persistStatus(match.taker.order.maker, match.taker.order.nonce, "settled", txHash);
 
           res.json({ status: "matched", txHash });
           return;
@@ -81,8 +81,8 @@ export function createOrderRoutes(
           match.maker.status = "pending";
           match.taker.status = "pending";
           try {
-            orderbook.add({ order: match.maker.order, signature: match.maker.signature });
-            orderbook.add({ order: match.taker.order, signature: match.taker.signature });
+            orderbook.add({ order: match.maker.order, signature: match.maker.signature }, match.maker.feeMode);
+            orderbook.add({ order: match.taker.order, signature: match.taker.signature }, match.taker.feeMode);
           } catch (readdErr) {
             console.error("failed to re-add orders after settle failure:", readdErr);
           }

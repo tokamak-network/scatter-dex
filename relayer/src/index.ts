@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { Orderbook } from "./core/orderbook.js";
 import { Matcher } from "./core/matcher.js";
 import { Submitter } from "./core/submitter.js";
+import { OrderDB } from "./core/db.js";
 import { createOrderRoutes } from "./routes/orders.js";
 import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
@@ -17,9 +18,15 @@ async function main() {
   const network = await provider.getNetwork();
   const chainId = network.chainId;
 
+  const db = new OrderDB();
   const orderbook = new Orderbook(MAX_ORDERBOOK_SIZE);
+  orderbook.setDB(db);
+  const restored = orderbook.loadFromDB();
+  if (restored > 0) {
+    console.log(`Restored ${restored} pending orders from DB`);
+  }
   const matcher = new Matcher(orderbook);
-  const submitter = new Submitter();
+  const submitter = new Submitter(provider);
 
   const app = express();
 
@@ -57,13 +64,27 @@ async function main() {
     }
   }, 60_000);
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     console.log(`ScatterDEX Relayer running on port ${config.port}`);
     console.log(`Chain ID: ${chainId}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
     console.log(`Settlement: ${config.settlementAddress}`);
     console.log(`Fee: ${config.relayerFee} bps`);
   });
+
+  // Graceful shutdown — wait for server to close before exiting
+  let isShuttingDown = false;
+  const shutdown = () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log("Shutting down...");
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 main().catch((err) => {

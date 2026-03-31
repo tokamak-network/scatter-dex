@@ -12,8 +12,8 @@ export class Submitter {
   private wallet: ethers.Wallet;
   private contract: ethers.Contract;
 
-  constructor() {
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  constructor(provider?: ethers.JsonRpcProvider) {
+    this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.contract = new ethers.Contract(
       config.settlementAddress,
@@ -46,13 +46,17 @@ export class Submitter {
       takerFee = BigInt(config.relayerFee) * 2n;
     }
 
+    // Use fresh nonce via direct RPC to avoid ethers v6 caching
+    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
+    const nonce = parseInt(hexNonce, 16);
     const tx = await this.contract.settle(
       maker.signature,
       taker.signature,
       makerOrder,
       takerOrder,
       makerFee,
-      takerFee
+      takerFee,
+      { nonce }
     );
 
     const receipt = await tx.wait();

@@ -1,4 +1,5 @@
-import { Order, SignedOrder, StoredOrder, pairKey } from "../types/order.js";
+import { Order, SignedOrder, StoredOrder, pairKey, OrderStatus } from "../types/order.js";
+import { OrderDB } from "./db.js";
 
 export class Orderbook {
   private sells = new Map<string, StoredOrder[]>();
@@ -6,22 +7,59 @@ export class Orderbook {
   private byMaker = new Map<string, Map<string, StoredOrder>>();
   private pendingCount = 0;
   private maxSize: number;
+  private db: OrderDB | null = null;
 
   constructor(maxSize = 10_000) {
     this.maxSize = maxSize;
   }
 
-  add(signed: SignedOrder): StoredOrder {
-    if (this.pendingCount >= this.maxSize) {
-      throw new Error("orderbook full");
+  /** Attach a DB for persistence. Call loadFromDB() after to restore orders. */
+  setDB(db: OrderDB): void {
+    this.db = db;
+  }
+
+  /** Restore pending orders from DB into memory. */
+  loadFromDB(): number {
+    if (!this.db) return 0;
+    const orders = this.db.loadPending();
+    let loaded = 0;
+    for (const stored of orders) {
+      try {
+        this.addInternal(stored);
+        loaded++;
+      } catch (err) {
+        console.warn(`Skipped restoring order ${stored.order.maker}:${stored.order.nonce}: ${err instanceof Error ? err.message : "unknown"}`);
+      }
     }
-    const { order } = signed;
-    const pair = pairKey(order.sellToken, order.buyToken);
+    return loaded;
+  }
+
+  add(signed: SignedOrder, feeMode?: "cover_taker"): StoredOrder {
     const stored: StoredOrder = {
       ...signed,
       status: "pending",
       submittedAt: Date.now(),
+      feeMode,
     };
+    this.addInternal(stored);
+    if (this.db) {
+      try {
+        this.db.save(stored);
+      } catch (err) {
+        // Rollback in-memory state to keep DB and memory in sync
+        this.remove(stored.order);
+        throw err;
+      }
+    }
+    return stored;
+  }
+
+  private addInternal(stored: StoredOrder): void {
+    if (this.pendingCount >= this.maxSize) {
+      throw new Error("orderbook full");
+    }
+    const { order } = stored;
+    const pair = pairKey(order.sellToken, order.buyToken);
 
     // Dedup by maker+nonce
     const makerKey = order.maker.toLowerCase();
@@ -62,8 +100,6 @@ export class Orderbook {
       else buyList.splice(idx, 0, stored);
       this.buys.set(pair, buyList);
     }
-
-    return stored;
   }
 
   remove(order: Order): void {
@@ -99,6 +135,7 @@ export class Orderbook {
 
     stored.status = "cancelled";
     this.remove(stored.order);
+    this.db?.updateStatus(maker, nonce, "cancelled");
     return stored;
   }
 
@@ -121,6 +158,11 @@ export class Orderbook {
     return this.pendingCount;
   }
 
+  /** Persist status change to DB (for settle results handled outside orderbook) */
+  persistStatus(maker: string, nonce: bigint, status: OrderStatus, settleTxHash?: string): void {
+    this.db?.updateStatus(maker, nonce, status, settleTxHash);
+  }
+
   // Remove expired orders (collect first, then remove to avoid mutation during iteration)
   purgeExpired(): number {
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -130,6 +172,7 @@ export class Orderbook {
       for (const [, stored] of orders) {
         if (stored.status === "pending" && stored.order.expiry <= now) {
           stored.status = "expired";
+          this.db?.updateStatus(stored.order.maker, stored.order.nonce, "expired");
           toRemove.push(stored.order);
         }
       }
