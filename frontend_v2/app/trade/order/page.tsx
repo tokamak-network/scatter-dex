@@ -238,8 +238,8 @@ export default function OrderPage() {
             </div>
           </div>
 
-          {/* Amount + Price + Expiry */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Amount + Price + Fee + Expiry */}
+          <div className="grid grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Amount</label>
               <input
@@ -258,6 +258,18 @@ export default function OrderPage() {
               {totalValue && (
                 <div className="text-[10px] text-on-surface-variant">
                   Total: {totalValue} {side === "sell" ? buyToken?.symbol : sellToken?.symbol}
+                </div>
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Max Fee (bps)</label>
+              <input
+                type="number" value={maxFee} onChange={(e) => setMaxFee(e.target.value)}
+                className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 text-lg font-mono"
+              />
+              {amount && maxFee && (
+                <div className="text-[10px] text-on-surface-variant">
+                  Fee: ~{(parseFloat(amount) * parseInt(maxFee) / 10000).toFixed(4)} {side === "sell" ? sellToken?.symbol : buyToken?.symbol}
                 </div>
               )}
             </div>
@@ -351,18 +363,38 @@ export default function OrderPage() {
               ))}
             </div>
 
-            {claims.length > 1 && receiveToken && (
-              <div className="mt-2 text-[10px] text-on-surface-variant flex justify-between">
-                <span>Claims total: {claimTotal} {receiveToken.symbol}</span>
-                {totalValue && <span>Order total: {totalValue} {receiveToken.symbol}</span>}
+            {receiveToken && (
+              <div className="mt-2 space-y-1">
+                <div className="text-[10px] text-on-surface-variant flex justify-between">
+                  <span>Claims total: {claimTotal} {receiveToken.symbol}</span>
+                  {totalValue && <span>Order total: {totalValue} {receiveToken.symbol}</span>}
+                </div>
+                {amount && price && claimTotal > 0 && (() => {
+                  const orderTotal = parseFloat(amount) * parseFloat(price);
+                  const feeAmount = orderTotal * parseInt(maxFee || "0") / 10000;
+                  const available = orderTotal - feeAmount;
+                  if (claimTotal > available) {
+                    return (
+                      <div className="text-[10px] text-error font-bold">
+                        Claims ({claimTotal}) exceed available after fee ({available.toFixed(4)} = {orderTotal} - {feeAmount.toFixed(4)} fee)
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
             )}
           </div>
 
           {/* Submit */}
+          {(() => {
+            const orderTotal = (parseFloat(amount) || 0) * (parseFloat(price) || 0);
+            const feeAmount = orderTotal * (parseInt(maxFee) || 0) / 10000;
+            const claimsExceed = claimTotal > 0 && claimTotal > orderTotal - feeAmount;
+            return (
           <button
             onClick={handleSubmit}
-            disabled={status === "signing" || status === "submitting" || !amount || !price}
+            disabled={status === "signing" || status === "submitting" || !amount || !price || claimsExceed}
             className="w-full gradient-btn py-4 rounded-md text-on-primary-fixed font-headline font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
           >
             {status === "signing" ? (
@@ -373,6 +405,8 @@ export default function OrderPage() {
               <><Lock className="w-4 h-4" /> Sign & Submit to Relayer</>
             )}
           </button>
+            );
+          })()}
           <p className="text-center text-[10px] text-on-surface-variant">
             EIP-712 signature — no gas required. Relayer executes the trade.
           </p>
@@ -444,9 +478,20 @@ export default function OrderPage() {
               <span className="text-on-surface-variant">Recipients</span>
               <span className="font-mono text-on-surface">{claims.length}</span>
             </div>
-            <div className="pt-2 border-t border-outline-variant/10 flex justify-between font-bold">
-              <span className="text-primary">Max Fee</span>
-              <span className="text-on-surface">{maxFee} bps</span>
+            <div className="pt-2 border-t border-outline-variant/10 space-y-1">
+              <div className="flex justify-between font-bold">
+                <span className="text-primary">Max Fee</span>
+                <span className="text-on-surface">{maxFee} bps</span>
+              </div>
+              {amount && price && maxFee && (
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-on-surface-variant">Fee amount</span>
+                  <span className="font-mono text-on-surface">
+                    ~{((parseFloat(amount) || 0) * (parseFloat(price) || 0) * (parseInt(maxFee) || 0) / 10000).toFixed(4)}{" "}
+                    {side === "sell" ? sellToken?.symbol : buyToken?.symbol}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
