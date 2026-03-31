@@ -5,18 +5,14 @@ import { usePathname } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { useWallet } from "../lib/wallet";
 import { RPC_URL, EXPECTED_CHAIN_ID, getChainName } from "../lib/config";
+import { shortenAddress } from "../lib/utils";
 
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/trade", label: "Trade" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/claim", label: "Claim" },
-  { href: "/relayers", label: "Relayers" },
 ];
-
-function shortenAddress(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 function shortenRpc(url: string) {
   try {

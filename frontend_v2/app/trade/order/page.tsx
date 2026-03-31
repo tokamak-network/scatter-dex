@@ -10,6 +10,7 @@ import { signOrder, generateSecret, buildClaimLink } from "../../lib/signing";
 import type { OrderInput, ClaimInput } from "../../lib/signing";
 import { RelayerClient } from "../../lib/relayerApi";
 import { isMetaAddress, generateStealthAddress, buildStealthClaimLink } from "../../lib/stealth";
+import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import PricePanel from "../../components/PricePanel";
 
 type Side = "buy" | "sell";
@@ -24,7 +25,6 @@ const EXPIRY_SECONDS: Record<ExpiryOption, number> = {
   "GTC": 365 * 86400,
 };
 
-const RELAYER_URL = getEnv("NEXT_PUBLIC_RELAYER_URL") || "http://localhost:3001";
 const MAX_CLAIMS = 10; // matches MAX_CLAIMS_PER_ORDER in ScatterSettlement
 const MIN_RELEASE_DELAY = 3600; // 1 hour — matches MIN_RELEASE_DELAY in contract
 
@@ -41,6 +41,10 @@ export default function OrderPage() {
   const { account, chainId, signer } = useWallet();
   const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
   const nextClaimId = useRef(1);
+  const { relayers } = useRelayers();
+  const onlineRelayers = relayers.filter((r) => r.online);
+  const [selectedRelayerIdx, setSelectedRelayerIdx] = useState(0);
+  const activeRelayer = onlineRelayers[selectedRelayerIdx] ?? null;
 
   // Token pair
   const [sellTokenIdx, setSellTokenIdx] = useState(0);
@@ -186,7 +190,7 @@ export default function OrderPage() {
       const amountBig = ethers.parseUnits(amount, sellDecimals);
       const priceBig = ethers.parseUnits(price, buyDecimals);
       // crossAmount = amount * price (scaled to buyDecimals)
-      const crossAmount = (amountBig * priceBig) / (10n ** BigInt(sellDecimals));
+      const crossAmount = (amountBig * priceBig) / (BigInt(10) ** BigInt(sellDecimals));
 
       const sellAmount = side === "sell" ? amountBig.toString() : crossAmount.toString();
       const buyAmount = side === "sell" ? crossAmount.toString() : amountBig.toString();
@@ -239,13 +243,13 @@ export default function OrderPage() {
       // Compute on-chain distributable: buyAmount minus takerFee
       // (takerFee is applied to counterparty's sell, which is what this user receives)
       const buyAmountBig = BigInt(buyAmount);
-      const takerFeeBps = feeMode === "both" ? 0n : BigInt(parseInt(maxFee) || 30);
-      const takerFeeAmt = (buyAmountBig * takerFeeBps) / 10000n;
+      const takerFeeBps = feeMode === "both" ? BigInt(0) : BigInt(parseInt(maxFee) || 30);
+      const takerFeeAmt = (buyAmountBig * takerFeeBps) / BigInt(10000);
       const distributableBig = buyAmountBig - takerFeeAmt;
 
       // Validate / auto-distribute claim amounts against distributable
       const filledSum = claimInputs.reduce(
-        (sum, c) => sum + (c.amount ? BigInt(c.amount) : 0n), 0n
+        (sum, c) => sum + (c.amount ? BigInt(c.amount) : BigInt(0)), BigInt(0)
       );
       const emptyCount = claimInputs.filter((c) => !c.amount).length;
 
@@ -256,7 +260,7 @@ export default function OrderPage() {
         // Distribute remaining amount evenly among empty claims
         const remaining = distributableBig - filledSum;
         const perEmpty = remaining / BigInt(emptyCount);
-        let distributed = 0n;
+        let distributed = BigInt(0);
         claimInputs.forEach((c, i) => {
           if (!c.amount) {
             // Last empty claim gets remainder to avoid rounding dust
@@ -293,7 +297,8 @@ export default function OrderPage() {
       const { signature, orderData } = await signOrder(signer, account, orderInput, chainId, settlementAddr);
 
       setStatus("submitting");
-      const relayer = new RelayerClient(RELAYER_URL);
+      if (!activeRelayer) throw new Error("No online relayer selected");
+      const relayer = new RelayerClient(activeRelayer.url);
       await relayer.submitOrder(orderData, signature, feeMode === "both" ? "cover_taker" : undefined);
 
       setClaimLinks(links);
@@ -660,10 +665,30 @@ export default function OrderPage() {
             )}
           </div>
 
+          {/* Relayer selector */}
+          <div className="bg-surface rounded-lg p-3 border border-outline-variant/10">
+            <label className="text-[10px] text-on-surface-variant/50 uppercase tracking-wider block mb-1.5">Relayer</label>
+            {onlineRelayers.length === 0 ? (
+              <div className="text-xs text-error">No online relayers available</div>
+            ) : (
+              <select
+                value={selectedRelayerIdx}
+                onChange={(e) => setSelectedRelayerIdx(Number(e.target.value))}
+                className="w-full bg-surface-container border border-outline-variant/20 rounded-md px-3 py-2 text-xs font-mono text-on-surface"
+              >
+                {onlineRelayers.map((r, i) => (
+                  <option key={r.address} value={i}>
+                    {r.address.slice(0, 10)}... — Fee {(r.fee / 100).toFixed(2)}% — {r.api?.orderCount ?? 0} orders
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           {/* Submit */}
           <button
             onClick={handleSubmit}
-            disabled={status === "signing" || status === "submitting" || !amount || !price || (claimTotal > 0 && distributable > 0 && claimTotal > distributable)}
+            disabled={status === "signing" || status === "submitting" || !amount || !price || !activeRelayer || (claimTotal > 0 && distributable > 0 && claimTotal > distributable)}
             className="w-full gradient-btn py-4 rounded-md text-on-primary-fixed font-headline font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
           >
             {status === "signing" ? (
@@ -728,7 +753,7 @@ export default function OrderPage() {
             buyTokenAddress={buyToken?.address}
             sellDecimals={sellToken?.decimals}
             buyDecimals={buyToken?.decimals}
-            relayerUrl={RELAYER_URL}
+            relayerUrl={activeRelayer?.url ?? "http://localhost:3001"}
             side={side}
             onSelectPrice={setPrice}
           />
