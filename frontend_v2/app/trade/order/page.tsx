@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { ethers } from "ethers";
 import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, Save, FolderOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -10,7 +10,6 @@ import { signOrder, generateSecret, buildClaimLink } from "../../lib/signing";
 import type { OrderInput, ClaimInput } from "../../lib/signing";
 import { RelayerClient } from "../../lib/relayerApi";
 import { isMetaAddress, generateStealthAddress, buildStealthClaimLink } from "../../lib/stealth";
-import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
 import PricePanel from "../../components/PricePanel";
 
 type Side = "buy" | "sell";
@@ -71,13 +70,6 @@ export default function OrderPage() {
   // Which token the user receives
   const receiveToken = side === "sell" ? buyToken : sellToken;
 
-  // Fee is deducted from sellToken — get its ETH price for display
-  const feeToken = side === "sell" ? sellToken : buyToken;
-  const providerRef = signer?.provider ?? null;
-  const { ethPerToken: feeTokenEthPrice } = useTokenEthPrice(
-    feeToken?.address, feeToken?.decimals, chainId ?? undefined, providerRef,
-  );
-
   // Total value
   const totalValue = useMemo(() => {
     if (!amount || !price) return "";
@@ -112,37 +104,6 @@ export default function OrderPage() {
     const floored = Math.floor(rest * 10000) / 10000; // truncate to 4 decimals
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
-
-  // Gas estimation
-  const [gasPrice, setGasPrice] = useState<bigint | null>(null);
-  useEffect(() => {
-    if (!signer) return;
-    const fetchGas = async () => {
-      try {
-        const provider = signer.provider;
-        if (provider) {
-          const feeData = await provider.getFeeData();
-          setGasPrice(feeData.gasPrice ?? null);
-        }
-      } catch { /* ignore */ }
-    };
-    fetchGas();
-    const interval = setInterval(fetchGas, 30_000);
-    return () => clearInterval(interval);
-  }, [signer]);
-
-  // Gas constants from GasBenchmark.t.sol: settle(3+1)=286,815 gas
-  // Base ≈ 200k (EIP-712 hash×2, ECDSA.recover×2, fee split+transfer×2, nonce SSTORE×2, escrow SSTORE×2)
-  // Per claim ≈ 22k (schedule SSTORE + hash check)
-  const gasEstimate = useMemo(() => {
-    const BASE_GAS = BigInt(200_000);
-    const PER_CLAIM_GAS = BigInt(22_000);
-    const totalGas = BASE_GAS + PER_CLAIM_GAS * BigInt(claims.length);
-    if (!gasPrice) return { totalGas, ethCost: null };
-    const costWei = totalGas * gasPrice;
-    const ethCost = parseFloat(ethers.formatEther(costWei));
-    return { totalGas, ethCost };
-  }, [claims.length, gasPrice]);
 
   const addClaim = () => {
     setClaims([...claims, { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
@@ -621,32 +582,19 @@ export default function OrderPage() {
                     )}
                   </div>
                 )}
-                {amount && price && claimTotal > 0 && (() => {
-                  const orderTotal = parseFloat(amount) * parseFloat(price);
-                  const feeAmount = orderTotal * (parseInt(maxFee || "0") * (feeMode === "both" ? 2 : 1)) / 10000;
-                  const available = orderTotal - feeAmount;
-                  if (claimTotal > available) {
-                    return (
-                      <div className="text-[10px] text-error font-bold">
-                        Claims ({claimTotal}) exceed available after fee ({available.toFixed(4)} = {orderTotal} - {feeAmount.toFixed(4)} fee)
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
+                {distributable > 0 && claimTotal > distributable && (
+                  <div className="text-[10px] text-error font-bold">
+                    Claims ({claimTotal.toFixed(4)}) exceed distributable ({distributable.toFixed(4)} {receiveToken.symbol})
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           {/* Submit */}
-          {(() => {
-            const orderTotal = (parseFloat(amount) || 0) * (parseFloat(price) || 0);
-            const feeAmount = orderTotal * ((parseInt(maxFee) || 0) * (feeMode === "both" ? 2 : 1)) / 10000;
-            const claimsExceed = claimTotal > 0 && claimTotal > orderTotal - feeAmount;
-            return (
           <button
             onClick={handleSubmit}
-            disabled={status === "signing" || status === "submitting" || !amount || !price || claimsExceed}
+            disabled={status === "signing" || status === "submitting" || !amount || !price || (claimTotal > 0 && distributable > 0 && claimTotal > distributable)}
             className="w-full gradient-btn py-4 rounded-md text-on-primary-fixed font-headline font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
           >
             {status === "signing" ? (
@@ -657,8 +605,6 @@ export default function OrderPage() {
               <><Lock className="w-4 h-4" /> Sign & Submit to Relayer</>
             )}
           </button>
-            );
-          })()}
           <div className="flex gap-2">
             <button onClick={saveDraft} className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 rounded-md transition-colors">
               {draftSaved ? <><Check className="w-3.5 h-3.5" /> Saved</> : <><Save className="w-3.5 h-3.5" /> Save Draft</>}
