@@ -148,7 +148,7 @@ async function advanceTime(provider: ethers.JsonRpcProvider, seconds: number) {
 async function depositWETH(wallet: ethers.Wallet, amount: bigint) {
   const weth = new ethers.Contract(WETH, WETH_ABI, wallet);
   const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
-  let nonce = await wallet.getNonce();
+  let nonce = await wallet.getNonce("latest");
   await (await weth.deposit({ value: amount, nonce: nonce++ })).wait();
   await (await weth.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
   await (await stl.deposit(WETH, amount, { nonce })).wait();
@@ -159,9 +159,9 @@ async function mintAndDepositUSDC(wallet: ethers.Wallet, amount: bigint, deploye
   const usdcWallet = new ethers.Contract(USDC, ERC20_ABI, wallet);
   const stl = new ethers.Contract(SETTLEMENT_ADDRESS, SETTLEMENT_ABI, wallet);
   // Deployer mint uses deployer's nonce
-  await (await usdcDeployer.mint(wallet.address, amount, { nonce: await deployerWallet.getNonce() })).wait();
+  await (await usdcDeployer.mint(wallet.address, amount, { nonce: await deployerWallet.getNonce("latest") })).wait();
   // Wallet approve + deposit
-  let nonce = await wallet.getNonce();
+  let nonce = await wallet.getNonce("latest");
   await (await usdcWallet.approve(SETTLEMENT_ADDRESS, amount, { nonce: nonce++ })).wait();
   await (await stl.deposit(USDC, amount, { nonce })).wait();
 }
