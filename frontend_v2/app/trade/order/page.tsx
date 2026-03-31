@@ -32,7 +32,8 @@ interface ClaimRow {
   mode: RecipientMode;
   address: string;      // standard address or meta-address
   amount: string;       // claim amount
-  delay: string;        // seconds
+  delay: string;        // numeric value
+  delayUnit: "min" | "hr" | "day";
 }
 
 let nextClaimId = 1;
@@ -55,7 +56,7 @@ export default function OrderPage() {
 
   // Claims (multiple recipients)
   const [claims, setClaims] = useState<ClaimRow[]>([
-    { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "3600" },
+    { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
 
   // Submission
@@ -90,13 +91,19 @@ export default function OrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
-  // Distributable amount (receive amount - fee)
+  // Distributable amount — net sell converted at order price
   const distributable = useMemo(() => {
     if (!amount || !price) return 0;
-    const receiveAmt = parseFloat(amount) * parseFloat(price);
+    const amt = parseFloat(amount);
+    const p = parseFloat(price);
+    const total = amt * p;
     const effectiveBps = (parseInt(maxFee) || 0) * (feeMode === "both" ? 2 : 1);
-    return receiveAmt - (receiveAmt * effectiveBps / 10000);
-  }, [amount, price, maxFee, feeMode]);
+    // Fee is on sellAmount (Buy: USDC, Sell: WETH)
+    const sellAmt = side === "buy" ? total : amt;
+    const netSell = sellAmt - (sellAmt * effectiveBps / 10000);
+    // Convert net sell to receive token: Buy → WETH, Sell → USDC
+    return side === "buy" ? netSell / p : netSell * p;
+  }, [amount, price, maxFee, feeMode, side]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
   const fillRest = (id: number) => {
@@ -138,7 +145,7 @@ export default function OrderPage() {
   }, [claims.length, gasPrice]);
 
   const addClaim = () => {
-    setClaims([...claims, { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "3600" }]);
+    setClaims([...claims, { id: nextClaimId++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
   };
 
   const removeClaim = (id: number) => {
@@ -204,7 +211,7 @@ export default function OrderPage() {
         return {
           recipient,
           amount: claimAmount,
-          releaseDelay: parseInt(c.delay) || 3600,
+          releaseDelay: (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60),
           secret,
         };
       });
@@ -295,10 +302,12 @@ export default function OrderPage() {
             </div>
           </div>
 
-          {/* Amount + Price + Mini Orderbook */}
+          {/* Amount + Price */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Amount</label>
+              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                {side === "buy" ? `Buy Amount (${sellToken?.symbol})` : `Sell Amount (${sellToken?.symbol})`}
+              </label>
               <input
                 type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
@@ -306,7 +315,9 @@ export default function OrderPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Price</label>
+              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                Price ({buyToken?.symbol} per {sellToken?.symbol})
+              </label>
               <input
                 type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)}
                 placeholder="0.00"
@@ -314,7 +325,9 @@ export default function OrderPage() {
               />
               {totalValue && (
                 <div className="text-[10px] text-on-surface-variant">
-                  Total: {totalValue} {side === "sell" ? buyToken?.symbol : sellToken?.symbol}
+                  {side === "buy"
+                    ? `You pay: ${totalValue} ${buyToken?.symbol}`
+                    : `You receive: ${totalValue} ${buyToken?.symbol}`}
                 </div>
               )}
             </div>
@@ -407,73 +420,43 @@ export default function OrderPage() {
             </div>
           </div>
 
-          {/* Fee Breakdown */}
-          {amount && maxFee && (() => {
+          {/* Order Summary + Fee — combined */}
+          {amount && price && maxFee && (() => {
+            const total = parseFloat(amount) * parseFloat(price);
+            const amt = parseFloat(amount);
             const baseBps = parseInt(maxFee) || 0;
             const isBoth = feeMode === "both";
-            // Cover both sides → your effective rate doubles (your share + taker's share)
-            const effectiveBps = isBoth ? baseBps * 2 : baseBps;
-            // Fee is on sellAmount: buy mode → amount×price (USDC), sell mode → amount (WETH)
-            const sellAmt = side === "buy"
-              ? parseFloat(amount) * parseFloat(price || "0")
-              : parseFloat(amount);
+            const effectiveBps = baseBps * (isBoth ? 2 : 1);
+
+            const sellAmt = side === "buy" ? total : amt;
+            const sellSym = side === "buy" ? buyToken?.symbol : sellToken?.symbol;
             const feeAmt = sellAmt * effectiveBps / 10000;
-            const basePct = (baseBps / 100).toFixed(2);
-            const effectivePct = (effectiveBps / 100).toFixed(2);
-            const feeInEth = feeTokenEthPrice !== null ? feeAmt * feeTokenEthPrice : null;
-            const isEthToken = feeToken?.symbol === "ETH" || feeToken?.symbol === "WETH";
-            const relayerNet = feeInEth !== null && gasEstimate.ethCost !== null
-              ? feeInEth - gasEstimate.ethCost : null;
+            const netSell = sellAmt - feeAmt;
+            const recvAmt = side === "buy" ? netSell / parseFloat(price) : netSell * parseFloat(price);
+            const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
+
             return (
-              <div className="bg-surface-container-low/50 rounded-lg px-4 py-3 space-y-2.5">
-                {/* Total */}
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-on-surface">Your Fee</span>
-                  <div className="text-right">
-                    <div className="text-base font-bold font-mono text-primary">
-                      {feeAmt.toFixed(4)} {feeToken?.symbol}
-                    </div>
-                    {!isEthToken && feeInEth !== null && (
-                      <div className="text-[10px] font-mono text-on-surface-variant">
-                        ≈ {feeInEth.toFixed(6)} ETH
-                      </div>
-                    )}
-                  </div>
+              <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">From escrow</span>
+                  <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
-
-                {/* Fee distribution */}
-                <div className="space-y-1.5 text-[11px]">
-                  {isBoth ? (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-on-surface-variant">Your rate</span>
-                        <span className="font-mono text-on-surface">{effectivePct}% <span className="text-on-surface-variant">({basePct}% × 2)</span></span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-on-surface-variant">Taker rate</span>
-                        <span className="font-mono text-tertiary">0% — included in your fee</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-on-surface-variant">Your rate</span>
-                        <span className="font-mono text-on-surface">{basePct}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-on-surface-variant">Taker rate</span>
-                        <span className="font-mono text-on-surface">{basePct}% (taker pays own)</span>
-                      </div>
-                    </>
-                  )}
-
+                <div className="flex justify-between text-error/80">
+                  <span>Fee ({(effectiveBps / 100).toFixed(2)}%{isBoth ? `, ${(baseBps / 100).toFixed(2)}%×2` : ""})</span>
+                  <span className="font-mono">−{feeAmt.toFixed(4)} {sellSym}</span>
                 </div>
-
-                <p className="text-[9px] text-on-surface-variant/50">
-                  {isBoth
-                    ? "You pay the full relay fee. Taker is not charged. Higher fee = faster pickup."
-                    : "Fee is deducted from both sides of the trade. Higher fee = faster relay pickup."}
-                </p>
+                <div className="flex justify-between border-t border-outline-variant/10 pt-1">
+                  <span className="text-on-surface-variant">Net to trade</span>
+                  <span className="font-mono text-on-surface">{netSell.toFixed(4)} {sellSym}</span>
+                </div>
+                <div className="flex justify-between font-bold text-tertiary pt-0.5">
+                  <span>You receive</span>
+                  <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
+                </div>
+                <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
+                  <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
+                  <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
+                </div>
               </div>
             );
           })()}
@@ -484,6 +467,11 @@ export default function OrderPage() {
               <h3 className="font-headline font-bold text-sm flex items-center gap-2">
                 <Shield className="w-4 h-4 text-primary" />
                 Recipients (Scatter)
+                {receiveToken && (
+                  <span className="text-[10px] font-normal text-on-surface-variant bg-surface-container-low px-1.5 py-0.5 rounded">
+                    receives {receiveToken.symbol}
+                  </span>
+                )}
               </h3>
               <button onClick={addClaim} className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold">
                 <Plus className="w-3.5 h-3.5" /> Add
@@ -546,15 +534,23 @@ export default function OrderPage() {
                       </div>
                     </div>
                     <div className="col-span-3">
-                      <div className="flex items-center gap-1 bg-surface-container-low border border-outline-variant/20 rounded-md p-2" title="Release delay — time after settlement before recipient can claim (seconds)">
+                      <div className="flex items-center gap-1 bg-surface-container-low border border-outline-variant/20 rounded-md p-2" title="Release delay — time after settlement before recipient can claim">
                         <Clock className="w-3 h-3 text-on-surface-variant flex-shrink-0" />
                         <input
                           type="number" value={c.delay}
                           onChange={(e) => updateClaim(c.id, "delay", e.target.value)}
-                          className="w-full bg-transparent border-none p-0 text-xs font-mono focus:ring-0 text-on-surface"
-                          placeholder="3600"
+                          className="w-12 bg-transparent border-none p-0 text-xs font-mono focus:ring-0 text-on-surface"
+                          min="1"
                         />
-                        <span className="text-[9px] text-on-surface-variant flex-shrink-0">sec</span>
+                        <select
+                          value={c.delayUnit}
+                          onChange={(e) => updateClaim(c.id, "delayUnit", e.target.value)}
+                          className="bg-transparent border-none p-0 text-[10px] font-mono focus:ring-0 text-on-surface-variant"
+                        >
+                          <option value="min">min</option>
+                          <option value="hr">hr</option>
+                          <option value="day">day</option>
+                        </select>
                       </div>
                     </div>
                   </div>
