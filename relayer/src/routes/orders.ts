@@ -56,11 +56,14 @@ export function createOrderRoutes(
       // Try to find a match
       const match = matcher.findMatch(stored);
       if (match) {
-        // Immediately mark as matched to prevent race condition (C3)
+        // Immediately mark as matched and persist to DB to prevent
+        // duplicate settlement attempts if the process crashes mid-settle
         match.maker.status = "matched";
         match.taker.status = "matched";
         orderbook.remove(match.maker.order);
         orderbook.remove(match.taker.order);
+        orderbook.persistStatus(match.maker.order.maker, match.maker.order.nonce, "matched");
+        orderbook.persistStatus(match.taker.order.maker, match.taker.order.nonce, "matched");
 
         try {
           const txHash = await submitter.submitSettle(match);

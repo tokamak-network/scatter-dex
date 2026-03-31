@@ -4,18 +4,46 @@ import { StoredOrder, Order, ClaimInfo, OrderStatus } from "../types/order.js";
 
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "relayer.db");
 
+interface OrderRow {
+  maker: string;
+  nonce: string;
+  sell_token: string;
+  buy_token: string;
+  sell_amount: string;
+  buy_amount: string;
+  max_fee: string;
+  expiry: string;
+  signature: string;
+  status: string;
+  fee_mode: string | null;
+  settle_tx: string | null;
+  submitted_at: number;
+}
+
+interface ClaimRow {
+  maker: string;
+  nonce: string;
+  idx: number;
+  claim_hash: string;
+  amount: string;
+  release_delay: string;
+}
+
 export class OrderDB {
   private db: Database.Database;
-  private insertOrder!: ReturnType<Database.Database["prepare"]>;
-  private insertClaim!: ReturnType<Database.Database["prepare"]>;
-  private deleteClaims!: ReturnType<Database.Database["prepare"]>;
-  private updateStatusStmt!: ReturnType<Database.Database["prepare"]>;
+  private insertOrder: ReturnType<Database.Database["prepare"]>;
+  private insertClaim: ReturnType<Database.Database["prepare"]>;
+  private deleteClaims: ReturnType<Database.Database["prepare"]>;
+  private updateStatusStmt: ReturnType<Database.Database["prepare"]>;
+  private selectPending: ReturnType<Database.Database["prepare"]>;
+  private selectClaims: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.migrate();
+
     this.insertOrder = this.db.prepare(`
       INSERT OR REPLACE INTO orders
         (maker, nonce, sell_token, buy_token, sell_amount, buy_amount, max_fee, expiry, signature, status, fee_mode, settle_tx, submitted_at)
@@ -30,6 +58,12 @@ export class OrderDB {
     this.updateStatusStmt = this.db.prepare(`
       UPDATE orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx)
       WHERE maker = @maker AND nonce = @nonce
+    `);
+    this.selectPending = this.db.prepare(`
+      SELECT * FROM orders WHERE status = 'pending' ORDER BY submitted_at ASC
+    `);
+    this.selectClaims = this.db.prepare(`
+      SELECT * FROM claims WHERE maker = @maker AND nonce = @nonce ORDER BY idx
     `);
   }
 
@@ -63,7 +97,7 @@ export class OrderDB {
         FOREIGN KEY (maker, nonce) REFERENCES orders(maker, nonce) ON DELETE CASCADE
       );
 
-      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, submitted_at);
       CREATE INDEX IF NOT EXISTS idx_orders_pair ON orders(sell_token, buy_token);
     `);
   }
@@ -116,19 +150,14 @@ export class OrderDB {
   }
 
   loadPending(): StoredOrder[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM orders WHERE status = 'pending'
-    `).all() as any[];
-
+    const rows = this.selectPending.all() as OrderRow[];
     return rows.map((row) => this.rowToStoredOrder(row));
   }
 
-  private rowToStoredOrder(row: any): StoredOrder {
-    const claimRows = this.db.prepare(`
-      SELECT * FROM claims WHERE maker = @maker AND nonce = @nonce ORDER BY idx
-    `).all({ maker: row.maker, nonce: row.nonce }) as any[];
+  private rowToStoredOrder(row: OrderRow): StoredOrder {
+    const claimRows = this.selectClaims.all({ maker: row.maker, nonce: row.nonce }) as ClaimRow[];
 
-    const claims: ClaimInfo[] = claimRows.map((c: any) => ({
+    const claims: ClaimInfo[] = claimRows.map((c) => ({
       claimHash: c.claim_hash,
       amount: BigInt(c.amount),
       releaseDelay: BigInt(c.release_delay),
@@ -151,7 +180,7 @@ export class OrderDB {
       signature: row.signature,
       status: row.status as OrderStatus,
       submittedAt: row.submitted_at,
-      feeMode: row.fee_mode ?? undefined,
+      feeMode: row.fee_mode as "cover_taker" | undefined ?? undefined,
       settleTxHash: row.settle_tx ?? undefined,
     };
   }

@@ -42,7 +42,15 @@ export class Orderbook {
       feeMode,
     };
     this.addInternal(stored);
-    this.db?.save(stored);
+    if (this.db) {
+      try {
+        this.db.save(stored);
+      } catch (err) {
+        // Rollback in-memory state to keep DB and memory in sync
+        this.remove(stored.order);
+        throw err;
+      }
+    }
     return stored;
   }
 

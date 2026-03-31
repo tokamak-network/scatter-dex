@@ -26,7 +26,7 @@ async function main() {
     console.log(`Restored ${restored} pending orders from DB`);
   }
   const matcher = new Matcher(orderbook);
-  const submitter = new Submitter();
+  const submitter = new Submitter(provider);
 
   const app = express();
 
@@ -72,12 +72,16 @@ async function main() {
     console.log(`Fee: ${config.relayerFee} bps`);
   });
 
-  // Graceful shutdown
+  // Graceful shutdown — wait for server to close before exiting
+  let isShuttingDown = false;
   const shutdown = () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     console.log("Shutting down...");
-    server.close();
-    db.close();
-    process.exit(0);
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

@@ -156,7 +156,11 @@ async function advanceTime(provider: ethers.JsonRpcProvider, seconds: number) {
   await provider.send("evm_mine", []);
 }
 
-/** Get fresh nonce via direct RPC — bypasses ethers v6 caching */
+/**
+ * Get fresh nonce via direct RPC — bypasses ethers v6 caching.
+ * Uses "latest" because Anvil's "pending" returns stale values in auto-mine mode.
+ * Sequential await-based test flow ensures no concurrent TX conflicts.
+ */
 async function rpcNonce(address: string): Promise<number> {
   const res = await fetch(RPC_URL, {
     method: "POST",
@@ -568,8 +572,10 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
       const book = await getOrderbook(WETH, USDC);
       const sells = book.sells;
       expect(sells.length).toBeGreaterThanOrEqual(2);
-      // Sell side sorted by cross-multiplication: lower sell/buy ratio first.
-      // Charlie (2/4400=0.000454) has lower ratio than Alice (2/4200=0.000476), so Charlie is first.
+      // Sell side sorted by sell/buy ratio ascending (cross-multiplication).
+      // Charlie: 2 WETH for 4400 USDC (ratio 2/4400 ≈ 0.000454) — lower ratio = first
+      // Alice:   2 WETH for 4200 USDC (ratio 2/4200 ≈ 0.000476) — higher ratio = second
+      // Note: lower ratio means seller demands MORE per unit sold (higher USDC/WETH price).
       expect(sells[0].maker.toLowerCase()).toBe(addr.charlie.toLowerCase());
     });
 

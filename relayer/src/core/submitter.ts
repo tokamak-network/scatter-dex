@@ -12,8 +12,8 @@ export class Submitter {
   private wallet: ethers.Wallet;
   private contract: ethers.Contract;
 
-  constructor() {
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  constructor(provider?: ethers.JsonRpcProvider) {
+    this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.contract = new ethers.Contract(
       config.settlementAddress,
