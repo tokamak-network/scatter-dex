@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ethers } from "ethers";
-import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2 } from "lucide-react";
+import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, Save, FolderOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getSettlementAddress, getEnv } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -155,6 +155,50 @@ export default function OrderPage() {
 
   const updateClaim = (id: number, field: keyof ClaimRow, value: string) => {
     setClaims(claims.map((c) => c.id === id ? { ...c, [field]: value } : c));
+  };
+
+  // Draft save (JSON file download) / load (file upload)
+  const [draftSaved, setDraftSaved] = useState(false);
+  const saveDraft = () => {
+    const draft = { side, sellTokenIdx, buyTokenIdx, amount, price, expiry, maxFee, feeMode, claims };
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `order-draft-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 2000);
+  };
+  const loadDraft = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const d = JSON.parse(reader.result as string);
+          if (d.side) setSide(d.side);
+          if (d.sellTokenIdx !== undefined) setSellTokenIdx(d.sellTokenIdx);
+          if (d.buyTokenIdx !== undefined) setBuyTokenIdx(d.buyTokenIdx);
+          if (d.amount) setAmount(d.amount);
+          if (d.price) setPrice(d.price);
+          if (d.expiry) setExpiry(d.expiry);
+          if (d.maxFee) setMaxFee(d.maxFee);
+          if (d.feeMode) setFeeMode(d.feeMode);
+          if (d.claims?.length) {
+            nextClaimId = Math.max(...d.claims.map((c: ClaimRow) => c.id)) + 1;
+            setClaims(d.claims);
+          }
+        } catch { /* ignore corrupt file */ }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
   };
 
   const handleSubmit = async () => {
@@ -442,7 +486,7 @@ export default function OrderPage() {
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
                 <div className="flex justify-between text-error/80">
-                  <span>Fee ({(effectiveBps / 100).toFixed(2)}%{isBoth ? `, ${(baseBps / 100).toFixed(2)}%×2` : ""})</span>
+                  <span>Fee ({(effectiveBps / 100).toFixed(2)}%{isBoth ? ` — maker ${(baseBps / 100).toFixed(2)}% + taker ${(baseBps / 100).toFixed(2)}%` : ""})</span>
                   <span className="font-mono">−{feeAmt.toFixed(4)} {sellSym}</span>
                 </div>
                 <div className="flex justify-between border-t border-outline-variant/10 pt-1">
@@ -552,6 +596,9 @@ export default function OrderPage() {
                           <option value="day">day</option>
                         </select>
                       </div>
+                      <p className="text-[9px] text-on-surface-variant mt-0.5">
+                        Claimable {c.delay || "?"} {c.delayUnit === "day" ? (c.delay === "1" ? "day" : "days") : c.delayUnit === "hr" ? (c.delay === "1" ? "hour" : "hours") : (c.delay === "1" ? "minute" : "minutes")} after settlement
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -612,6 +659,14 @@ export default function OrderPage() {
           </button>
             );
           })()}
+          <div className="flex gap-2">
+            <button onClick={saveDraft} className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 rounded-md transition-colors">
+              {draftSaved ? <><Check className="w-3.5 h-3.5" /> Saved</> : <><Save className="w-3.5 h-3.5" /> Save Draft</>}
+            </button>
+            <button onClick={loadDraft} className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-bold text-on-surface-variant bg-surface-container-low hover:bg-surface-container rounded-md transition-colors">
+              <FolderOpen className="w-3.5 h-3.5" /> Load Draft
+            </button>
+          </div>
           <p className="text-center text-[10px] text-on-surface-variant">
             EIP-712 signature — no gas required. Relayer executes the trade.
           </p>
