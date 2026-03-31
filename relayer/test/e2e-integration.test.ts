@@ -75,6 +75,17 @@ function makeClaimHash(secret: string, recipient: string): string {
   return ethers.keccak256(ethers.solidityPacked(["bytes32", "address"], [secret, recipient]));
 }
 
+/** Get current chain timestamp (may differ from wall clock after evm_increaseTime) */
+async function chainTime(): Promise<number> {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "eth_getBlockByNumber", params: ["latest", false], id: 1 }),
+  });
+  const { result } = await res.json();
+  return parseInt(result.timestamp, 16);
+}
+
 function buildOrder(opts: {
   maker: string;
   sellToken: string;
@@ -93,7 +104,7 @@ function buildOrder(opts: {
     sellAmount: opts.sellAmount,
     buyAmount: opts.buyAmount,
     maxFee: opts.maxFee ?? "100",
-    expiry: opts.expiry ?? (Math.floor(Date.now() / 1000) + 86400).toString(),
+    expiry: opts.expiry ?? "9999999999", // Far future — safe even after evm_increaseTime
     nonce: opts.nonce,
     claims: opts.claims,
   };
@@ -295,14 +306,20 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Claim with wrong secret reverts", async () => {
+      // Advance well past release delay (3600s). Extra margin for block-level timestamp gaps.
       await advanceTime(provider, 7200);
+      await advanceTime(provider, 3600);
       const wrongSecret = ethers.keccak256(ethers.toUtf8Bytes("wrong-secret"));
       const settlementCharlie = settlement.connect(charlie);
       await expect(settlementCharlie.claimRelease(wrongSecret)).rejects.toThrow();
     });
 
     it("Claim with correct secret succeeds after release delay", async () => {
-      // Mine an extra block to ensure timestamp is fully applied
+      // Explicitly set next block timestamp well past release time
+      const claimHash = makeClaimHash(g1AliceSecret, g1AliceRecipient);
+      const schedule = await settlement.schedules(claimHash);
+      const releaseTime = Number(schedule[1]);
+      await provider.send("evm_setNextBlockTimestamp", [releaseTime + 100]);
       await provider.send("evm_mine", []);
 
       const settlementCharlie = settlement.connect(charlie);
@@ -367,15 +384,17 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
 
       // Sign gasless claim
       const tip = ethers.parseUnits("1", 18); // 1 USDC tip
-      const deadline = Math.floor(Date.now() / 1000) + 7200;
+      const deadline = await chainTime() + 7200;
       const gaslessNonce = await settlement.gaslessNonces(recipient);
       const domain = { ...EIP712_DOMAIN, chainId, verifyingContract: SETTLEMENT_ADDRESS };
+      // Use alice as the gasless claim relayer (anyone can call claimReleaseFor)
       const recipientSig = await charlie.signTypedData(domain, GASLESS_CLAIM_TYPES, {
-        secret, recipient, relayer: addr.deployer, relayerTip: tip, deadline, nonce: gaslessNonce,
+        secret, recipient, relayer: addr.alice, relayerTip: tip, deadline, nonce: gaslessNonce,
       });
 
-      const settlementDeployer = settlement.connect(deployer);
-      const tx = await settlementDeployer.claimReleaseFor(secret, recipient, tip, deadline, recipientSig);
+      const settlementAliceRelay = settlement.connect(alice);
+      const nonce = await rpcNonce(addr.alice);
+      const tx = await settlementAliceRelay.claimReleaseFor(secret, recipient, tip, deadline, recipientSig, { nonce });
       const receipt = await tx.wait();
       expect(receipt.status).toBe(1);
     });
