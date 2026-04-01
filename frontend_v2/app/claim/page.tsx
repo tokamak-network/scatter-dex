@@ -249,7 +249,7 @@ function ClaimPageInner() {
 
         const settlement = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, claimSigner);
         const tx = claimAsETH && preview?.isWeth
-          ? await settlement.claimReleaseAsETH(secretBytes)
+          ? await settlement.claimReleaseAsEth(secretBytes)
           : await settlement.claimRelease(secretBytes);
         await tx.wait();
 
