@@ -255,7 +255,7 @@ function ClaimPageInner() {
         const result = await res.json();
         setClaimTxHash(result.txHash || "submitted");
         setClaimStatus("success");
-        if (preview) setPreview({ ...preview, claimed: true });
+        setPreview(p => p ? { ...p, claimed: true } : p);
       } else {
         // ─── Standard / Stealth direct claim ───
         if (!signer) throw new Error("Connect wallet to claim");
@@ -272,7 +272,7 @@ function ClaimPageInner() {
 
         setClaimTxHash(tx.hash);
         setClaimStatus("success");
-        if (preview) setPreview({ ...preview, claimed: true });
+        setPreview(p => p ? { ...p, claimed: true } : p);
       }
     } catch (e) {
       setClaimStatus("error");
@@ -466,9 +466,11 @@ function ClaimPageInner() {
                   <code className="text-xs text-primary font-mono truncate flex-1">{stealthInfo.address}</code>
                   <button
                     onClick={async () => {
-                      await navigator.clipboard.writeText(stealthInfo.address);
-                      setAddrCopied(true);
-                      setTimeout(() => setAddrCopied(false), 2000);
+                      try {
+                        await navigator.clipboard.writeText(stealthInfo.address);
+                        setAddrCopied(true);
+                        setTimeout(() => setAddrCopied(false), 2000);
+                      } catch { /* clipboard unavailable */ }
                     }}
                     className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
                   >
@@ -488,9 +490,11 @@ function ClaimPageInner() {
                     </code>
                     <button
                       onClick={async () => {
-                        await navigator.clipboard.writeText(stealthInfo.privKey);
-                        setPrivKeyCopied(true);
-                        setTimeout(() => setPrivKeyCopied(false), 2000);
+                        try {
+                          await navigator.clipboard.writeText(stealthInfo.privKey);
+                          setPrivKeyCopied(true);
+                          setTimeout(() => setPrivKeyCopied(false), 2000);
+                        } catch { /* clipboard unavailable */ }
                       }}
                       className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
                     >

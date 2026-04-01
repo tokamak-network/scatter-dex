@@ -101,9 +101,9 @@ export default function OrderPage() {
     const buyAmt = side === "buy" ? amt : amt * p;
     const baseBps = parseInt(maxFee) || 0;
     if (isSameToken) {
-      // Same-token: fee is deducted from sellAmount, remainder is distributable
-      const feeBps = feeMode === "both" ? baseBps * 2 : baseBps;
-      return amt * (1 - feeBps / 10000);
+      // Same-token (scheduled transfer): no taker exists, so "cover both" has
+      // no counterparty fee to absorb — just apply the single baseBps fee.
+      return amt * (1 - baseBps / 10000);
     }
     if (feeMode === "both") {
       // You cover both: fee is 2×baseBps on your sell side only.
@@ -501,8 +501,10 @@ export default function OrderPage() {
             const baseBps = parseInt(maxFee) || 0;
             const isBoth = feeMode === "both";
 
-            // makerFee (on your sell) — affects what counterparty receives
-            const makerFeeBps = isBoth ? baseBps * 2 : baseBps;
+            // makerFee (on your sell) — affects what counterparty receives.
+            // For same-token (scheduled transfer), no taker exists so "cover both" is
+            // equivalent to single baseBps — do not double.
+            const makerFeeBps = (isBoth && !isSameToken) ? baseBps * 2 : baseBps;
             // takerFee (on counterparty's sell) — affects what you receive
             const takerFeeBps = isBoth ? 0 : baseBps;
 
