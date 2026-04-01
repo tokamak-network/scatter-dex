@@ -8,6 +8,8 @@ const ORDER_TUPLE = "tuple(address maker, address sellToken, address buyToken, u
 const SETTLEMENT_ABI = [
   `function settle(bytes makerSig, bytes takerSig, ${ORDER_TUPLE} makerOrder, ${ORDER_TUPLE} takerOrder, uint256 makerFee, uint256 takerFee) external`,
   `function settleScheduledTransfer(bytes sig, ${ORDER_TUPLE} order, uint256 fee) external`,
+  "function claimReleaseFor(bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline, bytes recipientSig) external",
+  "function claimReleaseForAsEth(bytes32 secret, address recipient, uint256 relayerTip, uint256 deadline, bytes recipientSig) external",
 ];
 
 export class Submitter {
@@ -97,6 +99,29 @@ export class Submitter {
       { nonce }
     );
 
+    const receipt = await tx.wait();
+    return receipt.hash;
+  }
+
+  async submitGaslessClaim(params: {
+    secret: string;
+    recipient: string;
+    relayerTip: string;
+    deadline: number;
+    signature: string;
+    asEth?: boolean;
+  }): Promise<string> {
+    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
+    const nonce = parseInt(hexNonce, 16);
+    const method = params.asEth ? "claimReleaseForAsEth" : "claimReleaseFor";
+    const tx = await this.contract[method](
+      params.secret,
+      params.recipient,
+      params.relayerTip,
+      params.deadline,
+      params.signature,
+      { nonce }
+    );
     const receipt = await tx.wait();
     return receipt.hash;
   }

@@ -9,6 +9,7 @@ import { OrderDB } from "./core/db.js";
 import { createOrderRoutes } from "./routes/orders.js";
 import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
+import { createClaimRoutes } from "./routes/claim.js";
 import { ethers } from "ethers";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
@@ -55,6 +56,7 @@ async function main() {
   app.use("/api/orders", createOrderRoutes(orderbook, matcher, submitter, chainId, orderLimiter, readLimiter));
   app.use("/api/orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
+  app.use("/api/claim-gasless", createClaimRoutes(submitter, orderLimiter));
 
   // Periodic expired order cleanup
   setInterval(() => {
