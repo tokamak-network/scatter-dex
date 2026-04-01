@@ -391,7 +391,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
     /// @notice Claim WETH and receive as native ETH.
     /// @dev Only works when the scheduled token is WETH. Unwraps and sends ETH to msg.sender.
-    function claimReleaseAsETH(bytes32 secret) external nonReentrant {
+    function claimReleaseAsEth(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
         bytes32 claimHash;
         assembly { mstore(0x00, secret) mstore(0x20, shl(96, caller())) claimHash := keccak256(0x00, 0x34) }
@@ -406,7 +406,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Gasless claim as ETH — a relayer calls on behalf of the recipient, unwrapping WETH.
-    function claimReleaseForAsETH(
+    function claimReleaseForAsEth(
         bytes32 secret,
         address recipient,
         uint256 relayerTip,
