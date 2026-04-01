@@ -53,6 +53,10 @@ contract GasBenchmarkTest is Test {
 
         registry.setVerified(maker, true);
         registry.setVerified(taker, true);
+        registry.setVerified(recipientC, true);
+        registry.setVerified(recipientD, true);
+        registry.setVerified(recipientE, true);
+        registry.setVerified(recipientF, true);
 
         relayerRegistry.register{value: 0.1 ether}("http://localhost", 30);
 

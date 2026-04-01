@@ -154,7 +154,7 @@ contract IdentityGateTest is Test {
         settlement.deposit(address(token), 5e18);
     }
 
-    function test_withdraw_still_works_after_expiry() public {
+    function test_withdraw_reverts_after_expiry() public {
         // Deposit while verified
         vm.prank(user2);
         settlement.deposit(address(token), 10e18);
@@ -163,10 +163,10 @@ contract IdentityGateTest is Test {
         vm.warp(block.timestamp + 2 hours);
         assertFalse(gate.isVerified(user2));
 
-        // Withdraw should still work (no identity check on withdraw)
+        // Withdraw now requires identity — should revert after expiry
         vm.prank(user2);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
         settlement.withdraw(address(token), 10e18);
-        assertEq(token.balanceOf(user2), 100e18);
     }
 
     function test_reverify_allows_deposit_again() public {
@@ -198,6 +198,7 @@ contract IdentityGateTest is Test {
         uint256 u2Key;
         MockToken tA;
         MockToken tB;
+        RealisticIdentityRegistry reg;
     }
 
     function test_e2e_expiry_during_trade_lifecycle() public {
@@ -214,6 +215,10 @@ contract IdentityGateTest is Test {
         bytes32 sec2 = keccak256("s2");
         address recv1 = address(0xAAA);
         address recv2 = address(0xBBB);
+
+        // Recipients need identity verification for claimRelease
+        env.reg.setVerifiedUntil(recv1, type(uint64).max);
+        env.reg.setVerifiedUntil(recv2, type(uint64).max);
 
         (ScatterSettlement.Order memory o1, ScatterSettlement.Order memory o2) =
             _buildOrders(env, sec1, recv1, sec2, recv2, 3 hours);
@@ -267,14 +272,15 @@ contract IdentityGateTest is Test {
         // Nobody claims, wait for refund window
         vm.warp(block.timestamp + 7 days);
 
-        // u2 can still refund + withdraw (no identity check)
+        // u2 can still refund (no identity check on refundUnclaimed)
         vm.prank(env.u2);
         env.s.refundUnclaimed(keccak256(abi.encodePacked(keccak256("sec2"), address(0xDDD))));
         assertEq(env.s.deposits(env.u2, address(env.tA)), 10e18);
 
+        // But withdraw now requires identity — should revert after expiry
         vm.prank(env.u2);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
         env.s.withdraw(address(env.tA), 10e18);
-        assertEq(env.tA.balanceOf(env.u2), 10e18);
     }
 
     // ─── Internal Helpers ────────────────────────────────────────
@@ -293,6 +299,7 @@ contract IdentityGateTest is Test {
         env.s = new ScatterSettlement(address(g), address(rr2), address(1), 0);
         rr2.register{value: 0.1 ether}("http://test", 0);
 
+        env.reg = reg;
         reg.setVerifiedUntil(env.u1, uint64(block.timestamp + expiry1));
         reg.setVerifiedUntil(env.u2, uint64(block.timestamp + expiry2));
 

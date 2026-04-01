@@ -75,8 +75,12 @@ contract E2ELocalTest is Test {
         settlement.setTokenWhitelist(address(usdc), true);
         settlement.setTokenWhitelist(address(dai), true);
 
-        // Verify all traders
+        // Verify all traders and recipients
         address[5] memory traders = [alice, bob, charlie, diana, eve];
+        address[6] memory recipients = [recv1, recv2, recv3, recv4, recv5, recv6];
+        for (uint i; i < 6; i++) {
+            idRegistry.setVerified(recipients[i], true);
+        }
         for (uint i; i < 5; i++) {
             idRegistry.setVerified(traders[i], true);
             weth.mint(traders[i], 1000 ether);
@@ -457,9 +461,10 @@ contract E2ELocalTest is Test {
         vm.warp(block.timestamp + 1 hours);
 
         // Attacker sees secret in mempool, tries to claim from wrong address
+        // Identity check now reverts before schedule lookup for unverified addresses
         address attacker = address(0xBAD);
         vm.prank(attacker);
-        vm.expectRevert(ScatterSettlement.ScheduleNotFound.selector);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
         settlement.claimRelease(s1);
 
         // Real recipient can claim

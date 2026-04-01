@@ -61,6 +61,11 @@ contract ScatterSettlementTest is Test {
 
         registry.setVerified(maker, true);
         registry.setVerified(taker, true);
+        registry.setVerified(recipientC, true);
+        registry.setVerified(recipientD, true);
+        registry.setVerified(recipientE, true);
+        registry.setVerified(recipientF, true);
+        registry.setVerified(vm.addr(0xABC), true); // gasless claim recipient
 
         // Register default relayer (test contract itself acts as relayer)
         relayerRegistry.register{value: 0.1 ether}("http://localhost", 30);
@@ -625,7 +630,7 @@ contract ScatterSettlementTest is Test {
         vm.warp(block.timestamp + 3 hours);
 
         vm.prank(address(0xA77AC8E4));
-        vm.expectRevert(ScatterSettlement.ScheduleNotFound.selector);
+        vm.expectRevert(ScatterSettlement.NotVerified.selector);
         settlement.claimRelease(secret1);
     }
 
