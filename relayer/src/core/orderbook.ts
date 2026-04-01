@@ -171,6 +171,14 @@ export class Orderbook {
     this.db.save(stored);
   }
 
+  /** Check if a maker+nonce combination already exists (in-memory or DB). */
+  hasNonce(maker: string, nonce: bigint): boolean {
+    const makerKey = maker.toLowerCase();
+    const nonceKey = nonce.toString();
+    if (this.byMaker.get(makerKey)?.has(nonceKey)) return true;
+    return this.db?.hasOrder(maker, nonce) ?? false;
+  }
+
   /** Persist status change to DB (for settle results handled outside orderbook) */
   persistStatus(maker: string, nonce: bigint, status: OrderStatus, settleTxHash?: string): void {
     this.db?.updateStatus(maker, nonce, status, settleTxHash);

@@ -101,10 +101,9 @@ export default function OrderPage() {
     const buyAmt = side === "buy" ? amt : amt * p;
     const baseBps = parseInt(maxFee) || 0;
     if (feeMode === "both") {
-      // You cover both: your fee = 2×baseBps on sell side. Effective distributable = buyAmt - makerFee equivalent.
-      const sellAmt = side === "buy" ? amt * p : amt;
-      const makerFeeAmt = sellAmt * baseBps * 2 / 10000;
-      return buyAmt - makerFeeAmt;
+      // You cover both: fee is 2×baseBps on your sell side only.
+      // Taker pays 0 fee, so you receive the full buyAmt.
+      return buyAmt;
     }
     // My side only: takerFee deducted from counterparty's sell → reduces your receive
     return buyAmt * (1 - baseBps / 10000);
@@ -508,8 +507,8 @@ export default function OrderPage() {
             const buyAmt = side === "buy" ? amt : total;
             const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
             const takerFeeAmt = buyAmt * takerFeeBps / 10000;
-            // Effective receive: for "cover both", deduct your makerFee cost
-            const recvAmt = isBoth ? buyAmt - makerFeeAmt : buyAmt - takerFeeAmt;
+            // Effective receive: taker pays 0 fee when you cover both
+            const recvAmt = buyAmt - takerFeeAmt;
 
             return (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">

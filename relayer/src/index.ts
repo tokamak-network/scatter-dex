@@ -31,7 +31,7 @@ async function main() {
   const app = express();
 
   // Security: CORS whitelist
-  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3002"])
+  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3000", "http://localhost:3002"])
     .map(s => s.trim())
     .filter(Boolean);
   app.use(cors({ origin: allowedOrigins }));
