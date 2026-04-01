@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Shield, Download, Copy, Check, Eye, EyeOff, Loader2, Lock, Wallet, Zap, AlertCircle } from "lucide-react";
 import { useWallet } from "../lib/wallet";
 import { getSettlementAddress, getEnv } from "../lib/config";
-import { SETTLEMENT_ABI } from "../lib/contracts";
+import { SETTLEMENT_ABI, decodeContractError } from "../lib/contracts";
 import { generateMetaAddress, deriveStealthPrivateKey, stealthWallet } from "../lib/stealth";
 import { toSecretBytes, signGaslessClaim } from "../lib/signing";
 import { RelayerClient } from "../lib/relayerApi";
@@ -276,7 +276,7 @@ function ClaimPageInner() {
       }
     } catch (e) {
       setClaimStatus("error");
-      setClaimError(e instanceof Error ? e.message : "Claim failed");
+      setClaimError(decodeContractError(e));
     }
   };
 
