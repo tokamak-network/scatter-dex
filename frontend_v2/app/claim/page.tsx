@@ -10,6 +10,7 @@ import { SETTLEMENT_ABI } from "../lib/contracts";
 import { generateMetaAddress, deriveStealthPrivateKey, stealthWallet } from "../lib/stealth";
 import { toSecretBytes, signGaslessClaim } from "../lib/signing";
 import { RelayerClient } from "../lib/relayerApi";
+import { shortenAddress } from "../lib/utils";
 import type { MetaAddress } from "../lib/stealth";
 
 const RELAYER_URL = getEnv("NEXT_PUBLIC_RELAYER_URL") || "http://localhost:3001";
@@ -38,7 +39,7 @@ function ClaimPageInner() {
   const [showSecret, setShowSecret] = useState(false);
 
   // Claim preview
-  const [preview, setPreview] = useState<{ token: string; amount: string; releaseTime: number; claimed: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ token: string; symbol: string; amount: string; releaseTime: number; claimed: boolean; isWeth: boolean } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
@@ -47,6 +48,7 @@ function ClaimPageInner() {
   const [claimStatus, setClaimStatus] = useState<"idle" | "claiming" | "success" | "error">("idle");
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
+  const [claimAsETH, setClaimAsETH] = useState(false);
   const [decimalWarning, setDecimalWarning] = useState(false);
 
   // ─── Stealth Meta-Address Generation ────────────────────────
@@ -121,22 +123,34 @@ function ClaimPageInner() {
       if (schedule.amount === BigInt(0)) {
         setPreviewError("No claim found for this secret + address combination");
       } else {
-        // Query token decimals
+        // Query token metadata and WETH status in parallel
         let decimals = 18;
-        try {
-          const token = new ethers.Contract(schedule.token, ["function decimals() view returns (uint8)"], readProvider);
-          decimals = Number(await token.decimals());
-        } catch {
-          // Could not verify token decimals — show warning
+        let symbol = "";
+        let isWeth = false;
+        const tokenContract = new ethers.Contract(schedule.token, ["function decimals() view returns (uint8)", "function symbol() view returns (string)"], readProvider);
+        const [metaResult, wethResult] = await Promise.allSettled([
+          Promise.all([tokenContract.decimals(), tokenContract.symbol()]),
+          settlement.weth(),
+        ]);
+        if (metaResult.status === "fulfilled") {
+          decimals = Number(metaResult.value[0]);
+          symbol = metaResult.value[1];
+        } else {
           setDecimalWarning(true);
+        }
+        if (wethResult.status === "fulfilled") {
+          isWeth = schedule.token.toLowerCase() === (wethResult.value as string).toLowerCase();
         }
 
         setPreview({
           token: schedule.token,
+          symbol,
           amount: ethers.formatUnits(schedule.amount, decimals),
           releaseTime: Number(schedule.releaseTime),
           claimed: schedule.claimed,
+          isWeth,
         });
+        if (isWeth) setClaimAsETH(true);
       }
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "Preview failed");
@@ -234,7 +248,9 @@ function ClaimPageInner() {
           : signer;
 
         const settlement = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, claimSigner);
-        const tx = await settlement.claimRelease(secretBytes);
+        const tx = claimAsETH && preview?.isWeth
+          ? await settlement.claimReleaseAsETH(secretBytes)
+          : await settlement.claimRelease(secretBytes);
         await tx.wait();
 
         setClaimTxHash(tx.hash);
@@ -386,11 +402,12 @@ function ClaimPageInner() {
               <div className="grid grid-cols-3 gap-4 p-4 bg-surface-container-low/40 rounded-xl border border-outline-variant/10 mb-5">
                 <div>
                   <p className="text-[10px] text-on-surface-variant uppercase tracking-widest mb-1">Token</p>
-                  <p className="font-bold text-sm font-mono">{preview.token.slice(0, 6)}...{preview.token.slice(-4)}</p>
+                  <p className="font-bold text-sm">{preview.symbol || <span className="font-mono">{shortenAddress(preview.token)}</span>}</p>
+                  {preview.symbol && <p className="text-[10px] text-on-surface-variant font-mono mt-0.5">{shortenAddress(preview.token)}</p>}
                 </div>
                 <div>
                   <p className="text-[10px] text-on-surface-variant uppercase tracking-widest mb-1">Amount</p>
-                  <p className="font-bold text-sm">{preview.amount}</p>
+                  <p className="font-bold text-sm">{preview.amount} {preview.symbol}</p>
                 </div>
                 <div>
                   <p className="text-[10px] text-on-surface-variant uppercase tracking-widest mb-1">Status</p>
@@ -420,6 +437,22 @@ function ClaimPageInner() {
               <div className="text-xs p-3 rounded-md bg-error/5 text-error mb-5 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 {previewError}
+              </div>
+            )}
+
+            {/* Claim as ETH toggle */}
+            {preview && !preview.claimed && preview.isWeth && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-tertiary/10 border border-tertiary/20 mb-5">
+                <label className="flex items-center gap-2 cursor-pointer flex-1">
+                  <input
+                    type="checkbox"
+                    checked={claimAsETH}
+                    onChange={(e) => setClaimAsETH(e.target.checked)}
+                    className="rounded border-outline-variant/30"
+                  />
+                  <span className="text-sm font-medium text-on-surface">Receive as ETH</span>
+                  <span className="text-xs text-on-surface-variant">(unwrap WETH automatically)</span>
+                </label>
               </div>
             )}
 

@@ -65,7 +65,7 @@ contract E2ELocalTest is Test {
         relayerIdRegistry.setVerified(relayer1, true);
         relayerIdRegistry.setVerified(relayer2, true);
         relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
-        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 1000); // 10% protocol fee
+        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), address(1), 1000); // 10% protocol fee
 
         weth = new MockToken("WETH", "WETH");
         usdc = new MockToken("USDC", "USDC");

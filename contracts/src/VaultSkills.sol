@@ -64,7 +64,7 @@ contract VaultSkills {
         uint256 len = tokens.length;
         for (uint256 i; i < len; ++i) {
             if (tokens[i].amount == 0) revert ZeroAmount();
-            ScatterSettlement(settlement).withdraw(tokens[i].token, tokens[i].amount);
+            ScatterSettlement(payable(settlement)).withdraw(tokens[i].token, tokens[i].amount);
         }
     }
 
@@ -76,7 +76,7 @@ contract VaultSkills {
         if (settlement == address(0) || weth == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        ScatterSettlement(settlement).withdraw(weth, amount);
+        ScatterSettlement(payable(settlement)).withdraw(weth, amount);
         IWETH(weth).withdraw(amount);
     }
 
@@ -88,7 +88,7 @@ contract VaultSkills {
     function _safeApproveAndDeposit(address settlement, address token, uint256 amount) internal {
         IERC20 token_ = IERC20(token);
         token_.forceApprove(settlement, amount);
-        ScatterSettlement(settlement).deposit(token, amount);
+        ScatterSettlement(payable(settlement)).deposit(token, amount);
         // Revoke leftover allowance to prevent token drain
         uint256 remaining = token_.allowance(address(this), settlement);
         if (remaining > 0) {

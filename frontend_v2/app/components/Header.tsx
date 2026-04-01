@@ -10,7 +10,6 @@ import { shortenAddress } from "../lib/utils";
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/trade", label: "Trade" },
-  { href: "/dashboard", label: "Dashboard" },
   { href: "/claim", label: "Claim" },
 ];
 

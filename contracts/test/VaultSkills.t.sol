@@ -35,7 +35,7 @@ contract VaultSkillsTest is Test {
         MockIdentityRegistry relayerIdRegistry = new MockIdentityRegistry();
         relayerIdRegistry.setVerified(address(this), true);
         RelayerRegistry rr = new RelayerRegistry(address(0x7777), address(relayerIdRegistry));
-        settlement = new ScatterSettlement(address(gate), address(rr), 0);
+        settlement = new ScatterSettlement(address(gate), address(rr), address(1), 0);
         rr.register{value: 0.1 ether}("http://test", 0);
         skills = new VaultSkills();
         tokenA = new MockToken("Token A", "TKA");

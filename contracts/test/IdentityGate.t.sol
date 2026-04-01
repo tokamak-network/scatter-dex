@@ -59,7 +59,7 @@ contract IdentityGateTest is Test {
         RealisticIdentityRegistry relayerIdRegistry = new RealisticIdentityRegistry();
         relayerIdRegistry.setVerifiedUntil(address(this), type(uint64).max);
         RelayerRegistry rr = new RelayerRegistry(address(0x7777), address(relayerIdRegistry));
-        settlement = new ScatterSettlement(address(gate), address(rr), 0);
+        settlement = new ScatterSettlement(address(gate), address(rr), address(1), 0);
         rr.register{value: 0.1 ether}("http://test", 0);
         token = new MockToken();
 
@@ -290,7 +290,7 @@ contract IdentityGateTest is Test {
         RealisticIdentityRegistry relayerIdReg = new RealisticIdentityRegistry();
         relayerIdReg.setVerifiedUntil(address(this), type(uint64).max);
         RelayerRegistry rr2 = new RelayerRegistry(address(0x7777), address(relayerIdReg));
-        env.s = new ScatterSettlement(address(g), address(rr2), 0);
+        env.s = new ScatterSettlement(address(g), address(rr2), address(1), 0);
         rr2.register{value: 0.1 ether}("http://test", 0);
 
         reg.setVerifiedUntil(env.u1, uint64(block.timestamp + expiry1));

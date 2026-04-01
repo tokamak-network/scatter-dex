@@ -50,6 +50,21 @@ export function createOrderRoutes(
         return;
       }
 
+      // Same-token order: scheduled transfer — settle immediately, no matching needed
+      if (order.sellToken.toLowerCase() === order.buyToken.toLowerCase()) {
+        try {
+          const txHash = await submitter.submitScheduledTransfer({ order, signature, feeMode });
+          orderbook.persistStatus(order.maker, order.nonce, "settled", txHash);
+
+          res.json({ status: "settled", txHash });
+          return;
+        } catch (err: unknown) {
+          console.error("scheduled transfer failed:", err instanceof Error ? err.message : "unknown");
+          res.status(500).json({ status: "settle_failed", error: "scheduled transfer settlement failed" });
+          return;
+        }
+      }
+
       // Add to orderbook (with feeMode so it's persisted to DB immediately)
       const stored = orderbook.add({ order, signature }, feeMode === "cover_taker" ? "cover_taker" : undefined);
 

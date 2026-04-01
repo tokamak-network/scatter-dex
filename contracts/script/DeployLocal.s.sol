@@ -41,21 +41,21 @@ contract DeployLocal is Script {
         RelayerRegistry relayerRegistry = new RelayerRegistry(deployer, address(relayerIdentityRegistry));
         console.log("RelayerRegistry:", address(relayerRegistry));
 
-        // 4. Settlement
-        ScatterSettlement settlement = new ScatterSettlement(
-            address(gate), address(relayerRegistry), protocolFeeBps
-        );
-        console.log("ScatterSettlement:", address(settlement));
-
-        // 5. VaultSkills (EIP-7702 delegation target)
-        VaultSkills vaultSkills = new VaultSkills();
-        console.log("VaultSkills:", address(vaultSkills));
-
-        // 6. Mock tokens (WETH with deposit/withdraw, USDC as plain ERC20)
+        // 4. Mock tokens (WETH with deposit/withdraw, USDC as plain ERC20)
         MockWETH weth = new MockWETH();
         MockToken usdc = new MockToken("USD Coin", "USDC");
         console.log("WETH:", address(weth));
         console.log("USDC:", address(usdc));
+
+        // 5. Settlement
+        ScatterSettlement settlement = new ScatterSettlement(
+            address(gate), address(relayerRegistry), address(weth), protocolFeeBps
+        );
+        console.log("ScatterSettlement:", address(settlement));
+
+        // 6. VaultSkills (EIP-7702 delegation target)
+        VaultSkills vaultSkills = new VaultSkills();
+        console.log("VaultSkills:", address(vaultSkills));
 
         // 7. Whitelist tokens
         settlement.setTokenWhitelist(address(weth), true);

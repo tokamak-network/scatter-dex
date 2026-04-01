@@ -51,7 +51,7 @@ contract ScatterSettlementTest is Test {
         relayerIdRegistry = new MockIdentityRegistry();
         relayerIdRegistry.setVerified(address(this), true);
         relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
-        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
+        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), address(1), 0);
 
         tokenA = new MockToken("Token A", "TKA");
         tokenB = new MockToken("Token B", "TKB");
@@ -446,7 +446,7 @@ contract ScatterSettlementTest is Test {
 
     function test_constructor_fee_too_high_reverts() public {
         vm.expectRevert(ScatterSettlement.FeeTooHigh.selector);
-        new ScatterSettlement(address(gate), address(relayerRegistry), 10001);
+        new ScatterSettlement(address(gate), address(relayerRegistry), address(1), 10001);
     }
 
     function test_setProtocolFee_too_high_reverts() public {
@@ -456,7 +456,7 @@ contract ScatterSettlementTest is Test {
 
     function test_constructor_zero_address_reverts() public {
         vm.expectRevert(ScatterSettlement.ZeroAddress.selector);
-        new ScatterSettlement(address(0), address(relayerRegistry), 0);
+        new ScatterSettlement(address(0), address(relayerRegistry), address(1), 0);
     }
 
     function test_pause_blocks_settle() public {

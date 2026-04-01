@@ -3,8 +3,11 @@ import { Match } from "./matcher.js";
 import { Order } from "../types/order.js";
 import { config } from "../config.js";
 
+const ORDER_TUPLE = "tuple(address maker, address sellToken, address buyToken, uint256 sellAmount, uint256 buyAmount, uint256 maxFee, uint256 expiry, uint256 nonce, tuple(bytes32 claimHash, uint256 amount, uint256 releaseDelay)[] claims)";
+
 const SETTLEMENT_ABI = [
-  "function settle(bytes makerSig, bytes takerSig, tuple(address maker, address sellToken, address buyToken, uint256 sellAmount, uint256 buyAmount, uint256 maxFee, uint256 expiry, uint256 nonce, tuple(bytes32 claimHash, uint256 amount, uint256 releaseDelay)[] claims) makerOrder, tuple(address maker, address sellToken, address buyToken, uint256 sellAmount, uint256 buyAmount, uint256 maxFee, uint256 expiry, uint256 nonce, tuple(bytes32 claimHash, uint256 amount, uint256 releaseDelay)[] claims) takerOrder, uint256 makerFee, uint256 takerFee) external",
+  `function settle(bytes makerSig, bytes takerSig, ${ORDER_TUPLE} makerOrder, ${ORDER_TUPLE} takerOrder, uint256 makerFee, uint256 takerFee) external`,
+  `function settleScheduledTransfer(bytes sig, ${ORDER_TUPLE} order, uint256 fee) external`,
 ];
 
 export class Submitter {
@@ -79,6 +82,23 @@ export class Submitter {
         releaseDelay: c.releaseDelay,
       })),
     };
+  }
+
+  async submitScheduledTransfer(stored: { order: Order; signature: string; feeMode?: string }): Promise<string> {
+    const formatted = this.formatOrder(stored.order);
+    const fee = BigInt(config.relayerFee);
+
+    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
+    const nonce = parseInt(hexNonce, 16);
+    const tx = await this.contract.settleScheduledTransfer(
+      stored.signature,
+      formatted,
+      fee,
+      { nonce }
+    );
+
+    const receipt = await tx.wait();
+    return receipt.hash;
   }
 
   getAddress(): string {

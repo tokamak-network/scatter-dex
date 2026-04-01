@@ -20,6 +20,8 @@ contract DeploySettlement is Script {
         require(relayerIdentityRegistryAddr != address(0), "DeploySettlement: RELAYER_IDENTITY_REGISTRY not set or is address(0)");
         address treasuryAddr = vm.envAddress("TREASURY");
         require(treasuryAddr != address(0), "DeploySettlement: TREASURY not set or is address(0)");
+        address wethAddr = vm.envAddress("WETH");
+        require(wethAddr != address(0), "DeploySettlement: WETH not set or is address(0)");
         uint256 protocolFeeBps = vm.envUint("PROTOCOL_FEE_BPS");
         require(protocolFeeBps <= 10000, "DeploySettlement: PROTOCOL_FEE_BPS exceeds 100%");
 
@@ -32,7 +34,7 @@ contract DeploySettlement is Script {
         console.log("RelayerRegistry deployed:", address(relayerRegistry));
 
         ScatterSettlement settlement = new ScatterSettlement(
-            address(gate), address(relayerRegistry), protocolFeeBps
+            address(gate), address(relayerRegistry), wethAddr, protocolFeeBps
         );
         console.log("ScatterSettlement deployed:", address(settlement));
 
