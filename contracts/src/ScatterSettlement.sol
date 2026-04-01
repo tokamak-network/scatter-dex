@@ -10,13 +10,14 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IdentityGate} from "./IdentityGate.sol";
 import {RelayerRegistry} from "./RelayerRegistry.sol";
+import {IWETH} from "./interfaces/IWETH.sol";
 
 contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
 
     // ─── Constants ───────────────────────────────────────────────────
     uint256 public constant REFUND_WINDOW = 7 days;
-    uint256 public constant MIN_RELEASE_DELAY = 1 hours;
+    uint256 public minReleaseDelay = 1 hours;
     uint256 public constant MAX_CLAIMS_PER_ORDER = 10;
     uint256 public constant FEE_DENOMINATOR = 10000;
     uint256 public constant MAX_PROTOCOL_FEE = 5000; // 50% of total fee
@@ -54,6 +55,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     error TipExceedsAmount();
     error SignatureExpired();
     error RenounceOwnershipDisabled();
+    error NotWETH();
+    error ETHTransferFailed();
 
     // ─── Data Structures ─────────────────────────────────────────────
     enum NonceState { Unused, Settled, Cancelled }
@@ -104,6 +107,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     // ─── State ───────────────────────────────────────────────────────
     IdentityGate public immutable identityGate;
     RelayerRegistry public immutable relayerRegistry;
+    address public immutable weth;
 
     /// @notice Protocol fee in basis points (e.g., 10 = 0.1%). Taken from total fee.
     uint256 public protocolFeeBps;
@@ -130,6 +134,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     event Withdrawn(address indexed user, address indexed token, uint256 amount);
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event Settled(address indexed maker, address indexed taker, bytes32[] claimHashes);
+    event ScheduledTransfer(address indexed depositor, address indexed token, uint256 totalAmount, bytes32[] claimHashes);
     event Claimed(bytes32 indexed claimHash, address indexed recipient, address indexed token, uint256 amount);
     event ClaimedFor(bytes32 indexed claimHash, address indexed recipient, address indexed token, address relayer, uint256 recipientAmount, uint256 relayerTip);
     event GaslessClaimCancelled(address indexed recipient, uint256 newNonce);
@@ -140,15 +145,21 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     event Unpaused(address account);
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _identityGate, address _relayerRegistry, uint256 _protocolFeeBps)
+    constructor(address _identityGate, address _relayerRegistry, address _weth, uint256 _protocolFeeBps)
         EIP712("ScatterSettlement", "1")
         Ownable(msg.sender)
     {
-        if (_identityGate == address(0) || _relayerRegistry == address(0)) revert ZeroAddress();
+        if (_identityGate == address(0) || _relayerRegistry == address(0) || _weth == address(0)) revert ZeroAddress();
         if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         identityGate = IdentityGate(_identityGate);
         relayerRegistry = RelayerRegistry(_relayerRegistry);
+        weth = _weth;
         protocolFeeBps = _protocolFeeBps;
+    }
+
+    /// @dev Required to receive ETH from WETH.withdraw()
+    receive() external payable {
+        if (msg.sender != weth) revert NotWETH();
     }
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
@@ -166,6 +177,10 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (_protocolFeeBps > MAX_PROTOCOL_FEE) revert FeeTooHigh();
         emit ProtocolFeeUpdated(protocolFeeBps, _protocolFeeBps);
         protocolFeeBps = _protocolFeeBps;
+    }
+
+    function setMinReleaseDelay(uint256 _delay) external onlyOwner {
+        minReleaseDelay = _delay;
     }
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
@@ -213,6 +228,89 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         IERC20(token).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, token, amount);
+    }
+
+    // ─── Scheduled Transfer (same-token, relayer-submitted) ────────
+    /// @notice Settle a same-token scheduled transfer. Called by a registered relayer.
+    /// @dev The maker signs an EIP-712 Order where sellToken == buyToken.
+    ///      The relayer submits this on-chain (gas abstraction) and receives a fee.
+    ///      Maker's escrow is deducted, fee is paid, and claim schedules are created.
+    /// @param sig EIP-712 signature from maker
+    /// @param order The signed order (sellToken must equal buyToken)
+    /// @param fee Fee in basis points charged by relayer (must be ≤ order.maxFee and ≤ relayer's registered fee)
+    function settleScheduledTransfer(
+        bytes calldata sig,
+        Order calldata order,
+        uint256 fee
+    ) external nonReentrant {
+        if (paused) revert ContractPaused();
+
+        // Verify relayer
+        (bool isActive, uint256 relayerFee, address treasury) = relayerRegistry.getSettlementInfo(msg.sender);
+        if (!isActive) revert NotActiveRelayer();
+        if (fee > relayerFee) revert FeeExceedsRelayerRegistered();
+
+        // Must be same-token
+        if (order.sellToken != order.buyToken) revert TokenMismatch();
+
+        // Verify token is whitelisted
+        if (!whitelistedTokens[order.sellToken]) revert TokenNotWhitelisted();
+
+        // Verify signature
+        bytes32 orderHash = _hashOrder(order);
+        if (ECDSA.recover(orderHash, sig) != order.maker) revert InvalidSignature();
+
+        // Verify nonce
+        if (nonces[order.maker][order.nonce] != NonceState.Unused) revert NonceConsumed();
+
+        // Verify expiry
+        if (block.timestamp > order.expiry) revert OrderExpired();
+
+        // Verify fee
+        if (fee > order.maxFee) revert FeeExceedsMax();
+
+        // Verify claim count
+        if (order.claims.length == 0 || order.claims.length > MAX_CLAIMS_PER_ORDER) revert InvalidClaimCount();
+
+        // Verify escrow
+        if (deposits[order.maker][order.sellToken] < order.sellAmount) revert InsufficientEscrow();
+
+        // Verify claims sum ≤ sellAmount - fee
+        uint256 dust = _verifyClaims(order.claims, order.sellAmount, fee);
+
+        // Consume nonce
+        nonces[order.maker][order.nonce] = NonceState.Settled;
+
+        // Deduct escrow
+        deposits[order.maker][order.sellToken] -= order.sellAmount;
+
+        // Pay fee
+        uint256 cachedProtocolFeeBps = protocolFeeBps;
+        _splitAndPayFee(order.sellToken, order.sellAmount, fee, treasury, cachedProtocolFeeBps);
+
+        // Pay dust to relayer
+        if (dust > 0) {
+            IERC20(order.sellToken).safeTransfer(msg.sender, dust);
+        }
+
+        // Create schedules
+        uint48 now48 = uint48(block.timestamp);
+        bytes32[] memory claimHashes = new bytes32[](order.claims.length);
+        for (uint256 i; i < order.claims.length; ++i) {
+            bytes32 ch = order.claims[i].claimHash;
+            if (schedules[ch].amount != 0) revert DuplicateClaimHash();
+            (uint96 safeAmt, uint48 safeTime) = _safeCastClaim(order.claims[i], now48);
+            schedules[ch] = ClaimSchedule({
+                token: order.sellToken,
+                amount: safeAmt,
+                releaseTime: safeTime,
+                claimed: false,
+                depositor: order.maker
+            });
+            claimHashes[i] = ch;
+        }
+
+        emit ScheduledTransfer(order.maker, order.sellToken, order.sellAmount, claimHashes);
     }
 
     // ─── Cancel ──────────────────────────────────────────────────────
@@ -289,6 +387,74 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
         IERC20(token).safeTransfer(msg.sender, amt);
         emit Claimed(claimHash, msg.sender, token, amt);
+    }
+
+    /// @notice Claim WETH and receive as native ETH.
+    /// @dev Only works when the scheduled token is WETH. Unwraps and sends ETH to msg.sender.
+    function claimReleaseAsETH(bytes32 secret) external nonReentrant {
+        if (paused) revert ContractPaused();
+        bytes32 claimHash;
+        assembly { mstore(0x00, secret) mstore(0x20, shl(96, caller())) claimHash := keccak256(0x00, 0x34) }
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
+        if (token != weth) revert NotWETH();
+
+        IWETH(weth).withdraw(amt);
+        (bool success,) = msg.sender.call{value: amt}("");
+        if (!success) revert ETHTransferFailed();
+
+        emit Claimed(claimHash, msg.sender, token, amt);
+    }
+
+    /// @notice Gasless claim as ETH — a relayer calls on behalf of the recipient, unwrapping WETH.
+    function claimReleaseForAsETH(
+        bytes32 secret,
+        address recipient,
+        uint256 relayerTip,
+        uint256 deadline,
+        bytes calldata recipientSig
+    ) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (block.timestamp > deadline) revert SignatureExpired();
+
+        uint256 currentNonce = gaslessNonces[recipient];
+        bytes32 structHash;
+        {
+            bytes32 th = GASLESS_CLAIM_TYPEHASH;
+            assembly {
+                let p := mload(0x40)
+                mstore(p, th)
+                mstore(add(p, 0x20), secret)
+                mstore(add(p, 0x40), recipient)
+                mstore(add(p, 0x60), caller())
+                mstore(add(p, 0x80), relayerTip)
+                mstore(add(p, 0xa0), deadline)
+                mstore(add(p, 0xc0), currentNonce)
+                structHash := keccak256(p, 0xe0)
+            }
+        }
+        if (ECDSA.recover(_hashTypedDataV4(structHash), recipientSig) != recipient) revert InvalidSignature();
+
+        gaslessNonces[recipient] = currentNonce + 1;
+
+        bytes32 claimHash;
+        assembly { mstore(0x00, secret) mstore(0x20, shl(96, recipient)) claimHash := keccak256(0x00, 0x34) }
+        (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
+        if (token != weth) revert NotWETH();
+        if (relayerTip > amt) revert TipExceedsAmount();
+
+        IWETH(weth).withdraw(amt);
+
+        uint256 recipientAmount = uint256(amt) - relayerTip;
+        if (recipientAmount > 0) {
+            (bool ok,) = recipient.call{value: recipientAmount}("");
+            if (!ok) revert ETHTransferFailed();
+        }
+        if (relayerTip > 0) {
+            (bool ok,) = msg.sender.call{value: relayerTip}("");
+            if (!ok) revert ETHTransferFailed();
+        }
+
+        emit ClaimedFor(claimHash, recipient, token, msg.sender, recipientAmount, relayerTip);
     }
 
     /// @notice Gasless claim — a relayer calls on behalf of the recipient.
@@ -547,9 +713,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         );
     }
 
-    function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal pure returns (uint96, uint48) {
+    function _safeCastClaim(ClaimInfo calldata claim, uint48 now48) internal view returns (uint96, uint48) {
         if (claim.amount > type(uint96).max) revert AmountOverflow();
-        if (claim.releaseDelay < MIN_RELEASE_DELAY) revert ReleaseDelayTooShort();
+        if (claim.releaseDelay < minReleaseDelay) revert ReleaseDelayTooShort();
         if (claim.releaseDelay > type(uint48).max - now48) revert ReleaseDelayOverflow();
         return (uint96(claim.amount), now48 + uint48(claim.releaseDelay));
     }

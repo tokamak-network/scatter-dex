@@ -52,7 +52,7 @@ export function parseOrder(raw: Record<string, unknown>): Order {
   if (!ADDRESS_RE.test(maker)) throw new Error("invalid maker address");
   if (!ADDRESS_RE.test(sellToken)) throw new Error("invalid sellToken address");
   if (!ADDRESS_RE.test(buyToken)) throw new Error("invalid buyToken address");
-  if (sellToken.toLowerCase() === buyToken.toLowerCase()) throw new Error("sellToken == buyToken");
+  // Same-token orders allowed — enables scheduled transfers via claim schedules
 
   let sellAmount: bigint, buyAmount: bigint, maxFee: bigint, expiry: bigint, nonce: bigint;
   try {

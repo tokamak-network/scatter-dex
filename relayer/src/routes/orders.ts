@@ -50,6 +50,25 @@ export function createOrderRoutes(
         return;
       }
 
+      // Same-token order: scheduled transfer — settle immediately, no matching needed
+      if (order.sellToken.toLowerCase() === order.buyToken.toLowerCase()) {
+        if (orderbook.hasNonce(order.maker, order.nonce)) {
+          res.status(400).json({ error: "duplicate nonce" });
+          return;
+        }
+        try {
+          const txHash = await submitter.submitScheduledTransfer({ order, signature, feeMode });
+          orderbook.persistOrder({ order, signature }, "settled", feeMode === "cover_taker" ? "cover_taker" : undefined, txHash);
+
+          res.json({ status: "settled", txHash });
+          return;
+        } catch (err: unknown) {
+          console.error("scheduled transfer failed:", err instanceof Error ? err.message : "unknown");
+          res.status(500).json({ status: "settle_failed", error: "scheduled transfer settlement failed" });
+          return;
+        }
+      }
+
       // Add to orderbook (with feeMode so it's persisted to DB immediately)
       const stored = orderbook.add({ order, signature }, feeMode === "cover_taker" ? "cover_taker" : undefined);
 

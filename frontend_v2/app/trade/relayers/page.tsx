@@ -277,8 +277,8 @@ export default function RelayersPage() {
   const [orderbooks, setOrderbooks] = useState<Map<string, RelayerOrderbook>>(new Map());
   const [obLoading, setObLoading] = useState(false);
 
-  const tokens = getTokenList();
-  const pairOptions = buildPairOptions(tokens);
+  const tokens = useMemo(() => getTokenList(), []);
+  const pairOptions = useMemo(() => buildPairOptions(tokens), [tokens]);
   const selectedPair = pairOptions[activePairIdx]?.value ?? "";
   const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
 
@@ -317,7 +317,7 @@ export default function RelayersPage() {
     if (pairOptions.length > 0 && relayers.length > 0) {
       loadOrderbooks(pairOptions[activePairIdx]?.value ?? "");
     }
-  }, [activePairIdx, pairOptions, relayers, loadOrderbooks]);
+  }, [activePairIdx, relayers.length, loadOrderbooks, pairOptions]);
 
   const selectPair = (idx: number) => {
     setActivePairIdx(idx);

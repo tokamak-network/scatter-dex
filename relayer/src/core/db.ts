@@ -37,6 +37,7 @@ export class OrderDB {
   private updateStatusStmt: ReturnType<Database.Database["prepare"]>;
   private selectPending: ReturnType<Database.Database["prepare"]>;
   private selectClaims: ReturnType<Database.Database["prepare"]>;
+  private selectExists: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -64,6 +65,9 @@ export class OrderDB {
     `);
     this.selectClaims = this.db.prepare(`
       SELECT * FROM claims WHERE maker = @maker AND nonce = @nonce ORDER BY idx
+    `);
+    this.selectExists = this.db.prepare(`
+      SELECT 1 FROM orders WHERE maker = @maker AND nonce = @nonce LIMIT 1
     `);
   }
 
@@ -147,6 +151,10 @@ export class OrderDB {
       status,
       settleTx: settleTxHash ?? null,
     });
+  }
+
+  hasOrder(maker: string, nonce: bigint): boolean {
+    return !!this.selectExists.get({ maker: maker.toLowerCase(), nonce: nonce.toString() });
   }
 
   loadPending(): StoredOrder[] {

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, AlertCircle, Save, FolderOpen } from "lucide-react";
+import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, AlertCircle, Save, FolderOpen, Download } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getSettlementAddress, getEnv } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -26,7 +26,7 @@ const EXPIRY_SECONDS: Record<ExpiryOption, number> = {
 };
 
 const MAX_CLAIMS = 10; // matches MAX_CLAIMS_PER_ORDER in ScatterSettlement
-const MIN_RELEASE_DELAY = 3600; // 1 hour — matches MIN_RELEASE_DELAY in contract
+const MIN_RELEASE_DELAY = 1; // 1 second — configurable via setMinReleaseDelay() on contract
 
 interface ClaimRow {
   id: number;
@@ -72,6 +72,9 @@ export default function OrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
+  // Same-token mode = scheduled transfer
+  const isSameToken = sellToken && buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
+
   // Which token the user receives
   const receiveToken = side === "sell" ? buyToken : sellToken;
 
@@ -88,20 +91,23 @@ export default function OrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
-  // Distributable amount — what the user actually receives after fee.
-  // In the contract: makerFee is deducted from maker's sell (affects taker's receive),
-  // takerFee is deducted from taker's sell (affects maker's receive).
-  // When "both" (cover_taker): takerFee=0, so user receives full buyAmount.
+  // Distributable amount — what recipients can claim after all fees.
+  // "My side only": takerFee deducted from counterparty's sell → reduces your receive
+  // "Cover both sides": makerFee is your total cost → reduces your effective value
   const distributable = useMemo(() => {
-    if (!amount || !price) return 0;
+    if (!amount || (!isSameToken && !price)) return 0;
     const amt = parseFloat(amount);
-    const p = parseFloat(price);
-    // buyAmount = what user expects to receive
+    const p = isSameToken ? 1 : parseFloat(price);
     const buyAmt = side === "buy" ? amt : amt * p;
-    // Fee on the receive side: "mine" → baseBps, "both" → 0 (taker pays nothing)
-    const receiveFeeRate = feeMode === "both" ? 0 : (parseInt(maxFee) || 0);
-    return buyAmt * (1 - receiveFeeRate / 10000);
-  }, [amount, price, maxFee, feeMode, side]);
+    const baseBps = parseInt(maxFee) || 0;
+    if (feeMode === "both") {
+      // You cover both: fee is 2×baseBps on your sell side only.
+      // Taker pays 0 fee, so you receive the full buyAmt.
+      return buyAmt;
+    }
+    // My side only: takerFee deducted from counterparty's sell → reduces your receive
+    return buyAmt * (1 - baseBps / 10000);
+  }, [amount, price, maxFee, feeMode, side, isSameToken]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
   const fillRest = (id: number) => {
@@ -171,7 +177,8 @@ export default function OrderPage() {
 
   const handleSubmit = async () => {
     if (!signer || !account || !chainId || !sellToken || !buyToken) return;
-    if (!amount || !price) return;
+    if (!isSameToken && (!amount || !price)) return;
+    if (isSameToken && !amount) return;
 
     setStatus("signing");
     setError(null);
@@ -186,10 +193,10 @@ export default function OrderPage() {
       const buyDecimals = orderBuyToken.decimals;
 
       // Use BigInt arithmetic to avoid floating-point precision errors.
-      // Compute cross amount: amount * price using integer math at combined precision.
       const amountBig = ethers.parseUnits(amount, sellDecimals);
-      const priceBig = ethers.parseUnits(price, buyDecimals);
-      // crossAmount = amount * price (scaled to buyDecimals)
+
+      // For same-token: sellAmount == buyAmount, price is implicitly 1:1
+      const priceBig = isSameToken ? ethers.parseUnits("1", buyDecimals) : ethers.parseUnits(price, buyDecimals);
       const crossAmount = (amountBig * priceBig) / (BigInt(10) ** BigInt(sellDecimals));
 
       const sellAmount = side === "sell" ? amountBig.toString() : crossAmount.toString();
@@ -203,7 +210,6 @@ export default function OrderPage() {
         let ephemeralPubKey: string | undefined;
 
         if (!c.address) {
-          // No recipient specified: default to self
           recipient = account;
         } else if (c.mode === "stealth" && isMetaAddress(c.address)) {
           const stealth = generateStealthAddress(c.address);
@@ -215,17 +221,15 @@ export default function OrderPage() {
           throw new Error(`Invalid recipient address for claim #${index + 1}`);
         }
 
-        // Validate releaseDelay (converted to seconds)
         const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
         if (delaySec < MIN_RELEASE_DELAY) {
-          throw new Error(`Release delay for claim #${index + 1} must be at least ${MIN_RELEASE_DELAY / 3600} hour(s)`);
+          throw new Error(`Release delay for claim #${index + 1} must be at least ${MIN_RELEASE_DELAY} second(s)`);
         }
 
         const claimAmount = c.amount
           ? ethers.parseUnits(c.amount, receiveToken?.decimals ?? 18).toString()
-          : ""; // will be filled after validation
+          : "";
 
-        // Build claim link
         if (ephemeralPubKey) {
           links.push(buildStealthClaimLink(secret, ephemeralPubKey));
         } else {
@@ -235,13 +239,12 @@ export default function OrderPage() {
         return {
           recipient,
           amount: claimAmount,
-          releaseDelay: Math.max(MIN_RELEASE_DELAY, (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60)),
+          releaseDelay: Math.max(MIN_RELEASE_DELAY, delaySec),
           secret,
         };
       });
 
       // Compute on-chain distributable: buyAmount minus takerFee
-      // (takerFee is applied to counterparty's sell, which is what this user receives)
       const buyAmountBig = BigInt(buyAmount);
       const takerFeeBps = feeMode === "both" ? BigInt(0) : BigInt(parseInt(maxFee) || 30);
       const takerFeeAmt = (buyAmountBig * takerFeeBps) / BigInt(10000);
@@ -257,20 +260,17 @@ export default function OrderPage() {
         if (filledSum > distributableBig) {
           throw new Error("Sum of specified claim amounts exceeds distributable amount");
         }
-        // Distribute remaining amount evenly among empty claims
         const remaining = distributableBig - filledSum;
         const perEmpty = remaining / BigInt(emptyCount);
         let distributed = BigInt(0);
         claimInputs.forEach((c, i) => {
           if (!c.amount) {
-            // Last empty claim gets remainder to avoid rounding dust
             const isLast = claimInputs.slice(i + 1).every((x) => x.amount);
             c.amount = isLast ? (remaining - distributed).toString() : perEmpty.toString();
             distributed += BigInt(c.amount);
           }
         });
       } else {
-        // All amounts specified — verify sum does not exceed distributable
         if (filledSum > distributableBig) {
           throw new Error(
             `Sum of claim amounts (${ethers.formatUnits(filledSum, receiveToken?.decimals ?? 18)}) ` +
@@ -279,7 +279,6 @@ export default function OrderPage() {
         }
       }
 
-      // Use crypto-random nonce to avoid collisions at millisecond precision
       const nonceBuf = crypto.getRandomValues(new Uint8Array(6));
       const nonce = Number(BigInt("0x" + [...nonceBuf].map(b => b.toString(16).padStart(2, "0")).join("")));
 
@@ -371,10 +370,10 @@ export default function OrderPage() {
           </div>
 
           {/* Amount + Price */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className={isSameToken ? "" : "grid grid-cols-2 gap-4"}>
             <div className="space-y-1">
               <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
-                {side === "buy" ? `Buy Amount (${sellToken?.symbol})` : `Sell Amount (${sellToken?.symbol})`}
+                {isSameToken ? `Transfer Amount (${sellToken?.symbol})` : side === "buy" ? `Buy Amount (${sellToken?.symbol})` : `Sell Amount (${sellToken?.symbol})`}
               </label>
               <input
                 type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
@@ -382,23 +381,25 @@ export default function OrderPage() {
                 className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 text-lg font-mono"
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
-                Price ({buyToken?.symbol} per {sellToken?.symbol})
-              </label>
-              <input
-                type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)}
-                placeholder="0.00"
-                className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 text-lg font-mono"
-              />
-              {totalValue && (
-                <div className="text-[10px] text-on-surface-variant">
-                  {side === "buy"
-                    ? `You pay: ${totalValue} ${buyToken?.symbol}`
-                    : `You receive: ${totalValue} ${buyToken?.symbol}`}
-                </div>
-              )}
-            </div>
+            {!isSameToken && (
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                  Price ({buyToken?.symbol} per {sellToken?.symbol})
+                </label>
+                <input
+                  type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2 px-3 text-lg font-mono"
+                />
+                {totalValue && (
+                  <div className="text-[10px] text-on-surface-variant">
+                    {side === "buy"
+                      ? `You pay: ${totalValue} ${buyToken?.symbol}`
+                      : `You receive: ${totalValue} ${buyToken?.symbol}`}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Fee + Expiry */}
@@ -489,8 +490,8 @@ export default function OrderPage() {
           </div>
 
           {/* Order Summary + Fee — combined */}
-          {amount && price && maxFee && (() => {
-            const total = parseFloat(amount) * parseFloat(price);
+          {amount && (isSameToken || (price && maxFee)) && (() => {
+            const total = isSameToken ? parseFloat(amount) : parseFloat(amount) * parseFloat(price);
             const amt = parseFloat(amount);
             const baseBps = parseInt(maxFee) || 0;
             const isBoth = feeMode === "both";
@@ -506,32 +507,44 @@ export default function OrderPage() {
             const buyAmt = side === "buy" ? amt : total;
             const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
             const takerFeeAmt = buyAmt * takerFeeBps / 10000;
+            // Effective receive: taker pays 0 fee when you cover both
             const recvAmt = buyAmt - takerFeeAmt;
 
             return (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-on-surface-variant">From escrow</span>
+                  <span className="text-on-surface-variant">You send</span>
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
                 <div className="flex justify-between text-error/80">
-                  <span>Your fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both sides" : ""})</span>
+                  <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""})</span>
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                {!isBoth && (
-                  <div className="flex justify-between text-on-surface-variant/70">
-                    <span>Taker fee ({(takerFeeBps / 100).toFixed(2)}%)</span>
-                    <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
-                  </div>
-                )}
+                <div className="flex justify-between text-on-surface-variant/60">
+                  <span>Counterparty receives</span>
+                  <span className="font-mono">{(sellAmt - makerFeeAmt).toFixed(4)} {sellSym}</span>
+                </div>
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>You receive</span>
                   <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
                 </div>
-                <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
-                  <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
-                  <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
-                </div>
+                {!isBoth && takerFeeAmt > 0 && (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant/50">
+                    <span>Taker fee deducted</span>
+                    <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
+                  </div>
+                )}
+                {isSameToken ? (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
+                    <span>Scheduled transfer (1:1)</span>
+                    <span>{isBoth ? "Taker pays 0%" : `Relay fee ${(baseBps / 100).toFixed(2)}%`}</span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
+                    <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
+                    <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -553,9 +566,22 @@ export default function OrderPage() {
                 disabled={claims.length >= MAX_CLAIMS}
                 className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS && `(max ${MAX_CLAIMS})`}
+                <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS ? `(max ${MAX_CLAIMS})` : ""}
               </button>
             </div>
+
+            {isSameToken && (
+              <div className="flex items-start gap-2.5 p-3 rounded-lg bg-tertiary/10 border border-tertiary/20 text-xs mb-3">
+                <AlertCircle className="w-4 h-4 text-tertiary flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-tertiary mb-0.5">Scheduled Transfer</div>
+                  <div className="text-on-surface-variant/70">
+                    Same-token transfer — your {sellToken?.symbol} will be deposited and scheduled for release on-chain.
+                    No counterparty needed. Relayer submits the transaction.
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               {claims.map((c, idx) => (
@@ -688,7 +714,7 @@ export default function OrderPage() {
           {/* Submit */}
           <button
             onClick={handleSubmit}
-            disabled={status === "signing" || status === "submitting" || !amount || !price || !activeRelayer || (claimTotal > 0 && distributable > 0 && claimTotal > distributable)}
+            disabled={status === "signing" || status === "submitting" || !amount || (!isSameToken && !price) || !activeRelayer || (claimTotal > 0 && distributable > 0 && claimTotal > distributable)}
             className="w-full gradient-btn py-4 rounded-md text-on-primary-fixed font-headline font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
           >
             {status === "signing" ? (
@@ -696,7 +722,7 @@ export default function OrderPage() {
             ) : status === "submitting" ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
             ) : (
-              <><Lock className="w-4 h-4" /> Sign & Submit to Relayer</>
+              <><Lock className="w-4 h-4" /> {isSameToken ? "Sign & Submit Transfer" : "Sign & Submit to Relayer"}</>
             )}
           </button>
           <div className="flex gap-2">
@@ -708,7 +734,7 @@ export default function OrderPage() {
             </button>
           </div>
           <p className="text-center text-[10px] text-on-surface-variant">
-            EIP-712 signature — no gas required. Relayer executes the trade.
+            EIP-712 signature — no gas required. Relayer executes the {isSameToken ? "scheduled transfer" : "trade"}.
           </p>
 
           {status === "error" && error && (
@@ -739,6 +765,21 @@ export default function OrderPage() {
                 </div>
               ))}
             </div>
+            <button
+              onClick={() => {
+                const text = claimLinks.map((link, i) => `Claim #${i + 1}: ${link}`).join("\n");
+                const blob = new Blob([text], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `claim-links-${Date.now()}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-md bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Download All Claim Links
+            </button>
           </div>
         )}
       </div>

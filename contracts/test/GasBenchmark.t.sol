@@ -43,7 +43,7 @@ contract GasBenchmarkTest is Test {
         MockIdentityRegistry relayerIdRegistry = new MockIdentityRegistry();
         relayerIdRegistry.setVerified(address(this), true);
         relayerRegistry = new RelayerRegistry(treasury, address(relayerIdRegistry));
-        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), 0);
+        settlement = new ScatterSettlement(address(gate), address(relayerRegistry), address(1), 0);
 
         tokenA = new BenchToken("Token A", "TKA");
         tokenB = new BenchToken("Token B", "TKB");

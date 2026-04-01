@@ -158,6 +158,27 @@ export class Orderbook {
     return this.pendingCount;
   }
 
+  /** Save an order directly to DB without adding to in-memory book (e.g. scheduled transfers). */
+  persistOrder(signed: SignedOrder, status: OrderStatus, feeMode?: "cover_taker", settleTxHash?: string): void {
+    if (!this.db) return;
+    const stored: StoredOrder = {
+      ...signed,
+      status,
+      submittedAt: Date.now(),
+      feeMode,
+      settleTxHash,
+    };
+    this.db.save(stored);
+  }
+
+  /** Check if a maker+nonce combination already exists (in-memory or DB). */
+  hasNonce(maker: string, nonce: bigint): boolean {
+    const makerKey = maker.toLowerCase();
+    const nonceKey = nonce.toString();
+    if (this.byMaker.get(makerKey)?.has(nonceKey)) return true;
+    return this.db?.hasOrder(maker, nonce) ?? false;
+  }
+
   /** Persist status change to DB (for settle results handled outside orderbook) */
   persistStatus(maker: string, nonce: bigint, status: OrderStatus, settleTxHash?: string): void {
     this.db?.updateStatus(maker, nonce, status, settleTxHash);
