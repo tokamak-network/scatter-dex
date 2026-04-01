@@ -446,12 +446,12 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
 
         uint256 recipientAmount = uint256(amt) - relayerTip;
         if (recipientAmount > 0) {
-            (bool success,) = recipient.call{value: recipientAmount}("");
-            if (!success) revert ETHTransferFailed();
+            (bool ok,) = recipient.call{value: recipientAmount}("");
+            if (!ok) revert ETHTransferFailed();
         }
         if (relayerTip > 0) {
-            (bool success,) = msg.sender.call{value: relayerTip}("");
-            if (!success) revert ETHTransferFailed();
+            (bool ok,) = msg.sender.call{value: relayerTip}("");
+            if (!ok) revert ETHTransferFailed();
         }
 
         emit ClaimedFor(claimHash, recipient, token, msg.sender, recipientAmount, relayerTip);

@@ -108,7 +108,7 @@ export default function OrderPage() {
     }
     // My side only: takerFee deducted from counterparty's sell → reduces your receive
     return buyAmt * (1 - baseBps / 10000);
-  }, [amount, price, maxFee, feeMode, side]);
+  }, [amount, price, maxFee, feeMode, side, isSameToken]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
   const fillRest = (id: number) => {
@@ -224,7 +224,7 @@ export default function OrderPage() {
 
         const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
         if (delaySec < MIN_RELEASE_DELAY) {
-          throw new Error(`Release delay for claim #${index + 1} must be at least ${MIN_RELEASE_DELAY / 3600} hour(s)`);
+          throw new Error(`Release delay for claim #${index + 1} must be at least ${MIN_RELEASE_DELAY} second(s)`);
         }
 
         const claimAmount = c.amount
@@ -535,10 +535,17 @@ export default function OrderPage() {
                     <span className="font-mono">−{takerFeeAmt.toFixed(4)} {recvSym}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
-                  <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
-                  <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
-                </div>
+                {isSameToken ? (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
+                    <span>Scheduled transfer (1:1)</span>
+                    <span>{isBoth ? "Taker pays 0%" : `Relay fee ${(baseBps / 100).toFixed(2)}%`}</span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant pt-0.5">
+                    <span>@ {parseFloat(price).toLocaleString()} {buyToken?.symbol} per {sellToken?.symbol}</span>
+                    <span>{isBoth ? "Taker pays 0%" : `Taker pays ${(baseBps / 100).toFixed(2)}%`}</span>
+                  </div>
+                )}
               </div>
             );
           })()}

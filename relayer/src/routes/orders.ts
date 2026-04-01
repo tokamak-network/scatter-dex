@@ -54,7 +54,7 @@ export function createOrderRoutes(
       if (order.sellToken.toLowerCase() === order.buyToken.toLowerCase()) {
         try {
           const txHash = await submitter.submitScheduledTransfer({ order, signature, feeMode });
-          orderbook.persistStatus(order.maker, order.nonce, "settled", txHash);
+          orderbook.persistOrder({ order, signature }, "settled", feeMode === "cover_taker" ? "cover_taker" : undefined, txHash);
 
           res.json({ status: "settled", txHash });
           return;
