@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { ethers } from "ethers";
 import { useSearchParams } from "next/navigation";
 import { Shield, Download, Copy, Check, Eye, EyeOff, Loader2, Lock, Wallet, Zap, AlertCircle } from "lucide-react";
 import { useWallet } from "../lib/wallet";
 import { getSettlementAddress, getEnv } from "../lib/config";
-import { SETTLEMENT_ABI } from "../lib/contracts";
+import { SETTLEMENT_ABI, decodeContractError } from "../lib/contracts";
 import { generateMetaAddress, deriveStealthPrivateKey, stealthWallet } from "../lib/stealth";
 import { toSecretBytes, signGaslessClaim } from "../lib/signing";
 import { RelayerClient } from "../lib/relayerApi";
@@ -44,12 +44,27 @@ function ClaimPageInner() {
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Claim execution
-  const [claimMethod, setClaimMethod] = useState<ClaimMethod>("standard");
+  const [claimMethod, setClaimMethod] = useState<ClaimMethod>(epk ? "gasless" : "standard");
   const [claimStatus, setClaimStatus] = useState<"idle" | "claiming" | "success" | "error">("idle");
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
   const [claimAsETH, setClaimAsETH] = useState(false);
+  const [showPrivKey, setShowPrivKey] = useState(false);
+  const [privKeyCopied, setPrivKeyCopied] = useState(false);
+  const [addrCopied, setAddrCopied] = useState(false);
   const [decimalWarning, setDecimalWarning] = useState(false);
+
+  // Derive stealth address + private key once from (meta, epk)
+  const stealthInfo = useMemo(() => {
+    if (!meta || !epk) return null;
+    try {
+      const privKey = deriveStealthPrivateKey(meta.spendingKey, meta.viewingKey, epk);
+      const wallet = new ethers.Wallet(privKey);
+      return { address: wallet.address, privKey };
+    } catch {
+      return null;
+    }
+  }, [meta, epk]);
 
   // ─── Stealth Meta-Address Generation ────────────────────────
 
@@ -230,6 +245,7 @@ function ClaimPageInner() {
             relayerTip,
             deadline,
             signature,
+            asEth: claimAsETH && preview?.isWeth,
           }),
         });
         if (!res.ok) {
@@ -239,6 +255,7 @@ function ClaimPageInner() {
         const result = await res.json();
         setClaimTxHash(result.txHash || "submitted");
         setClaimStatus("success");
+        setPreview(p => p ? { ...p, claimed: true } : p);
       } else {
         // ─── Standard / Stealth direct claim ───
         if (!signer) throw new Error("Connect wallet to claim");
@@ -255,10 +272,11 @@ function ClaimPageInner() {
 
         setClaimTxHash(tx.hash);
         setClaimStatus("success");
+        setPreview(p => p ? { ...p, claimed: true } : p);
       }
     } catch (e) {
       setClaimStatus("error");
-      setClaimError(e instanceof Error ? e.message : "Claim failed");
+      setClaimError(decodeContractError(e));
     }
   };
 
@@ -440,6 +458,54 @@ function ClaimPageInner() {
               </div>
             )}
 
+            {/* Stealth Address Info */}
+            {stealthInfo && preview && (
+              <div className="p-4 bg-surface-container-low/40 rounded-xl border border-outline-variant/10 mb-5 space-y-2">
+                <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Stealth Address</h4>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs text-primary font-mono truncate flex-1">{stealthInfo.address}</code>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(stealthInfo.address);
+                        setAddrCopied(true);
+                        setTimeout(() => setAddrCopied(false), 2000);
+                      } catch { /* clipboard unavailable */ }
+                    }}
+                    className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
+                  >
+                    {addrCopied ? <Check className="w-3.5 h-3.5 text-tertiary" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <div className="pt-2 border-t border-outline-variant/10">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-on-surface-variant uppercase tracking-widest">Private Key</span>
+                    <button onClick={() => setShowPrivKey(!showPrivKey)} className="text-on-surface-variant hover:text-on-surface">
+                      {showPrivKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="text-[11px] font-mono truncate flex-1 text-on-surface-variant">
+                      {showPrivKey ? stealthInfo.privKey : "••••••••••••••••••••••••••••••••"}
+                    </code>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(stealthInfo.privKey);
+                          setPrivKeyCopied(true);
+                          setTimeout(() => setPrivKeyCopied(false), 2000);
+                        } catch { /* clipboard unavailable */ }
+                      }}
+                      className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
+                    >
+                      {privKeyCopied ? <Check className="w-3.5 h-3.5 text-tertiary" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-error/70 mt-1">Import this key into a wallet to control the stealth address.</p>
+                </div>
+              </div>
+            )}
+
             {/* Claim as ETH toggle */}
             {preview && !preview.claimed && preview.isWeth && (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-tertiary/10 border border-tertiary/20 mb-5">
@@ -463,18 +529,20 @@ function ClaimPageInner() {
                   Claim Method
                 </h4>
                 <div className="space-y-2 mb-6">
-                  <button
-                    onClick={() => setClaimMethod("standard")}
-                    className={`w-full flex items-center gap-3 p-3 rounded-md border transition-all ${
-                      claimMethod === "standard" ? "border-primary/40 bg-primary/5" : "border-outline-variant/10 hover:border-primary/20"
-                    }`}
-                  >
-                    <Wallet className="w-5 h-5 text-primary" />
-                    <div className="text-left flex-1">
-                      <p className="font-bold text-sm">Standard Claim</p>
-                      <p className="text-xs text-on-surface-variant">Claim to your connected wallet</p>
-                    </div>
-                  </button>
+                  {!(epk && meta) && (
+                    <button
+                      onClick={() => setClaimMethod("standard")}
+                      className={`w-full flex items-center gap-3 p-3 rounded-md border transition-all ${
+                        claimMethod === "standard" ? "border-primary/40 bg-primary/5" : "border-outline-variant/10 hover:border-primary/20"
+                      }`}
+                    >
+                      <Wallet className="w-5 h-5 text-primary" />
+                      <div className="text-left flex-1">
+                        <p className="font-bold text-sm">Standard Claim</p>
+                        <p className="text-xs text-on-surface-variant">Claim to your connected wallet</p>
+                      </div>
+                    </button>
+                  )}
 
                   {epk && meta && (
                     <button

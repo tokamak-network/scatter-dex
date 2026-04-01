@@ -217,10 +217,8 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Withdraw unmatched escrow funds.
-    /// @dev No identity check — intentional. Users must always be able to recover
-    ///      their funds even after certificate expiry or revocation, to prevent
-    ///      permanent fund lockup. See security audit M-4.
     function withdraw(address token, uint256 amount) external nonReentrant {
+        if (!identityGate.isVerified(msg.sender)) revert NotVerified();
         if (amount == 0) revert ZeroAmount();
         if (deposits[msg.sender][token] < amount) revert InsufficientBalance();
 
@@ -381,6 +379,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     ///      generate a unique random secret per claim to avoid collisions. See audit M-3.
     function claimRelease(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
+        if (!identityGate.isVerified(msg.sender)) revert NotVerified();
         bytes32 claimHash;
         assembly { mstore(0x00, secret) mstore(0x20, shl(96, caller())) claimHash := keccak256(0x00, 0x34) }
         (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
@@ -393,6 +392,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
     /// @dev Only works when the scheduled token is WETH. Unwraps and sends ETH to msg.sender.
     function claimReleaseAsEth(bytes32 secret) external nonReentrant {
         if (paused) revert ContractPaused();
+        if (!identityGate.isVerified(msg.sender)) revert NotVerified();
         bytes32 claimHash;
         assembly { mstore(0x00, secret) mstore(0x20, shl(96, caller())) claimHash := keccak256(0x00, 0x34) }
         (uint96 amt, address token) = _validateAndMarkClaimed(claimHash);
@@ -414,6 +414,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         bytes calldata recipientSig
     ) external nonReentrant {
         if (paused) revert ContractPaused();
+        if (!identityGate.isVerified(recipient)) revert NotVerified();
         if (block.timestamp > deadline) revert SignatureExpired();
 
         uint256 currentNonce = gaslessNonces[recipient];
@@ -475,6 +476,7 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         bytes calldata recipientSig
     ) external nonReentrant {
         if (paused) revert ContractPaused();
+        if (!identityGate.isVerified(recipient)) revert NotVerified();
         if (block.timestamp > deadline) revert SignatureExpired();
 
         uint256 currentNonce = gaslessNonces[recipient];

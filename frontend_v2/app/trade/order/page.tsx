@@ -100,6 +100,11 @@ export default function OrderPage() {
     const p = isSameToken ? 1 : parseFloat(price);
     const buyAmt = side === "buy" ? amt : amt * p;
     const baseBps = parseInt(maxFee) || 0;
+    if (isSameToken) {
+      // Same-token (scheduled transfer): no taker exists, so "cover both" has
+      // no counterparty fee to absorb — just apply the single baseBps fee.
+      return amt * (1 - baseBps / 10000);
+    }
     if (feeMode === "both") {
       // You cover both: fee is 2×baseBps on your sell side only.
       // Taker pays 0 fee, so you receive the full buyAmt.
@@ -496,8 +501,10 @@ export default function OrderPage() {
             const baseBps = parseInt(maxFee) || 0;
             const isBoth = feeMode === "both";
 
-            // makerFee (on your sell) — affects what counterparty receives
-            const makerFeeBps = isBoth ? baseBps * 2 : baseBps;
+            // makerFee (on your sell) — affects what counterparty receives.
+            // For same-token (scheduled transfer), no taker exists so "cover both" is
+            // equivalent to single baseBps — do not double.
+            const makerFeeBps = (isBoth && !isSameToken) ? baseBps * 2 : baseBps;
             // takerFee (on counterparty's sell) — affects what you receive
             const takerFeeBps = isBoth ? 0 : baseBps;
 
@@ -507,8 +514,8 @@ export default function OrderPage() {
             const buyAmt = side === "buy" ? amt : total;
             const recvSym = side === "buy" ? sellToken?.symbol : buyToken?.symbol;
             const takerFeeAmt = buyAmt * takerFeeBps / 10000;
-            // Effective receive: taker pays 0 fee when you cover both
-            const recvAmt = buyAmt - takerFeeAmt;
+            // Effective receive: same-token deducts fee from sell; cross-token from counterparty's sell
+            const recvAmt = isSameToken ? (sellAmt - makerFeeAmt) : (buyAmt - takerFeeAmt);
 
             return (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
@@ -520,14 +527,23 @@ export default function OrderPage() {
                   <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""})</span>
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                <div className="flex justify-between text-on-surface-variant/60">
-                  <span>Counterparty receives</span>
-                  <span className="font-mono">{(sellAmt - makerFeeAmt).toFixed(4)} {sellSym}</span>
-                </div>
-                <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
-                  <span>You receive</span>
-                  <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
-                </div>
+                {isSameToken ? (
+                  <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
+                    <span>Recipients receive</span>
+                    <span className="font-mono">{recvAmt.toFixed(4)} {sellSym}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-on-surface-variant/60">
+                      <span>Counterparty receives</span>
+                      <span className="font-mono">{(sellAmt - makerFeeAmt).toFixed(4)} {sellSym}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
+                      <span>You receive</span>
+                      <span className="font-mono">{recvAmt.toFixed(4)} {recvSym}</span>
+                    </div>
+                  </>
+                )}
                 {!isBoth && takerFeeAmt > 0 && (
                   <div className="flex justify-between text-[10px] text-on-surface-variant/50">
                     <span>Taker fee deducted</span>
