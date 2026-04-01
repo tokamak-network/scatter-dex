@@ -51,7 +51,20 @@ function ClaimPageInner() {
   const [claimAsETH, setClaimAsETH] = useState(false);
   const [showPrivKey, setShowPrivKey] = useState(false);
   const [privKeyCopied, setPrivKeyCopied] = useState(false);
+  const [addrCopied, setAddrCopied] = useState(false);
   const [decimalWarning, setDecimalWarning] = useState(false);
+
+  // Derive stealth address + private key once from (meta, epk)
+  const stealthInfo = useMemo(() => {
+    if (!meta || !epk) return null;
+    try {
+      const privKey = deriveStealthPrivateKey(meta.spendingKey, meta.viewingKey, epk);
+      const wallet = new ethers.Wallet(privKey);
+      return { address: wallet.address, privKey };
+    } catch {
+      return null;
+    }
+  }, [meta, epk]);
 
   // ─── Stealth Meta-Address Generation ────────────────────────
 
@@ -446,52 +459,48 @@ function ClaimPageInner() {
             )}
 
             {/* Stealth Address Info */}
-            {epk && meta && preview && (() => {
-              try {
-                const privKey = deriveStealthPrivateKey(meta.spendingKey, meta.viewingKey, epk);
-                const wallet = new ethers.Wallet(privKey);
-                return (
-                  <div className="p-4 bg-surface-container-low/40 rounded-xl border border-outline-variant/10 mb-5 space-y-2">
-                    <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Stealth Address</h4>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs text-primary font-mono truncate flex-1">{wallet.address}</code>
-                      <button
-                        onClick={async () => {
-                          await navigator.clipboard.writeText(wallet.address);
-                        }}
-                        className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <div className="pt-2 border-t border-outline-variant/10">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] text-on-surface-variant uppercase tracking-widest">Private Key</span>
-                        <button onClick={() => setShowPrivKey(!showPrivKey)} className="text-on-surface-variant hover:text-on-surface">
-                          {showPrivKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <code className="text-[11px] font-mono truncate flex-1 text-on-surface-variant">
-                          {showPrivKey ? privKey : "••••••••••••••••••••••••••••••••"}
-                        </code>
-                        <button
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(privKey);
-                            setPrivKeyCopied(true);
-                            setTimeout(() => setPrivKeyCopied(false), 2000);
-                          }}
-                          className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
-                        >
-                          {privKeyCopied ? <Check className="w-3.5 h-3.5 text-tertiary" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <p className="text-[9px] text-error/70 mt-1">Import this key into a wallet to control the stealth address.</p>
-                    </div>
+            {stealthInfo && preview && (
+              <div className="p-4 bg-surface-container-low/40 rounded-xl border border-outline-variant/10 mb-5 space-y-2">
+                <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Stealth Address</h4>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs text-primary font-mono truncate flex-1">{stealthInfo.address}</code>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(stealthInfo.address);
+                      setAddrCopied(true);
+                      setTimeout(() => setAddrCopied(false), 2000);
+                    }}
+                    className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
+                  >
+                    {addrCopied ? <Check className="w-3.5 h-3.5 text-tertiary" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <div className="pt-2 border-t border-outline-variant/10">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-on-surface-variant uppercase tracking-widest">Private Key</span>
+                    <button onClick={() => setShowPrivKey(!showPrivKey)} className="text-on-surface-variant hover:text-on-surface">
+                      {showPrivKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
-                );
-              } catch { return null; }
-            })()}
+                  <div className="flex items-center gap-2">
+                    <code className="text-[11px] font-mono truncate flex-1 text-on-surface-variant">
+                      {showPrivKey ? stealthInfo.privKey : "••••••••••••••••••••••••••••••••"}
+                    </code>
+                    <button
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(stealthInfo.privKey);
+                        setPrivKeyCopied(true);
+                        setTimeout(() => setPrivKeyCopied(false), 2000);
+                      }}
+                      className="p-1 hover:bg-surface-bright rounded text-on-surface-variant"
+                    >
+                      {privKeyCopied ? <Check className="w-3.5 h-3.5 text-tertiary" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-error/70 mt-1">Import this key into a wallet to control the stealth address.</p>
+                </div>
+              </div>
+            )}
 
             {/* Claim as ETH toggle */}
             {preview && !preview.claimed && preview.isWeth && (

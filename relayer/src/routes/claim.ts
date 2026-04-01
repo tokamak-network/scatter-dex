@@ -12,16 +12,16 @@ export function createClaimRoutes(
     try {
       const { secret, recipient, relayerTip, deadline, signature, asEth } = req.body;
 
-      if (!secret || !recipient || !signature) {
-        res.status(400).json({ error: "missing required fields (secret, recipient, signature)" });
+      if (!secret || !recipient || !signature || deadline === undefined || relayerTip === undefined) {
+        res.status(400).json({ error: "missing required fields (secret, recipient, relayerTip, deadline, signature)" });
         return;
       }
 
       const txHash = await submitter.submitGaslessClaim({
         secret,
         recipient,
-        relayerTip: relayerTip || "0",
-        deadline: deadline || Math.floor(Date.now() / 1000) + 3600,
+        relayerTip,
+        deadline,
         signature,
         asEth: !!asEth,
       });
