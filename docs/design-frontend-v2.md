@@ -1,8 +1,9 @@
 # Frontend V2 Redesign
 
-**Status: IN PROGRESS**
-**Branch: feat/frontend-v2**
-**Directory: frontend_v2/**
+**Status: COMPLETED — merged into `frontend/`**
+**Directory: frontend/app/ (Next.js App Router)**
+
+> Note: 원래 `frontend_v2/`에서 개발했으나 `frontend/`으로 통합됨.
 
 ## Design Reference
 

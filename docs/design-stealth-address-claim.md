@@ -21,7 +21,7 @@
 
 ## Changes Required
 
-- [x] Stealth address 생성 라이브러리 (프론트엔드) — `frontend/src/lib/stealth.ts`
+- [x] Stealth address 생성 라이브러리 (프론트엔드) — `frontend/app/lib/stealth.ts`
 - [ ] Ephemeral pubkey 게시 메커니즘 (온체인 또는 오프체인)
 - [ ] 수신자 스캐닝 로직 (자기에게 온 stealth 주소 탐색)
 - [x] OrderForm에서 meta-address 입력 → stealth address 자동 생성

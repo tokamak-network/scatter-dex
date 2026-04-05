@@ -42,9 +42,9 @@
 
 ### 파일
 
-- `frontend/src/lib/stealth.ts` — 신규: stealth address 생성/스캔
-- `frontend/src/components/OrderForm.tsx` — meta-address 입력 → stealth 생성
-- `frontend/src/app/claim/page.tsx` — stealth key 유도 + claim
+- `frontend/app/lib/stealth.ts` — 신규: stealth address 생성/스캔
+- `frontend/app/trade/order/page.tsx` — meta-address 입력 → stealth 생성
+- `frontend/app/claim/page.tsx` — stealth key 유도 + claim
 - `relayer/` — ephemeralPubKey 저장/전달 *(Phase 1 미구현, 향후 작업)*
 
 ### 의존성
