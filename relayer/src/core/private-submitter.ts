@@ -27,7 +27,7 @@ const PRIVATE_SETTLEMENT_ABI = [
 const COMMITMENT_POOL_ABI = [
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
-  "event CommitmentDeposited(uint256 indexed commitment, uint32 leafIndex, address indexed token, uint256 amount, uint256 timestamp)",
+  "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
 
 const CLAIMS_TREE_DEPTH = 4;
@@ -81,7 +81,7 @@ export class PrivateSubmitter {
 
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
-    const filter = this.pool.filters.CommitmentDeposited();
+    const filter = this.pool.filters.CommitmentInserted();
     const events = await this.pool.queryFilter(filter, 0, "latest");
     this.commitmentLeaves = [];
 

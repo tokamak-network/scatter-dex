@@ -31,20 +31,16 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error NotAuthorizedSettlement();
 
     // ─── Events ──────────────────────────────────────────────────
-    event CommitmentDeposited(
+    event CommitmentInserted(
         uint256 indexed commitment,
         uint32 leafIndex,
-        address indexed token,
-        uint256 amount,
         uint256 timestamp
     );
     event Withdrawal(
         address indexed recipient,
         uint256 nullifierHash,
         uint256 newCommitment,
-        address indexed token,
-        uint256 amount,
-        address indexed relayer
+        uint256 amount
     );
 
     // ─── State ───────────────────────────────────────────────────
@@ -120,7 +116,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         // Insert commitment into Merkle tree
         uint32 leafIndex = _insert(commitment);
 
-        emit CommitmentDeposited(commitment, leafIndex, token, amount, block.timestamp);
+        emit CommitmentInserted(commitment, leafIndex, block.timestamp);
     }
 
     // ─── Insert (from PrivateSettlement) ──────────────────────────
@@ -203,6 +199,6 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         // Transfer tokens to recipient
         IERC20(token).safeTransfer(recipient, amount);
 
-        emit Withdrawal(recipient, nullifierHash, newCommitment, token, amount, relayer);
+        emit Withdrawal(recipient, nullifierHash, newCommitment, amount);
     }
 }

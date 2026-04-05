@@ -74,8 +74,8 @@ contract CommitmentPoolTest is Test {
     }
 
     function test_deposit_emits_event() public {
-        vm.expectEmit(true, true, false, true);
-        emit CommitmentPool.CommitmentDeposited(COMMITMENT_1, 0, address(token), 100 ether, block.timestamp);
+        vm.expectEmit(true, false, false, true);
+        emit CommitmentPool.CommitmentInserted(COMMITMENT_1, 0, block.timestamp);
 
         vm.prank(alice);
         pool.deposit(COMMITMENT_1, address(token), 100 ether);
@@ -231,8 +231,8 @@ contract CommitmentPoolTest is Test {
         uint[2][2] memory proofB;
         uint[2] memory proofC;
 
-        vm.expectEmit(true, true, true, true);
-        emit CommitmentPool.Withdrawal(alice, NULLIFIER_1, 0, address(token), 100 ether, address(0));
+        vm.expectEmit(true, false, false, true);
+        emit CommitmentPool.Withdrawal(alice, NULLIFIER_1, 0, 100 ether);
 
         pool.withdraw(proofA, proofB, proofC, root, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
     }
