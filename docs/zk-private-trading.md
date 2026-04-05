@@ -69,6 +69,107 @@ http://localhost:3000/claim
    - **Gasless**: 릴레이어가 가스 대납 (스텔스 주소로 수령)
 4. 브라우저에서 ZK proof 생성 (~3초) → 클레임 완료
 
+---
+
+## 수동 배포 (디버깅용)
+
+`dev.sh` 대신 각 단계를 수동으로 실행하여 문제를 추적할 수 있습니다.
+
+### Step 1: anvil 시작
+
+```bash
+anvil
+```
+
+### Step 2: 컨트랙트 배포
+
+```bash
+cd contracts
+forge script script/DeployLocal.s.sol:DeployLocal \
+  --rpc-url http://localhost:8545 --broadcast \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+출력에서 주소를 확인하세요:
+```
+ScatterSettlement:     0x...
+RelayerRegistry:       0x...
+WETH:                  0x...
+USDC:                  0x...
+CommitmentPool:        0x...
+PrivateSettlement:     0x...
+```
+
+### Step 3: 릴레이어 시작
+
+```bash
+cd relayer
+cat > .env <<EOF
+RPC_URL=http://localhost:8545
+RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+SETTLEMENT_ADDRESS=<ScatterSettlement 주소>
+RELAYER_FEE=30
+PORT=3001
+EOF
+npm run dev
+```
+
+### Step 4: 프론트엔드 시작
+
+```bash
+cd frontend
+cat > .env.local <<EOF
+NEXT_PUBLIC_SETTLEMENT_ADDRESS=<ScatterSettlement 주소>
+NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RelayerRegistry 주소>
+NEXT_PUBLIC_WETH_ADDRESS=<WETH 주소>
+NEXT_PUBLIC_TOKENS=<WETH>:WETH:18,<USDC>:USDC:18
+NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<CommitmentPool 주소>
+NEXT_PUBLIC_RPC_URL=http://localhost:8545
+NEXT_PUBLIC_CHAIN_ID=31337
+EOF
+npm run dev
+```
+
+### Step 5: 토큰 화이트리스트 확인
+
+```bash
+# CommitmentPool에 토큰이 화이트리스트되어 있는지 확인
+cast call <CommitmentPool> "whitelistedTokens(address)(bool)" <WETH> --rpc-url http://localhost:8545
+cast call <CommitmentPool> "whitelistedTokens(address)(bool)" <USDC> --rpc-url http://localhost:8545
+```
+
+### Step 6: 테스트 입금 (CLI에서 직접)
+
+```bash
+# 1. WETH wrap
+cast send <WETH> "deposit()" --value 1ether \
+  --private-key <유저 키> --rpc-url http://localhost:8545
+
+# 2. approve
+cast send <WETH> "approve(address,uint256)" <CommitmentPool> 1000000000000000000 \
+  --private-key <유저 키> --rpc-url http://localhost:8545
+
+# 3. deposit (commitment은 아무 값 — 테스트용)
+cast send <CommitmentPool> "deposit(uint256,address,uint256)" 12345 <WETH> 1000000000000000000 \
+  --private-key <유저 키> --rpc-url http://localhost:8545
+
+# 4. 확인
+cast call <CommitmentPool> "nextIndex()(uint32)" --rpc-url http://localhost:8545
+cast call <CommitmentPool> "getLastRoot()(uint256)" --rpc-url http://localhost:8545
+```
+
+### 디버깅 팁
+
+| 문제 | 확인 방법 |
+|------|----------|
+| 입금 실패 | `cast call` 로 `whitelistedTokens`, `allowance` 확인 |
+| leaf index 항상 0 | 컨트랙트 재배포 필요 (이벤트 이름 변경 후) |
+| 프론트엔드 pool 연결 안 됨 | `.env.local`에 `NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS` 확인 |
+| ZK proof 생성 실패 | `frontend/public/zk/` 에 `.wasm`, `.zkey` 파일 존재 확인 |
+| 온체인 이벤트 조회 | `cast logs --address <Pool> --from-block 0` |
+
+---
+
 ## 프라이버시 요약
 
 | 단계 | 온체인에 보이는 것 | 숨겨지는 것 |
