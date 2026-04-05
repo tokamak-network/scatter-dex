@@ -87,13 +87,13 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.nonceNullifiers(TAKER_NONCE_NULL));
 
         // Claims groups should be registered
-        (address token1, uint96 locked1, uint96 claimed1, uint48 expiry1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (address token1, uint48 expiry1, uint96 locked1, uint96 claimed1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(token1, address(weth));
         assertEq(locked1, 5 ether);
         assertEq(claimed1, 0);
         assertTrue(expiry1 > block.timestamp);
 
-        (address token2, uint96 locked2,,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
+        (address token2,, uint96 locked2,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
         assertEq(token2, address(usdc));
         assertEq(locked2, 10_000e18);
     }
@@ -164,7 +164,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
-        (, , uint96 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (,,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, claimAmount);
     }
 
@@ -189,7 +189,7 @@ contract PrivateSettlementTest is Test {
         assertEq(weth.balanceOf(recipient1), 2 ether);
         assertEq(weth.balanceOf(recipient2), 3 ether);
 
-        (, , uint96 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (,,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether); // all claimed
     }
 

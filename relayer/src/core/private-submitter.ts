@@ -3,6 +3,7 @@
  * Generates ZK proof and calls settlePrivate() on PrivateSettlement contract.
  */
 
+import crypto from "crypto";
 import { ethers } from "ethers";
 import { config } from "../config.js";
 import {
@@ -153,8 +154,18 @@ export class PrivateSubmitter {
     const takerNonceNullifier = await computeNullifier(taker.ownerSecret, taker.nonce);
 
     // Compute new commitments (after sell amount deduction)
-    const makerNewSalt = BigInt("0x" + Buffer.from(require("crypto").randomBytes(31)).toString("hex"));
-    const takerNewSalt = BigInt("0x" + Buffer.from(require("crypto").randomBytes(31)).toString("hex"));
+    const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+    const genSalt = (): bigint => {
+      let val: bigint;
+      do {
+        const bytes = crypto.randomBytes(32);
+        bytes[0] &= 0x1f;
+        val = BigInt("0x" + bytes.toString("hex"));
+      } while (val >= FIELD_MODULUS);
+      return val;
+    };
+    const makerNewSalt = genSalt();
+    const takerNewSalt = genSalt();
 
     const makerNewBal = maker.balance - maker.sellAmount;
     const takerNewBal = taker.balance - taker.sellAmount;

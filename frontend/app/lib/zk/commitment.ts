@@ -17,14 +17,20 @@ async function getPoseidon() {
   return poseidonInstance;
 }
 
+const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
 /** Generate a cryptographically random field element (< BN254 scalar field). */
 export function randomFieldElement(): bigint {
-  const bytes = new Uint8Array(31); // 31 bytes to stay within field
-  crypto.getRandomValues(bytes);
-  let value = 0n;
-  for (const b of bytes) {
-    value = (value << 8n) | BigInt(b);
-  }
+  let value: bigint;
+  do {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    bytes[0] &= 0x1f; // cap to ~253 bits to minimize rejection
+    value = 0n;
+    for (const b of bytes) {
+      value = (value << 8n) | BigInt(b);
+    }
+  } while (value >= FIELD_MODULUS);
   return value;
 }
 
@@ -64,13 +70,13 @@ export async function computeTokenHash(token: string): Promise<bigint> {
   return F.toObject(hash);
 }
 
-/** Serialize a note to JSON-safe format for storage/backup. */
+/** Serialize a note to JSON-safe format for storage/backup (hex encoding). */
 export function serializeNote(note: CommitmentNote): string {
   return JSON.stringify({
-    ownerSecret: note.ownerSecret.toString(),
-    token: note.token.toString(),
-    amount: note.amount.toString(),
-    salt: note.salt.toString(),
+    ownerSecret: "0x" + note.ownerSecret.toString(16),
+    token: "0x" + note.token.toString(16),
+    amount: "0x" + note.amount.toString(16),
+    salt: "0x" + note.salt.toString(16),
   });
 }
 
@@ -103,11 +109,11 @@ export async function buildMerkleTree(
     zeros.push(F.toObject(h));
   }
 
-  // Pad leaves to 2^depth
+  // Pad leaves to 2^depth with zero value (leaf-level zero = 0)
   const size = 2 ** depth;
   const paddedLeaves = [...leaves];
   while (paddedLeaves.length < size) {
-    paddedLeaves.push(0n); // zero leaf
+    paddedLeaves.push(zeros[0]); // zero leaf
   }
 
   const layers: bigint[][] = [paddedLeaves];

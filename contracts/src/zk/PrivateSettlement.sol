@@ -50,11 +50,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     );
 
     // ─── Data Structures ─────────────────────────────────────────
+    // Packed: 2 storage slots
+    // Slot 0: token (20) + expiry (6) + _pad (6) = 32 bytes
+    // Slot 1: totalLocked (12) + totalClaimed (12) + _pad (8) = 32 bytes
     struct ClaimsGroup {
-        address token;
-        uint96 totalLocked;
-        uint96 totalClaimed;
-        uint48 expiry;
+        address token;          // slot 0: 20 bytes
+        uint48  expiry;         // slot 0: 6 bytes
+        uint96  totalLocked;    // slot 1: 12 bytes
+        uint96  totalClaimed;   // slot 1: 12 bytes
     }
 
     // ─── State ───────────────────────────────────────────────────

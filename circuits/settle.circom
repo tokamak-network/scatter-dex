@@ -45,6 +45,16 @@ template ComputeMerkleRoot(maxLeaves, depth) {
     signal input count; // actual number of leaves (rest are zero-padded)
     signal output root;
 
+    // Verify unused leaves are zero (prevent padding manipulation)
+    component isUsed[maxLeaves];
+    for (var i = 0; i < maxLeaves; i++) {
+        isUsed[i] = LessThan(252);
+        isUsed[i].in[0] <== i;
+        isUsed[i].in[1] <== count;
+        // If i >= count, leaf must be zero
+        (1 - isUsed[i].out) * leaves[i] === 0;
+    }
+
     // Build tree bottom-up
     var layerSize = maxLeaves;
     component hashers[maxLeaves - 1]; // total internal nodes
@@ -355,6 +365,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerSigVerify.R8x <== makerSigR8x;
     makerSigVerify.R8y <== makerSigR8y;
     makerSigVerify.M <== makerOrderHash.out;
+    // EdDSAPoseidonVerifier asserts internally when enabled=1; no explicit output check needed.
 
     component takerOrderHash = Poseidon(7);
     takerOrderHash.inputs[0] <== takerSellToken;

@@ -67,8 +67,6 @@ export async function signEdDSA(
 ): Promise<EdDSASignature> {
   const { eddsa, babyJub } = await getEdDSA();
   const F = babyJub.F;
-
-  const msgBuf = Buffer.from(message.toString(16).padStart(64, "0"), "hex");
   const sig = eddsa.signPoseidon(privateKey, F.e(message));
 
   return {

@@ -75,13 +75,18 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         super.transferOwnership(newOwner);
     }
 
+    event Paused(bool paused);
+    event TokenWhitelistUpdated(address indexed token, bool allowed);
+
     function setPaused(bool _paused) external onlyOwner {
         paused = _paused;
+        emit Paused(_paused);
     }
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
+        emit TokenWhitelistUpdated(token, allowed);
     }
 
     // ─── Deposit ─────────────────────────────────────────────────

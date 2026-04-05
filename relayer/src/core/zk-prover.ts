@@ -178,6 +178,10 @@ export interface SettleProofInput {
   makerClaimLeaves: bigint[];
   takerClaimLeaves: bigint[];
 
+  // Totals
+  totalLockedMaker: bigint;
+  totalLockedTaker: bigint;
+
   // Tokens
   tokenMaker: bigint; // what maker receives
   tokenTaker: bigint; // what taker receives
@@ -234,8 +238,9 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
     );
   }
 
-  const totalLockedMaker = input.makerClaimLeaves.reduce((_, l) => 0n, 0n); // placeholder
-  const totalLockedTaker = input.takerClaimLeaves.reduce((_, l) => 0n, 0n);
+  // totalLocked comes from the SettleProofInput (caller computes from claim amounts)
+  const totalLockedMaker = input.totalLockedMaker ?? 0n;
+  const totalLockedTaker = input.totalLockedTaker ?? 0n;
 
   const circuitInput: Record<string, string | string[]> = {
     commitmentRoot: input.commitmentRoot.toString(),
