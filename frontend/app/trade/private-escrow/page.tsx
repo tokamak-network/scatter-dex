@@ -45,6 +45,7 @@ export default function PrivateEscrowPage() {
   const [notes, setNotes] = useState<StoredNote[]>([]);
   const [folderReady, setFolderReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
   const [txState, setTxState] = useState<TxState>("idle");
@@ -166,6 +167,7 @@ export default function PrivateEscrowPage() {
         tokenAddress: selectedToken.address,
         amount: depositAmount,
         leafIndex,
+        txHash: receipt.hash,
         createdAt: Date.now(),
       };
       await saveNote(storedNote);
@@ -277,32 +279,80 @@ export default function PrivateEscrowPage() {
             ) : (
               <div className="divide-y divide-outline-variant/10">
                 {notes.map((n, i) => (
-                  <div key={n.commitment} className="px-6 py-4 flex items-center justify-between hover:bg-surface-bright/20 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Lock className="w-5 h-5 text-primary" />
+                  <div key={n.commitment}>
+                    <div
+                      onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedIdx === i ? "bg-surface-bright/10" : ""}`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Lock className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-on-surface">
+                            {n.amount} {n.tokenSymbol}
+                          </div>
+                          <div className="text-xs text-on-surface-variant/50 font-mono">
+                            leaf #{n.leafIndex} &middot; {new Date(n.createdAt).toLocaleDateString()}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-semibold text-on-surface">
-                          {n.amount} {n.tokenSymbol}
-                        </div>
-                        <div className="text-xs text-on-surface-variant/50 font-mono">
-                          leaf #{n.leafIndex} &middot; {new Date(n.createdAt).toLocaleDateString()}
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">
+                          Active
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteNote(n); }}
+                          className="text-on-surface-variant/30 hover:text-error transition-colors p-1"
+                          title="Remove note file"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">
-                        Active
-                      </span>
-                      <button
-                        onClick={() => handleDeleteNote(n)}
-                        className="text-on-surface-variant/30 hover:text-error transition-colors p-1"
-                        title="Remove note file"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                    {expandedIdx === i && (
+                      <div className="px-6 py-4 bg-surface-container/50 border-t border-outline-variant/5">
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <span className="text-on-surface-variant/60">Token</span>
+                            <p className="font-mono text-on-surface mt-0.5">{n.tokenSymbol}</p>
+                          </div>
+                          <div>
+                            <span className="text-on-surface-variant/60">Amount</span>
+                            <p className="font-mono text-on-surface mt-0.5">{n.amount}</p>
+                          </div>
+                          <div>
+                            <span className="text-on-surface-variant/60">Leaf Index</span>
+                            <p className="font-mono text-on-surface mt-0.5">{n.leafIndex}</p>
+                          </div>
+                          <div>
+                            <span className="text-on-surface-variant/60">Date</span>
+                            <p className="text-on-surface mt-0.5">{new Date(n.createdAt).toLocaleString()}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-on-surface-variant/60">Commitment</span>
+                            <p className="font-mono text-on-surface mt-0.5 text-[11px] break-all">{n.commitment}</p>
+                          </div>
+                          {n.txHash && (
+                            <div className="col-span-2">
+                              <span className="text-on-surface-variant/60">Tx Hash</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <p className="font-mono text-on-surface text-[11px] truncate">{n.txHash}</p>
+                                <button
+                                  onClick={() => navigator.clipboard.writeText(n.txHash)}
+                                  className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors"
+                                  title="Copy tx hash"
+                                >📋</button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="col-span-2">
+                            <span className="text-on-surface-variant/60">Token Address</span>
+                            <p className="font-mono text-on-surface mt-0.5 text-[11px] break-all">{n.tokenAddress}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

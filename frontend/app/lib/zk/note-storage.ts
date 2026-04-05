@@ -13,6 +13,7 @@ export interface StoredNote {
   tokenAddress: string;
   amount: string;
   leafIndex: number;
+  txHash: string;
   createdAt: number;
 }
 
@@ -116,6 +117,7 @@ function serializeForFile(note: StoredNote) {
     tokenAddress: note.tokenAddress,
     amount: note.amount,
     leafIndex: note.leafIndex,
+    txHash: note.txHash,
     createdAt: new Date(note.createdAt).toISOString(),
     note: {
       ownerSecret: "0x" + note.note.ownerSecret.toString(16),
@@ -134,6 +136,7 @@ function deserializeFromFile(parsed: any): StoredNote {
     tokenAddress: parsed.tokenAddress,
     amount: parsed.amount,
     leafIndex: parsed.leafIndex,
+    txHash: parsed.txHash ?? "",
     createdAt: new Date(parsed.createdAt).getTime(),
     note: {
       ownerSecret: BigInt(parsed.note.ownerSecret),
