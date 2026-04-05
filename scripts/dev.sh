@@ -232,14 +232,16 @@ echo "  relayer running on http://localhost:3001 (PID $last_pid)"
 # ── 4. Start frontend ────────────────────────────────────────
 echo ""
 echo "[4/4] Starting frontend..."
-TOKEN_LIST=""
-[ -n "$WETH" ] && [ -n "$USDC" ] && TOKEN_LIST="$WETH,$USDC"
+TOKENS=""
+[ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
 cat > "$ROOT_DIR/frontend/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
-NEXT_PUBLIC_TOKEN_LIST=$TOKEN_LIST
+NEXT_PUBLIC_WETH_ADDRESS=$WETH
+NEXT_PUBLIC_TOKENS=$TOKENS
+NEXT_PUBLIC_CHAIN_ID=31337
 EOF
 
 cd "$ROOT_DIR/frontend"

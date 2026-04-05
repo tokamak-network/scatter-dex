@@ -2,11 +2,10 @@
 
 ScatterDEX requires a **zk-X509 Identity Registry** for user verification (Dual-CA architecture). This guide covers two ways to run the full stack locally.
 
-## Option A: Docker (Recommended)
+## Option A: Docker
 
-### Prerequisites
-
-- Docker Desktop
+> **Note:** Docker mode requires a `frontend/Dockerfile` which is not yet created.
+> Use **Option B (Native)** for now.
 
 ### Mock Mode (standalone, no zk-X509)
 
@@ -61,6 +60,7 @@ docker compose up -d
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, anvil, cast)
 - Node.js >= 18
+- [circom](https://docs.circom.io/getting-started/installation/) (for ZK circuit compilation)
 - [zk-X509](https://github.com/tokamak-network/zk-X509) repo (for integration mode)
 
 ### Mock Mode
@@ -125,8 +125,10 @@ cd frontend
 cat > .env.local <<EOF
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=<SETTLEMENT>
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
+NEXT_PUBLIC_WETH_ADDRESS=<WETH>
+NEXT_PUBLIC_TOKENS=<WETH>:WETH:18,<USDC>:USDC:18
 NEXT_PUBLIC_RPC_URL=http://localhost:8545
-NEXT_PUBLIC_TOKEN_LIST=<WETH>,<USDC>
+NEXT_PUBLIC_CHAIN_ID=31337
 EOF
 npm run dev
 ```
