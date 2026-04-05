@@ -2,26 +2,23 @@
 
 로컬 환경에서 ZK 프라이빗 거래를 테스트하는 방법입니다.
 
-> 사전 조건: `./scripts/dev.sh --mock`으로 로컬 환경이 실행 중이어야 합니다.
-
-## 1. ZK 컨트랙트 배포
+## 1. 로컬 환경 시작
 
 ```bash
-cd contracts
-forge script script/DeployPrivateSettlement.s.sol:DeployPrivateSettlement \
-  --rpc-url http://localhost:8545 --broadcast \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+./scripts/dev.sh --mock
 ```
 
-출력에서 주소를 복사하세요:
-```
-CommitmentPool:        0x...
-PrivateSettlement:     0x...
-```
+이 명령 하나로 **일반 + ZK 컨트랙트 전부** 배포됩니다:
+- anvil (로컬 블록체인)
+- ScatterSettlement + RelayerRegistry (일반)
+- CommitmentPool + PrivateSettlement + Verifiers (ZK)
+- 릴레이어 + 프론트엔드
 
-`frontend/.env.local`에 추가 후 프론트엔드를 재시작하세요:
+배포 완료 후 출력에서 `NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS`를 확인하세요.
+
+`frontend/.env.local`에 없다면 추가 후 프론트엔드를 재시작하세요:
 ```
-NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<CommitmentPool 주소>
+NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<출력된 CommitmentPool 주소>
 ```
 
 ## 2. Private Escrow (ZK 입금)
@@ -29,18 +26,19 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<CommitmentPool 주소>
 http://localhost:3000/trade/private-escrow
 
 1. 지갑 연결
-2. 토큰 선택 (WETH 또는 USDC)
-3. 금액 입력
-4. **Deposit Privately** 클릭
-5. MetaMask에서 approve → deposit 서명
+2. **Select Folder** 클릭 → 노트 저장할 로컬 폴더 지정 (최초 1회)
+3. 토큰 선택 (ETH, WETH, USDC)
+4. 금액 입력
+5. **Deposit Privately** 클릭
+6. MetaMask에서 approve → deposit 서명 (ETH 선택 시 자동 WETH wrap)
 
 입금 후:
-- **Private Notes** 목록에 표시됨
+- **Private Notes** 목록에 표시됨 (클릭하면 상세 정보)
 - 온체인에는 commitment(해시)만 저장 → **누가 얼마 넣었는지 모름**
-- 노트(secret/salt)는 브라우저에 저장됨
+- 노트(secret/salt)는 지정한 폴더에 JSON 파일로 자동 저장됨
 
-> ⚠️ **Backup 필수!** 노트를 잃으면 자금 회수 불가.
-> Backup 버튼으로 JSON 파일을 다운로드하세요.
+> ⚠️ **노트 파일을 잃으면 자금 회수 불가!**
+> 지정한 폴더를 안전한 곳에 보관하세요.
 
 ## 3. Private Order (ZK 주문)
 
