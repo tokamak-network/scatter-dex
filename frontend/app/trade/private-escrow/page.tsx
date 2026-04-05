@@ -38,7 +38,7 @@ type TxState = "idle" | "approving" | "depositing" | "success" | "error";
 
 export default function PrivateEscrowPage() {
   const { account, signer, connect } = useWallet();
-  const tokens = getTokenList().filter((t) => !t.isNative);
+  const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
   const [folderReady, setFolderReady] = useState(false);
@@ -82,22 +82,42 @@ export default function PrivateEscrowPage() {
       const parsed = ethers.parseUnits(depositAmount, selectedToken.decimals);
       if (parsed <= 0n) return;
 
-      const note = generateNote(selectedToken.address, parsed);
+      // For native ETH: commitment uses the WETH address (same underlying token)
+      const commitTokenAddr = selectedToken.address;
+      const note = generateNote(commitTokenAddr, parsed);
       const commitment = await computeCommitment(note);
 
-      // Approve
-      setTxState("approving");
-      const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
-      const allowance: bigint = await erc20.allowance(account, poolAddress);
-      if (allowance < parsed) {
-        const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
-        await approveTx.wait();
+      if (selectedToken.isNative) {
+        // ETH: wrap to WETH first, then approve + deposit
+        setTxState("approving");
+        const wethContract = new ethers.Contract(
+          selectedToken.address,
+          ["function deposit() external payable", ...ERC20_ABI],
+          signer
+        );
+        const wrapTx = await wethContract.deposit({ value: parsed });
+        await wrapTx.wait();
+
+        const allowance: bigint = await wethContract.allowance(account, poolAddress);
+        if (allowance < parsed) {
+          const approveTx = await wethContract.approve(poolAddress, ethers.MaxUint256);
+          await approveTx.wait();
+        }
+      } else {
+        // ERC20: just approve
+        setTxState("approving");
+        const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
+        const allowance: bigint = await erc20.allowance(account, poolAddress);
+        if (allowance < parsed) {
+          const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
+          await approveTx.wait();
+        }
       }
 
       // Deposit
       setTxState("depositing");
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
-      const tx = await pool.deposit(commitment, selectedToken.address, parsed);
+      const tx = await pool.deposit(commitment, commitTokenAddr, parsed);
       const receipt = await tx.wait();
       setTxHash(receipt.hash);
 
