@@ -1,0 +1,154 @@
+/**
+ * ZK Commitment utilities for CommitmentPool.
+ *
+ * Commitment = Poseidon(ownerSecret, token, amount, salt)
+ * Nullifier  = Poseidon(ownerSecret, salt)
+ */
+
+// We use circomlibjs for Poseidon in the browser.
+// Lazy-loaded to avoid blocking initial page load.
+let poseidonInstance: any = null;
+
+async function getPoseidon() {
+  if (!poseidonInstance) {
+    const { buildPoseidon } = await import("circomlibjs");
+    poseidonInstance = await buildPoseidon();
+  }
+  return poseidonInstance;
+}
+
+/** Generate a cryptographically random field element (< BN254 scalar field). */
+export function randomFieldElement(): bigint {
+  const bytes = new Uint8Array(31); // 31 bytes to stay within field
+  crypto.getRandomValues(bytes);
+  let value = 0n;
+  for (const b of bytes) {
+    value = (value << 8n) | BigInt(b);
+  }
+  return value;
+}
+
+/** Generate a new commitment note (all data needed to later withdraw). */
+export function generateNote(token: string, amount: bigint) {
+  return {
+    ownerSecret: randomFieldElement(),
+    token: BigInt(token), // address as uint256
+    amount,
+    salt: randomFieldElement(),
+  };
+}
+
+export type CommitmentNote = ReturnType<typeof generateNote>;
+
+/** Compute commitment = Poseidon(ownerSecret, token, amount, salt). */
+export async function computeCommitment(note: CommitmentNote): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const hash = poseidon([note.ownerSecret, note.token, note.amount, note.salt]);
+  return F.toObject(hash);
+}
+
+/** Compute nullifier = Poseidon(ownerSecret, salt). */
+export async function computeNullifier(note: CommitmentNote): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const hash = poseidon([note.ownerSecret, note.salt]);
+  return F.toObject(hash);
+}
+
+/** Compute tokenHash = Poseidon(token) for circuit public input. */
+export async function computeTokenHash(token: string): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const hash = poseidon([BigInt(token)]);
+  return F.toObject(hash);
+}
+
+/** Serialize a note to JSON-safe format for storage/backup. */
+export function serializeNote(note: CommitmentNote): string {
+  return JSON.stringify({
+    ownerSecret: note.ownerSecret.toString(),
+    token: note.token.toString(),
+    amount: note.amount.toString(),
+    salt: note.salt.toString(),
+  });
+}
+
+/** Deserialize a note from JSON string. */
+export function deserializeNote(json: string): CommitmentNote {
+  const parsed = JSON.parse(json);
+  return {
+    ownerSecret: BigInt(parsed.ownerSecret),
+    token: BigInt(parsed.token),
+    amount: BigInt(parsed.amount),
+    salt: BigInt(parsed.salt),
+  };
+}
+
+/**
+ * Build a Poseidon Merkle tree from an array of leaves.
+ * Returns the tree layers (for computing Merkle paths).
+ */
+export async function buildMerkleTree(
+  leaves: bigint[],
+  depth: number
+): Promise<{ root: bigint; layers: bigint[][] }> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+
+  // Compute zero values
+  const zeros: bigint[] = [0n];
+  for (let i = 1; i <= depth; i++) {
+    const h = poseidon([zeros[i - 1], zeros[i - 1]]);
+    zeros.push(F.toObject(h));
+  }
+
+  // Pad leaves to 2^depth
+  const size = 2 ** depth;
+  const paddedLeaves = [...leaves];
+  while (paddedLeaves.length < size) {
+    paddedLeaves.push(0n); // zero leaf
+  }
+
+  const layers: bigint[][] = [paddedLeaves];
+
+  // Build tree bottom-up
+  let currentLayer = paddedLeaves;
+  for (let i = 0; i < depth; i++) {
+    const nextLayer: bigint[] = [];
+    for (let j = 0; j < currentLayer.length; j += 2) {
+      const left = currentLayer[j];
+      const right = currentLayer[j + 1];
+      const h = poseidon([left, right]);
+      nextLayer.push(F.toObject(h));
+    }
+    layers.push(nextLayer);
+    currentLayer = nextLayer;
+  }
+
+  return { root: currentLayer[0], layers };
+}
+
+/**
+ * Get Merkle proof (path + indices) for a leaf at given index.
+ */
+export function getMerkleProof(
+  layers: bigint[][],
+  leafIndex: number
+): { pathElements: bigint[]; pathIndices: number[] } {
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+
+  let index = leafIndex;
+  for (let i = 0; i < layers.length - 1; i++) {
+    const isRight = index % 2;
+    const siblingIndex = isRight ? index - 1 : index + 1;
+
+    pathElements.push(layers[i][siblingIndex] ?? 0n);
+    pathIndices.push(isRight);
+
+    index = Math.floor(index / 2);
+  }
+
+  return { pathElements, pathIndices };
+}
