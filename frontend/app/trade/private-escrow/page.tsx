@@ -364,10 +364,19 @@ export default function PrivateEscrowPage() {
                 <div className="text-xs p-3 rounded-md bg-error/5 text-error truncate">{txError}</div>
               )}
               {txState === "success" && (
-                <div className="text-xs p-3 rounded-md bg-tertiary/5 text-tertiary">
-                  Deposit successful! Note saved to folder.
+                <div className="text-xs p-3 rounded-md bg-tertiary/5 text-tertiary space-y-1">
+                  <div>Deposit successful! Note saved to folder.</div>
                   {txHash && (
-                    <div className="font-mono mt-1 text-on-surface-variant/50">tx: {txHash.slice(0, 14)}...</div>
+                    <div className="flex items-center gap-2 font-mono text-on-surface-variant/50">
+                      <span className="truncate">{txHash}</span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(txHash)}
+                        className="shrink-0 hover:text-on-surface transition-colors"
+                        title="Copy tx hash"
+                      >
+                        📋
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
