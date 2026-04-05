@@ -12,6 +12,7 @@ optimizer_runs = 200
 remappings = [
     "forge-std/=lib/forge-std/src/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "poseidon-solidity/=lib/poseidon-solidity/contracts/",
 ]
 
 # Skip OZ internal test/fv/scripts that have unresolvable imports
