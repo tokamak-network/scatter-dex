@@ -166,12 +166,56 @@ The script will:
 | Relayer | http://localhost:3001 |
 | Anvil | http://localhost:8545 |
 
-## Contract Tests
+## Tests
+
+### Contract Tests (Solidity)
 
 ```bash
-make test
-# or
 cd contracts && forge test
+# or
+make test
+```
+
+Includes 165 tests: ScatterSettlement, CommitmentPool (ZK escrow), PrivateSettlement (ZK settle/claim).
+
+### ZK Circuit Tests (E2E with real proofs)
+
+```bash
+cd circuits && npm install && npm test
+```
+
+Generates real Groth16 proofs and verifies them off-chain. Tests:
+- Withdraw: full + partial with change commitment
+- Claim: single + multiple claims from same root
+
+### ZK Circuit Build (compile + trusted setup)
+
+```bash
+cd circuits && npm run build
+```
+
+Compiles 3 circuits (withdraw, settle, claim), runs Powers of Tau + Phase 2 ceremony, generates:
+- Solidity verifiers → `contracts/src/zk/`
+- WASM + zkey → `frontend/public/zk/`
+
+### Deploy ZK Contracts (local anvil)
+
+After `./scripts/dev.sh --mock`:
+
+```bash
+cd contracts
+forge script script/DeployPrivateSettlement.s.sol:DeployPrivateSettlement \
+  --rpc-url http://localhost:8545 --broadcast \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+Note the `NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS` from the output and add it to `frontend/.env.local`.
+
+### Relayer Tests
+
+```bash
+cd relayer && npm test           # unit tests
+cd relayer && npm run test:e2e   # E2E integration tests
 ```
 
 ## Troubleshooting
