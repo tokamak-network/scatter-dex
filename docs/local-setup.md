@@ -220,6 +220,16 @@ cd relayer && npm test           # unit tests
 cd relayer && npm run test:e2e   # E2E integration tests
 ```
 
+---
+
+## ZK Private Trading
+
+See [**zk-private-trading.md**](./zk-private-trading.md) for:
+- ZK 컨트랙트 배포
+- Private Escrow (ZK 입금)
+- Private Order (ZK 주문)
+- ZK Claim (수령)
+
 ## Troubleshooting
 
 | Problem | Solution |
