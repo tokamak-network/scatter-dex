@@ -28,6 +28,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotExpired();
     error RenounceOwnershipDisabled();
     error TokenNotWhitelisted();
+    error NotYetReleasable();
+    error TokenMismatch();
+    error AmountOverflow();
+    error TimestampOutOfRange();
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -66,6 +70,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     IClaimVerifier public immutable claimVerifier;
 
     uint256 public constant REFUND_WINDOW = 7 days;
+    uint256 public constant TIMESTAMP_TOLERANCE = 300; // 5 minutes
     bool public paused;
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
@@ -100,6 +105,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint[2] proofA;
         uint[2][2] proofB;
         uint[2] proofC;
+        uint256 currentRoot;
+        uint256 currentTimestamp;
         bytes32 makerNullifier;
         bytes32 takerNullifier;
         bytes32 makerNonceNullifier;
@@ -126,11 +133,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (nonceNullifiers[p.makerNonceNullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[p.takerNonceNullifier]) revert NullifierAlreadySpent();
 
-        uint256 currentRoot = pool.getLastRoot();
-        if (!pool.isKnownRoot(currentRoot)) revert UnknownRoot();
+        // Verify the caller-provided root is known to the pool (avoids reading stale root)
+        if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
+
+        // Verify the caller-provided timestamp is within tolerance of the actual block timestamp
+        if (
+            p.currentTimestamp > block.timestamp + TIMESTAMP_TOLERANCE ||
+            p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
+        ) revert TimestampOutOfRange();
 
         uint[15] memory pubSignals = [
-            currentRoot,
+            p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
             uint256(p.makerNonceNullifier),
@@ -144,7 +157,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(uint160(p.tokenMaker)),
             uint256(uint160(p.tokenTaker)),
             p.totalFee,
-            block.timestamp
+            p.currentTimestamp
         ];
 
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
@@ -155,6 +168,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nullifiers[p.takerNullifier] = true;
         nonceNullifiers[p.makerNonceNullifier] = true;
         nonceNullifiers[p.takerNonceNullifier] = true;
+
+        // Insert new commitments (change UTXOs) into the CommitmentPool Merkle tree
+        if (p.makerNewCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(p.makerNewCommitment));
+        }
+        if (p.takerNewCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(p.takerNewCommitment));
+        }
 
         uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
@@ -194,9 +215,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.totalLocked == 0) revert ClaimsGroupNotFound();
         if (claimNullifiers[claimNullifier]) revert NullifierAlreadySpent();
+        if (amount > type(uint96).max) revert AmountOverflow();
         if (group.totalClaimed + uint96(amount) > group.totalLocked) revert ExceedsTotalLocked();
-        require(block.timestamp >= releaseTime, "not yet releasable");
-        require(token == group.token, "token mismatch");
+        if (block.timestamp < releaseTime) revert NotYetReleasable();
+        if (token != group.token) revert TokenMismatch();
 
         // Verify ZK proof
         // Public signals: [claimsRoot, nullifier, amount, token, recipient, releaseTime]

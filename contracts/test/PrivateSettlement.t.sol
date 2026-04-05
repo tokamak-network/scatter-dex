@@ -60,6 +60,9 @@ contract PrivateSettlementTest is Test {
         settlement.setTokenWhitelist(address(weth), true);
         settlement.setTokenWhitelist(address(usdc), true);
 
+        // Authorize settlement contract to insert commitments into the pool
+        pool.setAuthorizedSettlement(address(settlement));
+
         // Fund pool with tokens (simulates tokens locked via deposits)
         // In real flow: users deposit via CommitmentPool.deposit()
         // For testing: directly mint to settlement contract
@@ -228,7 +231,7 @@ contract PrivateSettlementTest is Test {
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
-        vm.expectRevert("not yet releasable");
+        vm.expectRevert(PrivateSettlement.NotYetReleasable.selector);
         settlement.claimWithProof(
             proofA, proofB, proofC,
             CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
@@ -289,6 +292,8 @@ contract PrivateSettlementTest is Test {
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,
+            currentRoot: pool.getLastRoot(),
+            currentTimestamp: block.timestamp,
             makerNullifier: MAKER_NULL,
             takerNullifier: TAKER_NULL,
             makerNonceNullifier: MAKER_NONCE_NULL,

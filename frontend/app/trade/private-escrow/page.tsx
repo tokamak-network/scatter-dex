@@ -21,6 +21,7 @@ const POOL_ABI = [
   "function isKnownRoot(uint256 root) view returns (bool)",
   "function nullifiers(uint256) view returns (bool)",
   "function nextIndex() view returns (uint32)",
+  "event CommitmentDeposited(uint256 indexed commitment, uint32 leafIndex, address indexed token, uint256 amount, uint256 timestamp)",
 ];
 
 const ERC20_ABI = [

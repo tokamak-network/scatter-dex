@@ -68,6 +68,9 @@ export async function buildMerkleTree(
     zeros.push(F.toObject(poseidon([zeros[i - 1], zeros[i - 1]])));
   }
 
+  // TODO: O(2^depth) full tree rebuild is acceptable for MVP but will not scale.
+  // In production, use incremental tree building (maintain partial tree state
+  // and only recompute affected branches when new leaves are inserted).
   const size = 2 ** depth;
   const paddedLeaves = [...leaves];
   while (paddedLeaves.length < size) paddedLeaves.push(0n);

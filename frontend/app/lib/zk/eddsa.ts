@@ -38,7 +38,8 @@ export async function deriveEdDSAKey(signer: ethers.Signer): Promise<EdDSAKeyPai
   const signature = await signer.signMessage(DERIVE_MESSAGE);
 
   // Hash the signature to get 32 bytes for the private key
-  const hash = ethers.keccak256(ethers.toUtf8Bytes(signature));
+  // Hash the raw signature bytes (signature is already a hex string; keccak256 accepts hex)
+  const hash = ethers.keccak256(signature);
   const privateKey = ethers.getBytes(hash);
 
   // Derive public key on Baby Jubjub curve

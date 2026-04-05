@@ -21,7 +21,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
-  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint256 totalFee) p) external",
+  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint256 totalFee) p) external",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -109,7 +109,10 @@ export class PrivateSubmitter {
     await this.indexCommitments();
 
     // Build commitment Merkle tree
-    const { root: commitRoot, layers: commitLayers } = await buildMerkleTree(
+    // TODO: O(2^20) full tree rebuild is acceptable for MVP but will not scale.
+    // In production, use incremental tree building (maintain partial tree state
+    // and only recompute affected branches when new leaves are inserted).
+    let { root: commitRoot, layers: commitLayers } = await buildMerkleTree(
       this.commitmentLeaves,
       COMMIT_TREE_DEPTH,
     );
@@ -119,6 +122,9 @@ export class PrivateSubmitter {
     if (commitRoot !== BigInt(onChainRoot)) {
       console.warn("Local tree root differs from on-chain root, re-indexing...");
       await this.indexCommitments();
+      const freshResult = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
+      commitRoot = freshResult.root;
+      commitLayers = freshResult.layers;
     }
 
     // Get Merkle proofs for maker/taker commitments
@@ -270,10 +276,13 @@ export class PrivateSubmitter {
     const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
     const nonce = parseInt(hexNonce, 16);
 
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
     const tx = await this.settlement.settlePrivate({
       proofA,
       proofB,
       proofC,
+      currentRoot: commitRoot,
+      currentTimestamp,
       makerNullifier: "0x" + makerNullifier.toString(16).padStart(64, "0"),
       takerNullifier: "0x" + takerNullifier.toString(16).padStart(64, "0"),
       makerNonceNullifier: "0x" + makerNonceNullifier.toString(16).padStart(64, "0"),

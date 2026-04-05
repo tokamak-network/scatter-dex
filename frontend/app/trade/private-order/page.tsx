@@ -14,6 +14,10 @@ import {
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
 
+// NOTE: Storing EdDSA private key in localStorage is a known XSS risk.
+// This is an acceptable trade-off for the MVP. In production, use encrypted
+// storage (e.g., Web Crypto API with user-derived wrapping key) or hardware
+// wallet integration to protect the key material.
 const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
 
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";

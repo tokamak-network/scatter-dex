@@ -28,6 +28,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error InvalidProof();
     error ContractPaused();
     error RenounceOwnershipDisabled();
+    error NotAuthorizedSettlement();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentDeposited(
@@ -48,6 +49,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     // ─── State ───────────────────────────────────────────────────
     IVerifier public immutable withdrawVerifier;
+    address public authorizedSettlement;
     bool public paused;
 
     mapping(uint256 => bool) public nullifiers;
@@ -77,6 +79,13 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     event Paused(bool paused);
     event TokenWhitelistUpdated(address indexed token, bool allowed);
+    event AuthorizedSettlementUpdated(address indexed settlement);
+
+    function setAuthorizedSettlement(address _settlement) external onlyOwner {
+        if (_settlement == address(0)) revert ZeroAddress();
+        authorizedSettlement = _settlement;
+        emit AuthorizedSettlementUpdated(_settlement);
+    }
 
     function setPaused(bool _paused) external onlyOwner {
         paused = _paused;
@@ -112,6 +121,17 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         uint32 leafIndex = _insert(commitment);
 
         emit CommitmentDeposited(commitment, leafIndex, token, amount, block.timestamp);
+    }
+
+    // ─── Insert (from PrivateSettlement) ──────────────────────────
+
+    /// @notice Insert a new commitment into the Merkle tree.
+    /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Used to insert change commitments after a private settlement.
+    function insertCommitment(uint256 commitment) external returns (uint32) {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (commitment == 0) revert ZeroCommitment();
+        return _insert(commitment);
     }
 
     // ─── Withdraw ────────────────────────────────────────────────
@@ -153,6 +173,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         if (nullifiers[nullifierHash]) revert NullifierAlreadySpent();
 
         // Compute tokenHash = Poseidon(token) to match circuit's public input
+        // Cast to uint160 is safe: Ethereum addresses are exactly 160 bits, so no truncation occurs.
         uint256 tokenHash = PoseidonT2.hash([uint256(uint160(token))]);
 
         // Verify ZK proof

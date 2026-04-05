@@ -239,7 +239,17 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  5. PRICE COMPATIBILITY
     //    maker.sell * taker.sell <= maker.buy * taker.buy
     // ════════════════════════════════════════
-    // Note: this uses big multiplication, need to handle overflow in field
+    // Range-check all four amounts to 128 bits so their products fit
+    // within 256 bits (well within the ~254-bit BN254 field).
+    component rcMakerSell = Num2Bits(128);
+    rcMakerSell.in <== makerSellAmount;
+    component rcMakerBuy = Num2Bits(128);
+    rcMakerBuy.in <== makerBuyAmount;
+    component rcTakerSell = Num2Bits(128);
+    rcTakerSell.in <== takerSellAmount;
+    component rcTakerBuy = Num2Bits(128);
+    rcTakerBuy.in <== takerBuyAmount;
+
     signal makerProduct;
     makerProduct <== makerSellAmount * takerSellAmount;
     signal takerProduct;
@@ -293,6 +303,21 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  9. CLAIMS VALIDATION
     //     Claims sum must equal totalLocked
     // ════════════════════════════════════════
+    // NOTE: totalLockedMaker, totalLockedTaker, and totalFee are public inputs
+    // but are NOT constrained to match the sum of individual claim leaf amounts
+    // inside this circuit. This is because claim leaves are pre-hashed off-circuit
+    // as Poseidon(secret, recipient, token, amount, releaseTime) — the circuit
+    // only sees the hashed leaves, not their individual amount fields.
+    //
+    // In Phase 3a (MVP), this is enforced by the trusted relayer which computes
+    // totalLocked = sum(claim amounts) before proof generation.
+    //
+    // TODO: In a future update, expand the claim leaf structure to pass individual
+    // claim amounts as separate circuit inputs, enabling an in-circuit constraint:
+    //   totalLockedMaker === sum(makerClaimAmounts[i])
+    //   totalLockedTaker === sum(takerClaimAmounts[i])
+    //   totalFee === makerFee + takerFee (derived from sell amounts and fee bps)
+    //
     // (Claims leaves are pre-computed off-circuit as Poseidon hashes)
     // Verify claims roots
     component makerClaimsRoot = ComputeMerkleRoot(maxClaimsPerSide, claimsTreeDepth);

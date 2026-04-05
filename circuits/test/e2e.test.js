@@ -25,7 +25,7 @@ let poseidon, F;
 
 function randomField() {
   const bytes = new Uint8Array(31);
-  require("crypto").getRandomValues(bytes);
+  require("crypto").randomFillSync(bytes);
   let val = 0n;
   for (const b of bytes) val = (val << 8n) | BigInt(b);
   return val;

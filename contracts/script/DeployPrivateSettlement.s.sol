@@ -34,7 +34,11 @@ contract DeployPrivateSettlement is Script {
         );
         console.log("PrivateSettlement:", address(settlement));
 
-        // 4. Whitelist tokens (use same WETH/USDC as DeployLocal)
+        // 4. Authorize settlement to insert commitments into pool
+        pool.setAuthorizedSettlement(address(settlement));
+        console.log("Authorized PrivateSettlement on CommitmentPool");
+
+        // 5. Whitelist tokens (use same WETH/USDC as DeployLocal)
         // These addresses are deterministic from DeployLocal on anvil
         address weth = 0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9;
         address usdc = 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707;

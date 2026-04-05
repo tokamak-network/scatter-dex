@@ -18,7 +18,7 @@ contract IncrementalMerkleTree {
     uint32 public nextIndex;
 
     constructor(uint32 _levels, uint32 _rootHistorySize) {
-        require(_levels > 0 && _levels <= 32, "invalid levels");
+        require(_levels > 0 && _levels <= 20, "invalid levels");
         require(_rootHistorySize > 0, "invalid root history size");
         levels = _levels;
         ROOT_HISTORY_SIZE = _rootHistorySize;
