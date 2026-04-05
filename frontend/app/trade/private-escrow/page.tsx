@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { ethers } from "ethers";
 import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
+import { RPC_URL } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   generateNote,
@@ -14,6 +15,7 @@ import {
   isFileSystemAvailable,
   selectNotesFolder,
   hasFolderSelected,
+  getFolderName,
   saveNote,
   loadNotes,
   deleteNote,
@@ -42,6 +44,7 @@ export default function PrivateEscrowPage() {
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
   const [folderReady, setFolderReady] = useState(false);
+  const [folderName, setFolderName] = useState<string | null>(null);
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
   const [txState, setTxState] = useState<TxState>("idle");
@@ -51,6 +54,27 @@ export default function PrivateEscrowPage() {
   const poolAddress = process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS || "";
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
   const fsAvailable = isFileSystemAvailable();
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
+
+  // Fetch wallet balance for selected token
+  useEffect(() => {
+    if (!account || !selectedToken) { setWalletBalance(null); return; }
+    (async () => {
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        let bal: bigint;
+        if (selectedToken.isNative) {
+          bal = await provider.getBalance(account);
+        } else {
+          const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, provider);
+          bal = await erc20.balanceOf(account);
+        }
+        setWalletBalance(ethers.formatUnits(bal, selectedToken.decimals));
+      } catch {
+        setWalletBalance(null);
+      }
+    })();
+  }, [account, selectedToken, txState]);
 
   // Load notes when folder is selected
   const refreshNotes = useCallback(async () => {
@@ -64,6 +88,7 @@ export default function PrivateEscrowPage() {
     const ok = await selectNotesFolder();
     if (ok) {
       setFolderReady(true);
+      setFolderName(getFolderName());
       await refreshNotes();
     }
   }, [refreshNotes]);
@@ -233,7 +258,7 @@ export default function PrivateEscrowPage() {
               </h3>
               {folderReady && (
                 <span className="text-xs text-emerald-400 flex items-center gap-1">
-                  <FolderOpen className="w-3.5 h-3.5" /> Folder connected
+                  <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
                 </span>
               )}
             </div>
@@ -305,6 +330,11 @@ export default function PrivateEscrowPage() {
                     <option key={`${t.symbol}-${i}`} value={i}>{t.symbol}</option>
                   ))}
                 </select>
+                {walletBalance !== null && selectedToken && (
+                  <div className="mt-2 text-[10px] text-on-surface-variant">
+                    Wallet: {walletBalance} {selectedToken.symbol}
+                  </div>
+                )}
               </div>
 
               <div>

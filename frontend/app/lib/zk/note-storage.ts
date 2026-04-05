@@ -44,6 +44,11 @@ export function hasFolderSelected(): boolean {
   return dirHandle !== null;
 }
 
+/** Get the name of the selected folder. */
+export function getFolderName(): string | null {
+  return dirHandle?.name ?? null;
+}
+
 /** Save a note to the selected folder. */
 export async function saveNote(note: StoredNote): Promise<void> {
   if (!dirHandle) throw new Error("No folder selected");
