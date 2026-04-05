@@ -6,6 +6,8 @@ import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {ScatterSettlement} from "../src/ScatterSettlement.sol";
 import {VaultSkills} from "../src/VaultSkills.sol";
+import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
+import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
@@ -78,6 +80,34 @@ contract DeployLocal is Script {
         relayerRegistry.register{value: 0.1 ether}("http://localhost:3001", 30);
         console.log("Deployer registered as relayer");
 
+        // ── ZK Private Settlement ────────────────────────────────
+
+        // 11. Deploy Groth16 verifiers
+        address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
+        address settleVerifier = _deployCode("SettleVerifier.sol:Groth16Verifier");
+        address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
+        console.log("WithdrawVerifier:", withdrawVerifier);
+        console.log("SettleVerifier:", settleVerifier);
+        console.log("ClaimVerifier:", claimVerifier);
+
+        // 12. Deploy CommitmentPool (ZK escrow)
+        CommitmentPool pool = new CommitmentPool(withdrawVerifier, 20, 30);
+        console.log("CommitmentPool:", address(pool));
+
+        // 13. Deploy PrivateSettlement
+        PrivateSettlement privateSettlement = new PrivateSettlement(
+            address(pool), settleVerifier, claimVerifier
+        );
+        console.log("PrivateSettlement:", address(privateSettlement));
+
+        // 14. Authorize + whitelist
+        pool.setAuthorizedSettlement(address(privateSettlement));
+        pool.setTokenWhitelist(address(weth), true);
+        pool.setTokenWhitelist(address(usdc), true);
+        privateSettlement.setTokenWhitelist(address(weth), true);
+        privateSettlement.setTokenWhitelist(address(usdc), true);
+        console.log("ZK contracts configured");
+
         vm.stopBroadcast();
 
         // Print summary
@@ -88,7 +118,17 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_VAULTSKILLS_ADDRESS=", vm.toString(address(vaultSkills))));
         console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(address(weth))));
         console.log(string.concat("NEXT_PUBLIC_TOKENS=", vm.toString(address(weth)), ":WETH:18,", vm.toString(address(usdc)), ":USDC:18"));
+        console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(address(pool))));
+        console.log(string.concat("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=", vm.toString(address(privateSettlement))));
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
+    }
+
+    function _deployCode(string memory what) internal returns (address addr) {
+        bytes memory bytecode = vm.getCode(what);
+        assembly {
+            addr := create(0, add(bytecode, 0x20), mload(bytecode))
+        }
+        require(addr != address(0), "deploy failed");
     }
 }
