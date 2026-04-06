@@ -61,6 +61,7 @@ export default function PrivateOrderPage() {
   const [buyAmount, setBuyAmount] = useState("");
   const [expiry, setExpiry] = useState("24");
   const [price, setPrice] = useState("");
+  const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
 
   // Claims
   const nextClaimId = useRef(1);
@@ -121,14 +122,25 @@ export default function PrivateOrderPage() {
     setNotes(loaded);
   }, []);
 
-  // Compute buy amount from price
+  // Recompute fee-adjusted buyAmount from sell/price/fee
+  const recomputeBuyAmount = useCallback((sell: string, p: string, bpsStr: string) => {
+    const grossBuy = parseFloat(sell) * parseFloat(p);
+    if (isNaN(grossBuy)) return;
+    const bps = parseInt(bpsStr) || 0;
+    const fee = grossBuy * bps / 10000;
+    const dec = Math.min(buyToken?.decimals ?? 18, 18);
+    setBuyAmount((grossBuy - fee).toFixed(dec));
+  }, [buyToken]);
+
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
-    if (sellAmount) {
-      const buy = parseFloat(sellAmount) * parseFloat(p);
-      if (!isNaN(buy)) setBuyAmount(buy.toFixed(6));
-    }
-  }, [sellAmount]);
+    if (sellAmount) recomputeBuyAmount(sellAmount, p, maxFeeBps);
+  }, [sellAmount, maxFeeBps, recomputeBuyAmount]);
+
+  // Recompute buyAmount when fee changes
+  useEffect(() => {
+    if (sellAmount && price) recomputeBuyAmount(sellAmount, price, maxFeeBps);
+  }, [maxFeeBps]); // intentionally only on fee change
 
   // Claims helpers
   const addClaim = () => {
@@ -146,6 +158,9 @@ export default function PrivateOrderPage() {
   const claimTotal = useMemo(() => {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
+
+  const feeBps = parseInt(maxFeeBps) || 0;
+  const feePercent = feeBps / 100;
 
   const fillRest = (id: number) => {
     const buyAmt = parseFloat(buyAmount) || 0;
@@ -240,7 +255,7 @@ export default function PrivateOrderPage() {
         buyToken: BigInt(buyToken.address),
         sellAmount: parsedSell,
         buyAmount: parsedBuy,
-        maxFee: 60n,
+        maxFee: BigInt(maxFeeBps || "30"),
         expiry: expiryTimestamp,
         nonce,
         claimsRoot,
@@ -258,7 +273,7 @@ export default function PrivateOrderPage() {
           buyToken: buyToken.address,
           sellAmount: parsedSell.toString(),
           buyAmount: parsedBuy.toString(),
-          maxFee: "60",
+          maxFee: maxFeeBps,
           expiry: expiryTimestamp.toString(),
           nonce: nonce.toString(),
           pubKeyAx: keyPair.publicKey[0].toString(),
@@ -314,7 +329,7 @@ export default function PrivateOrderPage() {
       setError(e instanceof Error ? e.message : "Order submission failed");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
 
   if (!account) {
     return (
@@ -491,8 +506,7 @@ export default function PrivateOrderPage() {
                   onChange={(e) => {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
-                      const buy = parseFloat(e.target.value) * parseFloat(price);
-                      if (!isNaN(buy)) setBuyAmount(buy.toFixed(6));
+                      recomputeBuyAmount(e.target.value, price, maxFeeBps);
                     }
                   }}
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
@@ -526,19 +540,68 @@ export default function PrivateOrderPage() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
-              <select
-                value={expiry}
-                onChange={(e) => setExpiry(e.target.value)}
-                className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2.5 px-3"
-              >
-                <option value="1">1 hour</option>
-                <option value="6">6 hours</option>
-                <option value="24">24 hours</option>
-                <option value="168">7 days</option>
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Max Relay Fee</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { label: "0.1%", bps: "10" },
+                    { label: "0.3%", bps: "30" },
+                    { label: "0.5%", bps: "50" },
+                    { label: "1%", bps: "100" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.bps}
+                      type="button"
+                      onClick={() => setMaxFeeBps(opt.bps)}
+                      className={`flex-1 py-2 rounded-md text-xs font-bold transition-all ${
+                        maxFeeBps === opt.bps
+                          ? "bg-primary text-on-primary"
+                          : "bg-surface-container-low text-on-surface-variant hover:bg-surface-bright"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {sellAmount && price && (
+                  <div className="text-[10px] text-on-surface-variant mt-1">
+                    Fee ≈ {(parseFloat(sellAmount) * parseFloat(price) * feeBps / 10000).toFixed(4)} {buyToken?.symbol}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
+                <select
+                  value={expiry}
+                  onChange={(e) => setExpiry(e.target.value)}
+                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2.5 px-3"
+                >
+                  <option value="1">1 hour</option>
+                  <option value="6">6 hours</option>
+                  <option value="24">24 hours</option>
+                  <option value="168">7 days</option>
+                </select>
+              </div>
             </div>
+
+            {/* Fee summary */}
+            {sellAmount && buyAmount && price && (
+              <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">Gross receive</span>
+                  <span className="font-mono text-on-surface">{(parseFloat(sellAmount) * parseFloat(price)).toFixed(4)} {buyToken?.symbol}</span>
+                </div>
+                <div className="flex justify-between text-error/80">
+                  <span>Relay fee ({feePercent.toFixed(2)}%)</span>
+                  <span className="font-mono">−{(parseFloat(sellAmount) * parseFloat(price) * feeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
+                </div>
+                <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
+                  <span>You receive (buyAmount)</span>
+                  <span className="font-mono">{buyAmount} {buyToken?.symbol}</span>
+                </div>
+              </div>
+            )}
 
             {/* Claims (multiple recipients) */}
             <div className="pt-4 border-t border-outline-variant/10">
