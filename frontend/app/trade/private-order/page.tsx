@@ -24,6 +24,9 @@ import {
 } from "../../lib/zk/note-storage";
 import PricePanel from "../../components/PricePanel";
 
+// SECURITY WARNING: EdDSA private key is stored in localStorage for UX convenience.
+// Any XSS vulnerability could expose this key. In production, use Web Crypto API
+// with a user-derived wrapping key or hardware wallet integration.
 const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
 const MAX_CLAIMS = 10;
 
@@ -48,7 +51,7 @@ export default function PrivateOrderPage() {
 
   // Notes (commitment deposits)
   const [notes, setNotes] = useState<StoredNote[]>([]);
-  const [selectedNoteIdx, setSelectedNoteIdx] = useState<number>(-1);
+  const [selectedCommitment, setSelectedCommitment] = useState<string | null>(null);
   const [folderName, setFolderName] = useState<string | null>(null);
 
   // Order form
@@ -74,12 +77,22 @@ export default function PrivateOrderPage() {
     return notes.filter((n) => n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase());
   }, [notes, sellToken]);
 
-  const selectedNote = selectedNoteIdx >= 0 ? availableNotes[selectedNoteIdx] : null;
+  const selectedNote = useMemo(
+    () => availableNotes.find((n) => n.commitment === selectedCommitment) ?? null,
+    [availableNotes, selectedCommitment],
+  );
 
-  // Reset note selection when sell token changes
+  // Reset note selection when sell token changes or notes list changes
   useEffect(() => {
-    setSelectedNoteIdx(-1);
+    setSelectedCommitment(null);
   }, [sellTokenIdx]);
+
+  // Clear selection if selected note no longer exists in available list
+  useEffect(() => {
+    if (selectedCommitment && !availableNotes.some((n) => n.commitment === selectedCommitment)) {
+      setSelectedCommitment(null);
+    }
+  }, [availableNotes, selectedCommitment]);
 
   // Auto-fill sellAmount from selected note
   useEffect(() => {
@@ -90,6 +103,10 @@ export default function PrivateOrderPage() {
 
   // Load notes from folder
   const handleOpenFolder = useCallback(async () => {
+    if (!isFileSystemAvailable()) {
+      setError("File System Access API is not supported in this browser. Use Chrome or Edge.");
+      return;
+    }
     const ok = await selectNotesFolder();
     if (ok) {
       setFolderName(getFolderName());
@@ -267,7 +284,7 @@ export default function PrivateOrderPage() {
       setSellAmount("");
       setBuyAmount("");
       setPrice("");
-      setSelectedNoteIdx(-1);
+      setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Order submission failed");
@@ -374,9 +391,9 @@ export default function PrivateOrderPage() {
                   {availableNotes.map((n, i) => (
                     <button
                       key={n.commitment}
-                      onClick={() => setSelectedNoteIdx(i)}
+                      onClick={() => setSelectedCommitment(n.commitment)}
                       className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
-                        selectedNoteIdx === i
+                        selectedCommitment === n.commitment
                           ? "bg-primary/10 border border-primary/30"
                           : "bg-surface-container-low border border-outline-variant/10 hover:bg-surface-bright/50"
                       }`}
@@ -457,7 +474,11 @@ export default function PrivateOrderPage() {
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
                   placeholder="0.00"
                 />
-                {selectedNote && sellAmount && parseFloat(sellAmount) > parseFloat(selectedNote.amount) && (
+                {selectedNote && sellAmount && (() => {
+                  try {
+                    return ethers.parseUnits(sellAmount, sellToken?.decimals ?? 18) > selectedNote.note.amount;
+                  } catch { return false; }
+                })() && (
                   <div className="text-[10px] text-error mt-1">
                     Exceeds note balance ({selectedNote.amount} {sellToken?.symbol})
                   </div>
