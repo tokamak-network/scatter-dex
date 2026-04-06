@@ -105,7 +105,7 @@ contract PrivateSettlementTest is Test {
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
 
         vm.expectEmit(true, true, false, true);
-        emit PrivateSettlement.PrivateSettled(MAKER_NULL, TAKER_NULL, CLAIMS_ROOT_MAKER, CLAIMS_ROOT_TAKER);
+        emit PrivateSettlement.PrivateSettled(MAKER_NULL, TAKER_NULL, CLAIMS_ROOT_MAKER, CLAIMS_ROOT_TAKER, address(this), 0, 0);
 
         settlement.settlePrivate(p);
     }

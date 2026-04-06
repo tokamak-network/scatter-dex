@@ -38,7 +38,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         bytes32 indexed makerNullifier,
         bytes32 indexed takerNullifier,
         bytes32 claimsRootMaker,
-        bytes32 claimsRootTaker
+        bytes32 claimsRootTaker,
+        address relayer,
+        uint96 feeTokenMaker,
+        uint96 feeTokenTaker
     );
     event PrivateClaim(
         bytes32 indexed claimsRoot,
@@ -191,10 +194,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // Transfer fees from pool directly to relayer (msg.sender)
         if (p.feeTokenMaker > 0) {
-            pool.transferTo(msg.sender, p.tokenMaker, p.feeTokenMaker);
+            pool.transferFee(msg.sender, p.tokenMaker, p.feeTokenMaker);
         }
         if (p.feeTokenTaker > 0) {
-            pool.transferTo(msg.sender, p.tokenTaker, p.feeTokenTaker);
+            pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
         }
 
         uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
@@ -211,7 +214,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             expiry: expiry
         });
 
-        emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker);
+        emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
     }
 
     // ─── Claim ───────────────────────────────────────────────────

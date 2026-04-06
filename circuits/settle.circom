@@ -288,6 +288,13 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     //  7. FEE VALIDATION
     // ════════════════════════════════════════
+    // Range-check fee bps to 16 bits (max 65535, well above 10000=100%)
+    // Prevents field overflow in makerSellAmount * makerFee multiplication
+    component rcMakerFee = Num2Bits(16);
+    rcMakerFee.in <== makerFee;
+    component rcTakerFee = Num2Bits(16);
+    rcTakerFee.in <== takerFee;
+
     component makerFeeCheck = LessEqThan(252);
     makerFeeCheck.in[0] <== makerFee;
     makerFeeCheck.in[1] <== makerMaxFee;
