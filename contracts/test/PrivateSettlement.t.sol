@@ -105,7 +105,7 @@ contract PrivateSettlementTest is Test {
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
 
         vm.expectEmit(true, true, false, true);
-        emit PrivateSettlement.PrivateSettled(MAKER_NULL, TAKER_NULL, CLAIMS_ROOT_MAKER, CLAIMS_ROOT_TAKER);
+        emit PrivateSettlement.PrivateSettled(MAKER_NULL, TAKER_NULL, CLAIMS_ROOT_MAKER, CLAIMS_ROOT_TAKER, address(this), 0, 0);
 
         settlement.settlePrivate(p);
     }
@@ -306,7 +306,8 @@ contract PrivateSettlementTest is Test {
             totalLockedTaker: uint96(10_000e18),
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
-            totalFee: 0
+            feeTokenMaker: 0,
+            feeTokenTaker: 0
         });
     }
 }

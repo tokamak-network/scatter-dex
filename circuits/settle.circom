@@ -105,7 +105,8 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input totalLockedTaker;      // total locked for taker's claims
     signal input tokenMaker;            // token maker receives (= taker's sell token)
     signal input tokenTaker;            // token taker receives (= maker's sell token)
-    signal input totalFee;              // total fee amount
+    signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell, paid to relayer)
+    signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell, paid to relayer)
     signal input currentTimestamp;      // block.timestamp for expiry check
 
     // ════════════════════════════════════════
@@ -287,6 +288,13 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     //  7. FEE VALIDATION
     // ════════════════════════════════════════
+    // Range-check fee bps to 16 bits (max 65535, well above 10000=100%)
+    // Prevents field overflow in makerSellAmount * makerFee multiplication
+    component rcMakerFee = Num2Bits(16);
+    rcMakerFee.in <== makerFee;
+    component rcTakerFee = Num2Bits(16);
+    rcTakerFee.in <== takerFee;
+
     component makerFeeCheck = LessEqThan(252);
     makerFeeCheck.in[0] <== makerFee;
     makerFeeCheck.in[1] <== makerMaxFee;
@@ -297,31 +305,42 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerFeeCheck.in[1] <== takerMaxFee;
     takerFeeCheck.out === 1;
 
-    // ── Total fee validation ──
-    // totalFee = floor(makerSellAmount * makerFee / 10000) + floor(takerSellAmount * takerFee / 10000)
-    // Since integer division truncates, we verify:
-    //   expectedFee * 10000 <= makerSellAmount * makerFee + takerSellAmount * takerFee
-    //   expectedFee * 10000 + 19999 >= makerSellAmount * makerFee + takerSellAmount * takerFee
-    // (max rounding error = 9999 per side = 19998 total)
-    signal makerFeeProduct;
-    makerFeeProduct <== makerSellAmount * makerFee;
+    // ── Per-token fee validation ──
+    // feeTokenMaker = floor(takerSellAmount * takerFee / 10000)
+    //   → fee in tokenMaker, deducted from taker's sell amount
+    // feeTokenTaker = floor(makerSellAmount * makerFee / 10000)
+    //   → fee in tokenTaker, deducted from maker's sell amount
+    // Floor-division check: fee * 10000 <= product < fee * 10000 + 10000
+
     signal takerFeeProduct;
     takerFeeProduct <== takerSellAmount * takerFee;
-    signal feeProductSum;
-    feeProductSum <== makerFeeProduct + takerFeeProduct;
+    signal feeTokenMakerScaled;
+    feeTokenMakerScaled <== feeTokenMaker * 10000;
 
-    signal totalFeeScaled;
-    totalFeeScaled <== totalFee * 10000;
+    component feeTokenMakerLower = LessEqThan(252);
+    feeTokenMakerLower.in[0] <== feeTokenMakerScaled;
+    feeTokenMakerLower.in[1] <== takerFeeProduct;
+    feeTokenMakerLower.out === 1;
 
-    component feeLowerBound = LessEqThan(252);
-    feeLowerBound.in[0] <== totalFeeScaled;
-    feeLowerBound.in[1] <== feeProductSum;
-    feeLowerBound.out === 1;
+    component feeTokenMakerUpper = LessEqThan(252);
+    feeTokenMakerUpper.in[0] <== takerFeeProduct;
+    feeTokenMakerUpper.in[1] <== feeTokenMakerScaled + 9999;
+    feeTokenMakerUpper.out === 1;
 
-    component feeUpperBound = LessEqThan(252);
-    feeUpperBound.in[0] <== feeProductSum;
-    feeUpperBound.in[1] <== totalFeeScaled + 19999;
-    feeUpperBound.out === 1;
+    signal makerFeeProduct;
+    makerFeeProduct <== makerSellAmount * makerFee;
+    signal feeTokenTakerScaled;
+    feeTokenTakerScaled <== feeTokenTaker * 10000;
+
+    component feeTokenTakerLower = LessEqThan(252);
+    feeTokenTakerLower.in[0] <== feeTokenTakerScaled;
+    feeTokenTakerLower.in[1] <== makerFeeProduct;
+    feeTokenTakerLower.out === 1;
+
+    component feeTokenTakerUpper = LessEqThan(252);
+    feeTokenTakerUpper.in[0] <== makerFeeProduct;
+    feeTokenTakerUpper.in[1] <== feeTokenTakerScaled + 9999;
+    feeTokenTakerUpper.out === 1;
 
     // ════════════════════════════════════════
     //  8. BALANCE SUFFICIENCY
@@ -353,18 +372,22 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerReceiveCheck.out === 1;
 
     // ════════════════════════════════════════
-    //  8c. CLAIMS DO NOT EXCEED SELL AMOUNTS
-    //      totalLockedMaker comes from taker's sell → must not exceed takerSellAmount
-    //      totalLockedTaker comes from maker's sell → must not exceed makerSellAmount
-    //      (prevents inflated claims from draining the pool)
+    //  8c. CLAIMS + FEES DO NOT EXCEED SELL AMOUNTS
+    //      totalLockedMaker + feeTokenMaker <= takerSellAmount
+    //      totalLockedTaker + feeTokenTaker <= makerSellAmount
+    //      (prevents inflated claims/fees from draining the pool)
     // ════════════════════════════════════════
+    signal makerClaimPlusFee;
+    makerClaimPlusFee <== totalLockedMaker + feeTokenMaker;
     component makerClaimCap = LessEqThan(252);
-    makerClaimCap.in[0] <== totalLockedMaker;
+    makerClaimCap.in[0] <== makerClaimPlusFee;
     makerClaimCap.in[1] <== takerSellAmount;
     makerClaimCap.out === 1;
 
+    signal takerClaimPlusFee;
+    takerClaimPlusFee <== totalLockedTaker + feeTokenTaker;
     component takerClaimCap = LessEqThan(252);
-    takerClaimCap.in[0] <== totalLockedTaker;
+    takerClaimCap.in[0] <== takerClaimPlusFee;
     takerClaimCap.in[1] <== makerSellAmount;
     takerClaimCap.out === 1;
 
@@ -557,5 +580,5 @@ component main {public [
     claimsRootMaker, claimsRootTaker,
     totalLockedMaker, totalLockedTaker,
     tokenMaker, tokenTaker,
-    totalFee, currentTimestamp
+    feeTokenMaker, feeTokenTaker, currentTimestamp
 ]} = Settle(20, 16, 4);

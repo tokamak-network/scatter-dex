@@ -38,7 +38,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         bytes32 indexed makerNullifier,
         bytes32 indexed takerNullifier,
         bytes32 claimsRootMaker,
-        bytes32 claimsRootTaker
+        bytes32 claimsRootTaker,
+        address relayer,
+        uint96 feeTokenMaker,
+        uint96 feeTokenTaker
     );
     event PrivateClaim(
         bytes32 indexed claimsRoot,
@@ -119,7 +122,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 totalLockedTaker;
         address tokenMaker;
         address tokenTaker;
-        uint256 totalFee;
+        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to relayer)
+        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to relayer)
     }
 
     /// @notice Execute a private settlement with ZK proof.
@@ -142,7 +146,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[15] memory pubSignals = [
+        uint[16] memory pubSignals = [
             p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
@@ -156,7 +160,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(p.totalLockedTaker),
             uint256(uint160(p.tokenMaker)),
             uint256(uint160(p.tokenTaker)),
-            p.totalFee,
+            uint256(p.feeTokenMaker),
+            uint256(p.feeTokenTaker),
             p.currentTimestamp
         ];
 
@@ -187,6 +192,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
         }
 
+        // Transfer fees from pool directly to relayer (msg.sender)
+        if (p.feeTokenMaker > 0) {
+            pool.transferFee(msg.sender, p.tokenMaker, p.feeTokenMaker);
+        }
+        if (p.feeTokenTaker > 0) {
+            pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
+        }
+
         uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
@@ -201,7 +214,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             expiry: expiry
         });
 
-        emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker);
+        emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
     }
 
     // ─── Claim ───────────────────────────────────────────────────

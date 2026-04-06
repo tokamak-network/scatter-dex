@@ -143,6 +143,18 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         IERC20(token).safeTransfer(authorizedSettlement, amount);
     }
 
+    event FeeTransferred(address indexed recipient, address indexed token, uint256 amount);
+
+    /// @notice Transfer fee tokens from pool to a recipient (e.g., relayer).
+    /// @dev Only callable by the authorized PrivateSettlement contract.
+    function transferFee(address recipient, address token, uint256 amount) external nonReentrant {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (recipient == address(0)) revert ZeroAddress();
+        if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
+        IERC20(token).safeTransfer(recipient, amount);
+        emit FeeTransferred(recipient, token, amount);
+    }
+
     // ─── Withdraw ────────────────────────────────────────────────
 
     /// @notice Withdraw tokens by proving ownership of a commitment via ZK proof.
