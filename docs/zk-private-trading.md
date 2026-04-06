@@ -189,7 +189,7 @@ npm run dev
 | zk-relayer 매칭 안 됨 | `curl http://localhost:3002/api/info` 로 상태 확인 |
 | settlePrivate 실패 | zk-relayer 로그 확인 (`.dev-logs/zk-relayer.log`) |
 | TimestampOutOfRange | anvil block timestamp와 시스템 시간 차이 확인 |
-| claim proof 실패 | claim JSON의 allLeaves가 16개인지, leafIndex 범위 확인 |
+| claim proof 실패 | claim JSON의 `allLeaves` (프론트엔드에서 `allClaimLeaves`로 사용)가 16개인지, leafIndex 범위 확인 |
 
 ---
 
@@ -204,7 +204,7 @@ npm run dev
 | 최소 수령 금액 | 회로: `totalLockedMaker >= makerBuyAmount` |
 | Claims 총액 | 회로: `totalLockedMaker == sum(claim amounts)` |
 | 수수료 | 회로: `totalFee` floor-division 검증 |
-| 이중 지불 | 회로: nullifier (Poseidon(secret, salt)) |
+| 이중 지불 | 회로: settle/withdraw `nullifier = Poseidon(ownerSecret, salt)`, claim `nullifier = Poseidon(secret, leafIndex)` |
 
 ### 프라이버시 요약
 
@@ -213,7 +213,7 @@ npm run dev
 | 입금 | commitment 해시 | 누가, 얼마 |
 | 주문 | 없음 (오프체인) | 전부 |
 | 정산 | ZK proof + nullifiers | 거래자, 금액, 구조 |
-| 수령 | ZK proof + 스텔스 주소 | 수신자 신원, 어떤 정산인지 |
+| 수령 | ZK proof + recipient 주소 + 금액 | 어떤 정산에서 왔는지 (claimsRoot만 공개) |
 
 ## 회로 빌드
 
@@ -230,4 +230,4 @@ bash scripts/build.sh
 3. Verification key + Solidity verifier 생성
 4. `contracts/src/zk/` 와 `frontend/public/zk/` 에 복사
 
-settle 회로 제약: ~58K constraints (pot16 = 65,536 이내)
+참고: `circuits/scripts/build.sh`의 `PTAU_SIZE` 설정에 따라 최대 constraint 수가 결정됩니다. settle 회로는 ~58K constraints이므로 pot16 (2^16 = 65,536) 이상이 필요합니다. build.sh의 기본값이 14인 경우 settle 전용으로 pot16이 별도 생성됩니다.
