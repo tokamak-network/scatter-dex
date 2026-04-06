@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock } from "lucide-react";
+import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
@@ -14,12 +14,16 @@ import {
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
 import { poseidonHash, buildMerkleTree, randomFieldElement } from "../../lib/zk/commitment";
+import {
+  isFileSystemAvailable,
+  selectNotesFolder,
+  hasFolderSelected,
+  getFolderName,
+  loadNotes,
+  type StoredNote,
+} from "../../lib/zk/note-storage";
 import PricePanel from "../../components/PricePanel";
 
-// NOTE: Storing EdDSA private key in localStorage is a known XSS risk.
-// This is an acceptable trade-off for the MVP. In production, use encrypted
-// storage (e.g., Web Crypto API with user-derived wrapping key) or hardware
-// wallet integration to protect the key material.
 const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
 const MAX_CLAIMS = 10;
 
@@ -42,12 +46,17 @@ export default function PrivateOrderPage() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Notes (commitment deposits)
+  const [notes, setNotes] = useState<StoredNote[]>([]);
+  const [selectedNoteIdx, setSelectedNoteIdx] = useState<number>(-1);
+  const [folderName, setFolderName] = useState<string | null>(null);
+
   // Order form
   const [sellTokenIdx, setSellTokenIdx] = useState(0);
   const [buyTokenIdx, setBuyTokenIdx] = useState(1);
   const [sellAmount, setSellAmount] = useState("");
   const [buyAmount, setBuyAmount] = useState("");
-  const [expiry, setExpiry] = useState("24"); // hours
+  const [expiry, setExpiry] = useState("24");
   const [price, setPrice] = useState("");
 
   // Claims
@@ -59,7 +68,43 @@ export default function PrivateOrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
-  // Compute buy amount from price (or vice versa)
+  // Filter notes by sell token
+  const availableNotes = useMemo(() => {
+    if (!sellToken) return [];
+    return notes.filter((n) => n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase());
+  }, [notes, sellToken]);
+
+  const selectedNote = selectedNoteIdx >= 0 ? availableNotes[selectedNoteIdx] : null;
+
+  // Reset note selection when sell token changes
+  useEffect(() => {
+    setSelectedNoteIdx(-1);
+  }, [sellTokenIdx]);
+
+  // Auto-fill sellAmount from selected note
+  useEffect(() => {
+    if (selectedNote) {
+      setSellAmount(selectedNote.amount);
+    }
+  }, [selectedNote]);
+
+  // Load notes from folder
+  const handleOpenFolder = useCallback(async () => {
+    const ok = await selectNotesFolder();
+    if (ok) {
+      setFolderName(getFolderName());
+      const loaded = await loadNotes();
+      setNotes(loaded);
+    }
+  }, []);
+
+  const refreshNotes = useCallback(async () => {
+    if (!hasFolderSelected()) return;
+    const loaded = await loadNotes();
+    setNotes(loaded);
+  }, []);
+
+  // Compute buy amount from price
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
     if (sellAmount) {
@@ -125,7 +170,7 @@ export default function PrivateOrderPage() {
 
   // Submit private order
   const handleSubmit = useCallback(async () => {
-    if (!keyPair || !sellToken || !buyToken || !sellAmount || !buyAmount) return;
+    if (!keyPair || !sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote) return;
     setStep("signing");
     setError(null);
 
@@ -134,6 +179,11 @@ export default function PrivateOrderPage() {
       const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
       const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
       const nonce = BigInt(Date.now());
+
+      // Validate sell amount doesn't exceed note balance
+      if (parsedSell > selectedNote.note.amount) {
+        throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
+      }
 
       // Build claims data
       const claimData = claims.map((c, idx) => {
@@ -163,12 +213,11 @@ export default function PrivateOrderPage() {
           BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime),
         ]))
       );
-      // Pad to 16 for Merkle tree (depth 4)
       const padded = [...claimLeafHashes];
       while (padded.length < 16) padded.push(0n);
       const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
-      // Compute order hash and sign with EdDSA (includes claimsRoot to prevent relayer manipulation)
+      // Compute order hash and sign with EdDSA
       const orderHash = await hashOrder({
         sellToken: BigInt(sellToken.address),
         buyToken: BigInt(buyToken.address),
@@ -182,7 +231,7 @@ export default function PrivateOrderPage() {
 
       const sig = await signEdDSA(keyPair.privateKey, orderHash);
 
-      // Submit to zk-relayer
+      // Submit to zk-relayer with commitment info from note
       const relayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
       const res = await fetch(`${relayerUrl}/api/private-orders`, {
         method: "POST",
@@ -200,6 +249,11 @@ export default function PrivateOrderPage() {
           sigS: sig.S.toString(),
           sigR8x: sig.R8x.toString(),
           sigR8y: sig.R8y.toString(),
+          // Commitment info from note
+          ownerSecret: selectedNote.note.ownerSecret.toString(),
+          balance: selectedNote.note.amount.toString(),
+          salt: selectedNote.note.salt.toString(),
+          leafIndex: selectedNote.leafIndex,
           claims: claimData,
         }),
       });
@@ -213,12 +267,13 @@ export default function PrivateOrderPage() {
       setSellAmount("");
       setBuyAmount("");
       setPrice("");
+      setSelectedNoteIdx(-1);
       setClaims([{ id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Order submission failed");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote]);
 
   if (!account) {
     return (
@@ -288,6 +343,76 @@ export default function PrivateOrderPage() {
               Trading key active: {keyPair.publicKey[0].toString().slice(0, 10)}...
             </div>
 
+            {/* Notes Folder */}
+            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-headline font-bold text-sm flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-primary" />
+                  Commitment (Escrow Balance)
+                </h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleOpenFolder}
+                    className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    {folderName ? `${folderName}` : "Open Notes Folder"}
+                  </button>
+                  {folderName && (
+                    <button
+                      onClick={refreshNotes}
+                      className="text-xs text-on-surface-variant hover:text-on-surface font-bold"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {availableNotes.length > 0 ? (
+                <div className="space-y-1.5">
+                  {availableNotes.map((n, i) => (
+                    <button
+                      key={n.commitment}
+                      onClick={() => setSelectedNoteIdx(i)}
+                      className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
+                        selectedNoteIdx === i
+                          ? "bg-primary/10 border border-primary/30"
+                          : "bg-surface-container-low border border-outline-variant/10 hover:bg-surface-bright/50"
+                      }`}
+                    >
+                      <div>
+                        <span className="text-xs font-mono font-bold text-on-surface">
+                          {n.amount} {n.tokenSymbol}
+                        </span>
+                        <span className="text-[10px] text-on-surface-variant ml-2">
+                          leaf #{n.leafIndex}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-on-surface-variant">
+                        {n.txHash.slice(0, 10)}...
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : folderName ? (
+                <div className="text-xs text-on-surface-variant/60 text-center py-4">
+                  No {sellToken?.symbol} notes found. Deposit in Private Escrow first.
+                </div>
+              ) : (
+                <div className="text-xs text-on-surface-variant/60 text-center py-4">
+                  Open your notes folder to select an escrow commitment.
+                </div>
+              )}
+
+              {selectedNote && (
+                <div className="text-[10px] text-on-surface-variant flex justify-between bg-surface-container-low rounded-md px-3 py-2">
+                  <span>Selected balance: {selectedNote.amount} {selectedNote.tokenSymbol}</span>
+                  <span>Leaf index: {selectedNote.leafIndex}</span>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Sell</label>
@@ -332,6 +457,11 @@ export default function PrivateOrderPage() {
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
                   placeholder="0.00"
                 />
+                {selectedNote && sellAmount && parseFloat(sellAmount) > parseFloat(selectedNote.amount) && (
+                  <div className="text-[10px] text-error mt-1">
+                    Exceeds note balance ({selectedNote.amount} {sellToken?.symbol})
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Buy Amount</label>
@@ -474,10 +604,10 @@ export default function PrivateOrderPage() {
 
             <button
               onClick={handleSubmit}
-              disabled={!sellAmount || !buyAmount || sellTokenIdx === buyTokenIdx || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount))}
+              disabled={!sellAmount || !buyAmount || !selectedNote || sellTokenIdx === buyTokenIdx || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount))}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
-              Submit Private Order
+              {!selectedNote ? "Select a Commitment Note" : "Submit Private Order"}
             </button>
 
             <div className="text-xs text-on-surface-variant/40 text-center">
@@ -503,7 +633,7 @@ export default function PrivateOrderPage() {
               Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity.
             </p>
             <button
-              onClick={() => setStep("create_order")}
+              onClick={() => { setStep("create_order"); refreshNotes(); }}
               className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
             >
               Create Another Order
