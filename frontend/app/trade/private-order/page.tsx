@@ -280,6 +280,30 @@ export default function PrivateOrderPage() {
         throw new Error(err.error || "Failed to submit order");
       }
 
+      // Save all claim files as a single bundled JSON download
+      // Each entry contains the data needed for claimWithProof on the Private Claim page
+      const claimFiles = claimData.map((c, idx) => ({
+        secret: c.secret,
+        recipient: c.recipient,
+        token: c.token,
+        amount: c.amount,
+        releaseTime: c.releaseTime,
+        leafIndex: idx,
+        allLeaves: padded.map((l) => l.toString()),
+      }));
+      const bundle = {
+        claims: claimFiles,
+        note: "Each entry can be loaded individually in Private Claim. Keep this file secret.",
+        createdAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `claims-${Date.now()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
       setStep("submitted");
       setSellAmount("");
       setBuyAmount("");
