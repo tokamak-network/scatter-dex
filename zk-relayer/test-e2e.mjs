@@ -13,7 +13,7 @@ import { buildPoseidon } from "circomlibjs";
 import { ethers } from "ethers";
 
 const ZK_RELAYER_URL = "http://localhost:3002";
-const PRIVATE_SETTLEMENT = "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d";
+// Claims submitted via zk-relayer API — no direct contract address needed
 const POOL = "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c";
 const WETH = "0x0165878A594ca255338adfa4d48449f69242Eb8F";
 const USDC = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
@@ -301,40 +301,47 @@ async function main() {
   }, claimWasm, claimZkey);
   console.log("Claim proof generated!");
 
-  // Format proof for Solidity
-  const proofA = [BigInt(claimProof.pi_a[0]), BigInt(claimProof.pi_a[1])];
-  const proofB = [
-    [BigInt(claimProof.pi_b[0][1]), BigInt(claimProof.pi_b[0][0])],
-    [BigInt(claimProof.pi_b[1][1]), BigInt(claimProof.pi_b[1][0])],
-  ];
-  const proofC = [BigInt(claimProof.pi_c[0]), BigInt(claimProof.pi_c[1])];
-
-  const claimContract = new ethers.Contract(PRIVATE_SETTLEMENT, [
-    "function claimWithProof(uint[2],uint[2][2],uint[2],bytes32,bytes32,uint256,address,address,uint256) external",
-  ], aliceWallet);
-
   const claimsRootHex = "0x" + computedClaimsRoot.toString(16).padStart(64, "0");
   const nullifierHex = "0x" + claimNullifier.toString(16).padStart(64, "0");
   const tokenAddr = "0x" + claimToken.toString(16).padStart(40, "0");
   const recipientAddr = "0x" + claimRecipient.toString(16).padStart(40, "0");
 
-  console.log("Submitting claimWithProof on-chain...");
+  // Submit claim via zk-relayer API (gasless — relayer pays gas)
+  console.log("Submitting gasless claim via /api/private-claim...");
   try {
-    const claimTx = await claimContract.claimWithProof(
-      proofA, proofB, proofC,
-      claimsRootHex, nullifierHex,
-      claimAmount, tokenAddr, recipientAddr, claimReleaseTime,
-    );
-    const receipt = await claimTx.wait();
+    const claimRes = await fetch(`${ZK_RELAYER_URL}/api/private-claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        proofA: [claimProof.pi_a[0], claimProof.pi_a[1]],
+        proofB: [
+          [claimProof.pi_b[0][1], claimProof.pi_b[0][0]],
+          [claimProof.pi_b[1][1], claimProof.pi_b[1][0]],
+        ],
+        proofC: [claimProof.pi_c[0], claimProof.pi_c[1]],
+        claimsRoot: claimsRootHex,
+        claimNullifier: nullifierHex,
+        amount: claimAmount.toString(),
+        token: tokenAddr,
+        recipient: recipientAddr,
+        releaseTime: claimReleaseTime.toString(),
+      }),
+    });
+
+    const claimResult = await claimRes.json();
+    if (claimResult.status !== "claimed") {
+      throw new Error(`Claim failed: ${JSON.stringify(claimResult)}`);
+    }
 
     // Verify Alice received USDC
     const usdcContract = new ethers.Contract(USDC, ["function balanceOf(address) view returns (uint256)"], provider);
     const aliceBalance = await usdcContract.balanceOf(aliceWallet.address);
 
-    console.log(`\n✅ FULL E2E SUCCESS: Deposit → Order → Settle → Claim`);
+    console.log(`\n✅ FULL E2E SUCCESS: Deposit → Order → Settle → Gasless Claim`);
     console.log(`   Settle tx: ${bobResult.txHash}`);
-    console.log(`   Claim tx:  ${receipt?.hash ?? receipt?.transactionHash}`);
+    console.log(`   Claim tx:  ${claimResult.txHash}`);
     console.log(`   Alice USDC balance: ${ethers.formatUnits(aliceBalance, 18)}`);
+    console.log(`   Claim submitted by: relayer (gasless — Alice's wallet not on-chain)`);
   } catch (err) {
     console.error("\n❌ Claim failed:", err.message || err);
     process.exit(1);
