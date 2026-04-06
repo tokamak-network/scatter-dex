@@ -8,19 +8,22 @@ ZK 프라이빗 거래의 전체 플로우와 로컬 테스트 방법입니다.
 Frontend (:3000)
   ├── Private Escrow   → CommitmentPool (deposit)
   ├── Private Order    → zk-relayer (submit order)
-  ├── Private Claim    → PrivateSettlement (claimWithProof)
+  ├── Private Claim    → zk-relayer (gasless claimWithProof)
   └── Private History  → zk-relayer (query orders)
 
 zk-relayer (:3002)
   ├── Order matching (EdDSA signature verification)
   ├── Groth16 proof generation (snarkjs)
-  └── settlePrivate() on-chain call
+  ├── settlePrivate() on-chain call
+  └── Gasless claim (claimWithProof on behalf of recipient)
 
 Contracts (anvil :8545)
   ├── CommitmentPool      — UTXO-based private escrow (Poseidon Merkle tree)
   ├── PrivateSettlement   — ZK settlement + claims
   └── Groth16 Verifiers   — WithdrawVerifier, SettleVerifier, ClaimVerifier
 ```
+
+**참고**: 릴레이어 등록 시 bond 스테이킹은 선택사항입니다 (특허: "optionally stake a financial bond"). `minBond`은 owner가 설정 가능하며 기본값은 0입니다.
 
 ## 1. Quick Start
 
@@ -69,10 +72,13 @@ http://localhost:3000/trade/private-order
 
 ### 주문 제출
 1. Sell/Buy 토큰과 금액 입력 (우측 PricePanel 참고)
-2. Recipients (Scatter) 섹션에서 수신자 추가 (주소, 금액, 릴리즈 딜레이)
-3. 만료 시간 선택
-4. **Submit Private Order** 클릭
-5. claim JSON 파일이 자동 다운로드됨 (수신자에게 전달 필요)
+2. **Max Relay Fee** 선택 (0.1%, 0.3%, 0.5%, 1%) — buyAmount가 자동 조정됨
+3. Recipients (Scatter) 섹션에서 수신자 추가:
+   - **Standard**: 일반 주소 (0x...)
+   - **Stealth**: 메타주소 (st:eth:0x...) → 일회용 스텔스 주소 자동 생성
+4. 만료 시간 선택
+5. **Submit Private Order** 클릭
+6. claim JSON 파일이 자동 다운로드됨 (stealth인 경우 ephemeralPubKey 포함)
 
 ### 수수료
 
@@ -99,10 +105,14 @@ http://localhost:3000/trade/private-claim
 1. **Load JSON File** 클릭 → 주문자로부터 받은 claim JSON 로드
 2. 여러 claim이 있으면 선택 (multi-claim selector)
 3. **Claim Preview** 에서 금액, 수신자, 릴리즈 시간 확인
-4. **Generate Proof & Claim** 클릭
-5. 브라우저에서 ZK proof 생성 (~2-3초) → MetaMask에서 tx 서명
-6. 자금이 수신자 주소로 전송됨 (PrivateSettlement → Recipient)
+4. Stealth claim인 경우 안내 표시 (ephemeralPubKey 감지)
+5. **Generate Proof & Claim** 클릭
+6. 브라우저에서 ZK proof 생성 (~2-3초)
+7. proof가 **zk-relayer에 전송** → 릴레이어가 `claimWithProof()` 대신 호출 (gasless)
+8. 자금이 수신자 주소로 전송됨
 
+> **지갑 연결 불필요** — claim은 gasless (릴레이어가 가스 대납). 사용자 지갑 주소가 온체인에 노출되지 않음.
+>
 > **Claims는 만료 없이 영구적으로 수령 가능합니다.** releaseTime 이후 언제든 claim 가능.
 
 ## 5. Private History (주문 조회)
@@ -231,8 +241,11 @@ Deposit:  User wallet → CommitmentPool
 Settle:   CommitmentPool → PrivateSettlement (claim 금액)
           CommitmentPool → Relayer (per-token 수수료)
           CommitmentPool keeps change (new commitment)
-Claim:    PrivateSettlement → Recipient (ZK proof, 영구)
+Claim:    Browser → zk-relayer API (proof) → claimWithProof (relayer pays gas)
+          PrivateSettlement → Recipient (stealth or standard)
 ```
+
+**Gasless claim**: 브라우저에서 proof 생성 → zk-relayer API로 전송 → 릴레이어가 온체인 tx 제출. 사용자 지갑은 gas를 내지 않고, msg.sender는 릴레이어.
 
 ### 프라이버시 요약
 
@@ -240,8 +253,10 @@ Claim:    PrivateSettlement → Recipient (ZK proof, 영구)
 |------|-----------------|-----------|
 | 입금 | commitment 해시 | 누가, 얼마 |
 | 주문 | 없음 (오프체인) | 전부 |
-| 정산 | ZK proof + nullifiers | 거래자, 금액, 구조 |
-| 수령 | ZK proof + recipient 주소 + 금액 | 어떤 정산에서 왔는지 (claimsRoot만 공개) |
+| 정산 | ZK proof + nullifiers (msg.sender = relayer) | 거래자, 금액, 구조 |
+| 수령 | ZK proof + recipient + 금액 (msg.sender = relayer) | 어떤 정산인지, 수령자의 실제 신원 (stealth 사용 시) |
+
+**완전 프라이버시**: stealth 주소 + gasless claim을 사용하면 사용자 지갑 주소가 온체인에 한 번도 노출되지 않습니다.
 
 ## 회로 빌드
 
