@@ -5,7 +5,6 @@ import { ethers } from "ethers";
 import { Gift, Loader2, AlertCircle, Check, Upload } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
-import { poseidonHash, buildMerkleTree } from "../../lib/zk/commitment";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
 
 const PRIVATE_SETTLEMENT_ABI = [
@@ -40,19 +39,30 @@ export default function PrivateClaimPage() {
 
   const privateSettlementAddr = process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS || "";
 
+  // Shared validation for claim data
+  function validateClaimData(parsed: any): ClaimData {
+    // Support bundled format: { claims: [...] }
+    if (parsed.claims && Array.isArray(parsed.claims)) {
+      if (parsed.claims.length === 0) throw new Error("No claims in bundle");
+      // Use first claim for now; TODO: add claim selector for multi-claim bundles
+      return validateClaimData(parsed.claims[0]);
+    }
+    if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.releaseTime) {
+      throw new Error("Missing required fields: secret, recipient, token, amount, releaseTime");
+    }
+    if (parsed.leafIndex === undefined) throw new Error("Missing leafIndex");
+    if (!parsed.allLeaves || !Array.isArray(parsed.allLeaves) || parsed.allLeaves.length !== 16) {
+      throw new Error("allLeaves must be an array of 16 elements");
+    }
+    return parsed as ClaimData;
+  }
+
   // Parse claim JSON
   const handleParseClaim = useCallback(() => {
     setParseError(null);
     try {
       const parsed = JSON.parse(claimJson);
-      if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.releaseTime) {
-        throw new Error("Missing required fields: secret, recipient, token, amount, releaseTime");
-      }
-      if (parsed.leafIndex === undefined) throw new Error("Missing leafIndex");
-      if (!parsed.allLeaves || !Array.isArray(parsed.allLeaves) || parsed.allLeaves.length !== 16) {
-        throw new Error("allLeaves must be an array of 16 elements");
-      }
-      setClaimData(parsed as ClaimData);
+      setClaimData(validateClaimData(parsed));
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
       setClaimData(null);
@@ -71,10 +81,9 @@ export default function PrivateClaimPage() {
       reader.onload = () => {
         const text = reader.result as string;
         setClaimJson(text);
-        // Auto-parse
         try {
           const parsed = JSON.parse(text);
-          setClaimData(parsed as ClaimData);
+          setClaimData(validateClaimData(parsed));
           setParseError(null);
         } catch (err) {
           setParseError(err instanceof Error ? err.message : "Invalid JSON");
@@ -236,7 +245,7 @@ export default function PrivateClaimPage() {
                 <div>
                   <span className="text-on-surface-variant">Amount:</span>
                   <span className="font-mono font-bold text-on-surface ml-2">
-                    {ethers.formatUnits(claimData.amount, 18)} {tokenSymbol}
+                    {ethers.formatUnits(claimData.amount, tokens.find((t) => BigInt(t.address) === BigInt(claimData.token))?.decimals ?? 18)} {tokenSymbol}
                   </span>
                 </div>
                 <div>

@@ -10,6 +10,8 @@
 
 import { poseidonHash, buildMerkleTree, getMerkleProof } from "./commitment";
 
+const CLAIMS_TREE_DEPTH = 4;
+
 const WASM_PATH = "/zk/claim.wasm";
 const ZKEY_PATH = "/zk/claim_final.zkey";
 
@@ -43,16 +45,24 @@ export async function generateClaimProof(
 ): Promise<ClaimProofResult> {
   const snarkjs = await import("snarkjs");
 
-  // Compute claim leaf hash
-  const leafHash = await poseidonHash([
+  // Validate leafIndex
+  if (input.leafIndex < 0 || input.leafIndex >= input.allClaimLeaves.length) {
+    throw new Error(`Invalid leafIndex ${input.leafIndex} for ${input.allClaimLeaves.length} claim leaves`);
+  }
+
+  // Compute and verify claim leaf hash matches the expected leaf in the tree
+  const expectedLeaf = await poseidonHash([
     input.secret, input.recipient, input.token, input.amount, input.releaseTime,
   ]);
+  if (input.allClaimLeaves[input.leafIndex] !== expectedLeaf) {
+    throw new Error("Claim data does not match the leaf at the given index. Check your claim file.");
+  }
 
   // Compute nullifier = Poseidon(secret, leafIndex)
   const nullifier = await poseidonHash([input.secret, BigInt(input.leafIndex)]);
 
   // Build claims Merkle tree (depth 4, 16 leaves)
-  const { root: claimsRoot, layers } = await buildMerkleTree(input.allClaimLeaves, 4);
+  const { root: claimsRoot, layers } = await buildMerkleTree(input.allClaimLeaves, CLAIMS_TREE_DEPTH);
 
   // Get Merkle proof for this leaf
   const { pathElements, pathIndices } = getMerkleProof(layers, input.leafIndex);
