@@ -8,7 +8,7 @@ export class PrivateMatcher {
   /**
    * Find a matching pair for the given private order.
    * Price compatibility (BigInt cross-multiplication, matches Solidity _validateSettle):
-   *   order.sellAmount * candidate.sellAmount <= order.buyAmount * candidate.buyAmount
+   *   order.sellAmount * candidate.sellAmount >= order.buyAmount * candidate.buyAmount
    * Token compatibility: order.sellToken == candidate.buyToken && order.buyToken == candidate.sellToken
    */
   findMatch(newOrder: StoredPrivateOrder): PrivateMatch | null {
@@ -38,9 +38,10 @@ export class PrivateMatcher {
       if (candidate.order.sellToken !== order.buyToken) continue;
       if (candidate.order.buyToken !== order.sellToken) continue;
 
-      // Price compatibility
+      // Price compatibility: taker offers at least maker's minimum price
+      // maker.sell * taker.sell >= maker.buy * taker.buy
       const compatible =
-        order.sellAmount * candidate.order.sellAmount <=
+        order.sellAmount * candidate.order.sellAmount >=
         order.buyAmount * candidate.order.buyAmount;
       if (!compatible) continue;
 

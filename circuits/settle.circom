@@ -245,7 +245,8 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  5. PRICE COMPATIBILITY
-    //    maker.sell * taker.sell <= maker.buy * taker.buy
+    //    maker.sell * taker.sell >= maker.buy * taker.buy
+    //    (taker offers at least maker's minimum price)
     // ════════════════════════════════════════
     // Range-check all four amounts to 128 bits so their products fit
     // within 256 bits (well within the ~254-bit BN254 field).
@@ -263,9 +264,11 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal takerProduct;
     takerProduct <== makerBuyAmount * takerBuyAmount;
 
+    // maker.sell * taker.sell >= maker.buy * taker.buy
+    // (taker offers at least maker's minimum price)
     component priceCheck = LessEqThan(252);
-    priceCheck.in[0] <== makerProduct;
-    priceCheck.in[1] <== takerProduct;
+    priceCheck.in[0] <== takerProduct;
+    priceCheck.in[1] <== makerProduct;
     priceCheck.out === 1;
 
     // ════════════════════════════════════════
@@ -332,6 +335,22 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerBalCheck.in[0] <== takerSellAmount;
     takerBalCheck.in[1] <== takerBalance;
     takerBalCheck.out === 1;
+
+    // ════════════════════════════════════════
+    //  8b. MINIMUM RECEIVE GUARANTEE
+    //      Each party receives at least their signed buyAmount.
+    //      totalLockedMaker >= makerBuyAmount (maker receives enough)
+    //      totalLockedTaker >= takerBuyAmount (taker receives enough)
+    // ════════════════════════════════════════
+    component makerReceiveCheck = LessEqThan(252);
+    makerReceiveCheck.in[0] <== makerBuyAmount;
+    makerReceiveCheck.in[1] <== totalLockedMaker;
+    makerReceiveCheck.out === 1;
+
+    component takerReceiveCheck = LessEqThan(252);
+    takerReceiveCheck.in[0] <== takerBuyAmount;
+    takerReceiveCheck.in[1] <== totalLockedTaker;
+    takerReceiveCheck.out === 1;
 
     // ════════════════════════════════════════
     //  9. CLAIMS VALIDATION (trustless)

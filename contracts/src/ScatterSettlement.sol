@@ -658,8 +658,9 @@ contract ScatterSettlement is EIP712, ReentrancyGuard, Ownable2Step {
         if (!whitelistedTokens[makerOrder.sellToken]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[makerOrder.buyToken]) revert TokenNotWhitelisted();
 
-        // Verify price compatibility: maker.sell * taker.sell <= maker.buy * taker.buy
-        if (makerOrder.sellAmount * takerOrder.sellAmount > makerOrder.buyAmount * takerOrder.buyAmount) {
+        // Verify price compatibility: taker offers at least maker's minimum price
+        // maker.sell * taker.sell >= maker.buy * taker.buy
+        if (makerOrder.sellAmount * takerOrder.sellAmount < makerOrder.buyAmount * takerOrder.buyAmount) {
             revert PriceIncompatible();
         }
 
