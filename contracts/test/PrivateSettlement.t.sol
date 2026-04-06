@@ -65,9 +65,9 @@ contract PrivateSettlementTest is Test {
 
         // Fund pool with tokens (simulates tokens locked via deposits)
         // In real flow: users deposit via CommitmentPool.deposit()
-        // For testing: directly mint to settlement contract
-        weth.mint(address(settlement), 1000 ether);
-        usdc.mint(address(settlement), 100_000e18);
+        // settlePrivate() transfers from pool → settlement, so pool needs balance
+        weth.mint(address(pool), 1000 ether);
+        usdc.mint(address(pool), 100_000e18);
 
         // Also deposit some into pool for commitment tree root
         weth.mint(alice, 100 ether);
@@ -251,6 +251,23 @@ contract PrivateSettlementTest is Test {
             CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
             1 ether, address(weth), recipient1, block.timestamp
         );
+    }
+
+    function test_claimWithProof_far_future_still_succeeds() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        // Warp 1 year into the future — claims should still work (no expiry)
+        vm.warp(block.timestamp + 365 days);
+
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
+            2 ether, address(weth), recipient1, block.timestamp - 365 days
+        );
+
+        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 2 ether);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────
