@@ -311,6 +311,33 @@ export class PrivateSubmitter {
     return txHash;
   }
 
+  /** Verify a claim proof off-chain before spending gas. */
+  private async verifyClaimProof(
+    proofA: [bigint, bigint],
+    proofB: [[bigint, bigint], [bigint, bigint]],
+    proofC: [bigint, bigint],
+    publicSignals: string[],
+  ): Promise<boolean> {
+    const snarkjs = await import("snarkjs");
+    const vkeyPath = path.join(__dirname, "../../../circuits/build/claim_vkey.json");
+    const { readFileSync } = await import("fs");
+    const vkey = JSON.parse(readFileSync(vkeyPath, "utf8"));
+
+    const proof = {
+      pi_a: [proofA[0].toString(), proofA[1].toString(), "1"],
+      pi_b: [
+        [proofB[0][1].toString(), proofB[0][0].toString()],
+        [proofB[1][1].toString(), proofB[1][0].toString()],
+        ["1", "0"],
+      ],
+      pi_c: [proofC[0].toString(), proofC[1].toString(), "1"],
+      protocol: "groth16",
+      curve: "bn128",
+    };
+
+    return snarkjs.groth16.verify(vkey, publicSignals, proof);
+  }
+
   /** Submit a gasless claim on behalf of the recipient. */
   async submitClaim(params: {
     proofA: [bigint, bigint];
@@ -323,6 +350,19 @@ export class PrivateSubmitter {
     recipient: string;
     releaseTime: bigint;
   }): Promise<string> {
+    // Verify proof off-chain first to avoid wasting gas on invalid proofs
+    const publicSignals = [
+      BigInt(params.claimsRoot).toString(),
+      BigInt(params.claimNullifier).toString(),
+      params.amount.toString(),
+      BigInt(params.token).toString(),
+      BigInt(params.recipient).toString(),
+      params.releaseTime.toString(),
+    ];
+
+    const valid = await this.verifyClaimProof(params.proofA, params.proofB, params.proofC, publicSignals);
+    if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
+
     const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
     const nonce = parseInt(hexNonce, 16);
 

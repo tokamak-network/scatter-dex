@@ -1,6 +1,20 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 
+const HEX_RE = /^0x[0-9a-fA-F]+$/;
+
+function validateProofArray(arr: unknown, name: string, len: number): string[] {
+  if (!Array.isArray(arr) || arr.length !== len) {
+    throw new Error(`${name} must be an array of ${len} elements`);
+  }
+  for (const v of arr) {
+    if (typeof v !== "string" && typeof v !== "number") {
+      throw new Error(`${name} elements must be strings or numbers`);
+    }
+  }
+  return arr as string[];
+}
+
 export function createPrivateClaimRoutes(
   submitter: PrivateSubmitter,
   writeLimiter?: RequestHandler,
@@ -18,30 +32,51 @@ export function createPrivateClaimRoutes(
         return;
       }
 
+      // Validate proof structure
+      const pA = validateProofArray(proofA, "proofA", 2);
+      if (!Array.isArray(proofB) || proofB.length !== 2) {
+        res.status(400).json({ error: "proofB must be a 2x2 array" });
+        return;
+      }
+      const pB = proofB.map((row: unknown, i: number) => validateProofArray(row, `proofB[${i}]`, 2));
+      const pC = validateProofArray(proofC, "proofC", 2);
+
       // Validate hex strings
       for (const [name, val] of Object.entries({ claimsRoot, claimNullifier, token, recipient })) {
-        if (typeof val !== "string" || !/^0x[0-9a-fA-F]+$/.test(val)) {
+        if (typeof val !== "string" || !HEX_RE.test(val)) {
           res.status(400).json({ error: `${name} must be a hex string` });
           return;
         }
       }
 
+      // Validate BigInt-parsable
+      let parsedAmount: bigint;
+      let parsedReleaseTime: bigint;
+      try {
+        parsedAmount = BigInt(amount);
+        parsedReleaseTime = BigInt(releaseTime);
+      } catch {
+        res.status(400).json({ error: "amount and releaseTime must be valid numbers" });
+        return;
+      }
+
       const txHash = await submitter.submitClaim({
-        proofA: proofA.map(BigInt) as [bigint, bigint],
-        proofB: proofB.map((row: string[]) => row.map(BigInt)) as [[bigint, bigint], [bigint, bigint]],
-        proofC: proofC.map(BigInt) as [bigint, bigint],
+        proofA: pA.map(BigInt) as [bigint, bigint],
+        proofB: pB.map((row) => row.map(BigInt)) as [[bigint, bigint], [bigint, bigint]],
+        proofC: pC.map(BigInt) as [bigint, bigint],
         claimsRoot,
         claimNullifier,
-        amount: BigInt(amount),
+        amount: parsedAmount,
         token,
         recipient,
-        releaseTime: BigInt(releaseTime),
+        releaseTime: parsedReleaseTime,
       });
 
       res.json({ status: "claimed", txHash });
     } catch (err: unknown) {
       console.error("gasless ZK claim failed:", err instanceof Error ? err.message : "unknown");
-      res.status(500).json({ error: err instanceof Error ? err.message : "claim failed" });
+      // Don't leak internal error details to client
+      res.status(500).json({ error: "claim failed" });
     }
   });
 
