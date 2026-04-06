@@ -84,9 +84,14 @@ export function createPrivateClaimRoutes(
 
       res.json({ status: "claimed", txHash });
     } catch (err: unknown) {
-      console.error("gasless ZK claim failed:", err instanceof Error ? err.message : "unknown");
-      // Don't leak internal error details to client
-      res.status(500).json({ error: "claim failed" });
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.error("gasless ZK claim failed:", msg);
+      // Client errors (invalid proof, spent nullifier) → 400
+      if (msg.includes("Invalid claim proof") || msg.includes("nullifier already spent")) {
+        res.status(400).json({ error: msg });
+      } else {
+        res.status(500).json({ error: "claim failed" });
+      }
     }
   });
 
