@@ -120,6 +120,8 @@ export default function HistoryPage() {
   // Reset offset when status filter changes
   useEffect(() => { setOffset(0); }, [status]);
 
+  const relayerUrl = onlineRelayer?.url;
+
   const fetchDetail = useCallback(async (nonce: string) => {
     if (expandedNonce === nonce) {
       setExpandedNonce(null);
@@ -127,10 +129,13 @@ export default function HistoryPage() {
       setClaimStatuses([]);
       return;
     }
-    if (!account || !onlineRelayer) return;
+    if (!account || !relayerUrl) return;
+    const requestedNonce = nonce;
     try {
-      const client = new RelayerClient(onlineRelayer.url);
+      const client = new RelayerClient(relayerUrl);
       const d = await client.getOrderDetail(account, nonce);
+      // Guard against stale response if user clicked another row during fetch
+      if (requestedNonce !== nonce) return;
       setDetail(d);
       setExpandedNonce(nonce);
 
@@ -141,9 +146,9 @@ export default function HistoryPage() {
           const provider = getProvider();
           const settlement = new ethers.Contract(getSettlementAddress(), SETTLEMENT_ABI, provider);
           const schedules = await Promise.all(
-            d.claims.map((c: any) => settlement.schedules(c.claimHash))
+            d.claims.map((c) => settlement.schedules(c.claimHash))
           );
-          setClaimStatuses(schedules.map((s: any) => ({
+          setClaimStatuses(schedules.map((s) => ({
             token: s.token,
             releaseTime: Number(s.releaseTime),
             claimed: s.claimed,
@@ -159,7 +164,7 @@ export default function HistoryPage() {
     } catch {
       // silently fail detail fetch
     }
-  }, [account, onlineRelayer, expandedNonce]);
+  }, [account, relayerUrl, expandedNonce]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
