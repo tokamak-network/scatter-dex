@@ -370,9 +370,11 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     totalLockedMaker === makerAmountAcc[maxClaimsPerSide];
 
     // Verify maker claims Merkle root
+    // Zero out unused leaves: ComputeMerkleRoot requires leaves[i] == 0 for i >= count,
+    // but Poseidon(0,0,0,0,0) != 0, so we multiply by the isUsed flag.
     component makerClaimsRoot = ComputeMerkleRoot(maxClaimsPerSide, claimsTreeDepth);
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        makerClaimsRoot.leaves[i] <== makerComputedLeaves[i];
+        makerClaimsRoot.leaves[i] <== makerComputedLeaves[i] * makerClaimUsed[i].out;
     }
     makerClaimsRoot.count <== makerClaimCount;
     claimsRootMaker === makerClaimsRoot.root;
@@ -407,7 +409,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     component takerClaimsRoot = ComputeMerkleRoot(maxClaimsPerSide, claimsTreeDepth);
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        takerClaimsRoot.leaves[i] <== takerComputedLeaves[i];
+        takerClaimsRoot.leaves[i] <== takerComputedLeaves[i] * takerClaimUsed[i].out;
     }
     takerClaimsRoot.count <== takerClaimCount;
     claimsRootTaker === takerClaimsRoot.root;

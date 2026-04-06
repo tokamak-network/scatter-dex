@@ -231,11 +231,18 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
   const makerClaimsPadded = padClaims(input.makerClaims, 16);
   const takerClaimsPadded = padClaims(input.takerClaims, 16);
 
-  const makerClaimLeafHashes = await Promise.all(makerClaimsPadded.map((c) => computeClaimLeaf(c)));
-  const takerClaimLeafHashes = await Promise.all(takerClaimsPadded.map((c) => computeClaimLeaf(c)));
+  // Only hash real claims; unused slots are 0n (matches circuit: leaf * isUsed)
+  const makerRealLeaves = await Promise.all(input.makerClaims.map((c) => computeClaimLeaf(c)));
+  const takerRealLeaves = await Promise.all(input.takerClaims.map((c) => computeClaimLeaf(c)));
 
-  const makerClaimsRoot = await computeClaimsRoot(makerClaimLeafHashes, 4);
-  const takerClaimsRoot = await computeClaimsRoot(takerClaimLeafHashes, 4);
+  const padLeafArr = (leaves: bigint[], max: number): bigint[] => {
+    const padded = [...leaves];
+    while (padded.length < max) padded.push(0n);
+    return padded;
+  };
+
+  const makerClaimsRoot = await computeClaimsRoot(padLeafArr(makerRealLeaves, 16), 4);
+  const takerClaimsRoot = await computeClaimsRoot(padLeafArr(takerRealLeaves, 16), 4);
 
   const makerNullifier = await computeNullifier(input.makerSecret, input.makerSalt);
   const takerNullifier = await computeNullifier(input.takerSecret, input.takerSalt);

@@ -122,16 +122,19 @@ export class PrivateSubmitter {
     const makerClaimsPadded = padClaims(maker.claims, 16);
     const takerClaimsPadded = padClaims(taker.claims, 16);
 
-    // Compute claim leaf hashes for Merkle root (must match circuit computation)
-    const makerClaimLeaves = await Promise.all(
-      makerClaimsPadded.map((c) => computeClaimLeaf(c)),
-    );
-    const takerClaimLeaves = await Promise.all(
-      takerClaimsPadded.map((c) => computeClaimLeaf(c)),
-    );
+    // Compute claim leaf hashes for Merkle root.
+    // Only hash real claims; unused slots are 0n (matches circuit: leaf * isUsed).
+    const makerRealLeaves = await Promise.all(maker.claims.map((c) => computeClaimLeaf(c)));
+    const takerRealLeaves = await Promise.all(taker.claims.map((c) => computeClaimLeaf(c)));
 
-    const { root: claimsRootMaker } = await buildMerkleTree(makerClaimLeaves, CLAIMS_TREE_DEPTH);
-    const { root: claimsRootTaker } = await buildMerkleTree(takerClaimLeaves, CLAIMS_TREE_DEPTH);
+    const padLeaves = (leaves: bigint[], max: number): bigint[] => {
+      const padded = [...leaves];
+      while (padded.length < max) padded.push(0n);
+      return padded;
+    };
+
+    const { root: claimsRootMaker } = await buildMerkleTree(padLeaves(makerRealLeaves, 16), CLAIMS_TREE_DEPTH);
+    const { root: claimsRootTaker } = await buildMerkleTree(padLeaves(takerRealLeaves, 16), CLAIMS_TREE_DEPTH);
 
     // Compute totals
     const totalLockedMaker = maker.claims.reduce((sum, c) => sum + c.amount, 0n);
