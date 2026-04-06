@@ -128,7 +128,6 @@ describe("PrivateMatcher", () => {
   });
 
   it("matches at exact price boundary", () => {
-    // Alice: sell 10 TKA, want 20000 TKB
     const alice = book.add(makePrivateOrder({
       pubKeyAx: 1n, pubKeyAy: 1n,
       sellToken: TOKEN_A, buyToken: TOKEN_B,
@@ -137,8 +136,7 @@ describe("PrivateMatcher", () => {
       nonce: 1n,
     }));
 
-    // Bob: sell 20000 TKB, want 10 TKA (exact match)
-    // Cross-multiply: 10 * 20000 <= 20000 * 10 → 200000 <= 200000 → TRUE
+    // Exact match: 10 * 20000 >= 20000 * 10 → TRUE
     book.add(makePrivateOrder({
       pubKeyAx: 2n, pubKeyAy: 2n,
       sellToken: TOKEN_B, buyToken: TOKEN_A,
@@ -151,5 +149,29 @@ describe("PrivateMatcher", () => {
     expect(match).not.toBeNull();
     expect(match!.maker.order.pubKeyAx).toBe(1n);
     expect(match!.taker.order.pubKeyAx).toBe(2n);
+  });
+
+  it("matches when taker offers better price", () => {
+    // Alice: sell 10 TKA, want 20000 TKB (price = 2000 TKB/TKA)
+    const alice = book.add(makePrivateOrder({
+      pubKeyAx: 1n, pubKeyAy: 1n,
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: 10n * 10n ** 18n,
+      buyAmount: 20000n * 10n ** 18n,
+      nonce: 1n,
+    }));
+
+    // Bob: sell 25000 TKB, want 10 TKA (price = 2500 TKB/TKA — better for Alice)
+    // 10 * 25000 >= 20000 * 10 → 250000 >= 200000 → TRUE
+    book.add(makePrivateOrder({
+      pubKeyAx: 2n, pubKeyAy: 2n,
+      sellToken: TOKEN_B, buyToken: TOKEN_A,
+      sellAmount: 25000n * 10n ** 18n,
+      buyAmount: 10n * 10n ** 18n,
+      nonce: 2n,
+    }));
+
+    const match = matcher.findMatch(alice);
+    expect(match).not.toBeNull();
   });
 });

@@ -263,9 +263,11 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal takerProduct;
     takerProduct <== makerBuyAmount * takerBuyAmount;
 
+    // maker.sell * taker.sell >= maker.buy * taker.buy
+    // (taker offers at least maker's minimum price)
     component priceCheck = LessEqThan(252);
-    priceCheck.in[0] <== makerProduct;
-    priceCheck.in[1] <== takerProduct;
+    priceCheck.in[0] <== takerProduct;
+    priceCheck.in[1] <== makerProduct;
     priceCheck.out === 1;
 
     // ════════════════════════════════════════

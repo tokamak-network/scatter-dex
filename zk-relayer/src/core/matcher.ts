@@ -38,9 +38,10 @@ export class PrivateMatcher {
       if (candidate.order.sellToken !== order.buyToken) continue;
       if (candidate.order.buyToken !== order.sellToken) continue;
 
-      // Price compatibility
+      // Price compatibility: taker offers at least maker's minimum price
+      // maker.sell * taker.sell >= maker.buy * taker.buy
       const compatible =
-        order.sellAmount * candidate.order.sellAmount <=
+        order.sellAmount * candidate.order.sellAmount >=
         order.buyAmount * candidate.order.buyAmount;
       if (!compatible) continue;
 

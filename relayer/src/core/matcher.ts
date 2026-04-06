@@ -39,9 +39,10 @@ export class Matcher {
       if (candidate.order.sellToken.toLowerCase() !== order.buyToken.toLowerCase()) continue;
       if (candidate.order.buyToken.toLowerCase() !== order.sellToken.toLowerCase()) continue;
 
-      // Price compatibility (matches Solidity: maker.sell * taker.sell <= maker.buy * taker.buy)
+      // Price compatibility: taker offers at least maker's minimum price
+      // maker.sell * taker.sell >= maker.buy * taker.buy
       const compatible =
-        order.sellAmount * candidate.order.sellAmount <=
+        order.sellAmount * candidate.order.sellAmount >=
         order.buyAmount * candidate.order.buyAmount;
 
       if (!compatible) continue;
