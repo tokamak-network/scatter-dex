@@ -75,9 +75,10 @@ if [ "$MOCK_MODE" = true ]; then
 
   check_port 8545 "anvil"
   check_port 3001 "relayer"
+  check_port 3002 "zk-relayer"
   check_port 3000 "frontend"
 
-  echo "[1/4] Starting anvil..."
+  echo "[1/5] Starting anvil..."
   anvil --silent &
   last_pid=$!
   PIDS+=("$last_pid")
@@ -87,7 +88,7 @@ if [ "$MOCK_MODE" = true ]; then
   echo "  anvil running on $RPC_URL (PID $last_pid)"
 
   echo ""
-  echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
+  echo "[2/5] Deploying contracts (MockIdentityRegistry)..."
   cd "$ROOT_DIR/contracts"
   DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
@@ -96,8 +97,10 @@ if [ "$MOCK_MODE" = true ]; then
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
+  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
+  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "PrivateSettlement:" | awk '{print $NF}')
 
-  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ]; then
+  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
@@ -109,7 +112,7 @@ else
   echo ""
 
   # Verify anvil is running
-  echo "[1/4] Checking anvil..."
+  echo "[1/5] Checking anvil..."
   if ! curl -fsS "$RPC_URL" -X POST -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
     echo "  ERROR: anvil is not running at $RPC_URL"
@@ -161,7 +164,7 @@ else
   echo "  IdentityRegistry (Relayer CA): $RELAYER_IDENTITY_REGISTRY"
 
   echo ""
-  echo "[2/4] Deploying contracts (real IdentityGate)..."
+  echo "[2/5] Deploying contracts (real IdentityGate)..."
   cd "$ROOT_DIR/contracts"
 
   # Use deployer as treasury for local dev
@@ -202,14 +205,16 @@ if [ -n "$WETH" ] && [ -n "$USDC" ]; then
     --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null
 fi
 
-echo "  Settlement:       $SETTLEMENT"
-echo "  RelayerRegistry:  $RELAYER_REGISTRY"
-[ -n "$WETH" ] && echo "  WETH:             $WETH"
-[ -n "$USDC" ] && echo "  USDC:             $USDC"
+echo "  Settlement:          $SETTLEMENT"
+echo "  RelayerRegistry:     $RELAYER_REGISTRY"
+[ -n "$WETH" ] && echo "  WETH:                $WETH"
+[ -n "$USDC" ] && echo "  USDC:                $USDC"
+[ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
+[ -n "$PRIVATE_SETTLEMENT" ] && echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
 
-# ── 3. Start relayer ─────────────────────────────────────────
+# ── 3a. Start relayer ────────────────────────────────────────
 echo ""
-echo "[3/4] Starting relayer..."
+echo "[3/5] Starting relayer..."
 cat > "$ROOT_DIR/relayer/.env" << EOF
 RPC_URL=$RPC_URL
 RELAYER_PRIVATE_KEY=$DEPLOYER_KEY
@@ -229,9 +234,38 @@ if ! wait_for "http://localhost:3001/api/info" "relayer" 15; then
 fi
 echo "  relayer running on http://localhost:3001 (PID $last_pid)"
 
-# ── 4. Start frontend ────────────────────────────────────────
+# ── 3b. Start zk-relayer ────────────────────────────────────
+if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
+  echo ""
+  echo "[4/5] Starting zk-relayer..."
+  check_port 3002 "zk-relayer"
+  cat > "$ROOT_DIR/zk-relayer/.env" << EOF
+RPC_URL=$RPC_URL
+RELAYER_PRIVATE_KEY=$DEPLOYER_KEY
+COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
+PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+RELAYER_FEE=30
+PORT=3002
+EOF
+
+  cd "$ROOT_DIR/zk-relayer"
+  npm run dev > "$LOG_DIR/zk-relayer.log" 2>&1 &
+  last_pid=$!
+  PIDS+=("$last_pid")
+  if ! wait_for "http://localhost:3002/api/info" "zk-relayer" 30; then
+    echo "  Last 20 lines of zk-relayer log:"
+    tail -20 "$LOG_DIR/zk-relayer.log" 2>/dev/null
+    exit 1
+  fi
+  echo "  zk-relayer running on http://localhost:3002 (PID $last_pid)"
+else
+  echo ""
+  echo "[4/5] Skipping zk-relayer (no ZK contracts deployed)"
+fi
+
+# ── 5. Start frontend ───────────────────────────────────────
 echo ""
-echo "[4/4] Starting frontend..."
+echo "[5/5] Starting frontend..."
 TOKENS=""
 [ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
@@ -243,6 +277,15 @@ NEXT_PUBLIC_WETH_ADDRESS=$WETH
 NEXT_PUBLIC_TOKENS=$TOKENS
 NEXT_PUBLIC_CHAIN_ID=31337
 EOF
+
+# Add ZK env vars only when ZK contracts are deployed
+if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
+  cat >> "$ROOT_DIR/frontend/.env.local" << EOF
+NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
+NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
+EOF
+fi
 
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
@@ -267,14 +310,17 @@ else
   echo "  Registry:  $IDENTITY_REGISTRY"
 fi
 echo ""
-echo "  Frontend:  http://localhost:3000"
-echo "  Relayer:   http://localhost:3001"
-echo "  Anvil:     $RPC_URL"
+echo "  Frontend:    http://localhost:3000"
+echo "  Relayer:     http://localhost:3001"
+[ -n "$COMMITMENT_POOL" ] && echo "  ZK Relayer:  http://localhost:3002"
+echo "  Anvil:       $RPC_URL"
 echo ""
-echo "  Settlement:       $SETTLEMENT"
-echo "  RelayerRegistry:  $RELAYER_REGISTRY"
-[ -n "$WETH" ] && echo "  WETH:             $WETH"
-[ -n "$USDC" ] && echo "  USDC:             $USDC"
+echo "  Settlement:          $SETTLEMENT"
+echo "  RelayerRegistry:     $RELAYER_REGISTRY"
+[ -n "$WETH" ] && echo "  WETH:                $WETH"
+[ -n "$USDC" ] && echo "  USDC:                $USDC"
+[ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
+[ -n "$PRIVATE_SETTLEMENT" ] && echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
 echo ""
 echo "  Logs:      $LOG_DIR/"
 echo ""
