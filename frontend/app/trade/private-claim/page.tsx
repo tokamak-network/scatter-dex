@@ -9,7 +9,7 @@ import { generateClaimProof } from "../../lib/zk/claim-prover";
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
-  "function claimsGroups(bytes32) view returns (address token, uint96 totalLocked, uint96 totalClaimed, uint48 expiry)",
+  "function claimsGroups(bytes32) view returns (address token, uint96 totalLocked, uint96 totalClaimed)",
 ];
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";

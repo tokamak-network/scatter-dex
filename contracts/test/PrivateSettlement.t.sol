@@ -253,8 +253,6 @@ contract PrivateSettlementTest is Test {
         );
     }
 
-    // ─── Refund Tests ────────────────────────────────────────────
-
     // ─── Helpers ─────────────────────────────────────────────────
 
     function _defaultSettleParams() internal view returns (PrivateSettlement.SettleParams memory) {

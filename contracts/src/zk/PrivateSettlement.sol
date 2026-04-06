@@ -49,12 +49,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint256 amount
     );
     // ─── Data Structures ─────────────────────────────────────────
-    // Packed: 2 storage slots
-    // Slot 0: token (20) + _pad (12) = 32 bytes
-    // Slot 1: totalLocked (12) + totalClaimed (12) + _pad (8) = 32 bytes
+    // Packed into 2 storage slots:
+    // Slot 0: token (20 bytes) + totalLocked (12 bytes) = 32 bytes
+    // Slot 1: totalClaimed (12 bytes) + _pad (20 bytes) = 32 bytes
     struct ClaimsGroup {
         address token;          // slot 0: 20 bytes
-        uint96  totalLocked;    // slot 1: 12 bytes
+        uint96  totalLocked;    // slot 0: 12 bytes
         uint96  totalClaimed;   // slot 1: 12 bytes
     }
 
@@ -174,7 +174,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // Transfer claim amounts from CommitmentPool to this contract.
         // After settlement, PrivateSettlement holds the tokens and distributes
-        // them via claimWithProof(). Unclaimed tokens return to pool via refund.
+        // them via claimWithProof(). Claims are permanently available.
         if (p.totalLockedMaker > 0) {
             pool.transferToSettlement(p.tokenMaker, p.totalLockedMaker);
         }
