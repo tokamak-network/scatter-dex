@@ -2,10 +2,12 @@
 
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { Gift, Loader2, AlertCircle, Check, Upload } from "lucide-react";
+import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
+// Stealth addresses work without special signer — the connected wallet
+// pays gas, and tokens are sent to the stealth recipient address in the proof.
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
@@ -21,8 +23,8 @@ interface ClaimData {
   amount: string;
   releaseTime: string;
   leafIndex: number;
-  // All 16 leaves for Merkle proof (padded with "0")
   allLeaves: string[];
+  ephemeralPubKey?: string; // present if stealth address was used
 }
 
 export default function PrivateClaimPage() {
@@ -58,6 +60,12 @@ export default function PrivateClaimPage() {
     }
     for (let i = 0; i < c.allLeaves.length; i++) {
       try { BigInt(c.allLeaves[i]); } catch { throw new Error(`allLeaves[${i}] is not a valid number`); }
+    }
+    // Validate ephemeralPubKey format if present
+    if (c.ephemeralPubKey !== undefined) {
+      if (typeof c.ephemeralPubKey !== "string" || !/^0x[0-9a-fA-F]+$/.test(c.ephemeralPubKey)) {
+        throw new Error("ephemeralPubKey must be a hex string starting with 0x");
+      }
     }
     return c as ClaimData;
   }
@@ -115,6 +123,7 @@ export default function PrivateClaimPage() {
   // Submit claim with ZK proof
   const handleClaim = useCallback(async () => {
     if (!signer || !claimData || !privateSettlementAddr) return;
+
     setStatus("generating");
     setError(null);
     setTxHash(null);
@@ -149,7 +158,9 @@ export default function PrivateClaimPage() {
       });
       console.log("Claim proof generated!");
 
-      // Submit on-chain
+      // Submit on-chain — connected wallet signs, recipient is in the ZK proof
+      // For stealth claims: recipient is the stealth address (already in claim data)
+      // The connected wallet pays gas; tokens go to the recipient address
       setStatus("submitting");
       const contract = new ethers.Contract(privateSettlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
@@ -321,6 +332,14 @@ export default function PrivateClaimPage() {
                   Not yet claimable. Unlocks at {new Date(Number(claimData.releaseTime) * 1000).toLocaleString()}.
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Stealth indicator */}
+          {claimData?.ephemeralPubKey && (
+            <div className="flex items-center gap-2 text-xs text-primary bg-primary/5 px-3 py-2 rounded-md">
+              <Eye className="w-3.5 h-3.5" />
+              Stealth claim — tokens will be sent to a one-time stealth address. Your connected wallet pays gas only.
             </div>
           )}
 
