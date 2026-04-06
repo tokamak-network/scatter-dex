@@ -100,7 +100,7 @@ if [ "$MOCK_MODE" = true ]; then
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "PrivateSettlement:" | awk '{print $NF}')
 
-  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ]; then
+  if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
@@ -238,6 +238,7 @@ echo "  relayer running on http://localhost:3001 (PID $last_pid)"
 if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
   echo ""
   echo "[4/5] Starting zk-relayer..."
+  check_port 3002 "zk-relayer"
   cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
 RELAYER_PRIVATE_KEY=$DEPLOYER_KEY
@@ -251,7 +252,7 @@ EOF
   npm run dev > "$LOG_DIR/zk-relayer.log" 2>&1 &
   last_pid=$!
   PIDS+=("$last_pid")
-  if ! wait_for "http://localhost:3002/api/info" "zk-relayer" 15; then
+  if ! wait_for "http://localhost:3002/api/info" "zk-relayer" 30; then
     echo "  Last 20 lines of zk-relayer log:"
     tail -20 "$LOG_DIR/zk-relayer.log" 2>/dev/null
     exit 1
@@ -275,10 +276,16 @@ NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
 NEXT_PUBLIC_WETH_ADDRESS=$WETH
 NEXT_PUBLIC_TOKENS=$TOKENS
 NEXT_PUBLIC_CHAIN_ID=31337
+EOF
+
+# Add ZK env vars only when ZK contracts are deployed
+if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
+  cat >> "$ROOT_DIR/frontend/.env.local" << EOF
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
+fi
 
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
