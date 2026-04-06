@@ -257,13 +257,15 @@ contract PrivateSettlementTest is Test {
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
+        uint256 releaseTime = block.timestamp; // capture before warp
+
         // Warp 1 year into the future — claims should still work (no expiry)
         vm.warp(block.timestamp + 365 days);
 
         settlement.claimWithProof(
             proofA, proofB, proofC,
             CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
-            2 ether, address(weth), recipient1, block.timestamp - 365 days
+            2 ether, address(weth), recipient1, releaseTime
         );
 
         (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
