@@ -46,11 +46,9 @@ describe("PrivateMatcher", () => {
       nonce: 1n,
     }));
 
-    // Bob: sell 21000 TKB, want 11 TKA (price = 1909 TKB/TKA — worse than Alice's 2100)
-    // Amount sufficient (21000 >= 21000, 10 >= 11 fails → also caught by amount check)
-    // Price: 10 * 21000 <= 21000 * 11 → 210000 <= 231000 → TRUE (price ok)
-    // But amount: alice.sell(10) < bob.buy(11) → fails
-    // To isolate price: Bob wants 10 TKA but offers only 19000 TKB
+    // Bob offers only 19000 TKB for 10 TKA (price = 1900 TKB/TKA — below Alice's 2100)
+    // Price: 10 * 19000 >= 21000 * 10 → 190000 >= 210000 → FALSE (price too low)
+    // Amount: 19000 < 21000 → also fails (insufficient amount)
     book.add(makePrivateOrder({
       pubKeyAx: 2n, pubKeyAy: 2n,
       sellToken: TOKEN_B, buyToken: TOKEN_A,
@@ -58,8 +56,6 @@ describe("PrivateMatcher", () => {
       buyAmount: 10n * 10n ** 18n,
       nonce: 2n,
     }));
-    // Price: 10 * 19000 <= 21000 * 10 → 190000 <= 210000 → TRUE
-    // Amount: 19000 < 21000 → fails (Alice wants 21000 but Bob only offers 19000)
 
     expect(matcher.findMatch(alice)).toBeNull();
   });

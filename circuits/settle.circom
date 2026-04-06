@@ -245,7 +245,8 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  5. PRICE COMPATIBILITY
-    //    maker.sell * taker.sell <= maker.buy * taker.buy
+    //    maker.sell * taker.sell >= maker.buy * taker.buy
+    //    (taker offers at least maker's minimum price)
     // ════════════════════════════════════════
     // Range-check all four amounts to 128 bits so their products fit
     // within 256 bits (well within the ~254-bit BN254 field).
