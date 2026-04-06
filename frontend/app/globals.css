@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #060e20;
+  --color-surface: #060e20;
+  --color-surface-container: #0f1930;
+  --color-surface-container-low: #091328;
+  --color-surface-container-high: #141f38;
+  --color-surface-container-highest: #192540;
+  --color-surface-bright: #1f2b49;
+  --color-surface-variant: #192540;
+  --color-surface-tint: #95aaff;
+
+  --color-primary: #95aaff;
+  --color-primary-dim: #3766ff;
+  --color-primary-container: #829bff;
+  --color-on-primary: #00247e;
+  --color-on-primary-fixed: #000000;
+
+  --color-secondary: #c8d8f3;
+  --color-secondary-container: #38485d;
+  --color-on-secondary-container: #c1d1eb;
+
+  --color-tertiary: #9bffce;
+  --color-tertiary-dim: #58e7ab;
+  --color-on-tertiary-container: #005a3c;
+
+  --color-error: #ff6e84;
+  --color-error-dim: #d73357;
+
+  --color-on-surface: #dee5ff;
+  --color-on-surface-variant: #a3aac4;
+  --color-outline: #6d758c;
+  --color-outline-variant: #40485d;
+
+  --font-headline: 'Manrope', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #060e20;
+  color: #dee5ff;
+}
+
+.font-headline {
+  font-family: 'Manrope', sans-serif;
+}
+
+.glass-card {
+  background: rgba(25, 37, 64, 0.4);
+  backdrop-filter: blur(12px);
+}
+
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.03;
+  z-index: 50;
+  background: repeating-conic-gradient(#fff 0 0.0001%, transparent 0 0.0002%) 50% 50%/2500px 2500px;
+}
+
+.gradient-btn {
+  background: linear-gradient(135deg, #95aaff, #3766ff);
+}

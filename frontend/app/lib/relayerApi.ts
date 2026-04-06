@@ -14,9 +14,20 @@ export interface RelayerOrder {
   sellAmount: string;
   buyAmount: string;
   nonce: string;
+  maxFee: string;
+  expiry: string;
+  feeMode?: string;
   status: string;
   submittedAt: number;
   settleTxHash?: string;
+  claims?: { claimHash: string; amount: string; releaseDelay: string }[];
+}
+
+export interface OrderHistoryResponse {
+  orders: RelayerOrder[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface OrderData {
@@ -64,6 +75,22 @@ export class RelayerClient {
   async getOrders(address: string): Promise<RelayerOrder[]> {
     const res = await fetch(`${this.baseUrl}/api/orders/${address}`);
     if (!res.ok) throw new Error(`Failed to get orders: ${res.statusText}`);
+    return res.json();
+  }
+
+  async getOrderHistory(address: string, opts: { status?: string; limit?: number; offset?: number } = {}): Promise<OrderHistoryResponse> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    params.set("limit", String(opts.limit ?? 50));
+    params.set("offset", String(opts.offset ?? 0));
+    const res = await fetch(`${this.baseUrl}/api/orders/${address}?${params}`);
+    if (!res.ok) throw new Error(`Failed to get order history: ${res.statusText}`);
+    return res.json();
+  }
+
+  async getOrderDetail(address: string, nonce: string): Promise<RelayerOrder> {
+    const res = await fetch(`${this.baseUrl}/api/orders/${address}/${nonce}`);
+    if (!res.ok) throw new Error(`Failed to get order detail: ${res.statusText}`);
     return res.json();
   }
 

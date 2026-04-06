@@ -105,6 +105,47 @@ export function parseOrder(raw: Record<string, unknown>): Order {
   };
 }
 
+export interface OrderResponse {
+  maker: string;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  buyAmount: string;
+  nonce: string;
+  maxFee: string;
+  expiry: string;
+  feeMode?: string;
+  status: OrderStatus;
+  submittedAt: number;
+  settleTxHash?: string;
+  claims?: { claimHash: string; amount: string; releaseDelay: string }[];
+}
+
+export function serializeOrder(stored: StoredOrder, includeClaims = false): OrderResponse {
+  const resp: OrderResponse = {
+    maker: stored.order.maker,
+    sellToken: stored.order.sellToken,
+    buyToken: stored.order.buyToken,
+    sellAmount: stored.order.sellAmount.toString(),
+    buyAmount: stored.order.buyAmount.toString(),
+    nonce: stored.order.nonce.toString(),
+    maxFee: stored.order.maxFee.toString(),
+    expiry: stored.order.expiry.toString(),
+    feeMode: stored.feeMode,
+    status: stored.status,
+    submittedAt: stored.submittedAt,
+    settleTxHash: stored.settleTxHash,
+  };
+  if (includeClaims) {
+    resp.claims = stored.order.claims.map((c) => ({
+      claimHash: c.claimHash,
+      amount: c.amount.toString(),
+      releaseDelay: c.releaseDelay.toString(),
+    }));
+  }
+  return resp;
+}
+
 // EIP-712 typed data for order signing/verification
 export const EIP712_DOMAIN = {
   name: "ScatterSettlement",

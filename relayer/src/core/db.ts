@@ -38,6 +38,11 @@ export class OrderDB {
   private selectPending: ReturnType<Database.Database["prepare"]>;
   private selectClaims: ReturnType<Database.Database["prepare"]>;
   private selectExists: ReturnType<Database.Database["prepare"]>;
+  private selectByMaker: ReturnType<Database.Database["prepare"]>;
+  private selectByMakerStatus: ReturnType<Database.Database["prepare"]>;
+  private selectByMakerNonce: ReturnType<Database.Database["prepare"]>;
+  private countByMaker: ReturnType<Database.Database["prepare"]>;
+  private countByMakerStatus: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -68,6 +73,21 @@ export class OrderDB {
     `);
     this.selectExists = this.db.prepare(`
       SELECT 1 FROM orders WHERE maker = @maker AND nonce = @nonce LIMIT 1
+    `);
+    this.selectByMaker = this.db.prepare(`
+      SELECT * FROM orders WHERE maker = @maker ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
+    `);
+    this.selectByMakerStatus = this.db.prepare(`
+      SELECT * FROM orders WHERE maker = @maker AND status = @status ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
+    `);
+    this.selectByMakerNonce = this.db.prepare(`
+      SELECT * FROM orders WHERE maker = @maker AND nonce = @nonce LIMIT 1
+    `);
+    this.countByMaker = this.db.prepare(`
+      SELECT COUNT(*) as total FROM orders WHERE maker = @maker
+    `);
+    this.countByMakerStatus = this.db.prepare(`
+      SELECT COUNT(*) as total FROM orders WHERE maker = @maker AND status = @status
     `);
   }
 
@@ -103,6 +123,8 @@ export class OrderDB {
 
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, submitted_at);
       CREATE INDEX IF NOT EXISTS idx_orders_pair ON orders(sell_token, buy_token);
+      CREATE INDEX IF NOT EXISTS idx_orders_maker ON orders(maker, submitted_at);
+      CREATE INDEX IF NOT EXISTS idx_orders_maker_status ON orders(maker, status, submitted_at);
     `);
   }
 
@@ -181,6 +203,51 @@ export class OrderDB {
       expiry: BigInt(row.expiry),
       nonce: BigInt(row.nonce),
       claims,
+    };
+
+    return {
+      order,
+      signature: row.signature,
+      status: row.status as OrderStatus,
+      submittedAt: row.submitted_at,
+      feeMode: row.fee_mode as "cover_taker" | undefined ?? undefined,
+      settleTxHash: row.settle_tx ?? undefined,
+    };
+  }
+
+  getOrdersByMaker(maker: string, opts: { status?: OrderStatus; limit: number; offset: number }): StoredOrder[] {
+    const makerKey = maker.toLowerCase();
+    const rows = opts.status
+      ? this.selectByMakerStatus.all({ maker: makerKey, status: opts.status, limit: opts.limit, offset: opts.offset }) as OrderRow[]
+      : this.selectByMaker.all({ maker: makerKey, limit: opts.limit, offset: opts.offset }) as OrderRow[];
+    return rows.map((row) => this.rowToStoredOrderLight(row));
+  }
+
+  getOrderByMakerNonce(maker: string, nonce: bigint): StoredOrder | null {
+    const row = this.selectByMakerNonce.get({ maker: maker.toLowerCase(), nonce: nonce.toString() }) as OrderRow | undefined;
+    if (!row) return null;
+    return this.rowToStoredOrder(row);
+  }
+
+  countOrdersByMaker(maker: string, status?: OrderStatus): number {
+    const makerKey = maker.toLowerCase();
+    const result = status
+      ? this.countByMakerStatus.get({ maker: makerKey, status }) as { total: number }
+      : this.countByMaker.get({ maker: makerKey }) as { total: number };
+    return result.total;
+  }
+
+  private rowToStoredOrderLight(row: OrderRow): StoredOrder {
+    const order: Order = {
+      maker: row.maker,
+      sellToken: row.sell_token,
+      buyToken: row.buy_token,
+      sellAmount: BigInt(row.sell_amount),
+      buyAmount: BigInt(row.buy_amount),
+      maxFee: BigInt(row.max_fee),
+      expiry: BigInt(row.expiry),
+      nonce: BigInt(row.nonce),
+      claims: [],
     };
 
     return {

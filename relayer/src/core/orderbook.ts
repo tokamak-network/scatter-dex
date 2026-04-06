@@ -158,6 +158,21 @@ export class Orderbook {
     return this.pendingCount;
   }
 
+  getOrderHistory(maker: string, opts: { status?: OrderStatus; limit: number; offset: number }): StoredOrder[] {
+    if (!this.db) return [];
+    return this.db.getOrdersByMaker(maker, opts);
+  }
+
+  getOrderByNonce(maker: string, nonce: bigint): StoredOrder | null {
+    if (!this.db) return null;
+    return this.db.getOrderByMakerNonce(maker, nonce);
+  }
+
+  countOrders(maker: string, status?: OrderStatus): number {
+    if (!this.db) return 0;
+    return this.db.countOrdersByMaker(maker, status);
+  }
+
   /** Save an order directly to DB without adding to in-memory book (e.g. scheduled transfers). */
   persistOrder(signed: SignedOrder, status: OrderStatus, feeMode?: "cover_taker", settleTxHash?: string): void {
     if (!this.db) return;

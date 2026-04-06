@@ -4,7 +4,7 @@ import { Orderbook } from "../core/orderbook.js";
 import { Matcher } from "../core/matcher.js";
 import { Submitter } from "../core/submitter.js";
 import { isValidSignature } from "../core/signer.js";
-import { parseOrder } from "../types/order.js";
+import { parseOrder, OrderStatus, serializeOrder } from "../types/order.js";
 import { config } from "../config.js";
 
 export function createOrderRoutes(
@@ -118,22 +118,64 @@ export function createOrderRoutes(
   });
 
   // GET /api/orders/:address — get orders by maker (read rate limit)
+  // Without query params: returns in-memory pending orders (backward compatible)
+  // With query params (status, limit, offset): returns paginated history from DB
   if (readLimiter) router.get("/:address", readLimiter);
   router.get("/:address", (req: Request, res: Response) => {
-    const orders = orderbook.getOrdersByMaker(req.params.address);
-    res.json(
-      orders.map((o) => ({
-        maker: o.order.maker,
-        sellToken: o.order.sellToken,
-        buyToken: o.order.buyToken,
-        sellAmount: o.order.sellAmount.toString(),
-        buyAmount: o.order.buyAmount.toString(),
-        nonce: o.order.nonce.toString(),
-        status: o.status,
-        submittedAt: o.submittedAt,
-        settleTxHash: o.settleTxHash,
-      }))
-    );
+    const { status, limit, offset } = req.query;
+    const hasQueryParams = status !== undefined || limit !== undefined || offset !== undefined;
+
+    if (!hasQueryParams) {
+      // Backward compatible: in-memory pending orders only
+      const orders = orderbook.getOrdersByMaker(req.params.address);
+      res.json(orders.map((o) => serializeOrder(o)));
+      return;
+    }
+
+    // Validate status
+    const validStatuses: OrderStatus[] = ["pending", "matched", "settled", "cancelled", "expired"];
+    if (status !== undefined && !validStatuses.includes(status as OrderStatus)) {
+      res.status(400).json({ error: `invalid status: must be one of ${validStatuses.join(", ")}` });
+      return;
+    }
+
+    // Validate limit/offset
+    const parsedLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+    const parsedOffset = Math.max(Number(offset) || 0, 0);
+
+    const orders = orderbook.getOrderHistory(req.params.address, {
+      status: status as OrderStatus | undefined,
+      limit: parsedLimit,
+      offset: parsedOffset,
+    });
+    const total = orderbook.countOrders(req.params.address, status as OrderStatus | undefined);
+
+    res.json({
+      orders: orders.map((o) => serializeOrder(o)),
+      total,
+      limit: parsedLimit,
+      offset: parsedOffset,
+    });
+  });
+
+  // GET /api/orders/:address/:nonce — get single order detail with claims
+  if (readLimiter) router.get("/:address/:nonce", readLimiter);
+  router.get("/:address/:nonce", (req: Request, res: Response) => {
+    let nonce: bigint;
+    try {
+      nonce = BigInt(req.params.nonce);
+    } catch {
+      res.status(400).json({ error: "invalid nonce format" });
+      return;
+    }
+
+    const stored = orderbook.getOrderByNonce(req.params.address, nonce);
+    if (!stored) {
+      res.status(404).json({ error: "order not found" });
+      return;
+    }
+
+    res.json(serializeOrder(stored, true));
   });
 
   // DELETE /api/orders/:address/:nonce — cancel order (read rate limit)
