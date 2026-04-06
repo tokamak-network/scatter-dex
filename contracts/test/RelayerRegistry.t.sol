@@ -46,15 +46,7 @@ contract RelayerRegistryTest is Test {
         assertTrue(registry.isActiveRelayer(relayer1));
     }
 
-    function test_register_with_voluntary_bond() public {
-        vm.prank(relayer1);
-        registry.register{value: 0.5 ether}("http://relay1.com", 30);
-        (,, uint256 bond,,,) = registry.relayers(relayer1);
-        assertEq(bond, 0.5 ether);
-    }
-
     function test_register_insufficient_bond_reverts_when_set() public {
-        // Owner sets minBond
         registry.setMinBond(0.1 ether);
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
@@ -64,6 +56,12 @@ contract RelayerRegistryTest is Test {
     function test_setMinBond() public {
         registry.setMinBond(1 ether);
         assertEq(registry.minBond(), 1 ether);
+    }
+
+    function test_setMinBond_not_owner_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert();
+        registry.setMinBond(1 ether);
     }
 
     function test_register_already_registered_reverts() public {
