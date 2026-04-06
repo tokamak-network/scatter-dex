@@ -30,6 +30,8 @@ export default function PrivateClaimPage() {
   const tokens = getTokenList();
 
   const [claimJson, setClaimJson] = useState("");
+  const [allClaims, setAllClaims] = useState<ClaimData[]>([]);
+  const [selectedClaimIdx, setSelectedClaimIdx] = useState(0);
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
@@ -39,37 +41,59 @@ export default function PrivateClaimPage() {
 
   const privateSettlementAddr = process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS || "";
 
-  // Shared validation for claim data
-  function validateClaimData(parsed: any): ClaimData {
-    // Support bundled format: { claims: [...] }
-    if (parsed.claims && Array.isArray(parsed.claims)) {
-      if (parsed.claims.length === 0) throw new Error("No claims in bundle");
-      // Use first claim for now; TODO: add claim selector for multi-claim bundles
-      return validateClaimData(parsed.claims[0]);
-    }
-    if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.releaseTime) {
+  // Validate a single claim entry — checks presence and BigInt parsability
+  function validateSingleClaim(c: any): ClaimData {
+    if (!c.secret || !c.recipient || !c.token || !c.amount || !c.releaseTime) {
       throw new Error("Missing required fields: secret, recipient, token, amount, releaseTime");
     }
-    if (parsed.leafIndex === undefined) throw new Error("Missing leafIndex");
-    if (!parsed.allLeaves || !Array.isArray(parsed.allLeaves) || parsed.allLeaves.length !== 16) {
+    // Verify BigInt-parsable
+    for (const field of ["secret", "recipient", "token", "amount", "releaseTime"] as const) {
+      try { BigInt(c[field]); } catch { throw new Error(`${field} is not a valid number`); }
+    }
+    if (c.leafIndex === undefined || !Number.isFinite(Number(c.leafIndex)) || Number(c.leafIndex) < 0) {
+      throw new Error("leafIndex must be a non-negative integer");
+    }
+    if (!c.allLeaves || !Array.isArray(c.allLeaves) || c.allLeaves.length !== 16) {
       throw new Error("allLeaves must be an array of 16 elements");
     }
-    return parsed as ClaimData;
+    for (let i = 0; i < c.allLeaves.length; i++) {
+      try { BigInt(c.allLeaves[i]); } catch { throw new Error(`allLeaves[${i}] is not a valid number`); }
+    }
+    return c as ClaimData;
   }
 
-  // Parse claim JSON
-  const handleParseClaim = useCallback(() => {
+  // Parse claim JSON — supports single claim or bundled { claims: [...] }
+  function parseClaims(parsed: any): ClaimData[] {
+    if (parsed.claims && Array.isArray(parsed.claims)) {
+      if (parsed.claims.length === 0) throw new Error("No claims in bundle");
+      return parsed.claims.map((c: any, i: number) => {
+        try { return validateSingleClaim(c); }
+        catch (e) { throw new Error(`Claim #${i + 1}: ${e instanceof Error ? e.message : "invalid"}`); }
+      });
+    }
+    return [validateSingleClaim(parsed)];
+  }
+
+  function loadClaims(text: string) {
     setParseError(null);
     try {
-      const parsed = JSON.parse(claimJson);
-      setClaimData(validateClaimData(parsed));
+      const parsed = JSON.parse(text);
+      const claims = parseClaims(parsed);
+      setAllClaims(claims);
+      setSelectedClaimIdx(0);
+      setClaimData(claims[0]);
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
+      setAllClaims([]);
+      setSelectedClaimIdx(0);
       setClaimData(null);
     }
+  }
+
+  const handleParseClaim = useCallback(() => {
+    loadClaims(claimJson);
   }, [claimJson]);
 
-  // Load claim from file
   const handleLoadFile = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
@@ -81,14 +105,7 @@ export default function PrivateClaimPage() {
       reader.onload = () => {
         const text = reader.result as string;
         setClaimJson(text);
-        try {
-          const parsed = JSON.parse(text);
-          setClaimData(validateClaimData(parsed));
-          setParseError(null);
-        } catch (err) {
-          setParseError(err instanceof Error ? err.message : "Invalid JSON");
-          setClaimData(null);
-        }
+        loadClaims(text);
       };
       reader.readAsText(file);
     };
@@ -237,6 +254,39 @@ export default function PrivateClaimPage() {
             </button>
           )}
 
+          {/* Claim Selector (for multi-claim bundles) */}
+          {allClaims.length > 1 && (
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-on-surface-variant uppercase">Select Claim ({allClaims.length} available)</label>
+              <div className="space-y-1.5">
+                {allClaims.map((c, i) => {
+                  const claimTokenBig = BigInt(c.token);
+                  const tokenInfo = tokens.find((t) => BigInt(t.address) === claimTokenBig);
+                  const sym = tokenInfo?.symbol ?? "?";
+                  const dec = tokenInfo?.decimals ?? 18;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); }}
+                      className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
+                        selectedClaimIdx === i
+                          ? "bg-primary/10 border border-primary/30"
+                          : "bg-surface-container-low border border-outline-variant/10 hover:bg-surface-bright/50"
+                      }`}
+                    >
+                      <span className="text-xs font-mono font-bold text-on-surface">
+                        #{i + 1} — {ethers.formatUnits(c.amount, dec)} {sym}
+                      </span>
+                      <span className="text-[10px] font-mono text-on-surface-variant">
+                        leaf #{c.leafIndex}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Preview */}
           {claimData && (
             <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-2">
@@ -325,7 +375,7 @@ export default function PrivateClaimPage() {
             </div>
           )}
           <button
-            onClick={() => { setStatus("idle"); setClaimData(null); setClaimJson(""); setTxHash(null); }}
+            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHash(null); }}
             className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
           >
             Claim Another
