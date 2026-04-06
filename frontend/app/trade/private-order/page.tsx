@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import {
   deriveEdDSAKey,
   signEdDSA,
@@ -32,8 +33,11 @@ const MAX_CLAIMS = 10;
 
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
 
+type RecipientMode = "standard" | "stealth";
+
 interface ClaimRow {
   id: number;
+  mode: RecipientMode;
   address: string;
   amount: string;
   delay: string;
@@ -66,7 +70,7 @@ export default function PrivateOrderPage() {
   // Claims
   const nextClaimId = useRef(1);
   const [claims, setClaims] = useState<ClaimRow[]>([
-    { id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" },
+    { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
 
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
@@ -145,7 +149,7 @@ export default function PrivateOrderPage() {
   // Claims helpers
   const addClaim = () => {
     if (claims.length >= MAX_CLAIMS) return;
-    setClaims([...claims, { id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+    setClaims([...claims, { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
   };
   const removeClaim = (id: number) => {
     if (claims.length <= 1) return;
@@ -218,11 +222,21 @@ export default function PrivateOrderPage() {
       }
 
       // Build claims data
+      const ephemeralPubKeys: (string | undefined)[] = [];
       const claimData = claims.map((c, idx) => {
-        if (c.address && !ethers.isAddress(c.address)) {
+        let recipient: string;
+        let ephemeralPubKey: string | undefined;
+
+        if (c.mode === "stealth" && c.address && isMetaAddress(c.address)) {
+          const stealth = generateStealthAddress(c.address);
+          recipient = stealth.stealthAddress;
+          ephemeralPubKey = stealth.ephemeralPubKey;
+        } else if (c.address && !ethers.isAddress(c.address)) {
           throw new Error(`Claim #${idx + 1}: Invalid recipient address`);
+        } else {
+          recipient = c.address || account || ethers.ZeroAddress;
         }
-        const recipient = c.address || account || ethers.ZeroAddress;
+        ephemeralPubKeys.push(ephemeralPubKey);
         const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
         const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
         const claimSecret = randomFieldElement();
@@ -305,6 +319,7 @@ export default function PrivateOrderPage() {
         releaseTime: c.releaseTime,
         leafIndex: idx,
         allLeaves: padded.map((l) => l.toString()),
+        ...(ephemeralPubKeys[idx] ? { ephemeralPubKey: ephemeralPubKeys[idx] } : {}),
       }));
       const bundle = {
         claims: claimFiles,
@@ -324,7 +339,7 @@ export default function PrivateOrderPage() {
       setBuyAmount("");
       setPrice("");
       setSelectedCommitment(null);
-      setClaims([{ id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+      setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Order submission failed");
       setStep("error");
@@ -629,6 +644,20 @@ export default function PrivateOrderPage() {
                   <div key={c.id} className="bg-surface-container-low/50 rounded-lg p-3 border border-outline-variant/5">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-[10px] text-on-surface-variant font-bold">#{idx + 1}</span>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => updateClaim(c.id, "mode", "standard")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            c.mode === "standard" ? "bg-surface-container-highest text-on-surface" : "text-on-surface-variant"
+                          }`}
+                        >Standard</button>
+                        <button
+                          onClick={() => updateClaim(c.id, "mode", "stealth")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            c.mode === "stealth" ? "bg-primary/10 text-primary" : "text-on-surface-variant"
+                          }`}
+                        >Stealth</button>
+                      </div>
                       <div className="flex-1" />
                       {claims.length > 1 && (
                         <button onClick={() => removeClaim(c.id)} className="text-on-surface-variant hover:text-error">
@@ -641,7 +670,7 @@ export default function PrivateOrderPage() {
                         <input
                           type="text" value={c.address}
                           onChange={(e) => updateClaim(c.id, "address", e.target.value)}
-                          placeholder="0x... (empty = self)"
+                          placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
                           className="w-full bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
                         />
                       </div>
