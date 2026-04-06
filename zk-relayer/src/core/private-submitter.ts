@@ -22,7 +22,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
-  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint256 totalFee) p) external",
+  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -173,11 +173,13 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Circuit expects fee in bps; totalFee is the absolute token amount
+    // Per-token fees (absolute amounts from bps)
     const makerFeeBps = BigInt(config.relayerFee);
     const takerFeeBps = BigInt(config.relayerFee);
-    const totalFee = (maker.sellAmount * makerFeeBps) / 10000n
-                   + (taker.sellAmount * takerFeeBps) / 10000n;
+    // feeTokenMaker = fee in tokenMaker (from taker's sell)
+    const feeTokenMaker = (taker.sellAmount * takerFeeBps) / 10000n;
+    // feeTokenTaker = fee in tokenTaker (from maker's sell)
+    const feeTokenTaker = (maker.sellAmount * makerFeeBps) / 10000n;
 
     // Use latest block timestamp to stay within on-chain tolerance window
     const latestBlock = await this.provider.getBlock("latest");
@@ -201,7 +203,8 @@ export class PrivateSubmitter {
       totalLockedTaker: totalLockedTaker.toString(),
       tokenMaker: tokenMaker.toString(),
       tokenTaker: tokenTaker.toString(),
-      totalFee: totalFee.toString(),
+      feeTokenMaker: feeTokenMaker.toString(),
+      feeTokenTaker: feeTokenTaker.toString(),
       currentTimestamp: currentTimestamp.toString(),
 
       makerSecret: maker.ownerSecret.toString(),
@@ -296,7 +299,8 @@ export class PrivateSubmitter {
       totalLockedTaker,
       tokenMaker: "0x" + tokenMaker.toString(16).padStart(40, "0"),
       tokenTaker: "0x" + tokenTaker.toString(16).padStart(40, "0"),
-      totalFee,
+      feeTokenMaker,
+      feeTokenTaker,
     }, { nonce });
 
     const receipt = await tx.wait();

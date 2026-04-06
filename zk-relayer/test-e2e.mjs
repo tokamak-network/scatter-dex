@@ -92,10 +92,14 @@ async function main() {
   console.log(`Bob deposited 1000 USDC at leafIndex ${bobLeafIndex}\n`);
 
   // Order params
-  const sellAmountAlice = ethers.parseUnits("1", 18); // 1 WETH
-  const buyAmountAlice = ethers.parseUnits("100", 18); // wants 100 USDC
-  const sellAmountBob = ethers.parseUnits("100", 18); // 100 USDC
-  const buyAmountBob = ethers.parseUnits("1", 18); // wants 1 WETH
+  // Amounts: Alice sells 1 WETH for USDC, Bob sells 100 USDC for WETH
+  // Fee = 30 bps deducted from each side's sell amount
+  // Alice receives: Bob's 100 USDC - fee(0.3) = 99.7 USDC
+  // Bob receives: Alice's 1 WETH - fee(0.003) = 0.997 WETH
+  const sellAmountAlice = ethers.parseUnits("1", 18);
+  const buyAmountAlice = ethers.parseUnits("99.7", 18);  // fee-adjusted
+  const sellAmountBob = ethers.parseUnits("100", 18);
+  const buyAmountBob = ethers.parseUnits("0.997", 18);   // fee-adjusted
 
   // Use block timestamp to stay consistent with anvil
   const latestBlock = await provider.getBlock("latest");
@@ -105,20 +109,23 @@ async function main() {
   const nonceBob = BigInt(Date.now() + 1);
 
   // Claims with short releaseTime (blockNow + 60s for easy testing)
+  // Fee = 30 bps. Claims must be ≤ counterparty sellAmount - fee.
+  // Alice receives from Bob's 100 USDC: fee = 0.3 USDC → claims ≤ 99.7
+  // Bob receives from Alice's 1 WETH: fee = 0.003 WETH → claims ≤ 0.997
   const aliceClaim = {
     secret: "123456789",
     recipient: BigInt(aliceWallet.address).toString(),
     token: BigInt(USDC).toString(),
-    amount: ethers.parseUnits("100", 18).toString(),
-    releaseTime: BigInt(blockNow) + 60n.toString(),
+    amount: ethers.parseUnits("99.7", 18).toString(),
+    releaseTime: (BigInt(blockNow) + 60n).toString(),
   };
 
   const bobClaim = {
     secret: "987654321",
     recipient: BigInt(bobWallet.address).toString(),
     token: BigInt(WETH).toString(),
-    amount: ethers.parseUnits("1", 18).toString(),
-    releaseTime: BigInt(blockNow) + 60n.toString(),
+    amount: ethers.parseUnits("0.997", 18).toString(),
+    releaseTime: (BigInt(blockNow) + 60n).toString(),
   };
 
   // Compute claimsRoot for Alice

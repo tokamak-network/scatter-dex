@@ -306,7 +306,8 @@ contract PrivateSettlementTest is Test {
             totalLockedTaker: uint96(10_000e18),
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
-            totalFee: 0
+            feeTokenMaker: 0,
+            feeTokenTaker: 0
         });
     }
 }

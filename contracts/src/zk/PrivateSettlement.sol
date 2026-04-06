@@ -119,7 +119,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 totalLockedTaker;
         address tokenMaker;
         address tokenTaker;
-        uint256 totalFee;
+        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to relayer)
+        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to relayer)
     }
 
     /// @notice Execute a private settlement with ZK proof.
@@ -142,7 +143,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[15] memory pubSignals = [
+        uint[16] memory pubSignals = [
             p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
@@ -156,7 +157,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(p.totalLockedTaker),
             uint256(uint160(p.tokenMaker)),
             uint256(uint160(p.tokenTaker)),
-            p.totalFee,
+            uint256(p.feeTokenMaker),
+            uint256(p.feeTokenTaker),
             p.currentTimestamp
         ];
 
@@ -185,6 +187,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
         if (p.totalLockedTaker > 0) {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
+        }
+
+        // Transfer fees from pool directly to relayer (msg.sender)
+        if (p.feeTokenMaker > 0) {
+            pool.transferTo(msg.sender, p.tokenMaker, p.feeTokenMaker);
+        }
+        if (p.feeTokenTaker > 0) {
+            pool.transferTo(msg.sender, p.tokenTaker, p.feeTokenTaker);
         }
 
         uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
