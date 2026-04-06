@@ -77,7 +77,8 @@ contract DeployLocal is Script {
         console.log("Set minReleaseDelay to 1 second");
 
         // 10. Register deployer as relayer
-        relayerRegistry.register{value: 0.1 ether}("http://localhost:3001", 30);
+        // minBond = 0 by default (optional bond, per patent)
+        relayerRegistry.register("http://localhost:3001", 30);
         console.log("Deployer registered as relayer");
 
         // ── ZK Private Settlement ────────────────────────────────
