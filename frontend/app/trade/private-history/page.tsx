@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { ClipboardList, Loader2, RefreshCw, ExternalLink, ChevronLeft, ChevronRight, Key, Shield } from "lucide-react";
+import { ClipboardList, Loader2, RefreshCw, ChevronLeft, ChevronRight, Key, Shield } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
@@ -39,14 +39,15 @@ interface PrivateOrderRow {
   settleTxHash?: string;
 }
 
-function tokenSymbol(address: string, tokens: TokenInfo[]): string {
-  // address comes as bigint string from zk-relayer — convert to hex
+const ZK_RELAYER_URL = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
+
+function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
   try {
     const hex = "0x" + BigInt(address).toString(16).padStart(40, "0");
     const t = tokens.find((tk) => tk.address.toLowerCase() === hex.toLowerCase());
-    return t?.symbol ?? hex.slice(0, 8) + "...";
+    return t ? { symbol: t.symbol, decimals: t.decimals } : { symbol: hex.slice(0, 8) + "...", decimals: 18 };
   } catch {
-    return address.slice(0, 8) + "...";
+    return { symbol: address.slice(0, 8) + "...", decimals: 18 };
   }
 }
 
@@ -62,8 +63,6 @@ export default function PrivateHistoryPage() {
   const [page, setPage] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
-
-  const zkRelayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
 
   // Load saved EdDSA key
   useEffect(() => {
@@ -83,8 +82,9 @@ export default function PrivateHistoryPage() {
       const kp = await deriveEdDSAKey(signer);
       setKeyPair(kp);
       localStorage.setItem(EDDSA_KEY_STORAGE, serializeKeyPair(kp));
-    } catch { /* ignore */ }
-    finally { setKeyLoading(false); }
+    } catch (err) {
+      console.error("Failed to derive EdDSA key:", err);
+    } finally { setKeyLoading(false); }
   }, [signer]);
 
   // Fetch orders from zk-relayer
@@ -99,7 +99,7 @@ export default function PrivateHistoryPage() {
       });
       if (statusFilter !== "all") params.set("status", statusFilter);
 
-      const res = await fetch(`${zkRelayerUrl}/api/private-orders/${pubKeyAx}?${params}`);
+      const res = await fetch(`${ZK_RELAYER_URL}/api/private-orders/${pubKeyAx}?${params}`);
       if (!res.ok) throw new Error("Failed to fetch");
 
       const data = await res.json();
@@ -118,7 +118,7 @@ export default function PrivateHistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [keyPair, page, statusFilter, zkRelayerUrl]);
+  }, [keyPair, page, statusFilter, ZK_RELAYER_URL]);
 
   useEffect(() => {
     fetchOrders();
@@ -222,10 +222,8 @@ export default function PrivateHistoryPage() {
           </div>
         ) : (
           orders.map((o) => {
-            const sellSym = tokenSymbol(o.sellToken, tokens);
-            const buySym = tokenSymbol(o.buyToken, tokens);
-            const sellDec = tokens.find((t) => tokenSymbol(o.sellToken, tokens) === t.symbol)?.decimals ?? 18;
-            const buyDec = tokens.find((t) => tokenSymbol(o.buyToken, tokens) === t.symbol)?.decimals ?? 18;
+            const sell = resolveToken(o.sellToken, tokens);
+            const buy = resolveToken(o.buyToken, tokens);
 
             return (
               <div
@@ -233,12 +231,12 @@ export default function PrivateHistoryPage() {
                 className="grid grid-cols-[1fr_1fr_80px_100px_1fr] gap-2 px-4 py-3 border-b border-outline-variant/5 hover:bg-surface-bright/20 transition-colors text-xs"
               >
                 <div className="font-mono">
-                  <span className="text-error font-bold">{ethers.formatUnits(o.sellAmount, sellDec)}</span>
-                  <span className="text-on-surface-variant ml-1">{sellSym}</span>
+                  <span className="text-error font-bold">{ethers.formatUnits(o.sellAmount, sell.decimals)}</span>
+                  <span className="text-on-surface-variant ml-1">{sell.symbol}</span>
                 </div>
                 <div className="font-mono">
-                  <span className="text-tertiary font-bold">{ethers.formatUnits(o.buyAmount, buyDec)}</span>
-                  <span className="text-on-surface-variant ml-1">{buySym}</span>
+                  <span className="text-tertiary font-bold">{ethers.formatUnits(o.buyAmount, buy.decimals)}</span>
+                  <span className="text-on-surface-variant ml-1">{buy.symbol}</span>
                 </div>
                 <div className={`font-bold ${STATUS_COLORS[o.status] ?? "text-on-surface-variant"}`}>
                   {o.status}
