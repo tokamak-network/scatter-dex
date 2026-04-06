@@ -122,17 +122,25 @@ export default function PrivateOrderPage() {
     setNotes(loaded);
   }, []);
 
-  // Compute fee-adjusted buy amount from price
+  // Recompute fee-adjusted buyAmount from sell/price/fee
+  const recomputeBuyAmount = useCallback((sell: string, p: string, bpsStr: string) => {
+    const grossBuy = parseFloat(sell) * parseFloat(p);
+    if (isNaN(grossBuy)) return;
+    const bps = parseInt(bpsStr) || 0;
+    const fee = grossBuy * bps / 10000;
+    const dec = Math.min(buyToken?.decimals ?? 18, 18);
+    setBuyAmount((grossBuy - fee).toFixed(dec));
+  }, [buyToken]);
+
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
-    if (sellAmount) {
-      const grossBuy = parseFloat(sellAmount) * parseFloat(p);
-      if (!isNaN(grossBuy)) {
-        const fee = grossBuy * (parseInt(maxFeeBps) || 0) / 10000;
-        setBuyAmount((grossBuy - fee).toFixed(6));
-      }
-    }
-  }, [sellAmount, maxFeeBps]);
+    if (sellAmount) recomputeBuyAmount(sellAmount, p, maxFeeBps);
+  }, [sellAmount, maxFeeBps, recomputeBuyAmount]);
+
+  // Recompute buyAmount when fee changes
+  useEffect(() => {
+    if (sellAmount && price) recomputeBuyAmount(sellAmount, price, maxFeeBps);
+  }, [maxFeeBps]); // intentionally only on fee change
 
   // Claims helpers
   const addClaim = () => {
@@ -151,23 +159,8 @@ export default function PrivateOrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
-  // Distributable = counterparty's sellAmount - fee
-  // In ZK: Alice receives from Bob's sell. Fee is deducted from Bob's sell.
-  // buyAmount should already be fee-adjusted, so distributable = buyAmount
-  // But we also show the fee info for transparency.
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
-
-  // If user sets price and sellAmount, compute fee-adjusted buyAmount
-  const feeAdjustedBuyAmount = useMemo(() => {
-    if (!sellAmount || !price) return "";
-    const grossBuy = parseFloat(sellAmount) * parseFloat(price);
-    if (isNaN(grossBuy)) return "";
-    // Fee is deducted from the counterparty's sell (which becomes our buy)
-    // Counterparty sells grossBuy tokens, fee = grossBuy * feeBps / 10000
-    const fee = grossBuy * feeBps / 10000;
-    return (grossBuy - fee).toFixed(6);
-  }, [sellAmount, price, feeBps]);
 
   const fillRest = (id: number) => {
     const buyAmt = parseFloat(buyAmount) || 0;
@@ -262,7 +255,7 @@ export default function PrivateOrderPage() {
         buyToken: BigInt(buyToken.address),
         sellAmount: parsedSell,
         buyAmount: parsedBuy,
-        maxFee: BigInt(parseInt(maxFeeBps) || 30),
+        maxFee: BigInt(maxFeeBps || "30"),
         expiry: expiryTimestamp,
         nonce,
         claimsRoot,
@@ -336,7 +329,7 @@ export default function PrivateOrderPage() {
       setError(e instanceof Error ? e.message : "Order submission failed");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
 
   if (!account) {
     return (
@@ -513,11 +506,7 @@ export default function PrivateOrderPage() {
                   onChange={(e) => {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
-                      const grossBuy = parseFloat(e.target.value) * parseFloat(price);
-                      if (!isNaN(grossBuy)) {
-                        const fee = grossBuy * feeBps / 10000;
-                        setBuyAmount((grossBuy - fee).toFixed(6));
-                      }
+                      recomputeBuyAmount(e.target.value, price, maxFeeBps);
                     }
                   }}
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
