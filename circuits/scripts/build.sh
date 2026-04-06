@@ -20,14 +20,20 @@ echo ""
 
 # Determine required PTAU size for a given number of constraints.
 # PTAU must be >= ceil(log2(constraints)).
+MIN_PTAU=14  # minimum PTAU size (2^14 = 16,384)
+
 required_ptau() {
   local constraints="$1"
-  local size=1
-  local power=2
+  local size=0
+  local power=1
   while [ "$power" -lt "$constraints" ]; do
     size=$((size + 1))
     power=$((power * 2))
   done
+  # Enforce minimum
+  if [ "$size" -lt "$MIN_PTAU" ]; then
+    size=$MIN_PTAU
+  fi
   echo "$size"
 }
 
@@ -51,6 +57,8 @@ ensure_ptau() {
   echo "  Powers of Tau (2^$size) ready."
 }
 
+declare -A CIRCUIT_CONSTRAINTS
+
 for CIRCUIT in "${CIRCUITS[@]}"; do
   VERIFIER_NAME="${VERIFIER_NAMES[$CIRCUIT]}"
   echo ""
@@ -63,6 +71,11 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 
   # 2. Determine required PTAU size from constraint count
   CONSTRAINTS=$($SNARKJS r1cs info "$BUILD/${CIRCUIT}.r1cs" 2>&1 | grep "Constraints" | awk '{print $NF}')
+  if ! [[ "$CONSTRAINTS" =~ ^[0-9]+$ ]]; then
+    echo "  ERROR: failed to parse constraint count for ${CIRCUIT} (got: '$CONSTRAINTS')"
+    exit 1
+  fi
+  CIRCUIT_CONSTRAINTS[$CIRCUIT]=$CONSTRAINTS
   PTAU_SIZE=$(required_ptau "$CONSTRAINTS")
   echo "  [2/5] Circuit has $CONSTRAINTS constraints → needs pot$PTAU_SIZE (2^$PTAU_SIZE = $((2**PTAU_SIZE)))"
 
@@ -103,8 +116,7 @@ echo ""
 echo "=== Build complete ==="
 for CIRCUIT in "${CIRCUITS[@]}"; do
   VERIFIER_NAME="${VERIFIER_NAMES[$CIRCUIT]}"
-  CONSTRAINTS=$($SNARKJS r1cs info "$BUILD/${CIRCUIT}.r1cs" 2>&1 | grep "Constraints" | awk '{print $NF}')
-  echo "  Circuit:       ${CIRCUIT}.circom ($CONSTRAINTS constraints)"
+  echo "  Circuit:       ${CIRCUIT}.circom (${CIRCUIT_CONSTRAINTS[$CIRCUIT]} constraints)"
   echo "  WASM:          $BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm"
   echo "  zkey:          $BUILD/${CIRCUIT}_final.zkey"
   echo "  Verifier:      contracts/src/zk/${VERIFIER_NAME}.sol"
