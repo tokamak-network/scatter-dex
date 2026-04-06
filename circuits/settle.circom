@@ -286,6 +286,32 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerFeeCheck.in[1] <== takerMaxFee;
     takerFeeCheck.out === 1;
 
+    // ── Total fee validation ──
+    // totalFee = floor(makerSellAmount * makerFee / 10000) + floor(takerSellAmount * takerFee / 10000)
+    // Since integer division truncates, we verify:
+    //   expectedFee * 10000 <= makerSellAmount * makerFee + takerSellAmount * takerFee
+    //   expectedFee * 10000 + 19999 >= makerSellAmount * makerFee + takerSellAmount * takerFee
+    // (max rounding error = 9999 per side = 19998 total)
+    signal makerFeeProduct;
+    makerFeeProduct <== makerSellAmount * makerFee;
+    signal takerFeeProduct;
+    takerFeeProduct <== takerSellAmount * takerFee;
+    signal feeProductSum;
+    feeProductSum <== makerFeeProduct + takerFeeProduct;
+
+    signal totalFeeScaled;
+    totalFeeScaled <== totalFee * 10000;
+
+    component feeLowerBound = LessEqThan(252);
+    feeLowerBound.in[0] <== totalFeeScaled;
+    feeLowerBound.in[1] <== feeProductSum;
+    feeLowerBound.out === 1;
+
+    component feeUpperBound = LessEqThan(252);
+    feeUpperBound.in[0] <== feeProductSum;
+    feeUpperBound.in[1] <== totalFeeScaled + 19999;
+    feeUpperBound.out === 1;
+
     // ════════════════════════════════════════
     //  8. BALANCE SUFFICIENCY
     // ════════════════════════════════════════
@@ -372,8 +398,9 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  11. EdDSA SIGNATURE VERIFICATION
     //      Verify maker/taker signed their order
     // ════════════════════════════════════════
-    // Order hash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce)
-    component makerOrderHash = Poseidon(7);
+    // Order hash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot)
+    // Including claimsRoot prevents the relayer from manipulating claim recipients.
+    component makerOrderHash = Poseidon(8);
     makerOrderHash.inputs[0] <== makerSellToken;
     makerOrderHash.inputs[1] <== tokenMaker; // buyToken = what maker receives
     makerOrderHash.inputs[2] <== makerSellAmount;
@@ -381,6 +408,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerOrderHash.inputs[4] <== makerMaxFee;
     makerOrderHash.inputs[5] <== makerExpiry;
     makerOrderHash.inputs[6] <== makerNonce;
+    makerOrderHash.inputs[7] <== claimsRootMaker;
 
     component makerSigVerify = EdDSAPoseidonVerifier();
     makerSigVerify.enabled <== 1;
@@ -392,7 +420,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerSigVerify.M <== makerOrderHash.out;
     // EdDSAPoseidonVerifier asserts internally when enabled=1; no explicit output check needed.
 
-    component takerOrderHash = Poseidon(7);
+    component takerOrderHash = Poseidon(8);
     takerOrderHash.inputs[0] <== takerSellToken;
     takerOrderHash.inputs[1] <== tokenTaker; // buyToken
     takerOrderHash.inputs[2] <== takerSellAmount;
@@ -400,6 +428,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerOrderHash.inputs[4] <== takerMaxFee;
     takerOrderHash.inputs[5] <== takerExpiry;
     takerOrderHash.inputs[6] <== takerNonce;
+    takerOrderHash.inputs[7] <== claimsRootTaker;
 
     component takerSigVerify = EdDSAPoseidonVerifier();
     takerSigVerify.enabled <== 1;

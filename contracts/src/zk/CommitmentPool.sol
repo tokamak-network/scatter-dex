@@ -126,7 +126,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     ///      Used to insert change commitments after a private settlement.
     function insertCommitment(uint256 commitment) external returns (uint32) {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
-        if (commitment == 0) revert ZeroCommitment();
+        // Zero commitments are valid — they represent empty change UTXOs
+        // when a party's entire balance is consumed during settlement.
+        if (commitment == 0) return 0;
         return _insert(commitment);
     }
 

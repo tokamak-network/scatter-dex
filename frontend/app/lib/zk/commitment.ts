@@ -17,6 +17,13 @@ async function getPoseidon() {
   return poseidonInstance;
 }
 
+/** Generic Poseidon hash for arbitrary inputs. */
+export async function poseidonHash(inputs: bigint[]): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  return F.toObject(poseidon(inputs));
+}
+
 const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 /** Generate a cryptographically random field element (< BN254 scalar field). */
