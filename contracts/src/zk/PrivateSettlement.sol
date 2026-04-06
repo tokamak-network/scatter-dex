@@ -23,9 +23,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NullifierAlreadySpent();
     error InvalidProof();
     error ClaimsGroupNotFound();
-    error ClaimsGroupExpired();
     error ExceedsTotalLocked();
-    error NotExpired();
     error RenounceOwnershipDisabled();
     error TokenNotWhitelisted();
     error NotYetReleasable();
@@ -50,19 +48,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address token,
         uint256 amount
     );
-    event ClaimsGroupRefunded(
-        bytes32 indexed claimsRoot,
-        address indexed token,
-        uint256 amount
-    );
-
     // ─── Data Structures ─────────────────────────────────────────
     // Packed: 2 storage slots
-    // Slot 0: token (20) + expiry (6) + _pad (6) = 32 bytes
+    // Slot 0: token (20) + _pad (12) = 32 bytes
     // Slot 1: totalLocked (12) + totalClaimed (12) + _pad (8) = 32 bytes
     struct ClaimsGroup {
         address token;          // slot 0: 20 bytes
-        uint48  expiry;         // slot 0: 6 bytes
         uint96  totalLocked;    // slot 1: 12 bytes
         uint96  totalClaimed;   // slot 1: 12 bytes
     }
@@ -72,7 +63,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ISettleVerifier public immutable settleVerifier;
     IClaimVerifier public immutable claimVerifier;
 
-    uint256 public constant REFUND_WINDOW = 7 days;
     uint256 public constant TIMESTAMP_TOLERANCE = 300; // 5 minutes
     bool public paused;
 
@@ -200,18 +190,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
         }
 
-        uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
             totalLocked: p.totalLockedMaker,
-            totalClaimed: 0,
-            expiry: expiry
+            totalClaimed: 0
         });
         claimsGroups[p.claimsRootTaker] = ClaimsGroup({
             token: p.tokenTaker,
             totalLocked: p.totalLockedTaker,
-            totalClaimed: 0,
-            expiry: expiry
+            totalClaimed: 0
         });
 
         emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
@@ -268,28 +255,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         emit PrivateClaim(claimsRoot, claimNullifier, recipient, token, amount);
     }
 
-    // ─── Refund ──────────────────────────────────────────────────
-
-    /// @notice Refund unclaimed funds after expiry.
-    ///         Anyone can trigger this; funds go back to the pool.
-    function refundClaimsGroup(bytes32 claimsRoot) external nonReentrant {
-        ClaimsGroup storage group = claimsGroups[claimsRoot];
-        if (group.totalLocked == 0) revert ClaimsGroupNotFound();
-        if (block.timestamp < group.expiry) revert NotExpired();
-
-        uint256 unclaimed = group.totalLocked - group.totalClaimed;
-        if (unclaimed == 0) return;
-
-        // Mark as fully claimed to prevent re-entry
-        group.totalClaimed = group.totalLocked;
-
-        // NOTE: Returns unclaimed tokens to the pool contract balance only.
-        // This does NOT recreate a spendable commitment in the Merkle tree.
-        // The tokens sit in pool's ERC20 balance but are not withdrawable via
-        // ZK proof until a new commitment is explicitly created.
-        // TODO: Implement proper refund model (new commitment or explicit recipient).
-        IERC20(group.token).safeTransfer(address(pool), unclaimed);
-
-        emit ClaimsGroupRefunded(claimsRoot, group.token, unclaimed);
-    }
+    // Claims are permanently claimable — no expiry or refund mechanism.
+    // Claim holders can claim at any time after releaseTime with a valid ZK proof.
 }
