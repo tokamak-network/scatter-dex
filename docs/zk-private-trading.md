@@ -74,10 +74,22 @@ http://localhost:3000/trade/private-order
 4. **Submit Private Order** 클릭
 5. claim JSON 파일이 자동 다운로드됨 (수신자에게 전달 필요)
 
+### 수수료
+
+릴레이어 수수료 (기본 30 bps = 0.3%)는 양쪽 sell 금액에서 차감됩니다.
+- Alice sells 1 WETH → fee 0.003 WETH → 릴레이어
+- Bob sells 100 USDC → fee 0.3 USDC → 릴레이어
+- Alice claims: 99.7 USDC (100 - 0.3)
+- Bob claims: 0.997 WETH (1 - 0.003)
+
+**buyAmount는 fee 차감 후 금액으로 설정해야 합니다.**
+
 ### 매칭 & 정산
 매칭되면 zk-relayer가:
 1. Groth16 proof 생성 (~수 초)
-2. `settlePrivate()` 온체인 호출
+2. `settlePrivate()` 온체인 호출:
+   - CommitmentPool → PrivateSettlement (claim 금액)
+   - CommitmentPool → Relayer (수수료)
 3. 온체인에 **누가 거래했는지, 얼마에 거래했는지** 보이지 않음
 
 ## 4. Private Claim (ZK 수령)
@@ -89,7 +101,9 @@ http://localhost:3000/trade/private-claim
 3. **Claim Preview** 에서 금액, 수신자, 릴리즈 시간 확인
 4. **Generate Proof & Claim** 클릭
 5. 브라우저에서 ZK proof 생성 (~2-3초) → MetaMask에서 tx 서명
-6. 자금이 수신자 주소로 전송됨
+6. 자금이 수신자 주소로 전송됨 (PrivateSettlement → Recipient)
+
+> **Claims는 만료 없이 영구적으로 수령 가능합니다.** releaseTime 이후 언제든 claim 가능.
 
 ## 5. Private History (주문 조회)
 
@@ -190,6 +204,8 @@ npm run dev
 | settlePrivate 실패 | zk-relayer 로그 확인 (`.dev-logs/zk-relayer.log`) |
 | TimestampOutOfRange | anvil block timestamp와 시스템 시간 차이 확인 |
 | claim proof 실패 | claim JSON의 `allLeaves` (프론트엔드에서 `allClaimLeaves`로 사용)가 16개인지, leafIndex 범위 확인 |
+| claims cap 실패 | `totalLocked + fee > sellAmount` → claims 금액을 fee 차감 후로 조정 |
+| InsufficientPoolBalance | CommitmentPool에 충분한 토큰이 있는지 확인 (deposit 선행 필요) |
 
 ---
 
@@ -203,8 +219,20 @@ npm run dev
 | Claim 수신자/금액 | claimsRoot가 EdDSA 서명에 포함 |
 | 최소 수령 금액 | 회로: `totalLockedMaker >= makerBuyAmount` |
 | Claims 총액 | 회로: `totalLockedMaker == sum(claim amounts)` |
-| 수수료 | 회로: `totalFee` floor-division 검증 |
+| Claims + Fee 상한 | 회로: `totalLockedMaker + feeTokenMaker <= takerSellAmount` |
+| 수수료 | 회로: per-token fee floor-division 검증 (`feeTokenMaker`, `feeTokenTaker`) |
+| Fee bps 상한 | 회로: `makerFee <= makerMaxFee` + Num2Bits(16) range check |
 | 이중 지불 | 회로: settle/withdraw `nullifier = Poseidon(ownerSecret, salt)`, claim `nullifier = Poseidon(secret, leafIndex)` |
+
+### 토큰 플로우
+
+```
+Deposit:  User wallet → CommitmentPool
+Settle:   CommitmentPool → PrivateSettlement (claim 금액)
+          CommitmentPool → Relayer (per-token 수수료)
+          CommitmentPool keeps change (new commitment)
+Claim:    PrivateSettlement → Recipient (ZK proof, 영구)
+```
 
 ### 프라이버시 요약
 
@@ -230,4 +258,8 @@ bash scripts/build.sh
 3. Verification key + Solidity verifier 생성
 4. `contracts/src/zk/` 와 `frontend/public/zk/` 에 복사
 
-참고: `circuits/scripts/build.sh`의 `PTAU_SIZE` 설정에 따라 최대 constraint 수가 결정됩니다. settle 회로는 ~58K constraints이므로 pot16 (2^16 = 65,536) 이상이 필요합니다. build.sh의 기본값이 14인 경우 settle 전용으로 pot16이 별도 생성됩니다.
+build.sh는 각 회로의 constraint 수에 맞게 PTAU 크기를 자동 결정합니다 (최소 pot14).
+settle 회로: ~58K constraints → pot16. withdraw/claim: ~6K/~2K → pot14.
+
+settle 회로 public inputs (16개):
+`commitmentRoot, makerNullifier, takerNullifier, makerNonceNullifier, takerNonceNullifier, makerNewCommitment, takerNewCommitment, claimsRootMaker, claimsRootTaker, totalLockedMaker, totalLockedTaker, tokenMaker, tokenTaker, feeTokenMaker, feeTokenTaker, currentTimestamp`
