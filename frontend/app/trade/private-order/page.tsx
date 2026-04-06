@@ -227,7 +227,10 @@ export default function PrivateOrderPage() {
         let recipient: string;
         let ephemeralPubKey: string | undefined;
 
-        if (c.mode === "stealth" && c.address && isMetaAddress(c.address)) {
+        if (c.mode === "stealth") {
+          if (!c.address || !isMetaAddress(c.address)) {
+            throw new Error(`Claim #${idx + 1}: Stealth mode requires a valid meta-address (st:eth:0x...)`);
+          }
           const stealth = generateStealthAddress(c.address);
           recipient = stealth.stealthAddress;
           ephemeralPubKey = stealth.ephemeralPubKey;

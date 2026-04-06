@@ -6,7 +6,7 @@ import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
-import { deriveStealthPrivateKey, stealthWallet } from "../../lib/stealth";
+import { stealthWallet } from "../../lib/stealth";
 import { RPC_URL } from "../../lib/config";
 
 const PRIVATE_SETTLEMENT_ABI = [
@@ -64,6 +64,12 @@ export default function PrivateClaimPage() {
     }
     for (let i = 0; i < c.allLeaves.length; i++) {
       try { BigInt(c.allLeaves[i]); } catch { throw new Error(`allLeaves[${i}] is not a valid number`); }
+    }
+    // Validate ephemeralPubKey format if present
+    if (c.ephemeralPubKey !== undefined) {
+      if (typeof c.ephemeralPubKey !== "string" || !/^0x[0-9a-fA-F]+$/.test(c.ephemeralPubKey)) {
+        throw new Error("ephemeralPubKey must be a hex string starting with 0x");
+      }
     }
     return c as ClaimData;
   }
