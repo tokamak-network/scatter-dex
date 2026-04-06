@@ -179,8 +179,9 @@ export class PrivateSubmitter {
     const totalFee = (maker.sellAmount * makerFeeBps) / 10000n
                    + (taker.sellAmount * takerFeeBps) / 10000n;
 
-    // Compute timestamp once — reused in both circuit input and on-chain call
-    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+    // Use latest block timestamp to stay within on-chain tolerance window
+    const latestBlock = await this.provider.getBlock("latest");
+    const currentTimestamp = BigInt(latestBlock!.timestamp);
 
     // Generate ZK proof
     console.log("Generating settle ZK proof...");
