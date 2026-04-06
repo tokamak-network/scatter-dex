@@ -353,6 +353,22 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerReceiveCheck.out === 1;
 
     // ════════════════════════════════════════
+    //  8c. CLAIMS DO NOT EXCEED SELL AMOUNTS
+    //      totalLockedMaker comes from taker's sell → must not exceed takerSellAmount
+    //      totalLockedTaker comes from maker's sell → must not exceed makerSellAmount
+    //      (prevents inflated claims from draining the pool)
+    // ════════════════════════════════════════
+    component makerClaimCap = LessEqThan(252);
+    makerClaimCap.in[0] <== totalLockedMaker;
+    makerClaimCap.in[1] <== takerSellAmount;
+    makerClaimCap.out === 1;
+
+    component takerClaimCap = LessEqThan(252);
+    takerClaimCap.in[0] <== totalLockedTaker;
+    takerClaimCap.in[1] <== makerSellAmount;
+    takerClaimCap.out === 1;
+
+    // ════════════════════════════════════════
     //  9. CLAIMS VALIDATION (trustless)
     //     Compute leaf hashes in-circuit, verify roots, enforce amount sums.
     // ════════════════════════════════════════

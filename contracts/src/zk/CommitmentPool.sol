@@ -29,6 +29,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error ContractPaused();
     error RenounceOwnershipDisabled();
     error NotAuthorizedSettlement();
+    error InsufficientPoolBalance();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -130,6 +131,16 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         // when a party's entire balance is consumed during settlement.
         if (commitment == 0) return 0;
         return _insert(commitment);
+    }
+
+    /// @notice Transfer tokens from pool to PrivateSettlement for claim distribution.
+    /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Called during settlePrivate() to move claim amounts to the settlement
+    ///      contract, which then distributes them via claimWithProof().
+    function transferToSettlement(address token, uint256 amount) external nonReentrant {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
+        IERC20(token).safeTransfer(authorizedSettlement, amount);
     }
 
     // ─── Withdraw ────────────────────────────────────────────────
