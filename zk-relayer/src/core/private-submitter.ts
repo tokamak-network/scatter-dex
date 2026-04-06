@@ -23,6 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
+  "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -307,6 +308,41 @@ export class PrivateSubmitter {
     if (!receipt) throw new Error("Transaction failed: no receipt");
     const txHash = receipt.hash ?? receipt.transactionHash;
     console.log(`Private settlement tx: ${txHash}`);
+    return txHash;
+  }
+
+  /** Submit a gasless claim on behalf of the recipient. */
+  async submitClaim(params: {
+    proofA: [bigint, bigint];
+    proofB: [[bigint, bigint], [bigint, bigint]];
+    proofC: [bigint, bigint];
+    claimsRoot: string;
+    claimNullifier: string;
+    amount: bigint;
+    token: string;
+    recipient: string;
+    releaseTime: bigint;
+  }): Promise<string> {
+    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
+    const nonce = parseInt(hexNonce, 16);
+
+    const tx = await this.settlement.claimWithProof(
+      params.proofA,
+      params.proofB,
+      params.proofC,
+      params.claimsRoot,
+      params.claimNullifier,
+      params.amount,
+      params.token,
+      params.recipient,
+      params.releaseTime,
+      { nonce },
+    );
+
+    const receipt = await tx.wait();
+    if (!receipt) throw new Error("Claim transaction failed: no receipt");
+    const txHash = receipt.hash ?? receipt.transactionHash;
+    console.log(`Gasless claim tx: ${txHash}`);
     return txHash;
   }
 }

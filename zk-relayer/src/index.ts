@@ -9,6 +9,7 @@ import { PrivateOrderDB } from "./core/db.js";
 import { createPrivateOrderRoutes } from "./routes/orders.js";
 import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
+import { createPrivateClaimRoutes } from "./routes/claim.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -55,6 +56,7 @@ async function main() {
   app.use("/api/private-orders", createPrivateOrderRoutes(orderbook, matcher, submitter, writeLimiter, readLimiter));
   app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
+  app.use("/api/private-claim", createPrivateClaimRoutes(submitter, writeLimiter));
 
   // Periodic expired order cleanup
   const expireInterval = setInterval(() => {
