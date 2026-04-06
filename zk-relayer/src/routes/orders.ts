@@ -89,17 +89,20 @@ export function createPrivateOrderRoutes(
           orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "settled", txHash);
           orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "settled", txHash);
 
-          res.json({ status: "matched", txHash });
+          res.json({ status: "settled", txHash });
           return;
         } catch (err: unknown) {
-          // Settle failed — return orders to book
+          // Settle failed — restore DB status first (survives restart), then re-add to memory
+          orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "pending");
+          orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "pending");
           match.maker.status = "pending";
           match.taker.status = "pending";
           try {
             orderbook.add(match.maker.order);
             orderbook.add(match.taker.order);
           } catch (readdErr) {
-            console.error("failed to re-add orders after settle failure:", readdErr);
+            // Memory re-add failed, but DB is already "pending" — orders will recover on restart
+            console.error("failed to re-add orders to memory (DB safe):", readdErr);
           }
           console.error("private settle failed:", err instanceof Error ? err.message : "unknown");
           res.status(500).json({ status: "settle_failed", error: "private settlement failed" });

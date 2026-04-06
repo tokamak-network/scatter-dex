@@ -46,6 +46,11 @@ export function pairKey(tokenA: bigint, tokenB: bigint): string {
 }
 
 const MAX_CLAIMS = 16;
+const MAX_ADDRESS = (1n << 160n) - 1n;
+
+function validateAddress(val: bigint, name: string): void {
+  if (val < 0n || val > MAX_ADDRESS) throw new Error(`${name} must be a valid 160-bit address`);
+}
 
 function toBigInt(val: unknown, name: string): bigint {
   if (val === undefined || val === null) throw new Error(`missing ${name}`);
@@ -67,6 +72,8 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   const expiry = toBigInt(raw.expiry, "expiry");
   const nonce = toBigInt(raw.nonce, "nonce");
 
+  validateAddress(sellToken, "sellToken");
+  validateAddress(buyToken, "buyToken");
   if (sellAmount <= 0n) throw new Error("sellAmount must be > 0");
   if (buyAmount <= 0n) throw new Error("buyAmount must be > 0");
   if (maxFee < 0n) throw new Error("maxFee must be >= 0");
@@ -88,13 +95,19 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
     throw new Error(`claims must be 1-${MAX_CLAIMS}`);
   }
 
-  const claims: ClaimLeafData[] = rawClaims.map((c, i) => ({
-    secret: toBigInt(c.secret, `claims[${i}].secret`),
-    recipient: toBigInt(c.recipient, `claims[${i}].recipient`),
-    token: toBigInt(c.token, `claims[${i}].token`),
-    amount: toBigInt(c.amount, `claims[${i}].amount`),
-    releaseTime: toBigInt(c.releaseTime, `claims[${i}].releaseTime`),
-  }));
+  const claims: ClaimLeafData[] = rawClaims.map((c, i) => {
+    const recipient = toBigInt(c.recipient, `claims[${i}].recipient`);
+    const token = toBigInt(c.token, `claims[${i}].token`);
+    validateAddress(recipient, `claims[${i}].recipient`);
+    validateAddress(token, `claims[${i}].token`);
+    return {
+      secret: toBigInt(c.secret, `claims[${i}].secret`),
+      recipient,
+      token,
+      amount: toBigInt(c.amount, `claims[${i}].amount`),
+      releaseTime: toBigInt(c.releaseTime, `claims[${i}].releaseTime`),
+    };
+  });
 
   return {
     sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce,

@@ -144,7 +144,6 @@ export class PrivateSubmitter {
       let val: bigint;
       do {
         const bytes = crypto.randomBytes(32);
-        bytes[0] &= 0x1f;
         val = BigInt("0x" + bytes.toString("hex"));
       } while (val >= FIELD_MODULUS);
       return val;
@@ -166,10 +165,14 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Fee = relayerFee bps applied to both sides' sell amounts
-    const makerFee = (maker.sellAmount * BigInt(config.relayerFee)) / 10000n;
-    const takerFee = (taker.sellAmount * BigInt(config.relayerFee)) / 10000n;
-    const totalFee = makerFee + takerFee;
+    // Circuit expects fee in bps; totalFee is the absolute token amount
+    const makerFeeBps = BigInt(config.relayerFee);
+    const takerFeeBps = BigInt(config.relayerFee);
+    const totalFee = (maker.sellAmount * makerFeeBps) / 10000n
+                   + (taker.sellAmount * takerFeeBps) / 10000n;
+
+    // Compute timestamp once — reused in both circuit input and on-chain call
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
 
     // Generate ZK proof
     console.log("Generating settle ZK proof...");
@@ -190,7 +193,7 @@ export class PrivateSubmitter {
       tokenMaker: tokenMaker.toString(),
       tokenTaker: tokenTaker.toString(),
       totalFee: totalFee.toString(),
-      currentTimestamp: Math.floor(Date.now() / 1000).toString(),
+      currentTimestamp: currentTimestamp.toString(),
 
       makerSecret: maker.ownerSecret.toString(),
       makerSellToken: maker.sellToken.toString(),
@@ -217,8 +220,8 @@ export class PrivateSubmitter {
       takerExpiry: taker.expiry.toString(),
       takerNonce: taker.nonce.toString(),
 
-      makerFee: makerFee.toString(),
-      takerFee: takerFee.toString(),
+      makerFee: makerFeeBps.toString(),
+      takerFee: takerFeeBps.toString(),
       makerNewSalt: makerNewSalt.toString(),
       takerNewSalt: takerNewSalt.toString(),
 
@@ -258,7 +261,6 @@ export class PrivateSubmitter {
     const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
     const nonce = parseInt(hexNonce, 16);
 
-    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
     const tx = await this.settlement.settlePrivate({
       proofA,
       proofB,

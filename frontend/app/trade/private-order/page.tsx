@@ -13,7 +13,7 @@ import {
   deserializeKeyPair,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
-import { poseidonHash, buildMerkleTree } from "../../lib/zk/commitment";
+import { poseidonHash, buildMerkleTree, randomFieldElement } from "../../lib/zk/commitment";
 import PricePanel from "../../components/PricePanel";
 
 // NOTE: Storing EdDSA private key in localStorage is a known XSS risk.
@@ -143,9 +143,7 @@ export default function PrivateOrderPage() {
         const recipient = c.address || account || ethers.ZeroAddress;
         const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
         const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
-        const secretBytes = crypto.getRandomValues(new Uint8Array(32));
-        secretBytes[0] &= 0x1f; // cap to ~253 bits to stay within BN254 field
-        const claimSecret = BigInt("0x" + [...secretBytes].map(b => b.toString(16).padStart(2, "0")).join(""));
+        const claimSecret = randomFieldElement();
         const claimAmount = c.amount
           ? ethers.parseUnits(c.amount, buyToken.decimals).toString()
           : "0";

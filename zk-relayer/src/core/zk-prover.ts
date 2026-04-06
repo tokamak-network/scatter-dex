@@ -147,6 +147,9 @@ export async function verifyEdDSA(
 }
 
 // ─── Settle Proof Generation ────────────────────────────────
+// NOTE: generateSettleProof and SettleProofInput are kept as a reference
+// implementation but are not used by PrivateSubmitter, which builds
+// its own circuit input inline. Consider consolidating in the future.
 
 export interface SettleProofInput {
   commitmentRoot: bigint;

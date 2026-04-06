@@ -77,6 +77,7 @@ export class PrivateOrderbook {
     const isSellSide = sellHex < buyHex;
 
     if (isSellSide) {
+      // Sorted insertion — price ascending (best ask first for counterparty matching)
       const sellList = this.sells.get(pair) || [];
       const idx = sellList.findIndex((existing) =>
         stored.order.sellAmount * existing.order.buyAmount <
@@ -86,6 +87,7 @@ export class PrivateOrderbook {
       else sellList.splice(idx, 0, stored);
       this.sells.set(pair, sellList);
     } else {
+      // Sorted insertion — price descending (best bid first for counterparty matching)
       const buyList = this.buys.get(pair) || [];
       const idx = buyList.findIndex((existing) =>
         stored.order.buyAmount * existing.order.sellAmount >
