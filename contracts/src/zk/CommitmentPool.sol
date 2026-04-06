@@ -29,6 +29,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error ContractPaused();
     error RenounceOwnershipDisabled();
     error NotAuthorizedSettlement();
+    error InsufficientPoolBalance();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -138,6 +139,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     ///      contract, which then distributes them via claimWithProof().
     function transferToSettlement(address token, uint256 amount) external {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
         IERC20(token).safeTransfer(authorizedSettlement, amount);
     }
 
