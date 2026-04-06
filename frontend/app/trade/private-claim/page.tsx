@@ -6,8 +6,8 @@ import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
 // No wallet needed — claims are gasless via zk-relayer
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
-// Stealth addresses work without special signer — the connected wallet
-// pays gas, and tokens are sent to the stealth recipient address in the proof.
+// Claims are gasless — submitted via zk-relayer API (relayer pays gas).
+// No wallet connection needed. Stealth recipients stay private.
 
 // Claim is submitted via zk-relayer API (gasless — relayer pays gas)
 // No direct contract interaction from frontend
@@ -181,8 +181,9 @@ export default function PrivateClaimPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Claim submission failed");
+        let errMsg = "Claim submission failed";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON response */ }
+        throw new Error(errMsg);
       }
 
       const result = await res.json();

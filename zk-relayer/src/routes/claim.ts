@@ -41,10 +41,20 @@ export function createPrivateClaimRoutes(
       const pB = proofB.map((row: unknown, i: number) => validateProofArray(row, `proofB[${i}]`, 2));
       const pC = validateProofArray(proofC, "proofC", 2);
 
-      // Validate hex strings
-      for (const [name, val] of Object.entries({ claimsRoot, claimNullifier, token, recipient })) {
+      // Validate hex strings with expected byte lengths
+      const hexChecks: [string, unknown, number][] = [
+        ["claimsRoot", claimsRoot, 66],     // 0x + 64 hex = 32 bytes
+        ["claimNullifier", claimNullifier, 66],
+        ["token", token, 42],               // 0x + 40 hex = 20 bytes
+        ["recipient", recipient, 42],
+      ];
+      for (const [name, val, expectedLen] of hexChecks) {
         if (typeof val !== "string" || !HEX_RE.test(val)) {
           res.status(400).json({ error: `${name} must be a hex string` });
+          return;
+        }
+        if ((val as string).length !== expectedLen) {
+          res.status(400).json({ error: `${name} must be ${expectedLen - 2} hex chars (${(expectedLen - 2) / 2} bytes)` });
           return;
         }
       }
