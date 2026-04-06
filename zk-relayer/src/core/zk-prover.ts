@@ -192,8 +192,8 @@ export interface SettleProofInput {
   takerSigR8x: bigint;
   takerSigR8y: bigint;
 
-  makerClaimLeaves: bigint[];
-  takerClaimLeaves: bigint[];
+  makerClaims: ClaimLeafData[];
+  takerClaims: ClaimLeafData[];
 
   totalLockedMaker: bigint;
   totalLockedTaker: bigint;
@@ -220,14 +220,22 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
   const makerProof = getMerkleProof(commitLayers, input.makerLeafIndex);
   const takerProof = getMerkleProof(commitLayers, input.takerLeafIndex);
 
-  const padTo16 = (arr: bigint[]) => {
-    const padded = [...arr];
-    while (padded.length < 16) padded.push(0n);
+  const padClaims = (claims: ClaimLeafData[], max: number): ClaimLeafData[] => {
+    const padded = [...claims];
+    while (padded.length < max) {
+      padded.push({ secret: 0n, recipient: 0n, token: 0n, amount: 0n, releaseTime: 0n });
+    }
     return padded;
   };
 
-  const makerClaimsRoot = await computeClaimsRoot(padTo16(input.makerClaimLeaves), 4);
-  const takerClaimsRoot = await computeClaimsRoot(padTo16(input.takerClaimLeaves), 4);
+  const makerClaimsPadded = padClaims(input.makerClaims, 16);
+  const takerClaimsPadded = padClaims(input.takerClaims, 16);
+
+  const makerClaimLeafHashes = await Promise.all(makerClaimsPadded.map((c) => computeClaimLeaf(c)));
+  const takerClaimLeafHashes = await Promise.all(takerClaimsPadded.map((c) => computeClaimLeaf(c)));
+
+  const makerClaimsRoot = await computeClaimsRoot(makerClaimLeafHashes, 4);
+  const takerClaimsRoot = await computeClaimsRoot(takerClaimLeafHashes, 4);
 
   const makerNullifier = await computeNullifier(input.makerSecret, input.makerSalt);
   const takerNullifier = await computeNullifier(input.takerSecret, input.takerSalt);
@@ -312,10 +320,18 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
     takerSigR8x: input.takerSigR8x.toString(),
     takerSigR8y: input.takerSigR8y.toString(),
 
-    makerClaimLeaves: padTo16(input.makerClaimLeaves).map((l) => l.toString()),
-    makerClaimCount: input.makerClaimLeaves.length.toString(),
-    takerClaimLeaves: padTo16(input.takerClaimLeaves).map((l) => l.toString()),
-    takerClaimCount: input.takerClaimLeaves.length.toString(),
+    makerClaimSecrets: makerClaimsPadded.map((c) => c.secret.toString()),
+    makerClaimRecipients: makerClaimsPadded.map((c) => c.recipient.toString()),
+    makerClaimTokens: makerClaimsPadded.map((c) => c.token.toString()),
+    makerClaimAmounts: makerClaimsPadded.map((c) => c.amount.toString()),
+    makerClaimReleaseTimes: makerClaimsPadded.map((c) => c.releaseTime.toString()),
+    makerClaimCount: input.makerClaims.length.toString(),
+    takerClaimSecrets: takerClaimsPadded.map((c) => c.secret.toString()),
+    takerClaimRecipients: takerClaimsPadded.map((c) => c.recipient.toString()),
+    takerClaimTokens: takerClaimsPadded.map((c) => c.token.toString()),
+    takerClaimAmounts: takerClaimsPadded.map((c) => c.amount.toString()),
+    takerClaimReleaseTimes: takerClaimsPadded.map((c) => c.releaseTime.toString()),
+    takerClaimCount: input.takerClaims.length.toString(),
   };
 
   const wasmPath = path.join(CIRCUITS_DIR, "settle_js/settle.wasm");

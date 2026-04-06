@@ -161,12 +161,20 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input takerSigR8x;
     signal input takerSigR8y;
 
-    // ── Claims (maker side) ──
-    signal input makerClaimLeaves[maxClaimsPerSide];
+    // ── Claims (maker side) — individual fields for in-circuit validation ──
+    signal input makerClaimSecrets[maxClaimsPerSide];
+    signal input makerClaimRecipients[maxClaimsPerSide];
+    signal input makerClaimTokens[maxClaimsPerSide];
+    signal input makerClaimAmounts[maxClaimsPerSide];
+    signal input makerClaimReleaseTimes[maxClaimsPerSide];
     signal input makerClaimCount;
 
     // ── Claims (taker side) ──
-    signal input takerClaimLeaves[maxClaimsPerSide];
+    signal input takerClaimSecrets[maxClaimsPerSide];
+    signal input takerClaimRecipients[maxClaimsPerSide];
+    signal input takerClaimTokens[maxClaimsPerSide];
+    signal input takerClaimAmounts[maxClaimsPerSide];
+    signal input takerClaimReleaseTimes[maxClaimsPerSide];
     signal input takerClaimCount;
 
     // ════════════════════════════════════════
@@ -326,36 +334,80 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerBalCheck.out === 1;
 
     // ════════════════════════════════════════
-    //  9. CLAIMS VALIDATION
-    //     Claims sum must equal totalLocked
+    //  9. CLAIMS VALIDATION (trustless)
+    //     Compute leaf hashes in-circuit, verify roots, enforce amount sums.
     // ════════════════════════════════════════
-    // NOTE: totalLockedMaker, totalLockedTaker, and totalFee are public inputs
-    // but are NOT constrained to match the sum of individual claim leaf amounts
-    // inside this circuit. This is because claim leaves are pre-hashed off-circuit
-    // as Poseidon(secret, recipient, token, amount, releaseTime) — the circuit
-    // only sees the hashed leaves, not their individual amount fields.
-    //
-    // In Phase 3a (MVP), this is enforced by the trusted relayer which computes
-    // totalLocked = sum(claim amounts) before proof generation.
-    //
-    // TODO: In a future update, expand the claim leaf structure to pass individual
-    // claim amounts as separate circuit inputs, enabling an in-circuit constraint:
-    //   totalLockedMaker === sum(makerClaimAmounts[i])
-    //   totalLockedTaker === sum(takerClaimAmounts[i])
-    //   totalFee === makerFee + takerFee (derived from sell amounts and fee bps)
-    //
-    // (Claims leaves are pre-computed off-circuit as Poseidon hashes)
-    // Verify claims roots
+
+    // ── Maker claims ──
+    // Compute each claim leaf hash: Poseidon(secret, recipient, token, amount, releaseTime)
+    component makerLeafHash[maxClaimsPerSide];
+    signal makerComputedLeaves[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        makerLeafHash[i] = Poseidon(5);
+        makerLeafHash[i].inputs[0] <== makerClaimSecrets[i];
+        makerLeafHash[i].inputs[1] <== makerClaimRecipients[i];
+        makerLeafHash[i].inputs[2] <== makerClaimTokens[i];
+        makerLeafHash[i].inputs[3] <== makerClaimAmounts[i];
+        makerLeafHash[i].inputs[4] <== makerClaimReleaseTimes[i];
+        makerComputedLeaves[i] <== makerLeafHash[i].out;
+    }
+
+    // Unused claims (i >= count) must have amount = 0
+    component makerClaimUsed[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        makerClaimUsed[i] = LessThan(252);
+        makerClaimUsed[i].in[0] <== i;
+        makerClaimUsed[i].in[1] <== makerClaimCount;
+        (1 - makerClaimUsed[i].out) * makerClaimAmounts[i] === 0;
+    }
+
+    // Sum maker claim amounts
+    signal makerAmountAcc[maxClaimsPerSide + 1];
+    makerAmountAcc[0] <== 0;
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        makerAmountAcc[i + 1] <== makerAmountAcc[i] + makerClaimAmounts[i];
+    }
+    totalLockedMaker === makerAmountAcc[maxClaimsPerSide];
+
+    // Verify maker claims Merkle root
     component makerClaimsRoot = ComputeMerkleRoot(maxClaimsPerSide, claimsTreeDepth);
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        makerClaimsRoot.leaves[i] <== makerClaimLeaves[i];
+        makerClaimsRoot.leaves[i] <== makerComputedLeaves[i];
     }
     makerClaimsRoot.count <== makerClaimCount;
     claimsRootMaker === makerClaimsRoot.root;
 
+    // ── Taker claims ──
+    component takerLeafHash[maxClaimsPerSide];
+    signal takerComputedLeaves[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        takerLeafHash[i] = Poseidon(5);
+        takerLeafHash[i].inputs[0] <== takerClaimSecrets[i];
+        takerLeafHash[i].inputs[1] <== takerClaimRecipients[i];
+        takerLeafHash[i].inputs[2] <== takerClaimTokens[i];
+        takerLeafHash[i].inputs[3] <== takerClaimAmounts[i];
+        takerLeafHash[i].inputs[4] <== takerClaimReleaseTimes[i];
+        takerComputedLeaves[i] <== takerLeafHash[i].out;
+    }
+
+    component takerClaimUsed[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        takerClaimUsed[i] = LessThan(252);
+        takerClaimUsed[i].in[0] <== i;
+        takerClaimUsed[i].in[1] <== takerClaimCount;
+        (1 - takerClaimUsed[i].out) * takerClaimAmounts[i] === 0;
+    }
+
+    signal takerAmountAcc[maxClaimsPerSide + 1];
+    takerAmountAcc[0] <== 0;
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        takerAmountAcc[i + 1] <== takerAmountAcc[i] + takerClaimAmounts[i];
+    }
+    totalLockedTaker === takerAmountAcc[maxClaimsPerSide];
+
     component takerClaimsRoot = ComputeMerkleRoot(maxClaimsPerSide, claimsTreeDepth);
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        takerClaimsRoot.leaves[i] <== takerClaimLeaves[i];
+        takerClaimsRoot.leaves[i] <== takerComputedLeaves[i];
     }
     takerClaimsRoot.count <== takerClaimCount;
     claimsRootTaker === takerClaimsRoot.root;

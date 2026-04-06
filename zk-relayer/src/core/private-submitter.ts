@@ -110,23 +110,28 @@ export class PrivateSubmitter {
     const makerProof = getMerkleProof(commitLayers, maker.leafIndex);
     const takerProof = getMerkleProof(commitLayers, taker.leafIndex);
 
-    // Compute claim leaves and roots
-    const makerClaimLeaves = await Promise.all(
-      maker.claims.map((c) => computeClaimLeaf(c)),
-    );
-    const takerClaimLeaves = await Promise.all(
-      taker.claims.map((c) => computeClaimLeaf(c)),
-    );
-
-    // Pad to 16 for Merkle tree
-    const pad16 = (arr: bigint[]) => {
-      const p = [...arr];
-      while (p.length < 16) p.push(0n);
-      return p;
+    // Pad claims to maxClaimsPerSide (16) with zero fields
+    const padClaims = (claims: ClaimLeafData[], max: number): ClaimLeafData[] => {
+      const padded = [...claims];
+      while (padded.length < max) {
+        padded.push({ secret: 0n, recipient: 0n, token: 0n, amount: 0n, releaseTime: 0n });
+      }
+      return padded;
     };
 
-    const { root: claimsRootMaker } = await buildMerkleTree(pad16(makerClaimLeaves), CLAIMS_TREE_DEPTH);
-    const { root: claimsRootTaker } = await buildMerkleTree(pad16(takerClaimLeaves), CLAIMS_TREE_DEPTH);
+    const makerClaimsPadded = padClaims(maker.claims, 16);
+    const takerClaimsPadded = padClaims(taker.claims, 16);
+
+    // Compute claim leaf hashes for Merkle root (must match circuit computation)
+    const makerClaimLeaves = await Promise.all(
+      makerClaimsPadded.map((c) => computeClaimLeaf(c)),
+    );
+    const takerClaimLeaves = await Promise.all(
+      takerClaimsPadded.map((c) => computeClaimLeaf(c)),
+    );
+
+    const { root: claimsRootMaker } = await buildMerkleTree(makerClaimLeaves, CLAIMS_TREE_DEPTH);
+    const { root: claimsRootTaker } = await buildMerkleTree(takerClaimLeaves, CLAIMS_TREE_DEPTH);
 
     // Compute totals
     const totalLockedMaker = maker.claims.reduce((sum, c) => sum + c.amount, 0n);
@@ -237,10 +242,18 @@ export class PrivateSubmitter {
       takerSigR8x: taker.sigR8x.toString(),
       takerSigR8y: taker.sigR8y.toString(),
 
-      makerClaimLeaves: pad16(makerClaimLeaves).map((l) => l.toString()),
-      makerClaimCount: makerClaimLeaves.length.toString(),
-      takerClaimLeaves: pad16(takerClaimLeaves).map((l) => l.toString()),
-      takerClaimCount: takerClaimLeaves.length.toString(),
+      makerClaimSecrets: makerClaimsPadded.map((c) => c.secret.toString()),
+      makerClaimRecipients: makerClaimsPadded.map((c) => c.recipient.toString()),
+      makerClaimTokens: makerClaimsPadded.map((c) => c.token.toString()),
+      makerClaimAmounts: makerClaimsPadded.map((c) => c.amount.toString()),
+      makerClaimReleaseTimes: makerClaimsPadded.map((c) => c.releaseTime.toString()),
+      makerClaimCount: maker.claims.length.toString(),
+      takerClaimSecrets: takerClaimsPadded.map((c) => c.secret.toString()),
+      takerClaimRecipients: takerClaimsPadded.map((c) => c.recipient.toString()),
+      takerClaimTokens: takerClaimsPadded.map((c) => c.token.toString()),
+      takerClaimAmounts: takerClaimsPadded.map((c) => c.amount.toString()),
+      takerClaimReleaseTimes: takerClaimsPadded.map((c) => c.releaseTime.toString()),
+      takerClaimCount: taker.claims.length.toString(),
     };
 
     const wasmPath = path.join(__dirname, "../../../circuits/build/settle_js/settle.wasm");
