@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, ArrowLeftRight, Radio, ClipboardList, Lock, ShieldCheck } from "lucide-react";
+import { Shield, ArrowLeftRight, Radio, ClipboardList, Lock, ShieldCheck, Gift } from "lucide-react";
 
 const sidebarLinks = [
   { href: "/trade/escrow", label: "Escrow", icon: Shield },
   { href: "/trade/private-escrow", label: "Private Escrow", icon: Lock },
   { href: "/trade/order", label: "Order", icon: ArrowLeftRight },
   { href: "/trade/private-order", label: "Private Order", icon: ShieldCheck },
+  { href: "/trade/private-claim", label: "Private Claim", icon: Gift },
   { href: "/trade/history", label: "History", icon: ClipboardList },
   { href: "/trade/relayers", label: "Relayers", icon: Radio },
 ];
