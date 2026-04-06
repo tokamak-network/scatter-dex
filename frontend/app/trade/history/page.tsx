@@ -65,8 +65,10 @@ function formatAmount(value: string, tokens: TokenInfo[], tokenAddr: string): st
   const formatted = ethers.formatUnits(value, decimals);
   const num = Number(formatted);
   if (num === 0) return "0";
-  if (num < 0.001) return "<0.001";
-  return num % 1 === 0 ? String(num) : num.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  if (num < 0.0001) return "<0.0001";
+  // Dynamic precision: more decimals for small amounts
+  const precision = num >= 1000 ? 2 : num >= 1 ? 4 : num >= 0.01 ? 6 : 8;
+  return num.toFixed(precision).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function timeAgo(ms: number): string {
@@ -118,7 +120,7 @@ export default function HistoryPage() {
   // Reset offset when status filter changes
   useEffect(() => { setOffset(0); }, [status]);
 
-  const fetchDetail = async (nonce: string) => {
+  const fetchDetail = useCallback(async (nonce: string) => {
     if (expandedNonce === nonce) {
       setExpandedNonce(null);
       setDetail(null);
@@ -139,9 +141,9 @@ export default function HistoryPage() {
           const provider = getProvider();
           const settlement = new ethers.Contract(getSettlementAddress(), SETTLEMENT_ABI, provider);
           const schedules = await Promise.all(
-            d.claims.map((c) => settlement.schedules(c.claimHash))
+            d.claims.map((c: any) => settlement.schedules(c.claimHash))
           );
-          setClaimStatuses(schedules.map((s) => ({
+          setClaimStatuses(schedules.map((s: any) => ({
             token: s.token,
             releaseTime: Number(s.releaseTime),
             claimed: s.claimed,
@@ -157,7 +159,7 @@ export default function HistoryPage() {
     } catch {
       // silently fail detail fetch
     }
-  };
+  }, [account, onlineRelayer, expandedNonce]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
