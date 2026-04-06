@@ -6,8 +6,8 @@ import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
-import { stealthWallet } from "../../lib/stealth";
-import { RPC_URL } from "../../lib/config";
+// Stealth addresses work without special signer — the connected wallet
+// pays gas, and tokens are sent to the stealth recipient address in the proof.
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
@@ -36,10 +36,6 @@ export default function PrivateClaimPage() {
   const [selectedClaimIdx, setSelectedClaimIdx] = useState(0);
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
-
-  // Stealth keys (for stealth claims)
-  const [spendingKey, setSpendingKey] = useState("");
-  const [viewingKey, setViewingKey] = useState("");
 
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -126,13 +122,7 @@ export default function PrivateClaimPage() {
 
   // Submit claim with ZK proof
   const handleClaim = useCallback(async () => {
-    if (!claimData || !privateSettlementAddr) return;
-    const isStealth = !!claimData.ephemeralPubKey;
-    if (!isStealth && !signer) return;
-    if (isStealth && (!spendingKey || !viewingKey)) {
-      setError("Stealth claim requires spending and viewing keys.");
-      return;
-    }
+    if (!signer || !claimData || !privateSettlementAddr) return;
 
     setStatus("generating");
     setError(null);
@@ -168,18 +158,11 @@ export default function PrivateClaimPage() {
       });
       console.log("Claim proof generated!");
 
-      // Determine signer: stealth wallet or connected wallet
-      let claimSigner: ethers.Signer;
-      if (isStealth) {
-        const readProvider = new ethers.JsonRpcProvider(RPC_URL);
-        claimSigner = stealthWallet(spendingKey, viewingKey, claimData.ephemeralPubKey!, readProvider);
-      } else {
-        claimSigner = signer!;
-      }
-
-      // Submit on-chain
+      // Submit on-chain — connected wallet signs, recipient is in the ZK proof
+      // For stealth claims: recipient is the stealth address (already in claim data)
+      // The connected wallet pays gas; tokens go to the recipient address
       setStatus("submitting");
-      const contract = new ethers.Contract(privateSettlementAddr, PRIVATE_SETTLEMENT_ABI, claimSigner);
+      const contract = new ethers.Contract(privateSettlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
       const claimsRootHex = "0x" + proofResult.claimsRoot.toString(16).padStart(64, "0");
       const nullifierHex = "0x" + proofResult.nullifier.toString(16).padStart(64, "0");
@@ -205,7 +188,7 @@ export default function PrivateClaimPage() {
       setError(e instanceof Error ? e.message : "Claim failed");
       setStatus("error");
     }
-  }, [signer, claimData, privateSettlementAddr, spendingKey, viewingKey]);
+  }, [signer, claimData, privateSettlementAddr]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -352,33 +335,11 @@ export default function PrivateClaimPage() {
             </div>
           )}
 
-          {/* Stealth key input (shown when claim has ephemeralPubKey) */}
+          {/* Stealth indicator */}
           {claimData?.ephemeralPubKey && (
-            <div className="bg-primary/5 rounded-lg p-4 border border-primary/20 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-primary font-bold">
-                <Eye className="w-4 h-4" />
-                Stealth Claim — Enter your meta keys
-              </div>
-              <p className="text-[10px] text-on-surface-variant">
-                This claim uses a stealth address. Enter your spending and viewing keys to derive the stealth wallet.
-              </p>
-              <input
-                type="password"
-                value={spendingKey}
-                onChange={(e) => setSpendingKey(e.target.value)}
-                placeholder="Spending key (0x...)"
-                className="w-full bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
-              />
-              <input
-                type="password"
-                value={viewingKey}
-                onChange={(e) => setViewingKey(e.target.value)}
-                placeholder="Viewing key (0x...)"
-                className="w-full bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
-              />
-              <p className="text-[9px] text-on-surface-variant/50">
-                These keys were generated when you created your stealth meta-address. Load from your saved key file.
-              </p>
+            <div className="flex items-center gap-2 text-xs text-primary bg-primary/5 px-3 py-2 rounded-md">
+              <Eye className="w-3.5 h-3.5" />
+              Stealth claim — tokens will be sent to a one-time stealth address. Your connected wallet pays gas only.
             </div>
           )}
 
@@ -389,10 +350,9 @@ export default function PrivateClaimPage() {
           {claimData && (
             <button
               onClick={handleClaim}
-              disabled={!!claimData.ephemeralPubKey && (!spendingKey || !viewingKey)}
-              className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
+              className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"
             >
-              {claimData.ephemeralPubKey ? "Generate Proof & Stealth Claim" : "Generate Proof & Claim"}
+              Generate Proof & Claim
             </button>
           )}
 

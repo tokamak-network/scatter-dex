@@ -221,9 +221,8 @@ export default function PrivateOrderPage() {
         throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
       }
 
-      // Build claims data
-      const ephemeralPubKeys: (string | undefined)[] = [];
-      const claimData = claims.map((c, idx) => {
+      // Build claims data (with optional ephemeralPubKey for stealth)
+      const claimDataWithEpk = claims.map((c, idx) => {
         let recipient: string;
         let ephemeralPubKey: string | undefined;
 
@@ -239,7 +238,6 @@ export default function PrivateOrderPage() {
         } else {
           recipient = c.address || account || ethers.ZeroAddress;
         }
-        ephemeralPubKeys.push(ephemeralPubKey);
         const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
         const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
         const claimSecret = randomFieldElement();
@@ -253,8 +251,10 @@ export default function PrivateOrderPage() {
           token: BigInt(buyToken.address).toString(),
           amount: claimAmount,
           releaseTime: releaseTime.toString(),
+          ephemeralPubKey,
         };
       });
+      const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
 
       // Compute claim leaf hashes and claimsRoot
       const claimLeafHashes = await Promise.all(
@@ -314,7 +314,7 @@ export default function PrivateOrderPage() {
 
       // Save all claim files as a single bundled JSON download
       // Each entry contains the data needed for claimWithProof on the Private Claim page
-      const claimFiles = claimData.map((c, idx) => ({
+      const claimFiles = claimDataWithEpk.map((c, idx) => ({
         secret: c.secret,
         recipient: c.recipient,
         token: c.token,
@@ -322,7 +322,7 @@ export default function PrivateOrderPage() {
         releaseTime: c.releaseTime,
         leafIndex: idx,
         allLeaves: padded.map((l) => l.toString()),
-        ...(ephemeralPubKeys[idx] ? { ephemeralPubKey: ephemeralPubKeys[idx] } : {}),
+        ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       }));
       const bundle = {
         claims: claimFiles,
