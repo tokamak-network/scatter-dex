@@ -881,7 +881,7 @@ contract ScatterSettlementTest is Test {
         bytes memory makerSig = _signOrder(makerKey, makerOrder);
         bytes memory takerSig = _signOrder(takerKey, takerOrder);
 
-        vm.expectRevert(ScatterSettlement.ClaimsSumMismatch.selector);
+        vm.expectRevert(ScatterSettlement.PriceIncompatible.selector);
         settlement.settle(makerSig, takerSig, makerOrder, takerOrder, 0, 0);
     }
 
