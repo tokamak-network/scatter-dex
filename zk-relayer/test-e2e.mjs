@@ -96,27 +96,28 @@ async function main() {
   const sellAmountBob = ethers.parseUnits("100", 18); // 100 USDC
   const buyAmountBob = ethers.parseUnits("1", 18); // wants 1 WETH
 
-  const now = Math.floor(Date.now() / 1000);
-  const expiry = BigInt(now + 86400);
+  // Use block timestamp to stay consistent with anvil
+  const latestBlock = await provider.getBlock("latest");
+  const blockNow = latestBlock.timestamp;
+  const expiry = BigInt(blockNow + 86400);
   const nonceAlice = BigInt(Date.now());
   const nonceBob = BigInt(Date.now() + 1);
 
-  // Claims: Alice's order → 1 claim (self receives USDC)
+  // Claims with short releaseTime (blockNow + 60s for easy testing)
   const aliceClaim = {
     secret: "123456789",
     recipient: BigInt("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").toString(),
     token: BigInt(USDC).toString(),
     amount: ethers.parseUnits("100", 18).toString(),
-    releaseTime: BigInt(now + 3600).toString(),
+    releaseTime: BigInt(blockNow + 60).toString(),
   };
 
-  // Bob's order → 1 claim (self receives WETH)
   const bobClaim = {
     secret: "987654321",
     recipient: BigInt("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").toString(),
     token: BigInt(WETH).toString(),
     amount: ethers.parseUnits("1", 18).toString(),
-    releaseTime: BigInt(now + 3600).toString(),
+    releaseTime: BigInt(blockNow + 60).toString(),
   };
 
   // Compute claimsRoot for Alice
@@ -229,13 +230,119 @@ async function main() {
   const bobResult = await bobRes.json();
   console.log("Bob result:", JSON.stringify(bobResult));
 
-  if (bobResult.status === "settled") {
-    console.log("\n✅ E2E SUCCESS: Orders matched and settled!");
-    console.log("   txHash:", bobResult.txHash);
-  } else if (bobResult.status === "settle_failed") {
-    console.log("\n❌ Match found but settlement failed:", bobResult.error);
-  } else {
-    console.log("\nResult:", bobResult.status);
+  if (bobResult.status !== "settled") {
+    console.log("\n❌ Settlement failed:", bobResult.status, bobResult.error || "");
+    process.exit(1);
+  }
+  console.log("\n✅ Orders matched and settled!");
+  console.log("   txHash:", bobResult.txHash);
+
+  // ══════════════════════════════════════════
+  //  PHASE 2: Claim (Alice claims her USDC)
+  // ══════════════════════════════════════════
+  console.log("\n=== Phase 2: Claim ===\n");
+
+  // Advance anvil time past releaseTime
+  console.log("Advancing anvil time by 2 minutes...");
+  await provider.send("evm_increaseTime", [120]);
+  await provider.send("evm_mine", []);
+
+  // Build claim proof
+  const snarkjs = await import("snarkjs");
+  const claimWasm = new URL("../circuits/build/claim_js/claim.wasm", import.meta.url).pathname;
+  const claimZkey = new URL("../circuits/build/claim_final.zkey", import.meta.url).pathname;
+
+  const claimSecret = BigInt(aliceClaim.secret);
+  const claimRecipient = BigInt(aliceClaim.recipient);
+  const claimToken = BigInt(aliceClaim.token);
+  const claimAmount = BigInt(aliceClaim.amount);
+  const claimReleaseTime = BigInt(aliceClaim.releaseTime);
+  const claimLeafIndex = 0;
+
+  // Nullifier = Poseidon(secret, leafIndex)
+  const claimNullifier = F.toObject(poseidon([claimSecret, BigInt(claimLeafIndex)]));
+
+  // Build Merkle proof for claim leaf (depth 4, 16 leaves)
+  function getClaimMerkleProof(leaves, leafIdx, depth) {
+    const allLayers = [leaves];
+    let current = leaves;
+    for (let d = 0; d < depth; d++) {
+      const next = [];
+      for (let j = 0; j < current.length; j += 2) {
+        next.push(F.toObject(poseidon([current[j], current[j + 1]])));
+      }
+      allLayers.push(next);
+      current = next;
+    }
+    const pathElements = [];
+    const pathIndices = [];
+    let idx = leafIdx;
+    for (let d = 0; d < depth; d++) {
+      const isRight = idx % 2;
+      const sibIdx = isRight ? idx - 1 : idx + 1;
+      pathElements.push(allLayers[d][sibIdx] ?? 0n);
+      pathIndices.push(isRight);
+      idx = Math.floor(idx / 2);
+    }
+    return { pathElements, pathIndices, root: allLayers[depth][0] };
+  }
+
+  const { pathElements, pathIndices, root: computedClaimsRoot } = getClaimMerkleProof(aliceClaimLeaves, claimLeafIndex, 4);
+
+  console.log("Generating claim ZK proof...");
+  const { proof: claimProof } = await snarkjs.groth16.fullProve({
+    claimsRoot: computedClaimsRoot.toString(),
+    nullifier: claimNullifier.toString(),
+    amount: claimAmount.toString(),
+    token: claimToken.toString(),
+    recipient: claimRecipient.toString(),
+    releaseTime: claimReleaseTime.toString(),
+    secret: claimSecret.toString(),
+    leafIndex: claimLeafIndex.toString(),
+    pathElements: pathElements.map(e => e.toString()),
+    pathIndices: pathIndices.map(i => i.toString()),
+  }, claimWasm, claimZkey);
+  console.log("Claim proof generated!");
+
+  // Format proof for Solidity
+  const proofA = [BigInt(claimProof.pi_a[0]), BigInt(claimProof.pi_a[1])];
+  const proofB = [
+    [BigInt(claimProof.pi_b[0][1]), BigInt(claimProof.pi_b[0][0])],
+    [BigInt(claimProof.pi_b[1][1]), BigInt(claimProof.pi_b[1][0])],
+  ];
+  const proofC = [BigInt(claimProof.pi_c[0]), BigInt(claimProof.pi_c[1])];
+
+  // Call claimWithProof
+  const PRIVATE_SETTLEMENT = "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d";
+  const claimContract = new ethers.Contract(PRIVATE_SETTLEMENT, [
+    "function claimWithProof(uint[2],uint[2][2],uint[2],bytes32,bytes32,uint256,address,address,uint256) external",
+  ], aliceWallet);
+
+  const claimsRootHex = "0x" + computedClaimsRoot.toString(16).padStart(64, "0");
+  const nullifierHex = "0x" + claimNullifier.toString(16).padStart(64, "0");
+  const tokenAddr = "0x" + claimToken.toString(16).padStart(40, "0");
+  const recipientAddr = "0x" + claimRecipient.toString(16).padStart(40, "0");
+
+  console.log("Submitting claimWithProof on-chain...");
+  try {
+    const claimTx = await claimContract.claimWithProof(
+      proofA, proofB, proofC,
+      claimsRootHex, nullifierHex,
+      claimAmount, tokenAddr, recipientAddr, claimReleaseTime,
+    );
+    const receipt = await claimTx.wait();
+
+    // Verify Alice received USDC
+    const usdcContract = new ethers.Contract(USDC, ["function balanceOf(address) view returns (uint256)"], provider);
+    const aliceBalance = await usdcContract.balanceOf("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    console.log(`\n✅ FULL E2E SUCCESS: Deposit → Order → Settle → Claim`);
+    console.log(`   Settle tx: ${bobResult.txHash}`);
+    console.log(`   Claim tx:  ${receipt?.hash ?? receipt?.transactionHash}`);
+    console.log(`   Alice USDC balance: ${ethers.formatUnits(aliceBalance, 18)}`);
+  } catch (err) {
+    console.error("\n❌ Claim failed:", err.message || err);
+    process.exit(1);
   }
 }
 

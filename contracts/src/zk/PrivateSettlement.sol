@@ -177,6 +177,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.insertCommitment(uint256(p.takerNewCommitment));
         }
 
+        // Transfer claim amounts from CommitmentPool to this contract.
+        // After settlement, PrivateSettlement holds the tokens and distributes
+        // them via claimWithProof(). Unclaimed tokens return to pool via refund.
+        if (p.totalLockedMaker > 0) {
+            pool.transferToSettlement(p.tokenMaker, p.totalLockedMaker);
+        }
+        if (p.totalLockedTaker > 0) {
+            pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
+        }
+
         uint48 expiry = uint48(block.timestamp) + uint48(REFUND_WINDOW);
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
@@ -260,7 +270,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Mark as fully claimed to prevent re-entry
         group.totalClaimed = group.totalLocked;
 
-        // Return unclaimed tokens to pool contract (can be re-deposited as new commitment)
+        // NOTE: Returns unclaimed tokens to the pool contract balance only.
+        // This does NOT recreate a spendable commitment in the Merkle tree.
+        // The tokens sit in pool's ERC20 balance but are not withdrawable via
+        // ZK proof until a new commitment is explicitly created.
+        // TODO: Implement proper refund model (new commitment or explicit recipient).
         IERC20(group.token).safeTransfer(address(pool), unclaimed);
 
         emit ClaimsGroupRefunded(claimsRoot, group.token, unclaimed);

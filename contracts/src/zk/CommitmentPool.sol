@@ -132,6 +132,15 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         return _insert(commitment);
     }
 
+    /// @notice Transfer tokens from pool to PrivateSettlement for claim distribution.
+    /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Called during settlePrivate() to move claim amounts to the settlement
+    ///      contract, which then distributes them via claimWithProof().
+    function transferToSettlement(address token, uint256 amount) external {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        IERC20(token).safeTransfer(authorizedSettlement, amount);
+    }
+
     // ─── Withdraw ────────────────────────────────────────────────
 
     /// @notice Withdraw tokens by proving ownership of a commitment via ZK proof.
