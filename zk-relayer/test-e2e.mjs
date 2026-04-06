@@ -100,7 +100,7 @@ async function main() {
   // Use block timestamp to stay consistent with anvil
   const latestBlock = await provider.getBlock("latest");
   const blockNow = latestBlock.timestamp;
-  const expiry = BigInt(blockNow + 86400);
+  const expiry = BigInt(blockNow) + 86400n;
   const nonceAlice = BigInt(Date.now());
   const nonceBob = BigInt(Date.now() + 1);
 
@@ -110,7 +110,7 @@ async function main() {
     recipient: BigInt(aliceWallet.address).toString(),
     token: BigInt(USDC).toString(),
     amount: ethers.parseUnits("100", 18).toString(),
-    releaseTime: BigInt(blockNow + 60).toString(),
+    releaseTime: BigInt(blockNow) + 60n.toString(),
   };
 
   const bobClaim = {
@@ -118,7 +118,7 @@ async function main() {
     recipient: BigInt(bobWallet.address).toString(),
     token: BigInt(WETH).toString(),
     amount: ethers.parseUnits("1", 18).toString(),
-    releaseTime: BigInt(blockNow + 60).toString(),
+    releaseTime: BigInt(blockNow) + 60n.toString(),
   };
 
   // Compute claimsRoot for Alice
