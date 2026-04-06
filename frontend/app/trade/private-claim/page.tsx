@@ -3,16 +3,14 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
-import { useWallet } from "../../lib/wallet";
+// No wallet needed — claims are gasless via zk-relayer
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
-// Stealth addresses work without special signer — the connected wallet
-// pays gas, and tokens are sent to the stealth recipient address in the proof.
+// Claims are gasless — submitted via zk-relayer API (relayer pays gas).
+// No wallet connection needed. Stealth recipients stay private.
 
-const PRIVATE_SETTLEMENT_ABI = [
-  "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
-  "function claimsGroups(bytes32) view returns (address token, uint96 totalLocked, uint96 totalClaimed)",
-];
+// Claim is submitted via zk-relayer API (gasless — relayer pays gas)
+// No direct contract interaction from frontend
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";
 
@@ -28,7 +26,6 @@ interface ClaimData {
 }
 
 export default function PrivateClaimPage() {
-  const { account, signer, connect } = useWallet();
   const tokens = getTokenList();
 
   const [claimJson, setClaimJson] = useState("");
@@ -41,7 +38,7 @@ export default function PrivateClaimPage() {
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  const privateSettlementAddr = process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS || "";
+  // Claims submitted via zk-relayer (no direct contract address needed)
 
   // Validate a single claim entry — checks presence and BigInt parsability
   function validateSingleClaim(c: any): ClaimData {
@@ -122,7 +119,7 @@ export default function PrivateClaimPage() {
 
   // Submit claim with ZK proof
   const handleClaim = useCallback(async () => {
-    if (!signer || !claimData || !privateSettlementAddr) return;
+    if (!claimData) return;
 
     setStatus("generating");
     setError(null);
@@ -158,64 +155,52 @@ export default function PrivateClaimPage() {
       });
       console.log("Claim proof generated!");
 
-      // Submit on-chain — connected wallet signs, recipient is in the ZK proof
-      // For stealth claims: recipient is the stealth address (already in claim data)
-      // The connected wallet pays gas; tokens go to the recipient address
+      // Submit via zk-relayer (gasless — relayer pays gas, preserving privacy)
       setStatus("submitting");
-      const contract = new ethers.Contract(privateSettlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
+      const zkRelayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
 
       const claimsRootHex = "0x" + proofResult.claimsRoot.toString(16).padStart(64, "0");
       const nullifierHex = "0x" + proofResult.nullifier.toString(16).padStart(64, "0");
       const tokenAddr = "0x" + token.toString(16).padStart(40, "0");
       const recipientAddr = "0x" + recipient.toString(16).padStart(40, "0");
 
-      const tx = await contract.claimWithProof(
-        proofResult.proof.a.map(BigInt),
-        proofResult.proof.b.map((row: string[]) => row.map(BigInt)),
-        proofResult.proof.c.map(BigInt),
-        claimsRootHex,
-        nullifierHex,
-        amount,
-        tokenAddr,
-        recipientAddr,
-        releaseTime,
-      );
+      const res = await fetch(`${zkRelayerUrl}/api/private-claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proofA: proofResult.proof.a,
+          proofB: proofResult.proof.b,
+          proofC: proofResult.proof.c,
+          claimsRoot: claimsRootHex,
+          claimNullifier: nullifierHex,
+          amount: amount.toString(),
+          token: tokenAddr,
+          recipient: recipientAddr,
+          releaseTime: releaseTime.toString(),
+        }),
+      });
 
-      const receipt = await tx.wait();
-      setTxHash(receipt?.hash ?? receipt?.transactionHash ?? "");
+      if (!res.ok) {
+        let errMsg = "Claim submission failed";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON response */ }
+        throw new Error(errMsg);
+      }
+
+      const result = await res.json();
+      setTxHash(result.txHash || "");
       setStatus("success");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Claim failed");
       setStatus("error");
     }
-  }, [signer, claimData, privateSettlementAddr]);
+  }, [claimData]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
     ? tokens.find((t) => BigInt(t.address) === BigInt(claimData.token))?.symbol ?? "?"
     : "";
 
-  if (!account) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
-        <Gift className="w-12 h-12 mb-4 opacity-40" />
-        <p className="text-lg font-medium mb-4">Connect wallet to claim</p>
-        <button onClick={connect} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
-          Connect Wallet
-        </button>
-      </div>
-    );
-  }
-
-  if (!privateSettlementAddr) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
-        <AlertCircle className="w-12 h-12 mb-4 opacity-40" />
-        <p className="text-lg font-medium">PrivateSettlement not configured</p>
-        <p className="text-sm mt-2">Set NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS in .env.local</p>
-      </div>
-    );
-  }
+  // No wallet connection required — claims are gasless via zk-relayer
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

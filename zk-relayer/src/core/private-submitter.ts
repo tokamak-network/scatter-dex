@@ -23,6 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
+  "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
+  "function claimNullifiers(bytes32) view returns (bool)",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -40,6 +42,7 @@ export class PrivateSubmitter {
   private settlement: ethers.Contract;
   private pool: ethers.Contract;
   private commitmentLeaves: bigint[] = [];
+  private txMutex: Promise<void> = Promise.resolve();
 
   constructor(provider?: ethers.JsonRpcProvider) {
     this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
@@ -277,36 +280,125 @@ export class PrivateSubmitter {
     ];
     const proofC: [bigint, bigint] = [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])];
 
-    // Submit on-chain
-    const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
-    const nonce = parseInt(hexNonce, 16);
+    // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
+    return this.withTxLock(async () => {
+      const tx = await this.settlement.settlePrivate({
+        proofA,
+        proofB,
+        proofC,
+        currentRoot: commitRoot,
+        currentTimestamp,
+        makerNullifier: "0x" + makerNullifier.toString(16).padStart(64, "0"),
+        takerNullifier: "0x" + takerNullifier.toString(16).padStart(64, "0"),
+        makerNonceNullifier: "0x" + makerNonceNullifier.toString(16).padStart(64, "0"),
+        takerNonceNullifier: "0x" + takerNonceNullifier.toString(16).padStart(64, "0"),
+        makerNewCommitment: "0x" + makerNewCommitment.toString(16).padStart(64, "0"),
+        takerNewCommitment: "0x" + takerNewCommitment.toString(16).padStart(64, "0"),
+        claimsRootMaker: "0x" + claimsRootMaker.toString(16).padStart(64, "0"),
+        claimsRootTaker: "0x" + claimsRootTaker.toString(16).padStart(64, "0"),
+        totalLockedMaker,
+        totalLockedTaker,
+        tokenMaker: "0x" + tokenMaker.toString(16).padStart(40, "0"),
+        tokenTaker: "0x" + tokenTaker.toString(16).padStart(40, "0"),
+        feeTokenMaker,
+        feeTokenTaker,
+      });
 
-    const tx = await this.settlement.settlePrivate({
-      proofA,
-      proofB,
-      proofC,
-      currentRoot: commitRoot,
-      currentTimestamp,
-      makerNullifier: "0x" + makerNullifier.toString(16).padStart(64, "0"),
-      takerNullifier: "0x" + takerNullifier.toString(16).padStart(64, "0"),
-      makerNonceNullifier: "0x" + makerNonceNullifier.toString(16).padStart(64, "0"),
-      takerNonceNullifier: "0x" + takerNonceNullifier.toString(16).padStart(64, "0"),
-      makerNewCommitment: "0x" + makerNewCommitment.toString(16).padStart(64, "0"),
-      takerNewCommitment: "0x" + takerNewCommitment.toString(16).padStart(64, "0"),
-      claimsRootMaker: "0x" + claimsRootMaker.toString(16).padStart(64, "0"),
-      claimsRootTaker: "0x" + claimsRootTaker.toString(16).padStart(64, "0"),
-      totalLockedMaker,
-      totalLockedTaker,
-      tokenMaker: "0x" + tokenMaker.toString(16).padStart(40, "0"),
-      tokenTaker: "0x" + tokenTaker.toString(16).padStart(40, "0"),
-      feeTokenMaker,
-      feeTokenTaker,
-    }, { nonce });
+      const receipt = await tx.wait();
+      if (!receipt) throw new Error("Transaction failed: no receipt");
+      const txHash = receipt.hash ?? receipt.transactionHash;
+      console.log(`Private settlement tx: ${txHash}`);
+      return txHash;
+    });
+  }
 
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error("Transaction failed: no receipt");
-    const txHash = receipt.hash ?? receipt.transactionHash;
-    console.log(`Private settlement tx: ${txHash}`);
-    return txHash;
+  private claimVkeyCache: any = null;
+
+  /** Verify a claim proof off-chain before spending gas. */
+  private async verifyClaimProof(
+    proofA: [bigint, bigint],
+    proofB: [[bigint, bigint], [bigint, bigint]],
+    proofC: [bigint, bigint],
+    publicSignals: string[],
+  ): Promise<boolean> {
+    const snarkjs = await import("snarkjs");
+    if (!this.claimVkeyCache) {
+      const vkeyPath = path.join(__dirname, "../../../circuits/build/claim_vkey.json");
+      const { readFileSync } = await import("fs");
+      this.claimVkeyCache = JSON.parse(readFileSync(vkeyPath, "utf8"));
+    }
+    const vkey = this.claimVkeyCache;
+
+    const proof = {
+      pi_a: [proofA[0].toString(), proofA[1].toString(), "1"],
+      pi_b: [
+        [proofB[0][1].toString(), proofB[0][0].toString()],
+        [proofB[1][1].toString(), proofB[1][0].toString()],
+        ["1", "0"],
+      ],
+      pi_c: [proofC[0].toString(), proofC[1].toString(), "1"],
+      protocol: "groth16",
+      curve: "bn128",
+    };
+
+    return snarkjs.groth16.verify(vkey, publicSignals, proof);
+  }
+
+  /** Submit a gasless claim on behalf of the recipient. */
+  async submitClaim(params: {
+    proofA: [bigint, bigint];
+    proofB: [[bigint, bigint], [bigint, bigint]];
+    proofC: [bigint, bigint];
+    claimsRoot: string;
+    claimNullifier: string;
+    amount: bigint;
+    token: string;
+    recipient: string;
+    releaseTime: bigint;
+  }): Promise<string> {
+    // Verify proof off-chain first to avoid wasting gas on invalid proofs
+    const publicSignals = [
+      BigInt(params.claimsRoot).toString(),
+      BigInt(params.claimNullifier).toString(),
+      params.amount.toString(),
+      BigInt(params.token).toString(),
+      BigInt(params.recipient).toString(),
+      params.releaseTime.toString(),
+    ];
+
+    // Check nullifier not already spent (saves gas on replay attempts)
+    const alreadySpent = await this.settlement.claimNullifiers(params.claimNullifier);
+    if (alreadySpent) throw new Error("Claim nullifier already spent");
+
+    const valid = await this.verifyClaimProof(params.proofA, params.proofB, params.proofC, publicSignals);
+    if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
+
+    return this.withTxLock(async () => {
+      const tx = await this.settlement.claimWithProof(
+        params.proofA,
+        params.proofB,
+        params.proofC,
+        params.claimsRoot,
+        params.claimNullifier,
+        params.amount,
+        params.token,
+        params.recipient,
+        params.releaseTime,
+      );
+
+      const receipt = await tx.wait();
+      if (!receipt) throw new Error("Claim transaction failed: no receipt");
+      const txHash = receipt.hash ?? receipt.transactionHash;
+      console.log(`Gasless claim tx: ${txHash}`);
+      return txHash;
+    });
+  }
+
+  /** Serialize tx submissions to prevent nonce collisions. */
+  private withTxLock<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.txMutex;
+    let resolve: () => void;
+    this.txMutex = new Promise<void>((r) => { resolve = r; });
+    return prev.then(fn).finally(() => resolve!());
   }
 }
