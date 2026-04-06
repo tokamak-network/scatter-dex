@@ -20,11 +20,13 @@ interface ClaimOnChain {
 
 type ClaimStatus = "locked" | "claimable" | "claimed" | "refundable";
 
+const REFUND_WINDOW = 7 * 86400; // 7 days, matches PrivateSettlement.REFUND_WINDOW
+
 function getClaimStatus(schedule: ClaimOnChain): ClaimStatus {
   if (schedule.claimed) return "claimed";
   const now = Math.floor(Date.now() / 1000);
   if (now < schedule.releaseTime) return "locked";
-  // Refund window: 30 days after release (convention, actual value may differ)
+  if (now > schedule.releaseTime + REFUND_WINDOW) return "refundable";
   return "claimable";
 }
 
@@ -34,6 +36,12 @@ const CLAIM_STATUS_CONFIG: Record<ClaimStatus, { label: string; color: string; i
   claimed: { label: "Claimed", color: "text-emerald-400", icon: CheckCircle2 },
   refundable: { label: "Refundable", color: "text-orange-400", icon: Undo2 },
 };
+
+let cachedProvider: ethers.JsonRpcProvider | null = null;
+function getProvider(): ethers.JsonRpcProvider {
+  if (!cachedProvider) cachedProvider = new ethers.JsonRpcProvider(RPC_URL);
+  return cachedProvider;
+}
 
 const PAGE_SIZE = 20;
 const STATUS_OPTIONS = ["all", "pending", "matched", "settled", "cancelled", "expired"] as const;
@@ -128,7 +136,7 @@ export default function HistoryPage() {
       if (d.claims && d.claims.length > 0) {
         setClaimLoading(true);
         try {
-          const provider = new ethers.JsonRpcProvider(RPC_URL);
+          const provider = getProvider();
           const settlement = new ethers.Contract(getSettlementAddress(), SETTLEMENT_ABI, provider);
           const schedules = await Promise.all(
             d.claims.map((c) => settlement.schedules(c.claimHash))

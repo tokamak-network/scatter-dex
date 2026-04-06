@@ -66,12 +66,15 @@ async function main() {
   const aliceBalance = ethers.parseUnits("10", 18);
   const aliceCommitment = F.toObject(poseidon([aliceSecret, BigInt(WETH), aliceBalance, aliceSalt]));
 
+  // Capture leaf index before deposit
+  const aliceLeafIndex = Number(await pool.nextIndex());
+
   // Wrap ETH → WETH, approve, deposit
   const weth = new ethers.Contract(WETH, ERC20_ABI, aliceWallet);
   await (await weth.deposit({ value: aliceBalance })).wait();
   await (await weth.approve(POOL, aliceBalance)).wait();
   await (await pool.deposit(aliceCommitment, WETH, aliceBalance)).wait();
-  console.log("Alice deposited 10 WETH, commitment:", aliceCommitment.toString().slice(0, 20) + "...");
+  console.log(`Alice deposited 10 WETH at leafIndex ${aliceLeafIndex}`);
 
   // Bob: commitment for 1000 USDC
   const bobSecret = 333n;
@@ -79,14 +82,13 @@ async function main() {
   const bobBalance = ethers.parseUnits("1000", 18);
   const bobCommitment = F.toObject(poseidon([bobSecret, BigInt(USDC), bobBalance, bobSalt]));
 
+  const bobLeafIndex = Number(await pool.nextIndex());
+
   const usdc = new ethers.Contract(USDC, ERC20_ABI, bobWallet);
   const poolBob = new ethers.Contract(POOL, POOL_ABI, bobWallet);
   await (await usdc.approve(POOL, bobBalance)).wait();
   await (await poolBob.deposit(bobCommitment, USDC, bobBalance)).wait();
-  console.log("Bob deposited 1000 USDC, commitment:", bobCommitment.toString().slice(0, 20) + "...");
-
-  const nextIdx = await pool.nextIndex();
-  console.log("Pool nextIndex:", nextIdx.toString(), "\n");
+  console.log(`Bob deposited 1000 USDC at leafIndex ${bobLeafIndex}\n`);
 
   // Order params
   const sellAmountAlice = ethers.parseUnits("1", 18); // 1 WETH
@@ -186,7 +188,7 @@ async function main() {
       ownerSecret: aliceSecret.toString(),
       balance: aliceBalance.toString(),
       salt: aliceSalt.toString(),
-      leafIndex: 0,
+      leafIndex: aliceLeafIndex,
       claims: [aliceClaim],
     }),
   });
@@ -219,7 +221,7 @@ async function main() {
       ownerSecret: bobSecret.toString(),
       balance: bobBalance.toString(),
       salt: bobSalt.toString(),
-      leafIndex: 1,
+      leafIndex: bobLeafIndex,
       claims: [bobClaim],
     }),
   });

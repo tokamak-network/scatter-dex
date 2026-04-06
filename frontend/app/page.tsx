@@ -139,10 +139,7 @@ export default function Home() {
           <p className="text-xs text-on-surface-variant">Privacy-Preserving Decentralized Exchange</p>
         </div>
         <div className="flex gap-8">
-          <a className="text-xs text-on-surface-variant hover:text-on-surface transition-all" href="#">Privacy</a>
-          <a className="text-xs text-on-surface-variant hover:text-on-surface transition-all" href="#">Docs</a>
-          <a className="text-xs text-on-surface-variant hover:text-on-surface transition-all" href="#">Status</a>
-          <a className="text-xs text-on-surface-variant hover:text-on-surface transition-all" href="https://github.com/tokamak-network/scatter-dex">Github</a>
+          <a className="text-xs text-on-surface-variant hover:text-on-surface transition-all" href="https://github.com/tokamak-network/scatter-dex">GitHub</a>
         </div>
       </footer>
     </>
