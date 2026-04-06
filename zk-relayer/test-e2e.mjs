@@ -13,7 +13,7 @@ import { buildPoseidon } from "circomlibjs";
 import { ethers } from "ethers";
 
 const ZK_RELAYER_URL = "http://localhost:3002";
-const PRIVATE_SETTLEMENT = "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d";
+// Claims submitted via zk-relayer API — no direct contract address needed
 const POOL = "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c";
 const WETH = "0x0165878A594ca255338adfa4d48449f69242Eb8F";
 const USDC = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
@@ -300,14 +300,6 @@ async function main() {
     pathIndices: pathIndices.map(i => i.toString()),
   }, claimWasm, claimZkey);
   console.log("Claim proof generated!");
-
-  // Format proof for Solidity
-  const proofA = [BigInt(claimProof.pi_a[0]), BigInt(claimProof.pi_a[1])];
-  const proofB = [
-    [BigInt(claimProof.pi_b[0][1]), BigInt(claimProof.pi_b[0][0])],
-    [BigInt(claimProof.pi_b[1][1]), BigInt(claimProof.pi_b[1][0])],
-  ];
-  const proofC = [BigInt(claimProof.pi_c[0]), BigInt(claimProof.pi_c[1])];
 
   const claimsRootHex = "0x" + computedClaimsRoot.toString(16).padStart(64, "0");
   const nullifierHex = "0x" + claimNullifier.toString(16).padStart(64, "0");
