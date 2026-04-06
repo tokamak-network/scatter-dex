@@ -12,7 +12,7 @@ export class Matcher {
   /**
    * Find a matching pair for the given order.
    * Price compatibility (BigInt cross-multiplication, matches Solidity _validateSettle):
-   *   order.sellAmount * candidate.sellAmount <= order.buyAmount * candidate.buyAmount
+   *   order.sellAmount * candidate.sellAmount >= order.buyAmount * candidate.buyAmount
    * Token compatibility: order.sellToken == candidate.buyToken && order.buyToken == candidate.sellToken
    */
   findMatch(newOrder: StoredOrder): Match | null {

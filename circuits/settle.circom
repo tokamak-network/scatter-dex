@@ -337,6 +337,22 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerBalCheck.out === 1;
 
     // ════════════════════════════════════════
+    //  8b. MINIMUM RECEIVE GUARANTEE
+    //      Each party receives at least their signed buyAmount.
+    //      totalLockedMaker >= makerBuyAmount (maker receives enough)
+    //      totalLockedTaker >= takerBuyAmount (taker receives enough)
+    // ════════════════════════════════════════
+    component makerReceiveCheck = LessEqThan(252);
+    makerReceiveCheck.in[0] <== makerBuyAmount;
+    makerReceiveCheck.in[1] <== totalLockedMaker;
+    makerReceiveCheck.out === 1;
+
+    component takerReceiveCheck = LessEqThan(252);
+    takerReceiveCheck.in[0] <== takerBuyAmount;
+    takerReceiveCheck.in[1] <== totalLockedTaker;
+    takerReceiveCheck.out === 1;
+
+    // ════════════════════════════════════════
     //  9. CLAIMS VALIDATION (trustless)
     //     Compute leaf hashes in-circuit, verify roots, enforce amount sums.
     // ════════════════════════════════════════
