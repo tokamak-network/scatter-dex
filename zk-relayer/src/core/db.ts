@@ -1,0 +1,285 @@
+import Database from "better-sqlite3";
+import path from "path";
+import type { StoredPrivateOrder, PrivateOrder, PrivateOrderStatus } from "../types/order.js";
+import type { ClaimLeafData } from "./zk-prover.js";
+
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "zk-relayer.db");
+
+interface OrderRow {
+  pub_key_ax: string;
+  pub_key_ay: string;
+  nonce: string;
+  sell_token: string;
+  buy_token: string;
+  sell_amount: string;
+  buy_amount: string;
+  max_fee: string;
+  expiry: string;
+  sig_s: string;
+  sig_r8x: string;
+  sig_r8y: string;
+  owner_secret: string;
+  balance: string;
+  salt: string;
+  leaf_index: number;
+  status: string;
+  settle_tx: string | null;
+  submitted_at: number;
+}
+
+interface ClaimRow {
+  pub_key_ax: string;
+  nonce: string;
+  idx: number;
+  secret: string;
+  recipient: string;
+  token: string;
+  amount: string;
+  release_time: string;
+}
+
+export class PrivateOrderDB {
+  private db: Database.Database;
+  private insertOrder: ReturnType<Database.Database["prepare"]>;
+  private insertClaim: ReturnType<Database.Database["prepare"]>;
+  private deleteClaims: ReturnType<Database.Database["prepare"]>;
+  private updateStatusStmt: ReturnType<Database.Database["prepare"]>;
+  private selectPending: ReturnType<Database.Database["prepare"]>;
+  private selectClaims: ReturnType<Database.Database["prepare"]>;
+  private selectExists: ReturnType<Database.Database["prepare"]>;
+  private selectByPubKey: ReturnType<Database.Database["prepare"]>;
+  private selectByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
+  private selectByPubKeyNonce: ReturnType<Database.Database["prepare"]>;
+  private countByPubKey: ReturnType<Database.Database["prepare"]>;
+  private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
+
+  constructor(dbPath = DB_PATH) {
+    this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
+    this.migrate();
+
+    this.insertOrder = this.db.prepare(`
+      INSERT OR REPLACE INTO private_orders
+        (pub_key_ax, pub_key_ay, nonce, sell_token, buy_token, sell_amount, buy_amount,
+         max_fee, expiry, sig_s, sig_r8x, sig_r8y, owner_secret, balance, salt, leaf_index,
+         status, settle_tx, submitted_at)
+      VALUES
+        (@pubKeyAx, @pubKeyAy, @nonce, @sellToken, @buyToken, @sellAmount, @buyAmount,
+         @maxFee, @expiry, @sigS, @sigR8x, @sigR8y, @ownerSecret, @balance, @salt, @leafIndex,
+         @status, @settleTx, @submittedAt)
+    `);
+    this.insertClaim = this.db.prepare(`
+      INSERT OR REPLACE INTO private_claims (pub_key_ax, nonce, idx, secret, recipient, token, amount, release_time)
+      VALUES (@pubKeyAx, @nonce, @idx, @secret, @recipient, @token, @amount, @releaseTime)
+    `);
+    this.deleteClaims = this.db.prepare(`DELETE FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce`);
+    this.updateStatusStmt = this.db.prepare(`
+      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx)
+      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce
+    `);
+    this.selectPending = this.db.prepare(`
+      SELECT * FROM private_orders WHERE status = 'pending' ORDER BY submitted_at ASC
+    `);
+    this.selectClaims = this.db.prepare(`
+      SELECT * FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce ORDER BY idx
+    `);
+    this.selectExists = this.db.prepare(`
+      SELECT 1 FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
+    `);
+    this.selectByPubKey = this.db.prepare(`
+      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
+    `);
+    this.selectByPubKeyStatus = this.db.prepare(`
+      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
+    `);
+    this.selectByPubKeyNonce = this.db.prepare(`
+      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
+    `);
+    this.countByPubKey = this.db.prepare(`
+      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx
+    `);
+    this.countByPubKeyStatus = this.db.prepare(`
+      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status
+    `);
+  }
+
+  private migrate(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS private_orders (
+        pub_key_ax    TEXT NOT NULL,
+        pub_key_ay    TEXT NOT NULL,
+        nonce         TEXT NOT NULL,
+        sell_token    TEXT NOT NULL,
+        buy_token     TEXT NOT NULL,
+        sell_amount   TEXT NOT NULL,
+        buy_amount    TEXT NOT NULL,
+        max_fee       TEXT NOT NULL,
+        expiry        TEXT NOT NULL,
+        sig_s         TEXT NOT NULL,
+        sig_r8x       TEXT NOT NULL,
+        sig_r8y       TEXT NOT NULL,
+        owner_secret  TEXT NOT NULL,
+        balance       TEXT NOT NULL,
+        salt          TEXT NOT NULL,
+        leaf_index    INTEGER NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        settle_tx     TEXT,
+        submitted_at  INTEGER NOT NULL,
+        PRIMARY KEY (pub_key_ax, nonce)
+      );
+
+      CREATE TABLE IF NOT EXISTS private_claims (
+        pub_key_ax    TEXT NOT NULL,
+        nonce         TEXT NOT NULL,
+        idx           INTEGER NOT NULL,
+        secret        TEXT NOT NULL,
+        recipient     TEXT NOT NULL,
+        token         TEXT NOT NULL,
+        amount        TEXT NOT NULL,
+        release_time  TEXT NOT NULL,
+        PRIMARY KEY (pub_key_ax, nonce, idx),
+        FOREIGN KEY (pub_key_ax, nonce) REFERENCES private_orders(pub_key_ax, nonce) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_po_status ON private_orders(status, submitted_at);
+      CREATE INDEX IF NOT EXISTS idx_po_pair ON private_orders(sell_token, buy_token);
+      CREATE INDEX IF NOT EXISTS idx_po_pubkey ON private_orders(pub_key_ax, submitted_at);
+    `);
+  }
+
+  save(stored: StoredPrivateOrder): void {
+    const { order, status, submittedAt, settleTxHash } = stored;
+    const pubKeyAx = order.pubKeyAx.toString();
+    const nonce = order.nonce.toString();
+
+    const txn = this.db.transaction(() => {
+      this.insertOrder.run({
+        pubKeyAx,
+        pubKeyAy: order.pubKeyAy.toString(),
+        nonce,
+        sellToken: order.sellToken.toString(),
+        buyToken: order.buyToken.toString(),
+        sellAmount: order.sellAmount.toString(),
+        buyAmount: order.buyAmount.toString(),
+        maxFee: order.maxFee.toString(),
+        expiry: order.expiry.toString(),
+        sigS: order.sigS.toString(),
+        sigR8x: order.sigR8x.toString(),
+        sigR8y: order.sigR8y.toString(),
+        ownerSecret: order.ownerSecret.toString(),
+        balance: order.balance.toString(),
+        salt: order.salt.toString(),
+        leafIndex: order.leafIndex,
+        status,
+        settleTx: settleTxHash ?? null,
+        submittedAt,
+      });
+
+      this.deleteClaims.run({ pubKeyAx, nonce });
+      order.claims.forEach((c, idx) => {
+        this.insertClaim.run({
+          pubKeyAx,
+          nonce,
+          idx,
+          secret: c.secret.toString(),
+          recipient: c.recipient.toString(),
+          token: c.token.toString(),
+          amount: c.amount.toString(),
+          releaseTime: c.releaseTime.toString(),
+        });
+      });
+    });
+
+    txn();
+  }
+
+  updateStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string): void {
+    this.updateStatusStmt.run({
+      pubKeyAx: pubKeyAx.toString(),
+      nonce: nonce.toString(),
+      status,
+      settleTx: settleTxHash ?? null,
+    });
+  }
+
+  hasOrder(pubKeyAx: bigint, nonce: bigint): boolean {
+    return !!this.selectExists.get({ pubKeyAx: pubKeyAx.toString(), nonce: nonce.toString() });
+  }
+
+  loadPending(): StoredPrivateOrder[] {
+    const rows = this.selectPending.all({}) as OrderRow[];
+    return rows.map((row) => this.rowToStored(row));
+  }
+
+  private rowToStored(row: OrderRow): StoredPrivateOrder {
+    const claimRows = this.selectClaims.all({
+      pubKeyAx: row.pub_key_ax,
+      nonce: row.nonce,
+    }) as ClaimRow[];
+
+    const claims: ClaimLeafData[] = claimRows.map((c) => ({
+      secret: BigInt(c.secret),
+      recipient: BigInt(c.recipient),
+      token: BigInt(c.token),
+      amount: BigInt(c.amount),
+      releaseTime: BigInt(c.release_time),
+    }));
+
+    const order: PrivateOrder = {
+      sellToken: BigInt(row.sell_token),
+      buyToken: BigInt(row.buy_token),
+      sellAmount: BigInt(row.sell_amount),
+      buyAmount: BigInt(row.buy_amount),
+      maxFee: BigInt(row.max_fee),
+      expiry: BigInt(row.expiry),
+      nonce: BigInt(row.nonce),
+      pubKeyAx: BigInt(row.pub_key_ax),
+      pubKeyAy: BigInt(row.pub_key_ay),
+      sigS: BigInt(row.sig_s),
+      sigR8x: BigInt(row.sig_r8x),
+      sigR8y: BigInt(row.sig_r8y),
+      ownerSecret: BigInt(row.owner_secret),
+      balance: BigInt(row.balance),
+      salt: BigInt(row.salt),
+      leafIndex: row.leaf_index,
+      claims,
+    };
+
+    return {
+      order,
+      status: row.status as PrivateOrderStatus,
+      submittedAt: row.submitted_at,
+      settleTxHash: row.settle_tx ?? undefined,
+    };
+  }
+
+  getOrdersByPubKey(pubKeyAx: bigint, opts: { status?: PrivateOrderStatus; limit: number; offset: number }): StoredPrivateOrder[] {
+    const pk = pubKeyAx.toString();
+    const rows = opts.status
+      ? this.selectByPubKeyStatus.all({ pubKeyAx: pk, status: opts.status, limit: opts.limit, offset: opts.offset }) as OrderRow[]
+      : this.selectByPubKey.all({ pubKeyAx: pk, limit: opts.limit, offset: opts.offset }) as OrderRow[];
+    return rows.map((row) => this.rowToStored(row));
+  }
+
+  getOrderByPubKeyNonce(pubKeyAx: bigint, nonce: bigint): StoredPrivateOrder | null {
+    const row = this.selectByPubKeyNonce.get({
+      pubKeyAx: pubKeyAx.toString(),
+      nonce: nonce.toString(),
+    }) as OrderRow | undefined;
+    if (!row) return null;
+    return this.rowToStored(row);
+  }
+
+  countOrdersByPubKey(pubKeyAx: bigint, status?: PrivateOrderStatus): number {
+    const pk = pubKeyAx.toString();
+    const result = status
+      ? this.countByPubKeyStatus.get({ pubKeyAx: pk, status }) as { total: number }
+      : this.countByPubKey.get({ pubKeyAx: pk }) as { total: number };
+    return result.total;
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
