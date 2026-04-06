@@ -41,14 +41,23 @@ export default function PrivateClaimPage() {
 
   const privateSettlementAddr = process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS || "";
 
-  // Validate a single claim entry
+  // Validate a single claim entry — checks presence and BigInt parsability
   function validateSingleClaim(c: any): ClaimData {
     if (!c.secret || !c.recipient || !c.token || !c.amount || !c.releaseTime) {
       throw new Error("Missing required fields: secret, recipient, token, amount, releaseTime");
     }
-    if (c.leafIndex === undefined) throw new Error("Missing leafIndex");
+    // Verify BigInt-parsable
+    for (const field of ["secret", "recipient", "token", "amount", "releaseTime"] as const) {
+      try { BigInt(c[field]); } catch { throw new Error(`${field} is not a valid number`); }
+    }
+    if (c.leafIndex === undefined || !Number.isFinite(Number(c.leafIndex)) || Number(c.leafIndex) < 0) {
+      throw new Error("leafIndex must be a non-negative integer");
+    }
     if (!c.allLeaves || !Array.isArray(c.allLeaves) || c.allLeaves.length !== 16) {
       throw new Error("allLeaves must be an array of 16 elements");
+    }
+    for (let i = 0; i < c.allLeaves.length; i++) {
+      try { BigInt(c.allLeaves[i]); } catch { throw new Error(`allLeaves[${i}] is not a valid number`); }
     }
     return c as ClaimData;
   }
@@ -76,6 +85,7 @@ export default function PrivateClaimPage() {
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
       setAllClaims([]);
+      setSelectedClaimIdx(0);
       setClaimData(null);
     }
   }
@@ -250,8 +260,10 @@ export default function PrivateClaimPage() {
               <label className="text-xs font-bold text-on-surface-variant uppercase">Select Claim ({allClaims.length} available)</label>
               <div className="space-y-1.5">
                 {allClaims.map((c, i) => {
-                  const sym = tokens.find((t) => BigInt(t.address) === BigInt(c.token))?.symbol ?? "?";
-                  const dec = tokens.find((t) => BigInt(t.address) === BigInt(c.token))?.decimals ?? 18;
+                  const claimTokenBig = BigInt(c.token);
+                  const tokenInfo = tokens.find((t) => BigInt(t.address) === claimTokenBig);
+                  const sym = tokenInfo?.symbol ?? "?";
+                  const dec = tokenInfo?.decimals ?? 18;
                   return (
                     <button
                       key={i}
