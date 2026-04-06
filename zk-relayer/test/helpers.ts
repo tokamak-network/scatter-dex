@@ -6,6 +6,10 @@ const TOKEN_B = BigInt("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
 
 let nonceCounter = 1n;
 
+export function resetNonceCounter() {
+  nonceCounter = 1n;
+}
+
 export function makePrivateOrder(overrides: Partial<PrivateOrder> = {}): PrivateOrder {
   const nonce = nonceCounter++;
   return {

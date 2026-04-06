@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { PrivateOrderbook } from "../src/core/orderbook.js";
-import { makePrivateOrder, TOKEN_A, TOKEN_B } from "./helpers.js";
+import { pairKey } from "../src/types/order.js";
+import { makePrivateOrder, resetNonceCounter, TOKEN_A, TOKEN_B } from "./helpers.js";
 
 describe("PrivateOrderbook", () => {
   let book: PrivateOrderbook;
 
   beforeEach(() => {
     book = new PrivateOrderbook();
+    resetNonceCounter();
   });
 
   it("adds and retrieves orders", () => {
@@ -91,12 +93,7 @@ describe("PrivateOrderbook", () => {
       sellToken: TOKEN_B, buyToken: TOKEN_A,
     }));
 
-    const pair = (() => {
-      const a = "0x" + TOKEN_A.toString(16).padStart(40, "0");
-      const b = "0x" + TOKEN_B.toString(16).padStart(40, "0");
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      return `${lo}-${hi}`;
-    })();
+    const pair = pairKey(TOKEN_A, TOKEN_B);
 
     expect(book.getSellOrders(pair)).toHaveLength(1);
     expect(book.getBuyOrders(pair)).toHaveLength(1);

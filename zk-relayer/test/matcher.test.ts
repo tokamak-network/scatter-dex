@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { PrivateOrderbook } from "../src/core/orderbook.js";
 import { PrivateMatcher } from "../src/core/matcher.js";
-import { makePrivateOrder, TOKEN_A, TOKEN_B } from "./helpers.js";
+import { makePrivateOrder, resetNonceCounter, TOKEN_A, TOKEN_B } from "./helpers.js";
 
 describe("PrivateMatcher", () => {
   let book: PrivateOrderbook;
@@ -10,6 +10,7 @@ describe("PrivateMatcher", () => {
   beforeEach(() => {
     book = new PrivateOrderbook();
     matcher = new PrivateMatcher(book);
+    resetNonceCounter();
   });
 
   it("matches compatible orders", () => {
@@ -35,7 +36,8 @@ describe("PrivateMatcher", () => {
     expect(match!.taker.order.pubKeyAx).toBe(2n);
   });
 
-  it("does not match incompatible prices", () => {
+  it("does not match incompatible prices (amount sufficient but price too low)", () => {
+    // Alice: sell 10 TKA, want 21000 TKB (price = 2100 TKB/TKA)
     const alice = book.add(makePrivateOrder({
       pubKeyAx: 1n, pubKeyAy: 1n,
       sellToken: TOKEN_A, buyToken: TOKEN_B,
@@ -44,14 +46,20 @@ describe("PrivateMatcher", () => {
       nonce: 1n,
     }));
 
-    // Bob only offers 15000 TKB for 10 TKA (too low)
+    // Bob: sell 21000 TKB, want 11 TKA (price = 1909 TKB/TKA — worse than Alice's 2100)
+    // Amount sufficient (21000 >= 21000, 10 >= 11 fails → also caught by amount check)
+    // Price: 10 * 21000 <= 21000 * 11 → 210000 <= 231000 → TRUE (price ok)
+    // But amount: alice.sell(10) < bob.buy(11) → fails
+    // To isolate price: Bob wants 10 TKA but offers only 19000 TKB
     book.add(makePrivateOrder({
       pubKeyAx: 2n, pubKeyAy: 2n,
       sellToken: TOKEN_B, buyToken: TOKEN_A,
-      sellAmount: 15000n * 10n ** 18n,
+      sellAmount: 19000n * 10n ** 18n,
       buyAmount: 10n * 10n ** 18n,
       nonce: 2n,
     }));
+    // Price: 10 * 19000 <= 21000 * 10 → 190000 <= 210000 → TRUE
+    // Amount: 19000 < 21000 → fails (Alice wants 21000 but Bob only offers 19000)
 
     expect(matcher.findMatch(alice)).toBeNull();
   });
@@ -119,8 +127,8 @@ describe("PrivateMatcher", () => {
     expect(matcher.findMatch(alice)).toBeNull();
   });
 
-  it("matches when prices overlap (taker's ask <= maker's bid)", () => {
-    // Alice: sell 10 TKA, want at least 20000 TKB (price = 2000 TKB/TKA)
+  it("matches at exact price boundary", () => {
+    // Alice: sell 10 TKA, want 20000 TKB
     const alice = book.add(makePrivateOrder({
       pubKeyAx: 1n, pubKeyAy: 1n,
       sellToken: TOKEN_A, buyToken: TOKEN_B,
@@ -129,14 +137,8 @@ describe("PrivateMatcher", () => {
       nonce: 1n,
     }));
 
-    // Bob: sell 25000 TKB, want at least 10 TKA (price = 2500 TKB/TKA)
-    // Bob offers more TKB per TKA than Alice requires → compatible
-    // Cross-multiply: 10 * 25000 <= 20000 * 10 → 250000 <= 200000 → FALSE
-    // But from counterparty perspective: Bob.sell * Alice.sell <= Bob.buy * Alice.buy
-    // 25000 * 10 <= 10 * 20000 → 250000 <= 200000 → FALSE
-    // This means the matcher needs the taker to offer at or below maker's price
-    // Bob: sell 21000, want 10 → cross: 10*21000 <= 20000*10 → 210000 <= 200000 → FALSE
-    // Bob: sell 20000, want 10 → cross: 10*20000 <= 20000*10 → 200000 <= 200000 → TRUE
+    // Bob: sell 20000 TKB, want 10 TKA (exact match)
+    // Cross-multiply: 10 * 20000 <= 20000 * 10 → 200000 <= 200000 → TRUE
     book.add(makePrivateOrder({
       pubKeyAx: 2n, pubKeyAy: 2n,
       sellToken: TOKEN_B, buyToken: TOKEN_A,
@@ -147,5 +149,7 @@ describe("PrivateMatcher", () => {
 
     const match = matcher.findMatch(alice);
     expect(match).not.toBeNull();
+    expect(match!.maker.order.pubKeyAx).toBe(1n);
+    expect(match!.taker.order.pubKeyAx).toBe(2n);
   });
 });

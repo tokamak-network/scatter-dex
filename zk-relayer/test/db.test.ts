@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { PrivateOrderDB } from "../src/core/db.js";
-import { makePrivateOrder } from "./helpers.js";
+import { makePrivateOrder, resetNonceCounter } from "./helpers.js";
 import type { StoredPrivateOrder } from "../src/types/order.js";
 import fs from "fs";
+import os from "os";
 import path from "path";
+import crypto from "crypto";
 
-const TEST_DB_PATH = path.join(process.cwd(), "test-zk-relayer.db");
+function tempDbPath() {
+  return path.join(os.tmpdir(), `zk-relayer-test-${crypto.randomBytes(4).toString("hex")}.db`);
+}
 
 function makeStored(overrides = {}): StoredPrivateOrder {
   return {
@@ -17,20 +21,19 @@ function makeStored(overrides = {}): StoredPrivateOrder {
 
 describe("PrivateOrderDB", () => {
   let db: PrivateOrderDB;
+  let dbPath: string;
 
   beforeEach(() => {
-    // Clean up any leftover test DB
-    try { fs.unlinkSync(TEST_DB_PATH); } catch {}
-    try { fs.unlinkSync(TEST_DB_PATH + "-shm"); } catch {}
-    try { fs.unlinkSync(TEST_DB_PATH + "-wal"); } catch {}
-    db = new PrivateOrderDB(TEST_DB_PATH);
+    dbPath = tempDbPath();
+    db = new PrivateOrderDB(dbPath);
+    resetNonceCounter();
   });
 
   afterEach(() => {
     db.close();
-    try { fs.unlinkSync(TEST_DB_PATH); } catch {}
-    try { fs.unlinkSync(TEST_DB_PATH + "-shm"); } catch {}
-    try { fs.unlinkSync(TEST_DB_PATH + "-wal"); } catch {}
+    for (const suffix of ["", "-shm", "-wal"]) {
+      try { fs.unlinkSync(dbPath + suffix); } catch {}
+    }
   });
 
   it("saves and loads pending orders", () => {
