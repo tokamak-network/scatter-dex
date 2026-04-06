@@ -21,7 +21,7 @@ contract RelayerRegistry is Ownable2Step {
         bool active;
     }
 
-    uint256 public constant MIN_BOND = 0.1 ether;
+    uint256 public minBond; // optional — 0 means no bond required
     uint256 public constant EXIT_COOLDOWN = 7 days;
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
@@ -39,6 +39,7 @@ contract RelayerRegistry is Ownable2Step {
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
+    event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -76,7 +77,7 @@ contract RelayerRegistry is Ownable2Step {
 
     function register(string calldata url, uint256 fee) external payable {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
-        if (msg.value < MIN_BOND) revert InsufficientBond();
+        if (msg.value < minBond) revert InsufficientBond();
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
 
@@ -193,6 +194,13 @@ contract RelayerRegistry is Ownable2Step {
         if (_treasury == address(0)) revert ZeroAddress();
         emit TreasuryUpdated(treasury, _treasury);
         treasury = _treasury;
+    }
+
+    /// @notice Set minimum bond required for relayer registration.
+    /// @dev Set to 0 to make bond optional (align with patent: "optionally stake").
+    function setMinBond(uint256 _minBond) external onlyOwner {
+        emit MinBondUpdated(minBond, _minBond);
+        minBond = _minBond;
     }
 
 }
