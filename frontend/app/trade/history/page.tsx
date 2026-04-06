@@ -65,8 +65,10 @@ function formatAmount(value: string, tokens: TokenInfo[], tokenAddr: string): st
   const formatted = ethers.formatUnits(value, decimals);
   const num = Number(formatted);
   if (num === 0) return "0";
-  if (num < 0.001) return "<0.001";
-  return num % 1 === 0 ? String(num) : num.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  if (num < 0.0001) return "<0.0001";
+  // Dynamic precision: more decimals for small amounts
+  const precision = num >= 1000 ? 2 : num >= 1 ? 4 : num >= 0.01 ? 6 : 8;
+  return num.toFixed(precision).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function timeAgo(ms: number): string {
@@ -118,17 +120,22 @@ export default function HistoryPage() {
   // Reset offset when status filter changes
   useEffect(() => { setOffset(0); }, [status]);
 
-  const fetchDetail = async (nonce: string) => {
+  const relayerUrl = onlineRelayer?.url;
+
+  const fetchDetail = useCallback(async (nonce: string) => {
     if (expandedNonce === nonce) {
       setExpandedNonce(null);
       setDetail(null);
       setClaimStatuses([]);
       return;
     }
-    if (!account || !onlineRelayer) return;
+    if (!account || !relayerUrl) return;
+    const requestedNonce = nonce;
     try {
-      const client = new RelayerClient(onlineRelayer.url);
+      const client = new RelayerClient(relayerUrl);
       const d = await client.getOrderDetail(account, nonce);
+      // Guard against stale response if user clicked another row during fetch
+      if (requestedNonce !== nonce) return;
       setDetail(d);
       setExpandedNonce(nonce);
 
@@ -157,7 +164,7 @@ export default function HistoryPage() {
     } catch {
       // silently fail detail fetch
     }
-  };
+  }, [account, relayerUrl, expandedNonce]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
