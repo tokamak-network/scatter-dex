@@ -206,6 +206,15 @@ export class PrivateSubmitter {
       throw new Error("fee exceeds uint96 range");
     }
 
+    // Reject if fee BPS is below relayer's minimum (covers gas + profit)
+    const minFeeBps = BigInt(config.relayerFee ?? 0);
+    if (makerFeeBps < minFeeBps || takerFeeBps < minFeeBps) {
+      throw new Error(
+        `Fee too low: maker=${makerFeeBps} bps, taker=${takerFeeBps} bps, ` +
+        `minimum=${minFeeBps} bps. Rejecting settlement.`
+      );
+    }
+
     // Compute timestamp once — reused for both circuit input and contract call
     const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
 

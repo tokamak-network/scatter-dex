@@ -85,3 +85,40 @@ describe("private settlement fee calculation", () => {
     expect(takerFee).toBe(makerFee * 10n);
   });
 });
+
+describe("relayer minimum fee rejection", () => {
+  const RELAYER_MIN_FEE = 30n; // config.relayerFee default
+
+  function validateFeeBps(makerFeeBps: bigint, takerFeeBps: bigint, minFeeBps: bigint): string | null {
+    if (makerFeeBps < minFeeBps || takerFeeBps < minFeeBps) {
+      return `Fee too low: maker=${makerFeeBps} bps, taker=${takerFeeBps} bps, minimum=${minFeeBps} bps. Rejecting settlement.`;
+    }
+    return null;
+  }
+
+  it("accepts fees at or above minimum", () => {
+    expect(validateFeeBps(30n, 30n, RELAYER_MIN_FEE)).toBeNull();
+    expect(validateFeeBps(100n, 50n, RELAYER_MIN_FEE)).toBeNull();
+  });
+
+  it("rejects when maker fee is below minimum", () => {
+    const err = validateFeeBps(10n, 30n, RELAYER_MIN_FEE);
+    expect(err).toContain("Fee too low");
+    expect(err).toContain("maker=10");
+  });
+
+  it("rejects when taker fee is below minimum", () => {
+    const err = validateFeeBps(30n, 5n, RELAYER_MIN_FEE);
+    expect(err).toContain("Fee too low");
+    expect(err).toContain("taker=5");
+  });
+
+  it("rejects when both fees are below minimum", () => {
+    const err = validateFeeBps(0n, 0n, RELAYER_MIN_FEE);
+    expect(err).toContain("Fee too low");
+  });
+
+  it("accepts zero-fee when relayer min is 0", () => {
+    expect(validateFeeBps(0n, 0n, 0n)).toBeNull();
+  });
+});

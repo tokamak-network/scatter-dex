@@ -23,6 +23,9 @@ import {
   loadNotes,
   type StoredNote,
 } from "../../lib/zk/note-storage";
+import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
+import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
+import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
 // SECURITY WARNING: EdDSA private key is stored in localStorage for UX convenience.
@@ -45,7 +48,7 @@ interface ClaimRow {
 }
 
 export default function PrivateOrderPage() {
-  const { account, signer, connect } = useWallet();
+  const { account, signer, readProvider, chainId, connect } = useWallet();
   const tokens = getTokenList().filter((t) => !t.isNative);
 
   const [step, setStep] = useState<Step>("setup_key");
@@ -126,26 +129,6 @@ export default function PrivateOrderPage() {
     setNotes(loaded);
   }, []);
 
-  // Recompute fee-adjusted buyAmount from sell/price/fee
-  const recomputeBuyAmount = useCallback((sell: string, p: string, bpsStr: string) => {
-    const grossBuy = parseFloat(sell) * parseFloat(p);
-    if (isNaN(grossBuy)) return;
-    const bps = parseInt(bpsStr) || 0;
-    const fee = grossBuy * bps / 10000;
-    const dec = Math.min(buyToken?.decimals ?? 18, 18);
-    setBuyAmount((grossBuy - fee).toFixed(dec));
-  }, [buyToken]);
-
-  const handlePriceSelect = useCallback((p: string) => {
-    setPrice(p);
-    if (sellAmount) recomputeBuyAmount(sellAmount, p, maxFeeBps);
-  }, [sellAmount, maxFeeBps, recomputeBuyAmount]);
-
-  // Recompute buyAmount when fee changes
-  useEffect(() => {
-    if (sellAmount && price) recomputeBuyAmount(sellAmount, price, maxFeeBps);
-  }, [maxFeeBps]); // intentionally only on fee change
-
   // Claims helpers
   const addClaim = () => {
     if (claims.length >= MAX_CLAIMS) return;
@@ -165,6 +148,51 @@ export default function PrivateOrderPage() {
 
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
+
+  // Gas-inclusive minimum fee
+  const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId, readProvider);
+  const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
+  const [feeBreakdownOpen, setFeeBreakdownOpen] = useState(false);
+
+  useEffect(() => {
+    if (!readProvider || !sellAmount || !buyToken || !ethPerToken) {
+      setGasEstimate(null);
+      return;
+    }
+    let cancelled = false;
+    const sell = parseFloat(sellAmount);
+    const p = parseFloat(price);
+    if (!sell || !p) { setGasEstimate(null); return; }
+    const grossBuy = sell * p;
+    const sellBig = ethers.parseUnits(grossBuy.toFixed(Math.min(buyToken.decimals, 18)), buyToken.decimals);
+    if (sellBig <= 0n) { setGasEstimate(null); return; }
+
+    estimateMinFeeBps(readProvider, claims.length, sellBig, ethPerToken, buyToken.decimals)
+      .then((r) => { if (!cancelled) setGasEstimate(r); })
+      .catch((e) => { if (!cancelled) { console.warn("Gas estimation failed:", e); setGasEstimate(null); } });
+    return () => { cancelled = true; };
+  }, [readProvider, sellAmount, price, claims.length, buyToken?.address, buyToken?.decimals, ethPerToken]);
+
+  const minFeeBps = gasEstimate?.minFeeBps ?? 0;
+  const effectiveFeeBps = Math.max(feeBps, minFeeBps);
+
+  // Recompute fee-adjusted buyAmount from sell/price/fee
+  const recomputeBuyAmount = useCallback((sell: string, p: string, bps: number) => {
+    const grossBuy = parseFloat(sell) * parseFloat(p);
+    if (isNaN(grossBuy)) return;
+    const fee = grossBuy * bps / 10000;
+    const dec = Math.min(buyToken?.decimals ?? 18, 18);
+    setBuyAmount((grossBuy - fee).toFixed(dec));
+  }, [buyToken]);
+
+  const handlePriceSelect = useCallback((p: string) => {
+    setPrice(p);
+    if (sellAmount) recomputeBuyAmount(sellAmount, p, effectiveFeeBps);
+  }, [sellAmount, effectiveFeeBps, recomputeBuyAmount]);
+
+  useEffect(() => {
+    if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
+  }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
   const fillRest = (id: number) => {
     const buyAmt = parseFloat(buyAmount) || 0;
@@ -272,7 +300,7 @@ export default function PrivateOrderPage() {
         buyToken: BigInt(buyToken.address),
         sellAmount: parsedSell,
         buyAmount: parsedBuy,
-        maxFee: BigInt(maxFeeBps || "30"),
+        maxFee: BigInt(effectiveFeeBps || 30),
         expiry: expiryTimestamp,
         nonce,
         claimsRoot,
@@ -524,7 +552,7 @@ export default function PrivateOrderPage() {
                   onChange={(e) => {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
-                      recomputeBuyAmount(e.target.value, price, maxFeeBps);
+                      recomputeBuyAmount(e.target.value, price, effectiveFeeBps);
                     }
                   }}
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
@@ -582,9 +610,15 @@ export default function PrivateOrderPage() {
                     </button>
                   ))}
                 </div>
+                {minFeeBps > feeBps && (
+                  <div className="text-[10px] text-warning mt-1">
+                    Min fee {(minFeeBps / 100).toFixed(2)}% required (gas coverage for {claims.length} claim{claims.length > 1 ? "s" : ""})
+                  </div>
+                )}
                 {sellAmount && price && (
                   <div className="text-[10px] text-on-surface-variant mt-1">
-                    Fee ≈ {(parseFloat(sellAmount) * parseFloat(price) * feeBps / 10000).toFixed(4)} {buyToken?.symbol}
+                    Fee ≈ {(parseFloat(sellAmount) * parseFloat(price) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}
+                    {effectiveFeeBps > feeBps && <span className="text-warning ml-1">(adjusted)</span>}
                   </div>
                 )}
               </div>
@@ -610,10 +644,18 @@ export default function PrivateOrderPage() {
                   <span className="text-on-surface-variant">Gross receive</span>
                   <span className="font-mono text-on-surface">{(parseFloat(sellAmount) * parseFloat(price)).toFixed(4)} {buyToken?.symbol}</span>
                 </div>
-                <div className="flex justify-between text-error/80">
-                  <span>Relay fee ({feePercent.toFixed(2)}%)</span>
-                  <span className="font-mono">−{(parseFloat(sellAmount) * parseFloat(price) * feeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
-                </div>
+                <button
+                  type="button"
+                  aria-expanded={feeBreakdownOpen}
+                  className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
+                  onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
+                >
+                  <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
+                  <span className="font-mono">−{(parseFloat(sellAmount) * parseFloat(price) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
+                </button>
+                {feeBreakdownOpen && gasEstimate && (
+                  <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
+                )}
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>You receive (buyAmount)</span>
                   <span className="font-mono">{buyAmount} {buyToken?.symbol}</span>
