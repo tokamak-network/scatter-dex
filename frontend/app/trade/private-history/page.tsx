@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check } from "lucide-react";
+import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -20,6 +20,8 @@ import {
   getFolderName,
   loadEdDSAKeyFromFolder,
 } from "../../lib/zk/note-storage";
+import { toAddressHex } from "../../lib/zk/commitment";
+import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "text-yellow-400",
@@ -87,6 +89,13 @@ export default function PrivateHistoryPage() {
   const [orders, setOrders] = useState<OrderFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderFile | null>(null);
+
+  // Claim statuses for selected order
+  const selectedClaims = useMemo(
+    () => selectedOrder?.claims ?? [],
+    [selectedOrder?.filename]
+  );
+  const claimStatusesRaw = useClaimStatuses(selectedClaims, { includeTxHash: true });
 
   // Detect folder & key
   useEffect(() => {
@@ -337,20 +346,57 @@ export default function PrivateHistoryPage() {
             <div className="space-y-1">
               {selectedOrder.claims.map((c, i) => {
                 const ct = resolveToken(c.token, tokens);
+                const cs = claimStatusesRaw[i];
+                const isClaimed = cs?.claimed === true;
                 return (
-                  <div key={i} className="bg-surface-container-low rounded px-3 py-2 space-y-1">
+                  <div key={i} className={`rounded px-3 py-2 space-y-1 ${isClaimed ? "bg-emerald-500/5 border border-emerald-500/15" : "bg-surface-container-low"}`}>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-on-surface-variant">#{i + 1}</span>
-                      <span className="font-mono font-bold">
-                        {ethers.formatUnits(c.amount, ct.decimals)} {ct.symbol}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold">
+                          {ethers.formatUnits(c.amount, ct.decimals)} {ct.symbol}
+                        </span>
+                        {isClaimed ? (
+                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" /> Claimed
+                          </span>
+                        ) : cs !== undefined ? (
+                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                            <Clock className="w-3 h-3" /> Pending
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="text-xs font-mono text-on-surface-variant/60 break-all">
-                      → {"0x" + BigInt(c.recipient).toString(16).padStart(40, "0")}
+                      → {toAddressHex(c.recipient)}
                     </div>
                     <div className="text-xs text-on-surface-variant/50">
                       Claimable: {new Date(Number(c.releaseTime) * 1000).toLocaleString()}
                     </div>
+                    {cs?.txHash && (
+                      <div className="text-xs mt-1">
+                        <span className="text-on-surface-variant/40">Claim Tx: </span>
+                        <span className="font-mono text-primary break-all">{cs.txHash}</span>
+                      </div>
+                    )}
+                    {!isClaimed && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const singleClaim = JSON.stringify(c, null, 2);
+                          const blob = new Blob([singleClaim], { type: "application/json" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `zkscatter-claim-${i + 1}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="flex items-center gap-1 text-[10px] text-primary hover:text-primary-container transition-colors mt-1"
+                      >
+                        <Download className="w-3 h-3" /> Export claim #{i + 1}
+                      </button>
+                    )}
                   </div>
                 );
               })}

@@ -287,6 +287,32 @@ See [**zk-private-trading.md**](./zk-private-trading.md) for:
 - Private Order (ZK 주문)
 - ZK Claim (수령)
 
+## Redeployment / Reset
+
+When redeploying contracts (e.g., after code changes), you must reset the relayer databases and notes folder:
+
+```bash
+# 1. Stop all services (Ctrl+C if using dev.sh)
+
+# 2. Delete relayer databases (old orders reference stale contracts)
+rm -f zk-relayer/zk-relayer.db
+rm -f relayer/relayer.db
+
+# 3. Clear notes folder (old commitment notes are invalid after redeploy)
+#    Delete zkscatter-note-*.json and zkscatter-claims-*.json from your notes folder
+
+# 4. Restart everything
+./scripts/dev.sh --mock
+```
+
+> **Why?** After redeployment, contract addresses change. Old orders, commitments, and claims reference the previous contracts and will fail with errors like `ClaimsGroupNotFound` or `UnknownRoot`.
+
+If running manually (without `dev.sh`):
+- Re-run `forge script` to deploy fresh contracts
+- Update all `.env` files with new contract addresses
+- Delete DB files before restarting relayers
+- Fund test accounts again (`cast send`, `cast send <USDC> "mint(...)"`)
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -296,3 +322,6 @@ See [**zk-private-trading.md**](./zk-private-trading.md) for:
 | `NotVerified` when registering relayer | Register the relayer via zk-X509 (Relayer CA) |
 | Port conflict with zk-X509 frontend | Run the zk-X509 frontend on a different port: `PORT=3002` |
 | `TokenNotWhitelisted` | Tokens are auto-whitelisted by `dev.sh` / deployer; check the correct addresses |
+| `ClaimsGroupNotFound` | Order was not settled yet, or DB has stale data — see Redeployment section |
+| `Restored N pending orders from DB` | Old orders from previous deployment — delete `zk-relayer.db` and restart |
+| zk-relayer address mismatch | Check `zk-relayer/.env` has correct `RELAYER_PRIVATE_KEY`; `dev.sh` sets this automatically |

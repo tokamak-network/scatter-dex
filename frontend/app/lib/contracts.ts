@@ -114,6 +114,12 @@ export function decodeContractError(err: unknown): string {
   return msg;
 }
 
+export const PRIVATE_SETTLEMENT_ABI = [
+  "function nullifiers(bytes32) view returns (bool)",
+  "function claimNullifiers(bytes32) view returns (bool)",
+  "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
+];
+
 // Pre-parsed interfaces — avoids re-parsing ABI on every render cycle
 export const SETTLEMENT_IFACE = new ethers.Interface(SETTLEMENT_ABI);
 export const RELAYER_REGISTRY_IFACE = new ethers.Interface(RELAYER_REGISTRY_ABI);

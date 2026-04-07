@@ -5,13 +5,17 @@ import { ethers } from "ethers";
 import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
-import { RPC_URL } from "../../lib/config";
+import { RPC_URL, getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   generateNote,
   computeCommitment,
+  computeNullifier,
+  poseidonHash,
+  toBytes32Hex,
   type CommitmentNote,
 } from "../../lib/zk/commitment";
+import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import {
   isFileSystemAvailable,
   selectNotesFolder,
@@ -60,6 +64,95 @@ export default function PrivateEscrowPage() {
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
   const fsAvailable = isFileSystemAvailable();
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
+
+  // Track which notes are spent on-chain (nullifier consumed)
+  const [spentNotes, setSpentNotes] = useState<Set<string>>(new Set());
+  // Track whether all claims for a given leafIndex are completed
+  const [allClaimsDone, setAllClaimsDone] = useState<Record<number, boolean>>({});
+  const [syncError, setSyncError] = useState(false);
+
+  useEffect(() => {
+    if (notes.length === 0) return;
+    let cancelled = false;
+    setSyncError(false);
+    (async () => {
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const settlement = new ethers.Contract(
+          getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
+        );
+
+        // Check spent notes in parallel
+        const activeNotes = notes.filter((n) => n.leafIndex >= 0);
+        const spentResults = await Promise.all(
+          activeNotes.map(async (n) => {
+            const nullifier = await computeNullifier(n.note);
+            const isSpent = await settlement.nullifiers(toBytes32Hex(nullifier));
+            return { commitment: n.commitment, isSpent };
+          })
+        );
+        const spent = new Set(spentResults.filter((r) => r.isSpent).map((r) => r.commitment));
+        if (!cancelled) setSpentNotes(spent);
+
+        // Check claim statuses per leafIndex in parallel
+        const claimChecks = orderFiles
+          .filter((o) => o.order && o.claims?.length)
+          .map(async (o) => {
+            const leafIdx = o.order!.leafIndex;
+            const results = await Promise.all(
+              o.claims.map(async (c: any) => {
+                if (c.secret == null || c.leafIndex == null) return true;
+                const claimNull = await poseidonHash([BigInt(c.secret), BigInt(c.leafIndex)]);
+                return settlement.claimNullifiers(toBytes32Hex(claimNull));
+              })
+            );
+            return { leafIdx, allDone: results.every(Boolean) };
+          });
+        const claimResults = await Promise.all(claimChecks);
+        const claimsDone: Record<number, boolean> = {};
+        for (const { leafIdx, allDone } of claimResults) claimsDone[leafIdx] = allDone;
+        if (!cancelled) setAllClaimsDone(claimsDone);
+
+        // Resolve leafIndex for change notes (leafIndex === -1) from on-chain events
+        const changeNotesList = notes.filter((n) => n.leafIndex === -1);
+        if (changeNotesList.length > 0) {
+          const poolAddr = getCommitmentPoolAddress();
+          const poolContract = new ethers.Contract(
+            poolAddr,
+            ["event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)"],
+            provider
+          );
+          const allInsertLogs = await poolContract.queryFilter(
+            poolContract.filters.CommitmentInserted()
+          );
+          const commitToLeaf = new Map<string, number>();
+          for (const log of allInsertLogs) {
+            const e = log as ethers.EventLog;
+            commitToLeaf.set("0x" + BigInt(e.args.commitment).toString(16), Number(e.args.leafIndex));
+          }
+          let anyResolved = false;
+          for (const cn of changeNotesList) {
+            const normalizedCommit = "0x" + BigInt(cn.commitment).toString(16);
+            const leafIdx = commitToLeaf.get(normalizedCommit);
+            if (leafIdx != null) {
+              await deleteNote(cn);
+              await saveNote({ ...cn, leafIndex: leafIdx });
+              anyResolved = true;
+            }
+          }
+          if (anyResolved && !cancelled) {
+            const reloaded = await loadNotes();
+            setNotes(reloaded);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to sync on-chain status:", e);
+        if (!cancelled) setSyncError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [notes, orderFiles]);
 
   // Fetch wallet balance for selected token
   useEffect(() => {
@@ -273,6 +366,13 @@ export default function PrivateEscrowPage() {
               )}
             </div>
 
+            {syncError && (
+              <div className="mx-6 mt-3 flex items-center gap-2 p-2.5 rounded-lg bg-amber-500/10 text-amber-400 text-xs">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                Could not sync on-chain status. Note statuses may be outdated.
+              </div>
+            )}
+
             {!folderReady ? (
               <div className="px-6 py-16 text-center text-on-surface-variant/50">
                 <FolderOpen className="w-10 h-10 mx-auto mb-3 opacity-30" />
@@ -293,19 +393,36 @@ export default function PrivateEscrowPage() {
                     c.note.ownerSecret === n.note.ownerSecret &&
                     c.commitment !== n.commitment
                   );
+                  const isSpent = spentNotes.has(n.commitment);
+                  const hasChange = changeNotes.length > 0;
+                  const claimsDone = allClaimsDone[n.leafIndex] === true;
+                  const statusLabel = isSpent
+                    ? (claimsDone ? "Spent" : "Trading")
+                    : "Active";
+                  const statusStyle = isSpent
+                    ? (claimsDone
+                      ? "bg-on-surface-variant/10 text-on-surface-variant/50"
+                      : "bg-blue-500/10 text-blue-400")
+                    : "bg-emerald-500/10 text-emerald-400";
                   return (
                   <div key={n.commitment}>
                     <div
                       onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedIdx === i ? "bg-surface-bright/10" : ""}`}
+                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedIdx === i ? "bg-surface-bright/10" : ""} ${isSpent && !hasChange ? "opacity-50" : ""}`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <Lock className="w-5 h-5 text-primary" />
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSpent ? "bg-on-surface-variant/10" : "bg-primary/10"}`}>
+                          <Lock className={`w-5 h-5 ${isSpent ? "text-on-surface-variant/40" : "text-primary"}`} />
                         </div>
                         <div>
-                          <div className="font-semibold text-on-surface">
+                          <div className={`font-semibold flex items-center gap-2 ${isSpent && !hasChange ? "text-on-surface-variant/50 line-through" : "text-on-surface"}`}>
                             {n.amount} {n.tokenSymbol}
+                            {isSpent && hasChange && !claimsDone && (
+                              <span className="flex items-center gap-1 text-xs font-normal text-amber-400">
+                                <Coins className="w-3 h-3" />
+                                Change {changeNotes[0].amount} {changeNotes[0].tokenSymbol}
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-on-surface-variant/50 font-mono">
                             leaf #{n.leafIndex} &middot; {new Date(n.createdAt).toLocaleDateString()}
@@ -313,8 +430,8 @@ export default function PrivateEscrowPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium">
-                          Active
+                        <span className={`text-xs px-2 py-1 rounded font-medium ${statusStyle}`}>
+                          {statusLabel}
                         </span>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDeleteNote(n); }}
@@ -326,44 +443,49 @@ export default function PrivateEscrowPage() {
                       </div>
                     </div>
                     {expandedIdx === i && (
-                      <div className="px-6 py-4 bg-surface-container/50 border-t border-outline-variant/5">
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                          <div>
-                            <span className="text-on-surface-variant/60">Token</span>
-                            <p className="font-mono text-on-surface mt-0.5">{n.tokenSymbol}</p>
-                          </div>
-                          <div>
-                            <span className="text-on-surface-variant/60">Amount</span>
-                            <p className="font-mono text-on-surface mt-0.5">{n.amount}</p>
-                          </div>
-                          <div>
-                            <span className="text-on-surface-variant/60">Leaf Index</span>
-                            <p className="font-mono text-on-surface mt-0.5">{n.leafIndex}</p>
-                          </div>
-                          <div>
-                            <span className="text-on-surface-variant/60">Date</span>
-                            <p className="text-on-surface mt-0.5">{new Date(n.createdAt).toLocaleString()}</p>
-                          </div>
-                          <div className="col-span-2">
-                            <span className="text-on-surface-variant/60">Commitment</span>
-                            <p className="font-mono text-on-surface mt-0.5 text-[11px] break-all">{n.commitment}</p>
-                          </div>
-                          {n.txHash && (
-                            <div className="col-span-2">
-                              <span className="text-on-surface-variant/60">Tx Hash</span>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <p className="font-mono text-on-surface text-[11px] truncate">{n.txHash}</p>
-                                <button
-                                  onClick={() => navigator.clipboard.writeText(n.txHash)}
-                                  className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors"
-                                  title="Copy tx hash"
-                                >📋</button>
-                              </div>
+                      <div className="px-6 py-4 bg-surface-container/50 border-t border-outline-variant/5 space-y-4">
+                        {/* Note details */}
+                        <div className="bg-surface-container rounded-lg px-4 py-3">
+                          <div className="grid grid-cols-4 gap-y-3 text-xs">
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Token</div>
+                              <div className="font-mono text-on-surface mt-1">{n.tokenSymbol}</div>
                             </div>
-                          )}
-                          <div className="col-span-2">
-                            <span className="text-on-surface-variant/60">Token Address</span>
-                            <p className="font-mono text-on-surface mt-0.5 text-[11px] break-all">{n.tokenAddress}</p>
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Amount</div>
+                              <div className="font-mono text-on-surface mt-1">{n.amount}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Leaf</div>
+                              <div className="font-mono text-on-surface mt-1">#{n.leafIndex}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Date</div>
+                              <div className="text-on-surface mt-1">{new Date(n.createdAt).toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          <div className="mt-3 pt-3 border-t border-outline-variant/5 space-y-2 text-xs">
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Commitment</div>
+                              <div className="font-mono text-on-surface/80 mt-1 text-[11px] break-all leading-relaxed">{n.commitment}</div>
+                            </div>
+                            {n.txHash && (
+                              <div>
+                                <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Deposit Tx</div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="font-mono text-primary text-[11px] truncate">{n.txHash}</span>
+                                  <button
+                                    onClick={() => navigator.clipboard.writeText(n.txHash)}
+                                    className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors text-xs"
+                                    title="Copy"
+                                  >Copy</button>
+                                </div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Token Address</div>
+                              <div className="font-mono text-on-surface/80 mt-1 text-[11px] break-all">{n.tokenAddress}</div>
+                            </div>
                           </div>
                         </div>
 
@@ -419,6 +541,37 @@ export default function PrivateEscrowPage() {
                   </div>
                   );
                 })}
+
+                {/* Change notes from settled trades — shown as independent escrow entries */}
+                {notes.filter((cn) => {
+                  if (cn.leafIndex !== -1) return false;
+                  // Show as independent entry only when parent note is spent
+                  return notes.some((parent) =>
+                    parent.leafIndex >= 0 &&
+                    parent.note.ownerSecret === cn.note.ownerSecret &&
+                    parent.commitment !== cn.commitment &&
+                    spentNotes.has(parent.commitment)
+                  );
+                }).map((cn) => (
+                  <div key={cn.commitment} className="px-6 py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
+                        <Coins className="w-5 h-5 text-amber-400" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-on-surface">
+                          {cn.amount} {cn.tokenSymbol}
+                        </div>
+                        <div className="text-xs text-on-surface-variant/50">
+                          Change &middot; {new Date(cn.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 font-medium">
+                      Change
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -24,8 +24,9 @@ contract MockIdentityRegistry is IIdentityRegistry {
 contract DeployLocal is Script {
     function run() external {
         uint256 protocolFeeBps = 1000; // 10% of fee goes to treasury
+        uint256 deployerKey = vm.envOr("DEPLOYER_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
 
-        vm.startBroadcast();
+        vm.startBroadcast(deployerKey);
         address deployer = msg.sender;
 
         // 1. Mock identity registries (Dual-CA: User CA + Relayer CA)
@@ -88,7 +89,7 @@ contract DeployLocal is Script {
         relayerRegistry.register("http://localhost:3002", 30);
         console.log("Account #1 registered as zk-relayer");
         vm.stopBroadcast();
-        vm.startBroadcast();
+        vm.startBroadcast(deployerKey);
 
         // ── ZK Private Settlement ────────────────────────────────
 
@@ -106,7 +107,7 @@ contract DeployLocal is Script {
 
         // 13. Deploy PrivateSettlement
         PrivateSettlement privateSettlement = new PrivateSettlement(
-            address(pool), settleVerifier, claimVerifier
+            address(pool), settleVerifier, claimVerifier, address(weth)
         );
         console.log("PrivateSettlement:", address(privateSettlement));
 

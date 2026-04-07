@@ -130,7 +130,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         // Zero commitments are valid — they represent empty change UTXOs
         // when a party's entire balance is consumed during settlement.
         if (commitment == 0) return 0;
-        return _insert(commitment);
+        uint32 leafIndex = _insert(commitment);
+        emit CommitmentInserted(commitment, leafIndex, block.timestamp);
+        return leafIndex;
     }
 
     /// @notice Transfer tokens from pool to PrivateSettlement for claim distribution.
@@ -218,7 +220,8 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
         // Insert change commitment if non-zero
         if (newCommitment != 0) {
-            _insert(newCommitment);
+            uint32 changeLeaf = _insert(newCommitment);
+            emit CommitmentInserted(newCommitment, changeLeaf, block.timestamp);
         }
 
         // Transfer tokens to recipient
@@ -267,7 +270,8 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         nullifiers[nullifierHash] = true;
 
         if (newCommitment != 0) {
-            _insert(newCommitment);
+            uint32 changeLeaf = _insert(newCommitment);
+            emit CommitmentInserted(newCommitment, changeLeaf, block.timestamp);
         }
 
         IERC20(token).safeTransfer(recipient, amount);

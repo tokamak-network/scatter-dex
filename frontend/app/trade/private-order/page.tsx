@@ -18,7 +18,7 @@ import {
   DERIVE_MESSAGE,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
-import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment, type CommitmentNote } from "../../lib/zk/commitment";
+import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment, computeNullifier, toBytes32Hex, type CommitmentNote } from "../../lib/zk/commitment";
 import {
   isFileSystemAvailable,
   selectNotesFolder,
@@ -32,6 +32,8 @@ import {
   listEdDSAKeysInFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
+import { RPC_URL, getPrivateSettlementAddress } from "../../lib/config";
+import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
 import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
@@ -73,6 +75,7 @@ export default function PrivateOrderPage() {
 
   // Notes (commitment deposits)
   const [notes, setNotes] = useState<StoredNote[]>([]);
+  const [spentNotes, setSpentNotes] = useState<Set<string>>(new Set());
   const [selectedCommitment, setSelectedCommitment] = useState<string | null>(null);
   const [folderName, setFolderName] = useState<string | null>(null);
 
@@ -95,11 +98,39 @@ export default function PrivateOrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
-  // Filter notes by sell token
+  // Check which notes are spent on-chain (parallel)
+  useEffect(() => {
+    if (notes.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const settlement = new ethers.Contract(
+          getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
+        );
+        const activeNotes = notes.filter((n) => n.leafIndex >= 0);
+        const results = await Promise.all(
+          activeNotes.map(async (n) => {
+            const nullifier = await computeNullifier(n.note);
+            const isSpent = await settlement.nullifiers(toBytes32Hex(nullifier));
+            return { commitment: n.commitment, isSpent };
+          })
+        );
+        if (!cancelled) setSpentNotes(new Set(results.filter((r) => r.isSpent).map((r) => r.commitment)));
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [notes]);
+
+  // Filter notes by sell token, exclude spent
   const availableNotes = useMemo(() => {
     if (!sellToken) return [];
-    return notes.filter((n) => n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase());
-  }, [notes, sellToken]);
+    return notes.filter((n) =>
+      n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase() &&
+      n.leafIndex >= 0 &&
+      !spentNotes.has(n.commitment)
+    );
+  }, [notes, sellToken, spentNotes]);
 
   const selectedNote = useMemo(
     () => availableNotes.find((n) => n.commitment === selectedCommitment) ?? null,
@@ -531,14 +562,12 @@ export default function PrivateOrderPage() {
 
         {/* Order Form — always visible */}
         {(step === "setup_key" || step === "create_order" || step === "error") && (
-          <div className="glass-card rounded-xl p-8 border border-outline-variant/10 space-y-6">
-            {/* Key status is shown above submit button */}
-
-            {/* Notes Folder */}
-            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
+          <div className="space-y-4">
+            {/* 1. Escrow Selection */}
+            <div className="bg-surface-container/60 rounded-xl p-6 border border-outline-variant/10 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="font-headline font-bold text-sm flex items-center gap-2">
-                  <Wallet className="w-4 h-4 text-primary" />
+                <h3 className="font-headline font-bold text-base flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-primary" />
                   Commitment (Escrow Balance)
                 </h3>
                 <div className="flex gap-2">
@@ -573,14 +602,14 @@ export default function PrivateOrderPage() {
                       }`}
                     >
                       <div>
-                        <span className="text-xs font-mono font-bold text-on-surface">
+                        <span className="text-sm font-mono font-bold text-on-surface">
                           {n.amount} {n.tokenSymbol}
                         </span>
-                        <span className="text-[10px] text-on-surface-variant ml-2">
+                        <span className="text-xs text-on-surface-variant ml-2">
                           leaf #{n.leafIndex}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono text-on-surface-variant">
+                      <span className="text-xs font-mono text-on-surface-variant">
                         {n.txHash.slice(0, 10)}...
                       </span>
                     </button>
@@ -620,13 +649,15 @@ export default function PrivateOrderPage() {
               )}
             </div>
 
+            {/* 2. Token & Amount */}
+            <div className="bg-surface-container/40 rounded-xl p-6 border border-outline-variant/10 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Sell</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Sell</label>
                 <select
                   value={sellTokenIdx}
                   onChange={(e) => setSellTokenIdx(Number(e.target.value))}
-                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2.5 px-3"
+                  className="w-full bg-white/10 border border-outline-variant/30 focus:ring-1 focus:ring-primary text-on-surface rounded-lg py-3 px-4 text-base"
                 >
                   {tokens.map((t, i) => (
                     <option key={i} value={i}>{t.symbol}</option>
@@ -634,11 +665,11 @@ export default function PrivateOrderPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Buy</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Buy</label>
                 <select
                   value={buyTokenIdx}
                   onChange={(e) => setBuyTokenIdx(Number(e.target.value))}
-                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2.5 px-3"
+                  className="w-full bg-white/10 border border-outline-variant/30 focus:ring-1 focus:ring-primary text-on-surface rounded-lg py-3 px-4 text-base"
                 >
                   {tokens.map((t, i) => (
                     <option key={i} value={i}>{t.symbol}</option>
@@ -649,7 +680,7 @@ export default function PrivateOrderPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Sell Amount</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Sell Amount</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -668,13 +699,13 @@ export default function PrivateOrderPage() {
                     return ethers.parseUnits(sellAmount, sellToken?.decimals ?? 18) > selectedNote.note.amount;
                   } catch { return false; }
                 })() && (
-                  <div className="text-[10px] text-error mt-1">
+                  <div className="text-xs text-error mt-1">
                     Exceeds note balance ({selectedNote.amount} {sellToken?.symbol})
                   </div>
                 )}
               </div>
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Buy Amount</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Buy Amount</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -684,16 +715,20 @@ export default function PrivateOrderPage() {
                   placeholder="0.00"
                 />
                 {sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
-                  <div className="text-[10px] text-on-surface-variant mt-1">
+                  <div className="text-xs text-on-surface-variant mt-1">
                     Price: {(parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
                   </div>
                 )}
               </div>
             </div>
 
+            </div>
+
+            {/* 3. Fee & Expiry */}
+            <div className="bg-surface-container/30 rounded-xl p-6 border border-outline-variant/10 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Max Relay Fee</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Max Relay Fee</label>
                 <div className="flex gap-1.5">
                   {[
                     { label: "0.1%", bps: "10" },
@@ -716,23 +751,23 @@ export default function PrivateOrderPage() {
                   ))}
                 </div>
                 {minFeeBps > feeBps && (
-                  <div className="text-[10px] text-warning mt-1">
+                  <div className="text-xs text-warning mt-1">
                     Min fee {(minFeeBps / 100).toFixed(2)}% required (gas coverage for {claims.length} claim{claims.length > 1 ? "s" : ""})
                   </div>
                 )}
                 {sellAmount && price && (
-                  <div className="text-[10px] text-on-surface-variant mt-1">
+                  <div className="text-xs text-on-surface-variant mt-1">
                     Fee ≈ {(parseFloat(sellAmount) * parseFloat(price) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}
                     {effectiveFeeBps > feeBps && <span className="text-warning ml-1">(adjusted)</span>}
                   </div>
                 )}
               </div>
               <div>
-                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
                 <select
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
-                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md py-2.5 px-3"
+                  className="w-full bg-white/10 border border-outline-variant/30 focus:ring-1 focus:ring-primary text-on-surface rounded-lg py-3 px-4 text-base"
                 >
                   <option value="1">1 hour</option>
                   <option value="6">6 hours</option>
@@ -744,7 +779,7 @@ export default function PrivateOrderPage() {
 
             {/* Fee summary */}
             {sellAmount && buyAmount && price && (
-              <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
+              <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Buy amount</span>
                   <span className="font-mono text-on-surface">{parseFloat(buyAmount).toFixed(4)} {buyToken?.symbol}</span>
@@ -768,14 +803,16 @@ export default function PrivateOrderPage() {
               </div>
             )}
 
-            {/* Claims (multiple recipients) */}
-            <div className="pt-4 border-t border-outline-variant/10">
+            </div>
+
+            {/* 4. Recipients */}
+            <div className="bg-surface-container/50 rounded-xl p-6 border border-outline-variant/10">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-headline font-bold text-sm flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary" />
+                <h3 className="font-headline font-bold text-base flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-primary" />
                   Recipients (Scatter)
                   {buyToken && (
-                    <span className="text-[10px] font-normal text-on-surface-variant bg-surface-container-low px-1.5 py-0.5 rounded">
+                    <span className="text-xs font-normal text-on-surface-variant bg-surface-container-low px-1.5 py-0.5 rounded">
                       receives {buyToken.symbol}
                     </span>
                   )}
@@ -793,17 +830,17 @@ export default function PrivateOrderPage() {
                 {claims.map((c, idx) => (
                   <div key={c.id} className="bg-surface-container-low/50 rounded-lg p-3 border border-outline-variant/5">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] text-on-surface-variant font-bold">#{idx + 1}</span>
+                      <span className="text-xs text-on-surface-variant font-bold">#{idx + 1}</span>
                       <div className="flex gap-1">
                         <button
                           onClick={() => updateClaim(c.id, "mode", "standard")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          className={`px-2 py-0.5 rounded text-xs font-bold ${
                             c.mode === "standard" ? "bg-surface-container-highest text-on-surface" : "text-on-surface-variant"
                           }`}
                         >Standard</button>
                         <button
                           onClick={() => updateClaim(c.id, "mode", "stealth")}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          className={`px-2 py-0.5 rounded text-xs font-bold ${
                             c.mode === "stealth" ? "bg-primary/10 text-primary" : "text-on-surface-variant"
                           }`}
                         >Stealth</button>
@@ -821,7 +858,7 @@ export default function PrivateOrderPage() {
                           type="text" value={c.address}
                           onChange={(e) => updateClaim(c.id, "address", e.target.value)}
                           placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
-                          className="w-full bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
+                          className="w-full bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
                         />
                       </div>
                       <div className="col-span-3">
@@ -830,12 +867,12 @@ export default function PrivateOrderPage() {
                             type="text" inputMode="decimal" value={c.amount}
                             onChange={(e) => updateClaim(c.id, "amount", e.target.value)}
                             placeholder="Amount"
-                            className="flex-1 min-w-0 bg-surface-container-low border border-outline-variant/20 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
+                            className="flex-1 min-w-0 bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
                           />
                           <button
                             type="button"
                             onClick={() => fillRest(c.id)}
-                            className="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded-md hover:bg-primary/20 transition-colors flex-shrink-0"
+                            className="px-2 py-1 bg-primary/10 text-primary text-xs font-bold rounded-md hover:bg-primary/20 transition-colors flex-shrink-0"
                             title="Fill remaining amount"
                           >
                             Rest
@@ -843,7 +880,7 @@ export default function PrivateOrderPage() {
                         </div>
                       </div>
                       <div className="col-span-4">
-                        <div className="flex items-center gap-1 bg-surface-container-low border border-outline-variant/20 rounded-md p-2" title="Release delay">
+                        <div className="flex items-center gap-1 bg-white/10 border border-outline-variant/30 rounded-lg p-2.5" title="Release delay">
                           <Clock className="w-3 h-3 text-on-surface-variant flex-shrink-0" />
                           <input
                             type="number" value={c.delay}
@@ -854,7 +891,7 @@ export default function PrivateOrderPage() {
                           <select
                             value={c.delayUnit}
                             onChange={(e) => updateClaim(c.id, "delayUnit", e.target.value)}
-                            className="bg-transparent border-none p-0 text-[10px] font-mono focus:ring-0 text-on-surface-variant"
+                            className="bg-transparent border-none p-0 text-xs font-mono focus:ring-0 text-on-surface-variant"
                           >
                             <option value="min">min</option>
                             <option value="hr">hr</option>
@@ -872,12 +909,12 @@ export default function PrivateOrderPage() {
 
               {buyToken && (
                 <div className="mt-2 space-y-1">
-                  <div className="text-[10px] text-on-surface-variant flex justify-between">
+                  <div className="text-xs text-on-surface-variant flex justify-between">
                     <span>Claims total: {claimTotal.toFixed(4)} {buyToken.symbol}</span>
                     <span>Net amount: {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
                   {netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001 && (
-                    <div className="text-[10px] text-error font-bold">
+                    <div className="text-xs text-error font-bold">
                       Claims ({claimTotal.toFixed(4)}) exceed net amount ({netBuyAmount.toFixed(4)} {buyToken.symbol})
                     </div>
                   )}
@@ -885,9 +922,12 @@ export default function PrivateOrderPage() {
               )}
             </div>
 
+            {/* 5. ZK Relayer & Trading Key & Submit */}
+            <div className="bg-surface-container/60 rounded-xl p-6 border border-outline-variant/10 space-y-4">
+
             {/* ZK Relayer selection */}
-            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
-              <h3 className="font-headline font-bold text-sm flex items-center gap-2">
+            <div className="space-y-3">
+              <h3 className="font-headline font-bold text-base flex items-center gap-2">
                 <Shield className="w-4 h-4 text-primary" />
                 ZK Relayer
               </h3>
@@ -897,7 +937,7 @@ export default function PrivateOrderPage() {
                 <select
                   value={selectedRelayerIdx}
                   onChange={(e) => setSelectedRelayerIdx(Number(e.target.value))}
-                  className="w-full bg-surface-container border border-outline-variant/20 rounded-md px-3 py-2 text-sm font-mono text-on-surface"
+                  className="w-full bg-white/10 border border-outline-variant/30 rounded-lg px-4 py-3 text-base font-mono text-on-surface"
                 >
                   {zkRelayers.map((r, i) => (
                     <option key={r.address} value={i}>
@@ -908,9 +948,9 @@ export default function PrivateOrderPage() {
               )}
             </div>
 
-            {/* Trading Key — select from folder or generate */}
-            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
-              <h3 className="font-headline font-bold text-sm flex items-center gap-2">
+            {/* Trading Key */}
+            <div className="pt-4 border-t border-outline-variant/10 space-y-3">
+              <h3 className="font-headline font-bold text-base flex items-center gap-2">
                 <Key className="w-4 h-4 text-primary" />
                 Trading Key
               </h3>
@@ -954,6 +994,7 @@ export default function PrivateOrderPage() {
             <div className="text-xs text-on-surface-variant/40 text-center">
               Order signed with EdDSA (Baby Jubjub). Hidden on-chain via ZK proof.
             </div>
+          </div>
           </div>
         )}
 

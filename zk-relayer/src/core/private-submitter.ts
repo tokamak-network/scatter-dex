@@ -365,7 +365,7 @@ export class PrivateSubmitter {
       withdrawAmount: withdrawAmount.toString(),
       recipient: BigInt(recipient).toString(),
       relayer: BigInt(relayer).toString(),
-      secret: order.ownerSecret.toString(),
+      ownerSecret: order.ownerSecret.toString(),
       token: order.sellToken.toString(),
       amount: order.balance.toString(),
       salt: order.salt.toString(),

@@ -77,6 +77,16 @@ export async function computeTokenHash(token: string): Promise<bigint> {
   return F.toObject(hash);
 }
 
+/** Format a bigint as a 0x-prefixed bytes32 hex string. */
+export function toBytes32Hex(value: bigint): string {
+  return "0x" + value.toString(16).padStart(64, "0");
+}
+
+/** Format an address-sized bigint as 0x-prefixed checksumless hex. */
+export function toAddressHex(value: bigint | string): string {
+  return "0x" + BigInt(value).toString(16).padStart(40, "0");
+}
+
 /** Serialize a note to JSON-safe format for storage/backup (hex encoding). */
 export function serializeNote(note: CommitmentNote): string {
   return JSON.stringify({

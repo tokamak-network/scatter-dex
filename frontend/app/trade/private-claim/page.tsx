@@ -2,10 +2,12 @@
 
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { Gift, Loader2, AlertCircle, Check, Upload, Eye } from "lucide-react";
+import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download } from "lucide-react";
 // No wallet needed — claims are gasless via zk-relayer
 import { getTokenList } from "../../lib/tokens";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
+import { toAddressHex } from "../../lib/zk/commitment";
+import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 // Claims are gasless — submitted via zk-relayer API (relayer pays gas).
 // No wallet connection needed. Stealth recipients stay private.
 
@@ -37,6 +39,8 @@ export default function PrivateClaimPage() {
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+
+  const claimedMap = useClaimStatuses(allClaims, { includeTxHash: true });
 
   // Claims submitted via zk-relayer (no direct contract address needed)
 
@@ -253,19 +257,48 @@ export default function PrivateClaimPage() {
           {/* Claim Selector (for multi-claim bundles) */}
           {allClaims.length > 1 && (
             <div className="space-y-2">
-              <label className="text-xs font-bold text-on-surface-variant uppercase">Select Claim ({allClaims.length} available)</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-on-surface-variant uppercase">Select Claim ({allClaims.length} available)</label>
+                <button
+                  onClick={async () => {
+                    const JSZip = (await import("jszip")).default;
+                    const zip = new JSZip();
+                    allClaims.forEach((c, i) => {
+                      const addr = toAddressHex(c.recipient);
+                      const shortAddr = addr.slice(0, 6) + "..." + addr.slice(-4);
+                      const filename = `claim-${i + 1}-${shortAddr}.json`;
+                      zip.file(filename, JSON.stringify(c, null, 2));
+                    });
+                    const blob = await zip.generateAsync({ type: "blob" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `zkscatter-claims-split.zip`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="flex items-center gap-1 text-[10px] text-primary font-bold hover:text-primary-container transition-colors"
+                >
+                  <Download className="w-3 h-3" /> Export as ZIP
+                </button>
+              </div>
               <div className="space-y-1.5">
                 {allClaims.map((c, i) => {
                   const claimTokenBig = BigInt(c.token);
                   const tokenInfo = tokens.find((t) => BigInt(t.address) === claimTokenBig);
                   const sym = tokenInfo?.symbol ?? "?";
                   const dec = tokenInfo?.decimals ?? 18;
+                  const cs = claimedMap[i];
+                  const isClaimed = cs?.claimed === true;
                   return (
                     <button
                       key={i}
                       onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); }}
+                      disabled={isClaimed}
                       className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
-                        selectedClaimIdx === i
+                        isClaimed
+                          ? "bg-emerald-500/5 border border-emerald-500/15 opacity-60 cursor-default"
+                          : selectedClaimIdx === i
                           ? "bg-primary/10 border border-primary/30"
                           : "bg-surface-container-low border border-outline-variant/10 hover:bg-surface-bright/50"
                       }`}
@@ -273,9 +306,16 @@ export default function PrivateClaimPage() {
                       <span className="text-xs font-mono font-bold text-on-surface">
                         #{i + 1} — {ethers.formatUnits(c.amount, dec)} {sym}
                       </span>
-                      <span className="text-[10px] font-mono text-on-surface-variant">
-                        leaf #{c.leafIndex}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {isClaimed && (
+                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" /> Claimed
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono text-on-surface-variant">
+                          leaf #{c.leafIndex}
+                        </span>
+                      </div>
                     </button>
                   );
                 })}
@@ -317,6 +357,19 @@ export default function PrivateClaimPage() {
                   Not yet claimable. Unlocks at {new Date(Number(claimData.releaseTime) * 1000).toLocaleString()}.
                 </div>
               )}
+
+              {claimedMap[selectedClaimIdx]?.claimed && (
+                <div className="text-xs p-3 rounded-md bg-emerald-500/5 border border-emerald-500/15 space-y-1">
+                  <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Already Claimed
+                  </div>
+                  {claimedMap[selectedClaimIdx]?.txHash && (
+                    <div className="font-mono text-[11px] text-on-surface-variant/60 break-all">
+                      Tx: {claimedMap[selectedClaimIdx].txHash}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -332,7 +385,7 @@ export default function PrivateClaimPage() {
             <div className="text-xs p-3 rounded-md bg-error/5 text-error">{error}</div>
           )}
 
-          {claimData && (
+          {claimData && !claimedMap[selectedClaimIdx]?.claimed && (
             <button
               onClick={handleClaim}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"

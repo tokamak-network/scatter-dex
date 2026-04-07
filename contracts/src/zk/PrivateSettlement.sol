@@ -8,6 +8,8 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {CommitmentPool} from "./CommitmentPool.sol";
 import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
+import {IWETH} from "../interfaces/IWETH.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 /// @title PrivateSettlement
 /// @notice ZK-based private settlement for ScatterDEX.
@@ -62,6 +64,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     CommitmentPool public immutable pool;
     ISettleVerifier public immutable settleVerifier;
     IClaimVerifier public immutable claimVerifier;
+    address public immutable weth;
 
     uint256 public constant TIMESTAMP_TOLERANCE = 300; // 5 minutes
     bool public paused;
@@ -76,13 +79,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     constructor(
         address _pool,
         address _settleVerifier,
-        address _claimVerifier
+        address _claimVerifier,
+        address _weth
     ) Ownable(msg.sender) {
-        if (_pool == address(0) || _settleVerifier == address(0) || _claimVerifier == address(0))
+        if (_pool == address(0) || _settleVerifier == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
         pool = CommitmentPool(_pool);
         settleVerifier = ISettleVerifier(_settleVerifier);
         claimVerifier = IClaimVerifier(_claimVerifier);
+        weth = _weth;
     }
 
     function renounceOwnership() public pure override { revert RenounceOwnershipDisabled(); }
@@ -316,10 +321,20 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         claimNullifiers[claimNullifier] = true;
         group.totalClaimed += uint96(amount);
 
-        // Transfer tokens
-        IERC20(token).safeTransfer(recipient, amount);
+        // Transfer tokens — unwrap WETH to ETH if applicable
+        if (token == weth) {
+            IWETH(weth).withdraw(amount);
+            Address.sendValue(payable(recipient), amount);
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
 
         emit PrivateClaim(claimsRoot, claimNullifier, recipient, token, amount);
+    }
+
+    /// @dev Accept ETH only from WETH.withdraw() during claimWithProof().
+    receive() external payable {
+        if (msg.sender != weth) revert ZeroAddress();
     }
 
     // Claims are permanently claimable — no expiry or refund mechanism.

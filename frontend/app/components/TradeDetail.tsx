@@ -1,8 +1,10 @@
 "use client";
 
 import { ethers } from "ethers";
-import { ArrowRight, Clock, Shield, Coins } from "lucide-react";
+import { ArrowRight, Clock, Shield, Coins, CheckCircle2 } from "lucide-react";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
+import { toAddressHex } from "../lib/zk/commitment";
+import { useClaimStatuses } from "../lib/zk/useClaimStatuses";
 
 export interface TradeOrder {
   sellToken: string;
@@ -61,6 +63,8 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const tokens = getTokenList();
   const sell = resolveToken(trade.order.sellToken, tokens);
   const buy = resolveToken(trade.order.buyToken, tokens);
+
+  const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
 
   if (compact) {
     return (
@@ -161,14 +165,22 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <div className="space-y-2">
           {trade.claims.map((c, i) => {
             const ct = resolveToken(c.token, tokens);
-            const addr = "0x" + BigInt(c.recipient).toString(16).padStart(40, "0");
+            const addr = toAddressHex(c.recipient);
+            const isClaimed = claimStatuses[i]?.claimed === true;
             return (
-              <div key={i} className="bg-surface-container rounded-lg px-4 py-3 space-y-1.5">
-                <div className="flex justify-between items-baseline">
+              <div key={i} className={`rounded-lg px-4 py-3 space-y-1.5 ${isClaimed ? "bg-emerald-500/5 border border-emerald-500/15" : "bg-surface-container"}`}>
+                <div className="flex justify-between items-center">
                   <span className="text-xs text-on-surface-variant/50">#{i + 1}</span>
-                  <span className="text-base font-mono font-bold text-on-surface">
-                    {parseFloat(ethers.formatUnits(c.amount, ct.decimals)).toFixed(4)} {ct.symbol}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-mono font-bold text-on-surface">
+                      {parseFloat(ethers.formatUnits(c.amount, ct.decimals)).toFixed(4)} {ct.symbol}
+                    </span>
+                    {isClaimed && (
+                      <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                        <CheckCircle2 className="w-3 h-3" /> Claimed
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="font-mono text-[11px] text-on-surface-variant/40 break-all leading-relaxed">
                   {addr}
