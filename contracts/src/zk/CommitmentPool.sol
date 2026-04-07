@@ -190,49 +190,11 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         address relayer
     ) external nonReentrant {
         if (paused) revert ContractPaused();
-        if (amount == 0) revert ZeroAmount();
-        if (recipient == address(0)) revert ZeroAddress();
-        if (!isKnownRoot(root)) revert UnknownRoot();
-        if (nullifiers[nullifierHash]) revert NullifierAlreadySpent();
-
-        // Compute tokenHash = Poseidon(token) to match circuit's public input
-        // Cast to uint160 is safe: Ethereum addresses are exactly 160 bits, so no truncation occurs.
-        uint256 tokenHash = PoseidonT2.hash([uint256(uint160(token))]);
-
-        // Verify ZK proof
-        // Public signals: [root, nullifierHash, newCommitment, tokenHash, withdrawAmount, recipient, relayer]
-        uint[7] memory pubSignals = [
-            root,
-            nullifierHash,
-            newCommitment,
-            tokenHash,
-            amount,
-            uint256(uint160(recipient)),
-            uint256(uint160(relayer))
-        ];
-
-        if (!withdrawVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
-            revert InvalidProof();
-        }
-
-        // Mark nullifier as spent
-        nullifiers[nullifierHash] = true;
-
-        // Insert change commitment if non-zero
-        if (newCommitment != 0) {
-            uint32 changeLeaf = _insert(newCommitment);
-            emit CommitmentInserted(newCommitment, changeLeaf, block.timestamp);
-        }
-
-        // Transfer tokens to recipient
-        IERC20(token).safeTransfer(recipient, amount);
-
-        emit Withdrawal(recipient, nullifierHash, newCommitment, amount);
+        _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
     }
 
     /// @notice Withdraw on behalf of PrivateSettlement (for scatterDirect).
     /// @dev Only callable by the authorized PrivateSettlement contract.
-    ///      Same logic as withdraw() but called by settlement, not the user.
     function withdrawFor(
         uint[2] calldata proofA,
         uint[2][2] calldata proofB,
@@ -246,6 +208,22 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         address relayer
     ) external nonReentrant {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
+    }
+
+    /// @dev Shared withdraw logic: verify proof, mark nullifier, insert change, transfer tokens.
+    function _processWithdraw(
+        uint[2] calldata proofA,
+        uint[2][2] calldata proofB,
+        uint[2] calldata proofC,
+        uint256 root,
+        uint256 nullifierHash,
+        uint256 newCommitment,
+        address token,
+        uint256 amount,
+        address recipient,
+        address relayer
+    ) private {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
         if (!isKnownRoot(root)) revert UnknownRoot();
