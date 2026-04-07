@@ -1,17 +1,24 @@
 # ScatterDEX
 
-A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability without heavy ZK proofs.
+A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For stronger on-chain privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities and claim structure, while aggregate settlement amounts and token information remain public on-chain.
 
 > Privacy + Compliance + Efficiency — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
 
 ## Architecture
 
 ```
-Frontend (Next.js)  →  Relayer (Node.js)  →  Contracts (Solidity / Foundry)
-     ↕                      ↕                       ↕
-  MetaMask            Order matching         ScatterSettlement
-  Dashboard           EIP-712 signing        RelayerRegistry
-                                             IdentityGate
+Frontend (Next.js)  →  Relayer (Node.js)      →  Contracts (Solidity / Foundry)
+     ↕                      ↕                            ↕
+  MetaMask            Order matching             ScatterSettlement (standard)
+  EdDSA keys          EIP-712 signing            PrivateSettlement (ZK)
+  Stealth addr        ZK proof generation        CommitmentPool (incremental Merkle tree)
+                                                 RelayerRegistry
+                      zk-relayer (gasless)       IdentityGate
+
+Circuits (Circom)
+  settle.circom      ~30K constraints — private settlement with EdDSA + fee validation
+  claim.circom       ~1.5K constraints — claim with Merkle inclusion proof
+  withdraw.circom    ~6K constraints — withdrawal from commitment pool
 ```
 
 ## Project Structure
@@ -19,12 +26,19 @@ Frontend (Next.js)  →  Relayer (Node.js)  →  Contracts (Solidity / Foundry)
 ```
 contracts/       Solidity contracts + Foundry tests
   src/             ScatterSettlement, RelayerRegistry, IdentityGate, VaultSkills
-  test/            Unit, E2E, gas benchmark tests
+  src/zk/          CommitmentPool, PrivateSettlement, IncrementalMerkleTree
+  test/            Unit, E2E, gas benchmark tests (165+)
   script/          DeployLocal, DeploySettlement
-frontend/        Next.js dashboard (trade, deposit, claim, admin)
+circuits/        Circom ZK circuits (settle, claim, withdraw)
+  build/           Generated artifacts (WASM + zkeys, produced by scripts/build.sh)
+frontend/        Next.js app (trade, deposit, claim, private order, history)
+  app/lib/zk/      EdDSA, commitment, stealth, incremental tree
 relayer/         Off-chain order matching + settlement relay
+  src/core/        Orderbook, matcher, submitter, private-submitter, DB
+  test/            Unit tests (45+) + E2E integration (36)
+zk-relayer/      Gasless ZK claim relay (proof submission)
 scripts/         Dev & E2E test scripts
-docs/            Research paper
+docs/            Research paper, design docs, ZK trading guide
 ```
 
 ## Quick Start
@@ -56,9 +70,10 @@ Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches re
 ### Run Tests
 
 ```bash
-cd contracts && forge test        # 123 tests (unit + E2E + gas benchmark)
-cd relayer && npm test            # Relayer unit tests
-./scripts/e2e-test.sh             # On-chain E2E scenarios via cast
+cd contracts && forge test          # 165+ tests (unit + E2E + gas benchmark)
+cd relayer && npm test              # 45+ unit tests
+cd relayer && npm run test:e2e      # 36+ E2E integration tests (requires anvil + deploy + relayer)
+bash scripts/run-e2e.sh             # Full E2E: Foundry + relayer integration
 ```
 
 ### Docker

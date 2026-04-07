@@ -39,8 +39,9 @@ Build a **[My Scatter Status Board]** that visually shows:
 ### 2.3 Gasless Claim UX
 
 - Recipients should never see a "gas fee required" screen
-- One-click claim: sign message → relayer handles the rest
-- Show relayer tip transparently: "Gas fee: 0.5 USDC (paid from your claim)"
+- **Standard claim**: one-click claim with relayer tip (EIP-712 signed)
+- **ZK private claim**: browser generates ZK proof → zk-relayer submits on-chain (fully gasless, no wallet connection)
+- Settlement fee covers relayer gas costs (gas-inclusive minimum fee auto-calculated per claim count)
 
 ## 3. Testnet Milestones
 
@@ -51,6 +52,14 @@ Build a **[My Scatter Status Board]** that visually shows:
 - [x] Paper enhancement (Dual-CA, MLS model, formal proofs) — PR #23
 - [x] All security issues resolved (H-1/2, M-1/3/4/5, L-1/2/3/4)
 - [x] Multicall3 batch query optimization — PR #26
+- [x] ZK private settlement (CommitmentPool + PrivateSettlement + circuits) — PR #50
+- [x] Stealth address claim — PR #74
+- [x] Gasless ZK claim via zk-relayer — PR #78, #80
+- [x] Relayer fee calculation (private settlement) — PR #84
+- [x] Gas-inclusive minimum fee + clickable breakdown — PR #85
+- [x] E2E tests 36/36 passing — PR #86
+- [x] EdDSA key AES-GCM encryption in localStorage — PR #87
+- [x] Incremental Merkle tree (O(depth) insert) — PR #88
 
 ### Phase 1: Core Demo (Week 1-2)
 - [ ] Deploy ScatterSettlement + RelayerRegistry + IdentityGate to Base Sepolia
@@ -72,12 +81,12 @@ Build a **[My Scatter Status Board]** that visually shows:
 
 ## 4. VC Narrative
 
-**Elevator pitch**: "ScatterDEX is the first DEX that solves the privacy-compliance-efficiency trilemma. We achieve Tornado Cash-level privacy at 74% lower gas cost, with built-in KYC compliance — no zero-knowledge proofs needed."
+**Elevator pitch**: "ScatterDEX is the first DEX that solves the privacy-compliance-efficiency trilemma. We combine hash-lock scatter settlement for standard trades with full ZK privacy (Groth16 + stealth addresses) for maximum anonymity — all with built-in KYC compliance via zk-X509."
 
 **Key differentiators for VC pitch**:
 1. **Regulatory moat**: zk-X509 identity gating = compliant by design (post-Tornado Cash world)
-2. **Gas efficiency**: 67-74% cheaper than ZK alternatives (measured, not estimated)
-3. **Simple audit surface**: hash-locks + time-locks only, no ZK circuits to audit
+2. **Dual privacy modes**: Standard scatter settlement (67-74% cheaper than ZK alternatives) + ZK private settlement (full privacy with commitment pools and stealth addresses)
+3. **Gasless UX**: ZK claims require no wallet connection — zk-relayer pays gas, settlement fee covers costs
 4. **Multi-relayer model**: no single point of failure, censorship resistant
 5. **Base ecosystem alignment**: Coinbase's regulatory DNA + Base's developer momentum
 
