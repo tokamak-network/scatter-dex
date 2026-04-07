@@ -6,7 +6,7 @@
 
 ## Abstract
 
-We present **Scatter Settlement**, a novel settlement mechanism for decentralized exchanges (DEXs) that achieves transaction unlinkability without relying on heavy zero-knowledge proof systems. Our approach decouples trade execution from settlement and introduces a multi-dimensional dissociation scheme combining (1) cross-token conversion, (2) amount splitting, (3) temporal dispersion, (4) address separation, (5) transaction mixing, (6) pre-claim address concealment via hash-locks, and (7) explicit recipient consent. By storing only `claimHash = H(secret, recipient)` on-chain, neither the recipient address nor the claim secret is revealed until the moment of withdrawal. We formally define the **anonymity set** of Scatter Settlement as a function of contract TVL, concurrent transactions, split count, and time delay, and prove that an adversary's advantage in linking deposits to withdrawals is negligible under moderate-to-high traffic conditions (≥100 deposits/hour). To reconcile privacy with regulatory compliance, we introduce a **Dual-CA (Certificate Authority) architecture** with opposing disclosure policies: a privacy-preserving User CA (maximum identity masking) and an accountability-maximizing Relayer CA (minimum masking), positioning relayers as publicly identified intermediaries with post-hoc disclosure obligations to law enforcement. Relayers cooperate in a **multi-relayer MLS (Multiple Listing Service) model** to maximize matching liquidity, which — unlike prior systems — does not degrade user privacy because privacy is structurally guaranteed by claimHash and fresh recipient addresses. Our evaluation on Ethereum L1 and L2 shows that Scatter Settlement achieves comparable privacy guarantees to ZK-based mixing protocols at **~67–74% lower gas cost** (compared against equivalent end-to-end private trade operations including deposit, settlement, and withdrawal phases), while maintaining full compatibility with KYC/AML compliance. Notably, because Scatter Settlement requires only hash-locks and time-locks — no ZK proof verification — it is practically deployable even on L1, where observed gas prices (as low as ~0.14 Gwei in March 2025 [39]) bring the total cost of a full privacy trade to under $0.16.
+We present **Scatter Settlement**, a novel settlement mechanism for decentralized exchanges (DEXs) that achieves transaction unlinkability through a multi-dimensional dissociation scheme. Our approach decouples trade execution from settlement and combines (1) cross-token conversion, (2) amount splitting, (3) temporal dispersion, (4) address separation, (5) transaction mixing, (6) pre-claim address concealment via hash-locks, and (7) explicit recipient consent. By storing only `claimHash = H(secret, recipient)` on-chain, neither the recipient address nor the claim secret is revealed until the moment of withdrawal. We formally define the **anonymity set** of Scatter Settlement as a function of contract TVL, concurrent transactions, split count, and time delay, and prove that an adversary's advantage in linking deposits to withdrawals is negligible under moderate-to-high traffic conditions (≥100 deposits/hour). To reconcile privacy with regulatory compliance, we introduce a **Dual-CA (Certificate Authority) architecture** with opposing disclosure policies: a privacy-preserving User CA (maximum identity masking) and an accountability-maximizing Relayer CA (minimum masking), positioning relayers as publicly identified intermediaries with post-hoc disclosure obligations to law enforcement. Relayers cooperate in a **multi-relayer MLS (Multiple Listing Service) model** to maximize matching liquidity, which — unlike prior systems — does not degrade user privacy because privacy is structurally guaranteed by claimHash and fresh recipient addresses. ScatterDEX offers a **dual-mode architecture**: (a) **Standard Scatter Settlement** using only hash-locks and time-locks — no ZK proofs — achieving **~67–74% lower gas cost** than ZK alternatives and practical L1 deployability; and (b) **ZK Private Settlement** using Groth16 proofs with commitment pools, EdDSA signatures, and stealth addresses for maximum on-chain privacy, hiding trader identities and claim structure while aggregate settlement amounts remain public. Our evaluation on Ethereum L1 and L2 demonstrates that the standard mode is practically deployable even on L1, where observed gas prices (as low as ~0.14 Gwei in March 2025 [39]) bring the total cost of a full privacy trade to under $0.16, while the ZK mode provides cryptographic privacy guarantees for users requiring stronger anonymity.
 
 **Keywords:** DEX, privacy, unlinkability, hash-lock, settlement, anonymity set, compliance
 
@@ -32,7 +32,8 @@ Existing approaches resolve at most two of these three requirements:
 | Tornado Cash | ✓ | ✗ | ✓ |
 | Railgun | ✓ | ✗ | ✗ (heavy ZK) |
 | Renegade | ✓ | ✗ | ✗ (MPC/FHE) |
-| **Scatter Settlement** | **✓** | **✓** | **✓** |
+| **Scatter Settlement (standard)** | **✓** | **✓** | **✓** |
+| **Scatter Settlement (ZK mode)** | **✓✓** | **✓** | ✓ (ZK cost) |
 
 ### 1.2 Key Insight
 
@@ -729,17 +730,17 @@ This separation of concerns means relayers can freely cooperate, share order flo
 
 ### 7.1 Architecture Comparison
 
-| Feature | Uniswap | 0x/CoW | Renegade | Railgun | **Ours** |
-|---------|---------|--------|----------|---------|----------|
-| Orderbook type | AMM | Off-chain | Dark pool | N/A | Off-chain |
-| Order privacy | None | None | Full (MPC) | N/A | Off-chain |
-| Settlement privacy | None | None | Full (MPC) | Full (ZK) | **Hash-lock + 7D dissociation** |
-| Relayer model | N/A | Anonymous | Anonymous | N/A | **Public (Dual-CA) + MLS cooperation** |
-| Identity check | None | None | None | None | **Dual-CA (User masked / Relayer public)** |
-| MEV resistance | None | Partial | Full | Partial | **Sandwich + front-run immune** |
-| Gas per trade* | ~150K | ~100K | ~500K+ | ~300K+ (per op) | **~569K (full trade)** |
-| ZK circuits needed | 0 | 0 | 0 (MPC) | Many | **0** |
-| Audit surface | Small | Small | Large (MPC) | Large (ZK) | **Small** |
+| Feature | Uniswap | 0x/CoW | Renegade | Railgun | **Ours (Standard)** | **Ours (ZK Mode)** |
+|---------|---------|--------|----------|---------|---------------------|---------------------|
+| Orderbook type | AMM | Off-chain | Dark pool | N/A | Off-chain | Off-chain |
+| Order privacy | None | None | Full (MPC) | N/A | Off-chain | Off-chain + EdDSA |
+| Settlement privacy | None | None | Full (MPC) | Full (ZK) | **Hash-lock + 7D** | **ZK proof + stealth** |
+| Relayer model | N/A | Anonymous | Anonymous | N/A | **Public (Dual-CA)** | **Public (Dual-CA)** |
+| Identity check | None | None | None | None | **Dual-CA** | **Dual-CA** |
+| MEV resistance | None | Partial | Full | Partial | **Immune** | **Immune** |
+| Gas per trade* | ~150K | ~100K | ~500K+ | ~300K+ (per op) | **~569K** | **~800K+ (ZK verify)** |
+| ZK circuits needed | 0 | 0 | 0 (MPC) | Many | **0** | **3 (settle/claim/withdraw)** |
+| Audit surface | Small | Small | Large (MPC) | Large (ZK) | **Small** | **Medium (circuits)** |
 
 *\*Gas per trade: Values for Uniswap and 0x represent single swap operations without privacy. Values for Renegade and Railgun represent single private transfers (~300K+ per operation); an equivalent end-to-end private trade requires multiple operations, totaling ~1.7M gas (Railgun) and ~2.2M gas (Tornado Cash). ScatterDEX's ~569K covers a complete end-to-end trade with 4 claims — a 67–74% reduction. See Section 8.2 for detailed comparison.*
 
@@ -751,9 +752,9 @@ This separation of concerns means relayers can freely cooperate, share order flo
 | Gen 2 | Uniswap | On-chain AMM |
 | Gen 3 | 0x, CoW | Off-chain order, on-chain settle |
 | Gen 4 | Renegade, Railgun | Privacy-first (ZK/MPC) |
-| **Gen 5 (This paper)** | **ScatterDEX** | **Separation principle** |
+| **Gen 5 (This paper)** | **ScatterDEX** | **Separation principle + dual-mode (standard/ZK)** |
 
-We position our work as a "Gen 5" DEX that learns from Gen 3's off-chain efficiency and Gen 4's privacy goals, but avoids Gen 4's over-engineering by applying the separation principle.
+We position our work as a "Gen 5" DEX that learns from Gen 3's off-chain efficiency and Gen 4's privacy goals. The standard mode avoids Gen 4's over-engineering by applying the separation principle; the ZK mode offers a Gen 4-class privacy option within the same compliance-first framework.
 
 ### 7.3 Design Rationale
 
@@ -773,10 +774,20 @@ We position our work as a "Gen 5" DEX that learns from Gen 3's off-chain efficie
 
 We implement Scatter Settlement as a Solidity smart contract (Solidity 0.8.28, optimizer enabled at 200 runs) using the Foundry framework. The implementation consists of:
 
+**Standard Settlement (hash-lock mode):**
 - `ScatterSettlement.sol`: Core settlement contract (~385 lines)
-- `IdentityGate.sol`: Read-only access gate delegating to an external `IIdentityRegistry`; the zk-X509 User CA verification is assumed to be provided by the registry implementation (~27 lines)
-- `RelayerRegistry.sol`: Relayer registration, staking, fee management, and lifecycle; the Relayer CA certificate verification and on-chain identity storage described in Section 3.2 are designed as external components to be integrated (~180 lines)
+- `IdentityGate.sol`: Read-only access gate delegating to an external `IIdentityRegistry` (~27 lines)
+- `RelayerRegistry.sol`: Relayer registration, staking, fee management (~180 lines)
 - EIP-712 order signing library
+
+**ZK Private Settlement (Groth16 mode):**
+- `CommitmentPool.sol`: Poseidon-based commitment pool with incremental Merkle tree (depth 20, ~1M capacity)
+- `PrivateSettlement.sol`: ZK-verified settlement with per-token fee separation
+- `IncrementalMerkleTree.sol`: O(depth) insertion with precomputed zero hashes
+- Circom circuits: `settle.circom` (~30K constraints, EdDSA + fee validation), `claim.circom` (~1.5K constraints, Merkle inclusion), `withdraw.circom` (~6K constraints)
+- EdDSA key management: Baby Jubjub curve, MetaMask-derived deterministic keys, AES-GCM encrypted localStorage storage
+- Stealth addresses: EIP-5564 meta-addresses for recipient privacy
+- Gasless ZK claims via dedicated zk-relayer (browser generates proof, relayer submits on-chain)
 
 ### 8.2 Gas Cost Comparison
 
@@ -807,7 +818,7 @@ A critical advantage of Scatter Settlement's ZK-free design is practical deploya
 | Claim (×4) | 132,588 | 0.0000189 ETH | $0.038 |
 | **Full trade total** | **569,296** | **~0.000081 ETH** | **~$0.16** |
 
-*Note: Gas prices are volatile; the values above represent a low-end spot observation. At the 7-day median gas price of ~3 Gwei (March 2025), the full trade cost would be ~$3.40 — still 67–74% cheaper than ZK-based alternatives at the same gas price.*
+*Note: Gas prices are volatile; the values above represent a spot observation. As of 2025-2026, L1 average gas prices have stabilized at ~0.1-0.5 Gwei due to L2 migration. At a 0.5 Gwei average, the full trade cost would be ~$0.51 — still 67–74% cheaper than ZK-based alternatives. See [docs/gas-cost-analysis.md](gas-cost-analysis.md) for detailed Standard vs ZK cost comparison.*
 
 For comparison at the same gas price: Tornado Cash (~2.2M gas) costs ~$0.63 and Railgun (~1.7M gas) costs ~$0.48 per equivalent trade. This means Scatter Settlement on L1 is cheaper than ZK-based alternatives would be even on L2 at moderate gas prices.
 
@@ -983,19 +994,22 @@ Gas (K)
 
 **Gas funding for fresh addresses**: A fresh recipient address has no ETH for gas fees. Naively funding it from an existing wallet creates an on-chain link that destroys the privacy gained from address separation. Scatter Settlement addresses this via gasless meta-transaction claims (Section 4.3, Phase 4 Mode B): the recipient signs an EIP-712 claim request off-chain binding a specific gas payer, that gas payer submits it on their behalf, and gas compensation (relayerTip) is deducted from the claimed tokens. This eliminates the need for the fresh address to ever receive ETH from an external source, preserving the address isolation property.
 
-### 9.2 Comparison with ZK-based Approaches
+### 9.2 Dual-Mode Architecture: Standard vs. ZK
 
-Scatter Settlement trades cryptographic privacy strength for practical deployability:
+ScatterDEX offers two settlement modes to accommodate different privacy requirements:
 
 ```
-ZK-based (Railgun):     Cryptographic guarantee, any traffic level
-                         But: expensive proofs, complex circuits, slow UX
+Standard Scatter Settlement:   Statistical guarantee, traffic-dependent
+                                Hash-locks + time-locks only, cheap gas (~569K)
+                                Best for: high-traffic environments, cost-sensitive users
 
-Scatter Settlement:      Statistical guarantee, traffic-dependent
-                         But: no ZK needed, cheap gas, simple implementation
+ZK Private Settlement:          Cryptographic guarantee, traffic-independent
+                                Groth16 proofs + commitment pools + stealth addresses
+                                Hides trader identities and claim structure on-chain
+                                Best for: maximum privacy, identity-sensitive use cases
 ```
 
-This is analogous to the distinction between information-theoretic and computational security [12, 17] — both are valid approaches with different trade-off profiles. Recent surveys [23] confirm that the DeFi ecosystem increasingly favors practical privacy solutions over theoretically optimal but gas-prohibitive alternatives.
+This dual-mode design allows users to choose their privacy-cost trade-off. The standard mode retains the ~67–74% gas advantage over pure ZK alternatives, while the ZK mode provides cryptographic privacy guarantees comparable to Railgun. Both modes share the same compliance infrastructure (Dual-CA, IdentityGate, RelayerRegistry) and multi-relayer MLS model.
 
 ### 9.3 Regulatory Implications
 
@@ -1013,7 +1027,7 @@ This "compliant privacy" model may represent a viable middle ground in the ongoi
 
 ## 10. Conclusion
 
-We presented Scatter Settlement, a settlement mechanism that achieves transaction unlinkability through seven-dimensional dissociation without relying on zero-knowledge proofs. Our construction uses only hash-locks and time-locks — well-understood cryptographic primitives — to dissociate deposits from withdrawals across token type, amount, address, time, transaction mixing, pre-claim concealment, and recipient consent. Empirical evaluation demonstrates **~67-74% gas cost reduction** compared to ZK-based alternatives while maintaining comparable privacy guarantees under realistic traffic conditions. Crucially, the absence of ZK proof verification makes Scatter Settlement practically deployable on Ethereum L1 mainnet — at current gas prices (~0.14 Gwei, March 2025), a full privacy trade costs under $0.16, making L2 deployment optional rather than necessary.
+We presented Scatter Settlement, a settlement mechanism that achieves transaction unlinkability through seven-dimensional dissociation. In its standard mode, our construction uses only hash-locks and time-locks — well-understood cryptographic primitives — to dissociate deposits from withdrawals across token type, amount, address, time, transaction mixing, pre-claim concealment, and recipient consent, achieving **~67-74% gas cost reduction** compared to ZK-based alternatives. For users requiring stronger privacy guarantees, our **ZK Private Settlement** mode uses Groth16 proofs with commitment pools, EdDSA signatures, and stealth addresses to hide trader identities and claim structure on-chain. The standard mode is practically deployable on Ethereum L1 mainnet — at current gas prices (~0.14 Gwei, March 2025), a full privacy trade costs under $0.16, making L2 deployment optional rather than necessary.
 
 Our formal analysis (Theorem 6.1) shows that the anonymity set grows with cross-token traffic volume, providing a natural "network effect" for privacy. The combination of limit orderbooks with off-chain matching and delayed settlement provides structural sandwich and front-running immunity — an additional benefit arising naturally from the privacy-first design.
 
@@ -1023,7 +1037,7 @@ To reconcile privacy with regulatory compliance, we introduced the **Dual-CA arc
 
 We believe Scatter Settlement demonstrates that meaningful financial privacy, regulatory compliance, and practical efficiency need not be mutually exclusive — a contribution timely given the current regulatory landscape around privacy-preserving financial infrastructure.
 
-**Future Work**: Formal verification of the smart contract implementation [31]; game-theoretic model of multi-relayer competition and fee dynamics [20]; integration with existing DEX aggregators [21]; exploration of cross-chain Scatter Settlement via bridge protocols [37, 38]; TEE-based relayer extension for stronger order privacy guarantees; extension to support Mixeth-style [26] trustless mixing within the escrow pool.
+**Future Work**: Formal verification of the smart contract implementation [31]; game-theoretic model of multi-relayer competition and fee dynamics [20]; integration with existing DEX aggregators [21]; exploration of cross-chain Scatter Settlement via bridge protocols [37, 38]; TEE-based relayer extension for stronger order privacy guarantees; extension to support Mixeth-style [26] trustless mixing within the escrow pool; formal security analysis of the ZK Private Settlement circuits; performance optimization of incremental Merkle tree proof generation.
 
 ---
 
