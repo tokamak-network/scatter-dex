@@ -166,7 +166,7 @@ export default function HistoryPage() {
     }
   }, [account, relayerUrl, expandedNonce]);
 
-  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
+  const totalPages = data ? Math.ceil((data.total ?? 0) / PAGE_SIZE) : 0;
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
 
   if (!account) {
@@ -202,7 +202,7 @@ export default function HistoryPage() {
         <div>
           <h1 className="text-2xl font-headline font-semibold text-on-surface">Order History</h1>
           <p className="text-sm text-on-surface-variant/70 mt-1">
-            {data ? `${data.total} total orders` : "Loading..."}
+            {data ? `${data.total ?? 0} total orders` : "Loading..."}
           </p>
         </div>
         <button
@@ -262,14 +262,14 @@ export default function HistoryPage() {
                   <Loader2 className="w-5 h-5 animate-spin text-primary mx-auto" />
                 </td>
               </tr>
-            ) : data && data.orders.length === 0 ? (
+            ) : data && data.orders?.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-4 py-12 text-center text-on-surface-variant/50">
                   No orders found
                 </td>
               </tr>
             ) : (
-              data?.orders.map((order) => {
+              data?.orders?.map((order) => {
                 const sellSym = tokenSymbol(order.sellToken, tokens);
                 const buySym = tokenSymbol(order.buyToken, tokens);
                 const isSameToken = order.sellToken.toLowerCase() === order.buyToken.toLowerCase();
