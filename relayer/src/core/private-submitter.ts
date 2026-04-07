@@ -32,6 +32,7 @@ const COMMITMENT_POOL_ABI = [
 
 const CLAIMS_TREE_DEPTH = 4;
 const COMMIT_TREE_DEPTH = 20;
+const BPS_DENOMINATOR = 10000n;
 
 export interface PrivateOrder {
   sellToken: bigint;
@@ -190,9 +191,14 @@ export class PrivateSubmitter {
     // Fee is cross-side: makerFee deducted from maker's sell → taker's receive token,
     // takerFee deducted from taker's sell → maker's receive token.
     // Use maxFee as-is: frontend already computed claim amounts based on this rate.
-    const BPS_DENOMINATOR = 10000n;
     const makerFeeBps = maker.maxFee;
     const takerFeeBps = taker.maxFee;
+    if (makerFeeBps < 0n || makerFeeBps > BPS_DENOMINATOR ||
+        takerFeeBps < 0n || takerFeeBps > BPS_DENOMINATOR) {
+      throw new Error(`Invalid fee BPS: maker=${makerFeeBps}, taker=${takerFeeBps}`);
+    }
+    // Floor division — matches circuit's floor-division check:
+    // fee * 10000 <= sellAmount * feeBps < fee * 10000 + 10000
     const feeTokenMaker = (taker.sellAmount * takerFeeBps) / BPS_DENOMINATOR;
     const feeTokenTaker = (maker.sellAmount * makerFeeBps) / BPS_DENOMINATOR;
 
