@@ -684,7 +684,8 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
         sellAmount: ethers.parseUnits("1", 18).toString(),
         buyAmount: ethers.parseEther("1000").toString(),
         nonce: "5003",
-        claims: [{ claimHash: makeClaimHash(s, addr.alice), amount: ethers.parseEther("0.997").toString(), releaseDelay: "3600" }],
+        // claim amount matches buyAmount after fee (0.3%): 1000 * 0.997 = 997
+        claims: [{ claimHash: makeClaimHash(s, addr.alice), amount: ethers.parseEther("997").toString(), releaseDelay: "3600" }],
       });
       const { body } = await submitOrder(bobOrder, await signOrder(bob, bobOrder, chainId));
       // No WETH seller would match at 0.001 USDC/WETH — stays pending
