@@ -110,26 +110,29 @@ export async function deleteNote(note: StoredNote): Promise<void> {
 
 // ─── EdDSA Key Storage (in same folder) ─────────────────────
 
-const EDDSA_KEY_FILENAME = "zkscatter-eddsa-key.json";
+/** Get key filename for a specific account address. */
+function eddsaKeyFilename(account: string): string {
+  return `zkscatter-eddsa-key-${account.toLowerCase().slice(2, 10)}.json`;
+}
 
-/** Save encrypted EdDSA key to the notes folder. */
-export async function saveEdDSAKeyToFolder(encryptedJson: string): Promise<void> {
+/** Save encrypted EdDSA key to the notes folder (per-account file). */
+export async function saveEdDSAKeyToFolder(encryptedJson: string, account: string): Promise<void> {
   if (!dirHandle) throw new Error("No folder selected");
-  const fileHandle = await dirHandle.getFileHandle(EDDSA_KEY_FILENAME, { create: true });
+  const fileHandle = await dirHandle.getFileHandle(eddsaKeyFilename(account), { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(encryptedJson);
   await writable.close();
 }
 
-/** Load encrypted EdDSA key from the notes folder. Returns null if not found. */
-export async function loadEdDSAKeyFromFolder(): Promise<string | null> {
+/** Load encrypted EdDSA key for the given account. Returns null if not found. */
+export async function loadEdDSAKeyFromFolder(account: string): Promise<string | null> {
   if (!dirHandle) return null;
   try {
-    const fileHandle = await dirHandle.getFileHandle(EDDSA_KEY_FILENAME);
+    const fileHandle = await dirHandle.getFileHandle(eddsaKeyFilename(account));
     const file = await fileHandle.getFile();
     return await file.text();
   } catch {
-    return null; // file doesn't exist
+    return null; // file doesn't exist for this account
   }
 }
 
