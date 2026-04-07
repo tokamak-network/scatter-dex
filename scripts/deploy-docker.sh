@@ -4,7 +4,9 @@
 set -euo pipefail
 
 RPC_URL="${RPC_URL:-http://anvil:8545}"
-DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# WARNING: This is Anvil's well-known Account #0 key — for LOCAL DEVELOPMENT ONLY.
+# NEVER use this key on mainnet or testnet. Override via DEPLOYER_KEY env var for production.
+DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 OUTPUT_FILE="/shared/addresses.env"
 
 # Ensure shared volume is writable
@@ -45,8 +47,7 @@ IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*IdentityGate:" | awk 
 
 # Validate all addresses were parsed
 for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC IDENTITY_GATE; do
-  eval val=\$$var_name
-  if [ -z "$val" ]; then
+  if [ -z "${!var_name}" ]; then
     echo "ERROR: Failed to parse $var_name from deploy output"
     exit 1
   fi

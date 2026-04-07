@@ -21,10 +21,13 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
     event RegistryAdded(address indexed registry);
     event RegistryRemoved(address indexed registry);
 
+    uint256 public constant MAX_REGISTRIES = 10;
+
     error RegistryAddressZero();
     error RegistryAlreadyAdded();
     error RegistryNotFound();
     error NoRegistries();
+    error TooManyRegistries();
     error RenounceOwnershipDisabled();
 
     constructor(address _initialRegistry) Ownable(msg.sender) {
@@ -44,6 +47,7 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
     function addRegistry(address _registry) external onlyOwner {
         if (_registry == address(0)) revert RegistryAddressZero();
         if (registryExists[_registry]) revert RegistryAlreadyAdded();
+        if (registries.length >= MAX_REGISTRIES) revert TooManyRegistries();
         registries.push(IIdentityRegistry(_registry));
         registryExists[_registry] = true;
         emit RegistryAdded(_registry);
@@ -110,7 +114,10 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
     }
 
     /// @notice Returns true if ANY registry is paused.
-    /// @dev Skips registries that revert.
+    /// @dev Conservative: if even one CA is paused, the gate signals caution.
+    ///      Individual CA pause does not block verification via other CAs —
+    ///      isVerified() handles this because paused registries return false.
+    ///      Skips registries that revert.
     function paused() external view override returns (bool) {
         for (uint256 i = 0; i < registries.length; i++) {
             try registries[i].paused() returns (bool isPaused) {

@@ -33,6 +33,6 @@ export const config = {
   relayerPrivateKey: loadPrivateKey(),
   commitmentPoolAddress: requireEnv("COMMITMENT_POOL_ADDRESS"),
   privateSettlementAddress: requireEnv("PRIVATE_SETTLEMENT_ADDRESS"),
-  relayerFee: parseInt(process.env.RELAYER_FEE || "30"),
-  port: parseInt(process.env.PORT || "3002"),
+  relayerFee: parseInt(process.env.RELAYER_FEE || "30", 10),
+  port: parseInt(process.env.PORT || "3002", 10),
 };
