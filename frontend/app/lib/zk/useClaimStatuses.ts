@@ -26,7 +26,7 @@ export function useClaimStatuses(
   useEffect(() => {
     if (claims.length === 0) return;
     // Stable key to avoid re-running for same claims
-    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|");
+    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (options?.includeTxHash ? ":tx" : "");
     if (key === keyRef.current) return;
     keyRef.current = key;
 
@@ -78,10 +78,12 @@ export function useClaimStatuses(
           result[i] = { claimed, txHash: txMap[i] };
         }
         setStatuses(result);
-      } catch { /* ignore */ }
+      } catch (e) { console.warn("Failed to check claim statuses:", e); }
     })();
     return () => { cancelled = true; };
-  }, [claims, options?.includeTxHash]);
+  // options.includeTxHash is checked via keyRef to avoid re-renders from unstable object refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claims]);
 
   return statuses;
 }

@@ -273,6 +273,13 @@ contract PrivateSettlementTest is Test {
         assertEq(claimed, 2 ether);
     }
 
+    function test_receive_rejects_non_weth() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        (bool ok,) = address(settlement).call{value: 1 ether}("");
+        assertFalse(ok, "Should reject ETH from non-WETH address");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────
 
     function _defaultSettleParams() internal view returns (PrivateSettlement.SettleParams memory) {

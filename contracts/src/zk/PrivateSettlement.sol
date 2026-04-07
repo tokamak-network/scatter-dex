@@ -31,6 +31,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotYetReleasable();
     error TokenMismatch();
     error AmountOverflow();
+    error OnlyWETH();
     error TimestampOutOfRange();
 
     // ─── Events ──────────────────────────────────────────────────
@@ -240,8 +241,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
         if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
 
-        // withdrawAmount must cover claims + fee
-        if (p.withdrawAmount < uint256(p.totalLocked) + uint256(p.fee)) revert AmountOverflow();
+        // withdrawAmount must exactly equal claims + fee (no surplus left in contract)
+        if (p.withdrawAmount != uint256(p.totalLocked) + uint256(p.fee)) revert AmountOverflow();
 
         // Verify root is known
         if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
@@ -334,7 +335,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @dev Accept ETH only from WETH.withdraw() during claimWithProof().
     receive() external payable {
-        if (msg.sender != weth) revert ZeroAddress();
+        if (msg.sender != weth) revert OnlyWETH();
     }
 
     // Claims are permanently claimable — no expiry or refund mechanism.
