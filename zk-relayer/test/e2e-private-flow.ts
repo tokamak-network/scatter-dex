@@ -26,8 +26,8 @@ import { fileURLToPath } from "url";
 // Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
 import { poseidon2, poseidon4, poseidon5, poseidon8 } from "poseidon-lite";
 
-// EdDSA still needs circomlibjs (WASM-based) — only used for F.toObject / F.e on
-// EdDSA signatures, NOT for hashing. Hash results come from poseidon-lite above.
+// EdDSA needs circomlibjs (WASM-based) — only used for babyJub.F field conversions
+// on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,16 +81,10 @@ function poseidonHash(inputs: bigint[]): bigint {
   }
 }
 
-let _poseidonWasm: any;
-async function getPoseidon() {
-  if (!_poseidonWasm) {
-    const { buildPoseidon } = await import("circomlibjs");
-    _poseidonWasm = await buildPoseidon();
-  }
-  return _poseidonWasm;
+async function getEdDSAWithField() {
+  const { eddsa, babyJub } = await getEdDSAImpl();
+  return { eddsa, F: babyJub.F };
 }
-
-const getEdDSA = async () => (await getEdDSAImpl()).eddsa;
 
 const BN254_ORDER = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -99,7 +93,7 @@ function randomFieldElement(): bigint {
   do {
     const bytes = new Uint8Array(32);
     globalThis.crypto.getRandomValues(bytes);
-    bytes[0] &= 0x1f;
+    bytes[0] &= 0x3f; // BN254 order is 254 bits — mask top 2 bits
     value = 0n;
     for (const b of bytes) value = (value << 8n) | BigInt(b);
   } while (value >= BN254_ORDER);
@@ -243,8 +237,7 @@ async function main() {
 
   // ─── Step 3: Generate EdDSA key + sign order ───────────────
   console.log("\n[3/7] Generating EdDSA key & signing order...");
-  const eddsa = await getEdDSA();
-  const F = (await getPoseidon()).F;
+  const { eddsa, F } = await getEdDSAWithField();
 
   // Deterministic seed for reproducibility — NOT used in production
   const eddsaPrivKey = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-test-key")).slice(2), "hex");
@@ -257,7 +250,12 @@ async function main() {
   const claimSecret2 = randomFieldElement();
   const recipientBig = BigInt(RECIPIENT);
   const tokenBig = BigInt(weth);
-  const releaseTime = BigInt(Math.floor(Date.now() / 1000) + 60);
+
+  // Use chain timestamp (not wall clock) — contracts enforce block.timestamp checks
+  const latestBlock = await provider.getBlock("latest");
+  if (!latestBlock) throw new Error("Failed to fetch latest block");
+  const chainTime = BigInt(latestBlock.timestamp);
+  const releaseTime = chainTime + 60n;
 
   const claims = [
     { secret: claimSecret1, recipient: recipientBig, token: tokenBig, amount: claimAmount1, releaseTime },
@@ -278,9 +276,9 @@ async function main() {
   const changeAmount = depositAmount - sellAmount;
   const expectedChangeCommitment = poseidonHash([ownerSecret, tokenBig, changeAmount, changeSalt]);
 
-  // Build order nonce
-  const nonce = BigInt(Date.now());
-  const expiry = BigInt(Math.floor(Date.now() / 1000) + 86400);
+  // Build order nonce (use chain time to avoid wall-clock drift)
+  const nonce = chainTime * 1000n + BigInt(Date.now() % 1000); // unique per run
+  const expiry = chainTime + 86400n;
 
   // Hash order
   const orderHash = poseidonHash([
@@ -360,11 +358,12 @@ async function main() {
 
   // ─── Step 6: Wait for releaseTime, then claim ──────────────
   console.log("\n[6/7] Claiming via zk-relayer...");
-  const now = Math.floor(Date.now() / 1000);
-  const waitSec = Number(releaseTime) - now;
-  if (waitSec > 0) {
-    console.log(`  Advancing anvil time by ${waitSec}s...`);
-    await provider.send("evm_increaseTime", [waitSec + 1]);
+  const currentBlock = await provider.getBlock("latest");
+  const currentChainTime = BigInt(currentBlock!.timestamp);
+  if (currentChainTime <= releaseTime) {
+    const advance = Number(releaseTime - currentChainTime) + 1;
+    console.log(`  Advancing anvil time by ${advance}s...`);
+    await provider.send("evm_increaseTime", [advance]);
     await provider.send("evm_mine", []);
   }
 
@@ -411,6 +410,9 @@ async function main() {
     return data.txHash;
   }
 
+  // Capture balance before claims for delta verification
+  const recipientEthBefore = await provider.getBalance(RECIPIENT);
+
   const tx1 = await submitClaim(0, claimSecret1, claimAmount1);
   assert(true, `Claim #1 TX: ${tx1}`);
 
@@ -423,12 +425,16 @@ async function main() {
   const tx2 = await submitClaim(1, claimSecret2, claimAmount2);
   assert(true, `Claim #2 TX: ${tx2}`);
 
+  // Wait for claim #2 TX to be mined before verifying on-chain state
+  await provider.waitForTransaction(tx2);
+
   // ─── Step 7: Verify balances ───────────────────────────────
   console.log("\n[7/7] Verifying balances...");
 
-  const recipientEth = await provider.getBalance(RECIPIENT);
+  const recipientEthAfter = await provider.getBalance(RECIPIENT);
+  const ethDelta = recipientEthAfter - recipientEthBefore;
   const expectedTotal = claimAmount1 + claimAmount2;
-  assert(recipientEth >= expectedTotal, `Recipient ETH: ${ethers.formatEther(recipientEth)} (expected ≥ ${ethers.formatEther(expectedTotal)})`);
+  assert(ethDelta >= expectedTotal, `Recipient ETH delta: +${ethers.formatEther(ethDelta)} (expected ≥ ${ethers.formatEther(expectedTotal)})`);
 
   const recipientWeth = await wethContract.balanceOf(RECIPIENT);
   assert(recipientWeth === 0n, `Recipient WETH: 0 (auto-unwrapped)`);
