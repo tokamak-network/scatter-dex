@@ -676,15 +676,14 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Cancelled order doesn't match with counter order", async () => {
-      // Use an extremely low price (1 USDC for 1000 WETH) that no WETH seller would match
+      // Price 1 USDC/WETH — too low for any WETH seller (normal ~2100), won't match
       await mintAndDepositUSDC(bob, ethers.parseUnits("1", 18), deployer);
       const s = ethers.keccak256(ethers.toUtf8Bytes("g5-no-match"));
       const bobOrder = buildOrder({
         maker: addr.bob, sellToken: USDC, buyToken: WETH,
         sellAmount: ethers.parseUnits("1", 18).toString(),
-        buyAmount: ethers.parseEther("1000").toString(),
+        buyAmount: ethers.parseEther("1").toString(),
         nonce: "5003",
-        // Intentionally small claim — this order is designed to never match (stays pending)
         claims: [{ claimHash: makeClaimHash(s, addr.alice), amount: ethers.parseEther("0.997").toString(), releaseDelay: "3600" }],
       });
       const { body } = await submitOrder(bobOrder, await signOrder(bob, bobOrder, chainId));
