@@ -2,14 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, ArrowLeftRight, Radio, ClipboardList, Lock, ShieldCheck, Gift, FileText, Globe, Fingerprint } from "lucide-react";
-
-const standardLinks = [
-  { href: "/trade/escrow", label: "Escrow", icon: Shield },
-  { href: "/trade/order", label: "Order", icon: ArrowLeftRight },
-  { href: "/trade/history", label: "History", icon: ClipboardList },
-  { href: "/trade/relayers", label: "Relayers", icon: Radio },
-];
+import { Lock, ShieldCheck, Gift, FileText } from "lucide-react";
 
 const privateLinks = [
   { href: "/trade/private-escrow", label: "Escrow", icon: Lock },
@@ -21,7 +14,7 @@ const privateLinks = [
 export default function TradeLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  const renderLink = (link: typeof standardLinks[number]) => {
+  const renderLink = (link: typeof privateLinks[number]) => {
     const active = pathname === link.href || pathname.startsWith(link.href + "/");
     const Icon = link.icon;
     return (
@@ -46,28 +39,11 @@ export default function TradeLayout({ children }: { children: React.ReactNode })
       <aside className="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-surface-container flex flex-col py-6 border-r border-outline-variant/15 z-30">
         <div className="px-6 mb-6">
           <h2 className="text-lg font-headline font-semibold text-on-surface">
-            Trading Terminal
+            Secret Trade
           </h2>
-          <p className="text-xs text-on-surface-variant/70">Fluid Logic Execution</p>
+          <p className="text-xs text-on-surface-variant/70">ZK Privacy-Preserving Exchange</p>
         </div>
 
-        {/* Standard */}
-        <div className="px-4 mb-2 flex items-center gap-1.5">
-          <Globe className="w-3.5 h-3.5 text-blue-400" />
-          <span className="text-xs uppercase tracking-widest text-on-surface-variant/70 font-bold">Standard</span>
-        </div>
-        <div className="flex flex-col gap-0.5 px-2 mb-4">
-          {standardLinks.map(renderLink)}
-        </div>
-
-        {/* Divider */}
-        <div className="mx-4 border-t border-outline-variant/10 mb-4" />
-
-        {/* Private (ZK) */}
-        <div className="px-4 mb-2 flex items-center gap-1.5">
-          <Fingerprint className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="text-xs uppercase tracking-widest text-on-surface-variant/70 font-bold">Private (ZK)</span>
-        </div>
         <div className="flex flex-col gap-0.5 px-2">
           {privateLinks.map(renderLink)}
         </div>

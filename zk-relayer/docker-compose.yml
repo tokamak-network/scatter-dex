@@ -1,0 +1,22 @@
+services:
+  zk-relayer:
+    build: .
+    ports:
+      - "${PORT:-3002}:${PORT:-3002}"
+    environment:
+      - PORT=${PORT:-3002}
+      - RPC_URL=${RPC_URL}
+      - RELAYER_PRIVATE_KEY_FILE=/run/secrets/relayer_key
+      - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
+      - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+      - RELAYER_FEE=${RELAYER_FEE:-30}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    secrets:
+      - relayer_key
+    volumes:
+      - ../circuits/build:/app/circuits/build:ro
+    restart: unless-stopped
+
+secrets:
+  relayer_key:
+    file: ${RELAYER_KEY_FILE:-./relayer.key}

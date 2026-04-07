@@ -34,3 +34,5 @@ node_modules/
 
 # Misc
 frontend/1.json
+relayer/dist/
+relayer/dist/

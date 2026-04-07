@@ -14,9 +14,7 @@ declare global {
 // Dynamic access like process.env[key] does NOT work on the client.
 // This map bridges the gap for client-side usage.
 const ENV_MAP: Record<string, string | undefined> = {
-  NEXT_PUBLIC_SETTLEMENT_ADDRESS: process.env.NEXT_PUBLIC_SETTLEMENT_ADDRESS,
   NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS: process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS,
-  NEXT_PUBLIC_VAULTSKILLS_ADDRESS: process.env.NEXT_PUBLIC_VAULTSKILLS_ADDRESS,
   NEXT_PUBLIC_WETH_ADDRESS: process.env.NEXT_PUBLIC_WETH_ADDRESS,
   NEXT_PUBLIC_RPC_URL: process.env.NEXT_PUBLIC_RPC_URL,
   NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
@@ -24,6 +22,8 @@ const ENV_MAP: Record<string, string | undefined> = {
   NEXT_PUBLIC_TOKENS: process.env.NEXT_PUBLIC_TOKENS,
   NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS: process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS,
   NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS: process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS,
+  NEXT_PUBLIC_IDENTITY_GATE_ADDRESS: process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS,
+  NEXT_PUBLIC_ZK_X509_URL: process.env.NEXT_PUBLIC_ZK_X509_URL,
 };
 
 export function getEnv(key: string): string | undefined {
@@ -44,22 +44,10 @@ function requireEnv(key: string): string {
 // Lazy getters — evaluated at runtime (first access), not at import/build time.
 // This avoids crashes during SSG when env vars are absent.
 
-let _settlement: string | undefined;
-export function getSettlementAddress(): string {
-  if (!_settlement) _settlement = requireEnv("NEXT_PUBLIC_SETTLEMENT_ADDRESS");
-  return _settlement;
-}
-
 let _registry: string | undefined;
 export function getRelayerRegistryAddress(): string {
   if (!_registry) _registry = requireEnv("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS");
   return _registry;
-}
-
-let _vaultSkills: string | undefined;
-export function getVaultSkillsAddress(): string {
-  if (!_vaultSkills) _vaultSkills = requireEnv("NEXT_PUBLIC_VAULTSKILLS_ADDRESS");
-  return _vaultSkills;
 }
 
 let _weth: string | undefined;
@@ -78,6 +66,16 @@ let _privateSettlement: string | undefined;
 export function getPrivateSettlementAddress(): string {
   if (!_privateSettlement) _privateSettlement = requireEnv("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS");
   return _privateSettlement;
+}
+
+let _identityGate: string | undefined;
+export function getIdentityGateAddress(): string {
+  if (!_identityGate) _identityGate = requireEnv("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS");
+  return _identityGate;
+}
+
+export function getZkX509Url(): string {
+  return getEnv("NEXT_PUBLIC_ZK_X509_URL") || "https://github.com/tokamak-network/zk-X509";
 }
 
 export const RPC_URL = getEnv("NEXT_PUBLIC_RPC_URL") || "http://localhost:8545";

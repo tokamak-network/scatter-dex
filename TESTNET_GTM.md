@@ -12,7 +12,7 @@ The paper mentions Arbitrum, but **Base (Coinbase L2)** is where the current mar
 
 - Position as **"The compliant privacy layer for Base ecosystem"**
 - Attracts Coinbase Ventures' attention
-- Base has strong regulatory alignment (Coinbase's compliance DNA), which matches ScatterDEX's zk-X509 identity gating narrative perfectly
+- Base has strong regulatory alignment (Coinbase's compliance DNA), which matches zkScatter's zk-X509 identity gating narrative perfectly
 - Lower competition in privacy tooling on Base vs Arbitrum
 
 ## 2. "Aha!" Moment UI/UX
@@ -81,7 +81,7 @@ Build a **[My Scatter Status Board]** that visually shows:
 
 ## 4. VC Narrative
 
-**Elevator pitch**: "ScatterDEX is the first DEX that solves the privacy-compliance-efficiency trilemma. We combine hash-lock scatter settlement for standard trades with full ZK privacy (Groth16 + stealth addresses) for maximum anonymity — all with built-in KYC compliance via zk-X509."
+**Elevator pitch**: "zkScatter is the first DEX that solves the privacy-compliance-efficiency trilemma. We combine hash-lock scatter settlement for standard trades with full ZK privacy (Groth16 + stealth addresses) for maximum anonymity — all with built-in KYC compliance via zk-X509."
 
 **Key differentiators for VC pitch**:
 1. **Regulatory moat**: zk-X509 identity gating = compliant by design (post-Tornado Cash world)

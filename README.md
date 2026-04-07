@@ -1,19 +1,18 @@
-# ScatterDEX
+# zkScatter
 
-A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For stronger on-chain privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities and claim structure, while aggregate settlement amounts and token information remain public on-chain.
+A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via ZK relayers; settlements use **ZK Private Settlement** — Groth16 proofs with commitment pools hide trader identities and claim structure on-chain, while zk-X509 identity gating ensures regulatory compliance.
 
-> Privacy + Compliance + Efficiency — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
+> Privacy + Compliance — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
 
 ## Architecture
 
 ```
-Frontend (Next.js)  →  Relayer (Node.js)      →  Contracts (Solidity / Foundry)
+Frontend (Next.js)  →  ZK Relayer (Node.js)   →  Contracts (Solidity / Foundry)
      ↕                      ↕                            ↕
-  MetaMask            Order matching             ScatterSettlement (standard)
-  EdDSA keys          EIP-712 signing            PrivateSettlement (ZK)
-  Stealth addr        ZK proof generation        CommitmentPool (incremental Merkle tree)
-                                                 RelayerRegistry
-                      zk-relayer (gasless)       IdentityGate
+  MetaMask            Order matching             PrivateSettlement (ZK)
+  EdDSA keys          ZK proof generation        CommitmentPool (incremental Merkle tree)
+                      Gasless claims             RelayerRegistry
+                                                 IdentityGate (multi-CA)
 
 Circuits (Circom)
   settle.circom      ~30K constraints — private settlement with EdDSA + fee validation
@@ -25,20 +24,19 @@ Circuits (Circom)
 
 ```
 contracts/       Solidity contracts + Foundry tests
-  src/             ScatterSettlement, RelayerRegistry, IdentityGate, VaultSkills
+  src/             RelayerRegistry, IdentityGate (multi-CA)
   src/zk/          CommitmentPool, PrivateSettlement, IncrementalMerkleTree
-  test/            Unit, E2E, gas benchmark tests (165+)
-  script/          DeployLocal, DeploySettlement
+  test/            Unit + E2E tests
+  script/          DeployLocal
 circuits/        Circom ZK circuits (settle, claim, withdraw)
   build/           Generated artifacts (WASM + zkeys, produced by scripts/build.sh)
-frontend/        Next.js app (trade, deposit, claim, private order, history)
-  app/lib/zk/      EdDSA, commitment, stealth, incremental tree
-relayer/         Off-chain order matching + settlement relay
-  src/core/        Orderbook, matcher, submitter, private-submitter, DB
-  test/            Unit tests (45+) + E2E integration (36)
-zk-relayer/      Gasless ZK claim relay (proof submission)
+frontend/        Next.js app (Secret Trade, Relayer dashboard, Identity verification)
+  app/lib/zk/      EdDSA, commitment, incremental tree
+zk-relayer/      ZK order matching + gasless claim relay
+  src/core/        Orderbook, matcher, private-submitter, DB
+  test/            E2E integration tests
 scripts/         Dev & E2E test scripts
-docs/            Research paper, design docs, ZK trading guide
+docs/            Research paper, design docs
 ```
 
 ## Quick Start
@@ -50,11 +48,11 @@ docs/            Research paper, design docs, ZK trading guide
 
 ### Full Local Dev (with zk-X509)
 
-ScatterDEX requires a **zk-X509 Identity Registry** for user verification. For the full setup with both systems on a shared anvil, see **[docs/local-setup.md](docs/local-setup.md)**.
+zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA: User CA + Relayer CA). For the full setup with both systems on a shared anvil, see **[docs/local-setup.md](docs/local-setup.md)**.
 
 ```bash
 # After zk-X509 is deployed on anvil:
-IDENTITY_REGISTRY=0x... ./scripts/dev.sh
+IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 ```
 
 ### Quick Start (mock mode)
@@ -65,21 +63,26 @@ For rapid development without zk-X509 (identity verification bypassed):
 ./scripts/dev.sh --mock
 ```
 
-Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches relayer + frontend. Open http://localhost:3000.
+Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk-relayer + frontend. Open http://localhost:3000.
 
 ### Run Tests
 
 ```bash
-cd contracts && forge test          # 165+ tests (unit + E2E + gas benchmark)
-cd relayer && npm test              # 45+ unit tests
-cd relayer && npm run test:e2e      # 36+ E2E integration tests (requires anvil + deploy + relayer)
-bash scripts/run-e2e.sh             # Full E2E: Foundry + relayer integration
+cd contracts && forge test          # Contract tests
+cd zk-relayer && npm test           # ZK relayer unit tests
+cd zk-relayer && npx tsx test/e2e-private-flow.ts  # Full E2E (requires dev.sh --mock)
 ```
 
-### Docker
+### Docker (ZK Relayer)
 
 ```bash
-docker-compose up
+cd zk-relayer
+PORT=3002 \
+RPC_URL=https://your-rpc.example.com \
+COMMITMENT_POOL_ADDRESS=0x... \
+PRIVATE_SETTLEMENT_ADDRESS=0x... \
+RELAYER_KEY_FILE=./relayer.key \
+docker compose up -d
 ```
 
 ## Test Accounts (anvil defaults)
