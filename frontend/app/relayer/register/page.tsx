@@ -66,7 +66,7 @@ export default function RelayerRegisterPage() {
       setAlreadyRegistered(isActive);
 
       // Get min bond
-      const bond = await registry.MIN_BOND();
+      const bond = await registry.minBond();
       setMinBond(bond);
 
       if (!verified) {
@@ -98,8 +98,12 @@ export default function RelayerRegisterPage() {
       const registryAddr = getRelayerRegistryAddress();
       const registry = new ethers.Contract(registryAddr, RELAYER_REGISTRY_ABI, signer);
 
-      const fee = BigInt(feeBps);
-      const bond = ethers.parseEther(bondEth || "0");
+      const feeNum = parseInt(feeBps, 10);
+      if (isNaN(feeNum) || feeNum < 0 || feeNum > 500) throw new Error("FeeTooHigh");
+      const fee = BigInt(feeNum);
+      let bond: bigint;
+      try { bond = ethers.parseEther(bondEth || "0"); }
+      catch { throw new Error("Invalid bond amount"); }
 
       const tx = await registry.register(url, fee, { value: bond });
       const receipt = await tx.wait();
@@ -107,17 +111,15 @@ export default function RelayerRegisterPage() {
       setStatus("success");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Registration failed";
-      if (msg.includes("NotVerified")) {
-        setErrorMsg("zk-X509 identity not verified. Please register your identity first.");
-      } else if (msg.includes("AlreadyRegistered")) {
-        setErrorMsg("This address is already registered as a relayer.");
-      } else if (msg.includes("InsufficientBond")) {
-        setErrorMsg(`Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`);
-      } else if (msg.includes("FeeTooHigh")) {
-        setErrorMsg("Fee too high. Maximum: 500 bps (5%).");
-      } else {
-        setErrorMsg(msg);
-      }
+      const errorMap: Record<string, string> = {
+        NotVerified: "zk-X509 identity not verified. Please register your identity first.",
+        AlreadyRegistered: "This address is already registered as a relayer.",
+        InsufficientBond: `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`,
+        FeeTooHigh: "Fee too high. Maximum: 500 bps (5%).",
+        "Invalid bond": "Invalid bond amount. Enter a valid ETH value.",
+      };
+      const matched = Object.entries(errorMap).find(([key]) => msg.includes(key));
+      setErrorMsg(matched ? matched[1] : msg);
       setStatus("error");
     }
   };

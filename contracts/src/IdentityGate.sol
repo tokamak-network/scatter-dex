@@ -53,14 +53,17 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
         if (!registryExists[_registry]) revert RegistryNotFound();
         if (registries.length == 1) revert NoRegistries();
 
-        // Swap-and-pop
+        // Swap-and-pop — find and remove from array
+        bool found = false;
         for (uint256 i = 0; i < registries.length; i++) {
             if (address(registries[i]) == _registry) {
                 registries[i] = registries[registries.length - 1];
                 registries.pop();
+                found = true;
                 break;
             }
         }
+        if (!found) revert RegistryNotFound();
         registryExists[_registry] = false;
         emit RegistryRemoved(_registry);
     }
@@ -80,27 +83,41 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
     // ─── IIdentityRegistry Implementation ────────────────────
 
     /// @notice Returns true if ANY registered CA has verified the user.
+    /// @dev Skips registries that revert (e.g., misconfigured proxy) to prevent DoS.
     function isVerified(address user) external view override returns (bool) {
         for (uint256 i = 0; i < registries.length; i++) {
-            if (registries[i].isVerified(user)) return true;
+            try registries[i].isVerified(user) returns (bool verified) {
+                if (verified) return true;
+            } catch {
+                continue; // skip reverting registry
+            }
         }
         return false;
     }
 
     /// @notice Returns the latest expiry across all CAs (0 = unverified in all).
+    /// @dev Skips registries that revert.
     function verifiedUntil(address user) external view override returns (uint64) {
         uint64 latest = 0;
         for (uint256 i = 0; i < registries.length; i++) {
-            uint64 until = registries[i].verifiedUntil(user);
-            if (until > latest) latest = until;
+            try registries[i].verifiedUntil(user) returns (uint64 until) {
+                if (until > latest) latest = until;
+            } catch {
+                continue;
+            }
         }
         return latest;
     }
 
     /// @notice Returns true if ANY registry is paused.
+    /// @dev Skips registries that revert.
     function paused() external view override returns (bool) {
         for (uint256 i = 0; i < registries.length; i++) {
-            if (registries[i].paused()) return true;
+            try registries[i].paused() returns (bool isPaused) {
+                if (isPaused) return true;
+            } catch {
+                continue;
+            }
         }
         return false;
     }

@@ -41,9 +41,10 @@ COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*CommitmentPool:" | 
 PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*PrivateSettlement:" | awk '{print $NF}')
 WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
 USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
+IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*IdentityGate:" | awk '{print $NF}')
 
 # Validate all addresses were parsed
-for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC; do
+for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC IDENTITY_GATE; do
   eval val=\$$var_name
   if [ -z "$val" ]; then
     echo "ERROR: Failed to parse $var_name from deploy output"
@@ -60,6 +61,7 @@ COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 

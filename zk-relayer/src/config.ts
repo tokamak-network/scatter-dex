@@ -12,8 +12,17 @@ function loadPrivateKey(): string {
   // RELAYER_PRIVATE_KEY_FILE takes precedence (for Docker secrets / mounted files)
   const keyFile = process.env.RELAYER_PRIVATE_KEY_FILE;
   if (keyFile) {
-    const key = readFileSync(keyFile, "utf-8").trim();
+    let key: string;
+    try {
+      key = readFileSync(keyFile, "utf-8").trim();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      throw new Error(`Cannot read RELAYER_PRIVATE_KEY_FILE (${keyFile}): ${msg}`);
+    }
     if (!key) throw new Error(`RELAYER_PRIVATE_KEY_FILE (${keyFile}) is empty`);
+    if (!key.startsWith("0x") || key.length !== 66) {
+      throw new Error(`RELAYER_PRIVATE_KEY_FILE (${keyFile}): invalid key format (expected 0x-prefixed 64 hex chars)`);
+    }
     return key;
   }
   return requireEnv("RELAYER_PRIVATE_KEY");
