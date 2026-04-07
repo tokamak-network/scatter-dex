@@ -67,7 +67,8 @@ export class PrivateSubmitter {
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private pool: ethers.Contract;
-  private tree: IncrementalMerkleTree | null = null;
+  private tree = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+  private lastIndexedBlock = 0;
 
   constructor(
     privateSettlementAddr: string,
@@ -80,8 +81,41 @@ export class PrivateSubmitter {
     this.pool = new ethers.Contract(commitmentPoolAddr, COMMITMENT_POOL_ABI, this.provider);
   }
 
-  /** Index all commitment deposits from on-chain events and build incremental tree. */
+  /** Index new commitment deposits since last indexed block. */
   async indexCommitments(): Promise<void> {
+    const filter = this.pool.filters.CommitmentInserted();
+    const fromBlock = this.lastIndexedBlock;
+    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
+
+    let newCount = 0;
+    for (const event of events) {
+      const parsed = this.pool.interface.parseLog({
+        topics: event.topics as string[],
+        data: event.data,
+      });
+      if (parsed) {
+        const leafIndex = Number(parsed.args.leafIndex);
+        // Skip already-indexed leaves
+        if (leafIndex < this.tree.nextIndex) continue;
+        // Fill gaps with zero leaves
+        while (this.tree.nextIndex < leafIndex) {
+          await this.tree.insert(0n);
+        }
+        await this.tree.insert(BigInt(parsed.args.commitment));
+        newCount++;
+      }
+      if (event.blockNumber) {
+        this.lastIndexedBlock = Math.max(this.lastIndexedBlock, event.blockNumber);
+      }
+    }
+
+    if (newCount > 0) {
+      console.log(`Indexed ${newCount} new commitments (total: ${this.tree.nextIndex})`);
+    }
+  }
+
+  /** Full re-index from block 0 (used on root mismatch). */
+  private async reindexFromScratch(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
     const events = await this.pool.queryFilter(filter, 0, "latest");
     const leaves: bigint[] = [];
@@ -96,33 +130,34 @@ export class PrivateSubmitter {
         while (leaves.length <= leafIndex) leaves.push(0n);
         leaves[leafIndex] = BigInt(parsed.args.commitment);
       }
+      if (event.blockNumber) {
+        this.lastIndexedBlock = Math.max(this.lastIndexedBlock, event.blockNumber);
+      }
     }
 
     this.tree = await IncrementalMerkleTree.fromLeaves(leaves, COMMIT_TREE_DEPTH);
-    console.log(`Indexed ${leaves.length} commitments (incremental tree)`);
+    console.log(`Re-indexed ${leaves.length} commitments from scratch`);
   }
 
   /** Submit a private settlement with ZK proof. */
   async submitPrivateSettle(match: PrivateMatch): Promise<string> {
     const { maker, taker } = match;
 
-    // Index commitments and build incremental tree
+    // Incrementally index only new commitments since last call
     await this.indexCommitments();
-    if (!this.tree) throw new Error("Tree not initialized");
 
     // Verify on-chain root matches
     let commitRoot = this.tree.root;
     const onChainRoot = await this.pool.getLastRoot();
     if (commitRoot !== BigInt(onChainRoot)) {
-      console.warn("Local tree root differs from on-chain root, re-indexing...");
-      await this.indexCommitments();
-      if (!this.tree) throw new Error("Tree not initialized after re-index");
+      console.warn("Local tree root differs from on-chain root, re-indexing from scratch...");
+      await this.reindexFromScratch();
       commitRoot = this.tree.root;
     }
 
-    // Get Merkle proofs (O(n) per proof, but only 2 proofs per settlement)
-    const makerProof = await this.tree.getProofAsync(maker.leafIndex);
-    const takerProof = await this.tree.getProofAsync(taker.leafIndex);
+    // Get Merkle proofs — layers are cached, so 2nd proof reuses the cache
+    const makerProof = await this.tree.getProof(maker.leafIndex);
+    const takerProof = await this.tree.getProof(taker.leafIndex);
 
     // Compute claim leaves and roots
     const makerClaimLeaves = await Promise.all(

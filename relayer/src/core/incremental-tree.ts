@@ -1,6 +1,7 @@
 /**
  * Incremental Poseidon Merkle Tree — mirrors IncrementalMerkleTree.sol.
  * O(depth) per insertion instead of O(2^depth) full rebuild.
+ * Layers are cached and rebuilt lazily for O(depth) proof generation.
  */
 
 import { poseidonHash } from "./zk-prover.js";
@@ -36,11 +37,13 @@ export class IncrementalMerkleTree {
   private filledSubtrees: bigint[];
   private _leaves: bigint[] = [];
   private _root: bigint;
+  private _cachedLayers: bigint[][] | null = null; // Lazy-built, invalidated on insert
 
+  // depth is capped at 20 (ZEROS.length - 1), so 2**depth fits safely in Number
   constructor(depth: number) {
     if (depth > ZEROS.length - 1) throw new Error(`depth ${depth} exceeds precomputed zeros`);
     this.depth = depth;
-    this.filledSubtrees = ZEROS.slice(0, depth).map((z) => z);
+    this.filledSubtrees = ZEROS.slice(0, depth);
     this._root = ZEROS[depth];
   }
 
@@ -56,6 +59,7 @@ export class IncrementalMerkleTree {
     let currentIndex = this._leaves.length;
     let currentHash = leaf;
     this._leaves.push(leaf);
+    this._cachedLayers = null; // Invalidate cache
 
     for (let i = 0; i < this.depth; i++) {
       let left: bigint, right: bigint;
@@ -75,11 +79,9 @@ export class IncrementalMerkleTree {
     return this._leaves.length - 1;
   }
 
-  /** Get Merkle proof for a leaf. O(n) — rebuilds layers from leaves. */
-  async getProofAsync(leafIndex: number): Promise<{ pathElements: bigint[]; pathIndices: number[] }> {
-    if (leafIndex < 0 || leafIndex >= this._leaves.length) {
-      throw new Error(`leafIndex ${leafIndex} out of range [0, ${this._leaves.length})`);
-    }
+  /** Build layers once, cache for multiple proof lookups. O(n) total, then O(depth) per proof. */
+  private async ensureLayers(): Promise<bigint[][]> {
+    if (this._cachedLayers) return this._cachedLayers;
 
     const size = 2 ** this.depth;
     const padded = [...this._leaves];
@@ -97,6 +99,17 @@ export class IncrementalMerkleTree {
       currentLayer = nextLayer;
     }
 
+    this._cachedLayers = layers;
+    return layers;
+  }
+
+  /** Get Merkle proof. First call builds layers O(n), subsequent calls O(depth). */
+  async getProof(leafIndex: number): Promise<{ pathElements: bigint[]; pathIndices: number[] }> {
+    if (leafIndex < 0 || leafIndex >= this._leaves.length) {
+      throw new Error(`leafIndex ${leafIndex} out of range [0, ${this._leaves.length})`);
+    }
+
+    const layers = await this.ensureLayers();
     const pathElements: bigint[] = [];
     const pathIndices: number[] = [];
     let idx = leafIndex;

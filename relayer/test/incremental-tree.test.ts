@@ -31,7 +31,7 @@ describe("IncrementalMerkleTree", () => {
     expect(tree.nextIndex).toBe(5);
   });
 
-  it("getProofAsync produces valid Merkle path", async () => {
+  it("getProof produces valid Merkle path", async () => {
     const leaves = [10n, 20n, 30n, 40n];
     const tree = new IncrementalMerkleTree(DEPTH);
     for (const leaf of leaves) await tree.insert(leaf);
@@ -39,7 +39,7 @@ describe("IncrementalMerkleTree", () => {
     const { root: fullRoot, layers } = await buildMerkleTree(leaves, DEPTH);
 
     for (let i = 0; i < leaves.length; i++) {
-      const proof = await tree.getProofAsync(i);
+      const proof = await tree.getProof(i);
       expect(proof.pathElements.length).toBe(DEPTH);
       expect(proof.pathIndices.length).toBe(DEPTH);
 
@@ -76,11 +76,11 @@ describe("IncrementalMerkleTree", () => {
     await expect(tree.insert(99n)).rejects.toThrow("tree full");
   });
 
-  it("getProofAsync out of range throws", async () => {
+  it("getProof out of range throws", async () => {
     const tree = new IncrementalMerkleTree(DEPTH);
     await tree.insert(1n);
-    await expect(tree.getProofAsync(-1)).rejects.toThrow("out of range");
-    await expect(tree.getProofAsync(1)).rejects.toThrow("out of range");
+    await expect(tree.getProof(-1)).rejects.toThrow("out of range");
+    await expect(tree.getProof(1)).rejects.toThrow("out of range");
   });
 
   it("depth 20 insert is fast", async () => {
@@ -91,7 +91,6 @@ describe("IncrementalMerkleTree", () => {
     }
     const elapsed = Date.now() - start;
     console.log(`100 inserts at depth 20: ${elapsed}ms`);
-    // Should be well under 5 seconds (each insert is O(20) hashes)
-    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeLessThan(500);
   });
 });
