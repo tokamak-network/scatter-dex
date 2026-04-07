@@ -123,23 +123,32 @@ export default function PrivateEscrowPage() {
             ["event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)"],
             provider
           );
-          // Query per change note using indexed commitment filter (efficient)
-          let anyResolved = false;
-          await Promise.all(changeNotesList.map(async (cn) => {
+          // Query per change note using indexed commitment filter (efficient).
+          // Resolve in parallel, then apply side effects sequentially.
+          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
             try {
               const commitBigInt = BigInt(cn.commitment);
               const logs = await poolContract.queryFilter(
                 poolContract.filters.CommitmentInserted(commitBigInt)
               );
               if (logs.length > 0) {
-                const e = logs[0] as ethers.EventLog;
-                const leafIdx = Number(e.args.leafIndex);
-                await deleteNote(cn);
-                await saveNote({ ...cn, leafIndex: leafIdx });
-                anyResolved = true;
+                // Use latest log in case of duplicate commitments
+                const e = logs[logs.length - 1] as ethers.EventLog;
+                return { cn, leafIdx: Number(e.args.leafIndex) };
               }
-            } catch { /* skip */ }
+            } catch (e) { console.warn("Failed to resolve change note:", e); }
+            return null;
           }));
+
+          // Apply file updates sequentially to avoid storage race conditions
+          let anyResolved = false;
+          for (const r of resolved) {
+            if (r) {
+              await deleteNote(r.cn);
+              await saveNote({ ...r.cn, leafIndex: r.leafIdx });
+              anyResolved = true;
+            }
+          }
           if (anyResolved && !cancelled) {
             const reloaded = await loadNotes();
             setNotes(reloaded);
