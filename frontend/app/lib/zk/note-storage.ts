@@ -131,8 +131,9 @@ export async function loadEdDSAKeyFromFolder(account: string): Promise<string | 
     const fileHandle = await dirHandle.getFileHandle(eddsaKeyFilename(account));
     const file = await fileHandle.getFile();
     return await file.text();
-  } catch {
-    return null; // file doesn't exist for this account
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "NotFoundError") return null;
+    throw e;
   }
 }
 
