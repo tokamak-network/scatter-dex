@@ -280,6 +280,107 @@ contract PrivateSettlementTest is Test {
         assertFalse(ok, "Should reject ETH from non-WETH address");
     }
 
+    // ─── E2E: Full Private Flow ──────────────────────────────────
+
+    function test_e2e_deposit_settle_claim_change() public {
+        // Full flow: deposit → settle → claim (WETH auto-unwrap) → verify change commitment
+
+        // 1. Settle creates claims groups and inserts change commitments
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        // Verify claims groups created
+        (address token, uint96 locked, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(token, address(weth));
+        assertEq(locked, 5 ether);
+        assertEq(claimed, 0);
+
+        // 2. Claim #1 — WETH auto-unwrapped to ETH
+        uint256 claimAmount1 = 2 ether;
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
+            claimAmount1, address(weth), recipient1, block.timestamp
+        );
+
+        // Recipient received ETH (not WETH)
+        assertEq(recipient1.balance, claimAmount1, "recipient1 should receive ETH");
+        assertEq(weth.balanceOf(recipient1), 0, "recipient1 should have no WETH");
+
+        // Nullifier marked
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
+
+        // Claims group updated
+        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, claimAmount1);
+
+        // 3. Claim #2 — remaining amount
+        uint256 claimAmount2 = 3 ether;
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            CLAIMS_ROOT_MAKER, CLAIM_NULL_2,
+            claimAmount2, address(weth), recipient2, block.timestamp
+        );
+
+        assertEq(recipient2.balance, claimAmount2, "recipient2 should receive ETH");
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_2));
+
+        // All claims done — totalClaimed == totalLocked
+        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 5 ether, "all claims should be consumed");
+
+        // 4. Verify double-claim is rejected
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
+            1 ether, address(weth), recipient1, block.timestamp
+        );
+
+        // 5. Verify conservation: settlement contract should have 0 WETH
+        //    (all claimed amounts have been unwrapped and sent as ETH)
+        assertEq(weth.balanceOf(address(settlement)), 0, "settlement should hold no WETH after full claim");
+    }
+
+    function test_e2e_settle_with_empty_taker() public {
+        // Settlement where taker has 0 locked (one-sided claims)
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        p.totalLockedTaker = 0;
+        p.claimsRootTaker = bytes32(uint256(0x999));
+        p.tokenTaker = address(usdc);
+        settlement.settlePrivate(p);
+
+        // Claim from maker's claims root
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            CLAIMS_ROOT_MAKER, CLAIM_NULL_1,
+            2 ether, address(weth), recipient1, block.timestamp
+        );
+
+        assertEq(recipient1.balance, 2 ether);
+
+        // Taker's empty group should exist but have 0 locked
+        (address t2, uint96 locked2,) = settlement.claimsGroups(bytes32(uint256(0x999)));
+        assertEq(t2, address(usdc));
+        assertEq(locked2, 0);
+    }
+
+    function test_e2e_claimsGroup_overwrite_blocked() public {
+        // Verify ClaimsGroupAlreadyExists prevents overwriting
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        // Try to settle again with same claimsRootMaker
+        PrivateSettlement.SettleParams memory p2 = _defaultSettleParams();
+        p2.makerNullifier = bytes32(uint256(0xee));
+        p2.takerNullifier = bytes32(uint256(0xff));
+        p2.makerNonceNullifier = bytes32(uint256(0xee1));
+        p2.takerNonceNullifier = bytes32(uint256(0xff1));
+        // Same claimsRootMaker → should revert
+        vm.expectRevert(PrivateSettlement.ClaimsGroupAlreadyExists.selector);
+        settlement.settlePrivate(p2);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────
 
     function _defaultSettleParams() internal view returns (PrivateSettlement.SettleParams memory) {
