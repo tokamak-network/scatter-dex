@@ -205,42 +205,14 @@ export default function PrivateOrderPage() {
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Load encrypted EdDSA key from notes folder
+  // Check if encrypted key exists in folder (no signature needed — just detect)
+  const [hasStoredKey, setHasStoredKey] = useState(false);
   useEffect(() => {
-    if (typeof window === "undefined" || !signer || !account || keyPair) return;
-    if (!hasFolderSelected()) return;
+    if (typeof window === "undefined" || !hasFolderSelected()) return;
+    loadEdDSAKeyFromFolder().then((saved) => setHasStoredKey(!!saved));
+  }, [folderName]);
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const saved = await loadEdDSAKeyFromFolder();
-        if (!saved || cancelled) return;
-
-        if (isEncryptedKeyPair(saved)) {
-          const signature = await signer.signMessage(DERIVE_MESSAGE);
-          if (cancelled) return;
-          const kp = await deserializeKeyPairEncrypted(saved, signature, account);
-          if (cancelled) return;
-          setKeyPair(kp);
-          setStep("create_order");
-        } else {
-          // Legacy plaintext in file — load and migrate to encrypted
-          const kp = deserializeKeyPair(saved);
-          if (cancelled) return;
-          setKeyPair(kp);
-          setStep("create_order");
-          try {
-            const signature = await signer.signMessage(DERIVE_MESSAGE);
-            if (cancelled) return;
-            await saveEdDSAKeyToFolder(await serializeKeyPairEncrypted(kp, signature, account));
-          } catch { /* migration will retry next load */ }
-        }
-      } catch { /* wrong account or file not found */ }
-    })();
-    return () => { cancelled = true; };
-  }, [signer, account, keyPair, folderName]);
-
-  // Derive EdDSA key from MetaMask — saves encrypted to notes folder
+  // Derive or unlock EdDSA key — only triggered by button click (no auto-popup)
   const handleDeriveKey = useCallback(async () => {
     if (!signer || !account) return;
     if (!hasFolderSelected()) {
@@ -250,11 +222,23 @@ export default function PrivateOrderPage() {
     setKeyLoading(true);
     setError(null);
     try {
-      const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
-      const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
-      await saveEdDSAKeyToFolder(encrypted);
-      setKeyPair(kp);
-      setStep("create_order");
+      // Check if key file exists in folder
+      const saved = await loadEdDSAKeyFromFolder();
+      if (saved && isEncryptedKeyPair(saved)) {
+        // Unlock existing key
+        const signature = await signer.signMessage(DERIVE_MESSAGE);
+        const kp = await deserializeKeyPairEncrypted(saved, signature, account);
+        setKeyPair(kp);
+        setStep("create_order");
+      } else {
+        // Generate new key and save encrypted
+        const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
+        const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
+        await saveEdDSAKeyToFolder(encrypted);
+        setHasStoredKey(true);
+        setKeyPair(kp);
+        setStep("create_order");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Key derivation failed");
     } finally {
@@ -438,10 +422,13 @@ export default function PrivateOrderPage() {
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 space-y-6">
             <div className="text-center">
               <Key className="w-12 h-12 text-primary mx-auto mb-4" />
-              <h3 className="font-headline text-lg font-bold text-on-surface">Generate Trading Key</h3>
+              <h3 className="font-headline text-lg font-bold text-on-surface">
+                {hasStoredKey ? "Unlock Trading Key" : "Generate Trading Key"}
+              </h3>
               <p className="text-sm text-on-surface-variant/70 mt-2">
-                Sign a message with MetaMask to derive your ZK trading key.
-                This key is used to sign private orders. It does not access your funds.
+                {hasStoredKey
+                  ? "Sign with MetaMask to unlock your saved ZK trading key."
+                  : "Sign a message with MetaMask to derive your ZK trading key. This key is used to sign private orders. It does not access your funds."}
               </p>
             </div>
 
@@ -461,7 +448,7 @@ export default function PrivateOrderPage() {
                   <Loader2 className="w-4 h-4 animate-spin" /> Signing...
                 </span>
               ) : (
-                "Generate Key"
+                hasStoredKey ? "Unlock Key" : "Generate Key"
               )}
             </button>
           </div>
