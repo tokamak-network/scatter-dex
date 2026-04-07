@@ -14,10 +14,27 @@ Uses `MockIdentityRegistry` that approves all users and relayers (Dual-CA mock).
 ```bash
 make up          # start (background)
 make ps          # check status
-make logs        # follow logs
+make logs        # follow all logs
 make down        # stop
 make clean       # stop + remove volumes
+
+# View logs for a specific service:
+docker compose logs -f relayer       # standard relayer (port 3001)
+docker compose logs -f zk-relayer    # ZK private relayer (port 3002)
+docker compose logs -f frontend      # frontend (port 3000)
+docker compose logs -f anvil         # anvil (port 8545)
+docker compose logs -f deployer      # deploy output
+docker compose logs -f relayer zk-relayer  # both relayers
 ```
+
+Services started by `make up`:
+| Service | Port | Description |
+|---------|------|-------------|
+| anvil | 8545 | Local Ethereum node |
+| deployer | — | Deploys contracts (exits after completion) |
+| relayer | 3001 | Standard order matching + settlement |
+| zk-relayer | 3002 | ZK private orders + gasless claims |
+| frontend | 3000 | Next.js web app |
 
 Or without Makefile:
 

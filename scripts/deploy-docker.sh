@@ -103,6 +103,8 @@ else
 
   SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*ScatterSettlement:" | awk '{print $NF}')
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*RelayerRegistry:" | awk '{print $NF}')
+  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*CommitmentPool:" | awk '{print $NF}')
+  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*PrivateSettlement:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
 
@@ -113,6 +115,9 @@ SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=$SETTLEMENT
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
 NEXT_PUBLIC_TOKEN_LIST=$WETH,$USDC
+COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
+PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 
 fi
