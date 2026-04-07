@@ -108,6 +108,31 @@ export async function deleteNote(note: StoredNote): Promise<void> {
   }
 }
 
+// ─── EdDSA Key Storage (in same folder) ─────────────────────
+
+const EDDSA_KEY_FILENAME = "zkscatter-eddsa-key.json";
+
+/** Save encrypted EdDSA key to the notes folder. */
+export async function saveEdDSAKeyToFolder(encryptedJson: string): Promise<void> {
+  if (!dirHandle) throw new Error("No folder selected");
+  const fileHandle = await dirHandle.getFileHandle(EDDSA_KEY_FILENAME, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(encryptedJson);
+  await writable.close();
+}
+
+/** Load encrypted EdDSA key from the notes folder. Returns null if not found. */
+export async function loadEdDSAKeyFromFolder(): Promise<string | null> {
+  if (!dirHandle) return null;
+  try {
+    const fileHandle = await dirHandle.getFileHandle(EDDSA_KEY_FILENAME);
+    const file = await fileHandle.getFile();
+    return await file.text();
+  } catch {
+    return null; // file doesn't exist
+  }
+}
+
 // ─── Serialization ───────────────────────────────────────────
 
 function serializeForFile(note: StoredNote) {

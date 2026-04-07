@@ -24,6 +24,8 @@ import {
   hasFolderSelected,
   getFolderName,
   loadNotes,
+  saveEdDSAKeyToFolder,
+  loadEdDSAKeyFromFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
@@ -31,10 +33,8 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
-// EdDSA key is AES-GCM encrypted in localStorage. This protects against
-// direct storage reads (extensions, physical access). It does NOT protect
-// against XSS — the decrypted key lives in React state at runtime.
-const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
+// EdDSA key is AES-GCM encrypted and stored in the notes folder (File System API).
+// This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
 
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
@@ -205,26 +205,17 @@ export default function PrivateOrderPage() {
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Load legacy plaintext key immediately (no signer needed)
-  useEffect(() => {
-    if (typeof window === "undefined" || keyPair) return;
-    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (!saved || isEncryptedKeyPair(saved)) return;
-    try {
-      setKeyPair(deserializeKeyPair(saved));
-      setStep("create_order");
-    } catch { /* invalid stored key */ }
-  }, [keyPair]);
-
-  // Decrypt encrypted key (needs signer) + auto-migrate legacy to encrypted
+  // Load encrypted EdDSA key from notes folder
   useEffect(() => {
     if (typeof window === "undefined" || !signer || !account || keyPair) return;
-    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (!saved) return;
+    if (!hasFolderSelected()) return;
 
     let cancelled = false;
     (async () => {
       try {
+        const saved = await loadEdDSAKeyFromFolder();
+        if (!saved || cancelled) return;
+
         if (isEncryptedKeyPair(saved)) {
           const signature = await signer.signMessage(DERIVE_MESSAGE);
           if (cancelled) return;
@@ -233,26 +224,35 @@ export default function PrivateOrderPage() {
           setKeyPair(kp);
           setStep("create_order");
         } else {
-          // Auto-migrate legacy plaintext to encrypted
+          // Legacy plaintext in file — load and migrate to encrypted
           const kp = deserializeKeyPair(saved);
-          const signature = await signer.signMessage(DERIVE_MESSAGE);
           if (cancelled) return;
-          localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
+          setKeyPair(kp);
+          setStep("create_order");
+          try {
+            const signature = await signer.signMessage(DERIVE_MESSAGE);
+            if (cancelled) return;
+            await saveEdDSAKeyToFolder(await serializeKeyPairEncrypted(kp, signature, account));
+          } catch { /* migration will retry next load */ }
         }
-      } catch { /* wrong account or user rejected — key stays as-is */ }
+      } catch { /* wrong account or file not found */ }
     })();
     return () => { cancelled = true; };
-  }, [signer, account, keyPair]);
+  }, [signer, account, keyPair, folderName]);
 
-  // Derive EdDSA key from MetaMask (single signMessage — no double popup)
+  // Derive EdDSA key from MetaMask — saves encrypted to notes folder
   const handleDeriveKey = useCallback(async () => {
     if (!signer || !account) return;
+    if (!hasFolderSelected()) {
+      setError("Select a notes folder first");
+      return;
+    }
     setKeyLoading(true);
     setError(null);
     try {
       const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
       const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
-      localStorage.setItem(EDDSA_KEY_STORAGE, encrypted);
+      await saveEdDSAKeyToFolder(encrypted);
       setKeyPair(kp);
       setStep("create_order");
     } catch (e: unknown) {
