@@ -9,6 +9,7 @@
  *   3. cd relayer && npm run dev
  *   4. npm run test:e2e
  */
+import "dotenv/config";
 import { describe, it, expect, beforeAll } from "vitest";
 import { ethers } from "ethers";
 import { EIP712_DOMAIN, EIP712_TYPES, parseOrder, pairKey } from "../src/types/order.js";
