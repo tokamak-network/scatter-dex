@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function TradePage() {
-  redirect("/trade/escrow");
+  redirect("/trade/private-escrow");
 }
