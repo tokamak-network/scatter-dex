@@ -27,32 +27,8 @@ services:
       - IDENTITY_REGISTRY=${IDENTITY_REGISTRY:-}
       - RELAYER_IDENTITY_REGISTRY=${RELAYER_IDENTITY_REGISTRY:-}
 
-  # ── Relayer ─────────────────────────────────────────────────
-  relayer:
-    build: ./relayer
-    depends_on:
-      deployer:
-        condition: service_completed_successfully
-    ports:
-      - "3001:3001"
-    volumes:
-      - shared:/shared:ro
-    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npx tsx src/index.ts"]
-    environment:
-      - RPC_URL=${RPC_URL:-http://anvil:8545}
-      - RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - RELAYER_FEE=30
-      - PORT=3001
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 3s
-      timeout: 5s
-      retries: 15
-
   # ── ZK Relayer (private settlement + gasless claims) ────────
-  # Only in mock profile — integration mode needs separate ZK contract deployment
   zk-relayer:
-    profiles: ["mock"]
     build: ./zk-relayer
     depends_on:
       deployer:
@@ -64,9 +40,8 @@ services:
     entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npx tsx src/index.ts"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
-      # Anvil Account #1 — different from standard relayer (#0) to avoid nonce conflicts
       - RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
-      - RELAYER_FEE=30  # basis points (0.3%)
+      - RELAYER_FEE=30
       - PORT=3002
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
@@ -78,7 +53,7 @@ services:
   frontend:
     build: ./frontend
     depends_on:
-      relayer:
+      zk-relayer:
         condition: service_healthy
     ports:
       - "3000:3000"

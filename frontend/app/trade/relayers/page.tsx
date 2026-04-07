@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, Activity, BarChart3 } from "lucide-react";
+import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3 } from "lucide-react";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
-import { SETTLEMENT_ABI } from "../../lib/contracts";
-import { getSettlementAddress } from "../../lib/config";
 import { getReadProvider } from "../../lib/provider";
 import { shortenAddress } from "../../lib/utils";
 
@@ -166,76 +164,6 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-// ─── Recent Settlements ──────────────────────────────────────
-interface SettleEvent {
-  maker: string;
-  taker: string;
-  claimCount: number;
-  blockNumber: number;
-  txHash: string;
-}
-
-function RecentSettlements() {
-  const [events, setEvents] = useState<SettleEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const settlement = new ethers.Contract(getSettlementAddress(), SETTLEMENT_ABI, provider);
-        const filter = settlement.filters.Settled();
-        const blockNumber = await provider.getBlockNumber();
-        const fromBlock = Math.max(0, blockNumber - 5000);
-        const logs = await settlement.queryFilter(filter, fromBlock, blockNumber);
-
-        const parsed: SettleEvent[] = logs.slice(-10).reverse().map((log) => {
-          const e = log as ethers.EventLog;
-          return {
-            maker: e.args[0] as string,
-            taker: e.args[1] as string,
-            claimCount: (e.args[2] as string[]).length,
-            blockNumber: e.blockNumber,
-            txHash: e.transactionHash,
-          };
-        });
-        setEvents(parsed);
-      } catch { /* ignore */ }
-      setLoading(false);
-    })();
-  }, []);
-
-  return (
-    <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-      <h3 className="text-xs font-semibold text-on-surface flex items-center gap-2 mb-3">
-        <Activity className="w-3.5 h-3.5" /> Recent Settlements
-      </h3>
-      {loading ? (
-        <div className="text-xs text-on-surface-variant/40 py-4 text-center">
-          <Loader2 className="w-3 h-3 animate-spin inline mr-1" /> Loading...
-        </div>
-      ) : events.length === 0 ? (
-        <div className="text-xs text-on-surface-variant/30 py-4 text-center">No settlements yet</div>
-      ) : (
-        <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
-          {events.map((e, i) => (
-            <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-surface-bright/30 text-[11px] transition-colors">
-              <div>
-                <span className="font-mono text-on-surface-variant">{shortenAddress(e.maker)}</span>
-                <span className="text-on-surface-variant/30 mx-1">&harr;</span>
-                <span className="font-mono text-on-surface-variant">{shortenAddress(e.taker)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-on-surface-variant/40">{e.claimCount} claims</span>
-                <span className="text-on-surface-variant/30">#{e.blockNumber}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -481,10 +409,9 @@ export default function RelayersPage() {
               </div>
             </div>
 
-            {/* Right: Stats + Recent settlements */}
+            {/* Right: Stats */}
             <div className="w-[280px] flex-shrink-0 space-y-4">
               <NetworkStats relayers={relayers} />
-              <RecentSettlements />
             </div>
           </div>
         </>

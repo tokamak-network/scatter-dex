@@ -5,9 +5,9 @@ up:
 	docker compose --profile mock up -d
 	@echo ""
 	@echo "ScatterDEX is running (mock mode)"
-	@echo "  Frontend:  http://localhost:3000"
-	@echo "  Relayer:   http://localhost:3001"
-	@echo "  Anvil:     http://localhost:8545"
+	@echo "  Frontend:    http://localhost:3000"
+	@echo "  ZK Relayer:  http://localhost:3002"
+	@echo "  Anvil:       http://localhost:8545"
 	@echo ""
 	@echo "  make logs   — follow logs"
 	@echo "  make down   — stop all"
@@ -27,9 +27,9 @@ endif
 	docker compose up -d
 	@echo ""
 	@echo "ScatterDEX is running (integration mode)"
-	@echo "  Frontend:  http://localhost:3000"
-	@echo "  Relayer:   http://localhost:3001"
-	@echo "  Anvil:     http://localhost:8545 (zk-X509)"
+	@echo "  Frontend:    http://localhost:3000"
+	@echo "  ZK Relayer:  http://localhost:3002"
+	@echo "  Anvil:       http://localhost:8545 (zk-X509)"
 
 # ─── Management ──────────────────────────────────────────────
 down:
