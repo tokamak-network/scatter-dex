@@ -22,23 +22,31 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22)
+// Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22).
+// Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
 import { poseidon2, poseidon4, poseidon5, poseidon8 } from "poseidon-lite";
 
-// EdDSA still needs circomlibjs (WASM-based)
+// EdDSA still needs circomlibjs (WASM-based) — only used for F.toObject / F.e on
+// EdDSA signatures, NOT for hashing. Hash results come from poseidon-lite above.
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Config ─────────────────────────────────────────────────
 
-const RPC_URL = "http://localhost:8545";
-const ZK_RELAYER_URL = "http://localhost:3002";
+const RPC_URL = process.env.RPC_URL ?? "http://localhost:8545";
+const ZK_RELAYER_URL = process.env.ZK_RELAYER_URL ?? "http://localhost:3002";
 const FEE_BPS = 30n; // 0.3% — must match relayer config
+const CLAIMS_TREE_DEPTH = 4; // must match contract CLAIMS_TREE_DEPTH
+const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
+const SETTLE_POLL_TIMEOUT_SEC = 60;
 
-// Anvil Account #9 (dedicated for E2E test — not used elsewhere)
-const USER_KEY = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-const RECIPIENT = "0x627306090abaB3A6e1400e9345bC60c78a8BEf57";
+// Anvil well-known Account #9 — NEVER use on real networks.
+// Override via env var for custom test setups.
+const USER_KEY = process.env.E2E_PRIVATE_KEY
+  ?? "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
+const RECIPIENT = process.env.E2E_RECIPIENT
+  ?? "0x627306090abaB3A6e1400e9345bC60c78a8BEf57";
 
 const WETH_ABI = [
   "function deposit() external payable",
@@ -67,7 +75,9 @@ function poseidonHash(inputs: bigint[]): bigint {
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
-    default: throw new Error(`poseidonHash: unsupported input length ${inputs.length}`);
+    default: throw new Error(
+      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 4, 5, 8)`
+    );
   }
 }
 
@@ -101,7 +111,7 @@ function toHex(n: bigint, bytes: number): string {
 }
 
 function assert(condition: boolean, msg: string) {
-  if (!condition) { console.error(`❌ FAIL: ${msg}`); process.exit(1); }
+  if (!condition) throw new Error(msg);
   console.log(`  ✓ ${msg}`);
 }
 
@@ -160,6 +170,16 @@ async function main() {
 
   // 0. Setup
   const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+  // Safety: refuse to run against non-local chains
+  const chainId = (await provider.getNetwork()).chainId;
+  if (chainId !== 31337n && !process.env.E2E_ALLOW_NON_LOCAL) {
+    throw new Error(
+      `Refusing to run on chain ${chainId} — this script uses well-known Anvil keys. ` +
+      `Set E2E_ALLOW_NON_LOCAL=1 to override.`
+    );
+  }
+
   const baseWallet = new ethers.Wallet(USER_KEY, provider);
   const wallet = new ethers.NonceManager(baseWallet);
   const userAddr = baseWallet.address;
@@ -174,11 +194,10 @@ async function main() {
   console.log(`CommitmentPool: ${poolAddr}`);
   console.log(`PrivateSettlement: ${settlementAddr}`);
 
-  const wethAddr = await provider.call({
-    to: settlementAddr,
-    data: ethers.id("weth()").slice(0, 10),
-  });
-  const weth = ethers.getAddress("0x" + wethAddr.slice(26));
+  const settlementForWeth = new ethers.Contract(
+    settlementAddr, ["function weth() view returns (address)"], provider,
+  );
+  const weth: string = await settlementForWeth.weth();
   console.log(`WETH: ${weth}\n`);
 
   const wethContract = new ethers.Contract(weth, WETH_ABI, wallet);
@@ -227,7 +246,7 @@ async function main() {
   const eddsa = await getEdDSA();
   const F = (await getPoseidon()).F;
 
-  // Derive EdDSA key from a deterministic seed
+  // Deterministic seed for reproducibility — NOT used in production
   const eddsaPrivKey = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-test-key")).slice(2), "hex");
   const pubKey = eddsa.prv2pub(eddsaPrivKey);
   const pubKeyAx = F.toObject(pubKey[0]);
@@ -250,9 +269,9 @@ async function main() {
     poseidonHash([c.secret, c.recipient, c.token, c.amount, c.releaseTime])
   );
   const paddedLeaves = [...claimLeaves];
-  while (paddedLeaves.length < 16) paddedLeaves.push(0n);
+  while (paddedLeaves.length < CLAIMS_TREE_SIZE) paddedLeaves.push(0n);
 
-  const { root: claimsRoot, layers: claimsLayers } = buildTree(paddedLeaves, 4);
+  const { root: claimsRoot, layers: claimsLayers } = buildTree(paddedLeaves, CLAIMS_TREE_DEPTH);
 
   // Compute change salt + expected change commitment
   const changeSalt = randomFieldElement();
@@ -314,8 +333,7 @@ async function main() {
   });
   const orderData = await orderRes.json();
   if (!orderRes.ok) {
-    console.error("Order submission failed:", orderData);
-    process.exit(1);
+    throw new Error(`Order submission failed: ${JSON.stringify(orderData)}`);
   }
 
   // ─── Step 5: Wait for settlement ───────────────────────────
@@ -324,20 +342,19 @@ async function main() {
   let settleTxHash = orderData.txHash;
   if (orderData.status !== "settled") {
     console.log("\n[5/7] Waiting for settlement...");
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < SETTLE_POLL_TIMEOUT_SEC; i++) {
       await sleep(1000);
       const statusRes = await fetch(`${ZK_RELAYER_URL}/api/private-orders/${pubKeyAx}/${nonce}`);
       if (statusRes.ok) {
         const s = await statusRes.json();
         if (s.status === "settled") { settleTxHash = s.settleTxHash; break; }
         if (s.status === "scatter_failed" || s.status === "settle_failed") {
-          console.error(`Settlement failed: ${s.status}`);
-          process.exit(1);
+          throw new Error(`Settlement failed: ${s.status}`);
         }
       }
       if (i % 5 === 0) process.stdout.write(".");
     }
-    if (!settleTxHash) { console.error("\n❌ Settlement timed out"); process.exit(1); }
+    if (!settleTxHash) throw new Error("Settlement timed out");
   }
   assert(true, `Settled! TX: ${settleTxHash}`);
 
@@ -397,8 +414,11 @@ async function main() {
   const tx1 = await submitClaim(0, claimSecret1, claimAmount1);
   assert(true, `Claim #1 TX: ${tx1}`);
 
-  // Wait for claim #1 TX to be mined (avoids relayer nonce collision)
+  // Wait for claim #1 TX to be mined + brief delay for Anvil nonce state propagation.
+  // The relayer uses a plain Wallet (not NonceManager), so getTransactionCount
+  // can return stale values immediately after mining.
   await provider.waitForTransaction(tx1);
+  await sleep(500);
 
   const tx2 = await submitClaim(1, claimSecret2, claimAmount2);
   assert(true, `Claim #2 TX: ${tx2}`);
