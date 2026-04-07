@@ -10,8 +10,11 @@ import {
   deriveEdDSAKey,
   signEdDSA,
   hashOrder,
-  serializeKeyPair,
+  serializeKeyPairEncrypted,
+  deserializeKeyPairEncrypted,
+  isEncryptedKeyPair,
   deserializeKeyPair,
+  DERIVE_MESSAGE,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
 import { poseidonHash, buildMerkleTree, randomFieldElement } from "../../lib/zk/commitment";
@@ -28,9 +31,9 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
-// SECURITY WARNING: EdDSA private key is stored in localStorage for UX convenience.
-// Any XSS vulnerability could expose this key. In production, use Web Crypto API
-// with a user-derived wrapping key or hardware wallet integration.
+// EdDSA key is AES-GCM encrypted in localStorage. This protects against
+// direct storage reads (extensions, physical access). It does NOT protect
+// against XSS — the decrypted key lives in React state at runtime.
 const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
 const MAX_CLAIMS = 10;
 
@@ -202,35 +205,62 @@ export default function PrivateOrderPage() {
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Load saved key
+  // Load legacy plaintext key immediately (no signer needed)
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || keyPair) return;
     const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (saved) {
-      try {
-        const kp = deserializeKeyPair(saved);
-        setKeyPair(kp);
-        setStep("create_order");
-      } catch { /* invalid stored key */ }
-    }
-  }, []);
+    if (!saved || isEncryptedKeyPair(saved)) return;
+    try {
+      setKeyPair(deserializeKeyPair(saved));
+      setStep("create_order");
+    } catch { /* invalid stored key */ }
+  }, [keyPair]);
 
-  // Derive EdDSA key from MetaMask
+  // Decrypt encrypted key (needs signer) + auto-migrate legacy to encrypted
+  useEffect(() => {
+    if (typeof window === "undefined" || !signer || !account || keyPair) return;
+    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
+    if (!saved) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        if (isEncryptedKeyPair(saved)) {
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          if (cancelled) return;
+          const kp = await deserializeKeyPairEncrypted(saved, signature, account);
+          if (cancelled) return;
+          setKeyPair(kp);
+          setStep("create_order");
+        } else {
+          // Auto-migrate legacy plaintext to encrypted
+          const kp = deserializeKeyPair(saved);
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          if (cancelled) return;
+          localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
+        }
+      } catch { /* wrong account or user rejected — key stays as-is */ }
+    })();
+    return () => { cancelled = true; };
+  }, [signer, account, keyPair]);
+
+  // Derive EdDSA key from MetaMask (single signMessage — no double popup)
   const handleDeriveKey = useCallback(async () => {
-    if (!signer) return;
+    if (!signer || !account) return;
     setKeyLoading(true);
     setError(null);
     try {
-      const kp = await deriveEdDSAKey(signer);
+      const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
+      const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
+      localStorage.setItem(EDDSA_KEY_STORAGE, encrypted);
       setKeyPair(kp);
-      localStorage.setItem(EDDSA_KEY_STORAGE, serializeKeyPair(kp));
       setStep("create_order");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Key derivation failed");
     } finally {
       setKeyLoading(false);
     }
-  }, [signer]);
+  }, [signer, account]);
 
   // Submit private order
   const handleSubmit = useCallback(async () => {

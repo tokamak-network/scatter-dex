@@ -7,8 +7,11 @@ import { useWallet } from "../../lib/wallet";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   deriveEdDSAKey,
-  serializeKeyPair,
+  serializeKeyPairEncrypted,
+  deserializeKeyPairEncrypted,
+  isEncryptedKeyPair,
   deserializeKeyPair,
+  DERIVE_MESSAGE,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
 
@@ -64,28 +67,49 @@ export default function PrivateHistoryPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
 
-  // Load saved EdDSA key
+  // Load legacy plaintext key immediately (no signer needed)
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || keyPair) return;
     const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (saved) {
+    if (!saved || isEncryptedKeyPair(saved)) return;
+    try { setKeyPair(deserializeKeyPair(saved)); } catch { /* invalid */ }
+  }, [keyPair]);
+
+  // Decrypt encrypted key (needs signer) + auto-migrate legacy to encrypted
+  useEffect(() => {
+    if (typeof window === "undefined" || !signer || !account || keyPair) return;
+    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
+    if (!saved) return;
+
+    let cancelled = false;
+    (async () => {
       try {
-        setKeyPair(deserializeKeyPair(saved));
-      } catch { /* invalid */ }
-    }
-  }, []);
+        if (isEncryptedKeyPair(saved)) {
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          if (cancelled) return;
+          setKeyPair(await deserializeKeyPairEncrypted(saved, signature, account));
+        } else {
+          const kp = deserializeKeyPair(saved);
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          if (cancelled) return;
+          localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
+        }
+      } catch { /* wrong account or user rejected */ }
+    })();
+    return () => { cancelled = true; };
+  }, [signer, account, keyPair]);
 
   const handleDeriveKey = useCallback(async () => {
-    if (!signer) return;
+    if (!signer || !account) return;
     setKeyLoading(true);
     try {
-      const kp = await deriveEdDSAKey(signer);
+      const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
+      localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
       setKeyPair(kp);
-      localStorage.setItem(EDDSA_KEY_STORAGE, serializeKeyPair(kp));
     } catch (err) {
       console.error("Failed to derive EdDSA key:", err);
     } finally { setKeyLoading(false); }
-  }, [signer]);
+  }, [signer, account]);
 
   // Fetch orders from zk-relayer
   const fetchOrders = useCallback(async () => {

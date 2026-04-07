@@ -10,7 +10,7 @@
 
 import { ethers } from "ethers";
 
-const DERIVE_MESSAGE = "Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.";
+export const DERIVE_MESSAGE = "Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.";
 
 let eddsaInstance: any = null;
 let babyjubInstance: any = null;
@@ -32,13 +32,13 @@ export interface EdDSAKeyPair {
 /**
  * Derive an EdDSA key pair from a MetaMask signature.
  * Deterministic: same wallet always produces the same key.
+ * Accepts a pre-obtained signature to avoid triggering a second MetaMask popup.
  */
-export async function deriveEdDSAKey(signer: ethers.Signer): Promise<EdDSAKeyPair> {
-  // Sign deterministic message
-  const signature = await signer.signMessage(DERIVE_MESSAGE);
+export async function deriveEdDSAKey(signerOrSignature: ethers.Signer | string): Promise<{ keyPair: EdDSAKeyPair; signature: string }> {
+  const signature = typeof signerOrSignature === "string"
+    ? signerOrSignature
+    : await signerOrSignature.signMessage(DERIVE_MESSAGE);
 
-  // Hash the signature to get 32 bytes for the private key
-  // Hash the raw signature bytes (signature is already a hex string; keccak256 accepts hex)
   const hash = ethers.keccak256(signature);
   const privateKey = ethers.getBytes(hash);
 
@@ -47,8 +47,8 @@ export async function deriveEdDSAKey(signer: ethers.Signer): Promise<EdDSAKeyPai
   const pubKey = eddsa.prv2pub(privateKey);
 
   return {
-    privateKey,
-    publicKey: [babyJub.F.toObject(pubKey[0]), babyJub.F.toObject(pubKey[1])],
+    keyPair: { privateKey, publicKey: [babyJub.F.toObject(pubKey[0]), babyJub.F.toObject(pubKey[1])] },
+    signature,
   };
 }
 
@@ -130,4 +130,75 @@ export function deserializeKeyPair(json: string): EdDSAKeyPair {
     privateKey: ethers.getBytes(parsed.privateKey),
     publicKey: [BigInt(parsed.publicKey[0]), BigInt(parsed.publicKey[1])],
   };
+}
+
+// ─── Encrypted Storage (AES-GCM) ─────────────────────────────
+
+/**
+ * Check if a stored key is in encrypted format (v1).
+ */
+export function isEncryptedKeyPair(stored: string): boolean {
+  try {
+    const parsed = JSON.parse(stored);
+    return parsed.v === 1 && typeof parsed.iv === "string" && typeof parsed.ct === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Derive an AES-GCM wrapping key from the MetaMask signature.
+ * The ":wrap" suffix domain-separates this from the EdDSA key derivation.
+ * Per-user salt includes the account address to prevent rainbow table attacks.
+ *
+ * Threat model: protects against localStorage reads (extensions, physical access).
+ * Does NOT protect against XSS — decrypted keyPair lives in React state at runtime.
+ */
+async function deriveWrappingKey(signature: string, account: string): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    ethers.getBytes(signature + ":wrap"),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: new TextEncoder().encode("zkscatter-eddsa-v1:" + account.toLowerCase()), iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/**
+ * Encrypt and serialize an EdDSA key pair using AES-GCM.
+ * The wrapping key is derived from the MetaMask signature used to derive the EdDSA key.
+ */
+export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: string, account: string): Promise<string> {
+  const wrappingKey = await deriveWrappingKey(signature, account);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(serializeKeyPair(kp));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
+  return JSON.stringify({
+    v: 1,
+    iv: ethers.hexlify(iv),
+    ct: ethers.hexlify(new Uint8Array(ciphertext)),
+  });
+}
+
+/**
+ * Decrypt an encrypted EdDSA key pair from storage.
+ * Requires the same MetaMask signature used during encryption.
+ */
+export async function deserializeKeyPairEncrypted(stored: string, signature: string, account: string): Promise<EdDSAKeyPair> {
+  const { v, iv, ct } = JSON.parse(stored);
+  if (v !== 1) throw new Error("Unsupported encrypted key format");
+  const wrappingKey = await deriveWrappingKey(signature, account);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: ethers.getBytes(iv) },
+    wrappingKey,
+    ethers.getBytes(ct),
+  );
+  return deserializeKeyPair(new TextDecoder().decode(plaintext));
 }
