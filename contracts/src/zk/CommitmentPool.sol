@@ -226,4 +226,52 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
         emit Withdrawal(recipient, nullifierHash, newCommitment, amount);
     }
+
+    /// @notice Withdraw on behalf of PrivateSettlement (for scatterDirect).
+    /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Same logic as withdraw() but called by settlement, not the user.
+    function withdrawFor(
+        uint[2] calldata proofA,
+        uint[2][2] calldata proofB,
+        uint[2] calldata proofC,
+        uint256 root,
+        uint256 nullifierHash,
+        uint256 newCommitment,
+        address token,
+        uint256 amount,
+        address recipient,
+        address relayer
+    ) external nonReentrant {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (amount == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+        if (!isKnownRoot(root)) revert UnknownRoot();
+        if (nullifiers[nullifierHash]) revert NullifierAlreadySpent();
+
+        uint256 tokenHash = PoseidonT2.hash([uint256(uint160(token))]);
+
+        uint[7] memory pubSignals = [
+            root,
+            nullifierHash,
+            newCommitment,
+            tokenHash,
+            amount,
+            uint256(uint160(recipient)),
+            uint256(uint160(relayer))
+        ];
+
+        if (!withdrawVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+            revert InvalidProof();
+        }
+
+        nullifiers[nullifierHash] = true;
+
+        if (newCommitment != 0) {
+            _insert(newCommitment);
+        }
+
+        IERC20(token).safeTransfer(recipient, amount);
+
+        emit Withdrawal(recipient, nullifierHash, newCommitment, amount);
+    }
 }

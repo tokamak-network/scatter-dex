@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { ethers } from "ethers";
-import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen } from "lucide-react";
+import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
+import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { RPC_URL } from "../../lib/config";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -18,6 +19,7 @@ import {
   getFolderName,
   saveNote,
   loadNotes,
+  loadClaimsFiles,
   deleteNote,
   type StoredNote,
 } from "../../lib/zk/note-storage";
@@ -43,9 +45,11 @@ export default function PrivateEscrowPage() {
   const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
+  const [orderFiles, setOrderFiles] = useState<Array<{ order?: { leafIndex: number; sellAmount: string; buyAmount: string; sellToken: string; buyToken: string; maxFee: number }; claims: Array<{ amount: string; recipient: string; releaseTime: string }>; createdAt: string }>>([]);
   const [folderReady, setFolderReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<TradeData | null>(null);
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
   const [txState, setTxState] = useState<TxState>("idle");
@@ -77,11 +81,15 @@ export default function PrivateEscrowPage() {
     })();
   }, [account, selectedToken, txState]);
 
-  // Load notes when folder is selected
+  // Load notes + order files when folder is selected
   const refreshNotes = useCallback(async () => {
     if (!hasFolderSelected()) return;
     const loaded = await loadNotes();
     setNotes(loaded);
+    try {
+      const claims = await loadClaimsFiles();
+      setOrderFiles(claims as typeof orderFiles);
+    } catch { /* ignore */ }
   }, []);
 
   // ─── Select Folder ─────────────────────────────────────────────
@@ -278,7 +286,14 @@ export default function PrivateEscrowPage() {
               </div>
             ) : (
               <div className="divide-y divide-outline-variant/10">
-                {notes.map((n, i) => (
+                {notes.filter((n) => n.leafIndex >= 0).map((n, i) => {
+                  // Find pending change notes linked to this note (same ownerSecret, leafIndex === -1)
+                  const changeNotes = notes.filter((c) =>
+                    c.leafIndex === -1 &&
+                    c.note.ownerSecret === n.note.ownerSecret &&
+                    c.commitment !== n.commitment
+                  );
+                  return (
                   <div key={n.commitment}>
                     <div
                       onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
@@ -351,10 +366,59 @@ export default function PrivateEscrowPage() {
                             <p className="font-mono text-on-surface mt-0.5 text-[11px] break-all">{n.tokenAddress}</p>
                           </div>
                         </div>
+
+                        {/* Linked trades + change notes */}
+                        {(() => {
+                          const linkedOrders = orderFiles.filter((o) => o.order?.leafIndex === n.leafIndex);
+                          if (linkedOrders.length === 0 && changeNotes.length === 0) return null;
+                          return (
+                            <div className="mt-3 pt-3 border-t border-outline-variant/10 space-y-3">
+                              {linkedOrders.length > 0 && (
+                                <div>
+                                  <h4 className="text-xs font-bold text-on-surface-variant mb-2">Trade History</h4>
+                                  <div className="space-y-1">
+                                    {linkedOrders.map((o, oi) => (
+                                      <button
+                                        key={oi}
+                                        onClick={(e) => { e.stopPropagation(); setSelectedTrade(o as unknown as TradeData); }}
+                                        className="w-full text-left"
+                                      >
+                                        <TradeDetail trade={o as unknown as TradeData} compact />
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {changeNotes.length > 0 && (
+                                <div>
+                                  {changeNotes.map((cn) => (
+                                    <div key={cn.commitment} className="bg-amber-500/5 border border-amber-500/15 rounded-lg px-4 py-3 flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <Coins className="w-4 h-4 text-amber-400" />
+                                        <div>
+                                          <div className="text-sm font-semibold text-amber-400">
+                                            {cn.amount} {cn.tokenSymbol}
+                                          </div>
+                                          <div className="text-xs text-on-surface-variant/50">
+                                            Change · Trade in progress...
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-amber-500/15 text-amber-400 border-amber-500/20">
+                                        Pending
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -446,6 +510,23 @@ export default function PrivateEscrowPage() {
           </div>
         </div>
       </div>
+
+      {/* Trade Detail Modal */}
+      {selectedTrade && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSelectedTrade(null)}>
+          <div className="w-full max-w-lg mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="glass-card rounded-2xl border border-outline-variant/20 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/10">
+                <h3 className="text-lg font-headline font-bold text-on-surface">Trade Detail</h3>
+                <button onClick={() => setSelectedTrade(null)} className="text-on-surface-variant/50 hover:text-on-surface text-xl transition-colors">✕</button>
+              </div>
+              <div className="p-4">
+                <TradeDetail trade={selectedTrade} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

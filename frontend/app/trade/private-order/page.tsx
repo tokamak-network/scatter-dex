@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
 import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
+import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import {
@@ -17,15 +18,18 @@ import {
   DERIVE_MESSAGE,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
-import { poseidonHash, buildMerkleTree, randomFieldElement } from "../../lib/zk/commitment";
+import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment, type CommitmentNote } from "../../lib/zk/commitment";
 import {
   isFileSystemAvailable,
   selectNotesFolder,
   hasFolderSelected,
   getFolderName,
   loadNotes,
+  saveNote,
+  saveFileToFolder,
   saveEdDSAKeyToFolder,
   loadEdDSAKeyFromFolder,
+  listEdDSAKeysInFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
@@ -52,7 +56,15 @@ interface ClaimRow {
 
 export default function PrivateOrderPage() {
   const { account, signer, readProvider, chainId, connect } = useWallet();
+  const { relayers } = useRelayers();
   const tokens = getTokenList().filter((t) => !t.isNative);
+
+  // ZK relayers (filter by name containing "ZK")
+  const zkRelayers = useMemo(() =>
+    relayers.filter((r) => r.online && r.api?.name?.includes("ZK")),
+    [relayers]
+  );
+  const [selectedRelayerIdx, setSelectedRelayerIdx] = useState(0);
 
   const [step, setStep] = useState<Step>("setup_key");
   const [keyPair, setKeyPair] = useState<EdDSAKeyPair | null>(null);
@@ -71,6 +83,7 @@ export default function PrivateOrderPage() {
   const [buyAmount, setBuyAmount] = useState("");
   const [expiry, setExpiry] = useState("24");
   const [price, setPrice] = useState("");
+  const [changeSalt, setChangeSalt] = useState<bigint | null>(null);
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
 
   // Claims
@@ -179,13 +192,12 @@ export default function PrivateOrderPage() {
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
 
-  // Recompute fee-adjusted buyAmount from sell/price/fee
-  const recomputeBuyAmount = useCallback((sell: string, p: string, bps: number) => {
+  // Recompute buyAmount from sell * price (fee is deducted at settlement, not here)
+  const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
     const grossBuy = parseFloat(sell) * parseFloat(p);
     if (isNaN(grossBuy)) return;
-    const fee = grossBuy * bps / 10000;
     const dec = Math.min(buyToken?.decimals ?? 18, 18);
-    setBuyAmount((grossBuy - fee).toFixed(dec));
+    setBuyAmount(grossBuy.toFixed(dec));
   }, [buyToken]);
 
   const handlePriceSelect = useCallback((p: string) => {
@@ -197,18 +209,41 @@ export default function PrivateOrderPage() {
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
+  // Net amount after fee — this is the distributable amount for claims
+  const netBuyAmount = parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000) || 0;
+
+  // Change (remainder) calculation
+  const changeAmount = useMemo(() => {
+    if (!selectedNote || !sellAmount || !sellToken) return 0n;
+    try {
+      const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
+      const rem = selectedNote.note.amount - parsedSell;
+      return rem > 0n ? rem : 0n;
+    } catch { return 0n; }
+  }, [selectedNote, sellAmount, sellToken]);
+
+  // Generate changeSalt when change exists
+  useEffect(() => {
+    if (changeAmount > 0n) {
+      setChangeSalt(randomFieldElement());
+    } else {
+      setChangeSalt(null);
+    }
+  }, [changeAmount]);
+
   const fillRest = (id: number) => {
-    const buyAmt = parseFloat(buyAmount) || 0;
     const othersTotal = claims.reduce((sum, c) => c.id === id ? sum : sum + (parseFloat(c.amount) || 0), 0);
-    const rest = Math.max(0, buyAmt - othersTotal);
+    const rest = Math.max(0, netBuyAmount - othersTotal);
     const floored = Math.floor(rest * 10000) / 10000;
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Check if encrypted key exists in folder (no signature needed — just detect)
+  // List available EdDSA keys in folder
   const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [availableKeys, setAvailableKeys] = useState<{ accountSuffix: string; filename: string }[]>([]);
   useEffect(() => {
     if (typeof window === "undefined" || !hasFolderSelected()) return;
+    listEdDSAKeysInFolder().then(setAvailableKeys);
     if (!account) return;
     loadEdDSAKeyFromFolder(account).then((saved) => setHasStoredKey(!!saved));
   }, [folderName, account]);
@@ -251,29 +286,10 @@ export default function PrivateOrderPage() {
   const handleSubmit = useCallback(async () => {
     if (!sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote || !signer || !account) return;
 
-    // Auto-generate/unlock key if not yet available
-    let kp = keyPair;
+    const kp = keyPair;
     if (!kp) {
-      if (!hasFolderSelected()) {
-        setError("Select a notes folder first (Private Escrow → Select Folder)");
-        return;
-      }
-      try {
-        const saved = await loadEdDSAKeyFromFolder(account);
-        if (saved && isEncryptedKeyPair(saved)) {
-          const signature = await signer.signMessage(DERIVE_MESSAGE);
-          kp = await deserializeKeyPairEncrypted(saved, signature, account);
-        } else {
-          const result = await deriveEdDSAKey(signer);
-          kp = result.keyPair;
-          await saveEdDSAKeyToFolder(await serializeKeyPairEncrypted(kp, result.signature, account), account);
-          setHasStoredKey(true);
-        }
-        setKeyPair(kp);
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Key generation failed");
-        return;
-      }
+      setError("Unlock or generate a trading key first");
+      return;
     }
 
     setStep("signing");
@@ -288,6 +304,20 @@ export default function PrivateOrderPage() {
       // Validate sell amount doesn't exceed note balance
       if (parsedSell > selectedNote.note.amount) {
         throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
+      }
+
+      // Use pre-generated changeSalt for change commitment
+      const change = selectedNote.note.amount - parsedSell;
+      const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
+      let expectedChangeCommitment = 0n;
+      if (change > 0n && changeSalt) {
+        const changeNote: CommitmentNote = {
+          ownerSecret: selectedNote.note.ownerSecret,
+          token: selectedNote.note.token,
+          amount: change,
+          salt: changeSalt,
+        };
+        expectedChangeCommitment = await computeCommitment(changeNote);
       }
 
       // Build claims data (with optional ephemeralPubKey for stealth)
@@ -350,7 +380,9 @@ export default function PrivateOrderPage() {
       const sig = await signEdDSA(kp.privateKey, orderHash);
 
       // Submit to zk-relayer with commitment info from note
-      const relayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
+      const selectedZkRelayer = zkRelayers[selectedRelayerIdx];
+      if (!selectedZkRelayer) throw new Error("No ZK relayer selected");
+      const relayerUrl = selectedZkRelayer.url;
       const res = await fetch(`${relayerUrl}/api/private-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -372,6 +404,9 @@ export default function PrivateOrderPage() {
           balance: selectedNote.note.amount.toString(),
           salt: selectedNote.note.salt.toString(),
           leafIndex: selectedNote.leafIndex,
+          // Change commitment: user-controlled newSalt
+          newSalt: newSalt.toString(),
+          expectedChangeCommitment: expectedChangeCommitment.toString(),
           claims: claimData,
         }),
       });
@@ -394,17 +429,67 @@ export default function PrivateOrderPage() {
         ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       }));
       const bundle = {
+        order: {
+          sellToken: sellToken.address,
+          buyToken: buyToken.address,
+          sellAmount: parsedSell.toString(),
+          buyAmount: parsedBuy.toString(),
+          maxFee: effectiveFeeBps,
+          expiry: expiryTimestamp.toString(),
+          nonce: nonce.toString(),
+          leafIndex: selectedNote.leafIndex,
+        },
+        change: change > 0n ? {
+          amount: change.toString(),
+          salt: newSalt.toString(),
+          expectedCommitment: expectedChangeCommitment.toString(),
+        } : null,
         claims: claimFiles,
         note: "Each entry can be loaded individually in Private Claim. Keep this file secret.",
         createdAt: new Date().toISOString(),
       };
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const bundleJson = JSON.stringify(bundle, null, 2);
+      const claimsFilename = `zkscatter-claims-${Date.now()}.json`;
+
+      // Save to notes folder
+      try {
+        await saveFileToFolder(claimsFilename, bundleJson);
+      } catch (e) {
+        console.warn("Failed to save claims to folder:", e);
+      }
+
+      // Also trigger browser download
+      const blob = new Blob([bundleJson], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `claims-${Date.now()}.json`;
+      a.download = claimsFilename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      // Pre-save change note to folder (leafIndex TBD — will be verified after settlement)
+      if (change > 0n && changeSalt) {
+        const changeStoredNote: StoredNote = {
+          note: {
+            ownerSecret: selectedNote.note.ownerSecret,
+            token: selectedNote.note.token,
+            amount: change,
+            salt: changeSalt,
+          },
+          commitment: "0x" + expectedChangeCommitment.toString(16),
+          tokenSymbol: sellToken.symbol,
+          tokenAddress: sellToken.address,
+          amount: ethers.formatUnits(changeAmount, sellToken.decimals),
+          leafIndex: -1, // placeholder — updated after on-chain settlement
+          txHash: "", // pending settlement
+          createdAt: Date.now(),
+        };
+        try {
+          await saveNote(changeStoredNote);
+        } catch (e) {
+          console.warn("Failed to save change note:", e);
+        }
+      }
 
       setStep("submitted");
       setSellAmount("");
@@ -447,17 +532,7 @@ export default function PrivateOrderPage() {
         {/* Order Form — always visible */}
         {(step === "setup_key" || step === "create_order" || step === "error") && (
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 space-y-6">
-            {keyPair ? (
-              <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-md">
-                <Check className="w-3.5 h-3.5" />
-                Trading key active: {keyPair.publicKey[0].toString().slice(0, 10)}...
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-xs text-on-surface-variant/60 bg-surface-container px-3 py-2 rounded-md">
-                <Key className="w-3.5 h-3.5" />
-                Trading key will be generated when you submit the order.
-              </div>
-            )}
+            {/* Key status is shown above submit button */}
 
             {/* Notes Folder */}
             <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
@@ -522,9 +597,25 @@ export default function PrivateOrderPage() {
               )}
 
               {selectedNote && (
-                <div className="text-[10px] text-on-surface-variant flex justify-between bg-surface-container-low rounded-md px-3 py-2">
-                  <span>Selected balance: {selectedNote.amount} {selectedNote.tokenSymbol}</span>
-                  <span>Leaf index: {selectedNote.leafIndex}</span>
+                <div className="space-y-1">
+                  <div className="text-sm text-on-surface-variant flex justify-between bg-surface-container-low rounded-md px-3 py-2">
+                    <span>Selected balance: {selectedNote.amount} {selectedNote.tokenSymbol}</span>
+                    <span>Leaf index: {selectedNote.leafIndex}</span>
+                  </div>
+                  {changeAmount > 0n && sellToken && (
+                    <div className="text-sm bg-tertiary/10 text-tertiary rounded-md px-3 py-2 space-y-1">
+                      <div className="flex justify-between font-bold">
+                        <span>Change (remainder)</span>
+                        <span className="font-mono">{ethers.formatUnits(changeAmount, sellToken.decimals)} {sellToken.symbol}</span>
+                      </div>
+                      {changeSalt && (
+                        <div className="flex justify-between text-tertiary/70">
+                          <span>Salt</span>
+                          <span className="font-mono truncate ml-4">{changeSalt.toString().slice(0, 16)}...</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -655,8 +746,8 @@ export default function PrivateOrderPage() {
             {sellAmount && buyAmount && price && (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-1 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-on-surface-variant">Gross receive</span>
-                  <span className="font-mono text-on-surface">{(parseFloat(sellAmount) * parseFloat(price)).toFixed(4)} {buyToken?.symbol}</span>
+                  <span className="text-on-surface-variant">Buy amount</span>
+                  <span className="font-mono text-on-surface">{parseFloat(buyAmount).toFixed(4)} {buyToken?.symbol}</span>
                 </div>
                 <button
                   type="button"
@@ -665,14 +756,14 @@ export default function PrivateOrderPage() {
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
                   <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
-                  <span className="font-mono">−{(parseFloat(sellAmount) * parseFloat(price) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
+                  <span className="font-mono">−{(parseFloat(buyAmount) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
                 </button>
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
-                  <span>You receive (buyAmount)</span>
-                  <span className="font-mono">{buyAmount} {buyToken?.symbol}</span>
+                  <span>You receive</span>
+                  <span className="font-mono">{(parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}</span>
                 </div>
               </div>
             )}
@@ -783,13 +874,67 @@ export default function PrivateOrderPage() {
                 <div className="mt-2 space-y-1">
                   <div className="text-[10px] text-on-surface-variant flex justify-between">
                     <span>Claims total: {claimTotal.toFixed(4)} {buyToken.symbol}</span>
-                    <span>Buy amount: {buyAmount || "—"} {buyToken.symbol}</span>
+                    <span>Net amount: {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
-                  {parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) && (
+                  {netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001 && (
                     <div className="text-[10px] text-error font-bold">
-                      Claims ({claimTotal.toFixed(4)}) exceed buy amount ({buyAmount} {buyToken.symbol})
+                      Claims ({claimTotal.toFixed(4)}) exceed net amount ({netBuyAmount.toFixed(4)} {buyToken.symbol})
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* ZK Relayer selection */}
+            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
+              <h3 className="font-headline font-bold text-sm flex items-center gap-2">
+                <Shield className="w-4 h-4 text-primary" />
+                ZK Relayer
+              </h3>
+              {zkRelayers.length === 0 ? (
+                <p className="text-sm text-error/70">No ZK relayers online. Check the Relayers page.</p>
+              ) : (
+                <select
+                  value={selectedRelayerIdx}
+                  onChange={(e) => setSelectedRelayerIdx(Number(e.target.value))}
+                  className="w-full bg-surface-container border border-outline-variant/20 rounded-md px-3 py-2 text-sm font-mono text-on-surface"
+                >
+                  {zkRelayers.map((r, i) => (
+                    <option key={r.address} value={i}>
+                      {r.api?.name} — {r.url} (Fee {(r.fee / 100).toFixed(2)}%)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Trading Key — select from folder or generate */}
+            <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">
+              <h3 className="font-headline font-bold text-sm flex items-center gap-2">
+                <Key className="w-4 h-4 text-primary" />
+                Trading Key
+              </h3>
+              {keyPair ? (
+                <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-md">
+                  <Check className="w-3.5 h-3.5" />
+                  Key active: {keyPair.publicKey[0].toString().slice(0, 10)}...
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-on-surface-variant/60">
+                    {hasStoredKey
+                      ? "Trading key found for this account. Sign with wallet to unlock."
+                      : "No trading key for this account. Sign with wallet to generate."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleDeriveKey}
+                    disabled={keyLoading || !account || !hasFolderSelected()}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-bold bg-primary text-on-primary hover:bg-primary/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {keyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                    {hasStoredKey ? "Unlock with Wallet" : "Generate with Wallet"}
+                  </button>
                 </div>
               )}
             </div>
@@ -800,7 +945,7 @@ export default function PrivateOrderPage() {
 
             <button
               onClick={handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || sellTokenIdx === buyTokenIdx || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount))}
+              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001)}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {!selectedNote ? "Select a Commitment Note" : "Submit Private Order"}

@@ -76,10 +76,19 @@ contract DeployLocal is Script {
         settlement.setMinReleaseDelay(1);
         console.log("Set minReleaseDelay to 1 second");
 
-        // 10. Register deployer as relayer
+        // 10. Register relayers
         // minBond = 0 by default (optional bond, per patent)
         relayerRegistry.register("http://localhost:3001", 30);
-        console.log("Deployer registered as relayer");
+        console.log("Deployer registered as standard relayer");
+
+        // 10b. Register zk-relayer (anvil Account #1)
+        uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+        vm.stopBroadcast();
+        vm.startBroadcast(zkRelayerKey);
+        relayerRegistry.register("http://localhost:3002", 30);
+        console.log("Account #1 registered as zk-relayer");
+        vm.stopBroadcast();
+        vm.startBroadcast();
 
         // ── ZK Private Settlement ────────────────────────────────
 

@@ -4,6 +4,8 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.dev-logs"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Hardhat Account #1 — used for zk-relayer (separate identity)
+ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 RPC_URL="http://localhost:8545"
 MOCK_MODE=false
 PIDS=()
@@ -106,6 +108,11 @@ if [ "$MOCK_MODE" = true ]; then
     exit 1
   fi
 
+  # Register zk-relayer (separate account from deployer)
+  echo "  Registering zk-relayer..."
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3002" 30 \
+    --value 0.1ether --private-key "$ZK_RELAYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
+
 else
   # ── Integration mode: connect to existing anvil with zk-X509 ──
   echo "Mode: INTEGRATION (zk-X509 required)"
@@ -194,6 +201,11 @@ else
   echo "  Registering deployer as relayer..."
   cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3001" 30 \
     --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
+
+  # Register zk-relayer (separate account)
+  echo "  Registering zk-relayer..."
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3002" 30 \
+    --value 0.1ether --private-key "$ZK_RELAYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
 fi
 
 # Whitelist tokens (if available)
@@ -241,7 +253,7 @@ if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
   check_port 3002 "zk-relayer"
   cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
-RELAYER_PRIVATE_KEY=$DEPLOYER_KEY
+RELAYER_PRIVATE_KEY=$ZK_RELAYER_KEY
 COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 RELAYER_FEE=30

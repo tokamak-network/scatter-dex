@@ -107,21 +107,39 @@ forge script script/DeployLocal.s.sol:DeployLocal \
   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 ```
 
-Note the addresses from the output (ScatterSettlement, RelayerRegistry, WETH, USDC).
+Note the addresses from the output — you'll need these for later steps:
 
-**3. Whitelist tokens:**
+| Variable | Output label |
+|----------|-------------|
+| `<SETTLEMENT>` | ScatterSettlement |
+| `<RELAYER_REGISTRY>` | RelayerRegistry |
+| `<WETH>` | WETH |
+| `<USDC>` | USDC |
+| `<COMMITMENT_POOL>` | CommitmentPool |
+| `<PRIVATE_SETTLEMENT>` | PrivateSettlement |
+
+**3. Verify deployment:**
+
+> `DeployLocal.s.sol` automatically:
+> - Whitelists WETH/USDC on all 3 contracts (Settlement, CommitmentPool, PrivateSettlement)
+> - Registers deployer (Account #0) as standard relayer → `http://localhost:3001`
+> - Registers Account #1 as zk-relayer → `http://localhost:3002`
 
 ```bash
-cast send <SETTLEMENT> "setTokenWhitelist(address,bool)" <WETH> true \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-  --rpc-url http://localhost:8545
+# Check token whitelist
+cast call <SETTLEMENT> "whitelistedTokens(address)(bool)" <WETH> --rpc-url http://localhost:8545
+cast call <COMMITMENT_POOL> "whitelistedTokens(address)(bool)" <WETH> --rpc-url http://localhost:8545
+cast call <PRIVATE_SETTLEMENT> "whitelistedTokens(address)(bool)" <WETH> --rpc-url http://localhost:8545
 
-cast send <SETTLEMENT> "setTokenWhitelist(address,bool)" <USDC> true \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+# Check registered relayers (should show 2 addresses)
+cast call <RELAYER_REGISTRY> "getActiveRelayers()(address[])" --rpc-url http://localhost:8545
+
+# Check specific relayer info
+cast call <RELAYER_REGISTRY> "relayers(address)(string,uint256,uint256,uint256,uint256,bool)" <RELAYER_ADDRESS> \
   --rpc-url http://localhost:8545
 ```
 
-**4. Start relayer:**
+**4. Start standard relayer:**
 
 ```bash
 cd relayer
@@ -135,20 +153,40 @@ EOF
 npm run dev
 ```
 
-**5. Start frontend:**
+**5. Start zk-relayer:**
+
+```bash
+cd zk-relayer
+cat > .env <<EOF
+RPC_URL=http://localhost:8545
+RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+COMMITMENT_POOL_ADDRESS=<COMMITMENT_POOL>
+PRIVATE_SETTLEMENT_ADDRESS=<PRIVATE_SETTLEMENT>
+RELAYER_FEE=30
+PORT=3002
+EOF
+npm run dev
+```
+
+**6. Start frontend:**
 
 ```bash
 cd frontend
 cat > .env.local <<EOF
 NEXT_PUBLIC_SETTLEMENT_ADDRESS=<SETTLEMENT>
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
+NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<COMMITMENT_POOL>
 NEXT_PUBLIC_WETH_ADDRESS=<WETH>
 NEXT_PUBLIC_TOKENS=<WETH>:WETH:18,<USDC>:USDC:18
 NEXT_PUBLIC_RPC_URL=http://localhost:8545
 NEXT_PUBLIC_CHAIN_ID=31337
+NEXT_PUBLIC_RELAYER_URL=http://localhost:3001
+NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 npm run dev
 ```
+
+> **Tip:** If you need to install dependencies first, run `npm install` in each directory (relayer, zk-relayer, frontend) before `npm run dev`.
 
 ### Integration Mode
 
@@ -171,19 +209,21 @@ RELAYER_IDENTITY_REGISTRY=0x... \
 The script will:
 1. Detect the running anvil (does **not** start its own)
 2. Deploy ScatterDEX contracts with real `IdentityGate` (User CA) and `RelayerRegistry` (Relayer CA)
-3. Register deployer as relayer
+3. Register deployer as standard relayer + zk-relayer (separate account)
 4. Start relayer on http://localhost:3001
-5. Start frontend on http://localhost:3000
+5. Start zk-relayer on http://localhost:3002
+6. Start frontend on http://localhost:3000
 
 ---
 
 ## Services
 
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3000 |
-| Relayer | http://localhost:3001 |
-| Anvil | http://localhost:8545 |
+| Service | URL | Description |
+|---------|-----|-------------|
+| Frontend | http://localhost:3000 | Next.js web app |
+| Relayer | http://localhost:3001 | Standard order matching + settlement |
+| ZK Relayer | http://localhost:3002 | ZK private orders + gasless claims |
+| Anvil | http://localhost:8545 | Local Ethereum node |
 
 ## Tests
 

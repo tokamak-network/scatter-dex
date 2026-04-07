@@ -204,6 +204,73 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
     }
 
+    // ─── Scatter Direct (same-token, no counterparty) ─────────────
+
+    struct ScatterDirectParams {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        uint256 currentRoot;
+        bytes32 nullifier;
+        bytes32 newCommitment;
+        address token;
+        uint256 withdrawAmount;      // total amount withdrawn from commitment
+        bytes32 claimsRoot;
+        uint96 totalLocked;          // sum of claim amounts
+        uint96 fee;                  // relayer fee
+    }
+
+    event ScatterDirect(
+        bytes32 indexed nullifier,
+        bytes32 indexed claimsRoot,
+        address relayer,
+        uint96 fee
+    );
+
+    /// @notice Single-party scatter: consume a commitment and register claims directly.
+    ///         Uses withdraw proof — no counterparty or settle circuit needed.
+    ///         For same-token orders (e.g., scheduled transfers).
+    function scatterDirect(ScatterDirectParams calldata p) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
+        if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
+
+        // withdrawAmount must cover claims + fee
+        if (p.withdrawAmount < uint256(p.totalLocked) + uint256(p.fee)) revert AmountOverflow();
+
+        // Verify root is known
+        if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
+
+        // Withdraw from pool: recipient = this contract, relayer = msg.sender
+        pool.withdrawFor(
+            p.proofA, p.proofB, p.proofC,
+            p.currentRoot,
+            uint256(p.nullifier),
+            uint256(p.newCommitment),
+            p.token,
+            p.withdrawAmount,
+            address(this),   // funds come to PrivateSettlement
+            msg.sender       // relayer bound in proof
+        );
+
+        // Mark nullifier
+        nullifiers[p.nullifier] = true;
+
+        // Register claims group
+        claimsGroups[p.claimsRoot] = ClaimsGroup({
+            token: p.token,
+            totalLocked: p.totalLocked,
+            totalClaimed: 0
+        });
+
+        // Transfer fee to relayer
+        if (p.fee > 0) {
+            IERC20(p.token).safeTransfer(msg.sender, p.fee);
+        }
+
+        emit ScatterDirect(p.nullifier, p.claimsRoot, msg.sender, p.fee);
+    }
+
     // ─── Claim ───────────────────────────────────────────────────
 
     /// @notice Claim funds from a private settlement using ZK proof.
