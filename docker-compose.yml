@@ -49,6 +49,31 @@ services:
       timeout: 5s
       retries: 15
 
+  # ── ZK Relayer (private settlement + gasless claims) ────────
+  # Only in mock profile — integration mode needs separate ZK contract deployment
+  zk-relayer:
+    profiles: ["mock"]
+    build: ./zk-relayer
+    depends_on:
+      deployer:
+        condition: service_completed_successfully
+    ports:
+      - "3002:3002"
+    volumes:
+      - shared:/shared:ro
+    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npx tsx src/index.ts"]
+    environment:
+      - RPC_URL=${RPC_URL:-http://anvil:8545}
+      # Anvil Account #1 — different from standard relayer (#0) to avoid nonce conflicts
+      - RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+      - RELAYER_FEE=30  # basis points (0.3%)
+      - PORT=3002
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+
   # ── Frontend ────────────────────────────────────────────────
   frontend:
     build: ./frontend
