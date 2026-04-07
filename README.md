@@ -1,6 +1,6 @@
 # ScatterDEX
 
-A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For full privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities, trade structure, and settlement amounts on-chain (deposit amounts remain visible in ERC-20 transfers).
+A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For stronger on-chain privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities and claim structure, while aggregate settlement amounts and token information remain public on-chain.
 
 > Privacy + Compliance + Efficiency — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
 
@@ -30,7 +30,7 @@ contracts/       Solidity contracts + Foundry tests
   test/            Unit, E2E, gas benchmark tests (165+)
   script/          DeployLocal, DeploySettlement
 circuits/        Circom ZK circuits (settle, claim, withdraw)
-  build/           Compiled WASM + zkeys
+  build/           Generated artifacts (WASM + zkeys, produced by scripts/build.sh)
 frontend/        Next.js app (trade, deposit, claim, private order, history)
   app/lib/zk/      EdDSA, commitment, stealth, incremental tree
 relayer/         Off-chain order matching + settlement relay
