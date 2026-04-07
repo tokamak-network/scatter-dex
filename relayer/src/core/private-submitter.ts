@@ -12,9 +12,9 @@ import {
   computeNullifier,
   computeClaimLeaf,
   buildMerkleTree,
-  getMerkleProof,
   type ClaimLeafData,
 } from "./zk-prover.js";
+import { IncrementalMerkleTree } from "./incremental-tree.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -67,7 +67,7 @@ export class PrivateSubmitter {
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private pool: ethers.Contract;
-  private commitmentLeaves: bigint[] = [];
+  private tree: IncrementalMerkleTree | null = null;
 
   constructor(
     privateSettlementAddr: string,
@@ -80,11 +80,11 @@ export class PrivateSubmitter {
     this.pool = new ethers.Contract(commitmentPoolAddr, COMMITMENT_POOL_ABI, this.provider);
   }
 
-  /** Index all commitment deposits from on-chain events. */
+  /** Index all commitment deposits from on-chain events and build incremental tree. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
     const events = await this.pool.queryFilter(filter, 0, "latest");
-    this.commitmentLeaves = [];
+    const leaves: bigint[] = [];
 
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
@@ -93,44 +93,36 @@ export class PrivateSubmitter {
       });
       if (parsed) {
         const leafIndex = Number(parsed.args.leafIndex);
-        while (this.commitmentLeaves.length <= leafIndex) {
-          this.commitmentLeaves.push(0n);
-        }
-        this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
+        while (leaves.length <= leafIndex) leaves.push(0n);
+        leaves[leafIndex] = BigInt(parsed.args.commitment);
       }
     }
-    console.log(`Indexed ${this.commitmentLeaves.length} commitments`);
+
+    this.tree = await IncrementalMerkleTree.fromLeaves(leaves, COMMIT_TREE_DEPTH);
+    console.log(`Indexed ${leaves.length} commitments (incremental tree)`);
   }
 
   /** Submit a private settlement with ZK proof. */
   async submitPrivateSettle(match: PrivateMatch): Promise<string> {
     const { maker, taker } = match;
 
-    // Re-index commitments to get fresh state
+    // Index commitments and build incremental tree
     await this.indexCommitments();
-
-    // Build commitment Merkle tree
-    // TODO: O(2^20) full tree rebuild is acceptable for MVP but will not scale.
-    // In production, use incremental tree building (maintain partial tree state
-    // and only recompute affected branches when new leaves are inserted).
-    let { root: commitRoot, layers: commitLayers } = await buildMerkleTree(
-      this.commitmentLeaves,
-      COMMIT_TREE_DEPTH,
-    );
+    if (!this.tree) throw new Error("Tree not initialized");
 
     // Verify on-chain root matches
+    let commitRoot = this.tree.root;
     const onChainRoot = await this.pool.getLastRoot();
     if (commitRoot !== BigInt(onChainRoot)) {
       console.warn("Local tree root differs from on-chain root, re-indexing...");
       await this.indexCommitments();
-      const freshResult = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
-      commitRoot = freshResult.root;
-      commitLayers = freshResult.layers;
+      if (!this.tree) throw new Error("Tree not initialized after re-index");
+      commitRoot = this.tree.root;
     }
 
-    // Get Merkle proofs for maker/taker commitments
-    const makerProof = getMerkleProof(commitLayers, maker.leafIndex);
-    const takerProof = getMerkleProof(commitLayers, taker.leafIndex);
+    // Get Merkle proofs (O(n) per proof, but only 2 proofs per settlement)
+    const makerProof = await this.tree.getProofAsync(maker.leafIndex);
+    const takerProof = await this.tree.getProofAsync(taker.leafIndex);
 
     // Compute claim leaves and roots
     const makerClaimLeaves = await Promise.all(
