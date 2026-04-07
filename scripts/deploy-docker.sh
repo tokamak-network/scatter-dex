@@ -108,7 +108,22 @@ else
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
 
+  # Validate all addresses were parsed
+  for var_name in SETTLEMENT RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC; do
+    eval val=\$$var_name
+    if [ -z "$val" ]; then
+      echo "ERROR: Failed to parse $var_name from deploy output"
+      exit 1
+    fi
+  done
+
   whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
+
+  # Register Anvil Account #1 as zk-relayer (Account #0 is registered by DeployLocal)
+  ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+  echo "Registering zk-relayer (Account #1)..."
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3002" 30 \
+    --private-key "$ZK_RELAYER_KEY" --rpc-url "$RPC_URL" 2>/dev/null || true
 
   cat > "$OUTPUT_FILE" <<EOF
 SETTLEMENT_ADDRESS=$SETTLEMENT
