@@ -21,7 +21,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
-  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint256 totalFee) p) external",
+  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -187,7 +187,14 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    const totalFee = 0n; // TODO: integrate fee calculation
+    // Fee is cross-side: makerFee deducted from maker's sell → taker's receive token,
+    // takerFee deducted from taker's sell → maker's receive token.
+    // Use maxFee as-is: frontend already computed claim amounts based on this rate.
+    const BPS_DENOMINATOR = 10000n;
+    const makerFeeBps = maker.maxFee;
+    const takerFeeBps = taker.maxFee;
+    const feeTokenMaker = (taker.sellAmount * takerFeeBps) / BPS_DENOMINATOR;
+    const feeTokenTaker = (maker.sellAmount * makerFeeBps) / BPS_DENOMINATOR;
 
     // Generate ZK proof
     console.log("Generating settle ZK proof...");
@@ -207,7 +214,8 @@ export class PrivateSubmitter {
       totalLockedTaker: totalLockedTaker.toString(),
       tokenMaker: tokenMaker.toString(),
       tokenTaker: tokenTaker.toString(),
-      totalFee: totalFee.toString(),
+      feeTokenMaker: feeTokenMaker.toString(),
+      feeTokenTaker: feeTokenTaker.toString(),
       currentTimestamp: Math.floor(Date.now() / 1000).toString(),
 
       makerSecret: maker.ownerSecret.toString(),
@@ -235,8 +243,8 @@ export class PrivateSubmitter {
       takerExpiry: taker.expiry.toString(),
       takerNonce: taker.nonce.toString(),
 
-      makerFee: "0",
-      takerFee: "0",
+      makerFee: makerFeeBps.toString(),
+      takerFee: takerFeeBps.toString(),
       makerNewSalt: makerNewSalt.toString(),
       takerNewSalt: takerNewSalt.toString(),
 
@@ -295,7 +303,8 @@ export class PrivateSubmitter {
       totalLockedTaker,
       tokenMaker: "0x" + tokenMaker.toString(16).padStart(40, "0"),
       tokenTaker: "0x" + tokenTaker.toString(16).padStart(40, "0"),
-      totalFee,
+      feeTokenMaker,
+      feeTokenTaker,
     }, { nonce });
 
     const receipt = await tx.wait();
