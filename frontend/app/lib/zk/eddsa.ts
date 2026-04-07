@@ -157,7 +157,7 @@ export function isEncryptedKeyPair(stored: string): boolean {
 async function deriveWrappingKey(signature: string, account: string): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    ethers.getBytes(signature + ":wrap"),
+    new TextEncoder().encode(signature + ":wrap"),
     "PBKDF2",
     false,
     ["deriveKey"],

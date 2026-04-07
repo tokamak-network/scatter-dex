@@ -146,12 +146,19 @@ export function useMainnetPrice(
     const buy = MAINNET_TOKENS[buyKey];
 
     if (!sell || !buy) {
-      setPrices(sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: false, error: "unknown token" })));
+      setPrices(sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: false })));
       return;
     }
 
     if (sell.address.toLowerCase() === buy.address.toLowerCase()) {
       setPrices(sourceNames.map((s) => ({ source: s, price: 1, netPrice: 1, fee: "0%", loading: false })));
+      return;
+    }
+
+    // Skip mainnet price fetch on local dev (anvil) to avoid rate limiting
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+      setPrices(sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: false })));
       return;
     }
 

@@ -24,6 +24,8 @@ import {
   hasFolderSelected,
   getFolderName,
   loadNotes,
+  saveEdDSAKeyToFolder,
+  loadEdDSAKeyFromFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
@@ -31,10 +33,8 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
-// EdDSA key is AES-GCM encrypted in localStorage. This protects against
-// direct storage reads (extensions, physical access). It does NOT protect
-// against XSS — the decrypted key lives in React state at runtime.
-const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
+// EdDSA key is AES-GCM encrypted and stored in the notes folder (File System API).
+// This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
 
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
@@ -205,56 +205,41 @@ export default function PrivateOrderPage() {
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Load legacy plaintext key immediately (no signer needed)
+  // Check if encrypted key exists in folder (no signature needed — just detect)
+  const [hasStoredKey, setHasStoredKey] = useState(false);
   useEffect(() => {
-    if (typeof window === "undefined" || keyPair) return;
-    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (!saved || isEncryptedKeyPair(saved)) return;
-    try {
-      setKeyPair(deserializeKeyPair(saved));
-      setStep("create_order");
-    } catch { /* invalid stored key */ }
-  }, [keyPair]);
+    if (typeof window === "undefined" || !hasFolderSelected()) return;
+    if (!account) return;
+    loadEdDSAKeyFromFolder(account).then((saved) => setHasStoredKey(!!saved));
+  }, [folderName, account]);
 
-  // Decrypt encrypted key (needs signer) + auto-migrate legacy to encrypted
-  useEffect(() => {
-    if (typeof window === "undefined" || !signer || !account || keyPair) return;
-    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
-    if (!saved) return;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        if (isEncryptedKeyPair(saved)) {
-          const signature = await signer.signMessage(DERIVE_MESSAGE);
-          if (cancelled) return;
-          const kp = await deserializeKeyPairEncrypted(saved, signature, account);
-          if (cancelled) return;
-          setKeyPair(kp);
-          setStep("create_order");
-        } else {
-          // Auto-migrate legacy plaintext to encrypted
-          const kp = deserializeKeyPair(saved);
-          const signature = await signer.signMessage(DERIVE_MESSAGE);
-          if (cancelled) return;
-          localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
-        }
-      } catch { /* wrong account or user rejected — key stays as-is */ }
-    })();
-    return () => { cancelled = true; };
-  }, [signer, account, keyPair]);
-
-  // Derive EdDSA key from MetaMask (single signMessage — no double popup)
+  // Derive or unlock EdDSA key — only triggered by button click (no auto-popup)
   const handleDeriveKey = useCallback(async () => {
     if (!signer || !account) return;
+    if (!hasFolderSelected()) {
+      setError("Select a notes folder first");
+      return;
+    }
     setKeyLoading(true);
     setError(null);
     try {
-      const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
-      const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
-      localStorage.setItem(EDDSA_KEY_STORAGE, encrypted);
-      setKeyPair(kp);
-      setStep("create_order");
+      // Check if key file exists in folder
+      const saved = await loadEdDSAKeyFromFolder(account);
+      if (saved && isEncryptedKeyPair(saved)) {
+        // Unlock existing key
+        const signature = await signer.signMessage(DERIVE_MESSAGE);
+        const kp = await deserializeKeyPairEncrypted(saved, signature, account);
+        setKeyPair(kp);
+        setStep("create_order");
+      } else {
+        // Generate new key and save encrypted
+        const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
+        const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
+        await saveEdDSAKeyToFolder(encrypted, account);
+        setHasStoredKey(true);
+        setKeyPair(kp);
+        setStep("create_order");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Key derivation failed");
     } finally {
@@ -262,9 +247,35 @@ export default function PrivateOrderPage() {
     }
   }, [signer, account]);
 
-  // Submit private order
+  // Submit private order — auto-generates key if not present
   const handleSubmit = useCallback(async () => {
-    if (!keyPair || !sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote) return;
+    if (!sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote || !signer || !account) return;
+
+    // Auto-generate/unlock key if not yet available
+    let kp = keyPair;
+    if (!kp) {
+      if (!hasFolderSelected()) {
+        setError("Select a notes folder first (Private Escrow → Select Folder)");
+        return;
+      }
+      try {
+        const saved = await loadEdDSAKeyFromFolder(account);
+        if (saved && isEncryptedKeyPair(saved)) {
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          kp = await deserializeKeyPairEncrypted(saved, signature, account);
+        } else {
+          const result = await deriveEdDSAKey(signer);
+          kp = result.keyPair;
+          await saveEdDSAKeyToFolder(await serializeKeyPairEncrypted(kp, result.signature, account), account);
+          setHasStoredKey(true);
+        }
+        setKeyPair(kp);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Key generation failed");
+        return;
+      }
+    }
+
     setStep("signing");
     setError(null);
 
@@ -336,7 +347,7 @@ export default function PrivateOrderPage() {
         claimsRoot,
       });
 
-      const sig = await signEdDSA(keyPair.privateKey, orderHash);
+      const sig = await signEdDSA(kp.privateKey, orderHash);
 
       // Submit to zk-relayer with commitment info from note
       const relayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
@@ -351,8 +362,8 @@ export default function PrivateOrderPage() {
           maxFee: maxFeeBps,
           expiry: expiryTimestamp.toString(),
           nonce: nonce.toString(),
-          pubKeyAx: keyPair.publicKey[0].toString(),
-          pubKeyAy: keyPair.publicKey[1].toString(),
+          pubKeyAx: kp.publicKey[0].toString(),
+          pubKeyAy: kp.publicKey[1].toString(),
           sigS: sig.S.toString(),
           sigR8x: sig.R8x.toString(),
           sigR8y: sig.R8y.toString(),
@@ -433,47 +444,20 @@ export default function PrivateOrderPage() {
           </p>
         </div>
 
-        {/* Step 1: EdDSA Key Setup */}
-        {step === "setup_key" && !keyPair && (
+        {/* Order Form — always visible */}
+        {(step === "setup_key" || step === "create_order" || step === "error") && (
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 space-y-6">
-            <div className="text-center">
-              <Key className="w-12 h-12 text-primary mx-auto mb-4" />
-              <h3 className="font-headline text-lg font-bold text-on-surface">Generate Trading Key</h3>
-              <p className="text-sm text-on-surface-variant/70 mt-2">
-                Sign a message with MetaMask to derive your ZK trading key.
-                This key is used to sign private orders. It does not access your funds.
-              </p>
-            </div>
-
-            {error && (
-              <div className="text-xs p-3 rounded-md bg-error/5 text-error flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            {keyPair ? (
+              <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-md">
+                <Check className="w-3.5 h-3.5" />
+                Trading key active: {keyPair.publicKey[0].toString().slice(0, 10)}...
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-on-surface-variant/60 bg-surface-container px-3 py-2 rounded-md">
+                <Key className="w-3.5 h-3.5" />
+                Trading key will be generated when you submit the order.
               </div>
             )}
-
-            <button
-              onClick={handleDeriveKey}
-              disabled={keyLoading}
-              className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
-            >
-              {keyLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Signing...
-                </span>
-              ) : (
-                "Generate Key"
-              )}
-            </button>
-          </div>
-        )}
-
-        {/* Step 2: Create Order */}
-        {(step === "create_order" || step === "error") && keyPair && (
-          <div className="glass-card rounded-xl p-8 border border-outline-variant/10 space-y-6">
-            <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-md">
-              <Check className="w-3.5 h-3.5" />
-              Trading key active: {keyPair.publicKey[0].toString().slice(0, 10)}...
-            </div>
 
             {/* Notes Folder */}
             <div className="bg-surface-container-low/50 rounded-lg p-4 border border-outline-variant/5 space-y-3">

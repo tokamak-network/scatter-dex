@@ -410,6 +410,9 @@ export default function RelayersPage() {
                 <div className="flex items-center gap-2 mb-1.5">
                   <Circle className={`w-2.5 h-2.5 fill-current ${r.online ? "text-primary" : "text-error/40"}`} />
                   <span className="text-xs font-mono text-on-surface">{shortenAddress(r.address)}</span>
+                  {r.api?.name?.includes("ZK") && (
+                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
+                  )}
                 </div>
                 <div className="text-[10px] text-on-surface-variant/50 space-y-0.5">
                   <div className="flex gap-3">
@@ -432,7 +435,10 @@ export default function RelayersPage() {
                 {selected.url} <ExternalLink className="w-3 h-3" />
               </a>
               {selected.api && (
-                <span className="text-on-surface-variant/50 ml-auto">
+                <span className="text-on-surface-variant/50 ml-auto flex items-center gap-2">
+                  {selected.api.name?.includes("ZK") && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK Private</span>
+                  )}
                   {selected.api.name} v{selected.api.version}
                 </span>
               )}
