@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
 import { Loader2, Copy, Check, Clock, Shield, Lock, Plus, Trash2, AlertCircle, Save, FolderOpen, Download } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -11,6 +11,9 @@ import type { OrderInput, ClaimInput } from "../../lib/signing";
 import { RelayerClient } from "../../lib/relayerApi";
 import { isMetaAddress, generateStealthAddress, buildStealthClaimLink } from "../../lib/stealth";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
+import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
+import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
+import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
 type Side = "buy" | "sell";
@@ -38,7 +41,7 @@ interface ClaimRow {
 }
 
 export default function OrderPage() {
-  const { account, chainId, signer } = useWallet();
+  const { account, chainId, signer, readProvider } = useWallet();
   const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
   const nextClaimId = useRef(1);
   const { relayers } = useRelayers();
@@ -91,29 +94,56 @@ export default function OrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
+  // Gas-inclusive minimum fee
+  const { ethPerToken } = useTokenEthPrice(receiveToken?.address, receiveToken?.decimals, chainId, readProvider);
+  const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
+  const [feeBreakdownOpen, setFeeBreakdownOpen] = useState(false);
+  const baseBpsParsed = parseInt(maxFee) || 0;
+
+  useEffect(() => {
+    if (!readProvider || !amount || !receiveToken || !ethPerToken) {
+      setGasEstimate(null);
+      return;
+    }
+    let cancelled = false;
+    const amt = parseFloat(amount);
+    const p = isSameToken ? 1 : parseFloat(price);
+    if (!amt || (!isSameToken && !p)) return;
+    const receiveAmt = side === "buy" ? amt : amt * p;
+    try {
+      const receiveBig = ethers.parseUnits(
+        receiveAmt.toFixed(Math.min(receiveToken.decimals, 18)),
+        receiveToken.decimals,
+      );
+      if (receiveBig <= 0n) return;
+      estimateMinFeeBps(readProvider, claims.length, receiveBig, ethPerToken, receiveToken.decimals)
+        .then((r) => { if (!cancelled) setGasEstimate(r); })
+        .catch(() => { if (!cancelled) setGasEstimate(null); });
+    } catch {
+      setGasEstimate(null);
+    }
+    return () => { cancelled = true; };
+  }, [readProvider, amount, price, claims.length, receiveToken, ethPerToken, side, isSameToken]);
+
+  const minFeeBps = gasEstimate?.minFeeBps ?? 0;
+  const effectiveFeeBps = Math.max(baseBpsParsed, minFeeBps);
+
   // Distributable amount — what recipients can claim after all fees.
-  // "My side only": takerFee deducted from counterparty's sell → reduces your receive
-  // "Cover both sides": makerFee is your total cost → reduces your effective value
   const distributable = useMemo(() => {
     if (!amount || (!isSameToken && !price)) return 0;
     const amt = parseFloat(amount);
     const p = isSameToken ? 1 : parseFloat(price);
     const buyAmt = side === "buy" ? amt : amt * p;
-    const baseBps = parseInt(maxFee) || 0;
+    const baseBps = effectiveFeeBps;
     if (isSameToken) {
-      // Same-token: "cover both" = 2×baseBps (sender pays full fee, recipients get full amount)
-      // "my side only" = baseBps (fee deducted from distributable)
       const feeBps = feeMode === "both" ? baseBps * 2 : baseBps;
       return amt * (1 - feeBps / 10000);
     }
     if (feeMode === "both") {
-      // You cover both: fee is 2×baseBps on your sell side only.
-      // Taker pays 0 fee, so you receive the full buyAmt.
       return buyAmt;
     }
-    // My side only: takerFee deducted from counterparty's sell → reduces your receive
     return buyAmt * (1 - baseBps / 10000);
-  }, [amount, price, maxFee, feeMode, side, isSameToken]);
+  }, [amount, price, effectiveFeeBps, feeMode, side, isSameToken]);
 
   // Fill remaining amount for a specific claim (floor to avoid exceeding distributable)
   const fillRest = (id: number) => {
@@ -293,7 +323,7 @@ export default function OrderPage() {
         buyToken: orderBuyToken.address,
         sellAmount,
         buyAmount,
-        maxFee: (parseInt(maxFee) || 30) * (feeMode === "both" ? 2 : 1),
+        maxFee: effectiveFeeBps * (feeMode === "both" ? 2 : 1),
         expiry: Math.floor(Date.now() / 1000) + EXPIRY_SECONDS[expiry],
         nonce,
         claims: claimInputs,
@@ -477,6 +507,9 @@ export default function OrderPage() {
               {feeMode === "both" && (
                 <p className="text-[9px] text-tertiary">Taker pays 0% — you cover the full relay fee</p>
               )}
+              {minFeeBps > baseBpsParsed && (
+                <p className="text-[9px] text-warning">Min fee {(minFeeBps / 100).toFixed(2)}% required (gas coverage for {claims.length} claim{claims.length > 1 ? "s" : ""})</p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Expires</label>
@@ -499,7 +532,7 @@ export default function OrderPage() {
           {amount && (isSameToken || (price && maxFee)) && (() => {
             const total = isSameToken ? parseFloat(amount) : parseFloat(amount) * parseFloat(price);
             const amt = parseFloat(amount);
-            const baseBps = parseInt(maxFee) || 0;
+            const baseBps = effectiveFeeBps;
             const isBoth = feeMode === "both";
 
             // makerFee (on your sell) — "cover both" = 2×baseBps
@@ -522,10 +555,16 @@ export default function OrderPage() {
                   <span className="text-on-surface-variant">You send</span>
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                <div className="flex justify-between text-error/80">
-                  <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""})</span>
+                <div
+                  className="flex justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
+                  onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
+                >
+                  <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""}) ▾</span>
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </div>
+                {feeBreakdownOpen && gasEstimate && (
+                  <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={baseBpsParsed} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
+                )}
                 {isSameToken ? (
                   <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                     <span>Recipients receive</span>
