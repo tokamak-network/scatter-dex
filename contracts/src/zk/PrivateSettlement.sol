@@ -32,6 +32,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error TokenMismatch();
     error AmountOverflow();
     error OnlyWETH();
+    error ClaimsGroupAlreadyExists();
     error TimestampOutOfRange();
 
     // ─── Events ──────────────────────────────────────────────────
@@ -196,11 +197,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
         }
 
+        if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
             totalLocked: p.totalLockedMaker,
             totalClaimed: 0
         });
+        if (claimsGroups[p.claimsRootTaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootTaker] = ClaimsGroup({
             token: p.tokenTaker,
             totalLocked: p.totalLockedTaker,
@@ -262,7 +265,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Mark nullifier
         nullifiers[p.nullifier] = true;
 
-        // Register claims group
+        // Register claims group (prevent overwriting existing group)
+        if (claimsGroups[p.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRoot] = ClaimsGroup({
             token: p.token,
             totalLocked: p.totalLocked,

@@ -327,12 +327,15 @@ export class PrivateSubmitter {
     // Nullifier
     const nullifier = await computeNullifier(order.ownerSecret, order.salt);
 
-    // Change commitment
+    // Change commitment (validate against user's expected value)
     const newSalt = order.newSalt;
     const changeAmount = order.balance - order.sellAmount;
     const newCommitment = changeAmount > 0n
       ? await computeCommitment(order.ownerSecret, order.sellToken, changeAmount, newSalt)
       : 0n;
+    if (order.expectedChangeCommitment !== 0n && newCommitment !== order.expectedChangeCommitment) {
+      throw new Error("Change commitment mismatch: relayer-computed does not match user-expected");
+    }
 
     // Claims
     const claimLeafHashes = await Promise.all(order.claims.map((c) => computeClaimLeaf(c)));

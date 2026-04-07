@@ -83,6 +83,7 @@ contract DeployLocal is Script {
         console.log("Deployer registered as standard relayer");
 
         // 10b. Register zk-relayer (anvil Account #1)
+        // WARNING: Anvil default key — NEVER use in production
         uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
         vm.stopBroadcast();
         vm.startBroadcast(zkRelayerKey);

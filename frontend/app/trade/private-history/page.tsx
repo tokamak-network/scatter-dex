@@ -332,7 +332,7 @@ export default function PrivateHistoryPage() {
               <div className="font-bold">Change (Remainder)</div>
               <div className="flex justify-between">
                 <span>Amount</span>
-                <span className="font-mono">{ethers.formatUnits(selectedOrder.change.amount, 18)}</span>
+                <span className="font-mono">{ethers.formatUnits(selectedOrder.change.amount, resolveToken(selectedOrder.order.sellToken, tokens).decimals)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Salt</span>

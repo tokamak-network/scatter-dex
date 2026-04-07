@@ -147,6 +147,7 @@ export async function loadClaimsFiles(): Promise<Array<{ filename: string } & Re
       const file = await handle.getFile();
       const text = await file.text();
       const parsed = JSON.parse(text);
+      if (typeof parsed !== "object" || parsed === null) continue;
       files.push({ filename: name, ...parsed });
     } catch { /* skip malformed */ }
   }

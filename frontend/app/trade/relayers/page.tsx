@@ -32,7 +32,6 @@ function timeAgo(timestamp: number): string {
 function buildPairOptions(tokens: TokenInfo[]) {
   const erc20 = tokens.filter((t) => !t.isNative);
   const pairs: { label: string; value: string }[] = [];
-  // Cross-token pairs
   for (let i = 0; i < erc20.length; i++) {
     for (let j = i + 1; j < erc20.length; j++) {
       const [tokenLow, tokenHigh] = [erc20[i], erc20[j]].sort((t1, t2) =>
