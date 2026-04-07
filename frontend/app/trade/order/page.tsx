@@ -118,8 +118,9 @@ export default function OrderPage() {
       if (receiveBig <= 0n) return;
       estimateMinFeeBps(readProvider, claims.length, receiveBig, ethPerToken, receiveToken.decimals)
         .then((r) => { if (!cancelled) setGasEstimate(r); })
-        .catch(() => { if (!cancelled) setGasEstimate(null); });
-    } catch {
+        .catch((e) => { if (!cancelled) { console.warn("Gas estimation failed:", e); setGasEstimate(null); } });
+    } catch (e) {
+      console.warn("Gas estimation failed:", e);
       setGasEstimate(null);
     }
     return () => { cancelled = true; };
@@ -555,13 +556,14 @@ export default function OrderPage() {
                   <span className="text-on-surface-variant">You send</span>
                   <span className="font-mono text-on-surface">{sellAmt.toFixed(4)} {sellSym}</span>
                 </div>
-                <div
-                  className="flex justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
+                <button
+                  type="button"
+                  className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
                   <span>Relay fee ({(makerFeeBps / 100).toFixed(2)}%{isBoth ? " — covers both" : ""}) ▾</span>
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
-                </div>
+                </button>
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={baseBpsParsed} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}

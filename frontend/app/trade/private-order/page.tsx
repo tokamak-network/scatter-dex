@@ -169,7 +169,7 @@ export default function PrivateOrderPage() {
 
     estimateMinFeeBps(readProvider, claims.length, sellBig, ethPerToken, buyToken.decimals)
       .then((r) => { if (!cancelled) setGasEstimate(r); })
-      .catch(() => { if (!cancelled) setGasEstimate(null); });
+      .catch((e) => { if (!cancelled) { console.warn("Gas estimation failed:", e); setGasEstimate(null); } });
     return () => { cancelled = true; };
   }, [readProvider, sellAmount, price, claims.length, buyToken, ethPerToken]);
 
@@ -190,10 +190,9 @@ export default function PrivateOrderPage() {
     if (sellAmount) recomputeBuyAmount(sellAmount, p, effectiveFeeBps);
   }, [sellAmount, effectiveFeeBps, recomputeBuyAmount]);
 
-  // Recompute buyAmount when effective fee changes (user selection or gas-based minimum)
   useEffect(() => {
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
-  }, [effectiveFeeBps]); // intentionally only on fee change
+  }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
   const fillRest = (id: number) => {
     const buyAmt = parseFloat(buyAmount) || 0;
@@ -645,13 +644,14 @@ export default function PrivateOrderPage() {
                   <span className="text-on-surface-variant">Gross receive</span>
                   <span className="font-mono text-on-surface">{(parseFloat(sellAmount) * parseFloat(price)).toFixed(4)} {buyToken?.symbol}</span>
                 </div>
-                <div
-                  className="flex justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
+                <button
+                  type="button"
+                  className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
                   <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
                   <span className="font-mono">−{(parseFloat(sellAmount) * parseFloat(price) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
-                </div>
+                </button>
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}

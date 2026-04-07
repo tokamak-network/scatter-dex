@@ -22,7 +22,7 @@ export default function FeeBreakdown({ gasEstimate, baseFeeBps, minFeeBps, effec
         <span>Gas coverage</span>
         <span className="font-mono">{minFeeBps > 0 ? `${(minFeeBps / 100).toFixed(2)}%` : "—"} ({minFeeBps} bps)</span>
       </div>
-      <div className="pl-2 space-y-0.5 text-on-surface-variant/70">
+      <div className="pl-2 space-y-0.5 text-on-surface-variant/70 font-mono">
         <div className="flex justify-between">
           <span>├ Settle tx</span>
           <span className="font-mono">~{formatGasEth(gasEstimate.settleGasWei)} ETH</span>

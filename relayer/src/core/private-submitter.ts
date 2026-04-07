@@ -207,7 +207,7 @@ export class PrivateSubmitter {
     }
 
     // Reject if fee BPS is below relayer's minimum (covers gas + profit)
-    const minFeeBps = BigInt(config.relayerFee);
+    const minFeeBps = BigInt(config.relayerFee ?? 0);
     if (makerFeeBps < minFeeBps || takerFeeBps < minFeeBps) {
       throw new Error(
         `Fee too low: maker=${makerFeeBps} bps, taker=${takerFeeBps} bps, ` +
