@@ -818,7 +818,7 @@ A critical advantage of Scatter Settlement's ZK-free design is practical deploya
 | Claim (×4) | 132,588 | 0.0000189 ETH | $0.038 |
 | **Full trade total** | **569,296** | **~0.000081 ETH** | **~$0.16** |
 
-*Note: Gas prices are volatile; the values above represent a low-end spot observation. At the 7-day median gas price of ~3 Gwei (March 2025), the full trade cost would be ~$3.40 — still 67–74% cheaper than ZK-based alternatives at the same gas price.*
+*Note: Gas prices are volatile; the values above represent a spot observation. As of 2025-2026, L1 average gas prices have stabilized at ~0.1-0.5 Gwei due to L2 migration. At a 0.5 Gwei average, the full trade cost would be ~$0.51 — still 67–74% cheaper than ZK-based alternatives. See [docs/gas-cost-analysis.md](gas-cost-analysis.md) for detailed Standard vs ZK cost comparison.*
 
 For comparison at the same gas price: Tornado Cash (~2.2M gas) costs ~$0.63 and Railgun (~1.7M gas) costs ~$0.48 per equivalent trade. This means Scatter Settlement on L1 is cheaper than ZK-based alternatives would be even on L2 at moderate gas prices.
 
