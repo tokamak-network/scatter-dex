@@ -195,6 +195,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Withdraw on behalf of PrivateSettlement (for scatterDirect).
     /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Intentionally skips paused check — settlement flows must complete once started.
     function withdrawFor(
         uint[2] calldata proofA,
         uint[2][2] calldata proofB,
