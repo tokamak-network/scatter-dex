@@ -111,7 +111,7 @@ http://localhost:3000/trade/private-claim
 7. proof가 **zk-relayer에 전송** → 릴레이어가 `claimWithProof()` 대신 호출 (gasless)
 8. 자금이 수신자 주소로 전송됨
 
-> **지갑 연결 불필요** — claim은 gasless (릴레이어가 가스 대납). 사용자 지갑 주소가 온체인에 노출되지 않음.
+> **지갑 연결 불필요** — claim은 gasless (릴레이어가 가스 대납). 사용자가 직접 보내는 tx sender 지갑 주소는 온체인에 노출되지 않음. 단, 표준 주소 수령에서는 `recipient` 주소가 온체인에 포함될 수 있으며, stealth claim 사용 시에만 수신자의 실제 지갑과 unlink됩니다.
 >
 > **Claims는 만료 없이 영구적으로 수령 가능합니다.** releaseTime 이후 언제든 claim 가능.
 
@@ -256,7 +256,7 @@ Claim:    Browser → zk-relayer API (proof) → claimWithProof (relayer pays ga
 | 정산 | ZK proof + nullifiers (msg.sender = relayer) | 거래자, 금액, 구조 |
 | 수령 | ZK proof + recipient + 금액 (msg.sender = relayer) | 어떤 정산인지, 수령자의 실제 신원 (stealth 사용 시) |
 
-**완전 프라이버시**: stealth 주소 + gasless claim을 사용하면 사용자 지갑 주소가 온체인에 한 번도 노출되지 않습니다.
+**프라이버시 범위**: gasless claim/relayer를 사용하면 settle/claim 단계의 온체인 `msg.sender` 는 사용자 대신 릴레이어로 보이며, stealth 주소를 사용하면 수신자 신원을 추가로 숨길 수 있습니다. 다만 사용자가 직접 보내는 deposit 등 온체인 자금 이동 트랜잭션은 별도이며, 이 경우 지갑 주소가 온체인에 노출될 수 있습니다.
 
 ## 회로 빌드
 
