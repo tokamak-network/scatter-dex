@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { poseidonHash, toBytes32Hex } from "./commitment";
-import { RPC_URL, getPrivateSettlementAddress } from "../config";
+import { getPrivateSettlementAddress } from "../config";
+import { getReadProvider } from "../provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../contracts";
 
 export interface ClaimStatusInfo {
@@ -33,7 +34,7 @@ export function useClaimStatuses(
     let cancelled = false;
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = getReadProvider();
         const settlement = new ethers.Contract(
           getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
         );

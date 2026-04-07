@@ -81,6 +81,7 @@ export function getPrivateSettlementAddress(): string {
 }
 
 export const RPC_URL = getEnv("NEXT_PUBLIC_RPC_URL") || "http://localhost:8545";
+
 export const EXPECTED_CHAIN_ID = Number(getEnv("NEXT_PUBLIC_CHAIN_ID") || "31337");
 
 const CHAIN_NAMES: Record<number, string> = {

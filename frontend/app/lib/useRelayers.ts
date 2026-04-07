@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { RELAYER_REGISTRY_ABI } from "./contracts";
-import { getRelayerRegistryAddress, RPC_URL } from "./config";
+import { getRelayerRegistryAddress } from "./config";
+import { getReadProvider } from "./provider";
 
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+const provider = getReadProvider();
 
 export interface RelayerOnChain {
   address: string;
