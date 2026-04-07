@@ -17,31 +17,32 @@ export default function Home() {
               Privacy-Preserving DEX with ZK Settlements
             </span>
           </div>
-          <h1 className="font-headline font-extrabold text-5xl md:text-7xl lg:text-8xl tracking-tighter text-on-surface mb-8 leading-[1.05]">
-            zkScatter:{" "}
+          <h1 className="font-headline font-extrabold text-4xl md:text-5xl lg:text-6xl tracking-tighter text-on-surface mb-8 leading-[1.1]">
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-tertiary">
-              Secure, Stealth
+              zkScatter
             </span>
-            , and Decentralized.
           </h1>
-          <p className="text-xl md:text-2xl text-on-surface-variant max-w-3xl mx-auto mb-12 leading-relaxed">
-            Trade transparently, settle privately. Seven-dimensional dissociation
-            makes your fund flows untraceable — powered by stealth addresses and
-            zero-knowledge proofs.
+          <p className="text-2xl md:text-3xl text-on-surface max-w-3xl mx-auto mb-4 leading-snug font-semibold">
+            Hide Your Flow. Prove Your Identity.
+          </p>
+          <p className="text-lg md:text-xl text-on-surface-variant max-w-3xl mx-auto mb-12 leading-relaxed">
+            ZKPs protect your on-chain financial privacy, while zk-X509 Identity Gating secures the network with uncompromising compliance.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
               href="/trade"
               className="w-full sm:w-auto px-10 py-4 gradient-btn text-on-primary-fixed rounded-md font-bold text-lg hover:shadow-[0_0_40px_-10px_rgba(149,170,255,0.5)] transition-all text-center"
             >
-              Launch Terminal
+              Start Secret Trade
             </Link>
-            <Link
-              href="/docs/PAPER.md"
+            <a
+              href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/PAPER.md"
+              target="_blank"
+              rel="noreferrer"
               className="w-full sm:w-auto px-10 py-4 bg-surface-container text-on-surface rounded-md font-bold text-lg border border-outline-variant/20 hover:bg-surface-bright transition-all text-center"
             >
               Read Whitepaper
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -49,8 +50,10 @@ export default function Home() {
         <div className="relative z-10 w-full max-w-6xl mt-24 grid grid-cols-2 md:grid-cols-4 gap-8 px-8 py-10 rounded-xl glass-card border border-outline-variant/10">
           <StatItem label="Privacy Model" value="Dual-CA" />
           <StatItem label="Settlement" value="Scatter" />
-          <StatItem label="Claims" value="Stealth" />
-          <StatItem label="Gas Savings" value="~74%" />
+          <StatItem label="Claims" value="ZK Proof" />
+          <Link href="/identity" className="hover:opacity-80 transition-opacity">
+            <StatItem label="Identity" value="zk-X509" />
+          </Link>
         </div>
       </section>
 
@@ -63,14 +66,15 @@ export default function Home() {
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-          {/* Stealth Claims */}
+          {/* ZK Claims */}
           <div className="md:col-span-8 rounded-xl bg-surface-container border border-outline-variant/10 p-8 flex flex-col justify-between min-h-[400px]">
             <div>
               <Shield className="w-10 h-10 text-tertiary mb-6" />
-              <h3 className="font-headline font-bold text-3xl mb-4">Stealth Claims</h3>
+              <h3 className="font-headline font-bold text-3xl mb-4">ZK Claims</h3>
               <p className="text-on-surface-variant text-lg max-w-md">
-                Recipients use one-time stealth addresses derived from meta-addresses.
-                Mathematically unlinkable — no fresh wallet management needed.
+                Recipients claim funds with zero-knowledge proofs. Nullifiers prevent
+                double-spending while keeping the link between sender and receiver
+                cryptographically hidden.
               </p>
             </div>
           </div>
@@ -120,8 +124,8 @@ export default function Home() {
             Ready to trade privately?
           </h2>
           <p className="text-on-surface-variant text-xl mb-12 max-w-2xl mx-auto">
-            Connect your wallet, deposit to escrow, and start trading with
-            cryptographic privacy guarantees.
+            Verify your identity via zk-X509, deposit to escrow, and start
+            secret trading with zero-knowledge privacy guarantees.
           </p>
           <Link
             href="/trade"

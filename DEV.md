@@ -121,7 +121,7 @@ Gen 1   EtherDelta      온체인 오더북             가스비 폭발
 Gen 2   Uniswap         온체인 AMM               MEV, 프라이버시 없음
 Gen 3   0x, CoW         오프체인 주문 + 온체인 정산  프라이버시 없음
 Gen 4   Renegade, Railgun  ZK/MPC 기반 프라이버시   비쌈, 복잡, 컴플라이언스 없음
-Gen 5   본 설계 (ScatterDEX)  분리 원칙 + Scatter Settlement  ←
+Gen 5   본 설계 (zkScatter)  분리 원칙 + Scatter Settlement  ←
 ```
 
 ### 2.2 기존 시스템과의 차이
@@ -776,7 +776,7 @@ zk-X509:       기존 구현 재사용 (SP1 zkVM)
 #### Phase 6: 프론트엔드 (플랫폼 UI) ⬜ 진행 예정
 
 ```
-목표: ScatterDEX 플랫폼 웹 UI
+목표: zkScatter 플랫폼 웹 UI
 
 작업:
   ├─ Next.js 프로젝트 셋업 (wagmi + viem)

@@ -9,8 +9,9 @@ import { shortenAddress } from "../lib/utils";
 
 const navLinks = [
   { href: "/", label: "Home" },
-  { href: "/trade", label: "Trade" },
-  { href: "/claim", label: "Claim" },
+  { href: "/identity", label: "Identity Verification" },
+  { href: "/trade", label: "Secret Trade" },
+  { href: "/relayer", label: "Relayer" },
 ];
 
 function shortenRpc(url: string) {

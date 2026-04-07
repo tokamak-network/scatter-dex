@@ -4,5 +4,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --production=false
 COPY . .
-EXPOSE 3002
+
+ENV PORT=3002
+EXPOSE ${PORT}
+
 CMD ["npx", "tsx", "src/index.ts"]

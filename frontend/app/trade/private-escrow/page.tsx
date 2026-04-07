@@ -334,6 +334,20 @@ export default function PrivateEscrowPage() {
         </p>
       </div>
 
+      {/* Local storage warning */}
+      <div className="flex items-start gap-3 p-4 rounded-xl bg-tertiary/5 border border-tertiary/20">
+        <AlertCircle className="w-5 h-5 text-tertiary flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-on-surface-variant space-y-1">
+          <p className="font-semibold text-tertiary">Your secret notes are stored locally only</p>
+          <p>
+            zkScatter does not store any personal data on its servers. Your commitment notes
+            (containing secret keys needed to withdraw or trade) are saved as local files
+            that only you control. <strong>If you lose these files, your deposited funds
+            cannot be recovered.</strong> Please back up your notes folder regularly.
+          </p>
+        </div>
+      </div>
+
       {/* Folder Selection */}
       {fsAvailable && !folderReady && (
         <div className="bg-surface-container rounded-xl p-6 flex items-center justify-between">

@@ -3,12 +3,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3 } from "lucide-react";
-import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../../lib/useRelayers";
-import { getTokenList, type TokenInfo } from "../../lib/tokens";
-import { getReadProvider } from "../../lib/provider";
-import { shortenAddress } from "../../lib/utils";
-
-const provider = getReadProvider();
+import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
+import { getTokenList, type TokenInfo } from "../lib/tokens";
+import { shortenAddress } from "../lib/utils";
 
 function formatBond(bond: bigint): string {
   const val = Number(ethers.formatEther(bond));
@@ -41,7 +38,6 @@ function buildPairOptions(tokens: TokenInfo[]) {
       pairs.push({ label: `${tokenLow.symbol}/${tokenHigh.symbol}`, value: `${a}-${b}` });
     }
   }
-  // Same-token pairs (ScatterDirect)
   for (const t of erc20) {
     const addr = t.address.toLowerCase();
     pairs.push({ label: `${t.symbol} Scatter`, value: `${addr}-${addr}` });
@@ -70,7 +66,6 @@ function aggregateOrderbook(
     return val.toFixed(digits);
   };
 
-  // price = quote (tB) per base (tA)
   const calcPrice = (baseAmt: string, quoteAmt: string, baseDec: number, quoteDec: number) => {
     const base = Number(ethers.formatUnits(baseAmt, baseDec));
     const quote = Number(ethers.formatUnits(quoteAmt, quoteDec));
@@ -81,13 +76,11 @@ function aggregateOrderbook(
   const bidMap = new Map<string, number>();
 
   for (const ob of orderbooks) {
-    // sells: maker sells tA to buy tB → price = buyAmount(tB) / sellAmount(tA)
     for (const o of ob.sells) {
       const price = calcPrice(o.sellAmount, o.buyAmount, dA, dB);
       const qty = Number(ethers.formatUnits(o.sellAmount, dA));
       askMap.set(price, (askMap.get(price) ?? 0) + qty);
     }
-    // buys: maker sells tB to buy tA → price = sellAmount(tB) / buyAmount(tA)
     for (const o of ob.buys) {
       const price = calcPrice(o.buyAmount, o.sellAmount, dA, dB);
       const qty = Number(ethers.formatUnits(o.buyAmount, dA));
@@ -118,22 +111,19 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
   const isEmpty = asks.length === 0 && bids.length === 0;
 
   if (isEmpty) {
-    return <div className="text-xs text-on-surface-variant/30 text-center py-16">No orders in this pair</div>;
+    return <div className="text-xs text-on-surface-variant/30 text-center py-10">No orders</div>;
   }
 
   return (
     <div>
-      {/* Column headers */}
       <div className="grid grid-cols-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider px-3 py-2">
         <span className="text-right">Qty ({symA})</span>
         <span className="text-center">Price ({symB})</span>
-        <span className="text-left">Qty ({symB})</span>
+        <span className="text-left">Qty ({symA})</span>
       </div>
-
-      <div className="max-h-[400px] overflow-y-auto">
-        {/* Asks: reversed so highest is at top, lowest near spread */}
+      <div className="max-h-[280px] overflow-y-auto">
         {[...asks].reverse().map((a, i) => (
-          <div key={`a-${i}`} className="grid grid-cols-3 items-center px-3 py-[5px] text-xs hover:bg-error/5 transition-colors">
+          <div key={`a-${i}`} className="grid grid-cols-3 items-center px-3 py-[4px] text-xs hover:bg-error/5 transition-colors">
             <div className="relative text-right pr-1">
               <div className="absolute right-0 top-0 bottom-0 bg-error/8 rounded-l" style={{ width: `${(a.qty / maxAskQty) * 100}%` }} />
               <span className="relative font-mono text-on-surface-variant/70">{a.qty.toFixed(4)}</span>
@@ -142,19 +132,15 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
             <span />
           </div>
         ))}
-
-        {/* Spread */}
         {asks.length > 0 && bids.length > 0 && (
-          <div className="flex items-center justify-center py-2 border-y border-outline-variant/10 my-0.5">
+          <div className="flex items-center justify-center py-1.5 border-y border-outline-variant/10 my-0.5">
             <span className="text-[10px] text-on-surface-variant/40">
               spread {(asks[0].priceNum - bids[0].priceNum).toFixed(2)} {symB}
             </span>
           </div>
         )}
-
-        {/* Bids: highest first (near spread) */}
         {bids.map((b, i) => (
-          <div key={`b-${i}`} className="grid grid-cols-3 items-center px-3 py-[5px] text-xs hover:bg-primary/5 transition-colors">
+          <div key={`b-${i}`} className="grid grid-cols-3 items-center px-3 py-[4px] text-xs hover:bg-primary/5 transition-colors">
             <span />
             <span className="text-center font-mono text-primary">{b.price}</span>
             <div className="relative text-left pl-1">
@@ -168,112 +154,85 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
   );
 }
 
-// ─── Network Stats ───────────────────────────────────────────
-function NetworkStats({ relayers }: { relayers: RelayerInfo[] }) {
-  const online = relayers.filter((r) => r.online);
-  const totalBond = relayers.reduce((s, r) => s + r.bond, BigInt(0));
-  const totalOrders = online.reduce((s, r) => s + (r.api?.orderCount ?? 0), 0);
-  const avgFee = relayers.length > 0
-    ? (relayers.reduce((s, r) => s + r.fee, 0) / relayers.length).toFixed(0)
-    : "0";
-
-  const stats = [
-    { label: "Relayers", value: `${online.length} / ${relayers.length}`, sub: "online / total" },
-    { label: "Total Bond", value: formatBond(totalBond), sub: "staked" },
-    { label: "Pending Orders", value: String(totalOrders), sub: "across network" },
-    { label: "Avg Fee", value: `${(Number(avgFee) / 100).toFixed(2)}%`, sub: `${avgFee} bps` },
-  ];
-
-  return (
-    <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-      <h3 className="text-xs font-semibold text-on-surface flex items-center gap-2 mb-3">
-        <BarChart3 className="w-3.5 h-3.5" /> Network Stats
-      </h3>
-      <div className="grid grid-cols-2 gap-3">
-        {stats.map((s) => (
-          <div key={s.label} className="bg-surface rounded-lg p-2.5">
-            <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">{s.label}</div>
-            <div className="text-sm font-semibold text-on-surface mt-0.5">{s.value}</div>
-            <div className="text-[10px] text-on-surface-variant/30">{s.sub}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Page ───────────────────────────────────────────────
 export default function RelayersPage() {
-  const { relayers, loading, error, refresh } = useRelayers();
-  // null = "Network" (all), number = specific relayer index
+  const { relayers: allRelayers, loading, error, refresh } = useRelayers();
+  const relayers = useMemo(() => allRelayers.filter((r) => r.api?.name?.includes("ZK") || !r.online), [allRelayers]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-  const [activePairIdx, setActivePairIdx] = useState(0);
-  const [orderbooks, setOrderbooks] = useState<Map<string, RelayerOrderbook>>(new Map());
+  const [orderbooks, setOrderbooks] = useState<Map<string, Map<string, RelayerOrderbook>>>(new Map());
   const [obLoading, setObLoading] = useState(false);
 
   const tokens = useMemo(() => getTokenList(), []);
   const pairOptions = useMemo(() => buildPairOptions(tokens), [tokens]);
-  const selectedPair = pairOptions[activePairIdx]?.value ?? "";
   const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
-
-  const pts = selectedPair.split("-");
-  const symA = findToken(pts[0])?.symbol ?? "?";
-  const symB = findToken(pts[1])?.symbol ?? "?";
 
   const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
   const selected = useMemo(() => selectedIdx !== null ? relayers[selectedIdx] : null, [selectedIdx, relayers]);
 
-  // Fetch orderbooks from all online relayers (or single selected)
-  const loadOrderbooks = useCallback(async (pair: string) => {
-    if (!pair) return;
+  // Fetch all pair orderbooks for the selected relayer (or all online relayers for Network view)
+  const loadOrderbooks = useCallback(async (target: RelayerInfo | null) => {
+    const targets = target && target.online ? [target] : onlineRelayers;
+    if (targets.length === 0 || pairOptions.length === 0) return;
     setObLoading(true);
-    const targets = selected && selected.online ? [selected] : onlineRelayers;
-    const results = new Map<string, RelayerOrderbook>();
+
+    const results = new Map<string, Map<string, RelayerOrderbook>>();
 
     await Promise.allSettled(
       targets.map(async (r) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-        try {
-          const res = await fetch(`${r.url}/api/orderbook/${pair}`, { signal: controller.signal });
-          if (res.ok) results.set(r.address, await res.json());
-        } catch { /* skip failed */ } finally {
-          clearTimeout(timeout);
-        }
+        const pairResults = new Map<string, RelayerOrderbook>();
+        await Promise.allSettled(
+          pairOptions.map(async (p) => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            try {
+              const res = await fetch(`${r.url}/api/orderbook/${p.value}`, { signal: controller.signal });
+              if (res.ok) pairResults.set(p.value, await res.json());
+            } catch { /* skip */ } finally {
+              clearTimeout(timeout);
+            }
+          })
+        );
+        results.set(r.address, pairResults);
       })
     );
 
     setOrderbooks(results);
     setObLoading(false);
-  }, [selected, onlineRelayers]);
+  }, [onlineRelayers, pairOptions]);
 
   useEffect(() => {
-    if (pairOptions.length > 0 && relayers.length > 0) {
-      loadOrderbooks(pairOptions[activePairIdx]?.value ?? "");
+    if (relayers.length > 0 && pairOptions.length > 0) {
+      loadOrderbooks(selected);
     }
-  }, [activePairIdx, relayers.length, loadOrderbooks, pairOptions]);
+  }, [selected, relayers.length, pairOptions.length, loadOrderbooks]);
 
-  const selectPair = (idx: number) => {
-    setActivePairIdx(idx);
-  };
+  // Get orderbooks for right panel
+  function getOrderbookForPair(pair: string) {
+    const obs: RelayerOrderbook[] = [];
+    if (selected) {
+      const pairMap = orderbooks.get(selected.address);
+      if (pairMap?.has(pair)) obs.push(pairMap.get(pair)!);
+    } else {
+      for (const pairMap of orderbooks.values()) {
+        if (pairMap.has(pair)) obs.push(pairMap.get(pair)!);
+      }
+    }
+    return aggregateOrderbook(obs, tokens, pair);
+  }
 
-  // Build aggregated or filtered orderbook
-  const visibleOrderbooks = selected
-    ? (orderbooks.has(selected.address) ? [orderbooks.get(selected.address)!] : [])
-    : Array.from(orderbooks.values());
-
-  const { asks, bids } = selectedPair
-    ? aggregateOrderbook(visibleOrderbooks, tokens, selectedPair)
-    : { asks: [], bids: [] };
+  // Count total orders for a relayer
+  function relayerOrderCount(r: RelayerInfo): number {
+    return r.api?.orderCount ?? 0;
+  }
 
   return (
     <div>
-      {/* Page header */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-headline font-bold text-on-surface flex items-center gap-3">
             <Radio className="w-7 h-7 text-primary" />
-            Relayers
+            Relayer Dashboard
           </h1>
           <p className="text-sm text-on-surface-variant/70 mt-1">
             {relayers.length} registered &middot; {onlineRelayers.length} online
@@ -309,112 +268,125 @@ export default function RelayersPage() {
       )}
 
       {relayers.length > 0 && (
-        <>
-          {/* ─── Relayer cards (horizontal) ─── */}
-          <div className="flex gap-2 mb-5 overflow-x-auto pb-2">
-            {/* Network (all) card */}
+        <div className="flex gap-5">
+          {/* ─── Left: Relayer List ─── */}
+          <div className="w-[320px] flex-shrink-0 space-y-2">
+            {/* Network card */}
             <button
               onClick={() => setSelectedIdx(null)}
-              className={`flex-shrink-0 rounded-lg border px-4 py-3 text-left transition-all min-w-[140px] ${
+              className={`w-full rounded-xl border px-5 py-4 text-left transition-all ${
                 selectedIdx === null
                   ? "border-primary bg-primary/8 ring-1 ring-primary/30"
                   : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
               }`}
             >
-              <div className="flex items-center gap-2 mb-1.5">
-                <Globe className="w-3.5 h-3.5 text-primary" />
-                <span className="text-xs font-semibold text-on-surface">Network</span>
+              <div className="flex items-center gap-2 mb-2">
+                <Globe className="w-4 h-4 text-primary" />
+                <span className="text-sm font-semibold text-on-surface">All Network</span>
               </div>
-              <div className="text-[10px] text-on-surface-variant/50 space-y-0.5">
-                <div>{onlineRelayers.length} online</div>
-                <div>{onlineRelayers.reduce((s, r) => s + (r.api?.orderCount ?? 0), 0)} orders</div>
+              <div className="flex gap-4 text-[11px] text-on-surface-variant/60">
+                <span>{onlineRelayers.length} online</span>
+                <span>{onlineRelayers.reduce((s, r) => s + relayerOrderCount(r), 0)} orders</span>
+                <span>{formatBond(relayers.reduce((s, r) => s + r.bond, 0n))} bonded</span>
               </div>
             </button>
 
+            {/* Individual relayer cards */}
             {relayers.map((r, i) => (
               <button
                 key={r.address}
                 onClick={() => setSelectedIdx(i)}
-                className={`flex-shrink-0 rounded-lg border px-4 py-3 text-left transition-all min-w-[140px] ${
+                className={`w-full rounded-xl border px-5 py-4 text-left transition-all ${
                   selectedIdx === i
                     ? "border-primary bg-primary/8 ring-1 ring-primary/30"
                     : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
                 }`}
               >
-                <div className="flex items-center gap-2 mb-1.5">
+                <div className="flex items-center gap-2 mb-2">
                   <Circle className={`w-2.5 h-2.5 fill-current ${r.online ? "text-primary" : "text-error/40"}`} />
-                  <span className="text-xs font-mono text-on-surface">{shortenAddress(r.address)}</span>
+                  <span className="text-sm font-mono text-on-surface">{shortenAddress(r.address)}</span>
                   {r.api?.name?.includes("ZK") && (
-                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
+                  )}
+                  {!r.online && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-error/10 text-error/60 font-bold">offline</span>
                   )}
                 </div>
-                <div className="text-[10px] text-on-surface-variant/50 space-y-0.5">
-                  <div className="flex gap-3">
-                    <span>Fee {feeBps(r.fee)}</span>
-                    <span>{formatBond(r.bond)}</span>
-                  </div>
-                  <div>{r.api?.orderCount ?? 0} orders &middot; {timeAgo(r.registeredAt)}</div>
+                <div className="flex gap-4 text-[11px] text-on-surface-variant/60">
+                  <span>Fee {feeBps(r.fee)}</span>
+                  <span>{formatBond(r.bond)}</span>
+                  <span>{relayerOrderCount(r)} orders</span>
+                  <span>{timeAgo(r.registeredAt)}</span>
                 </div>
+                {r.online && r.url && (
+                  <div className="text-[10px] text-on-surface-variant/40 font-mono mt-1 truncate">
+                    {r.url}
+                  </div>
+                )}
               </button>
             ))}
           </div>
 
-          {/* ─── Selected relayer detail bar ─── */}
-          {selected && (
-            <div className="flex items-center gap-4 mb-4 px-4 py-2.5 bg-surface-container rounded-lg border border-outline-variant/10 text-xs">
-              <Circle className={`w-2.5 h-2.5 fill-current flex-shrink-0 ${selected.online ? "text-primary" : "text-error/40"}`} />
-              <span className="font-mono text-on-surface">{selected.address}</span>
-              <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
-                className="text-primary hover:underline flex items-center gap-1">
-                {selected.url} <ExternalLink className="w-3 h-3" />
-              </a>
-              {selected.api && (
-                <span className="text-on-surface-variant/50 ml-auto flex items-center gap-2">
-                  {selected.api.name?.includes("ZK") && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK Private</span>
-                  )}
-                  {selected.api.name} v{selected.api.version}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* ─── Main content: Orderbook (left) + Side panels (right) ─── */}
-          <div className="flex gap-4">
-            {/* Left: Pair tabs + Orderbook */}
-            <div className="flex-1 bg-surface-container rounded-xl border border-outline-variant/15 overflow-hidden">
-              {/* Pair tabs */}
-              {pairOptions.length > 0 && (
-                <div className="flex border-b border-outline-variant/10">
-                  {pairOptions.map((p, i) => (
-                    <button
-                      key={p.value}
-                      onClick={() => selectPair(i)}
-                      className={`px-5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
-                        activePairIdx === i
-                          ? "border-primary text-primary bg-surface-bright/20"
-                          : "border-transparent text-on-surface-variant/50 hover:text-on-surface"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                  {obLoading && <Loader2 className="w-3 h-3 animate-spin text-on-surface-variant/30 self-center ml-auto mr-4" />}
-                </div>
-              )}
-
-              {/* Orderbook */}
-              <div className="max-w-[480px] mx-auto py-2">
-                <OrderbookDisplay asks={asks} bids={bids} symA={symA} symB={symB} />
+          {/* ─── Right: Selected Relayer Detail + Orderbooks per Pair ─── */}
+          <div className="flex-1 space-y-4">
+            {/* Detail bar */}
+            {selected && (
+              <div className="flex items-center gap-4 px-4 py-3 bg-surface-container rounded-xl border border-outline-variant/10 text-xs">
+                <Circle className={`w-2.5 h-2.5 fill-current flex-shrink-0 ${selected.online ? "text-primary" : "text-error/40"}`} />
+                <span className="font-mono text-on-surface">{selected.address}</span>
+                <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
+                  className="text-primary hover:underline flex items-center gap-1">
+                  API <ExternalLink className="w-3 h-3" />
+                </a>
+                {selected.api && (
+                  <span className="text-on-surface-variant/50 ml-auto">
+                    {selected.api.name} v{selected.api.version}
+                  </span>
+                )}
               </div>
-            </div>
+            )}
 
-            {/* Right: Stats */}
-            <div className="w-[280px] flex-shrink-0 space-y-4">
-              <NetworkStats relayers={relayers} />
-            </div>
+            {!selected && (
+              <div className="px-4 py-3 bg-surface-container rounded-xl border border-outline-variant/10 text-xs text-on-surface-variant/60 flex items-center gap-2">
+                <Globe className="w-4 h-4 text-primary" />
+                Aggregated orderbook across all {onlineRelayers.length} online relayers
+              </div>
+            )}
+
+            {obLoading && (
+              <div className="flex items-center justify-center py-8 text-on-surface-variant/50 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading orderbooks...
+              </div>
+            )}
+
+            {/* Orderbook per pair */}
+            {!obLoading && pairOptions.length > 0 && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {pairOptions.map((p) => {
+                  const pts = p.value.split("-");
+                  const symA = findToken(pts[0])?.symbol ?? "?";
+                  const symB = findToken(pts[1])?.symbol ?? "?";
+                  const { asks, bids } = getOrderbookForPair(p.value);
+                  const totalOrders = asks.length + bids.length;
+
+                  return (
+                    <div key={p.value} className="bg-surface-container rounded-xl border border-outline-variant/15 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-outline-variant/10">
+                        <span className="text-sm font-semibold text-on-surface">{p.label}</span>
+                        <span className="text-[10px] text-on-surface-variant/40">
+                          {totalOrders} order{totalOrders !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      <div className="py-1">
+                        <OrderbookDisplay asks={asks} bids={bids} symA={symA} symB={symB} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

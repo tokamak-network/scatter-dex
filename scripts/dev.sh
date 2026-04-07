@@ -107,6 +107,7 @@ if [ "$MOCK_MODE" = true ]; then
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^  CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
+  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
@@ -185,6 +186,7 @@ else
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "PrivateSettlement:" | awk '{print $NF}')
+  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "IdentityGate:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing contract addresses)"
@@ -245,6 +247,7 @@ NEXT_PUBLIC_TOKENS=$TOKENS
 NEXT_PUBLIC_CHAIN_ID=31337
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 
