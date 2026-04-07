@@ -162,16 +162,16 @@ export default function PrivateOrderPage() {
     let cancelled = false;
     const sell = parseFloat(sellAmount);
     const p = parseFloat(price);
-    if (!sell || !p) return;
+    if (!sell || !p) { setGasEstimate(null); return; }
     const grossBuy = sell * p;
     const sellBig = ethers.parseUnits(grossBuy.toFixed(Math.min(buyToken.decimals, 18)), buyToken.decimals);
-    if (sellBig <= 0n) return;
+    if (sellBig <= 0n) { setGasEstimate(null); return; }
 
     estimateMinFeeBps(readProvider, claims.length, sellBig, ethPerToken, buyToken.decimals)
       .then((r) => { if (!cancelled) setGasEstimate(r); })
       .catch((e) => { if (!cancelled) { console.warn("Gas estimation failed:", e); setGasEstimate(null); } });
     return () => { cancelled = true; };
-  }, [readProvider, sellAmount, price, claims.length, buyToken, ethPerToken]);
+  }, [readProvider, sellAmount, price, claims.length, buyToken?.address, buyToken?.decimals, ethPerToken]);
 
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
@@ -646,6 +646,7 @@ export default function PrivateOrderPage() {
                 </div>
                 <button
                   type="button"
+                  aria-expanded={feeBreakdownOpen}
                   className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >

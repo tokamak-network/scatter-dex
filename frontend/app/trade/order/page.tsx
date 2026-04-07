@@ -108,14 +108,14 @@ export default function OrderPage() {
     let cancelled = false;
     const amt = parseFloat(amount);
     const p = isSameToken ? 1 : parseFloat(price);
-    if (!amt || (!isSameToken && !p)) return;
+    if (!amt || (!isSameToken && !p)) { setGasEstimate(null); return; }
     const receiveAmt = side === "buy" ? amt : amt * p;
     try {
       const receiveBig = ethers.parseUnits(
         receiveAmt.toFixed(Math.min(receiveToken.decimals, 18)),
         receiveToken.decimals,
       );
-      if (receiveBig <= 0n) return;
+      if (receiveBig <= 0n) { setGasEstimate(null); return; }
       estimateMinFeeBps(readProvider, claims.length, receiveBig, ethPerToken, receiveToken.decimals)
         .then((r) => { if (!cancelled) setGasEstimate(r); })
         .catch((e) => { if (!cancelled) { console.warn("Gas estimation failed:", e); setGasEstimate(null); } });
@@ -124,7 +124,7 @@ export default function OrderPage() {
       setGasEstimate(null);
     }
     return () => { cancelled = true; };
-  }, [readProvider, amount, price, claims.length, receiveToken, ethPerToken, side, isSameToken]);
+  }, [readProvider, amount, price, claims.length, receiveToken?.address, receiveToken?.decimals, ethPerToken, side, isSameToken]);
 
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(baseBpsParsed, minFeeBps);
@@ -281,9 +281,9 @@ export default function OrderPage() {
         };
       });
 
-      // Compute on-chain distributable: buyAmount minus takerFee
+      // Compute on-chain distributable: buyAmount minus takerFee (using effectiveFeeBps)
       const buyAmountBig = BigInt(buyAmount);
-      const takerFeeBps = feeMode === "both" ? BigInt(0) : BigInt(parseInt(maxFee) || 30);
+      const takerFeeBps = feeMode === "both" ? BigInt(0) : BigInt(effectiveFeeBps);
       const takerFeeAmt = (buyAmountBig * takerFeeBps) / BigInt(10000);
       const distributableBig = buyAmountBig - takerFeeAmt;
 
@@ -558,6 +558,7 @@ export default function OrderPage() {
                 </div>
                 <button
                   type="button"
+                  aria-expanded={feeBreakdownOpen}
                   className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
@@ -565,7 +566,7 @@ export default function OrderPage() {
                   <span className="font-mono">−{makerFeeAmt.toFixed(4)} {sellSym}</span>
                 </button>
                 {feeBreakdownOpen && gasEstimate && (
-                  <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={baseBpsParsed} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
+                  <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={baseBpsParsed} minFeeBps={minFeeBps} effectiveFeeBps={makerFeeBps} claimCount={claims.length} />
                 )}
                 {isSameToken ? (
                   <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
