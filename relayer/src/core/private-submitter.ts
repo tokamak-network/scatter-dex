@@ -201,6 +201,13 @@ export class PrivateSubmitter {
     // fee * 10000 <= sellAmount * feeBps < fee * 10000 + 10000
     const feeTokenMaker = (taker.sellAmount * takerFeeBps) / BPS_DENOMINATOR;
     const feeTokenTaker = (maker.sellAmount * makerFeeBps) / BPS_DENOMINATOR;
+    const UINT96_MAX = (1n << 96n) - 1n;
+    if (feeTokenMaker > UINT96_MAX || feeTokenTaker > UINT96_MAX) {
+      throw new Error("fee exceeds uint96 range");
+    }
+
+    // Compute timestamp once — reused for both circuit input and contract call
+    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
 
     // Generate ZK proof
     console.log("Generating settle ZK proof...");
@@ -222,7 +229,7 @@ export class PrivateSubmitter {
       tokenTaker: tokenTaker.toString(),
       feeTokenMaker: feeTokenMaker.toString(),
       feeTokenTaker: feeTokenTaker.toString(),
-      currentTimestamp: Math.floor(Date.now() / 1000).toString(),
+      currentTimestamp: currentTimestamp.toString(),
 
       makerSecret: maker.ownerSecret.toString(),
       makerSellToken: maker.sellToken.toString(),
@@ -290,7 +297,6 @@ export class PrivateSubmitter {
     const hexNonce = await this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]);
     const nonce = parseInt(hexNonce, 16);
 
-    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
     const tx = await this.settlement.settlePrivate({
       proofA,
       proofB,
