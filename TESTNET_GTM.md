@@ -85,7 +85,7 @@ Build a **[My Scatter Status Board]** that visually shows:
 
 **Key differentiators for VC pitch**:
 1. **Regulatory moat**: zk-X509 identity gating = compliant by design (post-Tornado Cash world)
-2. **Dual privacy modes**: Standard scatter settlement (efficient, no ZK) + ZK private settlement (full privacy with commitment pools and stealth addresses)
+2. **Dual privacy modes**: Standard scatter settlement (67-74% cheaper than ZK alternatives) + ZK private settlement (full privacy with commitment pools and stealth addresses)
 3. **Gasless UX**: ZK claims require no wallet connection — zk-relayer pays gas, settlement fee covers costs
 4. **Multi-relayer model**: no single point of failure, censorship resistant
 5. **Base ecosystem alignment**: Coinbase's regulatory DNA + Base's developer momentum

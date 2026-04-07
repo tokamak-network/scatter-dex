@@ -1,6 +1,6 @@
 # ScatterDEX
 
-A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For full privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities, amounts, and trade structure on-chain.
+A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via an order book; settlements use **Scatter Settlement** — a hash-lock scheme that splits, delays, and separates fund flows to achieve transaction unlinkability. For full privacy, **ZK Private Settlement** uses Groth16 proofs with commitment pools and stealth addresses to hide trader identities, trade structure, and settlement amounts on-chain (deposit amounts remain visible in ERC-20 transfers).
 
 > Privacy + Compliance + Efficiency — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
 
@@ -16,9 +16,9 @@ Frontend (Next.js)  →  Relayer (Node.js)      →  Contracts (Solidity / Found
                       zk-relayer (gasless)       IdentityGate
 
 Circuits (Circom)
-  settle.circom      30K constraints — private settlement with EdDSA + fee validation
-  claim.circom        1.5K constraints — claim with Merkle inclusion proof
-  withdraw.circom     6K constraints — withdrawal from commitment pool
+  settle.circom      ~30K constraints — private settlement with EdDSA + fee validation
+  claim.circom       ~1.5K constraints — claim with Merkle inclusion proof
+  withdraw.circom    ~6K constraints — withdrawal from commitment pool
 ```
 
 ## Project Structure
@@ -72,7 +72,7 @@ Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches re
 ```bash
 cd contracts && forge test          # 165+ tests (unit + E2E + gas benchmark)
 cd relayer && npm test              # 45+ unit tests
-cd relayer && npm run test:e2e      # 36 E2E integration tests (requires anvil + deploy + relayer)
+cd relayer && npm run test:e2e      # 36+ E2E integration tests (requires anvil + deploy + relayer)
 bash scripts/run-e2e.sh             # Full E2E: Foundry + relayer integration
 ```
 
