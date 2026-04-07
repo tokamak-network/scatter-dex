@@ -101,10 +101,10 @@ else
 
   echo "$DEPLOY_OUTPUT"
 
-  SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "ScatterSettlement:" | awk '{print $NF}')
-  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
-  WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
-  USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
+  SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*ScatterSettlement:" | awk '{print $NF}')
+  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*RelayerRegistry:" | awk '{print $NF}')
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
 
   whitelist_tokens "$SETTLEMENT" "$WETH" "$USDC"
 

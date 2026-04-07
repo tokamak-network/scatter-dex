@@ -33,7 +33,7 @@ Existing approaches resolve at most two of these three requirements:
 | Railgun | ✓ | ✗ | ✗ (heavy ZK) |
 | Renegade | ✓ | ✗ | ✗ (MPC/FHE) |
 | **Scatter Settlement (standard)** | **✓** | **✓** | **✓** |
-| **Scatter Settlement (ZK mode)** | **✓✓** | **✓** | ✓ (ZK cost) |
+| **Scatter Settlement (ZK mode)** | **✓** (cryptographic) | **✓** | ✓ (ZK cost) |
 
 ### 1.2 Key Insight
 
@@ -733,12 +733,12 @@ This separation of concerns means relayers can freely cooperate, share order flo
 | Feature | Uniswap | 0x/CoW | Renegade | Railgun | **Ours (Standard)** | **Ours (ZK Mode)** |
 |---------|---------|--------|----------|---------|---------------------|---------------------|
 | Orderbook type | AMM | Off-chain | Dark pool | N/A | Off-chain | Off-chain |
-| Order privacy | None | None | Full (MPC) | N/A | Off-chain | Off-chain + EdDSA |
+| Order privacy | None | None | Full (MPC) | N/A | Off-chain | Off-chain (EdDSA signed) |
 | Settlement privacy | None | None | Full (MPC) | Full (ZK) | **Hash-lock + 7D** | **ZK proof + stealth** |
 | Relayer model | N/A | Anonymous | Anonymous | N/A | **Public (Dual-CA)** | **Public (Dual-CA)** |
 | Identity check | None | None | None | None | **Dual-CA** | **Dual-CA** |
 | MEV resistance | None | Partial | Full | Partial | **Immune** | **Immune** |
-| Gas per trade* | ~150K | ~100K | ~500K+ | ~300K+ (per op) | **~569K** | **~800K+ (ZK verify)** |
+| Gas per trade* | ~150K | ~100K | ~500K+ | ~300K+ (per op) | **~569K** | **~3,565K** (see [gas analysis](gas-cost-analysis.md)) |
 | ZK circuits needed | 0 | 0 | 0 (MPC) | Many | **0** | **3 (settle/claim/withdraw)** |
 | Audit surface | Small | Small | Large (MPC) | Large (ZK) | **Small** | **Medium (circuits)** |
 
