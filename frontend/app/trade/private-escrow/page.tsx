@@ -49,7 +49,7 @@ export default function PrivateEscrowPage() {
   const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
-  const [orderFiles, setOrderFiles] = useState<Array<{ order?: { leafIndex: number; sellAmount: string; buyAmount: string; sellToken: string; buyToken: string; maxFee: number }; claims: Array<{ amount: string; recipient: string; releaseTime: string }>; createdAt: string }>>([]);
+  const [orderFiles, setOrderFiles] = useState<Array<{ order?: { leafIndex: number; sellAmount: string; buyAmount: string; sellToken: string; buyToken: string; maxFee: number }; claims: Array<{ secret?: string; recipient: string; token?: string; amount: string; releaseTime: string; leafIndex?: number }>; createdAt: string }>>([]);
   const [folderReady, setFolderReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
