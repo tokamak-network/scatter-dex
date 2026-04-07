@@ -5,7 +5,8 @@ import { ethers } from "ethers";
 import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
-import { RPC_URL, getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
+import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
+import { getReadProvider } from "../../lib/provider";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   generateNote,
@@ -77,7 +78,7 @@ export default function PrivateEscrowPage() {
     setSyncError(false);
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = getReadProvider();
         const settlement = new ethers.Contract(
           getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
         );
@@ -122,21 +123,29 @@ export default function PrivateEscrowPage() {
             ["event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)"],
             provider
           );
-          const allInsertLogs = await poolContract.queryFilter(
-            poolContract.filters.CommitmentInserted()
-          );
-          const commitToLeaf = new Map<string, number>();
-          for (const log of allInsertLogs) {
-            const e = log as ethers.EventLog;
-            commitToLeaf.set("0x" + BigInt(e.args.commitment).toString(16), Number(e.args.leafIndex));
-          }
+          // Query per change note using indexed commitment filter (efficient).
+          // Resolve in parallel, then apply side effects sequentially.
+          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
+            try {
+              const commitBigInt = BigInt(cn.commitment);
+              const logs = await poolContract.queryFilter(
+                poolContract.filters.CommitmentInserted(commitBigInt)
+              );
+              if (logs.length > 0) {
+                // Use latest log in case of duplicate commitments
+                const e = logs[logs.length - 1] as ethers.EventLog;
+                return { cn, leafIdx: Number(e.args.leafIndex) };
+              }
+            } catch (e) { console.warn("Failed to resolve change note:", e); }
+            return null;
+          }));
+
+          // Apply file updates sequentially to avoid storage race conditions
           let anyResolved = false;
-          for (const cn of changeNotesList) {
-            const normalizedCommit = "0x" + BigInt(cn.commitment).toString(16);
-            const leafIdx = commitToLeaf.get(normalizedCommit);
-            if (leafIdx != null) {
-              await deleteNote(cn);
-              await saveNote({ ...cn, leafIndex: leafIdx });
+          for (const r of resolved) {
+            if (r) {
+              await deleteNote(r.cn);
+              await saveNote({ ...r.cn, leafIndex: r.leafIdx });
               anyResolved = true;
             }
           }
@@ -159,7 +168,7 @@ export default function PrivateEscrowPage() {
     if (!account || !selectedToken) { setWalletBalance(null); return; }
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = getReadProvider();
         let bal: bigint;
         if (selectedToken.isNative) {
           bal = await provider.getBalance(account);

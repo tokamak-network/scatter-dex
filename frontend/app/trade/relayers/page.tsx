@@ -6,10 +6,11 @@ import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, Ac
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { SETTLEMENT_ABI } from "../../lib/contracts";
-import { getSettlementAddress, RPC_URL } from "../../lib/config";
+import { getSettlementAddress } from "../../lib/config";
+import { getReadProvider } from "../../lib/provider";
 import { shortenAddress } from "../../lib/utils";
 
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+const provider = getReadProvider();
 
 function formatBond(bond: bigint): string {
   const val = Number(ethers.formatEther(bond));

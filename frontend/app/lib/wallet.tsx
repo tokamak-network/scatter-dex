@@ -2,9 +2,9 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
-import { RPC_URL } from "./config";
+import { getReadProvider } from "./provider";
 
-const READ_PROVIDER = new ethers.JsonRpcProvider(RPC_URL);
+const READ_PROVIDER = getReadProvider();
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

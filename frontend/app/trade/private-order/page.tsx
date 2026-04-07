@@ -32,7 +32,8 @@ import {
   listEdDSAKeysInFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
-import { RPC_URL, getPrivateSettlementAddress } from "../../lib/config";
+import { getPrivateSettlementAddress } from "../../lib/config";
+import { getReadProvider } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
 import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
@@ -104,7 +105,7 @@ export default function PrivateOrderPage() {
     let cancelled = false;
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = getReadProvider();
         const settlement = new ethers.Contract(
           getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
         );

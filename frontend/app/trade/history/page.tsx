@@ -8,7 +8,8 @@ import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { RelayerClient, type RelayerOrder, type OrderHistoryResponse } from "../../lib/relayerApi";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { SETTLEMENT_ABI } from "../../lib/contracts";
-import { getSettlementAddress, RPC_URL } from "../../lib/config";
+import { getSettlementAddress } from "../../lib/config";
+import { getReadProvider } from "../../lib/provider";
 
 interface ClaimOnChain {
   token: string;
@@ -37,11 +38,7 @@ const CLAIM_STATUS_CONFIG: Record<ClaimStatus, { label: string; color: string; i
   refundable: { label: "Refundable", color: "text-orange-400", icon: Undo2 },
 };
 
-let cachedProvider: ethers.JsonRpcProvider | null = null;
-function getProvider(): ethers.JsonRpcProvider {
-  if (!cachedProvider) cachedProvider = new ethers.JsonRpcProvider(RPC_URL);
-  return cachedProvider;
-}
+const getProvider = getReadProvider;
 
 const PAGE_SIZE = 20;
 const STATUS_OPTIONS = ["all", "pending", "matched", "settled", "cancelled", "expired"] as const;
