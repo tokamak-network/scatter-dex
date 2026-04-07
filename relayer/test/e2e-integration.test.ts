@@ -18,9 +18,9 @@ import path from "path";
 // ─── Config ──────────────────────────────────────────────────
 const RPC_URL = process.env.RPC_URL || "http://localhost:8545";
 const RELAYER_URL = process.env.RELAYER_URL || "http://localhost:3001";
-const SETTLEMENT_ADDRESS = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9";
-const WETH = "0x0165878A594ca255338adfa4d48449f69242Eb8F";
-const USDC = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
+const SETTLEMENT_ADDRESS = process.env.SETTLEMENT_ADDRESS || "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6";
+const WETH = process.env.WETH_ADDRESS || "0x0165878A594ca255338adfa4d48449f69242Eb8F";
+const USDC = process.env.USDC_ADDRESS || "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "relayer.db");
 
 // Anvil accounts (#2–#5 to avoid deployer #0 nonce conflicts)
@@ -676,18 +676,18 @@ describe("E2E Integration: ScatterDEX Relayer", () => {
     });
 
     it("Cancelled order doesn't match with counter order", async () => {
-      // Use a unique price point that won't match other pending orders
-      await mintAndDepositUSDC(bob, ethers.parseUnits("9999", 18), deployer);
+      // Use an extremely low price (1 USDC for 1000 WETH) that no WETH seller would match
+      await mintAndDepositUSDC(bob, ethers.parseUnits("1", 18), deployer);
       const s = ethers.keccak256(ethers.toUtf8Bytes("g5-no-match"));
       const bobOrder = buildOrder({
         maker: addr.bob, sellToken: USDC, buyToken: WETH,
-        sellAmount: ethers.parseUnits("9999", 18).toString(),
-        buyAmount: ethers.parseEther("1").toString(),
+        sellAmount: ethers.parseUnits("1", 18).toString(),
+        buyAmount: ethers.parseEther("1000").toString(),
         nonce: "5003",
         claims: [{ claimHash: makeClaimHash(s, addr.alice), amount: ethers.parseEther("0.997").toString(), releaseDelay: "3600" }],
       });
       const { body } = await submitOrder(bobOrder, await signOrder(bob, bobOrder, chainId));
-      // Alice's 5001 was cancelled. Bob's unique price shouldn't match other pending sells.
+      // No WETH seller would match at 0.001 USDC/WETH — stays pending
       expect(body.status).toBe("pending");
     });
 
