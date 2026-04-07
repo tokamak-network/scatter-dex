@@ -42,6 +42,11 @@ function buildPairOptions(tokens: TokenInfo[]) {
       pairs.push({ label: `${tokenLow.symbol}/${tokenHigh.symbol}`, value: `${a}-${b}` });
     }
   }
+  // Same-token pairs (ScatterDirect)
+  for (const t of erc20) {
+    const addr = t.address.toLowerCase();
+    pairs.push({ label: `${t.symbol} Scatter`, value: `${addr}-${addr}` });
+  }
   return pairs;
 }
 

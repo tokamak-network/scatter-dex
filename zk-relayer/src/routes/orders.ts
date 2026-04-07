@@ -67,6 +67,27 @@ export function createPrivateOrderRoutes(
         return;
       }
 
+      // Same-token order: scatter direct (no counterparty needed)
+      if (order.sellToken === order.buyToken) {
+        const stored = orderbook.add(order);
+        stored.status = "matched";
+        orderbook.persistStatus(order.pubKeyAx, order.nonce, "matched");
+
+        try {
+          const txHash = await submitter.submitScatterDirect(order);
+          stored.status = "settled";
+          stored.settleTxHash = txHash;
+          orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", txHash);
+          res.json({ status: "settled", txHash });
+        } catch (err: unknown) {
+          stored.status = "pending";
+          orderbook.persistStatus(order.pubKeyAx, order.nonce, "pending");
+          console.error("scatterDirect failed:", err instanceof Error ? err.message : "unknown");
+          res.status(500).json({ status: "scatter_failed", error: "scatterDirect failed" });
+        }
+        return;
+      }
+
       // Add to orderbook
       const stored = orderbook.add(order);
 

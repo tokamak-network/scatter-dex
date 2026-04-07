@@ -8,6 +8,7 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract MockToken is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
@@ -20,7 +21,7 @@ contract PrivateSettlementTest is Test {
     MockVerifier public withdrawVerifier;
     MockSettleVerifier public settleVerifier;
     MockClaimVerifier public claimVerifier;
-    MockToken public weth;
+    MockWETH public weth;
     MockToken public usdc;
 
     address alice = address(0xA11CE);
@@ -50,9 +51,8 @@ contract PrivateSettlementTest is Test {
         claimVerifier = new MockClaimVerifier();
 
         pool = new CommitmentPool(address(withdrawVerifier), 20, 30);
-        settlement = new PrivateSettlement(address(pool), address(settleVerifier), address(claimVerifier));
-
-        weth = new MockToken("WETH", "WETH");
+        weth = new MockWETH();
+        settlement = new PrivateSettlement(address(pool), address(settleVerifier), address(claimVerifier), address(weth));
         usdc = new MockToken("USDC", "USDC");
 
         pool.setTokenWhitelist(address(weth), true);
@@ -63,14 +63,15 @@ contract PrivateSettlementTest is Test {
         // Authorize settlement contract to insert commitments into the pool
         pool.setAuthorizedSettlement(address(settlement));
 
-        // Fund pool with tokens (simulates tokens locked via deposits)
-        // In real flow: users deposit via CommitmentPool.deposit()
-        // settlePrivate() transfers from pool → settlement, so pool needs balance
-        weth.mint(address(pool), 1000 ether);
+        // Fund pool with WETH (wrap ETH → WETH, then transfer to pool)
+        vm.deal(address(this), 1100 ether);
+        weth.deposit{value: 1100 ether}();
+        weth.transfer(address(pool), 1000 ether);
+
         usdc.mint(address(pool), 100_000e18);
 
-        // Also deposit some into pool for commitment tree root
-        weth.mint(alice, 100 ether);
+        // Fund alice with WETH for deposit
+        weth.transfer(alice, 100 ether);
         vm.prank(alice);
         weth.approve(address(pool), type(uint256).max);
         vm.prank(alice);
@@ -161,8 +162,8 @@ contract PrivateSettlementTest is Test {
             releaseTime
         );
 
-        // Recipient received tokens
-        assertEq(weth.balanceOf(recipient1), claimAmount);
+        // Recipient received ETH (WETH auto-unwrapped)
+        assertEq(recipient1.balance, claimAmount);
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
@@ -188,8 +189,8 @@ contract PrivateSettlementTest is Test {
             3 ether, address(weth), recipient2, block.timestamp
         );
 
-        assertEq(weth.balanceOf(recipient1), 2 ether);
-        assertEq(weth.balanceOf(recipient2), 3 ether);
+        assertEq(recipient1.balance, 2 ether);
+        assertEq(recipient2.balance, 3 ether);
 
         (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether); // all claimed
@@ -270,6 +271,13 @@ contract PrivateSettlementTest is Test {
 
         (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 2 ether);
+    }
+
+    function test_receive_rejects_non_weth() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        (bool ok,) = address(settlement).call{value: 1 ether}("");
+        assertFalse(ok, "Should reject ETH from non-WETH address");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────

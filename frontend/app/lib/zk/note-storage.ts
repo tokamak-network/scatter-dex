@@ -137,6 +137,45 @@ export async function loadEdDSAKeyFromFolder(account: string): Promise<string | 
   }
 }
 
+/** Load all zkscatter-claims-*.json files from folder. */
+export async function loadClaimsFiles(): Promise<Array<{ filename: string } & Record<string, unknown>>> {
+  if (!dirHandle) return [];
+  const files: Array<{ filename: string } & Record<string, unknown>> = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind !== "file" || !name.startsWith("zkscatter-claims-") || !name.endsWith(".json")) continue;
+    try {
+      const file = await handle.getFile();
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (typeof parsed !== "object" || parsed === null) continue;
+      files.push({ filename: name, ...parsed });
+    } catch { /* skip malformed */ }
+  }
+  return files;
+}
+
+/** Save an arbitrary file to the notes folder. */
+export async function saveFileToFolder(filename: string, content: string): Promise<void> {
+  if (!dirHandle) throw new Error("No folder selected");
+  const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+/** List all EdDSA key files in the folder. Returns array of {account suffix, filename}. */
+export async function listEdDSAKeysInFolder(): Promise<{ accountSuffix: string; filename: string }[]> {
+  if (!dirHandle) return [];
+  const keys: { accountSuffix: string; filename: string }[] = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === "file" && name.startsWith("zkscatter-eddsa-key-") && name.endsWith(".json")) {
+      const suffix = name.replace("zkscatter-eddsa-key-", "").replace(".json", "");
+      keys.push({ accountSuffix: suffix, filename: name });
+    }
+  }
+  return keys;
+}
+
 // ─── Serialization ───────────────────────────────────────────
 
 function serializeForFile(note: StoredNote) {

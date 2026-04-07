@@ -8,6 +8,8 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {CommitmentPool} from "./CommitmentPool.sol";
 import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
+import {IWETH} from "../interfaces/IWETH.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 /// @title PrivateSettlement
 /// @notice ZK-based private settlement for ScatterDEX.
@@ -29,6 +31,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotYetReleasable();
     error TokenMismatch();
     error AmountOverflow();
+    error OnlyWETH();
+    error ClaimsGroupAlreadyExists();
     error TimestampOutOfRange();
 
     // ─── Events ──────────────────────────────────────────────────
@@ -62,6 +66,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     CommitmentPool public immutable pool;
     ISettleVerifier public immutable settleVerifier;
     IClaimVerifier public immutable claimVerifier;
+    address public immutable weth;
 
     uint256 public constant TIMESTAMP_TOLERANCE = 300; // 5 minutes
     bool public paused;
@@ -76,13 +81,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     constructor(
         address _pool,
         address _settleVerifier,
-        address _claimVerifier
+        address _claimVerifier,
+        address _weth
     ) Ownable(msg.sender) {
-        if (_pool == address(0) || _settleVerifier == address(0) || _claimVerifier == address(0))
+        if (_pool == address(0) || _settleVerifier == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
         pool = CommitmentPool(_pool);
         settleVerifier = ISettleVerifier(_settleVerifier);
         claimVerifier = IClaimVerifier(_claimVerifier);
+        weth = _weth;
     }
 
     function renounceOwnership() public pure override { revert RenounceOwnershipDisabled(); }
@@ -190,11 +197,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
         }
 
+        if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
             totalLocked: p.totalLockedMaker,
             totalClaimed: 0
         });
+        if (claimsGroups[p.claimsRootTaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootTaker] = ClaimsGroup({
             token: p.tokenTaker,
             totalLocked: p.totalLockedTaker,
@@ -202,6 +211,74 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         });
 
         emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
+    }
+
+    // ─── Scatter Direct (same-token, no counterparty) ─────────────
+
+    struct ScatterDirectParams {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        uint256 currentRoot;
+        bytes32 nullifier;
+        bytes32 newCommitment;
+        address token;
+        uint256 withdrawAmount;      // total amount withdrawn from commitment
+        bytes32 claimsRoot;
+        uint96 totalLocked;          // sum of claim amounts
+        uint96 fee;                  // relayer fee
+    }
+
+    event ScatterDirect(
+        bytes32 indexed nullifier,
+        bytes32 indexed claimsRoot,
+        address relayer,
+        uint96 fee
+    );
+
+    /// @notice Single-party scatter: consume a commitment and register claims directly.
+    ///         Uses withdraw proof — no counterparty or settle circuit needed.
+    ///         For same-token orders (e.g., scheduled transfers).
+    function scatterDirect(ScatterDirectParams calldata p) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
+        if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
+
+        // withdrawAmount must exactly equal claims + fee (no surplus left in contract)
+        if (p.withdrawAmount != uint256(p.totalLocked) + uint256(p.fee)) revert AmountOverflow();
+
+        // Verify root is known
+        if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
+
+        // Withdraw from pool: recipient = this contract, relayer = msg.sender
+        pool.withdrawFor(
+            p.proofA, p.proofB, p.proofC,
+            p.currentRoot,
+            uint256(p.nullifier),
+            uint256(p.newCommitment),
+            p.token,
+            p.withdrawAmount,
+            address(this),   // funds come to PrivateSettlement
+            msg.sender       // relayer bound in proof
+        );
+
+        // Mark nullifier
+        nullifiers[p.nullifier] = true;
+
+        // Register claims group (prevent overwriting existing group)
+        if (claimsGroups[p.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        claimsGroups[p.claimsRoot] = ClaimsGroup({
+            token: p.token,
+            totalLocked: p.totalLocked,
+            totalClaimed: 0
+        });
+
+        // Transfer fee to relayer
+        if (p.fee > 0) {
+            IERC20(p.token).safeTransfer(msg.sender, p.fee);
+        }
+
+        emit ScatterDirect(p.nullifier, p.claimsRoot, msg.sender, p.fee);
     }
 
     // ─── Claim ───────────────────────────────────────────────────
@@ -249,10 +326,20 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         claimNullifiers[claimNullifier] = true;
         group.totalClaimed += uint96(amount);
 
-        // Transfer tokens
-        IERC20(token).safeTransfer(recipient, amount);
+        // Transfer tokens — unwrap WETH to ETH if applicable
+        if (token == weth) {
+            IWETH(weth).withdraw(amount);
+            Address.sendValue(payable(recipient), amount);
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
 
         emit PrivateClaim(claimsRoot, claimNullifier, recipient, token, amount);
+    }
+
+    /// @dev Accept ETH only from WETH.withdraw() during claimWithProof().
+    receive() external payable {
+        if (msg.sender != weth) revert OnlyWETH();
     }
 
     // Claims are permanently claimable — no expiry or refund mechanism.

@@ -23,6 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
+  "function scatterDirect(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, bytes32 nullifier, bytes32 newCommitment, address token, uint256 withdrawAmount, bytes32 claimsRoot, uint96 totalLocked, uint96 fee) p) external",
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimNullifiers(bytes32) view returns (bool)",
 ];
@@ -149,18 +150,9 @@ export class PrivateSubmitter {
     const makerNonceNullifier = await computeNullifier(maker.ownerSecret, maker.nonce);
     const takerNonceNullifier = await computeNullifier(taker.ownerSecret, taker.nonce);
 
-    // Compute new commitments (after sell amount deduction)
-    const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-    const genSalt = (): bigint => {
-      let val: bigint;
-      do {
-        const bytes = crypto.randomBytes(32);
-        val = BigInt("0x" + bytes.toString("hex"));
-      } while (val >= FIELD_MODULUS);
-      return val;
-    };
-    const makerNewSalt = genSalt();
-    const takerNewSalt = genSalt();
+    // Use user-provided newSalt for change commitments (user controls their salt)
+    const makerNewSalt = maker.newSalt;
+    const takerNewSalt = taker.newSalt;
 
     const makerNewBal = maker.balance - maker.sellAmount;
     const takerNewBal = taker.balance - taker.sellAmount;
@@ -308,6 +300,115 @@ export class PrivateSubmitter {
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`Private settlement tx: ${txHash}`);
+      return txHash;
+    });
+  }
+
+  /** Submit a scatter-direct (same-token, no counterparty) using withdraw proof. */
+  async submitScatterDirect(order: PrivateOrder): Promise<string> {
+    await this.indexCommitments();
+
+    // Build commitment Merkle tree
+    let { root: commitRoot, layers: commitLayers } = await buildMerkleTree(
+      this.commitmentLeaves,
+      COMMIT_TREE_DEPTH,
+    );
+
+    const onChainRoot = await this.pool.getLastRoot();
+    if (commitRoot !== BigInt(onChainRoot)) {
+      await this.indexCommitments();
+      const freshResult = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
+      commitRoot = freshResult.root;
+      commitLayers = freshResult.layers;
+    }
+
+    const merkleProof = getMerkleProof(commitLayers, order.leafIndex);
+
+    // Nullifier
+    const nullifier = await computeNullifier(order.ownerSecret, order.salt);
+
+    // Change commitment (validate against user's expected value)
+    const newSalt = order.newSalt;
+    const changeAmount = order.balance - order.sellAmount;
+    const newCommitment = changeAmount > 0n
+      ? await computeCommitment(order.ownerSecret, order.sellToken, changeAmount, newSalt)
+      : 0n;
+    if (order.expectedChangeCommitment !== 0n && newCommitment !== order.expectedChangeCommitment) {
+      throw new Error("Change commitment mismatch: relayer-computed does not match user-expected");
+    }
+
+    // Claims
+    const claimLeafHashes = await Promise.all(order.claims.map((c) => computeClaimLeaf(c)));
+    const paddedLeaves = [...claimLeafHashes];
+    while (paddedLeaves.length < 16) paddedLeaves.push(0n);
+    const { root: claimsRoot } = await buildMerkleTree(paddedLeaves, CLAIMS_TREE_DEPTH);
+
+    const totalLocked = order.claims.reduce((sum, c) => sum + c.amount, 0n);
+    const feeBps = BigInt(config.relayerFee);
+    const fee = (order.sellAmount * feeBps) / 10000n;
+    const withdrawAmount = totalLocked + fee;
+
+    // Token address
+    const tokenAddr = "0x" + order.sellToken.toString(16).padStart(40, "0");
+    const tokenHash = await poseidonHash([order.sellToken]);
+
+    // recipient = PrivateSettlement, relayer = this wallet
+    const recipient = config.privateSettlementAddress;
+    const relayer = this.wallet.address;
+
+    // Generate withdraw ZK proof
+    console.log("Generating withdraw ZK proof for scatterDirect...");
+    const snarkjs = await import("snarkjs");
+
+    const circuitInput: Record<string, string | string[]> = {
+      root: commitRoot.toString(),
+      nullifierHash: nullifier.toString(),
+      newCommitment: newCommitment.toString(),
+      tokenHash: tokenHash.toString(),
+      withdrawAmount: withdrawAmount.toString(),
+      recipient: BigInt(recipient).toString(),
+      relayer: BigInt(relayer).toString(),
+      ownerSecret: order.ownerSecret.toString(),
+      token: order.sellToken.toString(),
+      amount: order.balance.toString(),
+      salt: order.salt.toString(),
+      newSalt: newSalt.toString(),
+      pathElements: merkleProof.pathElements.map((e) => e.toString()),
+      pathIndices: merkleProof.pathIndices.map((i) => i.toString()),
+    };
+
+    const wasmPath = path.join(__dirname, "../../../circuits/build/withdraw_js/withdraw.wasm");
+    const zkeyPath = path.join(__dirname, "../../../circuits/build/withdraw_final.zkey");
+
+    const { proof } = await snarkjs.groth16.fullProve(circuitInput, wasmPath, zkeyPath);
+    console.log("Withdraw ZK proof generated for scatterDirect!");
+
+    const proofA: [bigint, bigint] = [BigInt(proof.pi_a[0]), BigInt(proof.pi_a[1])];
+    const proofB: [[bigint, bigint], [bigint, bigint]] = [
+      [BigInt(proof.pi_b[0][1]), BigInt(proof.pi_b[0][0])],
+      [BigInt(proof.pi_b[1][1]), BigInt(proof.pi_b[1][0])],
+    ];
+    const proofC: [bigint, bigint] = [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])];
+
+    return this.withTxLock(async () => {
+      const tx = await this.settlement.scatterDirect({
+        proofA,
+        proofB,
+        proofC,
+        currentRoot: commitRoot,
+        nullifier: "0x" + nullifier.toString(16).padStart(64, "0"),
+        newCommitment: "0x" + newCommitment.toString(16).padStart(64, "0"),
+        token: tokenAddr,
+        withdrawAmount,
+        claimsRoot: "0x" + claimsRoot.toString(16).padStart(64, "0"),
+        totalLocked,
+        fee,
+      });
+
+      const receipt = await tx.wait();
+      if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
+      const txHash = receipt.hash ?? receipt.transactionHash;
+      console.log(`ScatterDirect tx: ${txHash}`);
       return txHash;
     });
   }

@@ -4,6 +4,8 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.dev-logs"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Hardhat Account #1 — used for zk-relayer (separate identity)
+ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 RPC_URL="http://localhost:8545"
 MOCK_MODE=false
 PIDS=()
@@ -42,7 +44,15 @@ trap cleanup EXIT
 wait_for() {
   local url="$1" name="$2" max="$3"
   local i=0
-  while ! curl -fsS "$url" > /dev/null 2>&1; do
+  while true; do
+    # Try JSON-RPC POST first (for anvil), then plain GET (for relayer/frontend)
+    if curl -fsS "$url" -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"net_version","params":[],"id":1}' > /dev/null 2>&1; then
+      break
+    fi
+    if curl -fsS "$url" > /dev/null 2>&1; then
+      break
+    fi
     i=$((i + 1))
     if [ "$i" -ge "$max" ]; then
       echo "  ERROR: $name failed to start (waited ${max}s)"
@@ -93,18 +103,20 @@ if [ "$MOCK_MODE" = true ]; then
   DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
 
-  SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "ScatterSettlement:" | awk '{print $NF}')
-  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
-  WETH=$(echo "$DEPLOY_OUTPUT" | grep "WETH:" | awk '{print $NF}')
-  USDC=$(echo "$DEPLOY_OUTPUT" | grep "USDC:" | awk '{print $NF}')
-  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
-  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "PrivateSettlement:" | awk '{print $NF}')
+  SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  ScatterSettlement:" | awk '{print $NF}')
+  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
+  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^  CommitmentPool:" | awk '{print $NF}')
+  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
 
   if [ -z "$SETTLEMENT" ] || [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
   fi
+
+  # zk-relayer registration is handled by DeployLocal.s.sol (Account #1)
 
 else
   # ── Integration mode: connect to existing anvil with zk-X509 ──
@@ -194,6 +206,11 @@ else
   echo "  Registering deployer as relayer..."
   cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3001" 30 \
     --value 0.1ether --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
+
+  # Register zk-relayer (separate account)
+  echo "  Registering zk-relayer..."
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3002" 30 \
+    --value 0.1ether --private-key "$ZK_RELAYER_KEY" --rpc-url "$RPC_URL" > /dev/null || true
 fi
 
 # Whitelist tokens (if available)
@@ -241,7 +258,7 @@ if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
   check_port 3002 "zk-relayer"
   cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
-RELAYER_PRIVATE_KEY=$DEPLOYER_KEY
+RELAYER_PRIVATE_KEY=$ZK_RELAYER_KEY
 COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 RELAYER_FEE=30

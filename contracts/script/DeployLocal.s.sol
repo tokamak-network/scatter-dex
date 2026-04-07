@@ -24,8 +24,9 @@ contract MockIdentityRegistry is IIdentityRegistry {
 contract DeployLocal is Script {
     function run() external {
         uint256 protocolFeeBps = 1000; // 10% of fee goes to treasury
+        uint256 deployerKey = vm.envOr("DEPLOYER_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
 
-        vm.startBroadcast();
+        vm.startBroadcast(deployerKey);
         address deployer = msg.sender;
 
         // 1. Mock identity registries (Dual-CA: User CA + Relayer CA)
@@ -76,10 +77,20 @@ contract DeployLocal is Script {
         settlement.setMinReleaseDelay(1);
         console.log("Set minReleaseDelay to 1 second");
 
-        // 10. Register deployer as relayer
+        // 10. Register relayers
         // minBond = 0 by default (optional bond, per patent)
         relayerRegistry.register("http://localhost:3001", 30);
-        console.log("Deployer registered as relayer");
+        console.log("Deployer registered as standard relayer");
+
+        // 10b. Register zk-relayer (anvil Account #1)
+        // WARNING: Anvil default key — NEVER use in production
+        uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+        vm.stopBroadcast();
+        vm.startBroadcast(zkRelayerKey);
+        relayerRegistry.register("http://localhost:3002", 30);
+        console.log("Account #1 registered as zk-relayer");
+        vm.stopBroadcast();
+        vm.startBroadcast(deployerKey);
 
         // ── ZK Private Settlement ────────────────────────────────
 
@@ -97,7 +108,7 @@ contract DeployLocal is Script {
 
         // 13. Deploy PrivateSettlement
         PrivateSettlement privateSettlement = new PrivateSettlement(
-            address(pool), settleVerifier, claimVerifier
+            address(pool), settleVerifier, claimVerifier, address(weth)
         );
         console.log("PrivateSettlement:", address(privateSettlement));
 

@@ -19,6 +19,9 @@ export interface PrivateOrder {
   balance: bigint;
   salt: bigint;
   leafIndex: number;
+  // Change commitment — user-controlled salt
+  newSalt: bigint;
+  expectedChangeCommitment: bigint;
   // Claims
   claims: ClaimLeafData[];
 }
@@ -90,6 +93,9 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   const leafIndex = Number(raw.leafIndex);
   if (!Number.isInteger(leafIndex) || leafIndex < 0) throw new Error("invalid leafIndex");
 
+  const newSalt = toBigInt(raw.newSalt, "newSalt");
+  const expectedChangeCommitment = toBigInt(raw.expectedChangeCommitment, "expectedChangeCommitment");
+
   const rawClaims = raw.claims as Array<Record<string, unknown>>;
   if (!Array.isArray(rawClaims) || rawClaims.length === 0 || rawClaims.length > MAX_CLAIMS) {
     throw new Error(`claims must be 1-${MAX_CLAIMS}`);
@@ -113,6 +119,7 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
     sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce,
     pubKeyAx, pubKeyAy, sigS, sigR8x, sigR8y,
     ownerSecret, balance, salt, leafIndex,
+    newSalt, expectedChangeCommitment,
     claims,
   };
 }
