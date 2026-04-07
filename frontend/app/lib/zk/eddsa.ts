@@ -148,19 +148,22 @@ export function isEncryptedKeyPair(stored: string): boolean {
 
 /**
  * Derive an AES-GCM wrapping key from the MetaMask signature.
- * Uses a different domain separator (":wrap") so the wrapping key
- * differs from the EdDSA private key derived from the same signature.
+ * The ":wrap" suffix domain-separates this from the EdDSA key derivation.
+ * Per-user salt includes the account address to prevent rainbow table attacks.
+ *
+ * Threat model: protects against localStorage reads (extensions, physical access).
+ * Does NOT protect against XSS — decrypted keyPair lives in React state at runtime.
  */
-async function deriveWrappingKey(signature: string): Promise<CryptoKey> {
+async function deriveWrappingKey(signature: string, account: string): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(signature + ":wrap"))),
+    ethers.getBytes(signature + ":wrap"),
     "PBKDF2",
     false,
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: new TextEncoder().encode("zkscatter-eddsa-v1"), iterations: 100000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: new TextEncoder().encode("zkscatter-eddsa-v1:" + account.toLowerCase()), iterations: 100000, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -172,8 +175,8 @@ async function deriveWrappingKey(signature: string): Promise<CryptoKey> {
  * Encrypt and serialize an EdDSA key pair using AES-GCM.
  * The wrapping key is derived from the MetaMask signature used to derive the EdDSA key.
  */
-export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: string): Promise<string> {
-  const wrappingKey = await deriveWrappingKey(signature);
+export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: string, account: string): Promise<string> {
+  const wrappingKey = await deriveWrappingKey(signature, account);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(serializeKeyPair(kp));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
@@ -188,10 +191,10 @@ export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: str
  * Decrypt an encrypted EdDSA key pair from storage.
  * Requires the same MetaMask signature used during encryption.
  */
-export async function deserializeKeyPairEncrypted(stored: string, signature: string): Promise<EdDSAKeyPair> {
+export async function deserializeKeyPairEncrypted(stored: string, signature: string, account: string): Promise<EdDSAKeyPair> {
   const { v, iv, ct } = JSON.parse(stored);
   if (v !== 1) throw new Error("Unsupported encrypted key format");
-  const wrappingKey = await deriveWrappingKey(signature);
+  const wrappingKey = await deriveWrappingKey(signature, account);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: ethers.getBytes(iv) },
     wrappingKey,

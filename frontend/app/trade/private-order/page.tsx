@@ -31,6 +31,9 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 
+// EdDSA key is AES-GCM encrypted in localStorage. This protects against
+// direct storage reads (extensions, physical access). It does NOT protect
+// against XSS — the decrypted key lives in React state at runtime.
 const EDDSA_KEY_STORAGE = "zkscatter_eddsa_key";
 const MAX_CLAIMS = 10;
 
@@ -202,9 +205,20 @@ export default function PrivateOrderPage() {
     updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
   };
 
-  // Load saved key (encrypted or legacy plaintext)
+  // Load legacy plaintext key immediately (no signer needed)
   useEffect(() => {
-    if (typeof window === "undefined" || !signer || keyPair) return;
+    if (typeof window === "undefined" || keyPair) return;
+    const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
+    if (!saved || isEncryptedKeyPair(saved)) return;
+    try {
+      setKeyPair(deserializeKeyPair(saved));
+      setStep("create_order");
+    } catch { /* invalid stored key */ }
+  }, [keyPair]);
+
+  // Decrypt encrypted key (needs signer) + auto-migrate legacy to encrypted
+  useEffect(() => {
+    if (typeof window === "undefined" || !signer || !account || keyPair) return;
     const saved = localStorage.getItem(EDDSA_KEY_STORAGE);
     if (!saved) return;
 
@@ -214,30 +228,30 @@ export default function PrivateOrderPage() {
         if (isEncryptedKeyPair(saved)) {
           const signature = await signer.signMessage(DERIVE_MESSAGE);
           if (cancelled) return;
-          const kp = await deserializeKeyPairEncrypted(saved, signature);
+          const kp = await deserializeKeyPairEncrypted(saved, signature, account);
           if (cancelled) return;
           setKeyPair(kp);
           setStep("create_order");
         } else {
-          // Legacy plaintext: load immediately, migrate on next derive
+          // Auto-migrate legacy plaintext to encrypted
           const kp = deserializeKeyPair(saved);
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
           if (cancelled) return;
-          setKeyPair(kp);
-          setStep("create_order");
+          localStorage.setItem(EDDSA_KEY_STORAGE, await serializeKeyPairEncrypted(kp, signature, account));
         }
-      } catch { /* invalid or wrong account — user must re-derive */ }
+      } catch { /* wrong account or user rejected — key stays as-is */ }
     })();
     return () => { cancelled = true; };
-  }, [signer, keyPair]);
+  }, [signer, account, keyPair]);
 
   // Derive EdDSA key from MetaMask (single signMessage — no double popup)
   const handleDeriveKey = useCallback(async () => {
-    if (!signer) return;
+    if (!signer || !account) return;
     setKeyLoading(true);
     setError(null);
     try {
       const { keyPair: kp, signature } = await deriveEdDSAKey(signer);
-      const encrypted = await serializeKeyPairEncrypted(kp, signature);
+      const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
       localStorage.setItem(EDDSA_KEY_STORAGE, encrypted);
       setKeyPair(kp);
       setStep("create_order");
@@ -246,7 +260,7 @@ export default function PrivateOrderPage() {
     } finally {
       setKeyLoading(false);
     }
-  }, [signer]);
+  }, [signer, account]);
 
   // Submit private order
   const handleSubmit = useCallback(async () => {
