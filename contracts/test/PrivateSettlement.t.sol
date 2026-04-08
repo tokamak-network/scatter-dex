@@ -609,8 +609,8 @@ contract FeeVaultTest is Test {
         p.claimsRootTaker = bytes32(uint256(0x5444));
 
         // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedRelayer → InvalidProof
-        vm.prank(RELAYER_2);
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        vm.prank(RELAYER_2);
         settlement.settlePrivate(p);
     }
 
