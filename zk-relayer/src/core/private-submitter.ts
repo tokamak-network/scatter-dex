@@ -71,6 +71,10 @@ export class PrivateSubmitter {
     return this.wallet.address;
   }
 
+  getWallet(): ethers.Wallet {
+    return this.wallet;
+  }
+
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
@@ -521,6 +525,26 @@ export class PrivateSubmitter {
       if (!receipt) throw new Error("Claim transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`Gasless claim tx: ${txHash}`);
+      return txHash;
+    });
+  }
+
+  /** Claim accumulated fees from FeeVault for a specific token. Uses tx mutex. */
+  async claimVaultFee(vaultAddress: string, token: string): Promise<string> {
+    const vaultAbi = [
+      "function balances(address,address) view returns (uint256)",
+      "function claim(address) external",
+    ];
+    const vault = new ethers.Contract(vaultAddress, vaultAbi, this.wallet);
+
+    const balance = await vault.balances(this.wallet.address, token);
+    if (balance === 0n) throw new Error("No fees to claim for this token");
+
+    return this.withTxLock(async () => {
+      const tx = await vault.claim(token);
+      const receipt = await tx.wait();
+      const txHash = receipt.hash ?? receipt.transactionHash;
+      console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
       return txHash;
     });
   }

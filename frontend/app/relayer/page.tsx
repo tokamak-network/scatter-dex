@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3 } from "lucide-react";
+import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine } from "lucide-react";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
+import { useWallet } from "../lib/wallet";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
+import { getFeeVaultAddress } from "../lib/config";
+import { FEE_VAULT_ABI } from "../lib/contracts";
+import { getReadProvider } from "../lib/provider";
 import { shortenAddress } from "../lib/utils";
 
 function formatBond(bond: bigint): string {
@@ -157,10 +161,18 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
 // ─── Main Page ───────────────────────────────────────────────
 export default function RelayersPage() {
   const { relayers: allRelayers, loading, error, refresh } = useRelayers();
+  const { account, signer } = useWallet();
   const relayers = useMemo(() => allRelayers.filter((r) => r.api?.name?.includes("ZK") || !r.online), [allRelayers]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [orderbooks, setOrderbooks] = useState<Map<string, Map<string, RelayerOrderbook>>>(new Map());
   const [obLoading, setObLoading] = useState(false);
+
+  // FeeVault state
+  const [vaultBalances, setVaultBalances] = useState<{ token: string; symbol: string; balance: bigint }[]>([]);
+  const [vaultPlatformFee, setVaultPlatformFee] = useState<number>(0);
+  const [claimingToken, setClaimingToken] = useState<string | null>(null);
+  const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
 
   const tokens = useMemo(() => getTokenList(), []);
   const pairOptions = useMemo(() => buildPairOptions(tokens), [tokens]);
@@ -205,6 +217,51 @@ export default function RelayersPage() {
       loadOrderbooks(selected);
     }
   }, [selected, relayers.length, pairOptions.length, loadOrderbooks]);
+
+  // Load vault balances for connected account
+  const feeVaultAddr = getFeeVaultAddress();
+  const loadVaultBalances = useCallback(async () => {
+    if (!account || !feeVaultAddr) { setVaultBalances([]); return; }
+    try {
+      const provider = getReadProvider();
+      const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
+      const feeBps = await vault.platformFeeBps();
+      setVaultPlatformFee(Number(feeBps));
+
+      const erc20Tokens = tokens.filter((t) => !t.isNative);
+      const bals = await Promise.all(
+        erc20Tokens.map(async (t) => {
+          const bal = await vault.balances(account, t.address);
+          return { token: t.address, symbol: t.symbol, balance: bal };
+        })
+      );
+      setVaultBalances(bals.filter((b) => b.balance > 0n));
+    } catch (e) {
+      console.warn("Failed to load vault balances:", e);
+    }
+  }, [account, feeVaultAddr, tokens]);
+
+  useEffect(() => { loadVaultBalances(); }, [loadVaultBalances]);
+
+  const handleVaultClaim = useCallback(async (token: string) => {
+    if (!signer || !feeVaultAddr) return;
+    setClaimingToken(token);
+    setClaimTxHash(null);
+    setClaimError(null);
+    try {
+      const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, signer);
+      const tx = await vault.claim(token);
+      const receipt = await tx.wait();
+      setClaimTxHash(receipt.hash ?? receipt.transactionHash);
+      await loadVaultBalances();
+    } catch (e: unknown) {
+      console.error("Vault claim failed:", e);
+      const err = e as any;
+      setClaimError(err.reason || (e instanceof Error ? e.message : "Claim failed"));
+    } finally {
+      setClaimingToken(null);
+    }
+  }, [signer, feeVaultAddr, loadVaultBalances]);
 
   // Get orderbooks for right panel
   function getOrderbookForPair(pair: string) {
@@ -350,6 +407,71 @@ export default function RelayersPage() {
               <div className="px-4 py-3 bg-surface-container rounded-xl border border-outline-variant/10 text-xs text-on-surface-variant/60 flex items-center gap-2">
                 <Globe className="w-4 h-4 text-primary" />
                 Aggregated orderbook across all {onlineRelayers.length} online relayers
+              </div>
+            )}
+
+            {/* FeeVault Section — visible when connected wallet has vault balance */}
+            {feeVaultAddr && account && vaultBalances.length > 0 && (
+              <div className="bg-surface-container rounded-xl border border-outline-variant/10 p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Vault className="w-4 h-4 text-tertiary" />
+                    <span className="text-sm font-semibold text-on-surface">Fee Vault</span>
+                    <span className="text-[10px] text-on-surface-variant/50">Platform fee: {(vaultPlatformFee / 100).toFixed(1)}%</span>
+                  </div>
+                  <button
+                    onClick={loadVaultBalances}
+                    className="text-[10px] text-primary hover:text-primary-container font-bold"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                    {vaultBalances.map((b) => {
+                      const dec = findToken(b.token)?.decimals ?? 18;
+                      const grossStr = ethers.formatUnits(b.balance, dec);
+                      const netStr = ethers.formatUnits(b.balance * BigInt(10000 - vaultPlatformFee) / 10000n, dec);
+                      // Truncate to min(dec, 6) decimal places without parseFloat precision loss
+                      const maxDp = Math.min(dec, 6);
+                      const truncate = (s: string) => { const [i, d] = s.split("."); return d ? `${i}.${d.slice(0, maxDp)}` : i; };
+                      return (
+                      <div key={b.token} className="flex items-center justify-between bg-surface rounded-lg px-4 py-3">
+                        <div>
+                          <span className="font-mono font-bold text-on-surface">
+                            {truncate(grossStr)} {b.symbol}
+                          </span>
+                          <span className="text-[10px] text-on-surface-variant/40 ml-2">
+                            (net: {truncate(netStr)})
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleVaultClaim(b.token)}
+                          disabled={claimingToken === b.token}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-tertiary/15 text-tertiary text-xs font-bold hover:bg-tertiary/25 transition-colors disabled:opacity-50"
+                        >
+                          {claimingToken === b.token ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <ArrowDownToLine className="w-3 h-3" />
+                          )}
+                          Claim
+                        </button>
+                      </div>
+                      );
+                    })}
+                  </div>
+
+                {claimTxHash && (
+                  <div className="mt-2 text-[10px] font-mono text-primary bg-primary/5 rounded p-2 break-all">
+                    Tx: {claimTxHash}
+                  </div>
+                )}
+                {claimError && (
+                  <div className="mt-2 text-[10px] text-error bg-error/5 rounded p-2">
+                    {claimError}
+                  </div>
+                )}
               </div>
             )}
 

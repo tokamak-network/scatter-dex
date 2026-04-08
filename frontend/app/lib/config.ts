@@ -24,6 +24,7 @@ const ENV_MAP: Record<string, string | undefined> = {
   NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS: process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS,
   NEXT_PUBLIC_IDENTITY_GATE_ADDRESS: process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS,
   NEXT_PUBLIC_ZK_X509_URL: process.env.NEXT_PUBLIC_ZK_X509_URL,
+  NEXT_PUBLIC_FEE_VAULT_ADDRESS: process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS,
 };
 
 export function getEnv(key: string): string | undefined {
@@ -72,6 +73,12 @@ let _identityGate: string | undefined;
 export function getIdentityGateAddress(): string {
   if (!_identityGate) _identityGate = requireEnv("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS");
   return _identityGate;
+}
+
+let _feeVault: string | undefined;
+export function getFeeVaultAddress(): string {
+  if (!_feeVault) _feeVault = getEnv("NEXT_PUBLIC_FEE_VAULT_ADDRESS") || "";
+  return _feeVault;
 }
 
 export function getZkX509Url(): string {

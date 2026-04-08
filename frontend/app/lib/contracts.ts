@@ -33,6 +33,14 @@ export const PRIVATE_SETTLEMENT_ABI = [
   "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
 ];
 
+export const FEE_VAULT_ABI = [
+  "function balances(address relayer, address token) view returns (uint256)",
+  "function claim(address token) external",
+  "function platformFeeBps() view returns (uint256)",
+  "function treasury() view returns (address)",
+  "function totalTracked(address token) view returns (uint256)",
+];
+
 // Pre-parsed interfaces — avoids re-parsing ABI on every render cycle
 export const RELAYER_REGISTRY_IFACE = new ethers.Interface(RELAYER_REGISTRY_ABI);
 export const ERC20_IFACE = new ethers.Interface(ERC20_ABI);
