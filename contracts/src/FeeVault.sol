@@ -57,6 +57,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @dev Only authorized depositors (PrivateSettlement) can call this.
     function deposit(address relayer, address token, uint256 amount) external {
         if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
+        if (relayer == address(0)) revert ZeroAddress();
         if (amount == 0) return;
         balances[relayer][token] += amount;
         emit FeeDeposited(relayer, token, amount);

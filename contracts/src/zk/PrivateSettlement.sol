@@ -107,13 +107,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
     }
+    event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
+    event FeeVaultUpdated(address oldVault, address newVault);
+
     /// @notice Set the relayer registry. Pass address(0) to disable relayer gating.
     function setRelayerRegistry(address _registry) external onlyOwner {
-        relayerRegistry = RelayerRegistry(payable(_registry));
+        emit RelayerRegistryUpdated(address(relayerRegistry), _registry);
+        relayerRegistry = _registry == address(0) ? RelayerRegistry(payable(address(0))) : RelayerRegistry(payable(_registry));
     }
     /// @notice Set the fee vault. Pass address(0) to send fees directly to relayer (legacy mode).
     function setFeeVault(address _vault) external onlyOwner {
-        feeVault = FeeVault(_vault);
+        emit FeeVaultUpdated(address(feeVault), _vault);
+        feeVault = _vault == address(0) ? FeeVault(address(0)) : FeeVault(_vault);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
