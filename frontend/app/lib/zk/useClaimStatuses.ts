@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { poseidonHash, toBytes32Hex } from "./commitment";
 import { getPrivateSettlementAddress } from "../config";
-import { getReadProvider } from "../provider";
+import { getReadProvider, getDeployBlock } from "../provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../contracts";
 
 export interface ClaimStatusInfo {
@@ -63,7 +63,7 @@ export function useClaimStatuses(
           const txResults = await Promise.all(
             claimedItems.map(async ({ i, nullHex }) => {
               try {
-                const logs = await settlement.queryFilter(settlement.filters.PrivateClaim(null, nullHex));
+                const logs = await settlement.queryFilter(settlement.filters.PrivateClaim(null, nullHex), getDeployBlock());
                 return { i, txHash: logs[0]?.transactionHash };
               } catch { return { i, txHash: undefined }; }
             })

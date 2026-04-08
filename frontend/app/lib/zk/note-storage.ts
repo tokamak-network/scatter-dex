@@ -176,6 +176,31 @@ export async function listEdDSAKeysInFolder(): Promise<{ accountSuffix: string; 
   return keys;
 }
 
+// ─── Config Persistence (deploy block, etc.) ────────────────
+
+const CONFIG_FILENAME = "zkscatter-config.json";
+
+/** Load config from notes folder. */
+export async function loadConfigFromFolder(): Promise<Record<string, unknown>> {
+  if (!dirHandle) return {};
+  try {
+    const fh = await dirHandle.getFileHandle(CONFIG_FILENAME);
+    const file = await fh.getFile();
+    return JSON.parse(await file.text());
+  } catch { return {}; }
+}
+
+/** Save a config value to notes folder. */
+export async function saveConfigToFolder(key: string, value: unknown): Promise<void> {
+  if (!dirHandle) return;
+  const existing = await loadConfigFromFolder();
+  existing[key] = value;
+  const fh = await dirHandle.getFileHandle(CONFIG_FILENAME, { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(JSON.stringify(existing, null, 2));
+  await writable.close();
+}
+
 // ─── Serialization ───────────────────────────────────────────
 
 function serializeForFile(note: StoredNote) {

@@ -6,7 +6,7 @@ import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, 
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
-import { getReadProvider } from "../../lib/provider";
+import { getReadProvider, getDeployBlock, cacheDeployBlock } from "../../lib/provider";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   generateNote,
@@ -26,6 +26,8 @@ import {
   loadNotes,
   loadClaimsFiles,
   deleteNote,
+  loadConfigFromFolder,
+  saveConfigToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 
@@ -129,7 +131,8 @@ export default function PrivateEscrowPage() {
             try {
               const commitBigInt = BigInt(cn.commitment);
               const logs = await poolContract.queryFilter(
-                poolContract.filters.CommitmentInserted(commitBigInt)
+                poolContract.filters.CommitmentInserted(commitBigInt),
+                getDeployBlock(),
               );
               if (logs.length > 0) {
                 // Use latest log in case of duplicate commitments
@@ -201,6 +204,11 @@ export default function PrivateEscrowPage() {
       setFolderReady(true);
       setFolderName(getFolderName());
       await refreshNotes();
+      // Sync deploy block from folder config → localStorage
+      try {
+        const cfg = await loadConfigFromFolder();
+        if (typeof cfg.deployBlock === "number") cacheDeployBlock(cfg.deployBlock);
+      } catch { /* ignore */ }
     }
   }, [refreshNotes]);
 
@@ -267,6 +275,11 @@ export default function PrivateEscrowPage() {
             leafIndex = Number(p.args.leafIndex);
           }
         } catch { /* skip */ }
+      }
+      // Cache deploy block for future event queries (localStorage + folder)
+      if (receipt.blockNumber) {
+        cacheDeployBlock(receipt.blockNumber);
+        try { await saveConfigToFolder("deployBlock", receipt.blockNumber); } catch { /* ignore */ }
       }
 
       // Save note to folder
