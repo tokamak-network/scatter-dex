@@ -13,10 +13,11 @@ const FEE_VAULT_ABI = [
 // Parse token list once at module load (addr:symbol:decimals)
 const TOKEN_ENTRIES = (process.env.TOKEN_LIST || "")
   .split(",")
+  .map((s) => s.trim())
   .filter(Boolean)
   .map((entry) => {
     const parts = entry.split(":");
-    return { addr: parts[0], symbol: parts[1] || parts[0]?.slice(0, 10) || "?", decimals: parseInt(parts[2] || "18", 10) };
+    return { addr: parts[0]?.trim(), symbol: parts[1]?.trim() || parts[0]?.slice(0, 10) || "?", decimals: parseInt(parts[2] || "18", 10) };
   })
   .filter((e) => e.addr);
 
