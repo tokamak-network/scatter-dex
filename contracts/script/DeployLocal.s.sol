@@ -116,8 +116,10 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_TOKENS=", vm.toString(address(weth)), ":WETH:18,", vm.toString(address(usdc)), ":USDC:18"));
         console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(address(pool))));
         console.log(string.concat("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=", vm.toString(address(privateSettlement))));
+        console.log(string.concat("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=", vm.toString(address(gate))));
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
-        console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
+        console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=31337"));
+        console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
     }
 
     function _deployCode(string memory what) internal returns (address addr) {

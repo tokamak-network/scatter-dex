@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/identity", label: "Identity Verification" },
   { href: "/trade", label: "Secret Trade" },
   { href: "/relayer", label: "Relayer" },
+  { href: "/faq", label: "FAQ" },
 ];
 
 function shortenRpc(url: string) {
