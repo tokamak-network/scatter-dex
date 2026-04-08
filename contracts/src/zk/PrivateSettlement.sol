@@ -35,6 +35,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error AmountOverflow();
     error OnlyWETH();
     error ClaimsGroupAlreadyExists();
+    error DuplicateClaimsRoot();
     error TimestampOutOfRange();
     error NotActiveRelayer();
 
@@ -55,6 +56,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address token,
         uint256 amount
     );
+    event PausedUpdated(bool paused);
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
     event FeeVaultUpdated(address oldVault, address newVault);
     // ─── Data Structures ─────────────────────────────────────────
@@ -103,7 +105,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     }
 
     function renounceOwnership() public pure override { revert RenounceOwnershipDisabled(); }
-    function setPaused(bool _paused) external onlyOwner { paused = _paused; }
+    function setPaused(bool _paused) external onlyOwner { paused = _paused; emit PausedUpdated(_paused); }
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
@@ -226,6 +228,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
         if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
 
+        // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
+        if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
         if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,

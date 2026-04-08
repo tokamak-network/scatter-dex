@@ -60,7 +60,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @dev Only authorized depositors can call this. Caller must have already
     ///      transferred tokens to this contract. Verifies that the vault's actual
     ///      token balance covers total tracked liabilities after the new deposit.
-    function deposit(address relayer, address token, uint256 amount) external {
+    function deposit(address relayer, address token, uint256 amount) external nonReentrant {
         if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
         if (relayer == address(0) || token == address(0)) revert ZeroAddress();
         if (amount == 0) return;

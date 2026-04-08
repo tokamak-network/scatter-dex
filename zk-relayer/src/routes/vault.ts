@@ -29,7 +29,7 @@ function adminAuth(req: Request, res: Response, next: () => void) {
     res.status(403).json({ error: "Admin API key not configured on this relayer" });
     return;
   }
-  const provided = req.headers["x-admin-key"] || req.query.adminKey;
+  const provided = req.headers["x-admin-key"];
   if (provided !== key) {
     res.status(401).json({ error: "Invalid admin API key" });
     return;
