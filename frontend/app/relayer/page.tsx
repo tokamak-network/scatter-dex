@@ -254,7 +254,7 @@ export default function RelayersPage() {
       await loadVaultBalances();
     } catch (e: any) {
       console.error("Vault claim failed:", e);
-      alert(e.reason || e.message || "Claim failed");
+      setClaimTxHash(`Error: ${e.reason || e.message || "Claim failed"}`);
     } finally {
       setClaimingToken(null);
     }
@@ -430,14 +430,18 @@ export default function RelayersPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {vaultBalances.map((b) => (
+                    {vaultBalances.map((b) => {
+                      const dec = findToken(b.token)?.decimals ?? 18;
+                      const gross = parseFloat(ethers.formatUnits(b.balance, dec));
+                      const net = parseFloat(ethers.formatUnits(b.balance * BigInt(10000 - vaultPlatformFee) / 10000n, dec));
+                      return (
                       <div key={b.token} className="flex items-center justify-between bg-surface rounded-lg px-4 py-3">
                         <div>
                           <span className="font-mono font-bold text-on-surface">
-                            {parseFloat(ethers.formatEther(b.balance)).toFixed(6)} {b.symbol}
+                            {gross.toFixed(6)} {b.symbol}
                           </span>
                           <span className="text-[10px] text-on-surface-variant/40 ml-2">
-                            (net: {parseFloat(ethers.formatEther(b.balance * BigInt(10000 - vaultPlatformFee) / 10000n)).toFixed(6)})
+                            (net: {net.toFixed(6)})
                           </span>
                         </div>
                         <button
@@ -453,7 +457,8 @@ export default function RelayersPage() {
                           Claim
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

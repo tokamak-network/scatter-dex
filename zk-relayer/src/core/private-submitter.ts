@@ -71,6 +71,10 @@ export class PrivateSubmitter {
     return this.wallet.address;
   }
 
+  getWallet(): ethers.Wallet {
+    return this.wallet;
+  }
+
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();

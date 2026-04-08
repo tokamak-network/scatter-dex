@@ -11,7 +11,6 @@ import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
 import { createPrivateClaimRoutes } from "./routes/claim.js";
 import { createVaultRoutes } from "./routes/vault.js";
-import { ethers } from "ethers";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -62,8 +61,7 @@ async function main() {
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
 
   // FeeVault API (relayer fee management)
-  const relayerWallet = new ethers.Wallet(config.relayerPrivateKey, new ethers.JsonRpcProvider(config.rpcUrl));
-  app.use("/api/vault", createVaultRoutes(relayerWallet, writeLimiter));
+  app.use("/api/vault", createVaultRoutes(submitter.getWallet(), writeLimiter));
 
   // Periodic expired order cleanup
   const expireInterval = setInterval(() => {

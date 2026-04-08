@@ -9,6 +9,16 @@ const FEE_VAULT_ABI = [
   "function treasury() view returns (address)",
 ];
 
+// Parse token list once at module load
+const TOKEN_ENTRIES = (process.env.TOKEN_LIST || "")
+  .split(",")
+  .filter(Boolean)
+  .map((entry) => {
+    const [addr, symbol] = entry.split(":");
+    return { addr, symbol: symbol || addr?.slice(0, 10) || "?" };
+  })
+  .filter((e) => e.addr);
+
 export function createVaultRoutes(
   wallet: ethers.Wallet,
   writeLimiter?: RequestHandler,
@@ -16,18 +26,16 @@ export function createVaultRoutes(
   const router = Router();
 
   if (!config.feeVaultAddress) {
-    // FeeVault not configured — return empty routes
     router.get("/", (_req: Request, res: Response) => {
       res.json({ enabled: false, message: "FeeVault not configured" });
     });
     return router;
   }
 
-  const provider = wallet.provider!;
   const vault = new ethers.Contract(config.feeVaultAddress, FEE_VAULT_ABI, wallet);
   const relayerAddress = wallet.address;
 
-  // GET /api/vault — get vault info + relayer balances
+  // GET /api/vault — vault info + relayer balances
   router.get("/", async (_req: Request, res: Response) => {
     try {
       const [platformFeeBps, treasury] = await Promise.all([
@@ -35,26 +43,17 @@ export function createVaultRoutes(
         vault.treasury(),
       ]);
 
-      // Get balances for whitelisted tokens from settlement
-      const settlementAbi = ["function whitelistedTokens(address) view returns (bool)"];
-      const settlement = new ethers.Contract(config.privateSettlementAddress, settlementAbi, provider);
-
-      // Read token list from env (same format as frontend NEXT_PUBLIC_TOKENS)
-      const tokenEntries = (process.env.TOKEN_LIST || "").split(",").filter(Boolean);
-      const tokenBalances: { token: string; symbol: string; balance: string }[] = [];
-
-      for (const entry of tokenEntries) {
-        const [addr, symbol] = entry.split(":");
-        if (!addr) continue;
-        try {
-          const bal = await vault.balances(relayerAddress, addr);
-          tokenBalances.push({
-            token: addr,
-            symbol: symbol || addr.slice(0, 10),
-            balance: bal.toString(),
-          });
-        } catch { /* skip */ }
-      }
+      // Query all token balances in parallel
+      const tokenBalances = (
+        await Promise.all(
+          TOKEN_ENTRIES.map(async ({ addr, symbol }) => {
+            try {
+              const bal = await vault.balances(relayerAddress, addr);
+              return { token: addr, symbol, balance: bal.toString() };
+            } catch { return null; }
+          })
+        )
+      ).filter((b): b is NonNullable<typeof b> => b !== null);
 
       res.json({
         enabled: true,
