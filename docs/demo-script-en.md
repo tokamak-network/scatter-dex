@@ -130,7 +130,7 @@ What happens on-chain:
 - Commitment Merkle proof validation
 - Nullifier recorded (prevents reuse)
 - Claims root registered (enables recipients to claim later)
-- Fee deducted and transferred directly to the relayer (`msg.sender`)
+- Fee deducted and deposited into FeeVault (relayer claims later, platform fee auto-deducted)
 
 **What on-chain observers see**: ZK proof bytes, nullifier hash, and new commitment hash only. Who sent to whom, how much, and which token — all completely hidden.
 

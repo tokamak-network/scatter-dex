@@ -43,13 +43,7 @@ export function createVaultRoutes(
 ): Router {
   const router = Router();
 
-  if (!config.feeVaultAddress) {
-    router.get("/", (_req: Request, res: Response) => {
-      res.json({ enabled: false, message: "FeeVault not configured" });
-    });
-    return router;
-  }
-
+  // FEE_VAULT_ADDRESS is required (requireEnv in config.ts)
   const provider = submitter.getWallet().provider!;
   const vault = new ethers.Contract(config.feeVaultAddress, FEE_VAULT_ABI, provider);
   const relayerAddress = submitter.getAddress();
