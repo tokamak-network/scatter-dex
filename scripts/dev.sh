@@ -188,6 +188,7 @@ else
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "PrivateSettlement:" | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "IdentityGate:" | awk '{print $NF}')
+  FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "FeeVault:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
     echo "  ERROR: deployment failed (missing contract addresses)"
