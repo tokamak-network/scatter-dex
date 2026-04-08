@@ -133,7 +133,12 @@ export function createPrivateOrderRoutes(
 
       res.json({ status: "pending", nonce: order.nonce.toString() });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      console.error("Order submission failed:", err.message || err);
+      // Filter error messages — don't expose internal details
+      const msg = err.message || "";
+      const safeErrors = ["invalid EdDSA signature", "expired", "fee too low", "duplicate nonce", "missing"];
+      const safe = safeErrors.find((s) => msg.toLowerCase().includes(s));
+      res.status(400).json({ error: safe ? msg : "Order submission failed" });
     }
   });
 

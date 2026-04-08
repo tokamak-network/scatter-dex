@@ -119,6 +119,7 @@ export default function PrivateClaimPage() {
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
+      if (file.size > 1_000_000) { setParseError("File too large (max 1MB)"); return; }
       const reader = new FileReader();
       reader.onload = () => {
         const text = reader.result as string;
@@ -130,12 +131,19 @@ export default function PrivateClaimPage() {
     input.click();
   }, []);
 
-  /** Validate relayer URL — must be absolute http/https. Returns null if invalid. */
+  /** Validate relayer URL — must be absolute http/https, no internal addresses in production. */
   function validRelayerUrl(url: unknown): string | null {
     if (typeof url !== "string") return null;
     try {
       const u = new URL(url);
-      if (u.protocol === "http:" || u.protocol === "https:") return u.origin;
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      // In production, block internal/private addresses to prevent SSRF
+      const host = u.hostname;
+      if (process.env.NODE_ENV === "production") {
+        if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" ||
+            host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.")) return null;
+      }
+      return u.origin;
     } catch { /* invalid */ }
     return null;
   }
