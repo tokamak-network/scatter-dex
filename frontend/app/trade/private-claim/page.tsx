@@ -2,19 +2,20 @@
 
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download } from "lucide-react";
-// No wallet needed — claims are gasless via zk-relayer
+import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
+import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
+import { getPrivateSettlementAddress } from "../../lib/config";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
 import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
-// Claims are gasless — submitted via zk-relayer API (relayer pays gas).
-// No wallet connection needed. Stealth recipients stay private.
-
-// Claim is submitted via zk-relayer API (gasless — relayer pays gas)
-// No direct contract interaction from frontend
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";
+type ClaimMode = "relayer" | "wallet";
+
+const CLAIM_WITH_PROOF_ABI = [
+  "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
+];
 
 interface ClaimData {
   secret: string;
@@ -30,6 +31,7 @@ interface ClaimData {
 
 export default function PrivateClaimPage() {
   const tokens = getTokenList();
+  const { signer } = useWallet();
 
   const [claimJson, setClaimJson] = useState("");
   const [allClaims, setAllClaims] = useState<ClaimData[]>([]);
@@ -38,6 +40,7 @@ export default function PrivateClaimPage() {
   const [parseError, setParseError] = useState<string | null>(null);
 
   const [bundleRelayerUrl, setBundleRelayerUrl] = useState<string | null>(null);
+  const [claimMode, setClaimMode] = useState<ClaimMode>("relayer");
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -127,76 +130,68 @@ export default function PrivateClaimPage() {
     input.click();
   }, []);
 
-  // Submit claim with ZK proof
-  const handleClaim = useCallback(async () => {
-    if (!claimData) return;
+  // Shared proof generation
+  async function buildProof(cd: ClaimData) {
+    const secret = BigInt(cd.secret);
+    const recipient = BigInt(cd.recipient);
+    const token = BigInt(cd.token);
+    const amount = BigInt(cd.amount);
+    const releaseTime = BigInt(cd.releaseTime);
+    const allLeaves = cd.allLeaves.map((l) => BigInt(l));
 
+    const now = Math.floor(Date.now() / 1000);
+    if (now < Number(releaseTime)) {
+      const remaining = Number(releaseTime) - now;
+      const mins = Math.ceil(remaining / 60);
+      throw new Error(`Not yet claimable. Release in ${mins} minute${mins > 1 ? "s" : ""}.`);
+    }
+
+    const proofResult = await generateClaimProof({
+      secret, recipient, token, amount, releaseTime,
+      leafIndex: cd.leafIndex, allClaimLeaves: allLeaves,
+    });
+
+    return {
+      proofResult,
+      claimsRootHex: "0x" + proofResult.claimsRoot.toString(16).padStart(64, "0"),
+      nullifierHex: "0x" + proofResult.nullifier.toString(16).padStart(64, "0"),
+      tokenAddr: "0x" + token.toString(16).padStart(40, "0"),
+      recipientAddr: "0x" + recipient.toString(16).padStart(40, "0"),
+      amount,
+      releaseTime,
+    };
+  }
+
+  // Mode 1: Gasless claim via relayer
+  const handleClaimViaRelayer = useCallback(async () => {
+    if (!claimData) return;
     setStatus("generating");
     setError(null);
     setTxHash(null);
-
     try {
-      const secret = BigInt(claimData.secret);
-      const recipient = BigInt(claimData.recipient);
-      const token = BigInt(claimData.token);
-      const amount = BigInt(claimData.amount);
-      const releaseTime = BigInt(claimData.releaseTime);
-      const leafIndex = claimData.leafIndex;
-      const allLeaves = claimData.allLeaves.map((l) => BigInt(l));
-
-      // Check release time
-      const now = Math.floor(Date.now() / 1000);
-      if (now < Number(releaseTime)) {
-        const remaining = Number(releaseTime) - now;
-        const mins = Math.ceil(remaining / 60);
-        throw new Error(`Not yet claimable. Release in ${mins} minute${mins > 1 ? "s" : ""}.`);
-      }
-
-      // Generate ZK proof in browser
-      console.log("Generating claim ZK proof...");
-      const proofResult = await generateClaimProof({
-        secret,
-        recipient,
-        token,
-        amount,
-        releaseTime,
-        leafIndex,
-        allClaimLeaves: allLeaves,
-      });
-      console.log("Claim proof generated!");
-
-      // Submit via zk-relayer (gasless — relayer pays gas, preserving privacy)
-      // Use the relayer that settled this order (from bundle), fallback to env default
+      const p = await buildProof(claimData);
       setStatus("submitting");
-      const zkRelayerUrl = bundleRelayerUrl || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
-
-      const claimsRootHex = "0x" + proofResult.claimsRoot.toString(16).padStart(64, "0");
-      const nullifierHex = "0x" + proofResult.nullifier.toString(16).padStart(64, "0");
-      const tokenAddr = "0x" + token.toString(16).padStart(40, "0");
-      const recipientAddr = "0x" + recipient.toString(16).padStart(40, "0");
-
-      const res = await fetch(`${zkRelayerUrl}/api/private-claim`, {
+      const url = bundleRelayerUrl || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
+      const res = await fetch(`${url}/api/private-claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          proofA: proofResult.proof.a,
-          proofB: proofResult.proof.b,
-          proofC: proofResult.proof.c,
-          claimsRoot: claimsRootHex,
-          claimNullifier: nullifierHex,
-          amount: amount.toString(),
-          token: tokenAddr,
-          recipient: recipientAddr,
-          releaseTime: releaseTime.toString(),
+          proofA: p.proofResult.proof.a,
+          proofB: p.proofResult.proof.b,
+          proofC: p.proofResult.proof.c,
+          claimsRoot: p.claimsRootHex,
+          claimNullifier: p.nullifierHex,
+          amount: p.amount.toString(),
+          token: p.tokenAddr,
+          recipient: p.recipientAddr,
+          releaseTime: p.releaseTime.toString(),
         }),
       });
-
       if (!res.ok) {
         let errMsg = "Claim submission failed";
-        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON response */ }
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* */ }
         throw new Error(errMsg);
       }
-
       const result = await res.json();
       setTxHash(result.txHash || "");
       setStatus("success");
@@ -204,7 +199,37 @@ export default function PrivateClaimPage() {
       setError(e instanceof Error ? e.message : "Claim failed");
       setStatus("error");
     }
-  }, [claimData]);
+  }, [claimData, bundleRelayerUrl]);
+
+  // Mode 2: Direct claim via wallet (user pays gas)
+  const handleClaimViaWallet = useCallback(async () => {
+    if (!claimData || !signer) return;
+    setStatus("generating");
+    setError(null);
+    setTxHash(null);
+    try {
+      const p = await buildProof(claimData);
+      setStatus("submitting");
+      const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
+      const tx = await settlement.claimWithProof(
+        p.proofResult.proof.a.map(BigInt),
+        p.proofResult.proof.b.map((row: string[]) => row.map(BigInt)),
+        p.proofResult.proof.c.map(BigInt),
+        p.claimsRootHex,
+        p.nullifierHex,
+        p.amount,
+        p.tokenAddr,
+        p.recipientAddr,
+        p.releaseTime,
+      );
+      const receipt = await tx.wait();
+      setTxHash(receipt.hash ?? receipt.transactionHash ?? "");
+      setStatus("success");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Claim failed");
+      setStatus("error");
+    }
+  }, [claimData, signer]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -400,17 +425,59 @@ export default function PrivateClaimPage() {
           )}
 
           {claimData && !claimedMap[selectedClaimIdx]?.claimed && (
-            <button
-              onClick={handleClaim}
-              className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"
-            >
-              Generate Proof & Claim
-            </button>
+            <div className="space-y-4">
+              {/* Mode selector */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setClaimMode("relayer")}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-semibold transition-colors ${
+                    claimMode === "relayer"
+                      ? "bg-primary/15 text-primary border border-primary/30"
+                      : "bg-surface-container-low text-on-surface-variant border border-outline-variant/10 hover:bg-surface-bright/50"
+                  }`}
+                >
+                  <Radio className="w-4 h-4" />
+                  Gasless (Relayer)
+                </button>
+                <button
+                  onClick={() => setClaimMode("wallet")}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-semibold transition-colors ${
+                    claimMode === "wallet"
+                      ? "bg-tertiary/15 text-tertiary border border-tertiary/30"
+                      : "bg-surface-container-low text-on-surface-variant border border-outline-variant/10 hover:bg-surface-bright/50"
+                  }`}
+                >
+                  <Wallet className="w-4 h-4" />
+                  Wallet (Pay Gas)
+                </button>
+              </div>
+
+              {/* Claim button */}
+              {claimMode === "relayer" ? (
+                <button
+                  onClick={handleClaimViaRelayer}
+                  className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"
+                >
+                  Generate Proof & Claim (Gasless)
+                </button>
+              ) : (
+                <button
+                  onClick={handleClaimViaWallet}
+                  disabled={!signer}
+                  className="w-full bg-tertiary/80 hover:bg-tertiary text-on-tertiary-container py-4 rounded-md font-bold text-sm uppercase tracking-widest transition-colors disabled:opacity-50"
+                >
+                  {signer ? "Generate Proof & Claim (Wallet)" : "Connect Wallet First"}
+                </button>
+              )}
+            </div>
           )}
 
           <div className="text-xs text-on-surface-variant/40 text-center space-y-1">
             <p>ZK proof generated in your browser. No one can see which settlement this claim belongs to.</p>
-            <p>Gasless — the relayer submits the transaction and pays gas on your behalf.</p>
+            {claimMode === "relayer"
+              ? <p>Gasless — the relayer submits the transaction and pays gas on your behalf.</p>
+              : <p>You will sign the transaction with MetaMask and pay gas directly.</p>
+            }
           </div>
         </div>
       )}
@@ -429,7 +496,9 @@ export default function PrivateClaimPage() {
         <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
           <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
           <p className="text-on-surface font-medium">Submitting claim on-chain...</p>
-          <p className="text-xs text-on-surface-variant">Relayer is submitting the claim on-chain (gasless).</p>
+          <p className="text-xs text-on-surface-variant">
+            {claimMode === "relayer" ? "Relayer is submitting the claim on-chain (gasless)." : "Confirm the transaction in MetaMask."}
+          </p>
         </div>
       )}
 
