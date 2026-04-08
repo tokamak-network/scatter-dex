@@ -180,15 +180,17 @@ export async function listEdDSAKeysInFolder(): Promise<{ accountSuffix: string; 
 
 const CONFIG_FILENAME = "zkscatter-config.json";
 
-/** Load config from notes folder. */
+/** Load config from notes folder. Returns a plain object or {} on any error. */
 export async function loadConfigFromFolder(): Promise<Record<string, unknown>> {
   if (!dirHandle) return {};
   try {
     const fh = await dirHandle.getFileHandle(CONFIG_FILENAME);
     const file = await fh.getFile();
-    return JSON.parse(await file.text());
+    const parsed = JSON.parse(await file.text());
+    // Ensure result is a plain object (not array, string, null, etc.)
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return parsed;
   } catch (e) {
-    // NotFoundError is expected on first run; log other errors
     if (e instanceof DOMException && e.name === "NotFoundError") return {};
     console.warn("Failed to load config from folder:", e);
     return {};
@@ -200,7 +202,7 @@ export async function loadConfigFromFolder(): Promise<Record<string, unknown>> {
  *  from deposit handler, so no race condition in practice. */
 export async function saveConfigToFolder(key: string, value: unknown): Promise<void> {
   if (!dirHandle) return;
-  const existing = await loadConfigFromFolder();
+  const existing = await loadConfigFromFolder(); // guaranteed plain object
   existing[key] = value;
   const fh = await dirHandle.getFileHandle(CONFIG_FILENAME, { create: true });
   const writable = await fh.createWritable();

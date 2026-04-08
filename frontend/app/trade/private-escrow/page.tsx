@@ -126,13 +126,14 @@ export default function PrivateEscrowPage() {
             provider
           );
           // Query per change note using indexed commitment filter (efficient).
-          // Resolve in parallel, then apply side effects sequentially.
+          // Compute fromBlock once to avoid repeated localStorage reads.
+          const fromBlock = getEarliestBlock();
           const resolved = await Promise.all(changeNotesList.map(async (cn) => {
             try {
               const commitBigInt = BigInt(cn.commitment);
               const logs = await poolContract.queryFilter(
                 poolContract.filters.CommitmentInserted(commitBigInt),
-                getEarliestBlock(),
+                fromBlock,
               );
               if (logs.length > 0) {
                 // Use latest log in case of duplicate commitments
@@ -204,11 +205,11 @@ export default function PrivateEscrowPage() {
       setFolderReady(true);
       setFolderName(getFolderName());
       await refreshNotes();
-      // Sync deploy block from folder config → localStorage
+      // Sync earliest block from folder config → localStorage
       try {
         const cfg = await loadConfigFromFolder();
         if (typeof cfg.earliestBlock === "number") cacheEarliestBlock(cfg.earliestBlock);
-      } catch { /* ignore */ }
+      } catch (e) { console.warn("Failed to sync config from folder:", e); }
     }
   }, [refreshNotes]);
 
@@ -279,7 +280,7 @@ export default function PrivateEscrowPage() {
       // Cache deploy block for future event queries (localStorage + folder)
       if (receipt.blockNumber) {
         cacheEarliestBlock(receipt.blockNumber);
-        try { await saveConfigToFolder("earliestBlock", receipt.blockNumber); } catch { /* ignore */ }
+        try { await saveConfigToFolder("earliestBlock", receipt.blockNumber); } catch (e) { console.warn("Failed to save config to folder:", e); }
       }
 
       // Save note to folder

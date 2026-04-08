@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { RPC_URL, getEnv } from "./config";
+import { RPC_URL, getEnv, EXPECTED_CHAIN_ID } from "./config";
 
 /** Shared read-only provider singleton — reuse instead of creating new instances per component. */
 let _provider: ethers.JsonRpcProvider | undefined;
@@ -16,34 +16,38 @@ export function getReadProvider(): ethers.JsonRpcProvider {
 /**
  * Get the earliest known block for event queries.
  * Checks: NEXT_PUBLIC_DEPLOY_BLOCK env → localStorage cache → 0 (full scan).
- * The cached value is the earliest block this user has seen a transaction on,
- * not necessarily the contract deploy block.
+ * The cached value is set by cacheEarliestBlock() on first successful deposit tx.
+ * localStorage key is namespaced by chainId to avoid stale values across networks.
  */
-const EARLIEST_BLOCK_KEY = "zkscatter_earliest_block";
+function earliestBlockKey(): string {
+  return `zkscatter_earliest_block_${EXPECTED_CHAIN_ID}`;
+}
 
 export function getEarliestBlock(): number {
   const env = getEnv("NEXT_PUBLIC_DEPLOY_BLOCK");
   if (env) {
     const n = parseInt(env, 10);
-    if (!isNaN(n) && n > 0) return n;
+    if (Number.isFinite(n) && n > 0) return n;
   }
 
   if (typeof window !== "undefined") {
-    const cached = localStorage.getItem(EARLIEST_BLOCK_KEY);
+    const cached = localStorage.getItem(earliestBlockKey());
     if (cached) {
       const n = parseInt(cached, 10);
-      if (!isNaN(n) && n > 0) return n;
+      if (Number.isFinite(n) && n > 0) return n;
     }
   }
   return 0;
 }
 
-/** Cache the deploy block after first successful event query. */
+/** Cache the earliest known block after first successful deposit tx. */
 export function cacheEarliestBlock(block: number): void {
-  if (typeof window === "undefined" || block <= 0) return;
-  const existing = localStorage.getItem(EARLIEST_BLOCK_KEY);
-  // Only cache if not already set (keep the earliest known block)
-  if (!existing || parseInt(existing, 10) > block) {
-    localStorage.setItem(EARLIEST_BLOCK_KEY, block.toString());
+  if (typeof window === "undefined" || !Number.isFinite(block) || block <= 0) return;
+  const key = earliestBlockKey();
+  const existing = localStorage.getItem(key);
+  const existingNum = existing ? parseInt(existing, 10) : NaN;
+  // Only cache if not already set or new block is earlier
+  if (!Number.isFinite(existingNum) || existingNum > block) {
+    localStorage.setItem(key, block.toString());
   }
 }
