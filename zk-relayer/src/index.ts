@@ -60,8 +60,8 @@ async function main() {
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
 
-  // FeeVault API (relayer fee management)
-  app.use("/api/vault", createVaultRoutes(submitter.getWallet(), writeLimiter));
+  // FeeVault API (relayer fee management — claim requires ADMIN_API_KEY)
+  app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
 
   // Periodic expired order cleanup
   const expireInterval = setInterval(() => {

@@ -529,6 +529,26 @@ export class PrivateSubmitter {
     });
   }
 
+  /** Claim accumulated fees from FeeVault for a specific token. Uses tx mutex. */
+  async claimVaultFee(vaultAddress: string, token: string): Promise<string> {
+    const vaultAbi = [
+      "function balances(address,address) view returns (uint256)",
+      "function claim(address) external",
+    ];
+    const vault = new ethers.Contract(vaultAddress, vaultAbi, this.wallet);
+
+    const balance = await vault.balances(this.wallet.address, token);
+    if (balance === 0n) throw new Error("No fees to claim for this token");
+
+    return this.withTxLock(async () => {
+      const tx = await vault.claim(token);
+      const receipt = await tx.wait();
+      const txHash = receipt.hash ?? receipt.transactionHash;
+      console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
+      return txHash;
+    });
+  }
+
   /** Serialize tx submissions to prevent nonce collisions. */
   private withTxLock<T>(fn: () => Promise<T>): Promise<T> {
     const prev = this.txMutex;

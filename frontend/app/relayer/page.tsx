@@ -172,6 +172,7 @@ export default function RelayersPage() {
   const [vaultPlatformFee, setVaultPlatformFee] = useState<number>(0);
   const [claimingToken, setClaimingToken] = useState<string | null>(null);
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
 
   const tokens = useMemo(() => getTokenList(), []);
   const pairOptions = useMemo(() => buildPairOptions(tokens), [tokens]);
@@ -246,15 +247,17 @@ export default function RelayersPage() {
     if (!signer || !feeVaultAddr) return;
     setClaimingToken(token);
     setClaimTxHash(null);
+    setClaimError(null);
     try {
       const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, signer);
       const tx = await vault.claim(token);
       const receipt = await tx.wait();
       setClaimTxHash(receipt.hash ?? receipt.transactionHash);
       await loadVaultBalances();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Vault claim failed:", e);
-      setClaimTxHash(`Error: ${e.reason || e.message || "Claim failed"}`);
+      const err = e as any;
+      setClaimError(err.reason || (e instanceof Error ? e.message : "Claim failed"));
     } finally {
       setClaimingToken(null);
     }
@@ -407,8 +410,8 @@ export default function RelayersPage() {
               </div>
             )}
 
-            {/* FeeVault Section — visible when connected wallet is a relayer */}
-            {feeVaultAddr && account && (
+            {/* FeeVault Section — visible when connected wallet has vault balance */}
+            {feeVaultAddr && account && vaultBalances.length > 0 && (
               <div className="bg-surface-container rounded-xl border border-outline-variant/10 p-5">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -424,12 +427,7 @@ export default function RelayersPage() {
                   </button>
                 </div>
 
-                {vaultBalances.length === 0 ? (
-                  <div className="text-xs text-on-surface-variant/40 text-center py-4">
-                    No unclaimed fees for {shortenAddress(account)}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
+                <div className="space-y-2">
                     {vaultBalances.map((b) => {
                       const dec = findToken(b.token)?.decimals ?? 18;
                       const gross = parseFloat(ethers.formatUnits(b.balance, dec));
@@ -460,11 +458,15 @@ export default function RelayersPage() {
                       );
                     })}
                   </div>
-                )}
 
                 {claimTxHash && (
                   <div className="mt-2 text-[10px] font-mono text-primary bg-primary/5 rounded p-2 break-all">
-                    Claimed: {claimTxHash}
+                    Tx: {claimTxHash}
+                  </div>
+                )}
+                {claimError && (
+                  <div className="mt-2 text-[10px] text-error bg-error/5 rounded p-2">
+                    {claimError}
                   </div>
                 )}
               </div>

@@ -210,6 +210,7 @@ echo "  RelayerRegistry:     $RELAYER_REGISTRY"
 echo ""
 echo "[3/4] Starting zk-relayer..."
 if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
+  ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
   cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
 RELAYER_PRIVATE_KEY=$ZK_RELAYER_KEY
@@ -217,9 +218,11 @@ COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 FEE_VAULT_ADDRESS=$FEE_VAULT
 TOKEN_LIST=$WETH:WETH:18,$USDC:USDC:18
+ADMIN_API_KEY=$ADMIN_KEY
 RELAYER_FEE=30
 PORT=3002
 EOF
+  echo "  Admin API key: $ADMIN_KEY"
 
   cd "$ROOT_DIR/zk-relayer"
   npm run dev > "$LOG_DIR/zk-relayer.log" 2>&1 &

@@ -34,6 +34,7 @@ export const config = {
   commitmentPoolAddress: requireEnv("COMMITMENT_POOL_ADDRESS"),
   privateSettlementAddress: requireEnv("PRIVATE_SETTLEMENT_ADDRESS"),
   feeVaultAddress: process.env.FEE_VAULT_ADDRESS || "",
+  adminApiKey: process.env.ADMIN_API_KEY || "",
   relayerFee: parseInt(process.env.RELAYER_FEE || "30", 10),
   port: parseInt(process.env.PORT || "3002", 10),
 };
