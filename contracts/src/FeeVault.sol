@@ -57,7 +57,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @dev Only authorized depositors (PrivateSettlement) can call this.
     function deposit(address relayer, address token, uint256 amount) external {
         if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
-        if (relayer == address(0)) revert ZeroAddress();
+        if (relayer == address(0) || token == address(0)) revert ZeroAddress();
         if (amount == 0) return;
         balances[relayer][token] += amount;
         emit FeeDeposited(relayer, token, amount);
@@ -67,6 +67,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice Withdraw accumulated fees for a specific token. Platform fee is deducted.
     function claim(address token) external nonReentrant {
+        if (token == address(0)) revert ZeroAddress();
         uint256 balance = balances[msg.sender][token];
         if (balance == 0) revert NothingToClaim();
 

@@ -37,7 +37,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error ClaimsGroupAlreadyExists();
     error TimestampOutOfRange();
     error NotActiveRelayer();
-    error RelayerGateDisabled();
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -56,6 +55,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address token,
         uint256 amount
     );
+    event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
+    event FeeVaultUpdated(address oldVault, address newVault);
     // ─── Data Structures ─────────────────────────────────────────
     // Packed into 2 storage slots:
     // Slot 0: token (20 bytes) + totalLocked (12 bytes) = 32 bytes
@@ -107,18 +108,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
     }
-    event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
-    event FeeVaultUpdated(address oldVault, address newVault);
-
     /// @notice Set the relayer registry. Pass address(0) to disable relayer gating.
     function setRelayerRegistry(address _registry) external onlyOwner {
         emit RelayerRegistryUpdated(address(relayerRegistry), _registry);
-        relayerRegistry = _registry == address(0) ? RelayerRegistry(payable(address(0))) : RelayerRegistry(payable(_registry));
+        relayerRegistry = RelayerRegistry(payable(_registry));
     }
     /// @notice Set the fee vault. Pass address(0) to send fees directly to relayer (legacy mode).
     function setFeeVault(address _vault) external onlyOwner {
         emit FeeVaultUpdated(address(feeVault), _vault);
-        feeVault = _vault == address(0) ? FeeVault(address(0)) : FeeVault(_vault);
+        feeVault = FeeVault(_vault);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
