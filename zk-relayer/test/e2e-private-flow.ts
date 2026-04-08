@@ -16,6 +16,8 @@
  *   5. Submit claim via zk-relayer API
  *   6. Verify recipient received ETH (auto-unwrapped from WETH)
  *   7. Verify change note is on-chain
+ *   8. Verify FeeVault received relayer fee
+ *   9. Relayer claims from vault (platform fee deduction verified)
  */
 
 import { ethers } from "ethers";
@@ -64,7 +66,15 @@ const POOL_ABI = [
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",
   "function nullifiers(bytes32) view returns (bool)",
+  "function feeVault() view returns (address)",
   "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
+];
+
+const FEE_VAULT_ABI = [
+  "function balances(address relayer, address token) view returns (uint256)",
+  "function claim(address token) external",
+  "function platformFeeBps() view returns (uint256)",
+  "function treasury() view returns (address)",
 ];
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -462,6 +472,59 @@ async function main() {
   const noteNullifier = poseidonHash([ownerSecret, salt]);
   const noteSpent = await settlementContract.nullifiers(toHex(noteNullifier, 32));
   assert(noteSpent, "Original note nullifier spent");
+
+  // ─── Step 8: Verify FeeVault ──────────────────────────────
+  console.log("\n[8/9] Verifying FeeVault...");
+
+  const feeVaultAddr: string = await settlementContract.feeVault();
+  if (feeVaultAddr !== ethers.ZeroAddress) {
+    const vaultContract = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
+    const relayerAddr = info.address; // relayer address from /api/info
+
+    // Fee should be in vault, credited to relayer (use >= since prior runs may have accumulated)
+    const vaultBal = await vaultContract.balances(relayerAddr, weth);
+    assert(vaultBal >= fee, `Vault balance: ${ethers.formatEther(vaultBal)} WETH (expected ≥ ${ethers.formatEther(fee)})`);
+
+    // Check platform fee rate
+    const platformBps = await vaultContract.platformFeeBps();
+    assert(Number(platformBps) > 0, `Platform fee: ${Number(platformBps)} bps`);
+
+    const treasury: string = await vaultContract.treasury();
+    assert(treasury !== ethers.ZeroAddress, `Treasury: ${treasury}`);
+
+    // ─── Step 9: Relayer claims from vault ────────────────────
+    console.log("\n[9/9] Relayer claiming from FeeVault...");
+
+    // Use relayer wallet (Anvil Account #1) to claim
+    const RELAYER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    const relayerWallet = new ethers.Wallet(RELAYER_KEY, provider);
+    const vaultWithSigner = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, relayerWallet);
+
+    const totalVaultBal = vaultBal; // claim the full accumulated balance
+    const relayerWethBefore = await wethContract.balanceOf(relayerAddr);
+    const treasuryWethBefore = await wethContract.balanceOf(treasury);
+
+    const claimVaultTx = await vaultWithSigner.claim(weth);
+    await claimVaultTx.wait();
+
+    const relayerWethAfter = await wethContract.balanceOf(relayerAddr);
+    const treasuryWethAfter = await wethContract.balanceOf(treasury);
+
+    const platformFeeAmount = (totalVaultBal * platformBps) / 10000n;
+    const relayerNetAmount = totalVaultBal - platformFeeAmount;
+
+    const relayerDelta = relayerWethAfter - relayerWethBefore;
+    const treasuryDelta = treasuryWethAfter - treasuryWethBefore;
+
+    assert(relayerDelta === relayerNetAmount, `Relayer received: ${ethers.formatEther(relayerDelta)} WETH (expected ${ethers.formatEther(relayerNetAmount)})`);
+    assert(treasuryDelta === platformFeeAmount, `Treasury received: ${ethers.formatEther(treasuryDelta)} WETH (expected ${ethers.formatEther(platformFeeAmount)})`);
+
+    // Vault balance should be 0 after claim
+    const vaultBalAfter = await vaultContract.balances(relayerAddr, weth);
+    assert(vaultBalAfter === 0n, "Vault balance: 0 after claim");
+  } else {
+    console.log("  (FeeVault not set — skipping vault checks)");
+  }
 
   console.log("\n═══════════════════════════════════════════════════");
   console.log("  ✅ ALL E2E CHECKS PASSED");
