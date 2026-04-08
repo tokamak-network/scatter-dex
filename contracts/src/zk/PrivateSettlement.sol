@@ -228,7 +228,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
         if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
 
-        if (p.claimsRootMaker == p.claimsRootTaker) revert DuplicateClaimsRoot();
+        // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
+        if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
         if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,

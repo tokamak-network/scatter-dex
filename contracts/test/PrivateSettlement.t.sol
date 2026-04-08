@@ -412,6 +412,14 @@ contract PrivateSettlementTest is Test {
         assertEq(locked2, 0);
     }
 
+    function test_e2e_duplicate_claims_root_reverts() public {
+        // Same claimsRoot for maker and taker (both non-zero locked) → should revert
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        p.claimsRootTaker = p.claimsRootMaker; // force duplicate
+        vm.expectRevert(PrivateSettlement.DuplicateClaimsRoot.selector);
+        settlement.settlePrivate(p);
+    }
+
     function test_e2e_claimsGroup_overwrite_blocked() public {
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
