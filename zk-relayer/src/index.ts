@@ -24,6 +24,7 @@ async function main() {
 
   const matcher = new PrivateMatcher(orderbook);
   const submitter = new PrivateSubmitter();
+  submitter.setDB(db);
 
   // Index existing commitments on startup
   console.log("Indexing on-chain commitments...");
@@ -56,7 +57,7 @@ async function main() {
   app.use("/api/private-orders", createPrivateOrderRoutes(orderbook, matcher, submitter, writeLimiter, readLimiter));
   app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
-  app.use("/api/private-claim", createPrivateClaimRoutes(submitter, writeLimiter));
+  app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
 
   // Periodic expired order cleanup
   const expireInterval = setInterval(() => {

@@ -1,5 +1,6 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
+import type { PrivateOrderDB } from "../core/db.js";
 
 const HEX_RE = /^0x[0-9a-fA-F]+$/;
 
@@ -17,6 +18,7 @@ function validateProofArray(arr: unknown, name: string, len: number): string[] {
 
 export function createPrivateClaimRoutes(
   submitter: PrivateSubmitter,
+  db: PrivateOrderDB,
   writeLimiter?: RequestHandler,
 ): Router {
   const router = Router();
@@ -57,6 +59,12 @@ export function createPrivateClaimRoutes(
           res.status(400).json({ error: `${name} must be ${expectedLen - 2} hex chars (${(expectedLen - 2) / 2} bytes)` });
           return;
         }
+      }
+
+      // Only pay gas for claims from orders this relayer settled (early reject)
+      if (!db.hasSettledClaimsRoot(claimsRoot)) {
+        res.status(403).json({ error: "claims root not settled by this relayer" });
+        return;
       }
 
       // Validate BigInt-parsable

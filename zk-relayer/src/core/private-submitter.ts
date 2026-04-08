@@ -16,6 +16,7 @@ import {
   type ClaimLeafData,
 } from "./zk-prover.js";
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
+import type { PrivateOrderDB } from "./db.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -44,6 +45,12 @@ export class PrivateSubmitter {
   private pool: ethers.Contract;
   private commitmentLeaves: bigint[] = [];
   private txMutex: Promise<void> = Promise.resolve();
+  private db: PrivateOrderDB | null = null;
+
+  /** Attach DB for claims root tracking. */
+  setDB(db: PrivateOrderDB): void {
+    this.db = db;
+  }
 
   constructor(provider?: ethers.JsonRpcProvider) {
     this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
@@ -272,6 +279,9 @@ export class PrivateSubmitter {
     ];
     const proofC: [bigint, bigint] = [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])];
 
+    const crMakerHex = "0x" + claimsRootMaker.toString(16).padStart(64, "0");
+    const crTakerHex = "0x" + claimsRootTaker.toString(16).padStart(64, "0");
+
     // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
     return this.withTxLock(async () => {
       const tx = await this.settlement.settlePrivate({
@@ -286,8 +296,8 @@ export class PrivateSubmitter {
         takerNonceNullifier: "0x" + takerNonceNullifier.toString(16).padStart(64, "0"),
         makerNewCommitment: "0x" + makerNewCommitment.toString(16).padStart(64, "0"),
         takerNewCommitment: "0x" + takerNewCommitment.toString(16).padStart(64, "0"),
-        claimsRootMaker: "0x" + claimsRootMaker.toString(16).padStart(64, "0"),
-        claimsRootTaker: "0x" + claimsRootTaker.toString(16).padStart(64, "0"),
+        claimsRootMaker: crMakerHex,
+        claimsRootTaker: crTakerHex,
         totalLockedMaker,
         totalLockedTaker,
         tokenMaker: "0x" + tokenMaker.toString(16).padStart(40, "0"),
@@ -300,6 +310,11 @@ export class PrivateSubmitter {
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`Private settlement tx: ${txHash}`);
+
+      // Record claims roots so this relayer only pays gas for its own claims
+      this.db?.saveSettledClaimsRoot(crMakerHex);
+      this.db?.saveSettledClaimsRoot(crTakerHex);
+
       return txHash;
     });
   }
@@ -389,6 +404,7 @@ export class PrivateSubmitter {
       [BigInt(proof.pi_b[1][1]), BigInt(proof.pi_b[1][0])],
     ];
     const proofC: [bigint, bigint] = [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])];
+    const crHex = "0x" + claimsRoot.toString(16).padStart(64, "0");
 
     return this.withTxLock(async () => {
       const tx = await this.settlement.scatterDirect({
@@ -400,7 +416,7 @@ export class PrivateSubmitter {
         newCommitment: "0x" + newCommitment.toString(16).padStart(64, "0"),
         token: tokenAddr,
         withdrawAmount,
-        claimsRoot: "0x" + claimsRoot.toString(16).padStart(64, "0"),
+        claimsRoot: crHex,
         totalLocked,
         fee,
       });
@@ -409,6 +425,10 @@ export class PrivateSubmitter {
       if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`ScatterDirect tx: ${txHash}`);
+
+      // Record claims root so this relayer only pays gas for its own claims
+      this.db?.saveSettledClaimsRoot(crHex);
+
       return txHash;
     });
   }
