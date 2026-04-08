@@ -5,10 +5,13 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {FeeVault} from "../src/FeeVault.sol";
+import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
+import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 
 contract MockToken is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
@@ -446,6 +449,297 @@ contract PrivateSettlementTest is Test {
             tokenTaker: address(usdc),
             feeTokenMaker: 0,
             feeTokenTaker: 0
+        });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FeeVault + Relayer Gating Tests
+// ═══════════════════════════════════════════════════════════════════
+
+contract FeeVaultTest is Test {
+    CommitmentPool public pool;
+    PrivateSettlement public settlement;
+    FeeVault public vault;
+    RelayerRegistry public registry;
+    MockVerifier public withdrawVerifier;
+    MockSettleVerifier public settleVerifier;
+    MockClaimVerifier public claimVerifier;
+    MockWETH public weth;
+    MockToken public usdc;
+    MockIdentityRegistry public identityRegistry;
+
+    address deployer = address(this);
+    address relayer = address(0x7E1A);
+    address nonRelayer = address(0xBAD);
+    address alice = address(0xA11CE);
+    address recipient1 = address(0xC1);
+    address treasury = address(0x77EA);
+
+    uint[2] proofA = [uint(0), uint(0)];
+    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
+    uint[2] proofC = [uint(0), uint(0)];
+
+    bytes32 constant MAKER_NULL = bytes32(uint256(0x1aa));
+    bytes32 constant TAKER_NULL = bytes32(uint256(0x1bb));
+    bytes32 constant MAKER_NONCE_NULL = bytes32(uint256(0x1cc));
+    bytes32 constant TAKER_NONCE_NULL = bytes32(uint256(0x1dd));
+    bytes32 constant MAKER_NEW_COMMIT = bytes32(uint256(0x1111));
+    bytes32 constant TAKER_NEW_COMMIT = bytes32(uint256(0x2222));
+    bytes32 constant CLAIMS_ROOT_MAKER = bytes32(uint256(0x3333));
+    bytes32 constant CLAIMS_ROOT_TAKER = bytes32(uint256(0x4444));
+    bytes32 constant CLAIM_NULL_1 = bytes32(uint256(0x5555));
+
+    function setUp() public {
+        withdrawVerifier = new MockVerifier();
+        settleVerifier = new MockSettleVerifier();
+        claimVerifier = new MockClaimVerifier();
+        identityRegistry = new MockIdentityRegistry();
+        weth = new MockWETH();
+        usdc = new MockToken("USDC", "USDC");
+
+        pool = new CommitmentPool(address(withdrawVerifier), 20, 30);
+        settlement = new PrivateSettlement(address(pool), address(settleVerifier), address(claimVerifier), address(weth));
+
+        // Deploy FeeVault: 5% platform fee (500 bps), treasury
+        vault = new FeeVault(treasury, 500);
+        vault.setAuthorizedDepositor(address(settlement), true);
+
+        // Deploy RelayerRegistry with mock identity
+        registry = new RelayerRegistry(treasury, address(identityRegistry));
+
+        // Wire up
+        settlement.setRelayerRegistry(address(registry));
+        settlement.setFeeVault(address(vault));
+
+        // Whitelist tokens
+        pool.setTokenWhitelist(address(weth), true);
+        pool.setTokenWhitelist(address(usdc), true);
+        settlement.setTokenWhitelist(address(weth), true);
+        settlement.setTokenWhitelist(address(usdc), true);
+        pool.setAuthorizedSettlement(address(settlement));
+
+        // Fund pool
+        vm.deal(address(this), 1100 ether);
+        weth.deposit{value: 1100 ether}();
+        weth.transfer(address(pool), 1000 ether);
+        usdc.mint(address(pool), 100_000e18);
+
+        // Fund alice for deposit
+        vm.deal(alice, 10 ether);
+        vm.startPrank(alice);
+        weth.deposit{value: 10 ether}();
+        weth.approve(address(pool), type(uint256).max);
+        pool.deposit(uint256(0x9876), address(weth), 10 ether);
+        vm.stopPrank();
+
+        // Verify + register relayer
+        identityRegistry.setVerified(relayer, true);
+        vm.prank(relayer);
+        registry.register("http://localhost:3002", 30);
+    }
+
+    // ─── Relayer Gating ─────────────────────────────────────────
+
+    function test_settlePrivate_only_active_relayer() public {
+        PrivateSettlement.SettleParams memory p = _params();
+
+        // Non-relayer should be rejected
+        vm.prank(nonRelayer);
+        vm.expectRevert(PrivateSettlement.NotActiveRelayer.selector);
+        settlement.settlePrivate(p);
+
+        // Registered relayer should succeed
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+    }
+
+    function test_scatterDirect_only_active_relayer() public {
+        PrivateSettlement.ScatterDirectParams memory p = _scatterParams();
+
+        vm.prank(nonRelayer);
+        vm.expectRevert(PrivateSettlement.NotActiveRelayer.selector);
+        settlement.scatterDirect(p);
+
+        vm.prank(relayer);
+        settlement.scatterDirect(p);
+    }
+
+    function test_disable_relayer_gate() public {
+        // Disable relayer gating
+        settlement.setRelayerRegistry(address(0));
+
+        // Now anyone can settle
+        PrivateSettlement.SettleParams memory p = _params();
+        vm.prank(nonRelayer);
+        settlement.settlePrivate(p);
+    }
+
+    // ─── FeeVault ───────────────────────────────────────────────
+
+    function test_fees_go_to_vault() public {
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenMaker = uint96(0.1 ether); // 0.1 WETH fee
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        // Fee should be in vault, credited to relayer
+        assertEq(vault.balances(relayer, address(weth)), 0.1 ether, "vault should credit relayer");
+        assertEq(weth.balanceOf(address(vault)), 0.1 ether, "vault should hold WETH");
+    }
+
+    function test_fees_both_tokens() public {
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH
+        p.feeTokenTaker = uint96(100e18);       // fee in USDC
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        assertEq(vault.balances(relayer, address(weth)), 0.05 ether);
+        assertEq(vault.balances(relayer, address(usdc)), 100e18);
+    }
+
+    function test_relayer_claims_from_vault() public {
+        // Settle with fee
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenMaker = uint96(1 ether);
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        // Relayer claims from vault
+        uint256 relayerBalBefore = weth.balanceOf(relayer);
+        uint256 treasuryBalBefore = weth.balanceOf(treasury);
+
+        vm.prank(relayer);
+        vault.claim(address(weth));
+
+        // 5% platform fee: 0.05 ETH to treasury, 0.95 ETH to relayer
+        assertEq(weth.balanceOf(relayer) - relayerBalBefore, 0.95 ether, "relayer gets 95%");
+        assertEq(weth.balanceOf(treasury) - treasuryBalBefore, 0.05 ether, "treasury gets 5%");
+        assertEq(vault.balances(relayer, address(weth)), 0, "vault balance should be 0");
+    }
+
+    function test_relayer_claims_usdc_from_vault() public {
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenTaker = uint96(200e18); // USDC fee
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        vm.prank(relayer);
+        vault.claim(address(usdc));
+
+        // 5% of 200 USDC = 10 USDC to treasury, 190 USDC to relayer
+        assertEq(usdc.balanceOf(relayer), 190e18, "relayer gets 190 USDC");
+        assertEq(usdc.balanceOf(treasury), 200e18 - 190e18, "treasury gets 10 USDC");
+    }
+
+    function test_vault_nothing_to_claim_reverts() public {
+        vm.prank(relayer);
+        vm.expectRevert(FeeVault.NothingToClaim.selector);
+        vault.claim(address(weth));
+    }
+
+    function test_vault_unauthorized_deposit_reverts() public {
+        vm.prank(nonRelayer);
+        vm.expectRevert(FeeVault.NotAuthorized.selector);
+        vault.deposit(relayer, address(weth), 1 ether);
+    }
+
+    function test_scatterDirect_fee_to_vault() public {
+        PrivateSettlement.ScatterDirectParams memory p = _scatterParams();
+        p.fee = uint96(0.03 ether);
+        p.withdrawAmount = uint256(p.totalLocked) + uint256(p.fee);
+
+        vm.prank(relayer);
+        settlement.scatterDirect(p);
+
+        assertEq(vault.balances(relayer, address(weth)), 0.03 ether);
+    }
+
+    function test_disable_vault_fees_go_to_relayer() public {
+        // Disable vault
+        settlement.setFeeVault(address(0));
+
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenMaker = uint96(0.1 ether);
+
+        uint256 relayerBalBefore = weth.balanceOf(relayer);
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        // Fee goes directly to relayer (legacy mode)
+        assertEq(weth.balanceOf(relayer) - relayerBalBefore, 0.1 ether);
+        assertEq(vault.balances(relayer, address(weth)), 0);
+    }
+
+    // ─── Platform Fee Admin ─────────────────────────────────────
+
+    function test_vault_platform_fee_update() public {
+        vault.setPlatformFee(1000); // 10%
+        assertEq(vault.platformFeeBps(), 1000);
+
+        // Settle with fee
+        PrivateSettlement.SettleParams memory p = _params();
+        p.feeTokenMaker = uint96(1 ether);
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        // Claim — 10% platform fee
+        vm.prank(relayer);
+        vault.claim(address(weth));
+
+        assertEq(weth.balanceOf(treasury), 0.1 ether, "10% to treasury");
+    }
+
+    function test_vault_max_platform_fee() public {
+        vm.expectRevert(FeeVault.FeeTooHigh.selector);
+        vault.setPlatformFee(5001); // > 50%
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────
+
+    function _params() internal view returns (PrivateSettlement.SettleParams memory) {
+        return PrivateSettlement.SettleParams({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            currentRoot: pool.getLastRoot(),
+            currentTimestamp: block.timestamp,
+            makerNullifier: MAKER_NULL,
+            takerNullifier: TAKER_NULL,
+            makerNonceNullifier: MAKER_NONCE_NULL,
+            takerNonceNullifier: TAKER_NONCE_NULL,
+            makerNewCommitment: MAKER_NEW_COMMIT,
+            takerNewCommitment: TAKER_NEW_COMMIT,
+            claimsRootMaker: CLAIMS_ROOT_MAKER,
+            claimsRootTaker: CLAIMS_ROOT_TAKER,
+            totalLockedMaker: uint96(5 ether),
+            totalLockedTaker: uint96(10_000e18),
+            tokenMaker: address(weth),
+            tokenTaker: address(usdc),
+            feeTokenMaker: 0,
+            feeTokenTaker: 0
+        });
+    }
+
+    function _scatterParams() internal view returns (PrivateSettlement.ScatterDirectParams memory) {
+        return PrivateSettlement.ScatterDirectParams({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            currentRoot: pool.getLastRoot(),
+            nullifier: bytes32(uint256(0xABCD)),
+            newCommitment: bytes32(uint256(0xEF01)),
+            token: address(weth),
+            withdrawAmount: 5 ether,
+            claimsRoot: bytes32(uint256(0xF333)),
+            totalLocked: uint96(5 ether),
+            fee: 0
         });
     }
 }
