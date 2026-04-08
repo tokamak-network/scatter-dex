@@ -430,16 +430,19 @@ export default function RelayersPage() {
                 <div className="space-y-2">
                     {vaultBalances.map((b) => {
                       const dec = findToken(b.token)?.decimals ?? 18;
-                      const gross = parseFloat(ethers.formatUnits(b.balance, dec));
-                      const net = parseFloat(ethers.formatUnits(b.balance * BigInt(10000 - vaultPlatformFee) / 10000n, dec));
+                      const grossStr = ethers.formatUnits(b.balance, dec);
+                      const netStr = ethers.formatUnits(b.balance * BigInt(10000 - vaultPlatformFee) / 10000n, dec);
+                      // Truncate to min(dec, 6) decimal places without parseFloat precision loss
+                      const maxDp = Math.min(dec, 6);
+                      const truncate = (s: string) => { const [i, d] = s.split("."); return d ? `${i}.${d.slice(0, maxDp)}` : i; };
                       return (
                       <div key={b.token} className="flex items-center justify-between bg-surface rounded-lg px-4 py-3">
                         <div>
                           <span className="font-mono font-bold text-on-surface">
-                            {gross.toFixed(6)} {b.symbol}
+                            {truncate(grossStr)} {b.symbol}
                           </span>
                           <span className="text-[10px] text-on-surface-variant/40 ml-2">
-                            (net: {net.toFixed(6)})
+                            (net: {truncate(netStr)})
                           </span>
                         </div>
                         <button
