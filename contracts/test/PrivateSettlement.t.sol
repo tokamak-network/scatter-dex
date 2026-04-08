@@ -575,6 +575,61 @@ contract FeeVaultTest is Test {
         settlement.settlePrivate(p);
     }
 
+    // ─── Relayer Binding (proof front-run prevention) ─────────
+
+    address constant RELAYER_2 = address(0x7E1B);
+
+    function _registerRelayer2() internal {
+        identityRegistry.setVerified(RELAYER_2, true);
+        vm.prank(RELAYER_2);
+        registry.register("http://localhost:3003", 30);
+    }
+
+    function test_settlePrivate_correct_relayer_passes_proof() public {
+        settleVerifier.setEnforceRelayer(true, relayer);
+        PrivateSettlement.SettleParams memory p = _params();
+
+        vm.prank(relayer);
+        settlement.settlePrivate(p);
+
+        assertTrue(settlement.nullifiers(p.makerNullifier));
+    }
+
+    function test_settlePrivate_wrong_relayer_reverts_proof() public {
+        settleVerifier.setEnforceRelayer(true, relayer);
+        _registerRelayer2();
+
+        // Different nullifiers to avoid collision with other tests
+        PrivateSettlement.SettleParams memory p = _params();
+        p.makerNullifier = bytes32(uint256(0x2aa));
+        p.takerNullifier = bytes32(uint256(0x2bb));
+        p.makerNonceNullifier = bytes32(uint256(0x2cc));
+        p.takerNonceNullifier = bytes32(uint256(0x2dd));
+        p.claimsRootMaker = bytes32(uint256(0x5333));
+        p.claimsRootTaker = bytes32(uint256(0x5444));
+
+        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedRelayer → InvalidProof
+        vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        vm.prank(RELAYER_2);
+        settlement.settlePrivate(p);
+    }
+
+    function test_settlePrivate_no_enforce_any_relayer_passes() public {
+        // enforceRelayer = false (default) → any registered relayer can settle
+        _registerRelayer2();
+
+        PrivateSettlement.SettleParams memory p = _params();
+        p.makerNullifier = bytes32(uint256(0x3aa));
+        p.takerNullifier = bytes32(uint256(0x3bb));
+        p.makerNonceNullifier = bytes32(uint256(0x3cc));
+        p.takerNonceNullifier = bytes32(uint256(0x3dd));
+        p.claimsRootMaker = bytes32(uint256(0x6333));
+        p.claimsRootTaker = bytes32(uint256(0x6444));
+
+        vm.prank(RELAYER_2);
+        settlement.settlePrivate(p); // should pass without enforce
+    }
+
     // ─── FeeVault ───────────────────────────────────────────────
 
     function test_fees_go_to_vault() public {
