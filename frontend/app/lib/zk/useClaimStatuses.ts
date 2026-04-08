@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { poseidonHash, toBytes32Hex } from "./commitment";
 import { getPrivateSettlementAddress } from "../config";
-import { getReadProvider } from "../provider";
+import { getReadProvider, getEarliestBlock } from "../provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../contracts";
 
 export interface ClaimStatusInfo {
@@ -59,13 +59,14 @@ export function useClaimStatuses(
         // Optionally fetch tx hashes for claimed items in parallel
         let txMap: Record<number, string> = {};
         if (options?.includeTxHash) {
+          const fromBlock = getEarliestBlock();
           const claimedItems = checks.filter((c) => c.claimed);
           const txResults = await Promise.all(
             claimedItems.map(async ({ i, nullHex }) => {
               try {
-                const logs = await settlement.queryFilter(settlement.filters.PrivateClaim(null, nullHex));
+                const logs = await settlement.queryFilter(settlement.filters.PrivateClaim(null, nullHex), fromBlock);
                 return { i, txHash: logs[0]?.transactionHash };
-              } catch { return { i, txHash: undefined }; }
+              } catch (e) { console.warn("Failed to fetch claim tx:", e); return { i, txHash: undefined }; }
             })
           );
           for (const { i, txHash } of txResults) {

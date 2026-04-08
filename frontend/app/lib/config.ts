@@ -25,6 +25,7 @@ const ENV_MAP: Record<string, string | undefined> = {
   NEXT_PUBLIC_IDENTITY_GATE_ADDRESS: process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS,
   NEXT_PUBLIC_ZK_X509_URL: process.env.NEXT_PUBLIC_ZK_X509_URL,
   NEXT_PUBLIC_FEE_VAULT_ADDRESS: process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS,
+  NEXT_PUBLIC_DEPLOY_BLOCK: process.env.NEXT_PUBLIC_DEPLOY_BLOCK,
 };
 
 export function getEnv(key: string): string | undefined {
