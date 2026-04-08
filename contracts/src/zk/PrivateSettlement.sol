@@ -175,7 +175,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[16] memory pubSignals = [
+        uint[17] memory pubSignals = [
             p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
@@ -191,7 +191,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(uint160(p.tokenTaker)),
             uint256(p.feeTokenMaker),
             uint256(p.feeTokenTaker),
-            p.currentTimestamp
+            p.currentTimestamp,
+            uint256(uint160(msg.sender))  // relayer bound in proof
         ];
 
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
