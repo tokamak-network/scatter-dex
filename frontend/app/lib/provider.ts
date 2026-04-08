@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { RPC_URL } from "./config";
+import { RPC_URL, getEnv } from "./config";
 
 /** Shared read-only provider singleton — reuse instead of creating new instances per component. */
 let _provider: ethers.JsonRpcProvider | undefined;
@@ -22,19 +22,25 @@ export function getReadProvider(): ethers.JsonRpcProvider {
 const DEPLOY_BLOCK_KEY = "zkscatter_deploy_block";
 
 export function getDeployBlock(): number {
-  const env = process.env.NEXT_PUBLIC_DEPLOY_BLOCK;
-  if (env) return parseInt(env, 10);
+  const env = getEnv("NEXT_PUBLIC_DEPLOY_BLOCK");
+  if (env) {
+    const n = parseInt(env, 10);
+    if (!isNaN(n) && n > 0) return n;
+  }
 
   if (typeof window !== "undefined") {
     const cached = localStorage.getItem(DEPLOY_BLOCK_KEY);
-    if (cached) return parseInt(cached, 10);
+    if (cached) {
+      const n = parseInt(cached, 10);
+      if (!isNaN(n) && n > 0) return n;
+    }
   }
   return 0;
 }
 
 /** Cache the deploy block after first successful event query. */
 export function cacheDeployBlock(block: number): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || block <= 0) return;
   const existing = localStorage.getItem(DEPLOY_BLOCK_KEY);
   // Only cache if not already set (keep the earliest known block)
   if (!existing || parseInt(existing, 10) > block) {
