@@ -6,6 +6,7 @@ import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {FeeVault} from "../src/FeeVault.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
@@ -104,7 +105,16 @@ contract DeployLocal is Script {
         pool.setTokenWhitelist(address(usdc), true);
         privateSettlement.setTokenWhitelist(address(weth), true);
         privateSettlement.setTokenWhitelist(address(usdc), true);
-        console.log("ZK contracts configured");
+
+        // 11. Deploy FeeVault (5% platform fee, treasury = deployer)
+        FeeVault vault = new FeeVault(deployer, 500);
+        vault.setAuthorizedDepositor(address(privateSettlement), true);
+        console.log("FeeVault:", address(vault));
+
+        // 12. Wire relayer registry + fee vault to PrivateSettlement
+        privateSettlement.setRelayerRegistry(address(relayerRegistry));
+        privateSettlement.setFeeVault(address(vault));
+        console.log("ZK contracts configured (relayer gate + fee vault)");
 
         vm.stopBroadcast();
 
