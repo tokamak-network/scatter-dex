@@ -216,14 +216,14 @@ async function main() {
   const claimAmount2 = totalLocked - claimAmount1;
 
   // ─── Step 1: Wrap ETH → WETH ──────────────────────────────
-  console.log("[1/7] Wrapping ETH → WETH...");
+  console.log("[1/9] Wrapping ETH → WETH...");
   const wrapTx = await wethContract.deposit({ value: depositAmount });
   await wrapTx.wait();
   const wethBal = await wethContract.balanceOf(userAddr);
   assert(wethBal >= depositAmount, `WETH balance: ${ethers.formatEther(wethBal)} ETH`);
 
   // ─── Step 2: Approve + Deposit into CommitmentPool ─────────
-  console.log("\n[2/7] Depositing into CommitmentPool...");
+  console.log("\n[2/9] Depositing into CommitmentPool...");
   const approveTx = await wethContract.approve(poolAddr, ethers.MaxUint256);
   await approveTx.wait();
 
@@ -246,7 +246,7 @@ async function main() {
   assert(leafIndex >= 0, `Deposit committed at leaf #${leafIndex}`);
 
   // ─── Step 3: Generate EdDSA key + sign order ───────────────
-  console.log("\n[3/7] Generating EdDSA key & signing order...");
+  console.log("\n[3/9] Generating EdDSA key & signing order...");
   const { eddsa, F } = await getEdDSAWithField();
 
   // Deterministic seed for reproducibility — NOT used in production
@@ -305,7 +305,7 @@ async function main() {
   assert(true, `Order signed (hash: ${orderHash.toString().slice(0, 20)}...)`);
 
   // ─── Step 4: Submit order to zk-relayer ─────────────────────
-  console.log("\n[4/7] Submitting order to zk-relayer...");
+  console.log("\n[4/9] Submitting order to zk-relayer...");
   const orderBody = {
     sellToken: weth,
     buyToken: weth,
@@ -349,7 +349,7 @@ async function main() {
   // but poll as fallback for cross-token orders or async settlement
   let settleTxHash = orderData.txHash;
   if (orderData.status !== "settled") {
-    console.log("\n[5/7] Waiting for settlement...");
+    console.log("\n[5/9] Waiting for settlement...");
     for (let i = 0; i < SETTLE_POLL_TIMEOUT_SEC; i++) {
       await sleep(1000);
       const statusRes = await fetch(`${ZK_RELAYER_URL}/api/private-orders/${pubKeyAx}/${nonce}`);
@@ -367,7 +367,7 @@ async function main() {
   assert(true, `Settled! TX: ${settleTxHash}`);
 
   // ─── Step 6: Wait for releaseTime, then claim ──────────────
-  console.log("\n[6/7] Claiming via zk-relayer...");
+  console.log("\n[6/9] Claiming via zk-relayer...");
   const currentBlock = await provider.getBlock("latest");
   const currentChainTime = BigInt(currentBlock!.timestamp);
   if (currentChainTime <= releaseTime) {
@@ -439,7 +439,7 @@ async function main() {
   await provider.waitForTransaction(tx2);
 
   // ─── Step 7: Verify balances ───────────────────────────────
-  console.log("\n[7/7] Verifying balances...");
+  console.log("\n[7/9] Verifying balances...");
 
   const recipientEthAfter = await provider.getBalance(RECIPIENT);
   const ethDelta = recipientEthAfter - recipientEthBefore;
@@ -485,9 +485,9 @@ async function main() {
     const vaultBal = await vaultContract.balances(relayerAddr, weth);
     assert(vaultBal >= fee, `Vault balance: ${ethers.formatEther(vaultBal)} WETH (expected ≥ ${ethers.formatEther(fee)})`);
 
-    // Check platform fee rate
+    // Check platform fee rate (expected: 500 bps = 5%, max 10000)
     const platformBps = await vaultContract.platformFeeBps();
-    assert(Number(platformBps) > 0, `Platform fee: ${Number(platformBps)} bps`);
+    assert(Number(platformBps) === 500, `Platform fee: ${Number(platformBps)} bps (expected 500)`);
 
     const treasury: string = await vaultContract.treasury();
     assert(treasury !== ethers.ZeroAddress, `Treasury: ${treasury}`);
@@ -496,11 +496,17 @@ async function main() {
     console.log("\n[9/9] Relayer claiming from FeeVault...");
 
     // Use relayer wallet (Anvil Account #1) to claim
-    const RELAYER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    const RELAYER_KEY = process.env.E2E_RELAYER_KEY
+      ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
     const relayerWallet = new ethers.Wallet(RELAYER_KEY, provider);
+    assert(
+      relayerWallet.address.toLowerCase() === relayerAddr.toLowerCase(),
+      `Relayer address match: ${relayerWallet.address}`,
+    );
     const vaultWithSigner = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, relayerWallet);
 
-    const totalVaultBal = vaultBal; // claim the full accumulated balance
+    // Re-query vault balance right before claim for accuracy
+    const totalVaultBal = await vaultContract.balances(relayerAddr, weth);
     const relayerWethBefore = await wethContract.balanceOf(relayerAddr);
     const treasuryWethBefore = await wethContract.balanceOf(treasury);
 
