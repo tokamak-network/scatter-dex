@@ -311,9 +311,14 @@ export class PrivateSubmitter {
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`Private settlement tx: ${txHash}`);
 
-      // Record claims roots so this relayer only pays gas for its own claims
-      this.db?.saveSettledClaimsRoot(crMakerHex);
-      this.db?.saveSettledClaimsRoot(crTakerHex);
+      // Record claims roots so this relayer only pays gas for its own claims.
+      // Best-effort: chain tx already succeeded, DB failure must not break the flow.
+      try {
+        this.db?.saveSettledClaimsRoot(crMakerHex);
+        this.db?.saveSettledClaimsRoot(crTakerHex);
+      } catch (err) {
+        console.warn("Failed to persist settled claims roots:", err);
+      }
 
       return txHash;
     });
@@ -426,8 +431,13 @@ export class PrivateSubmitter {
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`ScatterDirect tx: ${txHash}`);
 
-      // Record claims root so this relayer only pays gas for its own claims
-      this.db?.saveSettledClaimsRoot(crHex);
+      // Record claims root so this relayer only pays gas for its own claims.
+      // Best-effort: chain tx already succeeded, DB failure must not break the flow.
+      try {
+        this.db?.saveSettledClaimsRoot(crHex);
+      } catch (err) {
+        console.warn(`Failed to persist claims root ${crHex}:`, err);
+      }
 
       return txHash;
     });

@@ -29,6 +29,7 @@ export function useClaimStatuses(
     // Stable key to avoid re-running for same claims
     const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (options?.includeTxHash ? ":tx" : "");
     if (key === keyRef.current) return;
+    keyRef.current = key;
 
     let cancelled = false;
     (async () => {
@@ -72,14 +73,16 @@ export function useClaimStatuses(
           }
         }
 
-        if (cancelled) return;
+        if (cancelled) { keyRef.current = ""; return; }
         const result: Record<number, ClaimStatusInfo> = {};
         for (const { i, claimed } of checks) {
           result[i] = { claimed, txHash: txMap[i] };
         }
-        keyRef.current = key;
         setStatuses(result);
-      } catch (e) { console.warn("Failed to check claim statuses:", e); }
+      } catch (e) {
+        keyRef.current = ""; // allow retry on error
+        console.warn("Failed to check claim statuses:", e);
+      }
     })();
     return () => { cancelled = true; };
   // options.includeTxHash is checked via keyRef to avoid re-renders from unstable object refs

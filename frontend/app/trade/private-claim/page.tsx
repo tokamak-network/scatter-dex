@@ -98,7 +98,7 @@ export default function PrivateClaimPage() {
       setClaimData(claims[0]);
       // Read relayer URL: from bundle top-level, or from individual claim entry
       const url = parsed.relayerUrl ?? claims[0]?.relayerUrl ?? null;
-      setBundleRelayerUrl(typeof url === "string" ? url : null);
+      setBundleRelayerUrl(validRelayerUrl(url));
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
       setAllClaims([]);
@@ -130,7 +130,17 @@ export default function PrivateClaimPage() {
     input.click();
   }, []);
 
-  // Shared proof generation
+  /** Validate relayer URL — must be absolute http/https. Returns null if invalid. */
+  function validRelayerUrl(url: unknown): string | null {
+    if (typeof url !== "string") return null;
+    try {
+      const u = new URL(url);
+      if (u.protocol === "http:" || u.protocol === "https:") return u.origin;
+    } catch { /* invalid */ }
+    return null;
+  }
+
+  // Shared proof generation (pure function of ClaimData — no component state captured)
   async function buildProof(cd: ClaimData) {
     const secret = BigInt(cd.secret);
     const recipient = BigInt(cd.recipient);
@@ -211,9 +221,10 @@ export default function PrivateClaimPage() {
       const p = await buildProof(claimData);
       setStatus("submitting");
       const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
+      // proofB: swap elements per row for Solidity G2 point representation [imaginary, real]
       const tx = await settlement.claimWithProof(
         p.proofResult.proof.a.map(BigInt),
-        p.proofResult.proof.b.map((row: string[]) => row.map(BigInt)),
+        p.proofResult.proof.b.map((row: string[]) => [BigInt(row[1]), BigInt(row[0])]),
         p.proofResult.proof.c.map(BigInt),
         p.claimsRootHex,
         p.nullifierHex,
@@ -225,8 +236,17 @@ export default function PrivateClaimPage() {
       const receipt = await tx.wait();
       setTxHash(receipt.hash ?? receipt.transactionHash ?? "");
       setStatus("success");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Claim failed");
+    } catch (e: any) {
+      console.error("Wallet claim failed:", e);
+      let message = "Claim failed";
+      if (e.code === "ACTION_REJECTED") {
+        message = "Transaction rejected in wallet.";
+      } else if (e.reason) {
+        message = e.reason;
+      } else if (e instanceof Error) {
+        message = e.message;
+      }
+      setError(message);
       setStatus("error");
     }
   }, [claimData, signer]);
@@ -325,7 +345,7 @@ export default function PrivateClaimPage() {
                   return (
                     <button
                       key={i}
-                      onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); if (allClaims[i].relayerUrl) setBundleRelayerUrl(allClaims[i].relayerUrl!); }}
+                      onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); setBundleRelayerUrl(validRelayerUrl(allClaims[i].relayerUrl)); }}
                       disabled={isClaimed}
                       className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
                         isClaimed
