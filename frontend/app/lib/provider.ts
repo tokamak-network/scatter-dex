@@ -14,14 +14,14 @@ export function getReadProvider(): ethers.JsonRpcProvider {
 }
 
 /**
- * Get the starting block for event queries.
- * Uses NEXT_PUBLIC_DEPLOY_BLOCK env var if set, otherwise falls back to
- * a cached value in localStorage (auto-detected from first successful query).
- * Returns 0 as last resort (full scan).
+ * Get the earliest known block for event queries.
+ * Checks: NEXT_PUBLIC_DEPLOY_BLOCK env → localStorage cache → 0 (full scan).
+ * The cached value is the earliest block this user has seen a transaction on,
+ * not necessarily the contract deploy block.
  */
-const DEPLOY_BLOCK_KEY = "zkscatter_deploy_block";
+const EARLIEST_BLOCK_KEY = "zkscatter_earliest_block";
 
-export function getDeployBlock(): number {
+export function getEarliestBlock(): number {
   const env = getEnv("NEXT_PUBLIC_DEPLOY_BLOCK");
   if (env) {
     const n = parseInt(env, 10);
@@ -29,7 +29,7 @@ export function getDeployBlock(): number {
   }
 
   if (typeof window !== "undefined") {
-    const cached = localStorage.getItem(DEPLOY_BLOCK_KEY);
+    const cached = localStorage.getItem(EARLIEST_BLOCK_KEY);
     if (cached) {
       const n = parseInt(cached, 10);
       if (!isNaN(n) && n > 0) return n;
@@ -39,11 +39,11 @@ export function getDeployBlock(): number {
 }
 
 /** Cache the deploy block after first successful event query. */
-export function cacheDeployBlock(block: number): void {
+export function cacheEarliestBlock(block: number): void {
   if (typeof window === "undefined" || block <= 0) return;
-  const existing = localStorage.getItem(DEPLOY_BLOCK_KEY);
+  const existing = localStorage.getItem(EARLIEST_BLOCK_KEY);
   // Only cache if not already set (keep the earliest known block)
   if (!existing || parseInt(existing, 10) > block) {
-    localStorage.setItem(DEPLOY_BLOCK_KEY, block.toString());
+    localStorage.setItem(EARLIEST_BLOCK_KEY, block.toString());
   }
 }

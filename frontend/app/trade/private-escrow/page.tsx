@@ -6,7 +6,7 @@ import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, 
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
-import { getReadProvider, getDeployBlock, cacheDeployBlock } from "../../lib/provider";
+import { getReadProvider, getEarliestBlock, cacheEarliestBlock } from "../../lib/provider";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   generateNote,
@@ -132,7 +132,7 @@ export default function PrivateEscrowPage() {
               const commitBigInt = BigInt(cn.commitment);
               const logs = await poolContract.queryFilter(
                 poolContract.filters.CommitmentInserted(commitBigInt),
-                getDeployBlock(),
+                getEarliestBlock(),
               );
               if (logs.length > 0) {
                 // Use latest log in case of duplicate commitments
@@ -207,7 +207,7 @@ export default function PrivateEscrowPage() {
       // Sync deploy block from folder config → localStorage
       try {
         const cfg = await loadConfigFromFolder();
-        if (typeof cfg.deployBlock === "number") cacheDeployBlock(cfg.deployBlock);
+        if (typeof cfg.earliestBlock === "number") cacheEarliestBlock(cfg.earliestBlock);
       } catch { /* ignore */ }
     }
   }, [refreshNotes]);
@@ -278,8 +278,8 @@ export default function PrivateEscrowPage() {
       }
       // Cache deploy block for future event queries (localStorage + folder)
       if (receipt.blockNumber) {
-        cacheDeployBlock(receipt.blockNumber);
-        try { await saveConfigToFolder("deployBlock", receipt.blockNumber); } catch { /* ignore */ }
+        cacheEarliestBlock(receipt.blockNumber);
+        try { await saveConfigToFolder("earliestBlock", receipt.blockNumber); } catch { /* ignore */ }
       }
 
       // Save note to folder

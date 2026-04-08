@@ -187,10 +187,17 @@ export async function loadConfigFromFolder(): Promise<Record<string, unknown>> {
     const fh = await dirHandle.getFileHandle(CONFIG_FILENAME);
     const file = await fh.getFile();
     return JSON.parse(await file.text());
-  } catch { return {}; }
+  } catch (e) {
+    // NotFoundError is expected on first run; log other errors
+    if (e instanceof DOMException && e.name === "NotFoundError") return {};
+    console.warn("Failed to load config from folder:", e);
+    return {};
+  }
 }
 
-/** Save a config value to notes folder. */
+/** Save a config value to notes folder.
+ *  Note: not concurrency-safe (read-modify-write). Currently only called
+ *  from deposit handler, so no race condition in practice. */
 export async function saveConfigToFolder(key: string, value: unknown): Promise<void> {
   if (!dirHandle) return;
   const existing = await loadConfigFromFolder();
