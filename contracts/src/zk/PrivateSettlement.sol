@@ -108,13 +108,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
     }
+    error NotAContract();
+
     /// @notice Set the relayer registry. Pass address(0) to disable relayer gating.
     function setRelayerRegistry(address _registry) external onlyOwner {
+        if (_registry != address(0) && _registry.code.length == 0) revert NotAContract();
         emit RelayerRegistryUpdated(address(relayerRegistry), _registry);
         relayerRegistry = RelayerRegistry(payable(_registry));
     }
     /// @notice Set the fee vault. Pass address(0) to send fees directly to relayer (legacy mode).
     function setFeeVault(address _vault) external onlyOwner {
+        if (_vault != address(0) && _vault.code.length == 0) revert NotAContract();
         emit FeeVaultUpdated(address(feeVault), _vault);
         feeVault = FeeVault(_vault);
     }
@@ -152,7 +156,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Execute a private settlement with ZK proof.
-    function settlePrivate(SettleParams calldata p) external nonReentrant onlyRelayer {
+    function settlePrivate(SettleParams calldata p) external onlyRelayer nonReentrant {
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
@@ -218,23 +222,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
 
         // Transfer fees: to FeeVault if set, otherwise directly to relayer (legacy)
-        if (address(feeVault) != address(0)) {
-            if (p.feeTokenMaker > 0) {
-                pool.transferFee(address(feeVault), p.tokenMaker, p.feeTokenMaker);
-                feeVault.deposit(msg.sender, p.tokenMaker, p.feeTokenMaker);
-            }
-            if (p.feeTokenTaker > 0) {
-                pool.transferFee(address(feeVault), p.tokenTaker, p.feeTokenTaker);
-                feeVault.deposit(msg.sender, p.tokenTaker, p.feeTokenTaker);
-            }
-        } else {
-            if (p.feeTokenMaker > 0) {
-                pool.transferFee(msg.sender, p.tokenMaker, p.feeTokenMaker);
-            }
-            if (p.feeTokenTaker > 0) {
-                pool.transferFee(msg.sender, p.tokenTaker, p.feeTokenTaker);
-            }
-        }
+        if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
+        if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
 
         if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
@@ -278,7 +267,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// @notice Single-party scatter: consume a commitment and register claims directly.
     ///         Uses withdraw proof — no counterparty or settle circuit needed.
     ///         For same-token orders (e.g., scheduled transfers).
-    function scatterDirect(ScatterDirectParams calldata p) external nonReentrant onlyRelayer {
+    function scatterDirect(ScatterDirectParams calldata p) external onlyRelayer nonReentrant {
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
         if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
@@ -312,15 +301,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             totalClaimed: 0
         });
 
-        // Transfer fee: to FeeVault if set, otherwise directly to relayer (legacy)
-        if (p.fee > 0) {
-            if (address(feeVault) != address(0)) {
-                IERC20(p.token).safeTransfer(address(feeVault), p.fee);
-                feeVault.deposit(msg.sender, p.token, p.fee);
-            } else {
-                IERC20(p.token).safeTransfer(msg.sender, p.fee);
-            }
-        }
+        // Transfer fee
+        if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
 
         emit ScatterDirect(p.nullifier, p.claimsRoot, msg.sender, p.fee);
     }
@@ -379,6 +361,28 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
 
         emit PrivateClaim(claimsRoot, claimNullifier, recipient, token, amount);
+    }
+
+    // ─── Internal Fee Routing ────────────────────────────────────
+
+    /// @dev Route fee from CommitmentPool to vault or relayer.
+    function _routeFeeFromPool(address token, uint256 amount) internal {
+        if (address(feeVault) != address(0)) {
+            pool.transferFee(address(feeVault), token, amount);
+            feeVault.deposit(msg.sender, token, amount);
+        } else {
+            pool.transferFee(msg.sender, token, amount);
+        }
+    }
+
+    /// @dev Route fee from this contract's balance to vault or relayer.
+    function _routeFeeLocal(address token, uint256 amount) internal {
+        if (address(feeVault) != address(0)) {
+            IERC20(token).safeTransfer(address(feeVault), amount);
+            feeVault.deposit(msg.sender, token, amount);
+        } else {
+            IERC20(token).safeTransfer(msg.sender, amount);
+        }
     }
 
     /// @dev Accept ETH only from WETH.withdraw() during claimWithProof().
