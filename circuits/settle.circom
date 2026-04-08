@@ -108,6 +108,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell, paid to relayer)
     signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell, paid to relayer)
     signal input currentTimestamp;      // block.timestamp for expiry check
+    signal input relayer;               // relayer address — prevents front-running of settlement tx
 
     // ════════════════════════════════════════
     //  PRIVATE INPUTS
@@ -566,6 +567,14 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal sameKey;
     sameKey <== notSamePubX.out * notSamePubY.out;
     sameKey === 0;
+
+    // ════════════════════════════════════════
+    //  13. RELAYER BINDING
+    //      Bind relayer address to proof so it can't be front-run.
+    //      Same pattern as withdraw.circom.
+    // ════════════════════════════════════════
+    signal relayerSq;
+    relayerSq <== relayer * relayer;
 }
 
 // Parameters:
@@ -580,5 +589,5 @@ component main {public [
     claimsRootMaker, claimsRootTaker,
     totalLockedMaker, totalLockedTaker,
     tokenMaker, tokenTaker,
-    feeTokenMaker, feeTokenTaker, currentTimestamp
+    feeTokenMaker, feeTokenTaker, currentTimestamp, relayer
 ]} = Settle(20, 16, 4);

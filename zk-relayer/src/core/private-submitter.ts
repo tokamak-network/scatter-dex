@@ -212,6 +212,7 @@ export class PrivateSubmitter {
       feeTokenMaker: feeTokenMaker.toString(),
       feeTokenTaker: feeTokenTaker.toString(),
       currentTimestamp: currentTimestamp.toString(),
+      relayer: BigInt(this.wallet.address).toString(),
 
       makerSecret: maker.ownerSecret.toString(),
       makerSellToken: maker.sellToken.toString(),

@@ -202,6 +202,7 @@ export interface SettleProofInput {
   tokenTaker: bigint;
   totalFee: bigint;
   currentTimestamp: bigint;
+  relayer: bigint;
 }
 
 export interface SettleProofResult {
@@ -284,6 +285,7 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
     tokenTaker: input.tokenTaker.toString(),
     totalFee: input.totalFee.toString(),
     currentTimestamp: input.currentTimestamp.toString(),
+    relayer: input.relayer.toString(),
 
     makerSecret: input.makerSecret.toString(),
     makerSellToken: input.makerSellToken.toString(),
