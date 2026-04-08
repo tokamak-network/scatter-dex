@@ -577,38 +577,57 @@ contract FeeVaultTest is Test {
 
     // ─── Relayer Binding (proof front-run prevention) ─────────
 
-    function test_settlePrivate_wrong_relayer_reverts_proof() public {
-        // Enable relayer binding enforcement — proof is "bound" to `relayer`
-        settleVerifier.setEnforceRelayer(true, relayer);
+    address constant RELAYER_2 = address(0x7E1B);
 
+    function _registerRelayer2() internal {
+        identityRegistry.setVerified(RELAYER_2, true);
+        vm.prank(RELAYER_2);
+        registry.register("http://localhost:3003", 30);
+    }
+
+    function test_settlePrivate_correct_relayer_passes_proof() public {
+        settleVerifier.setEnforceRelayer(true, relayer);
         PrivateSettlement.SettleParams memory p = _params();
 
-        // Register a second relayer
-        address relayer2 = address(0x7E1B);
-        identityRegistry.setVerified(relayer2, true);
-        vm.prank(relayer2);
-        registry.register("http://localhost:3003", 30);
-
-        // relayer2 submits the proof, but pubSignals[16] will be relayer2's address
-        // while the proof was generated for a different relayer → verification fails
-        // In this mock: tx.origin check simulates the proof mismatch
         vm.prank(relayer);
-        settlement.settlePrivate(p); // relayer matches → should pass
+        settlement.settlePrivate(p);
 
-        // Try with different nullifiers but relayer2
-        PrivateSettlement.SettleParams memory p2 = _params();
-        p2.makerNullifier = bytes32(uint256(0x2aa));
-        p2.takerNullifier = bytes32(uint256(0x2bb));
-        p2.makerNonceNullifier = bytes32(uint256(0x2cc));
-        p2.takerNonceNullifier = bytes32(uint256(0x2dd));
-        p2.claimsRootMaker = bytes32(uint256(0x5333));
-        p2.claimsRootTaker = bytes32(uint256(0x5444));
+        assertTrue(settlement.nullifiers(p.makerNullifier));
+    }
 
-        // relayer2 tries to submit → pubSignals[16] = relayer2, but mock checks tx.origin
-        // In real Groth16 this would fail because proof was for a specific relayer
-        vm.prank(relayer2);
+    function test_settlePrivate_wrong_relayer_reverts_proof() public {
+        settleVerifier.setEnforceRelayer(true, relayer);
+        _registerRelayer2();
+
+        // Different nullifiers to avoid collision with other tests
+        PrivateSettlement.SettleParams memory p = _params();
+        p.makerNullifier = bytes32(uint256(0x2aa));
+        p.takerNullifier = bytes32(uint256(0x2bb));
+        p.makerNonceNullifier = bytes32(uint256(0x2cc));
+        p.takerNonceNullifier = bytes32(uint256(0x2dd));
+        p.claimsRootMaker = bytes32(uint256(0x5333));
+        p.claimsRootTaker = bytes32(uint256(0x5444));
+
+        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedRelayer → InvalidProof
+        vm.prank(RELAYER_2);
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
-        settlement.settlePrivate(p2);
+        settlement.settlePrivate(p);
+    }
+
+    function test_settlePrivate_no_enforce_any_relayer_passes() public {
+        // enforceRelayer = false (default) → any registered relayer can settle
+        _registerRelayer2();
+
+        PrivateSettlement.SettleParams memory p = _params();
+        p.makerNullifier = bytes32(uint256(0x3aa));
+        p.takerNullifier = bytes32(uint256(0x3bb));
+        p.makerNonceNullifier = bytes32(uint256(0x3cc));
+        p.takerNonceNullifier = bytes32(uint256(0x3dd));
+        p.claimsRootMaker = bytes32(uint256(0x6333));
+        p.claimsRootTaker = bytes32(uint256(0x6444));
+
+        vm.prank(RELAYER_2);
+        settlement.settlePrivate(p); // should pass without enforce
     }
 
     // ─── FeeVault ───────────────────────────────────────────────

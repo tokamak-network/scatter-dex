@@ -17,10 +17,11 @@ contract MockSettleVerifier is ISettleVerifier {
     function verifyProof(uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[17] calldata _pubSignals) external view returns (bool) {
         if (!shouldPass) return false;
         if (enforceRelayer) {
-            // pubSignals[16] is the relayer address (msg.sender of settlePrivate).
-            // In real Groth16, the proof is bound to a specific relayer address.
-            // If a different address submits, the proof doesn't match → false.
-            // We simulate this by storing the expected relayer and checking against it.
+            // pubSignals[16] is msg.sender (set by PrivateSettlement.settlePrivate).
+            // In real Groth16, the proof is cryptographically bound to a specific relayer.
+            // If a different address submits, msg.sender differs → pubSignals[16] mismatches
+            // the value inside the proof → verification fails. We simulate this by checking
+            // pubSignals[16] against a stored expected relayer address.
             return _pubSignals[16] == uint256(uint160(expectedRelayer));
         }
         return true;
