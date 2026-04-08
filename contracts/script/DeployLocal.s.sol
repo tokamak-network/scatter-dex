@@ -129,6 +129,7 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=", vm.toString(address(gate))));
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
+        console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(address(vault))));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
     }
 
