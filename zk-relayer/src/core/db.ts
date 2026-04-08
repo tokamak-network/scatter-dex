@@ -52,6 +52,8 @@ export class PrivateOrderDB {
   private selectByPubKeyNonce: ReturnType<Database.Database["prepare"]>;
   private countByPubKey: ReturnType<Database.Database["prepare"]>;
   private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
+  private insertClaimsRoot: ReturnType<Database.Database["prepare"]>;
+  private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -102,6 +104,12 @@ export class PrivateOrderDB {
     this.countByPubKeyStatus = this.db.prepare(`
       SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status
     `);
+    this.insertClaimsRoot = this.db.prepare(`
+      INSERT OR IGNORE INTO settled_claims_roots (claims_root, settled_at) VALUES (@claimsRoot, @settledAt)
+    `);
+    this.selectClaimsRoot = this.db.prepare(`
+      SELECT 1 FROM settled_claims_roots WHERE claims_root = @claimsRoot LIMIT 1
+    `);
   }
 
   private migrate(): void {
@@ -145,6 +153,13 @@ export class PrivateOrderDB {
       CREATE INDEX IF NOT EXISTS idx_po_status ON private_orders(status, submitted_at);
       CREATE INDEX IF NOT EXISTS idx_po_pair ON private_orders(sell_token, buy_token);
       CREATE INDEX IF NOT EXISTS idx_po_pubkey ON private_orders(pub_key_ax, submitted_at);
+
+      -- Track claims roots from settlements this relayer has processed.
+      -- Used to reject gasless claim requests for orders settled by other relayers.
+      CREATE TABLE IF NOT EXISTS settled_claims_roots (
+        claims_root   TEXT PRIMARY KEY,
+        settled_at    INTEGER NOT NULL
+      );
     `);
   }
 
@@ -277,6 +292,16 @@ export class PrivateOrderDB {
       ? this.countByPubKeyStatus.get({ pubKeyAx: pk, status }) as { total: number }
       : this.countByPubKey.get({ pubKeyAx: pk }) as { total: number };
     return result.total;
+  }
+
+  /** Record a claims root from a settlement this relayer processed. */
+  saveSettledClaimsRoot(claimsRoot: string): void {
+    this.insertClaimsRoot.run({ claimsRoot: claimsRoot.toLowerCase(), settledAt: Date.now() });
+  }
+
+  /** Check if a claims root was settled by this relayer. */
+  hasSettledClaimsRoot(claimsRoot: string): boolean {
+    return !!this.selectClaimsRoot.get({ claimsRoot: claimsRoot.toLowerCase() });
   }
 
   close(): void {

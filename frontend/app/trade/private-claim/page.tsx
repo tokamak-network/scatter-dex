@@ -24,6 +24,7 @@ interface ClaimData {
   releaseTime: string;
   leafIndex: number;
   allLeaves: string[];
+  relayerUrl?: string; // relayer that settled this order
   ephemeralPubKey?: string; // present if stealth address was used
 }
 
@@ -36,6 +37,7 @@ export default function PrivateClaimPage() {
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
+  const [bundleRelayerUrl, setBundleRelayerUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -91,11 +93,15 @@ export default function PrivateClaimPage() {
       setAllClaims(claims);
       setSelectedClaimIdx(0);
       setClaimData(claims[0]);
+      // Read relayer URL: from bundle top-level, or from individual claim entry
+      const url = parsed.relayerUrl ?? claims[0]?.relayerUrl ?? null;
+      setBundleRelayerUrl(typeof url === "string" ? url : null);
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
       setAllClaims([]);
       setSelectedClaimIdx(0);
       setClaimData(null);
+      setBundleRelayerUrl(null);
     }
   }
 
@@ -160,8 +166,9 @@ export default function PrivateClaimPage() {
       console.log("Claim proof generated!");
 
       // Submit via zk-relayer (gasless — relayer pays gas, preserving privacy)
+      // Use the relayer that settled this order (from bundle), fallback to env default
       setStatus("submitting");
-      const zkRelayerUrl = process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
+      const zkRelayerUrl = bundleRelayerUrl || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
 
       const claimsRootHex = "0x" + proofResult.claimsRoot.toString(16).padStart(64, "0");
       const nullifierHex = "0x" + proofResult.nullifier.toString(16).padStart(64, "0");
@@ -293,7 +300,7 @@ export default function PrivateClaimPage() {
                   return (
                     <button
                       key={i}
-                      onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); }}
+                      onClick={() => { setSelectedClaimIdx(i); setClaimData(allClaims[i]); if (allClaims[i].relayerUrl) setBundleRelayerUrl(allClaims[i].relayerUrl!); }}
                       disabled={isClaimed}
                       className={`w-full flex items-center justify-between p-3 rounded-md text-left transition-colors ${
                         isClaimed
@@ -352,6 +359,13 @@ export default function PrivateClaimPage() {
                 </div>
               </div>
 
+              {bundleRelayerUrl && (
+                <div className="flex items-center gap-2 text-xs pt-2 border-t border-outline-variant/10">
+                  <span className="text-on-surface-variant">Relayer:</span>
+                  <span className="font-mono text-on-surface">{bundleRelayerUrl}</span>
+                </div>
+              )}
+
               {Date.now() / 1000 < Number(claimData.releaseTime) && (
                 <div className="text-xs p-2 rounded bg-tertiary/10 text-tertiary">
                   Not yet claimable. Unlocks at {new Date(Number(claimData.releaseTime) * 1000).toLocaleString()}.
@@ -394,8 +408,9 @@ export default function PrivateClaimPage() {
             </button>
           )}
 
-          <div className="text-xs text-on-surface-variant/40 text-center">
-            ZK proof generated in your browser. No one can see which settlement this claim belongs to.
+          <div className="text-xs text-on-surface-variant/40 text-center space-y-1">
+            <p>ZK proof generated in your browser. No one can see which settlement this claim belongs to.</p>
+            <p>Gasless — the relayer submits the transaction and pays gas on your behalf.</p>
           </div>
         </div>
       )}
@@ -414,7 +429,7 @@ export default function PrivateClaimPage() {
         <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
           <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
           <p className="text-on-surface font-medium">Submitting claim on-chain...</p>
-          <p className="text-xs text-on-surface-variant">Confirm the transaction in MetaMask.</p>
+          <p className="text-xs text-on-surface-variant">Relayer is submitting the claim on-chain (gasless).</p>
         </div>
       )}
 
@@ -432,7 +447,7 @@ export default function PrivateClaimPage() {
             </div>
           )}
           <button
-            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHash(null); }}
+            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHash(null); setBundleRelayerUrl(null); }}
             className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
           >
             Claim Another
