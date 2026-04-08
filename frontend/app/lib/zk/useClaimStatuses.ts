@@ -73,13 +73,16 @@ export function useClaimStatuses(
           }
         }
 
-        if (cancelled) return;
+        if (cancelled) { keyRef.current = ""; return; }
         const result: Record<number, ClaimStatusInfo> = {};
         for (const { i, claimed } of checks) {
           result[i] = { claimed, txHash: txMap[i] };
         }
         setStatuses(result);
-      } catch (e) { console.warn("Failed to check claim statuses:", e); }
+      } catch (e) {
+        keyRef.current = ""; // allow retry on error
+        console.warn("Failed to check claim statuses:", e);
+      }
     })();
     return () => { cancelled = true; };
   // options.includeTxHash is checked via keyRef to avoid re-renders from unstable object refs

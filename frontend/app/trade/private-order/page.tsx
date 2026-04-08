@@ -458,6 +458,7 @@ export default function PrivateOrderPage() {
         releaseTime: c.releaseTime,
         leafIndex: idx,
         allLeaves: padded.map((l) => l.toString()),
+        relayerUrl,
         ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       }));
       const bundle = {
@@ -477,6 +478,7 @@ export default function PrivateOrderPage() {
           expectedCommitment: expectedChangeCommitment.toString(),
         } : null,
         claims: claimFiles,
+        relayerUrl,
         note: "Each entry can be loaded individually in Private Claim. Keep this file secret.",
         createdAt: new Date().toISOString(),
       };
