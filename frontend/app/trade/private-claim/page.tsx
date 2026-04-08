@@ -141,7 +141,10 @@ export default function PrivateClaimPage() {
       const host = u.hostname;
       if (process.env.NODE_ENV === "production") {
         if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" ||
-            host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.")) return null;
+            host === "[::1]" || host.startsWith("169.254.") ||
+            host.startsWith("192.168.") || host.startsWith("10.") ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+            host.startsWith("fc") || host.startsWith("fd")) return null;
       }
       return u.origin;
     } catch { /* invalid */ }

@@ -35,6 +35,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error AmountOverflow();
     error OnlyWETH();
     error ClaimsGroupAlreadyExists();
+    error DuplicateClaimsRoot();
     error TimestampOutOfRange();
     error NotActiveRelayer();
 
@@ -227,7 +228,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
         if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
 
-        if (p.claimsRootMaker == p.claimsRootTaker) revert ClaimsGroupAlreadyExists();
+        if (p.claimsRootMaker == p.claimsRootTaker) revert DuplicateClaimsRoot();
         if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
