@@ -195,6 +195,16 @@ Frontend integration following the Steam bot marketplace model:
 
 > **Design reference**: Steam trading bot marketplaces (CSGOFloat, Buff163) where bots display inventory, stats, and trade status. zkScatter relayers are the "bots" and the shared orderbook is the "marketplace".
 
+### Phase 3.6: Trustless Fee Split (Implemented)
+
+Settle circuit redesigned with dual relayer binding:
+
+1. **orderHash** now includes `relayerAddress` — user's EdDSA signature binds the order to a specific relayer
+2. **Public signals**: single `relayer` → `makerRelayer` + `takerRelayer`
+3. **Contract**: fee split based on proof — `feeTokenMaker` → `makerRelayer`, `feeTokenTaker` → `takerRelayer`
+4. **Either relayer can submit**: only makerRelayer or takerRelayer can call settlePrivate (prevents DoS)
+5. **Trustless**: Relayer A cannot redirect Relayer B's fee because it's bound in User B's EdDSA signature
+
 ### Phase 4: Decentralization (future)
 
 Replace central server with:

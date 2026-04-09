@@ -79,9 +79,9 @@ export async function signEdDSA(
 
 /**
  * Compute Poseidon hash of order data for signing.
- * Must match the circuit's order hash computation.
- * orderHash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot)
- * Including claimsRoot prevents the relayer from manipulating claim recipients.
+ * Must match the circuit's order hash computation (Poseidon with 9 inputs).
+ * orderHash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayerAddress)
+ * Including claimsRoot prevents claim manipulation; relayerAddress enables trustless fee split.
  */
 export async function hashOrder(order: {
   sellToken: bigint;
@@ -92,6 +92,7 @@ export async function hashOrder(order: {
   expiry: bigint;
   nonce: bigint;
   claimsRoot: bigint;
+  relayerAddress: bigint;
 }): Promise<bigint> {
   const { buildPoseidon } = await import("circomlibjs");
   const poseidon = await buildPoseidon();
@@ -106,6 +107,7 @@ export async function hashOrder(order: {
     order.expiry,
     order.nonce,
     order.claimsRoot,
+    order.relayerAddress,
   ]);
 
   return F.toObject(hash);

@@ -153,12 +153,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 totalLockedTaker;
         address tokenMaker;
         address tokenTaker;
-        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to relayer)
-        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to relayer)
+        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell) → paid to takerRelayer
+        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell) → paid to makerRelayer
+        address makerRelayer;   // relayer that handles maker's order (bound in proof)
+        address takerRelayer;   // relayer that handles taker's order (bound in proof)
     }
 
     /// @notice Execute a private settlement with ZK proof.
-    function settlePrivate(SettleParams calldata p) external onlyRelayer nonReentrant {
+    /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
+    /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
+    function settlePrivate(SettleParams calldata p) external nonReentrant {
+        // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
+        require(msg.sender == p.makerRelayer || msg.sender == p.takerRelayer, "sender must be maker or taker relayer");
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
@@ -177,7 +183,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[17] memory pubSignals = [
+        uint[18] memory pubSignals = [
             p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
@@ -194,11 +200,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(p.feeTokenMaker),
             uint256(p.feeTokenTaker),
             p.currentTimestamp,
-            uint256(uint160(msg.sender))  // relayer bound in proof
+            uint256(uint160(p.makerRelayer)),  // maker's relayer bound in proof
+            uint256(uint160(p.takerRelayer))   // taker's relayer bound in proof
         ];
 
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
             revert InvalidProof();
+        }
+
+        // Verify both relayers are registered (if registry is set)
+        if (address(relayerRegistry) != address(0)) {
+            if (!relayerRegistry.isActiveRelayer(p.makerRelayer)) revert NotActiveRelayer();
+            if (!relayerRegistry.isActiveRelayer(p.takerRelayer)) revert NotActiveRelayer();
         }
 
         nullifiers[p.makerNullifier] = true;
@@ -224,9 +237,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
         }
 
-        // Transfer fees: to FeeVault if set, otherwise directly to relayer (legacy)
-        if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
-        if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
+        // Fee split: each relayer earns the fee paid by THEIR user.
+        //
+        // Naming convention:
+        //   feeTokenMaker = fee denominated in tokenMaker (= taker's sell token)
+        //                 = fee deducted from taker's sell → paid by taker → goes to takerRelayer
+        //   feeTokenTaker = fee denominated in tokenTaker (= maker's sell token)
+        //                 = fee deducted from maker's sell → paid by maker → goes to makerRelayer
+        //
+        // This looks "crossed" but is correct: the token name indicates denomination, not who pays.
+        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.takerRelayer);
+        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.makerRelayer);
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
         if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
@@ -370,13 +391,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Internal Fee Routing ────────────────────────────────────
 
-    /// @dev Route fee from CommitmentPool to vault or relayer.
+    /// @dev Route fee from CommitmentPool to msg.sender via vault (legacy: scatterDirect).
     function _routeFeeFromPool(address token, uint256 amount) internal {
+        _routeFeeFromPoolTo(token, amount, msg.sender);
+    }
+
+    /// @dev Route fee from CommitmentPool to a specific relayer via vault.
+    function _routeFeeFromPoolTo(address token, uint256 amount, address relayer) internal {
         if (address(feeVault) != address(0)) {
             pool.transferFee(address(feeVault), token, amount);
-            feeVault.deposit(msg.sender, token, amount);
+            feeVault.deposit(relayer, token, amount);
         } else {
-            pool.transferFee(msg.sender, token, amount);
+            pool.transferFee(relayer, token, amount);
         }
     }
 

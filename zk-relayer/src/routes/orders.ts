@@ -34,12 +34,13 @@ export function createPrivateOrderRoutes(
       while (padded.length < 16) padded.push(0n);
       const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
-      // Verify EdDSA signature (includes claimsRoot to prevent relayer manipulation)
+      // Verify EdDSA signature (includes claimsRoot + relayer address for trustless fee split)
+      const relayerAddr = BigInt(submitter.getAddress());
       const msgHash = await poseidonHash([
         order.sellToken, order.buyToken,
         order.sellAmount, order.buyAmount,
         order.maxFee, order.expiry, order.nonce,
-        claimsRoot,
+        claimsRoot, relayerAddr,
       ]);
 
       const valid = await verifyEdDSA(
@@ -171,7 +172,8 @@ export function createPrivateOrderRoutes(
           orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "matched");
 
           try {
-            const txHash = await submitter.submitPrivateSettle(match);
+            const localAddr = submitter.getAddress();
+            const txHash = await submitter.submitPrivateSettle(match, localAddr, localAddr);
             match.maker.status = "settled";
             match.maker.settleTxHash = txHash;
             match.taker.status = "settled";

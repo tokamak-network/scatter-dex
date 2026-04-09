@@ -398,6 +398,10 @@ export default function PrivateOrderPage() {
       const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
       // Compute order hash and sign with EdDSA
+      // Submit to zk-relayer with commitment info from note
+      const selectedZkRelayer = zkRelayers[selectedRelayerIdx];
+      if (!selectedZkRelayer) throw new Error("No ZK relayer selected");
+
       const orderHash = await hashOrder({
         sellToken: BigInt(sellToken.address),
         buyToken: BigInt(buyToken.address),
@@ -407,13 +411,10 @@ export default function PrivateOrderPage() {
         expiry: expiryTimestamp,
         nonce,
         claimsRoot,
+        relayerAddress: BigInt(selectedZkRelayer.address),
       });
 
       const sig = await signEdDSA(kp.privateKey, orderHash);
-
-      // Submit to zk-relayer with commitment info from note
-      const selectedZkRelayer = zkRelayers[selectedRelayerIdx];
-      if (!selectedZkRelayer) throw new Error("No ZK relayer selected");
       const relayerUrl = selectedZkRelayer.url;
       const res = await fetch(`${relayerUrl}/api/private-orders`, {
         method: "POST",

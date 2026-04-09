@@ -24,7 +24,7 @@ import { ethers } from "ethers";
 import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import { poseidon2, poseidon4, poseidon5, poseidon8 } from "poseidon-lite";
+import { poseidon2, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +89,7 @@ function poseidonHash(inputs: bigint[]): bigint {
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
+    case 9: return poseidon9(inputs);
     default: throw new Error(`poseidonHash: unsupported arity ${inputs.length}`);
   }
 }
@@ -154,6 +155,7 @@ interface OrderParams {
   salt: bigint;
   leafIndex: number;
   recipientAddr: string;
+  relayerAddr: string;
   chainTime: bigint;
   eddsaPrivKey: Buffer;
 }
@@ -194,6 +196,7 @@ async function buildOrder(params: OrderParams) {
     BigInt(params.sellToken), BigInt(params.buyToken),
     params.sellAmount, params.buyAmount,
     FEE_BPS, expiry, nonce, claimsRoot,
+    BigInt(params.relayerAddr),
   ]);
 
   const sig = eddsa.signPoseidon(params.eddsaPrivKey, F.e(orderHash.toString()));
@@ -366,6 +369,7 @@ async function main() {
     salt: saltA,
     leafIndex: leafIndexA,
     recipientAddr: RECIPIENT_A,
+    relayerAddr: infoA.address,
     chainTime,
     eddsaPrivKey: eddsaKeyA,
   });
@@ -382,6 +386,7 @@ async function main() {
     salt: saltB,
     leafIndex: leafIndexB,
     recipientAddr: RECIPIENT_B,
+    relayerAddr: infoB.address,
     chainTime,
     eddsaPrivKey: eddsaKeyB,
   });

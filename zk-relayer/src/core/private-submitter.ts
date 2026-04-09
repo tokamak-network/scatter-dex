@@ -23,7 +23,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
-  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
+  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker, address makerRelayer, address takerRelayer) p) external",
   "function scatterDirect(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, bytes32 nullifier, bytes32 newCommitment, address token, uint256 withdrawAmount, bytes32 claimsRoot, uint96 totalLocked, uint96 fee) p) external",
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimNullifiers(bytes32) view returns (bool)",
@@ -98,7 +98,11 @@ export class PrivateSubmitter {
   }
 
   /** Submit a private settlement with ZK proof. */
-  async submitPrivateSettle(match: PrivateMatch): Promise<string> {
+  async submitPrivateSettle(
+    match: PrivateMatch,
+    makerRelayerAddr: string,
+    takerRelayerAddr: string,
+  ): Promise<string> {
     const maker = match.maker.order;
     const taker = match.taker.order;
 
@@ -212,7 +216,8 @@ export class PrivateSubmitter {
       feeTokenMaker: feeTokenMaker.toString(),
       feeTokenTaker: feeTokenTaker.toString(),
       currentTimestamp: currentTimestamp.toString(),
-      relayer: BigInt(this.wallet.address).toString(),
+      makerRelayer: BigInt(makerRelayerAddr).toString(),
+      takerRelayer: BigInt(takerRelayerAddr).toString(),
 
       makerSecret: maker.ownerSecret.toString(),
       makerSellToken: maker.sellToken.toString(),
@@ -309,6 +314,8 @@ export class PrivateSubmitter {
         tokenTaker: "0x" + tokenTaker.toString(16).padStart(40, "0"),
         feeTokenMaker,
         feeTokenTaker,
+        makerRelayer: makerRelayerAddr,
+        takerRelayer: takerRelayerAddr,
       });
 
       const receipt = await tx.wait();
