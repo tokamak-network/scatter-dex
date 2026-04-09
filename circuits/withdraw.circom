@@ -136,8 +136,19 @@ template Withdraw(levels) {
     newCommitment === expectedCommitment;
 
     // ════════════════════════════════════════
-    //  7. PREVENT RECIPIENT/RELAYER OPTIMIZATION
-    //     (Bind to proof so it can't be front-run)
+    //  7. BIND RECIPIENT / RELAYER INTO THE PROOF
+    //
+    //  [M6] `recipient` and `relayer` are public inputs and are therefore
+    //  already bound to the proof at the verification-key level. The
+    //  squaring statements below exist to prevent the circom optimizer
+    //  from dropping these signals from the witness — without at least
+    //  one constraint that *uses* them, the compiler may consider them
+    //  dead and elide them, leading to verification keys that no longer
+    //  cover the public inputs.
+    //
+    //  The choice of `x * x` is the simplest constraint that touches
+    //  every bit of the input without leaking any structural information.
+    //  See: https://docs.circom.io/circom-language/signals/#unused-signals
     // ════════════════════════════════════════
     signal recipientSq;
     recipientSq <== recipient * recipient;

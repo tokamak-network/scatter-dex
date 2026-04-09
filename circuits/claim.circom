@@ -90,6 +90,11 @@ template Claim(depth) {
 
     // ════════════════════════════════════════
     //  4. BIND PUBLIC INPUTS (prevent optimization)
+    //
+    //  [M6] Same pattern as withdraw.circom §7: `amount` and `recipient`
+    //  are public inputs already covered by the verification key, but
+    //  circom may elide them from the witness if no constraint references
+    //  them. The squaring statements force the optimizer to keep them.
     // ════════════════════════════════════════
     signal amountSq;
     amountSq <== amount * amount;

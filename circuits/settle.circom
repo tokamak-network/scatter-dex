@@ -40,6 +40,15 @@ template PoseidonMerkleProof(levels) {
 }
 
 // Compute Merkle root from array of leaves (fixed size, padded with zeros)
+//
+// [M5] The internal `isUsed` check below is technically redundant with the
+// way the Settle circuit invokes this template: the caller already mutes
+// unused leaves to zero (`makerComputedLeaves[i] * makerClaimUsed[i].out`,
+// see §9 of the Settle template). We keep the inner check anyway because:
+//   1. ComputeMerkleRoot is meant to be reusable; future callers must not
+//      have to re-derive the muting invariant themselves.
+//   2. The constraint cost is `O(maxLeaves)` (16 in practice) which is
+//      vanishingly small next to the rest of settle.circom (~60k).
 template ComputeMerkleRoot(maxLeaves, depth) {
     signal input leaves[maxLeaves];
     signal input count; // actual number of leaves (rest are zero-padded)
@@ -250,6 +259,19 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  5. PRICE COMPATIBILITY
     //    maker.sell * taker.sell >= maker.buy * taker.buy
     //    (taker offers at least maker's minimum price)
+    //
+    //  [M2] Note: this check is *strictly redundant* with the
+    //  combination of:
+    //    - receive guarantees in §8b (totalLockedMaker >= makerBuyAmount,
+    //      totalLockedTaker >= takerBuyAmount), and
+    //    - the claim/fee caps in §8c (totalLockedMaker + feeTokenMaker
+    //      <= takerSellAmount, totalLockedTaker + feeTokenTaker
+    //      <= makerSellAmount).
+    //  Multiplying those four inequalities yields the price-product
+    //  inequality below (with `fee = 0` it is exact). We keep the
+    //  explicit check for defense-in-depth and as documentation of
+    //  the trade's economic intent — its constraint cost is negligible
+    //  compared to the rest of the circuit.
     // ════════════════════════════════════════
     // Range-check all four amounts to 128 bits so their products fit
     // within 256 bits (well within the ~254-bit BN254 field).
@@ -577,6 +599,12 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //      Bind both relayer addresses to proof for trustless fee split.
     //      Each relayer is also included in the order hash (signed by user),
     //      so they cannot be changed without invalidating the EdDSA signature.
+    //
+    //  [M6] As in withdraw.circom and claim.circom, `makerRelayer` and
+    //  `takerRelayer` are public inputs and are already bound to the proof
+    //  at the verification-key level. The squaring statements below force
+    //  the circom optimizer to keep the signals in the witness — without a
+    //  constraint that uses them, the compiler may consider them dead.
     // ════════════════════════════════════════
     signal makerRelayerSq;
     makerRelayerSq <== makerRelayer * makerRelayer;
