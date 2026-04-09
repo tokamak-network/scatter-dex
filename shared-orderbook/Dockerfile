@@ -1,7 +1,7 @@
 FROM node:20-slim
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --production=false
+RUN npm ci
 COPY . .
 RUN mkdir -p /data && chown -R node:node /app /data
 

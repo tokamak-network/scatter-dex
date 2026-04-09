@@ -89,10 +89,11 @@ The `deployer` service only runs in `mock` profile — testnet mode skips it.
 
 ```bash
 # Single relayer (testnet — no deployer, no anvil)
-docker compose up -d shared-orderbook zk-relayer
+# shared-orderbook starts automatically as a dependency
+docker compose up -d zk-relayer
 
-# Multi-relayer
-docker compose --profile multi-relayer up -d shared-orderbook zk-relayer zk-relayer-b
+# Multi-relayer (shared-orderbook starts automatically)
+docker compose --profile multi-relayer up -d zk-relayer zk-relayer-b
 ```
 
 ### 4. Register Relayers
