@@ -303,8 +303,11 @@ async function main() {
   const claimReleaseTime = BigInt(aliceClaim.releaseTime);
   const claimLeafIndex = 0;
 
-  // Nullifier = Poseidon(secret, leafIndex)
-  const claimNullifier = F.toObject(poseidon([claimSecret, BigInt(claimLeafIndex)]));
+  // [M4] Domain-separated claim nullifier = Poseidon(tag, secret, leafIndex)
+  // Tag pulled from the shared module so it cannot drift from circuits
+  // / zk-prover / frontend.
+  const { TAG_CLAIM_NULL } = await import("./src/core/tags.js");
+  const claimNullifier = F.toObject(poseidon([TAG_CLAIM_NULL, claimSecret, BigInt(claimLeafIndex)]));
 
   const { pathElements, pathIndices, root: computedClaimsRoot } = buildMerkleTreeWithProof(aliceClaimLeaves, 4, claimLeafIndex);
 

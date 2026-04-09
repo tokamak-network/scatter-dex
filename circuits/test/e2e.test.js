@@ -82,7 +82,8 @@ describe("ZK E2E Tests", () => {
     const salt = randomField();
 
     const commitment = F.toObject(poseidon([ownerSecret, token, amount, salt]));
-    const nullifierHash = F.toObject(poseidon([ownerSecret, salt]));
+    // [M4] Domain-separated escrow nullifier (tag = 0)
+    const nullifierHash = F.toObject(poseidon([0n, ownerSecret, salt]));
     const tokenHash = F.toObject(poseidon([token]));
 
     // Build Merkle tree with this commitment
@@ -135,7 +136,8 @@ describe("ZK E2E Tests", () => {
     const salt = randomField();
 
     const commitment = F.toObject(poseidon([ownerSecret, token, amount, salt]));
-    const nullifierHash = F.toObject(poseidon([ownerSecret, salt]));
+    // [M4] Domain-separated escrow nullifier (tag = 0)
+    const nullifierHash = F.toObject(poseidon([0n, ownerSecret, salt]));
     const tokenHash = F.toObject(poseidon([token]));
 
     const leafIndex = 0;
@@ -190,7 +192,8 @@ describe("ZK E2E Tests", () => {
 
     const leaf = F.toObject(poseidon([secret, recipient, token, amount, releaseTime]));
     const leafIndex = 0;
-    const nullifier = F.toObject(poseidon([secret, BigInt(leafIndex)]));
+    // [M4] Domain-separated claim nullifier (tag = 2)
+    const nullifier = F.toObject(poseidon([2n, secret, BigInt(leafIndex)]));
 
     // Build claims Merkle tree (depth 4, max 16 leaves)
     const { root: claimsRoot, layers } = await buildMerkleTree([leaf], CLAIMS_DEPTH);
@@ -243,7 +246,8 @@ describe("ZK E2E Tests", () => {
     for (let i = 0; i < claims.length; i++) {
       const c = claims[i];
       const { pathElements, pathIndices } = getMerkleProof(layers, i);
-      const nullifier = F.toObject(poseidon([c.secret, BigInt(i)]));
+      // [M4] Domain-separated claim nullifier (tag = 2)
+      const nullifier = F.toObject(poseidon([2n, c.secret, BigInt(i)]));
 
       const input = {
         claimsRoot: claimsRoot.toString(),

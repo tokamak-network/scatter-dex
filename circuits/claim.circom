@@ -3,6 +3,7 @@ pragma circom 2.0.0;
 include "./node_modules/circomlib/circuits/poseidon.circom";
 include "./node_modules/circomlib/circuits/comparators.circom";
 include "./node_modules/circomlib/circuits/mux1.circom";
+include "./tags.circom";
 
 // Poseidon Merkle proof (same as in withdraw/settle)
 template PoseidonMerkleProofClaim(levels) {
@@ -81,11 +82,18 @@ template Claim(depth) {
 
     // ════════════════════════════════════════
     //  3. NULLIFIER
-    //     nullifier = Poseidon(secret, leafIndex)
+    //  [M4] Domain-separated claim nullifier (tag 2). Tag value comes from
+    //  the shared `tags.circom` helper so settle / withdraw / claim cannot
+    //  drift from each other. Disjoints the claim nullifier space from
+    //  the escrow (tag 0) and nonce (tag 1) nullifier spaces used by
+    //  withdraw / settle.
+    //     nullifier = Poseidon(2, secret, leafIndex)
     // ════════════════════════════════════════
-    component nullComp = Poseidon(2);
-    nullComp.inputs[0] <== secret;
-    nullComp.inputs[1] <== leafIndex;
+
+    component nullComp = Poseidon(3);
+    nullComp.inputs[0] <== TAG_CLAIM_NULL();
+    nullComp.inputs[1] <== secret;
+    nullComp.inputs[2] <== leafIndex;
     nullifier === nullComp.out;
 
     // ════════════════════════════════════════

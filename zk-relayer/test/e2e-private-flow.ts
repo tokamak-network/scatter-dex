@@ -26,11 +26,15 @@ import { fileURLToPath } from "url";
 
 // Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22).
 // Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
-import { poseidon2, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 
 // EdDSA needs circomlibjs (WASM-based) — only used for babyJub.F field conversions
 // on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
+
+// [PR #124 review] Centralised nullifier domain tags so the inline literal
+// `2n` / `0n` cannot drift from circuits/zk-prover/frontend.
+import { TAG_ESCROW_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,12 +92,13 @@ const FEE_VAULT_ABI = [
 function poseidonHash(inputs: bigint[]): bigint {
   switch (inputs.length) {
     case 2: return poseidon2(inputs);
+    case 3: return poseidon3(inputs);
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
     case 9: return poseidon9(inputs);
     default: throw new Error(
-      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 4, 5, 8, 9)`
+      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 3, 4, 5, 8, 9)`
     );
   }
 }
@@ -404,7 +409,8 @@ async function main() {
     secret: bigint,
     amount: bigint,
   ): Promise<string> {
-    const nullifier = poseidonHash([secret, BigInt(claimIdx)]);
+    // [M4] Domain-separated claim nullifier (tag = TAG_CLAIM_NULL)
+    const nullifier = poseidonHash([TAG_CLAIM_NULL, secret, BigInt(claimIdx)]);
     const proof = getMerkleProof(claimsLayers, claimIdx);
 
     const { proof: zkProof } = await snarkjs.groth16.fullProve({
@@ -477,8 +483,11 @@ async function main() {
   assert(changeLogs.length > 0, `Change commitment on-chain at leaf #${(changeLogs[0] as ethers.EventLog).args.leafIndex}`);
 
   // Verify claim nullifiers are spent
-  const claimNull1 = poseidonHash([claimSecret1, 0n]);
-  const claimNull2 = poseidonHash([claimSecret2, 1n]);
+  // [M4] Domain-separated claim nullifier (tag = TAG_CLAIM_NULL). Tag value
+  // imported from the shared module so the verification block cannot drift
+  // from submitClaim above or from the circuits.
+  const claimNull1 = poseidonHash([TAG_CLAIM_NULL, claimSecret1, 0n]);
+  const claimNull2 = poseidonHash([TAG_CLAIM_NULL, claimSecret2, 1n]);
   const [null1Spent, null2Spent] = await Promise.all([
     settlementContract.claimNullifiers(toHex(claimNull1, 32)),
     settlementContract.claimNullifiers(toHex(claimNull2, 32)),
@@ -487,7 +496,8 @@ async function main() {
   assert(null2Spent, "Claim #2 nullifier spent");
 
   // Verify original note nullifier is spent
-  const noteNullifier = poseidonHash([ownerSecret, salt]);
+  // [M4] Domain-separated escrow nullifier (tag = TAG_ESCROW_NULL)
+  const noteNullifier = poseidonHash([TAG_ESCROW_NULL, ownerSecret, salt]);
   const noteSpent = await settlementContract.nullifiers(toHex(noteNullifier, 32));
   assert(noteSpent, "Original note nullifier spent");
 

@@ -10,6 +10,7 @@ import {
   poseidonHash,
   computeCommitment,
   computeNullifier,
+  computeNonceNullifier,
   computeClaimLeaf,
   buildMerkleTree,
   getMerkleProof,
@@ -159,11 +160,11 @@ export class PrivateSubmitter {
     const totalLockedMaker = maker.claims.reduce((sum, c) => sum + c.amount, 0n);
     const totalLockedTaker = taker.claims.reduce((sum, c) => sum + c.amount, 0n);
 
-    // Compute nullifiers
+    // Compute nullifiers (M4: domain-separated escrow vs nonce nullifiers)
     const makerNullifier = await computeNullifier(maker.ownerSecret, maker.salt);
     const takerNullifier = await computeNullifier(taker.ownerSecret, taker.salt);
-    const makerNonceNullifier = await computeNullifier(maker.ownerSecret, maker.nonce);
-    const takerNonceNullifier = await computeNullifier(taker.ownerSecret, taker.nonce);
+    const makerNonceNullifier = await computeNonceNullifier(maker.ownerSecret, maker.nonce);
+    const takerNonceNullifier = await computeNonceNullifier(taker.ownerSecret, taker.nonce);
 
     // Use user-provided newSalt for change commitments (user controls their salt)
     const makerNewSalt = maker.newSalt;

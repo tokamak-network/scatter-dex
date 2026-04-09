@@ -12,6 +12,7 @@ import {
   generateNote,
   computeCommitment,
   computeNullifier,
+  computeClaimNullifier,
   poseidonHash,
   toBytes32Hex,
   type CommitmentNote,
@@ -107,7 +108,9 @@ export default function PrivateEscrowPage() {
             const results = await Promise.all(
               o.claims.map(async (c: any) => {
                 if (c.secret == null || c.leafIndex == null) return true;
-                const claimNull = await poseidonHash([BigInt(c.secret), BigInt(c.leafIndex)]);
+                // [M4] Use the centralised computeClaimNullifier helper so the
+                //      tag definition cannot drift from circuits/zk-prover.
+                const claimNull = await computeClaimNullifier(BigInt(c.secret), BigInt(c.leafIndex));
                 return settlement.claimNullifiers(toBytes32Hex(claimNull));
               })
             );

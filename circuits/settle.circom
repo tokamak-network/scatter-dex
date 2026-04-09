@@ -5,6 +5,7 @@ include "./node_modules/circomlib/circuits/eddsaposeidon.circom";
 include "./node_modules/circomlib/circuits/comparators.circom";
 include "./node_modules/circomlib/circuits/bitify.circom";
 include "./node_modules/circomlib/circuits/mux1.circom";
+include "./tags.circom";
 
 // Reuse from withdraw.circom
 template PoseidonMerkleProof(levels) {
@@ -231,26 +232,45 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  3. NULLIFIERS
+    //
+    //  [M4] Domain-separated to prevent any chance of an escrow nullifier
+    //  colliding with a nonce nullifier.  Both used to be Poseidon(2) of
+    //  the same secret, which meant a (secret, value) pair could in
+    //  principle hash to the same digest under either context.  Adding
+    //  a one-byte tag (0 = escrow, 1 = nonce) makes the two preimage
+    //  spaces disjoint by construction.
+    //
+    //  [PR #124 review] Tag values come from the shared `tags.circom`
+    //  helper so settle / withdraw / claim cannot drift from each other.
+    //  See `circuits/tags.circom` and the matching off-chain modules
+    //  `zk-relayer/src/core/tags.ts` and `frontend/app/lib/zk/tags.ts`.
+    //  TAG_ESCROW_NULL() / TAG_NONCE_NULL() are inlined circom functions
+    //  with zero constraint cost.
     // ════════════════════════════════════════
-    component makerNullComp = Poseidon(2);
-    makerNullComp.inputs[0] <== makerSecret;
-    makerNullComp.inputs[1] <== makerSalt;
+
+    component makerNullComp = Poseidon(3);
+    makerNullComp.inputs[0] <== TAG_ESCROW_NULL();
+    makerNullComp.inputs[1] <== makerSecret;
+    makerNullComp.inputs[2] <== makerSalt;
     makerNullifier === makerNullComp.out;
 
-    component takerNullComp = Poseidon(2);
-    takerNullComp.inputs[0] <== takerSecret;
-    takerNullComp.inputs[1] <== takerSalt;
+    component takerNullComp = Poseidon(3);
+    takerNullComp.inputs[0] <== TAG_ESCROW_NULL();
+    takerNullComp.inputs[1] <== takerSecret;
+    takerNullComp.inputs[2] <== takerSalt;
     takerNullifier === takerNullComp.out;
 
     // Nonce nullifiers (prevent replay)
-    component makerNonceNull = Poseidon(2);
-    makerNonceNull.inputs[0] <== makerSecret;
-    makerNonceNull.inputs[1] <== makerNonce;
+    component makerNonceNull = Poseidon(3);
+    makerNonceNull.inputs[0] <== TAG_NONCE_NULL();
+    makerNonceNull.inputs[1] <== makerSecret;
+    makerNonceNull.inputs[2] <== makerNonce;
     makerNonceNullifier === makerNonceNull.out;
 
-    component takerNonceNull = Poseidon(2);
-    takerNonceNull.inputs[0] <== takerSecret;
-    takerNonceNull.inputs[1] <== takerNonce;
+    component takerNonceNull = Poseidon(3);
+    takerNonceNull.inputs[0] <== TAG_NONCE_NULL();
+    takerNonceNull.inputs[1] <== takerSecret;
+    takerNonceNull.inputs[2] <== takerNonce;
     takerNonceNullifier === takerNonceNull.out;
 
     // ════════════════════════════════════════
@@ -279,16 +299,49 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  the trade's economic intent — its constraint cost is negligible
     //  compared to the rest of the circuit.
     // ════════════════════════════════════════
-    // Range-check all four amounts to 128 bits so their products fit
-    // within 256 bits (well within the ~254-bit BN254 field).
-    component rcMakerSell = Num2Bits(128);
+    // [M1, gemini review fix] Range-check the four trade amounts to 126 bits.
+    //
+    // The previous version used Num2Bits(128). 128-bit × 128-bit can reach
+    // 2^256, which exceeds the BN254 scalar modulus r ≈ 2^253.86 and would
+    // wrap around the field — making the LessEqThan(252) comparison below
+    // give the wrong answer for adversarially-chosen amounts. Reducing to
+    // 126 bits caps each product at 2^252 < r, well inside the field, with
+    // no realistic UX impact (2^126 ≈ 8.5e37, far above any plausible
+    // ERC20 supply).
+    //
+    // Other 128-bit checks below (balances, totalLocked, fees) are kept at
+    // 128 bits because they only get multiplied by 16-bit fee bps, where
+    // 128 + 16 = 144 bits is comfortably inside the field.
+    component rcMakerSell = Num2Bits(126);
     rcMakerSell.in <== makerSellAmount;
-    component rcMakerBuy = Num2Bits(128);
+    component rcMakerBuy = Num2Bits(126);
     rcMakerBuy.in <== makerBuyAmount;
-    component rcTakerSell = Num2Bits(128);
+    component rcTakerSell = Num2Bits(126);
     rcTakerSell.in <== takerSellAmount;
-    component rcTakerBuy = Num2Bits(128);
+    component rcTakerBuy = Num2Bits(126);
     rcTakerBuy.in <== takerBuyAmount;
+
+    // [M1] Range-check escrow balances and the locked / fee outputs.
+    // These were previously assumed to be well-formed; an attacker
+    // controlling the prover could otherwise pass values close to the
+    // field modulus through LessEqThan(252) and produce nonsensical
+    // comparisons.
+    component rcMakerBalance = Num2Bits(128);
+    rcMakerBalance.in <== makerBalance;
+    component rcTakerBalance = Num2Bits(128);
+    rcTakerBalance.in <== takerBalance;
+    component rcTotalLockedMaker = Num2Bits(128);
+    rcTotalLockedMaker.in <== totalLockedMaker;
+    component rcTotalLockedTaker = Num2Bits(128);
+    rcTotalLockedTaker.in <== totalLockedTaker;
+    component rcFeeTokenMaker = Num2Bits(128);
+    rcFeeTokenMaker.in <== feeTokenMaker;
+    component rcFeeTokenTaker = Num2Bits(128);
+    rcFeeTokenTaker.in <== feeTokenTaker;
+    component rcMakerMaxFee = Num2Bits(16);
+    rcMakerMaxFee.in <== makerMaxFee;
+    component rcTakerMaxFee = Num2Bits(16);
+    rcTakerMaxFee.in <== takerMaxFee;
 
     signal makerProduct;
     makerProduct <== makerSellAmount * takerSellAmount;
@@ -440,6 +493,19 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         makerComputedLeaves[i] <== makerLeafHash[i].out;
     }
 
+    // [M1, gemini review fix] Range-check every claim amount to 128 bits
+    // before accumulating them into totalLockedMaker. Without this, an
+    // attacker controlling the prover could feed near-modulus values that
+    // wrap during the running sum and produce a totalLockedMaker that does
+    // not reflect the real claim distribution. With each claim bounded to
+    // 2^128 and at most maxClaimsPerSide = 16 entries, the sum is at most
+    // 16 × 2^128 = 2^132, well inside the BN254 field.
+    component rcMakerClaimAmount[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        rcMakerClaimAmount[i] = Num2Bits(128);
+        rcMakerClaimAmount[i].in <== makerClaimAmounts[i];
+    }
+
     // Unused claims (i >= count) must have amount = 0
     component makerClaimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
@@ -478,6 +544,15 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         takerLeafHash[i].inputs[3] <== takerClaimAmounts[i];
         takerLeafHash[i].inputs[4] <== takerClaimReleaseTimes[i];
         takerComputedLeaves[i] <== takerLeafHash[i].out;
+    }
+
+    // [M1, gemini review fix] Same 128-bit range check on each taker claim
+    // amount as on the maker side above. Prevents sum wrap-around in
+    // takerAmountAcc when an attacker controls the prover.
+    component rcTakerClaimAmount[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        rcTakerClaimAmount[i] = Num2Bits(128);
+        rcTakerClaimAmount[i].in <== takerClaimAmounts[i];
     }
 
     component takerClaimUsed[maxClaimsPerSide];
@@ -586,6 +661,20 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  12. SELF-TRADE PREVENTION
+    //
+    //  Two layers of defence:
+    //   (a) reject when both EdDSA pubkeys match (catches the naive case
+    //       where a user signs both legs with the same key);
+    //   (b) [M3] reject when either escrow nullifier or nonce nullifier
+    //       collides between the two sides — that proves the same UTXO /
+    //       same nonce slot is being used twice in a single settle.
+    //
+    //  Sybil resistance against a user holding multiple BabyJubJub
+    //  keypairs is intentionally NOT enforced here; that has to be
+    //  handled upstream by an identity gate (e.g. RelayerRegistry +
+    //  IdentityGate).  These checks make sure the prover cannot collapse
+    //  a self-trade onto a single commitment without burning a unique
+    //  nullifier per side.
     // ════════════════════════════════════════
     component notSamePubX = IsEqual();
     notSamePubX.in[0] <== makerPubKeyAx;
@@ -599,6 +688,32 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal sameKey;
     sameKey <== notSamePubX.out * notSamePubY.out;
     sameKey === 0;
+
+    // [M3] Reject if maker/taker reuse the same escrow commitment
+    //      (escrow nullifier collision) or the same nonce slot
+    //      (nonce nullifier collision).  Without this, a user with one
+    //      keypair could in principle pass the pubkey check above by
+    //      using two ephemeral keys but still spend the same UTXO twice.
+    //
+    //  [PR #124 review note] These checks are NOT redundant with the
+    //  contract-level replay protection in PrivateSettlement.settlePrivate.
+    //  That function reads `nullifiers[makerNullifier]` and
+    //  `nullifiers[takerNullifier]` separately on entry — both reads return
+    //  `false` if the nullifier hasn't been spent yet, so a tx with
+    //  `makerNullifier == takerNullifier` passes both reads and then
+    //  performs two idempotent writes (`nullifiers[X] = true` twice with the
+    //  same key). Storage writes don't revert on duplicate writes, so the
+    //  contract alone would happily settle a self-trade onto a single UTXO.
+    //  The constraint here is the only thing that catches it.
+    component sameEscrowNull = IsEqual();
+    sameEscrowNull.in[0] <== makerNullifier;
+    sameEscrowNull.in[1] <== takerNullifier;
+    sameEscrowNull.out === 0;
+
+    component sameNonceNull = IsEqual();
+    sameNonceNull.in[0] <== makerNonceNullifier;
+    sameNonceNull.in[1] <== takerNonceNullifier;
+    sameNonceNull.out === 0;
 
     // ════════════════════════════════════════
     //  13. RELAYER BINDING
