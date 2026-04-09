@@ -42,7 +42,7 @@ services:
     volumes:
       - orderbook-data:/data
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s
       timeout: 5s
       retries: 10
@@ -50,6 +50,9 @@ services:
   # ── ZK Relayer A (primary) ──────────────────────────────────
   zk-relayer:
     build: ./zk-relayer
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
     ports:
       - "3002:3002"
     volumes:
@@ -57,7 +60,7 @@ services:
       - relayer-a-data:/data
     # Source /shared/addresses.env if available (mock mode), else rely on env vars (testnet).
     # Wait up to 30s for deployer to finish in mock mode.
-    entrypoint: ["sh", "-c", "i=0; while [ ! -f /shared/addresses.env ] && [ -z \"$$COMMITMENT_POOL_ADDRESS\" ] && [ $$i -lt 30 ]; do sleep 1; i=$$((i+1)); done; [ -f /shared/addresses.env ] && set -a && . /shared/addresses.env && set +a; exec npx tsx src/index.ts"]
+    entrypoint: ["sh", "/app/docker-entrypoint.sh"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
       # WARNING: Default is Anvil Account #1 (well-known test key). Set RELAYER_A_KEY for testnet/production.
@@ -72,7 +75,7 @@ services:
       - RELAYER_PUBLIC_URL=${RELAYER_A_PUBLIC_URL:-http://zk-relayer:3002}
       - RELAYER_NAME=Relayer-A
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s
       timeout: 5s
       retries: 15
@@ -81,6 +84,9 @@ services:
   zk-relayer-b:
     build: ./zk-relayer
     profiles: ["multi-relayer"]
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
     ports:
       - "3003:3003"
     volumes:
@@ -101,7 +107,7 @@ services:
       - RELAYER_PUBLIC_URL=${RELAYER_B_PUBLIC_URL:-http://zk-relayer-b:3003}
       - RELAYER_NAME=Relayer-B
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3003/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s
       timeout: 5s
       retries: 15
