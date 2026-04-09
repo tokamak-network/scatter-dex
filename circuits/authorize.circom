@@ -76,19 +76,18 @@ template AuthMerkleProof(levels) {
     root <== hashes[levels];
 }
 
-// ── Fixed-size claim tree root computation (duplicated from settle.circom) ──
+// ── Fixed-size claim tree root computation ──
+//
+// [PR #127 optimization] Unlike the equivalent template in settle.circom,
+// this version is INTERNAL to authorize.circom and the caller (the
+// `Authorize` template below) always mutes unused leaves to zero before
+// passing them in. We therefore drop the inner `isUsed`/`LessThan(252)`
+// loop entirely, saving ~4 000 R1CS constraints (~13% of the unoptimized
+// authorize circuit). The settle.circom version keeps the check for
+// reusability; this one is a private helper so the trade is worth it.
 template AuthClaimsRoot(maxLeaves, depth) {
     signal input leaves[maxLeaves];
-    signal input count;
     signal output root;
-
-    component isUsed[maxLeaves];
-    for (var i = 0; i < maxLeaves; i++) {
-        isUsed[i] = LessThan(252);
-        isUsed[i].in[0] <== i;
-        isUsed[i].in[1] <== count;
-        (1 - isUsed[i].out) * leaves[i] === 0;
-    }
 
     var layerSize = maxLeaves;
     component hashers[maxLeaves - 1];
@@ -231,8 +230,13 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     //  4. BALANCE SUFFICIENCY
     //     sellAmount ≤ balance
+    //
+    //  [PR #127 optimization] LessEqThan(128) is sufficient because both
+    //  inputs are independently range-checked above (sellAmount ≤ 2^126,
+    //  balance ≤ 2^128). The original LessEqThan(252) wasted ~250
+    //  constraints on bits that the inputs cannot occupy.
     // ════════════════════════════════════════
-    component balCheck = LessEqThan(252);
+    component balCheck = LessEqThan(128);
     balCheck.in[0] <== sellAmount;
     balCheck.in[1] <== balance;
     balCheck.out === 1;
@@ -277,9 +281,14 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         computedLeaves[i] <== claimLeafHash[i].out;
     }
 
+    // [PR #127 optimization] `i` is 0..15 and `claimCount` is 0..16, so
+    // both fit in 5 bits. Using LessThan(5) instead of LessThan(252)
+    // saves ~250 constraints per instance × 16 instances ≈ ~4 000
+    // R1CS constraints. Same semantics; the wider check was just over-
+    // conservative.
     component claimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        claimUsed[i] = LessThan(252);
+        claimUsed[i] = LessThan(5);
         claimUsed[i].in[0] <== i;
         claimUsed[i].in[1] <== claimCount;
         (1 - claimUsed[i].out) * claimAmounts[i] === 0;
@@ -293,20 +302,24 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     }
     totalLocked === amountAcc[maxClaimsPerSide];
 
-    // Build the claims merkle root (mute unused slots to zero before hashing)
+    // Build the claims merkle root. Caller-side muting (above) means
+    // `AuthClaimsRoot` no longer needs its own redundant `isUsed` loop.
     component claimsRootComp = AuthClaimsRoot(maxClaimsPerSide, claimsTreeDepth);
     for (var i = 0; i < maxClaimsPerSide; i++) {
         claimsRootComp.leaves[i] <== computedLeaves[i] * claimUsed[i].out;
     }
-    claimsRootComp.count <== claimCount;
     claimsRoot === claimsRootComp.root;
 
     // ════════════════════════════════════════
     //  7. MINIMUM RECEIVE GUARANTEE
     //     totalLocked ≥ buyAmount
     //     (the user is guaranteed to get at least the limit they signed)
+    //
+    //  [PR #127 optimization] LessEqThan(128) is sufficient because both
+    //  inputs are independently range-checked above (buyAmount ≤ 2^126,
+    //  totalLocked ≤ 2^128).
     // ════════════════════════════════════════
-    component receiveCheck = LessEqThan(252);
+    component receiveCheck = LessEqThan(128);
     receiveCheck.in[0] <== buyAmount;
     receiveCheck.in[1] <== totalLocked;
     receiveCheck.out === 1;
