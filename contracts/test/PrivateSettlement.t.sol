@@ -449,7 +449,16 @@ contract PrivateSettlementTest is Test {
     function test_settlePrivate_accepts_recent_past_timestamp() public {
         vm.warp(1_000_000);
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
-        // Within the 5-minute window — still accepted (proof gen latency).
+        // Within the 60-second window — still accepted (proof gen latency).
+        p.currentTimestamp = block.timestamp - 30;
+        settlement.settlePrivate(p);
+    }
+
+    function test_settlePrivate_accepts_boundary_past_timestamp() public {
+        vm.warp(1_000_000);
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        // Exactly at the boundary — `currentTimestamp + 60 == block.timestamp`
+        // → not rejected.
         p.currentTimestamp = block.timestamp - 60;
         settlement.settlePrivate(p);
     }
@@ -457,8 +466,8 @@ contract PrivateSettlementTest is Test {
     function test_settlePrivate_rejects_too_old_timestamp() public {
         vm.warp(1_000_000);
         PrivateSettlement.SettleParams memory p = _defaultSettleParams();
-        // Beyond the 5-minute window — rejected.
-        p.currentTimestamp = block.timestamp - 400;
+        // Beyond the 60-second window — rejected.
+        p.currentTimestamp = block.timestamp - 61;
         vm.expectRevert(PrivateSettlement.TimestampOutOfRange.selector);
         settlement.settlePrivate(p);
     }

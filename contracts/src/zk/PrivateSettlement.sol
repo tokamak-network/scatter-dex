@@ -81,7 +81,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// @notice Optional fee vault — if set, fees go to vault instead of msg.sender.
     FeeVault public feeVault;
 
-    uint256 public constant TIMESTAMP_TOLERANCE = 300; // 5 minutes
+    /// @notice Maximum past skew allowed between `currentTimestamp` (set by
+    ///         the relayer at proof generation time) and `block.timestamp`.
+    ///         60 seconds is plenty for proof-gen + tx-propagation latency
+    ///         while keeping the stale-order surface tight (the previous
+    ///         300s window let an order that expired up to 5 min ago still
+    ///         settle — see PR #125 review). Future drift is forbidden by
+    ///         the upper bound in `settlePrivate`.
+    uint256 public constant TIMESTAMP_TOLERANCE = 60;
     bool public paused;
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers

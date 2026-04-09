@@ -68,6 +68,10 @@ export function pairKey(tokenA: bigint, tokenB: bigint): string {
 
 const MAX_CLAIMS = 16;
 const MAX_ADDRESS = (1n << 160n) - 1n;
+// [PR #125 review] CommitmentPool tree depth is 20, so any leafIndex
+// >= 2^20 is unreachable. Reject upstream so the user gets a clear error
+// instead of an opaque "pathElements undefined" later in the relayer.
+const MAX_LEAF_INDEX = (1 << 20) - 1;
 
 // [M8] BN254 scalar field modulus. Every value passed into the ZK circuits
 // (Poseidon inputs, EdDSA scalars, signatures, balances, …) must be a
@@ -75,7 +79,14 @@ const MAX_ADDRESS = (1n << 160n) - 1n;
 // would still reject the witness, but the user would just see an opaque
 // "Assert Failed" — far harder to debug than a precise upstream error.
 const BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const MAX_AMOUNT_128 = (1n << 128n) - 1n; // matches settle.circom Num2Bits(128)
+// [PR #125 review] Trade amounts (sellAmount/buyAmount/claim.amount) are
+// range-checked to **126 bits** in settle.circom (the gemini HIGH fix in
+// PR #124). Other amount-like signals (balance, totalLocked, fee outputs)
+// are checked to 128 bits because they only ever multiply against 16-bit
+// fee bps. We expose both bounds so the relayer's pre-check matches the
+// circuit exactly and the opaque "Assert Failed" surface stays closed.
+const MAX_AMOUNT_126 = (1n << 126n) - 1n; // matches settle.circom Num2Bits(126) for trade amounts
+const MAX_AMOUNT_128 = (1n << 128n) - 1n; // matches settle.circom Num2Bits(128) for balance / totalLocked / fee
 const MAX_FEE_16_BIT = (1n << 16n) - 1n;  // matches settle.circom Num2Bits(16) for fee bps
 
 function validateAddress(val: bigint, name: string): void {
@@ -88,7 +99,13 @@ function validateField(val: bigint, name: string): void {
   if (val >= BN254_FIELD_MODULUS) throw new Error(`${name} exceeds BN254 scalar field modulus`);
 }
 
-/** [M8] Stricter range used for amount-like signals (matches settle.circom Num2Bits(128)). */
+/** [PR #125 review] Tighter range for trade amounts (matches Num2Bits(126)). */
+function validateAmount126(val: bigint, name: string): void {
+  if (val < 0n) throw new Error(`${name} must be non-negative`);
+  if (val > MAX_AMOUNT_126) throw new Error(`${name} exceeds 126-bit range`);
+}
+
+/** [M8] Used for balance / totalLocked / fee outputs (matches Num2Bits(128)). */
 function validateAmount128(val: bigint, name: string): void {
   if (val < 0n) throw new Error(`${name} must be non-negative`);
   if (val > MAX_AMOUNT_128) throw new Error(`${name} exceeds 128-bit range`);
@@ -116,7 +133,14 @@ function toFieldBigInt(val: unknown, name: string): bigint {
   return v;
 }
 
-/** Parse + validate as a 128-bit unsigned amount. */
+/** Parse + validate as a 126-bit trade amount (matches Num2Bits(126)). */
+function toAmount126BigInt(val: unknown, name: string): bigint {
+  const v = toBigInt(val, name);
+  validateAmount126(v, name);
+  return v;
+}
+
+/** Parse + validate as a 128-bit unsigned amount (balance / totalLocked / fee). */
 function toAmount128BigInt(val: unknown, name: string): bigint {
   const v = toBigInt(val, name);
   validateAmount128(v, name);
@@ -137,9 +161,12 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   const sellToken = toAddressBigInt(raw.sellToken, "sellToken");
   const buyToken = toAddressBigInt(raw.buyToken, "buyToken");
 
-  // [M8] Trade amounts — parsed and 128-bit range-checked together.
-  const sellAmount = toAmount128BigInt(raw.sellAmount, "sellAmount");
-  const buyAmount = toAmount128BigInt(raw.buyAmount, "buyAmount");
+  // [PR #125 review] Trade amounts — parsed and **126-bit** range-checked
+  // to match settle.circom's Num2Bits(126) (the gemini HIGH fix in PR #124).
+  // Anything tighter than the circuit produces opaque "Assert Failed"
+  // errors at witness generation time.
+  const sellAmount = toAmount126BigInt(raw.sellAmount, "sellAmount");
+  const buyAmount = toAmount126BigInt(raw.buyAmount, "buyAmount");
   if (sellAmount <= 0n) throw new Error("sellAmount must be > 0");
   if (buyAmount <= 0n) throw new Error("buyAmount must be > 0");
 
@@ -164,8 +191,22 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   const balance = toAmount128BigInt(raw.balance, "balance");
   const salt = toFieldBigInt(raw.salt, "salt");
 
-  const leafIndex = Number(raw.leafIndex);
-  if (!Number.isInteger(leafIndex) || leafIndex < 0) throw new Error("invalid leafIndex");
+  // [PR #125 review] leafIndex must be a non-negative integer within the
+  // CommitmentPool tree depth (1M leaves). Reject upstream so the user
+  // gets a clear error instead of an opaque "pathElements undefined"
+  // later in buildMerkleTree.
+  const leafIndexRaw = raw.leafIndex;
+  if (typeof leafIndexRaw !== "number" && typeof leafIndexRaw !== "string") {
+    throw new Error("invalid leafIndex");
+  }
+  const leafIndex = Number(leafIndexRaw);
+  if (
+    !Number.isInteger(leafIndex) ||
+    leafIndex < 0 ||
+    leafIndex > MAX_LEAF_INDEX
+  ) {
+    throw new Error(`leafIndex must be 0..${MAX_LEAF_INDEX}`);
+  }
 
   // [M8] Change-commitment Poseidon inputs / outputs.
   const newSalt = toFieldBigInt(raw.newSalt, "newSalt");
@@ -179,10 +220,12 @@ export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   const claims: ClaimLeafData[] = rawClaims.map((c, i) => ({
     // [M8] Every Poseidon input for the claim leaf hash is parsed and
     //      range-checked through the same helpers as the order body.
+    //      claim.amount uses the 126-bit bound (it goes through the
+    //      settle priceCheck via totalLocked accumulation).
     secret: toFieldBigInt(c.secret, `claims[${i}].secret`),
     recipient: toAddressBigInt(c.recipient, `claims[${i}].recipient`),
     token: toAddressBigInt(c.token, `claims[${i}].token`),
-    amount: toAmount128BigInt(c.amount, `claims[${i}].amount`),
+    amount: toAmount126BigInt(c.amount, `claims[${i}].amount`),
     releaseTime: toFieldBigInt(c.releaseTime, `claims[${i}].releaseTime`),
   }));
 
