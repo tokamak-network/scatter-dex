@@ -28,6 +28,20 @@ interface OrderRow {
   submitted_at: number;
 }
 
+export interface TradeOfferRow {
+  id: number;
+  direction: "sent" | "received";
+  peer_relayer: string;
+  maker_pub_key: string;
+  maker_nonce: string;
+  taker_pub_key: string;
+  taker_nonce: string;
+  status: string;
+  tx_hash: string | null;
+  reason: string | null;
+  created_at: number;
+}
+
 interface ClaimRow {
   pub_key_ax: string;
   nonce: string;
@@ -55,6 +69,13 @@ export class PrivateOrderDB {
   private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
   private insertClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
+  private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
+  private selectTradeOffers: ReturnType<Database.Database["prepare"]>;
+  private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
+  private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
+  private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
+  private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
+  private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -111,6 +132,18 @@ export class PrivateOrderDB {
     this.selectClaimsRoot = this.db.prepare(`
       SELECT 1 FROM settled_claims_roots WHERE claims_root = @claimsRoot LIMIT 1
     `);
+    this.insertTradeOffer = this.db.prepare(`
+      INSERT INTO trade_offers (direction, peer_relayer, maker_pub_key, maker_nonce, taker_pub_key, taker_nonce, status, tx_hash, reason, created_at)
+      VALUES (@direction, @peerRelayer, @makerPubKey, @makerNonce, @takerPubKey, @takerNonce, @status, @txHash, @reason, @createdAt)
+    `);
+    this.selectTradeOffers = this.db.prepare(`
+      SELECT * FROM trade_offers ORDER BY created_at DESC LIMIT @limit OFFSET @offset
+    `);
+    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
+    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
+    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1");
+    this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
+    this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
   }
 
   private migrate(): void {
@@ -162,6 +195,25 @@ export class PrivateOrderDB {
         claims_root   TEXT PRIMARY KEY,
         settled_at    INTEGER NOT NULL
       );
+
+      -- Cross-relayer Trade Offer audit trail
+      CREATE TABLE IF NOT EXISTS trade_offers (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        direction     TEXT NOT NULL,          -- 'sent' or 'received'
+        peer_relayer  TEXT NOT NULL,          -- counterparty relayer address
+        maker_pub_key TEXT NOT NULL,
+        maker_nonce   TEXT NOT NULL,
+        taker_pub_key TEXT NOT NULL,
+        taker_nonce   TEXT NOT NULL,
+        status        TEXT NOT NULL,          -- 'settled', 'rejected', 'error'
+        tx_hash       TEXT,
+        reason        TEXT,
+        created_at    INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_to_created ON trade_offers(created_at);
+      CREATE INDEX IF NOT EXISTS idx_to_direction ON trade_offers(direction, created_at);
+      CREATE INDEX IF NOT EXISTS idx_to_peer ON trade_offers(peer_relayer, created_at);
     `);
 
     // Migration: add cross_relayer column to existing databases
@@ -311,6 +363,55 @@ export class PrivateOrderDB {
   /** Check if a claims root was settled by this relayer. */
   hasSettledClaimsRoot(claimsRoot: string): boolean {
     return !!this.selectClaimsRoot.get({ claimsRoot: claimsRoot.toLowerCase() });
+  }
+
+  // ─── Trade Offer audit trail ───
+
+  recordTradeOffer(params: {
+    direction: "sent" | "received";
+    peerRelayer: string;
+    makerPubKey: string;
+    makerNonce: string;
+    takerPubKey: string;
+    takerNonce: string;
+    status: "settled" | "rejected" | "error";
+    txHash?: string;
+    reason?: string;
+  }): void {
+    this.insertTradeOffer.run({
+      direction: params.direction,
+      peerRelayer: params.peerRelayer.toLowerCase(),
+      makerPubKey: params.makerPubKey,
+      makerNonce: params.makerNonce,
+      takerPubKey: params.takerPubKey,
+      takerNonce: params.takerNonce,
+      status: params.status,
+      txHash: params.txHash ?? null,
+      reason: params.reason ?? null,
+      createdAt: Date.now(),
+    });
+  }
+
+  getTradeOffers(limit = 50, offset = 0): TradeOfferRow[] {
+    return this.selectTradeOffers.all({ limit, offset }) as TradeOfferRow[];
+  }
+
+  /** Get relayer performance statistics for dashboard/profile. */
+  getRelayerStats(): Record<string, number> {
+    const total = (this.statsTotalOrders.get() as { count: number }).count;
+    const settled = (this.statsSettledOrders.get() as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
+
+    return {
+      totalOrders: total,
+      settledOrders: settled,
+      successRate: total > 0 ? Math.round((settled / total) * 100) : 0,
+      crossRelayerSettled: crossRelayer,
+      totalTradeOffers: tradeTotal,
+      settledTradeOffers: tradeSettled,
+    };
   }
 
   close(): void {

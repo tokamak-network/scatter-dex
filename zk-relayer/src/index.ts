@@ -11,6 +11,7 @@ import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
 import { createPrivateClaimRoutes } from "./routes/claim.js";
 import { createVaultRoutes } from "./routes/vault.js";
+import { createRelayerStatsRoutes } from "./routes/relayer-stats.js";
 import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
 import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
@@ -56,7 +57,7 @@ async function main() {
     });
 
     crossRelayerService = new CrossRelayerMatchService(
-      orderbook, remoteOrderbook, matcher, submitter, sharedClient, orderIdMap,
+      orderbook, remoteOrderbook, matcher, submitter, sharedClient, orderIdMap, db,
     );
 
     sharedClient.onOrder((summary) => {
@@ -111,6 +112,7 @@ async function main() {
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
+  app.use("/api/relayer", createRelayerStatsRoutes(db, orderbook, submitter, readLimiter));
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(

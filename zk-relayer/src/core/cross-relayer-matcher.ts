@@ -16,6 +16,7 @@ import {
 } from "../types/order.js";
 import { poseidonHash, verifyEdDSA, computeClaimLeaf, buildMerkleTree } from "./zk-prover.js";
 import { config } from "../config.js";
+import type { PrivateOrderDB } from "./db.js";
 
 /**
  * Cross-relayer matching and Trade Offer service.
@@ -36,6 +37,7 @@ export class CrossRelayerMatchService {
     private submitter: PrivateSubmitter,
     private sharedClient: SharedOrderbookClient,
     private orderIdMap: Map<string, string>,
+    private db?: PrivateOrderDB,
   ) {}
 
   // ─── Reactive matching ───
@@ -149,20 +151,35 @@ export class CrossRelayerMatchService {
 
     const url = `${remoteMaker.relayerUrl}/api/p2p/trade-offer`;
     const headers = await this.sharedClient.authHeaders("POST", "/api/p2p/trade-offer");
+    const auditBase = {
+      direction: "sent" as const, peerRelayer: remoteMaker.relayer,
+      makerPubKey: remoteMaker.pubKeyAx, makerNonce: remoteMaker.nonce,
+      takerPubKey: order.pubKeyAx.toString(), takerNonce: order.nonce.toString(),
+    };
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000), // 30s timeout for settlement
-    });
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
 
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-      return { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const result: TradeOfferResponse = { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
+        this.db?.recordTradeOffer({ ...auditBase, status: "rejected", reason: result.reason });
+        return result;
+      }
+
+      const result = await res.json() as TradeOfferResponse;
+      this.db?.recordTradeOffer({ ...auditBase, status: result.status, txHash: result.txHash, reason: result.reason });
+      return result;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "network error";
+      this.db?.recordTradeOffer({ ...auditBase, status: "error", reason });
+      return { status: "rejected", reason };
     }
-
-    return await res.json() as TradeOfferResponse;
   }
 
   // ─── Trade Offer handler (receiving side) ───
@@ -174,12 +191,22 @@ export class CrossRelayerMatchService {
   async handleTradeOffer(offer: TradeOfferRequest, senderRelayerAddress: string): Promise<TradeOfferResponse> {
     console.log(`[cross-relayer] Trade offer received from relayer ${senderRelayerAddress} for maker ${offer.makerPubKeyAx}:${offer.makerNonce}`);
 
+    const recordRejection = (reason: string, takerPubKey = "unknown", takerNonce = "unknown") => {
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: offer.makerPubKeyAx, makerNonce: offer.makerNonce,
+        takerPubKey, takerNonce, status: "rejected", reason,
+      });
+    };
+
     // 1. Parse and validate the taker's order
     let takerOrder;
     try {
       takerOrder = parsePrivateOrder(offer.takerOrder);
     } catch (err) {
-      return { status: "rejected", reason: `invalid taker order: ${err instanceof Error ? err.message : "unknown"}` };
+      const reason = `invalid taker order: ${err instanceof Error ? err.message : "unknown"}`;
+      recordRejection(reason);
+      return { status: "rejected", reason };
     }
 
     // 2. Find the local maker order by (pubKeyAx, nonce) — unique composite key
@@ -188,12 +215,16 @@ export class CrossRelayerMatchService {
     const makerStored = this.orderbook.getByPubKeyAndNonce(makerPubKeyAx, makerNonce);
 
     if (!makerStored) {
-      return { status: "rejected", reason: "maker order not found or no longer pending" };
+      const reason = "maker order not found or no longer pending";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
     }
 
     const orderKey = `${makerStored.order.pubKeyAx}:${makerStored.order.nonce}`;
     if (this.lockingOrders.has(orderKey)) {
-      return { status: "rejected", reason: "maker order is being matched" };
+      const reason = "maker order is being matched";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
     }
 
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)
@@ -283,6 +314,12 @@ export class CrossRelayerMatchService {
       }
 
       console.log(`[cross-relayer] Trade settled: maker=${orderKey} tx=${txHash}`);
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: maker.pubKeyAx.toString(), makerNonce: maker.nonce.toString(),
+        takerPubKey: takerOrder.pubKeyAx.toString(), takerNonce: takerOrder.nonce.toString(),
+        status: "settled", txHash,
+      });
       return { status: "settled", txHash };
     } catch (err) {
       // Restore maker to pending
@@ -294,6 +331,12 @@ export class CrossRelayerMatchService {
 
       const reason = err instanceof Error ? err.message : "settlement failed";
       console.error(`[cross-relayer] Settlement failed:`, reason);
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: maker.pubKeyAx.toString(), makerNonce: maker.nonce.toString(),
+        takerPubKey: takerOrder.pubKeyAx.toString(), takerNonce: takerOrder.nonce.toString(),
+        status: "error", reason,
+      });
       return { status: "rejected", reason };
     } finally {
       this.lockingOrders.delete(orderKey);
