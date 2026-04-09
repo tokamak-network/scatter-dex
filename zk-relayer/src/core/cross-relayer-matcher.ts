@@ -99,8 +99,9 @@ export class CrossRelayerMatchService {
           // Settlement confirmed on-chain by remote relayer
           local.status = "settled";
           local.settleTxHash = result.txHash;
+          local.crossRelayer = true;
           this.orderbook.remove(local.order);
-          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "settled", result.txHash);
+          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "settled", result.txHash, true);
           this.remoteOrderbook.remove(summary.id);
 
           // Cancel from shared orderbook
@@ -266,7 +267,8 @@ export class CrossRelayerMatchService {
       // Success
       makerStored.status = "settled";
       makerStored.settleTxHash = txHash;
-      this.orderbook.persistStatus(maker.pubKeyAx, maker.nonce, "settled", txHash);
+      makerStored.crossRelayer = true;
+      this.orderbook.persistStatus(maker.pubKeyAx, maker.nonce, "settled", txHash, true);
 
       // Cancel maker from shared orderbook
       const orderbookId = this.orderIdMap.get(orderKey);

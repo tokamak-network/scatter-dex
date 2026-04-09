@@ -60,7 +60,7 @@ interface OrderFile {
   // Enriched from relayer API response
   status?: string;
   settleTxHash?: string;
-  crossRelayer?: boolean; // Requires zk-relayer to include this field in GET response (future)
+  crossRelayer?: boolean;
 }
 
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {

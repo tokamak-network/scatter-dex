@@ -180,8 +180,8 @@ export class PrivateOrderbook {
     return this.db?.hasOrder(pubKeyAx, nonce) ?? false;
   }
 
-  persistStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string): void {
-    this.db?.updateStatus(pubKeyAx, nonce, status, settleTxHash);
+  persistStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string, crossRelayer?: boolean): void {
+    this.db?.updateStatus(pubKeyAx, nonce, status, settleTxHash, crossRelayer);
   }
 
   purgeExpired(): number {

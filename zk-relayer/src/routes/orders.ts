@@ -138,8 +138,9 @@ export function createPrivateOrderRoutes(
             if (tradeResult.status === "settled" && tradeResult.txHash) {
               stored.status = "settled";
               stored.settleTxHash = tradeResult.txHash;
+              stored.crossRelayer = true;
               orderbook.remove(order);
-              orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", tradeResult.txHash);
+              orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", tradeResult.txHash, true);
               // Cancel settled order from shared orderbook
               if (sharedClient && orderIdMap) {
                 const key = `${order.pubKeyAx}:${order.nonce}`;

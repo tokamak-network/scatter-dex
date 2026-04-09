@@ -77,7 +77,7 @@ export class PrivateOrderDB {
     `);
     this.deleteClaims = this.db.prepare(`DELETE FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce`);
     this.updateStatusStmt = this.db.prepare(`
-      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx)
+      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx), cross_relayer = COALESCE(@crossRelayer, cross_relayer)
       WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce
     `);
     this.selectPending = this.db.prepare(`
@@ -133,6 +133,7 @@ export class PrivateOrderDB {
         leaf_index    INTEGER NOT NULL,
         status        TEXT NOT NULL DEFAULT 'pending',
         settle_tx     TEXT,
+        cross_relayer INTEGER NOT NULL DEFAULT 0,
         submitted_at  INTEGER NOT NULL,
         PRIMARY KEY (pub_key_ax, nonce)
       );
@@ -209,12 +210,13 @@ export class PrivateOrderDB {
     txn();
   }
 
-  updateStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string): void {
+  updateStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string, crossRelayer?: boolean): void {
     this.updateStatusStmt.run({
       pubKeyAx: pubKeyAx.toString(),
       nonce: nonce.toString(),
       status,
       settleTx: settleTxHash ?? null,
+      crossRelayer: crossRelayer ? 1 : null,
     });
   }
 
@@ -266,6 +268,7 @@ export class PrivateOrderDB {
       status: row.status as PrivateOrderStatus,
       submittedAt: row.submitted_at,
       settleTxHash: row.settle_tx ?? undefined,
+      crossRelayer: (row as Record<string, unknown>).cross_relayer === 1 ? true : undefined,
     };
   }
 

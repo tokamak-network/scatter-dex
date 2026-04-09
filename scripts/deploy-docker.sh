@@ -69,6 +69,18 @@ NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 
+# Register Relayer B (Anvil Account #2) if multi-relayer mode
+RELAYER_B_KEY="${RELAYER_B_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}"
+if [ -n "$RELAYER_B_KEY" ]; then
+  echo ""
+  echo "Registering Relayer B in RelayerRegistry..."
+  # Check if register function exists (may vary by contract version)
+  cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://zk-relayer-b:3003" 30 \
+    --rpc-url "$RPC_URL" --private-key "$RELAYER_B_KEY" 2>/dev/null \
+    && echo "Relayer B registered" \
+    || echo "Relayer B registration skipped (may already be registered or function differs)"
+fi
+
 echo ""
 echo "=== Addresses written to $OUTPUT_FILE ==="
 cat "$OUTPUT_FILE"
