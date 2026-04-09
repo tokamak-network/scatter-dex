@@ -72,16 +72,51 @@ template Deposit() {
 
     // ════════════════════════════════════════
     //  1. PUBKEY VALIDITY
-    //     Reject off-curve points and the identity (0, 1). Only runs in
-    //     deposit, so this cost (~50 R1CS constraints) is paid once per
-    //     escrow instead of per-spend.
+    //
+    //  Reject off-curve points and the two "x == 0" on-curve points.
+    //  Only runs in deposit, so the ~50 R1CS constraint cost is paid
+    //  once per escrow instead of per-spend.
+    //
+    //  ── Why `Ax != 0` is the right check ──
+    //
+    //  BabyJub is the twisted Edwards curve `a·x² + y² = 1 + d·x²·y²`
+    //  with `a = 168700`, `d = 168696`. Plugging `x = 0`:
+    //       y² = 1   →   y ∈ { 1, -1 mod p }
+    //  So there are **exactly two** on-curve points with `x == 0`:
+    //
+    //    (0,  1)  — the identity element. EdDSA signatures over the
+    //               identity are trivially forgeable (R8·1 + A·1 = R8
+    //               for any message), so an escrow bound to it is
+    //               unprotected.
+    //    (0, -1)  — a point of order 2 (it lives in the cofactor-8
+    //               small-order subgroup, not in the prime-order
+    //               subgroup the standard BabyJub generator produces).
+    //               EdDSA over small-order keys is likewise broken.
+    //
+    //  A single `pubKeyAx != 0` check rejects *both* of these in one
+    //  constraint. Honest users calling `eddsa.prv2pub(privKey)` with
+    //  any non-zero scalar land in the prime-order subgroup and get a
+    //  pubkey with `x != 0`, so this check never false-positives on
+    //  well-formed keys.
+    //
+    //  ── What this check does NOT cover ──
+    //
+    //  BabyJub has cofactor 8, so the full small-order subgroup has
+    //  eight members. Six of them have `x != 0` and slip past this
+    //  check. They are still unreachable in practice (`prv2pub` never
+    //  produces one), but an *adversarially constructed* deposit
+    //  could land on one — and the resulting escrow would be spend-
+    //  able by anyone who can forge the short-order EdDSA signature.
+    //  That is a self-inflicted denial of service, not a theft of
+    //  other users' funds (each commitment is isolated by its own
+    //  nullifier), so we accept it as out of scope for the PoC. A
+    //  full cofactor-clearing check (`8·P != 0`) can be bolted on as
+    //  a follow-up when the prover has native BabyJub scalar-mul.
     // ════════════════════════════════════════
     component pubKeyOnCurve = BabyCheck();
     pubKeyOnCurve.x <== pubKeyAx;
     pubKeyOnCurve.y <== pubKeyAy;
 
-    // Identity point on BabyJub is (0, 1). Any on-curve point with x != 0
-    // is non-identity, so a single `Ax != 0` check is sufficient.
     component axIsZero = IsZero();
     axIsZero.in <== pubKeyAx;
     axIsZero.out === 0;

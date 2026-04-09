@@ -233,4 +233,44 @@ describe("Deposit circuit (v2 — commitment binds BabyJub pubkey)", () => {
       ),
     ).rejects.toThrow();
   }, 30000);
+
+  // [issue #128 PR #129 Copilot review] The other on-curve point with
+  // x == 0 is (0, -1 mod p), which lives in BabyJub's cofactor-8
+  // small-order subgroup. EdDSA over a small-order pubkey is broken
+  // the same way the identity case is, so the deposit circuit's
+  // `Ax != 0` check must reject it too. This test locks that invariant
+  // in so a future refactor can't narrow the check down to "only
+  // (0, 1)" without the test catching it.
+  test("rejects BabyJub order-2 point (0, -1 mod p)", async () => {
+    const secret = randomField();
+    const salt = randomField();
+    const token = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9");
+    const amount = 50n * 10n ** 18n;
+
+    // BN254 scalar field prime (the field BabyJub's coordinates live in).
+    const BN254_FIELD =
+      21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+    const pubKeyAx = 0n;
+    const pubKeyAy = BN254_FIELD - 1n; // -1 mod p
+    const commitment = computeCommitmentV2({
+      secret, token, amount, salt, pubKeyAx, pubKeyAy,
+    });
+
+    await expect(
+      snarkjs.groth16.fullProve(
+        {
+          commitment: commitment.toString(),
+          token: token.toString(),
+          amount: amount.toString(),
+          secret: secret.toString(),
+          salt: salt.toString(),
+          pubKeyAx: pubKeyAx.toString(),
+          pubKeyAy: pubKeyAy.toString(),
+        },
+        DEPOSIT_WASM,
+        DEPOSIT_ZKEY,
+      ),
+    ).rejects.toThrow();
+  }, 30000);
 });
