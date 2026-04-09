@@ -335,6 +335,10 @@ async function main() {
   }
   assert(leafIndexB >= 0, `User B deposited 10,000 USDC at leaf #${leafIndexB}`);
 
+  // Snapshot nextIndex after deposits (before settlement) for later comparison
+  const poolReadOnly = new ethers.Contract(poolAddr, POOL_ABI, provider);
+  const nextIndexAfterDeposits = Number(await poolReadOnly.nextIndex());
+
   // ─── Step 3: Build orders ─────────────────────────────────
   console.log("\n[3/7] Building orders...");
 
@@ -466,20 +470,27 @@ async function main() {
   assert(nullASpent, "User A's note nullifier is spent");
   assert(nullBSpent, "User B's note nullifier is spent");
 
-  // Verify change commitments exist
-  const poolContract = new ethers.Contract(poolAddr, POOL_ABI, provider);
-  const lastIndex = await poolContract.nextIndex();
-  assert(Number(lastIndex) > Math.max(leafIndexA, leafIndexB), `New commitments created (nextIndex: ${lastIndex})`);
+  // Verify settlement created new change commitments
+  const poolContractRead = new ethers.Contract(poolAddr, POOL_ABI, provider);
+  const nextIndexAfterSettle = Number(await poolContractRead.nextIndex());
+  assert(nextIndexAfterSettle > nextIndexAfterDeposits,
+    `Settlement created ${nextIndexAfterSettle - nextIndexAfterDeposits} new commitment(s) (${nextIndexAfterDeposits} → ${nextIndexAfterSettle})`);
 
-  // Verify FeeVault received fees
+  // Verify FeeVault received fees (check both relayers — settling relayer earns the fee)
   const feeVaultAddr: string = await settlementContract.feeVault();
   if (feeVaultAddr !== ethers.ZeroAddress) {
     const FEE_VAULT_ABI = ["function balances(address,address) view returns (uint256)"];
     const vaultContract = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
-    const feeBalA = await vaultContract.balances(infoA.address, weth);
-    const feeBalB = await vaultContract.balances(infoA.address, usdc);
-    console.log(`  FeeVault: ${ethers.formatEther(feeBalA)} WETH, ${ethers.formatUnits(feeBalB, 18)} USDC`);
-    assert(feeBalA > 0n || feeBalB > 0n, "FeeVault received settlement fees");
+    // Maker's relayer (A) settles, so fees go to Relayer A
+    const relayerAFeeWeth = await vaultContract.balances(infoA.address, weth);
+    const relayerAFeeUsdc = await vaultContract.balances(infoA.address, usdc);
+    // Also check Relayer B in case settlement was initiated by B
+    const relayerBFeeWeth = await vaultContract.balances(infoB.address, weth);
+    const relayerBFeeUsdc = await vaultContract.balances(infoB.address, usdc);
+    const totalFee = relayerAFeeWeth + relayerAFeeUsdc + relayerBFeeWeth + relayerBFeeUsdc;
+    console.log(`  FeeVault Relayer A: ${ethers.formatEther(relayerAFeeWeth)} WETH, ${ethers.formatUnits(relayerAFeeUsdc, 18)} USDC`);
+    console.log(`  FeeVault Relayer B: ${ethers.formatEther(relayerBFeeWeth)} WETH, ${ethers.formatUnits(relayerBFeeUsdc, 18)} USDC`);
+    assert(totalFee > 0n, "FeeVault received settlement fees from settling relayer");
   }
 
   console.log("\n===============================================================");

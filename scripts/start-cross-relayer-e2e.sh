@@ -23,7 +23,9 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$ROOT_DIR/.e2e-logs"
 mkdir -p "$LOG_DIR"
 
+# Track background PIDs for cleanup
 PIDS=()
+EXIT_CODE=0
 cleanup() {
   echo ""
   echo "Stopping background services..."
@@ -32,9 +34,10 @@ cleanup() {
   done
   wait 2>/dev/null
   echo "Done."
-  exit 0
+  exit "$EXIT_CODE"
 }
-trap cleanup SIGINT SIGTERM EXIT
+trap 'EXIT_CODE=$?; cleanup' EXIT
+trap 'EXIT_CODE=130; cleanup' SIGINT SIGTERM
 
 echo "==============================================="
 echo "  Cross-Relayer E2E Environment Setup"
@@ -79,11 +82,12 @@ if curl -s http://localhost:4000/health > /dev/null 2>&1; then
 else
   cd "$ROOT_DIR/shared-orderbook"
   PORT=4000 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
-  PIDS+=($!)
+  OB_PID=$!
+  PIDS+=($OB_PID)
   for i in $(seq 1 15); do
     sleep 1
     if curl -s http://localhost:4000/health > /dev/null 2>&1; then
-      echo "  [ok] Started (PID: ${PIDS[-1]}, log: .e2e-logs/orderbook.log)"
+      echo "  [ok] Started (PID: $OB_PID, log: .e2e-logs/orderbook.log)"
       break
     fi
     [ $i -eq 15 ] && { echo "  ERROR: Failed to start"; exit 1; }
@@ -98,6 +102,7 @@ lsof -ti:3002 | xargs kill 2>/dev/null || true
 sleep 1
 
 cd "$ROOT_DIR/zk-relayer"
+# WARNING: Anvil well-known test key (Account #1). NEVER use on real networks.
 RELAYER_A_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
 RPC_URL="$RPC_URL" \
@@ -112,12 +117,13 @@ SHARED_ORDERBOOK_URL="http://localhost:4000" \
 RELAYER_PUBLIC_URL="http://localhost:3002" \
 RELAYER_NAME="Relayer-A" \
 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
-PIDS+=($!)
+RA_PID=$!
+PIDS+=($RA_PID)
 
 for i in $(seq 1 15); do
   sleep 1
   if curl -s http://localhost:3002/api/info > /dev/null 2>&1; then
-    echo "  [ok] Started (PID: ${PIDS[-1]}, log: .e2e-logs/relayer-a.log)"
+    echo "  [ok] Started (PID: $RA_PID, log: .e2e-logs/relayer-a.log)"
     break
   fi
   [ $i -eq 15 ] && { echo "  ERROR: Failed to start"; exit 1; }
@@ -126,6 +132,7 @@ done
 # Start Relayer B
 echo ""
 echo "[4/4] Starting Relayer B (port 3003)..."
+# WARNING: Anvil well-known test key (Account #2). NEVER use on real networks.
 RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
 
 RPC_URL="$RPC_URL" \
@@ -140,12 +147,13 @@ SHARED_ORDERBOOK_URL="http://localhost:4000" \
 RELAYER_PUBLIC_URL="http://localhost:3003" \
 RELAYER_NAME="Relayer-B" \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
-PIDS+=($!)
+RB_PID=$!
+PIDS+=($RB_PID)
 
 for i in $(seq 1 15); do
   sleep 1
   if curl -s http://localhost:3003/api/info > /dev/null 2>&1; then
-    echo "  [ok] Started (PID: ${PIDS[-1]}, log: .e2e-logs/relayer-b.log)"
+    echo "  [ok] Started (PID: $RB_PID, log: .e2e-logs/relayer-b.log)"
     break
   fi
   [ $i -eq 15 ] && { echo "  ERROR: Failed to start"; exit 1; }

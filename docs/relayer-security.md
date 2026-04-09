@@ -27,7 +27,7 @@ The shared orderbook server only receives `OrderSummary` — a public subset:
 - Relayer address and endpoint URL
 - EdDSA public key (`pubKeyAx`)
 
-**Never transmitted to the shared orderbook:** `ownerSecret`, `salt`, `balance`, `claims`, EdDSA private key, signatures.
+**Never transmitted to the shared orderbook:** `ownerSecret`, `salt`, `balance`, `claims`, EdDSA private key, or EdDSA order signatures. (Note: EIP-191 *relayer authentication* signatures are sent in HTTP headers for API auth, but these are distinct from EdDSA *order* signatures and cannot be used to forge orders or spend commitments.)
 
 ## Threat Vectors
 
@@ -47,7 +47,7 @@ The shared orderbook server only receives `OrderSummary` — a public subset:
 
 **Risk:** An attacker gains access to the SQLite database file.
 
-**Impact:** Exposure of all pending orders' secrets. Attacker could use these to front-run settlements if they also have the relayer's private key.
+**Impact:** Critical — possession of `ownerSecret`, `salt`, and `balance` is sufficient to construct a valid ZK withdraw/settle proof and spend the user's commitment on-chain. An attacker with these secrets can call `CommitmentPool` or `PrivateSettlement` directly without needing the relayer's private key (any Ethereum account can submit the proof). This makes DB security paramount for pending orders.
 
 **Mitigations:**
 - Encrypt the database at rest (SQLCipher or filesystem-level encryption)

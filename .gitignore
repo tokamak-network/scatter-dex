@@ -36,3 +36,4 @@ node_modules/
 frontend/1.json
 relayer/dist/
 relayer/dist/
+.e2e-logs/
