@@ -119,15 +119,16 @@ Once an order is settled on-chain, the secrets are no longer needed. Implement a
 
 ```sql
 -- Zero out secrets for settled orders (preserves order history)
+-- Note: submitted_at is stored in milliseconds (Date.now()), so multiply threshold accordingly
 UPDATE private_orders
 SET owner_secret = '0', salt = '0', balance = '0'
-WHERE status = 'settled' AND submitted_at < (strftime('%s','now') - 3600);
+WHERE status = 'settled' AND submitted_at < (strftime('%s','now') * 1000 - 3600000);
 
 -- Delete claim secrets for settled orders
 DELETE FROM private_claims
 WHERE (pub_key_ax, nonce) IN (
   SELECT pub_key_ax, nonce FROM private_orders
-  WHERE status = 'settled' AND submitted_at < (strftime('%s','now') - 3600)
+  WHERE status = 'settled' AND submitted_at < (strftime('%s','now') * 1000 - 3600000)
 );
 ```
 

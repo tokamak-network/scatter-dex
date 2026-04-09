@@ -21,6 +21,7 @@
  */
 
 import { ethers } from "ethers";
+import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { poseidon2, poseidon4, poseidon5, poseidon8 } from "poseidon-lite";
@@ -103,7 +104,7 @@ function randomFieldElement(): bigint {
   let value: bigint;
   do {
     const bytes = new Uint8Array(32);
-    globalThis.crypto.getRandomValues(bytes);
+    crypto.getRandomValues(bytes);
     bytes[0] &= 0x3f;
     value = 0n;
     for (const b of bytes) value = (value << 8n) | BigInt(b);
@@ -185,7 +186,7 @@ async function buildOrder(params: OrderParams) {
   const changeAmount = params.balance - params.sellAmount;
   const expectedChangeCommitment = poseidonHash([params.ownerSecret, tokenBig, changeAmount, changeSalt]);
 
-  const nonceRand = BigInt("0x" + [...globalThis.crypto.getRandomValues(new Uint8Array(6))].map(b => b.toString(16).padStart(2,"0")).join(""));
+  const nonceRand = BigInt("0x" + [...crypto.getRandomValues(new Uint8Array(6))].map(b => b.toString(16).padStart(2,"0")).join(""));
   const nonce = params.chainTime * 10n ** 12n + nonceRand;
   const expiry = params.chainTime + 86400n;
 
@@ -305,7 +306,7 @@ async function main() {
     try {
       const parsed = poolIface.parseLog({ topics: log.topics as string[], data: log.data });
       if (parsed?.name === "CommitmentInserted") leafIndexA = Number(parsed.args.leafIndex);
-    } catch {}
+    } catch { /* skip non-matching logs */ }
   }
   assert(leafIndexA >= 0, `User A deposited 5 WETH at leaf #${leafIndexA}`);
 
@@ -331,7 +332,7 @@ async function main() {
     try {
       const parsed = poolIface.parseLog({ topics: log.topics as string[], data: log.data });
       if (parsed?.name === "CommitmentInserted") leafIndexB = Number(parsed.args.leafIndex);
-    } catch {}
+    } catch { /* skip non-matching logs */ }
   }
   assert(leafIndexB >= 0, `User B deposited 10,000 USDC at leaf #${leafIndexB}`);
 

@@ -102,8 +102,8 @@ lsof -ti:3002 | xargs kill 2>/dev/null || true
 sleep 1
 
 cd "$ROOT_DIR/zk-relayer"
-# WARNING: Anvil well-known test key (Account #1). NEVER use on real networks.
-RELAYER_A_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+# Anvil well-known test key (Account #1). Override via env for custom setups.
+RELAYER_A_KEY="${RELAYER_A_KEY:-0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d}"
 
 RPC_URL="$RPC_URL" \
 RELAYER_PRIVATE_KEY="$RELAYER_A_KEY" \
@@ -132,8 +132,8 @@ done
 # Start Relayer B
 echo ""
 echo "[4/4] Starting Relayer B (port 3003)..."
-# WARNING: Anvil well-known test key (Account #2). NEVER use on real networks.
-RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+# Anvil well-known test key (Account #2). Override via env for custom setups.
+RELAYER_B_KEY="${RELAYER_B_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}"
 
 RPC_URL="$RPC_URL" \
 RELAYER_PRIVATE_KEY="$RELAYER_B_KEY" \
