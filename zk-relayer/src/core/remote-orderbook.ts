@@ -27,6 +27,15 @@ export class RemoteOrderStore {
     const now = Math.floor(Date.now() / 1000);
     if (order.expiry <= now) return;
 
+    // Validate BigInt-parseable fields (remote data is untrusted)
+    try {
+      BigInt(order.sellAmount);
+      BigInt(order.buyAmount);
+    } catch {
+      console.warn(`[remote-orderbook] Skipping malformed order ${order.id}: invalid amount`);
+      return;
+    }
+
     this.byId.set(order.id, order);
 
     // Index by relayer

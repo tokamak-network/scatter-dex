@@ -127,6 +127,9 @@ export function createPrivateOrderRoutes(
             res.json({ status: "pending", nonce: order.nonce.toString() });
             return;
           }
+          // Lock local order before awaiting remote settlement (prevents double-matching)
+          stored.status = "matched";
+          orderbook.persistStatus(order.pubKeyAx, order.nonce, "matched");
           try {
             const tradeResult = await crossRelayerService.sendTradeOffer(
               matchResult.localOrder,
@@ -137,13 +140,24 @@ export function createPrivateOrderRoutes(
               stored.settleTxHash = tradeResult.txHash;
               orderbook.remove(order);
               orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", tradeResult.txHash);
+              // Cancel settled order from shared orderbook
+              if (sharedClient && orderIdMap) {
+                const key = `${order.pubKeyAx}:${order.nonce}`;
+                const oid = orderIdMap.get(key);
+                if (oid) { sharedClient.cancelOrder(oid).catch(() => {}); orderIdMap.delete(key); }
+              }
               res.json({ status: "settled", txHash: tradeResult.txHash, crossRelayer: true });
               return;
             }
-            // Trade offer rejected — fall through to "pending"
+            // Trade offer rejected — restore to pending
             console.warn("[cross-relayer] Trade offer rejected:", tradeResult.reason);
           } catch (err) {
             console.warn("[cross-relayer] Trade offer failed:", err instanceof Error ? err.message : "unknown");
+          }
+          // Restore to pending if not settled
+          if (stored.status === "matched") {
+            stored.status = "pending";
+            orderbook.persistStatus(order.pubKeyAx, order.nonce, "pending");
           }
         } else {
           // Local match — existing settlement flow
@@ -163,6 +177,15 @@ export function createPrivateOrderRoutes(
             match.taker.settleTxHash = txHash;
             orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "settled", txHash);
             orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "settled", txHash);
+
+            // Cancel settled orders from shared orderbook
+            if (sharedClient && orderIdMap) {
+              for (const m of [match.maker, match.taker]) {
+                const key = `${m.order.pubKeyAx}:${m.order.nonce}`;
+                const oid = orderIdMap.get(key);
+                if (oid) { sharedClient.cancelOrder(oid).catch(() => {}); orderIdMap.delete(key); }
+              }
+            }
 
             res.json({ status: "settled", txHash });
             return;

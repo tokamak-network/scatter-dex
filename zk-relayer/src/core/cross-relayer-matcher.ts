@@ -251,7 +251,7 @@ export class CrossRelayerMatchService {
       const takerStored: StoredPrivateOrder = {
         order: takerOrder,
         status: "matched",
-        submittedAt: Math.floor(Date.now() / 1000),
+        submittedAt: Date.now(),
       };
 
       this.orderbook.remove(maker);

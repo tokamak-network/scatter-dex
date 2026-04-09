@@ -34,6 +34,7 @@ function makeRemoteOrder(overrides: Partial<OrderSummary> = {}): OrderSummary {
     relayer: overrides.relayer ?? "0xremoterelayer",
     relayerUrl: overrides.relayerUrl ?? "http://remote:3002",
     nonce: overrides.nonce ?? "1",
+    pubKeyAx: overrides.pubKeyAx ?? "99999",
     sellToken: overrides.sellToken ?? TOKEN_B_HEX,
     buyToken: overrides.buyToken ?? TOKEN_A_HEX,
     sellAmount: overrides.sellAmount ?? "2000",
