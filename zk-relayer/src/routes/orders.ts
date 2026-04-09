@@ -34,12 +34,13 @@ export function createPrivateOrderRoutes(
       while (padded.length < 16) padded.push(0n);
       const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
-      // Verify EdDSA signature (includes claimsRoot to prevent relayer manipulation)
+      // Verify EdDSA signature (includes claimsRoot + relayer address for trustless fee split)
+      const relayerAddr = BigInt(submitter.getAddress());
       const msgHash = await poseidonHash([
         order.sellToken, order.buyToken,
         order.sellAmount, order.buyAmount,
         order.maxFee, order.expiry, order.nonce,
-        claimsRoot,
+        claimsRoot, relayerAddr,
       ]);
 
       const valid = await verifyEdDSA(

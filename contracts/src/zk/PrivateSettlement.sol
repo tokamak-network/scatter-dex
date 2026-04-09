@@ -153,12 +153,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 totalLockedTaker;
         address tokenMaker;
         address tokenTaker;
-        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to relayer)
-        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to relayer)
+        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to makerRelayer)
+        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to takerRelayer)
+        address makerRelayer;   // relayer that handles maker's order (bound in proof)
+        address takerRelayer;   // relayer that handles taker's order (bound in proof)
     }
 
     /// @notice Execute a private settlement with ZK proof.
-    function settlePrivate(SettleParams calldata p) external onlyRelayer nonReentrant {
+    /// Anyone can submit — relayer addresses are bound in the ZK proof.
+    function settlePrivate(SettleParams calldata p) external nonReentrant {
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
@@ -177,7 +180,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[17] memory pubSignals = [
+        uint[18] memory pubSignals = [
             p.currentRoot,
             uint256(p.makerNullifier),
             uint256(p.takerNullifier),
@@ -194,11 +197,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256(p.feeTokenMaker),
             uint256(p.feeTokenTaker),
             p.currentTimestamp,
-            uint256(uint160(msg.sender))  // relayer bound in proof
+            uint256(uint160(p.makerRelayer)),  // maker's relayer bound in proof
+            uint256(uint160(p.takerRelayer))   // taker's relayer bound in proof
         ];
 
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
             revert InvalidProof();
+        }
+
+        // Verify both relayers are registered (if registry is set)
+        if (address(relayerRegistry) != address(0)) {
+            if (!relayerRegistry.isActiveRelayer(p.makerRelayer)) revert NotActiveRelayer();
+            if (!relayerRegistry.isActiveRelayer(p.takerRelayer)) revert NotActiveRelayer();
         }
 
         nullifiers[p.makerNullifier] = true;
@@ -224,9 +234,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
         }
 
-        // Transfer fees: to FeeVault if set, otherwise directly to relayer (legacy)
-        if (p.feeTokenMaker > 0) _routeFeeFromPool(p.tokenMaker, p.feeTokenMaker);
-        if (p.feeTokenTaker > 0) _routeFeeFromPool(p.tokenTaker, p.feeTokenTaker);
+        // Transfer fees: split between maker's relayer and taker's relayer
+        // feeTokenMaker (from taker's sell) → maker's relayer
+        // feeTokenTaker (from maker's sell) → taker's relayer
+        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.makerRelayer);
+        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.takerRelayer);
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
         if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
@@ -377,6 +389,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             feeVault.deposit(msg.sender, token, amount);
         } else {
             pool.transferFee(msg.sender, token, amount);
+        }
+    }
+
+    /// @dev Route fee from CommitmentPool to a specific relayer via vault.
+    function _routeFeeFromPoolTo(address token, uint256 amount, address relayer) internal {
+        if (address(feeVault) != address(0)) {
+            pool.transferFee(address(feeVault), token, amount);
+            feeVault.deposit(relayer, token, amount);
+        } else {
+            pool.transferFee(relayer, token, amount);
         }
     }
 

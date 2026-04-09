@@ -208,7 +208,7 @@ export class CrossRelayerMatchService {
         takerOrder.sellToken, takerOrder.buyToken,
         takerOrder.sellAmount, takerOrder.buyAmount,
         takerOrder.maxFee, takerOrder.expiry, takerOrder.nonce,
-        claimsRoot,
+        claimsRoot, BigInt(senderRelayerAddress),
       ]);
 
       const valid = await verifyEdDSA(
@@ -262,11 +262,12 @@ export class CrossRelayerMatchService {
       this.orderbook.remove(maker);
       this.orderbook.persistStatus(maker.pubKeyAx, maker.nonce, "matched");
 
-      // Settle on-chain
-      const txHash = await this.submitter.submitPrivateSettle({
-        maker: makerStored,
-        taker: takerStored,
-      });
+      // Settle on-chain — this relayer = maker's relayer, sender = taker's relayer
+      const txHash = await this.submitter.submitPrivateSettle(
+        { maker: makerStored, taker: takerStored },
+        this.submitter.getAddress(),        // makerRelayer (this relayer)
+        senderRelayerAddress,               // takerRelayer (Trade Offer sender)
+      );
 
       // Success
       makerStored.status = "settled";

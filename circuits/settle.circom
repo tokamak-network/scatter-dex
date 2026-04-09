@@ -105,10 +105,11 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input totalLockedTaker;      // total locked for taker's claims
     signal input tokenMaker;            // token maker receives (= taker's sell token)
     signal input tokenTaker;            // token taker receives (= maker's sell token)
-    signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell, paid to relayer)
-    signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell, paid to relayer)
+    signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell, paid to makerRelayer)
+    signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell, paid to takerRelayer)
     signal input currentTimestamp;      // block.timestamp for expiry check
-    signal input relayer;               // relayer address — prevents front-running of settlement tx
+    signal input makerRelayer;          // relayer that handles maker's order (receives feeTokenTaker)
+    signal input takerRelayer;          // relayer that handles taker's order (receives feeTokenMaker)
 
     // ════════════════════════════════════════
     //  PRIVATE INPUTS
@@ -511,9 +512,10 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  11. EdDSA SIGNATURE VERIFICATION
     //      Verify maker/taker signed their order
     // ════════════════════════════════════════
-    // Order hash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot)
+    // Order hash = Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayer)
     // Including claimsRoot prevents the relayer from manipulating claim recipients.
-    component makerOrderHash = Poseidon(8);
+    // Including relayer binds the order to a specific relayer for trustless fee split.
+    component makerOrderHash = Poseidon(9);
     makerOrderHash.inputs[0] <== makerSellToken;
     makerOrderHash.inputs[1] <== tokenMaker; // buyToken = what maker receives
     makerOrderHash.inputs[2] <== makerSellAmount;
@@ -522,6 +524,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerOrderHash.inputs[5] <== makerExpiry;
     makerOrderHash.inputs[6] <== makerNonce;
     makerOrderHash.inputs[7] <== claimsRootMaker;
+    makerOrderHash.inputs[8] <== makerRelayer;
 
     component makerSigVerify = EdDSAPoseidonVerifier();
     makerSigVerify.enabled <== 1;
@@ -533,7 +536,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerSigVerify.M <== makerOrderHash.out;
     // EdDSAPoseidonVerifier asserts internally when enabled=1; no explicit output check needed.
 
-    component takerOrderHash = Poseidon(8);
+    component takerOrderHash = Poseidon(9);
     takerOrderHash.inputs[0] <== takerSellToken;
     takerOrderHash.inputs[1] <== tokenTaker; // buyToken
     takerOrderHash.inputs[2] <== takerSellAmount;
@@ -542,6 +545,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerOrderHash.inputs[5] <== takerExpiry;
     takerOrderHash.inputs[6] <== takerNonce;
     takerOrderHash.inputs[7] <== claimsRootTaker;
+    takerOrderHash.inputs[8] <== takerRelayer;
 
     component takerSigVerify = EdDSAPoseidonVerifier();
     takerSigVerify.enabled <== 1;
@@ -570,11 +574,14 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  13. RELAYER BINDING
-    //      Bind relayer address to proof so it can't be front-run.
-    //      Same pattern as withdraw.circom.
+    //      Bind both relayer addresses to proof for trustless fee split.
+    //      Each relayer is also included in the order hash (signed by user),
+    //      so they cannot be changed without invalidating the EdDSA signature.
     // ════════════════════════════════════════
-    signal relayerSq;
-    relayerSq <== relayer * relayer;
+    signal makerRelayerSq;
+    makerRelayerSq <== makerRelayer * makerRelayer;
+    signal takerRelayerSq;
+    takerRelayerSq <== takerRelayer * takerRelayer;
 }
 
 // Parameters:
@@ -589,5 +596,6 @@ component main {public [
     claimsRootMaker, claimsRootTaker,
     totalLockedMaker, totalLockedTaker,
     tokenMaker, tokenTaker,
-    feeTokenMaker, feeTokenTaker, currentTimestamp, relayer
+    feeTokenMaker, feeTokenTaker, currentTimestamp,
+    makerRelayer, takerRelayer
 ]} = Settle(20, 16, 4);

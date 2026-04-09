@@ -92,6 +92,7 @@ export async function hashOrder(order: {
   expiry: bigint;
   nonce: bigint;
   claimsRoot: bigint;
+  relayerAddress: bigint;
 }): Promise<bigint> {
   const { buildPoseidon } = await import("circomlibjs");
   const poseidon = await buildPoseidon();
@@ -106,6 +107,7 @@ export async function hashOrder(order: {
     order.expiry,
     order.nonce,
     order.claimsRoot,
+    order.relayerAddress,
   ]);
 
   return F.toObject(hash);
