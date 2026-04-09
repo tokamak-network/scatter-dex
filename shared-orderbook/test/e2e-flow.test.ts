@@ -161,6 +161,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
         nonce: "100",
+        pubKeyAx: "10001",
       }),
     });
     expect(status).toBe(201);
@@ -192,6 +193,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
         nonce: "200",
+        pubKeyAx: "20001",
       }),
     });
     expect(status).toBe(201);
@@ -265,7 +267,8 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         sellAmount: "500000000000000000", buyAmount: "1000000000000",
         minFillAmount: "0", maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "100",  // same nonce as before
+        nonce: "100",
+        pubKeyAx: "10001",
       }),
     });
     expect(status).toBe(409);
@@ -330,6 +333,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         minFillAmount: "0", maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) - 100,  // already expired
         nonce: "201",
+        pubKeyAx: "20002",
       }),
     });
     expect(status).toBe(400);
@@ -368,6 +372,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         sellAmount: "1", buyAmount: "1",
         maxFee: 0, expiry: Math.floor(Date.now() / 1000) + 3600,
         nonce: "999",
+        pubKeyAx: "99999",
       }),
     });
     // Should fail because signature was for /api/relayers/register, not /api/orders
@@ -411,6 +416,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         minFillAmount: "0", maxFee: 20,
         expiry: Math.floor(Date.now() / 1000) + 7200,
         nonce: "101",
+        pubKeyAx: "10002",
       }),
     });
     expect(status).toBe(201);

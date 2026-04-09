@@ -39,7 +39,7 @@ export interface ServerMatchResult {
   matchId: string;
   maker: OrderSummary;
   taker: OrderSummary;
-  settlingRelayer: string;
+  settlingRelayer: string;  // maker's relayer address (Phase 1: maker's relayer settles)
   pair: string;
   price: string;
   createdAt: number;
@@ -77,10 +77,11 @@ export function pairKey(tokenA: string, tokenB: string): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+export const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
-/** Validate a "tokenA-tokenB" pair string */
+/** Validate a "tokenA-tokenB" pair string (both must be valid 0x addresses) */
 export function isValidPair(pair: string): [string, string] | null {
+  // Ethereum addresses = 42 chars (0x + 40 hex), so split at index 42 is safe
   const a = pair.slice(0, 42);
   const b = pair.slice(43);
   if (pair[42] !== "-") return null;
