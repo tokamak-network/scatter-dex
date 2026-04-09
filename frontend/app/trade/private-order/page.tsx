@@ -338,7 +338,10 @@ export default function PrivateOrderPage() {
         throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
       }
 
-      // Use pre-generated changeSalt for change commitment
+      // Use pre-generated changeSalt for change commitment.
+      // [issue #128] The change commitment preserves the original
+      // escrow's pubkey binding — the user retains the residual with
+      // the same BabyJub key.
       const change = selectedNote.note.amount - parsedSell;
       const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
       let expectedChangeCommitment = 0n;
@@ -348,6 +351,8 @@ export default function PrivateOrderPage() {
           token: selectedNote.note.token,
           amount: change,
           salt: changeSalt,
+          pubKeyAx: selectedNote.note.pubKeyAx,
+          pubKeyAy: selectedNote.note.pubKeyAy,
         };
         expectedChangeCommitment = await computeCommitment(changeNote);
       }

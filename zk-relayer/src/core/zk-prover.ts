@@ -41,20 +41,40 @@ export async function poseidonHash(inputs: bigint[]): Promise<bigint> {
   return F.toObject(hash);
 }
 
+/**
+ * Compute the v2 commitment hash used throughout the codebase.
+ *
+ * [issue #128] The commitment now binds the BabyJub signing pubkey:
+ *   Poseidon(TAG_COMMITMENT_V2, secret, token, amount, salt, Ax, Ay)
+ *
+ * This is a clean-cutover replacement — the v1 4-input Poseidon is
+ * gone, and anyone calling this helper MUST supply the pubkey the
+ * escrow was deposited with.
+ */
 export async function computeCommitment(
   secret: bigint,
   token: bigint,
   amount: bigint,
-  salt: bigint
+  salt: bigint,
+  pubKeyAx: bigint,
+  pubKeyAy: bigint,
 ): Promise<bigint> {
-  return poseidonHash([secret, token, amount, salt]);
+  return poseidonHash([
+    TAG_COMMITMENT_V2,
+    secret,
+    token,
+    amount,
+    salt,
+    pubKeyAx,
+    pubKeyAy,
+  ]);
 }
 
 // [PR #124 review] Tag values now live in the shared `./tags.ts` module
 // so they cannot drift between circuits/zk-prover/frontend. Re-exported
 // here for backwards compatibility with downstream importers.
-export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags.js";
-import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags.js";
+export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "./tags.js";
+import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "./tags.js";
 
 /**
  * Escrow nullifier (used by withdraw and settle).
@@ -286,13 +306,23 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
   let makerNewCommitment = 0n;
   if (makerNewBalance > 0n) {
     makerNewCommitment = await computeCommitment(
-      input.makerSecret, input.makerSellToken, makerNewBalance, input.makerNewSalt
+      input.makerSecret,
+      input.makerSellToken,
+      makerNewBalance,
+      input.makerNewSalt,
+      input.makerPubKeyAx,
+      input.makerPubKeyAy,
     );
   }
   let takerNewCommitment = 0n;
   if (takerNewBalance > 0n) {
     takerNewCommitment = await computeCommitment(
-      input.takerSecret, input.takerSellToken, takerNewBalance, input.takerNewSalt
+      input.takerSecret,
+      input.takerSellToken,
+      takerNewBalance,
+      input.takerNewSalt,
+      input.takerPubKeyAx,
+      input.takerPubKeyAy,
     );
   }
 

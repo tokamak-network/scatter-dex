@@ -19,18 +19,26 @@ export const DEPOSIT_WASM = path.join(__dirname, "../../../circuits/build/deposi
 export const DEPOSIT_ZKEY = path.join(__dirname, "../../../circuits/build/deposit_final.zkey");
 
 /**
- * Generate a Groth16 proof for `deposit.circom`.
+ * Generate a Groth16 proof for `deposit.circom` (v2 — binds pubkey).
+ *
+ * [issue #128] The deposit circuit now requires the depositor's
+ * BabyJub signing pubkey and runs `BabyCheck` + identity rejection on
+ * it. The caller must supply `pubKeyAx`/`pubKeyAy` AND the commitment
+ * must be the v2 hash `Poseidon(TAG_COMMITMENT_V2, secret, token,
+ * amount, salt, pubKeyAx, pubKeyAy)`.
  *
  * @param {object} input
  * @param {bigint} input.secret      escrow ownerSecret
  * @param {bigint} input.salt        escrow salt
  * @param {string} input.token       ERC20 address (hex string)
- * @param {bigint} input.commitment  Poseidon(secret, token, amount, salt)
+ * @param {bigint} input.commitment  v2 Poseidon hash (see above)
  * @param {bigint} input.amount      transfer amount
+ * @param {bigint} input.pubKeyAx    BabyJub pubkey x-coordinate
+ * @param {bigint} input.pubKeyAy    BabyJub pubkey y-coordinate
  *
  * @returns {Promise<{a: [string,string], b: [[string,string],[string,string]], c: [string,string], publicSignals: string[]}>}
  */
-export async function makeDepositProof({ secret, salt, token, commitment, amount }) {
+export async function makeDepositProof({ secret, salt, token, commitment, amount, pubKeyAx, pubKeyAy }) {
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     {
       commitment: commitment.toString(),
@@ -38,6 +46,8 @@ export async function makeDepositProof({ secret, salt, token, commitment, amount
       amount: amount.toString(),
       secret: secret.toString(),
       salt: salt.toString(),
+      pubKeyAx: pubKeyAx.toString(),
+      pubKeyAy: pubKeyAy.toString(),
     },
     DEPOSIT_WASM,
     DEPOSIT_ZKEY,

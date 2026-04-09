@@ -24,12 +24,13 @@ import { ethers } from "ethers";
 import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7, poseidon8, poseidon9 } from "poseidon-lite";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 // [PR #124 review] Centralised nullifier domain tags so the inline literal
 // `0n` cannot drift from circuits/zk-prover/frontend.
-import { TAG_ESCROW_NULL } from "../src/core/tags.js";
+// [issue #128] TAG_COMMITMENT_V2 joins the v2 commitment preimage.
+import { TAG_ESCROW_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -99,10 +100,26 @@ function poseidonHash(inputs: bigint[]): bigint {
     case 3: return poseidon3(inputs);
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
+    case 7: return poseidon7(inputs);
     case 8: return poseidon8(inputs);
     case 9: return poseidon9(inputs);
     default: throw new Error(`poseidonHash: unsupported arity ${inputs.length}`);
   }
+}
+
+/**
+ * v2 commitment: Poseidon(TAG_COMMITMENT_V2, secret, token, amount,
+ * salt, pubKeyAx, pubKeyAy). See circuits/deposit.circom + issue #128.
+ */
+function computeCommitmentV2(
+  secret: bigint,
+  token: bigint,
+  amount: bigint,
+  salt: bigint,
+  pubKeyAx: bigint,
+  pubKeyAy: bigint,
+): bigint {
+  return poseidonHash([TAG_COMMITMENT_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy]);
 }
 
 async function getEdDSAWithField() {
@@ -197,7 +214,16 @@ async function buildOrder(params: OrderParams) {
 
   const changeSalt = randomFieldElement();
   const changeAmount = params.balance - params.sellAmount;
-  const expectedChangeCommitment = poseidonHash([params.ownerSecret, tokenBig, changeAmount, changeSalt]);
+  // [issue #128] Change commitment uses the v2 format so the user
+  // retains the residual under the same pubkey they deposited with.
+  const expectedChangeCommitment = computeCommitmentV2(
+    params.ownerSecret,
+    tokenBig,
+    changeAmount,
+    changeSalt,
+    pubKeyAx,
+    pubKeyAy,
+  );
 
   const nonceRand = BigInt("0x" + [...crypto.getRandomValues(new Uint8Array(6))].map(b => b.toString(16).padStart(2,"0")).join(""));
   const nonce = params.chainTime * 10n ** 12n + nonceRand;
@@ -304,6 +330,20 @@ async function main() {
   const poolContractA = new ethers.Contract(poolAddr, POOL_ABI, walletA);
   const poolContractB = new ethers.Contract(poolAddr, POOL_ABI, walletB);
 
+  // [issue #128] Derive each user's BabyJub signing keypair BEFORE the
+  // deposit — the v2 commitment binds the pubkey so the deposit proof
+  // needs it up front. The same key is reused later when building the
+  // order (see `buildOrder`), so we surface it here once.
+  const { eddsa: eddsaForDeposits, F: FForDeposits } = await getEdDSAWithField();
+  const eddsaKeyA = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-cross-user-a")).slice(2), "hex");
+  const eddsaKeyB = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-cross-user-b")).slice(2), "hex");
+  const pubKeyAraw = eddsaForDeposits.prv2pub(eddsaKeyA);
+  const pubKeyBraw = eddsaForDeposits.prv2pub(eddsaKeyB);
+  const pubKeyAxA = FForDeposits.toObject(pubKeyAraw[0]);
+  const pubKeyAyA = FForDeposits.toObject(pubKeyAraw[1]);
+  const pubKeyAxB = FForDeposits.toObject(pubKeyBraw[0]);
+  const pubKeyAyB = FForDeposits.toObject(pubKeyBraw[1]);
+
   // User A: wrap ETH → WETH and deposit
   const wethAmount = ethers.parseEther("5");
   await (await wethContract.deposit({ value: wethAmount })).wait();
@@ -311,9 +351,12 @@ async function main() {
 
   const secretA = randomFieldElement();
   const saltA = randomFieldElement();
-  const commitmentA = poseidonHash([secretA, BigInt(weth), wethAmount, saltA]);
+  const commitmentA = computeCommitmentV2(
+    secretA, BigInt(weth), wethAmount, saltA, pubKeyAxA, pubKeyAyA,
+  );
   const depositProofA = await makeDepositProof({
     secret: secretA, salt: saltA, token: weth, commitment: commitmentA, amount: wethAmount,
+    pubKeyAx: pubKeyAxA, pubKeyAy: pubKeyAyA,
   });
   const depositTxA = await poolContractA.deposit(
     depositProofA.a, depositProofA.b, depositProofA.c,
@@ -344,9 +387,12 @@ async function main() {
 
   const secretB = randomFieldElement();
   const saltB = randomFieldElement();
-  const commitmentB = poseidonHash([secretB, BigInt(usdc), usdcAmount, saltB]);
+  const commitmentB = computeCommitmentV2(
+    secretB, BigInt(usdc), usdcAmount, saltB, pubKeyAxB, pubKeyAyB,
+  );
   const depositProofB = await makeDepositProof({
     secret: secretB, salt: saltB, token: usdc, commitment: commitmentB, amount: usdcAmount,
+    pubKeyAx: pubKeyAxB, pubKeyAy: pubKeyAyB,
   });
   const depositTxB = await poolContractB.deposit(
     depositProofB.a, depositProofB.b, depositProofB.c,
@@ -373,9 +419,8 @@ async function main() {
   if (!latestBlock) throw new Error("Failed to fetch latest block");
   const chainTime = BigInt(latestBlock.timestamp);
 
-  const eddsaKeyA = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-cross-user-a")).slice(2), "hex");
-  const eddsaKeyB = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-cross-user-b")).slice(2), "hex");
-
+  // eddsaKeyA/eddsaKeyB are declared earlier so the deposit step can
+  // bind the pubkey into the v2 commitment. See [issue #128] block above.
   const sellWethAmount = ethers.parseEther("2");       // User A sells 2 WETH
   const buyUsdcAmount = ethers.parseUnits("4000", 18); // User A wants 4000 USDC
   const sellUsdcAmount = ethers.parseUnits("4000", 18); // User B sells 4000 USDC

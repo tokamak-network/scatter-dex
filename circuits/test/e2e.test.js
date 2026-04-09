@@ -4,7 +4,7 @@
  * Flow: deposit commitment → withdraw with real Groth16 proof
  */
 
-const { buildPoseidon } = require("circomlibjs");
+const { buildPoseidon, buildEddsa, buildBabyjub } = require("circomlibjs");
 const snarkjs = require("snarkjs");
 const path = require("path");
 const { execSync } = require("child_process");
@@ -21,7 +21,10 @@ const CLAIM_VKEY = path.join(BUILD_DIR, "claim_vkey.json");
 const TREE_DEPTH = 20;
 const CLAIMS_DEPTH = 4;
 
-let poseidon, F;
+// [issue #128] Must match circuits/tags.circom — v2 commitment tag.
+const TAG_COMMITMENT_V2 = 3n;
+
+let poseidon, F, eddsa, babyJub;
 
 function randomField() {
   const bytes = new Uint8Array(31);
@@ -31,6 +34,34 @@ function randomField() {
   return val;
 }
 
+function randomBabyJubKeypair() {
+  const privKey = require("crypto").randomBytes(32);
+  const pub = eddsa.prv2pub(privKey);
+  return {
+    privKey,
+    pubKeyAx: babyJub.F.toObject(pub[0]),
+    pubKeyAy: babyJub.F.toObject(pub[1]),
+  };
+}
+
+/**
+ * v2 commitment: Poseidon(TAG_COMMITMENT_V2, secret, token, amount,
+ * salt, pubKeyAx, pubKeyAy). See circuits/deposit.circom + issue #128.
+ */
+function computeCommitmentV2({ secret, token, amount, salt, pubKeyAx, pubKeyAy }) {
+  return F.toObject(
+    poseidon([TAG_COMMITMENT_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy])
+  );
+}
+
+/**
+ * Build a *dense* Merkle tree.
+ *
+ * Only safe for small depths (e.g., claims tree depth=4 = 16 leaves).
+ * For the commitment tree (depth=20 = ~1M leaves) use
+ * `computeSparseSingleLeafProof` instead — the dense builder here
+ * costs ~1M Poseidon hashes per call and dominates jest runtime.
+ */
 async function buildMerkleTree(leaves, depth) {
   const zeros = [0n];
   for (let i = 1; i <= depth; i++) {
@@ -68,28 +99,68 @@ function getMerkleProof(layers, idx) {
   return { pathElements, pathIndices };
 }
 
+/**
+ * Sparse Merkle proof for a *single* leaf in an otherwise empty tree.
+ *
+ * O(depth) Poseidon hashes instead of O(2^depth). For the withdraw
+ * tests below (depth=20, leaf at index 0), this drops per-test cost
+ * from ~1M hashes (~52s in jest) to ~40 hashes (< 10ms).
+ *
+ * Byte-identical output to the dense builder when the only non-zero
+ * leaf is at `leafIndex` — used by the circuit's merkle membership
+ * check, which only cares about (root, pathElements, pathIndices) for
+ * this one leaf.
+ */
+function computeSparseSingleLeafProof(leaf, depth, leafIndex) {
+  const zeros = [0n];
+  for (let i = 1; i <= depth; i++) {
+    zeros.push(F.toObject(poseidon([zeros[i - 1], zeros[i - 1]])));
+  }
+
+  const pathElements = [];
+  const pathIndices = [];
+  let current = leaf;
+  let index = leafIndex;
+  for (let i = 0; i < depth; i++) {
+    const isRight = index % 2;
+    pathElements.push(zeros[i]);
+    pathIndices.push(isRight);
+    current = isRight
+      ? F.toObject(poseidon([zeros[i], current]))
+      : F.toObject(poseidon([current, zeros[i]]));
+    index = Math.floor(index / 2);
+  }
+  return { root: current, pathElements, pathIndices };
+}
+
 describe("ZK E2E Tests", () => {
   beforeAll(async () => {
     poseidon = await buildPoseidon();
     F = poseidon.F;
+    eddsa = await buildEddsa();
+    babyJub = await buildBabyjub();
   }, 30000);
 
   test("Withdraw circuit: generate and verify proof", async () => {
-    // Generate commitment note
+    // [issue #128] v2 commitment binds the BabyJub signing pubkey.
     const ownerSecret = randomField();
     const token = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"); // WETH addr
     const amount = BigInt("1000000000000000000"); // 1 ETH
     const salt = randomField();
+    const { pubKeyAx, pubKeyAy } = randomBabyJubKeypair();
 
-    const commitment = F.toObject(poseidon([ownerSecret, token, amount, salt]));
+    const commitment = computeCommitmentV2({
+      secret: ownerSecret, token, amount, salt, pubKeyAx, pubKeyAy,
+    });
     // [M4] Domain-separated escrow nullifier (tag = 0)
     const nullifierHash = F.toObject(poseidon([0n, ownerSecret, salt]));
     const tokenHash = F.toObject(poseidon([token]));
 
-    // Build Merkle tree with this commitment
+    // Sparse single-leaf tree (depth=20 → ~40 hashes, not ~1M).
     const leafIndex = 0;
-    const { root, layers } = await buildMerkleTree([commitment], TREE_DEPTH);
-    const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
+    const { root, pathElements, pathIndices } = computeSparseSingleLeafProof(
+      commitment, TREE_DEPTH, leafIndex
+    );
 
     // Full withdrawal (no change)
     const withdrawAmount = amount;
@@ -112,6 +183,9 @@ describe("ZK E2E Tests", () => {
       newSalt: newSalt.toString(),
       pathElements: pathElements.map(e => e.toString()),
       pathIndices: pathIndices.map(i => i.toString()),
+      // [issue #128] pubkey bound to the original commitment
+      pubKeyAx: pubKeyAx.toString(),
+      pubKeyAy: pubKeyAy.toString(),
     };
 
     // Generate proof
@@ -134,21 +208,29 @@ describe("ZK E2E Tests", () => {
     const token = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9");
     const amount = BigInt("5000000000000000000"); // 5 ETH
     const salt = randomField();
+    const { pubKeyAx, pubKeyAy } = randomBabyJubKeypair();
 
-    const commitment = F.toObject(poseidon([ownerSecret, token, amount, salt]));
+    const commitment = computeCommitmentV2({
+      secret: ownerSecret, token, amount, salt, pubKeyAx, pubKeyAy,
+    });
     // [M4] Domain-separated escrow nullifier (tag = 0)
     const nullifierHash = F.toObject(poseidon([0n, ownerSecret, salt]));
     const tokenHash = F.toObject(poseidon([token]));
 
     const leafIndex = 0;
-    const { root, layers } = await buildMerkleTree([commitment], TREE_DEPTH);
-    const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
+    const { root, pathElements, pathIndices } = computeSparseSingleLeafProof(
+      commitment, TREE_DEPTH, leafIndex
+    );
 
-    // Partial withdrawal: withdraw 2 ETH, keep 3 ETH as change
+    // Partial withdrawal: withdraw 2 ETH, keep 3 ETH as change.
+    // [issue #128] Change commitment preserves the same pubkey.
     const withdrawAmount = BigInt("2000000000000000000");
     const changeAmount = amount - withdrawAmount;
     const newSalt = randomField();
-    const newCommitment = F.toObject(poseidon([ownerSecret, token, changeAmount, newSalt]));
+    const newCommitment = computeCommitmentV2({
+      secret: ownerSecret, token, amount: changeAmount, salt: newSalt,
+      pubKeyAx, pubKeyAy,
+    });
 
     const recipient = BigInt("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
@@ -167,6 +249,8 @@ describe("ZK E2E Tests", () => {
       newSalt: newSalt.toString(),
       pathElements: pathElements.map(e => e.toString()),
       pathIndices: pathIndices.map(i => i.toString()),
+      pubKeyAx: pubKeyAx.toString(),
+      pubKeyAy: pubKeyAy.toString(),
     };
 
     console.time("partial withdraw proof");

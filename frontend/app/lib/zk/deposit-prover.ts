@@ -52,6 +52,11 @@ export async function generateDepositProof(
     // Private
     secret: note.ownerSecret.toString(),
     salt: note.salt.toString(),
+    // [issue #128] Pubkey is bound into the commitment preimage. The
+    // circuit runs BabyCheck + identity rejection on these inputs, so
+    // we MUST pass the exact pubkey the note was generated for.
+    pubKeyAx: note.pubKeyAx.toString(),
+    pubKeyAy: note.pubKeyAy.toString(),
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(

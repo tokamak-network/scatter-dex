@@ -26,7 +26,7 @@ import { fileURLToPath } from "url";
 
 // Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22).
 // Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
-import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7, poseidon8, poseidon9 } from "poseidon-lite";
 
 // EdDSA needs circomlibjs (WASM-based) — only used for babyJub.F field conversions
 // on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
@@ -34,7 +34,8 @@ import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 // [PR #124 review] Centralised nullifier domain tags so the inline literal
 // `2n` / `0n` cannot drift from circuits/zk-prover/frontend.
-import { TAG_ESCROW_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
+// [issue #128] TAG_COMMITMENT_V2 joins the v2 commitment preimage.
+import { TAG_ESCROW_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,12 +96,28 @@ function poseidonHash(inputs: bigint[]): bigint {
     case 3: return poseidon3(inputs);
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
+    case 7: return poseidon7(inputs);
     case 8: return poseidon8(inputs);
     case 9: return poseidon9(inputs);
     default: throw new Error(
-      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 3, 4, 5, 8, 9)`
+      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 3, 4, 5, 7, 8, 9)`
     );
   }
+}
+
+/**
+ * v2 commitment: Poseidon(TAG_COMMITMENT_V2, secret, token, amount,
+ * salt, pubKeyAx, pubKeyAy). See circuits/deposit.circom + issue #128.
+ */
+function computeCommitmentV2(
+  secret: bigint,
+  token: bigint,
+  amount: bigint,
+  salt: bigint,
+  pubKeyAx: bigint,
+  pubKeyAy: bigint,
+): bigint {
+  return poseidonHash([TAG_COMMITMENT_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy]);
 }
 
 async function getEdDSAWithField() {
@@ -239,9 +256,20 @@ async function main() {
   const approveTx = await wethContract.approve(poolAddr, ethers.MaxUint256);
   await approveTx.wait();
 
+  // [issue #128] Derive the BabyJub signing key BEFORE the deposit —
+  // the v2 commitment format binds the pubkey. Same key is used later
+  // in the EdDSA-signed order below.
+  const { eddsa: eddsaForDeposit, F: FForDeposit } = await getEdDSAWithField();
+  const eddsaPrivKey = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-test-key")).slice(2), "hex");
+  const pubKeyRaw = eddsaForDeposit.prv2pub(eddsaPrivKey);
+  const pubKeyAx = FForDeposit.toObject(pubKeyRaw[0]);
+  const pubKeyAy = FForDeposit.toObject(pubKeyRaw[1]);
+
   const ownerSecret = randomFieldElement();
   const salt = randomFieldElement();
-  const commitment = poseidonHash([ownerSecret, BigInt(weth), depositAmount, salt]);
+  const commitment = computeCommitmentV2(
+    ownerSecret, BigInt(weth), depositAmount, salt, pubKeyAx, pubKeyAy,
+  );
 
   const depositProof = await makeDepositProof({
     secret: ownerSecret,
@@ -249,6 +277,8 @@ async function main() {
     token: weth,
     commitment,
     amount: depositAmount,
+    pubKeyAx,
+    pubKeyAy,
   });
   const depositTx = await poolContract.deposit(
     depositProof.a, depositProof.b, depositProof.c,
@@ -267,15 +297,13 @@ async function main() {
   }
   assert(leafIndex >= 0, `Deposit committed at leaf #${leafIndex}`);
 
-  // ─── Step 3: Generate EdDSA key + sign order ───────────────
-  console.log("\n[3/9] Generating EdDSA key & signing order...");
-  const { eddsa, F } = await getEdDSAWithField();
-
-  // Deterministic seed for reproducibility — NOT used in production
-  const eddsaPrivKey = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes("e2e-test-key")).slice(2), "hex");
-  const pubKey = eddsa.prv2pub(eddsaPrivKey);
-  const pubKeyAx = F.toObject(pubKey[0]);
-  const pubKeyAy = F.toObject(pubKey[1]);
+  // ─── Step 3: Sign order (EdDSA key already derived for deposit) ──
+  console.log("\n[3/9] Signing order with the EdDSA key bound into the commitment...");
+  // [issue #128] eddsa/F/eddsaPrivKey/pubKeyAx/pubKeyAy were derived
+  // earlier (see Step 2 deposit block) because the v2 commitment binds
+  // the pubkey. We reuse them here so sign and spend use the same key.
+  const eddsa = eddsaForDeposit;
+  const F = FForDeposit;
 
   // Build claims
   const claimSecret1 = randomFieldElement();
@@ -303,10 +331,13 @@ async function main() {
 
   const { root: claimsRoot, layers: claimsLayers } = buildTree(paddedLeaves, CLAIMS_TREE_DEPTH);
 
-  // Compute change salt + expected change commitment
+  // Compute change salt + expected change commitment.
+  // [issue #128] v2 binding — the change preserves the same pubkey.
   const changeSalt = randomFieldElement();
   const changeAmount = depositAmount - sellAmount;
-  const expectedChangeCommitment = poseidonHash([ownerSecret, tokenBig, changeAmount, changeSalt]);
+  const expectedChangeCommitment = computeCommitmentV2(
+    ownerSecret, tokenBig, changeAmount, changeSalt, pubKeyAx, pubKeyAy,
+  );
 
   // Build order nonce (use chain time to avoid wall-clock drift)
   const nonce = chainTime * 1000n + BigInt(Date.now() % 1000); // unique per run

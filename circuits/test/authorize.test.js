@@ -49,6 +49,9 @@ const MAX_CLAIMS = 16;
 // ── Domain tags (must match circuits/tags.circom) ──
 const TAG_ESCROW_NULL = 0n;
 const TAG_NONCE_NULL = 1n;
+// [issue #128] v2 commitment tag — binds BabyJub signing pubkey into the
+// escrow commitment preimage.
+const TAG_COMMITMENT_V2 = 3n;
 
 let poseidon, F, eddsa, babyJub;
 
@@ -161,9 +164,20 @@ async function buildAuthorizeInput({
   relayer,
   privKey,
 }) {
-  // Commitment + sparse single-leaf tree (depth=20, ~40 Poseidon hashes
-  // total — see computeSparseSingleLeafProof for why this matters).
-  const commitment = F.toObject(poseidon([secret, sellToken, balance, salt]));
+  // [issue #128] Derive the BabyJub signing pubkey first — it's part
+  // of the v2 commitment preimage, so it has to exist before we
+  // compute the commitment.
+  const pub = eddsa.prv2pub(privKey);
+  const pubKeyAx = babyJub.F.toObject(pub[0]);
+  const pubKeyAy = babyJub.F.toObject(pub[1]);
+
+  // v2 commitment: Poseidon(TAG_COMMITMENT_V2, secret, sellToken,
+  // balance, salt, pubKeyAx, pubKeyAy). Sparse single-leaf tree
+  // (depth=20, ~40 Poseidon hashes total — see
+  // computeSparseSingleLeafProof for why this matters).
+  const commitment = F.toObject(
+    poseidon([TAG_COMMITMENT_V2, secret, sellToken, balance, salt, pubKeyAx, pubKeyAy])
+  );
   const leafIndex = 0;
   const { root, pathElements, pathIndices } = computeSparseSingleLeafProof(
     commitment,
@@ -175,11 +189,13 @@ async function buildAuthorizeInput({
   const nullifier = F.toObject(poseidon([TAG_ESCROW_NULL, secret, salt]));
   const nonceNullifier = F.toObject(poseidon([TAG_NONCE_NULL, secret, nonce]));
 
-  // New (residual) commitment
+  // Residual commitment uses the same v2 binding.
   const newBalance = balance - sellAmount;
   const newCommitment = newBalance === 0n
     ? 0n
-    : F.toObject(poseidon([secret, sellToken, newBalance, newSalt]));
+    : F.toObject(
+        poseidon([TAG_COMMITMENT_V2, secret, sellToken, newBalance, newSalt, pubKeyAx, pubKeyAy])
+      );
 
   // Claims root + total locked.
   //
@@ -203,13 +219,14 @@ async function buildAuthorizeInput({
     poseidon([sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayer])
   );
 
-  // EdDSA signature over orderHash
+  // EdDSA signature over orderHash. pubKeyAx/Ay were derived earlier
+  // (they're part of the commitment preimage now).
+  //
+  // [issue #128 design correction] We no longer expose pubKeyHash as
+  // a public output — see the threat-model block at the top of
+  // authorize.circom for why. The pubkey stays inside the witness.
   const orderHashBytes = F.e(orderHash);
   const sig = eddsa.signPoseidon(privKey, orderHashBytes);
-  const pub = eddsa.prv2pub(privKey);
-  const pubKeyAx = babyJub.F.toObject(pub[0]);
-  const pubKeyAy = babyJub.F.toObject(pub[1]);
-  const pubKeyHash = F.toObject(poseidon([pubKeyAx, pubKeyAy]));
 
   return {
     // public
@@ -227,7 +244,6 @@ async function buildAuthorizeInput({
     totalLocked: totalLocked.toString(),
     relayer: relayer.toString(),
     orderHash: orderHash.toString(),
-    pubKeyHash: pubKeyHash.toString(),
     // private
     secret: secret.toString(),
     balance: balance.toString(),
@@ -401,8 +417,8 @@ describe("authorize.circom (Half-proof PoC)", () => {
     });
 
     // Flip one bit of the signature scalar — keeps every other public
-    // signal valid, including the orderHash and pubKeyHash, so the
-    // failure must come from the EdDSA verifier itself.
+    // signal valid, including the orderHash, so the failure must come
+    // from the EdDSA verifier itself.
     const tampered = { ...input, sigS: (BigInt(input.sigS) + 1n).toString() };
 
     await expectWitnessFailure(tampered);
