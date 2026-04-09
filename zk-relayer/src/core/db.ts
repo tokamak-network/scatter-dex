@@ -24,6 +24,7 @@ interface OrderRow {
   leaf_index: number;
   status: string;
   settle_tx: string | null;
+  cross_relayer: number;
   submitted_at: number;
 }
 
@@ -162,6 +163,11 @@ export class PrivateOrderDB {
         settled_at    INTEGER NOT NULL
       );
     `);
+
+    // Migration: add cross_relayer column to existing databases
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN cross_relayer INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
   }
 
   save(stored: StoredPrivateOrder): void {
@@ -216,7 +222,7 @@ export class PrivateOrderDB {
       nonce: nonce.toString(),
       status,
       settleTx: settleTxHash ?? null,
-      crossRelayer: crossRelayer ? 1 : null,
+      crossRelayer: crossRelayer ? 1 : 0,
     });
   }
 
@@ -268,7 +274,7 @@ export class PrivateOrderDB {
       status: row.status as PrivateOrderStatus,
       submittedAt: row.submitted_at,
       settleTxHash: row.settle_tx ?? undefined,
-      crossRelayer: (row as Record<string, unknown>).cross_relayer === 1 ? true : undefined,
+      crossRelayer: row.cross_relayer === 1 ? true : undefined,
     };
   }
 

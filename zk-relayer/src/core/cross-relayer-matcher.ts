@@ -61,6 +61,10 @@ export class CrossRelayerMatchService {
       : this.orderbook.getSellOrders(pair);
 
     const now = BigInt(Math.floor(Date.now() / 1000));
+
+    // Skip expired remote orders
+    if (BigInt(summary.expiry) <= now) return;
+
     const remoteSellAmount = BigInt(summary.sellAmount);
     const remoteBuyAmount = BigInt(summary.buyAmount);
 
