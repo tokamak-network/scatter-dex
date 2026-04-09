@@ -192,7 +192,7 @@ Replace central server with:
 
 ## Security Considerations
 
-1. **Secret exposure**: Users must explicitly approve sending secrets to a new relayer
+1. **Secret exposure**: Users delegate secrets to their relayer on order submission. Cross-relayer secret transfer (via Trade Offer) is handled automatically by relayers — no additional user approval needed. See [relayer-security.md](./relayer-security.md) for details
 2. **Relayer impersonation**: Shared orderbook must verify relayer identity (signed messages or on-chain registry check)
 3. **Order front-running**: Order summaries are public — MEV bots could front-run. Mitigated by relayer binding in ZK proof
 4. **DoS**: Rate limiting on shared orderbook API

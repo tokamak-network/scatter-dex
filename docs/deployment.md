@@ -84,8 +84,11 @@ Copy the deployed addresses into `.env`:
 
 ### 3. Start Services
 
+Contract addresses from step 2 are passed via `.env` environment variables.
+The `deployer` service only runs in `mock` profile — testnet mode skips it.
+
 ```bash
-# Single relayer
+# Single relayer (testnet — no deployer, no anvil)
 docker compose up -d shared-orderbook zk-relayer
 
 # Multi-relayer
@@ -94,11 +97,17 @@ docker compose --profile multi-relayer up -d shared-orderbook zk-relayer zk-rela
 
 ### 4. Register Relayers
 
-Relayers auto-register with the shared orderbook on startup. For on-chain registration (if RelayerRegistry requires it):
+Relayers auto-register with the shared orderbook server on startup. For on-chain registration in `RelayerRegistry` (if required by your deployment):
 
 ```bash
-cast send $RELAYER_REGISTRY "register()" --rpc-url $RPC_URL --private-key $RELAYER_A_KEY
-cast send $RELAYER_REGISTRY "register()" --rpc-url $RPC_URL --private-key $RELAYER_B_KEY
+# register(string url, uint256 fee) — check your contract's exact signature
+cast send $RELAYER_REGISTRY "register(string,uint256)" \
+  "https://relayer-a.yourdomain.com" 30 \
+  --rpc-url $RPC_URL --private-key $RELAYER_A_KEY
+
+cast send $RELAYER_REGISTRY "register(string,uint256)" \
+  "https://relayer-b.yourdomain.com" 30 \
+  --rpc-url $RPC_URL --private-key $RELAYER_B_KEY
 ```
 
 ## Docker Services
