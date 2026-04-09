@@ -1017,6 +1017,11 @@ export default function PrivateOrderPage() {
             <p className="text-sm text-on-surface-variant/70">
               Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity.
             </p>
+            {process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL && (
+              <div className="bg-primary/5 border border-primary/15 rounded-lg px-4 py-3 text-xs text-on-surface-variant/60 text-left">
+                <span className="text-primary font-semibold">Shared Orderbook:</span> Your order summary is also published to the shared orderbook, enabling cross-relayer matching with other relayers for better liquidity.
+              </div>
+            )}
             <button
               onClick={() => { setStep("create_order"); refreshNotes(); }}
               className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"

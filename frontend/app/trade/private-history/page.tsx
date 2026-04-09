@@ -57,9 +57,10 @@ interface OrderFile {
     leafIndex: number;
   }>;
   createdAt: string;
-  // Enriched from relayer
+  // Enriched from relayer API response
   status?: string;
   settleTxHash?: string;
+  crossRelayer?: boolean; // Requires zk-relayer to include this field in GET response (future)
 }
 
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
@@ -142,14 +143,14 @@ export default function PrivateHistoryPage() {
       const res = await fetch(`${relayerUrl}/api/private-orders/${pubKeyAx}`);
       if (!res.ok) return orderList;
       const data = await res.json();
-      const relayerOrders: Array<{ nonce: string; status: string; settleTxHash?: string }> =
+      const relayerOrders: Array<{ nonce: string; status: string; settleTxHash?: string; crossRelayer?: boolean }> =
         Array.isArray(data) ? data : data.orders ?? [];
 
       // Match by nonce
       return orderList.map((o) => {
         if (!o.order?.nonce) return o;
         const match = relayerOrders.find((ro) => ro.nonce === o.order.nonce);
-        return match ? { ...o, status: match.status, settleTxHash: match.settleTxHash } : o;
+        return match ? { ...o, status: match.status, settleTxHash: match.settleTxHash, crossRelayer: match.crossRelayer } : o;
       });
     } catch {
       return orderList;
@@ -296,8 +297,15 @@ export default function PrivateHistoryPage() {
                     <span className="text-tertiary font-bold">{ethers.formatUnits(o.order.buyAmount, buy.decimals)}</span>
                     <span className="text-on-surface-variant ml-1">{buy.symbol}</span>
                   </div>
-                  <div className={`font-bold text-xs ${STATUS_COLORS[o.status ?? ""] ?? "text-on-surface-variant/40"}`}>
-                    {o.status ?? (keyPair ? "—" : "unlock key")}
+                  <div className="flex items-center gap-1.5">
+                    <span className={`font-bold text-xs ${STATUS_COLORS[o.status ?? ""] ?? "text-on-surface-variant/40"}`}>
+                      {o.status ?? (keyPair ? "—" : "unlock key")}
+                    </span>
+                    {o.crossRelayer && (
+                      <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/20">
+                        Cross
+                      </span>
+                    )}
                   </div>
                   <div className="text-on-surface-variant font-mono text-xs">
                     {new Date(o.createdAt).toLocaleString("en-US", {

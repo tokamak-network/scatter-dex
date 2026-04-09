@@ -39,6 +39,7 @@ export interface TradeData {
   createdAt: string;
   status?: string;
   settleTxHash?: string;
+  crossRelayer?: boolean;
 }
 
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
@@ -197,9 +198,19 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
 
       {/* Settle tx */}
       {trade.settleTxHash && (
-        <div className="bg-surface-container/50 rounded-lg px-4 py-2 text-xs">
-          <span className="text-on-surface-variant/40">Settlement Tx: </span>
-          <span className="font-mono text-primary break-all">{trade.settleTxHash}</span>
+        <div className="bg-surface-container/50 rounded-lg px-4 py-2 text-xs space-y-1">
+          <div>
+            <span className="text-on-surface-variant/40">Settlement Tx: </span>
+            <span className="font-mono text-primary break-all">{trade.settleTxHash}</span>
+          </div>
+          {trade.crossRelayer && (
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/20">
+                Cross-Relayer
+              </span>
+              <span className="text-on-surface-variant/40">Matched across relayers</span>
+            </div>
+          )}
         </div>
       )}
 

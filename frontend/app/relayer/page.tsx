@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine } from "lucide-react";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
@@ -10,6 +10,8 @@ import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
 import { shortenAddress } from "../lib/utils";
+import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
+import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
 
 function formatBond(bond: bigint): string {
   const val = Number(ethers.formatEther(bond));
@@ -167,6 +169,30 @@ export default function RelayersPage() {
   const [orderbooks, setOrderbooks] = useState<Map<string, Map<string, RelayerOrderbook>>>(new Map());
   const [obLoading, setObLoading] = useState(false);
 
+  // Shared orderbook state
+  const [sharedRelayers, setSharedRelayers] = useState<SharedRelayer[]>([]);
+  const sharedRelayerMap = useMemo(() => {
+    const m = new Map<string, SharedRelayer>();
+    for (const r of sharedRelayers) m.set(r.address.toLowerCase(), r);
+    return m;
+  }, [sharedRelayers]);
+  const [obViewMode, setObViewMode] = useState<"local" | "global">("local");
+  const [globalOrders, setGlobalOrders] = useState<SharedOrder[]>([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+
+  const globalLoadingRef = React.useRef(false);
+  const loadGlobalOrders = useCallback(async () => {
+    if (globalLoadingRef.current) return;
+    globalLoadingRef.current = true;
+    setGlobalLoading(true);
+    try {
+      const orders = await getOrders(500);
+      setGlobalOrders(orders);
+    } catch { /* silent */ }
+    setGlobalLoading(false);
+    globalLoadingRef.current = false;
+  }, []);
+
   // FeeVault state
   const [vaultBalances, setVaultBalances] = useState<{ token: string; symbol: string; balance: bigint }[]>([]);
   const [vaultPlatformFee, setVaultPlatformFee] = useState<number>(0);
@@ -305,6 +331,9 @@ export default function RelayersPage() {
         </button>
       </div>
 
+      {/* Shared Orderbook Status */}
+      <SharedOrderbookStatus onRelayersLoaded={setSharedRelayers} />
+
       {error && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-error-container/10 border border-error/20 text-error text-sm mb-4">
           <AlertCircle className="w-4 h-4 flex-shrink-0" /> {error}
@@ -380,6 +409,18 @@ export default function RelayersPage() {
                     {r.url}
                   </div>
                 )}
+                {/* Shared orderbook info */}
+                {(() => {
+                  const shared = sharedRelayerMap.get(r.address.toLowerCase());
+                  if (!shared) return null;
+                  return (
+                    <div className="mt-2 pt-2 border-t border-outline-variant/10 flex gap-3 text-[10px] text-on-surface-variant/50">
+                      <span className="text-tertiary">Shared</span>
+                      <span>{shared.orderCount} shared orders</span>
+                      <span>Heartbeat: {timeAgo(shared.lastHeartbeat)}</span>
+                    </div>
+                  );
+                })()}
               </button>
             ))}
           </div>
@@ -475,14 +516,43 @@ export default function RelayersPage() {
               </div>
             )}
 
-            {obLoading && (
+            {/* Orderbook view mode tabs */}
+            {sharedRelayers.length > 0 && (
+              <div className="flex gap-1 mb-3">
+                <button
+                  onClick={() => setObViewMode("local")}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    obViewMode === "local"
+                      ? "bg-primary/15 text-primary"
+                      : "text-on-surface-variant/60 hover:text-on-surface-variant"
+                  }`}
+                >
+                  Local
+                </button>
+                <button
+                  onClick={() => {
+                    setObViewMode("global");
+                    loadGlobalOrders();
+                  }}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    obViewMode === "global"
+                      ? "bg-primary/15 text-primary"
+                      : "text-on-surface-variant/60 hover:text-on-surface-variant"
+                  }`}
+                >
+                  Global
+                </button>
+              </div>
+            )}
+
+            {(obLoading || globalLoading) && (
               <div className="flex items-center justify-center py-8 text-on-surface-variant/50 text-sm">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading orderbooks...
               </div>
             )}
 
-            {/* Orderbook per pair */}
-            {!obLoading && pairOptions.length > 0 && (
+            {/* Local orderbook per pair */}
+            {!obLoading && !globalLoading && obViewMode === "local" && pairOptions.length > 0 && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 {pairOptions.map((p) => {
                   const pts = p.value.split("-");
@@ -505,6 +575,53 @@ export default function RelayersPage() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Global orderbook (shared orderbook) */}
+            {!globalLoading && obViewMode === "global" && (
+              <div className="space-y-3">
+                {globalOrders.length === 0 ? (
+                  <div className="text-xs text-on-surface-variant/30 text-center py-10">
+                    No orders on shared orderbook
+                  </div>
+                ) : (
+                  <div className="bg-surface-container rounded-xl border border-outline-variant/15 overflow-hidden">
+                    {/* Pre-compute relayer lookup map for O(1) access per row */}
+                    <div className="grid grid-cols-[1fr_1fr_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-outline-variant/10 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
+                      <span>Sell</span>
+                      <span>Buy</span>
+                      <span className="text-right">Fee</span>
+                      <span className="text-right">Expiry</span>
+                      <span className="text-right">Relayer</span>
+                    </div>
+                    <div className="max-h-[400px] overflow-y-auto">
+                      {globalOrders.map((o) => {
+                        const sellSym = findToken(o.sellToken)?.symbol ?? shortenAddress(o.sellToken);
+                        const buySym = findToken(o.buyToken)?.symbol ?? shortenAddress(o.buyToken);
+                        const sellDec = findToken(o.sellToken)?.decimals ?? 18;
+                        const buyDec = findToken(o.buyToken)?.decimals ?? 18;
+                        const sellFmt = Number(ethers.formatUnits(o.sellAmount, sellDec)).toFixed(4);
+                        const buyFmt = Number(ethers.formatUnits(o.buyAmount, buyDec)).toFixed(4);
+                        const shared = sharedRelayerMap.get(o.relayer.toLowerCase());
+                        const expiresIn = o.expiry - Math.floor(Date.now() / 1000);
+                        const expiryStr = expiresIn <= 0 ? "Expired" : expiresIn > 3600 ? `${Math.floor(expiresIn / 3600)}h` : expiresIn > 60 ? `${Math.floor(expiresIn / 60)}m` : `${expiresIn}s`;
+
+                        return (
+                          <div key={o.id} className="grid grid-cols-[1fr_1fr_80px_80px_100px] gap-2 px-4 py-2 text-xs hover:bg-surface-bright/20 transition-colors border-b border-outline-variant/5">
+                            <span className="font-mono text-error">{sellFmt} {sellSym}</span>
+                            <span className="font-mono text-tertiary">{buyFmt} {buySym}</span>
+                            <span className="text-right text-on-surface-variant/60">{(o.maxFee / 100).toFixed(2)}%</span>
+                            <span className="text-right text-on-surface-variant/60">{expiryStr}</span>
+                            <span className="text-right text-[10px] text-on-surface-variant/40 truncate">
+                              {shared?.name ?? shortenAddress(o.relayer)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

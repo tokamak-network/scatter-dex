@@ -26,6 +26,7 @@ const ENV_MAP: Record<string, string | undefined> = {
   NEXT_PUBLIC_ZK_X509_URL: process.env.NEXT_PUBLIC_ZK_X509_URL,
   NEXT_PUBLIC_FEE_VAULT_ADDRESS: process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS,
   NEXT_PUBLIC_DEPLOY_BLOCK: process.env.NEXT_PUBLIC_DEPLOY_BLOCK,
+  NEXT_PUBLIC_SHARED_ORDERBOOK_URL: process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
 };
 
 export function getEnv(key: string): string | undefined {
@@ -80,6 +81,10 @@ let _feeVault: string | undefined;
 export function getFeeVaultAddress(): string {
   if (!_feeVault) _feeVault = getEnv("NEXT_PUBLIC_FEE_VAULT_ADDRESS") || "";
   return _feeVault;
+}
+
+export function getSharedOrderbookUrl(): string {
+  return getEnv("NEXT_PUBLIC_SHARED_ORDERBOOK_URL") || "";
 }
 
 export function getZkX509Url(): string {
