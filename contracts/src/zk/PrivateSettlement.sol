@@ -30,6 +30,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error ExceedsTotalLocked();
     error RenounceOwnershipDisabled();
     error TokenNotWhitelisted();
+    error NotMakerOrTakerRelayer();
     error NotYetReleasable();
     error TokenMismatch();
     error AmountOverflow();
@@ -164,7 +165,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
     function settlePrivate(SettleParams calldata p) external nonReentrant {
         // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
-        require(msg.sender == p.makerRelayer || msg.sender == p.takerRelayer, "sender must be maker or taker relayer");
+        if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();

@@ -554,9 +554,9 @@ contract FeeVaultTest is Test {
     function test_settlePrivate_only_active_relayer() public {
         PrivateSettlement.SettleParams memory p = _params();
 
-        // Non-relayer (not in proof) should be rejected with descriptive message
+        // Non-relayer (not in proof) should be rejected
         vm.prank(nonRelayer);
-        vm.expectRevert("sender must be maker or taker relayer");
+        vm.expectRevert(PrivateSettlement.NotMakerOrTakerRelayer.selector);
         settlement.settlePrivate(p);
 
         // Registered relayer (in proof as both maker+taker) should succeed
@@ -575,14 +575,13 @@ contract FeeVaultTest is Test {
         settlement.scatterDirect(p);
     }
 
-    function test_disable_relayer_gate() public {
-        // Disable relayer gating
+    function test_disable_registry_still_requires_proof_relayer() public {
+        // Disable relayer registry gating
         settlement.setRelayerRegistry(address(0));
 
-        // Still restricted to maker/taker relayer in proof (not "anyone")
+        // Still restricted to maker/taker relayer bound in proof
         PrivateSettlement.SettleParams memory p = _params();
-        // relayer (= makerRelayer = takerRelayer in _params) should succeed
-        vm.prank(relayer);
+        vm.prank(relayer); // relayer = makerRelayer = takerRelayer in _params
         settlement.settlePrivate(p);
     }
 
