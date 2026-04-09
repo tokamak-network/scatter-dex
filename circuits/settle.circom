@@ -105,11 +105,11 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input totalLockedTaker;      // total locked for taker's claims
     signal input tokenMaker;            // token maker receives (= taker's sell token)
     signal input tokenTaker;            // token taker receives (= maker's sell token)
-    signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell) → paid to makerRelayer
-    signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell) → paid to takerRelayer
+    signal input feeTokenMaker;         // fee in tokenMaker (from taker's sell) → paid to takerRelayer
+    signal input feeTokenTaker;         // fee in tokenTaker (from maker's sell) → paid to makerRelayer
     signal input currentTimestamp;      // block.timestamp for expiry check
-    signal input makerRelayer;          // relayer that handles maker's order → receives feeTokenMaker
-    signal input takerRelayer;          // relayer that handles taker's order → receives feeTokenTaker
+    signal input makerRelayer;          // relayer that handles maker's order → receives feeTokenTaker
+    signal input takerRelayer;          // relayer that handles taker's order → receives feeTokenMaker
 
     // ════════════════════════════════════════
     //  PRIVATE INPUTS

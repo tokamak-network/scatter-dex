@@ -202,7 +202,7 @@ Settle circuit redesigned with dual relayer binding:
 1. **orderHash** now includes `relayerAddress` — user's EdDSA signature binds the order to a specific relayer
 2. **Public signals**: single `relayer` → `makerRelayer` + `takerRelayer`
 3. **Contract**: fee split based on proof — `feeTokenMaker` → `makerRelayer`, `feeTokenTaker` → `takerRelayer`
-4. **Anyone can submit**: `msg.sender` no longer checked — relayer addresses are in the proof
+4. **Either relayer can submit**: only makerRelayer or takerRelayer can call settlePrivate (prevents DoS)
 5. **Trustless**: Relayer A cannot redirect Relayer B's fee because it's bound in User B's EdDSA signature
 
 ### Phase 4: Decentralization (future)

@@ -153,8 +153,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 totalLockedTaker;
         address tokenMaker;
         address tokenTaker;
-        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell, paid to makerRelayer)
-        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell, paid to takerRelayer)
+        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell) → paid to takerRelayer
+        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell) → paid to makerRelayer
         address makerRelayer;   // relayer that handles maker's order (bound in proof)
         address takerRelayer;   // relayer that handles taker's order (bound in proof)
     }
@@ -163,7 +163,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
     /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
     function settlePrivate(SettleParams calldata p) external nonReentrant {
-        if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotActiveRelayer();
+        // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
+        require(msg.sender == p.makerRelayer || msg.sender == p.takerRelayer, "sender must be maker or taker relayer");
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
@@ -236,11 +237,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
         }
 
-        // Transfer fees: split between maker's relayer and taker's relayer
-        // feeTokenMaker (from taker's sell) → maker's relayer
-        // feeTokenTaker (from maker's sell) → taker's relayer
-        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.makerRelayer);
-        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.takerRelayer);
+        // Transfer fees: each relayer receives the fee paid by their user
+        // feeTokenMaker (from taker's sell amount) → takerRelayer (taker's relayer earns taker's fee)
+        // feeTokenTaker (from maker's sell amount) → makerRelayer (maker's relayer earns maker's fee)
+        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.takerRelayer);
+        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.makerRelayer);
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
         if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
