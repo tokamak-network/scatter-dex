@@ -22,7 +22,6 @@ export interface DepositProofResult {
     b: [[string, string], [string, string]];
     c: [string, string];
   };
-  publicSignals: string[];
 }
 
 /**
@@ -61,6 +60,15 @@ export async function generateDepositProof(
     ZKEY_PATH,
   );
 
+  // Sanity-check that the prover-emitted public signal matches the
+  // commitment we derived from the note. If they ever drift the user
+  // would otherwise see only an opaque on-chain `InvalidProof` revert.
+  if (BigInt(publicSignals[0]) !== commitment) {
+    throw new Error(
+      "deposit-prover: snarkjs publicSignals[0] does not match the derived commitment"
+    );
+  }
+
   return {
     commitment,
     proof: {
@@ -71,6 +79,5 @@ export async function generateDepositProof(
       ],
       c: [proof.pi_c[0], proof.pi_c[1]],
     },
-    publicSignals,
   };
 }

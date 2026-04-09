@@ -32,6 +32,8 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error NotAuthorizedSettlement();
     error InsufficientPoolBalance();
     error FieldElementOutOfRange();
+    error NotAContract();
+    error FeeOnTransferTokenUnsupported();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -76,6 +78,10 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     {
         if (_withdrawVerifier == address(0)) revert ZeroAddress();
         if (_depositVerifier == address(0)) revert ZeroAddress();
+        // [PR #123 review] Reject EOAs at deploy-time so a fat-fingered
+        // address surfaces immediately instead of failing inside verifyProof.
+        if (_withdrawVerifier.code.length == 0) revert NotAContract();
+        if (_depositVerifier.code.length == 0) revert NotAContract();
         withdrawVerifier = IVerifier(_withdrawVerifier);
         depositVerifier = IDepositVerifier(_depositVerifier);
     }
@@ -160,8 +166,17 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
             revert InvalidProof();
         }
 
-        // Transfer tokens to this contract
+        // [PR #123 review] Defend against fee-on-transfer / rebasing tokens.
+        // The commitment encodes the *parameter* `amount`, so the pool must
+        // actually receive exactly that many tokens — otherwise an admin who
+        // accidentally whitelists a fee-on-transfer token leaks `fee` per
+        // deposit and lets honest depositors slowly drain via overcommitted
+        // withdraw amounts. Measuring the balance delta around the transfer
+        // turns this silent loss into a hard revert.
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+        if (received != amount) revert FeeOnTransferTokenUnsupported();
 
         // Insert commitment into Merkle tree
         uint32 leafIndex = _insert(commitment);
