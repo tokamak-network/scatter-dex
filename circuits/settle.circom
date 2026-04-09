@@ -44,11 +44,17 @@ template PoseidonMerkleProof(levels) {
 // [M5] The internal `isUsed` check below is technically redundant with the
 // way the Settle circuit invokes this template: the caller already mutes
 // unused leaves to zero (`makerComputedLeaves[i] * makerClaimUsed[i].out`,
-// see §9 of the Settle template). We keep the inner check anyway because:
-//   1. ComputeMerkleRoot is meant to be reusable; future callers must not
-//      have to re-derive the muting invariant themselves.
-//   2. The constraint cost is `O(maxLeaves)` (16 in practice) which is
-//      vanishingly small next to the rest of settle.circom (~60k).
+// see §9 of the Settle template). We keep the inner check because
+// ComputeMerkleRoot is meant to be reusable — future callers must not
+// have to re-derive the muting invariant themselves.
+//
+// [PR #126 review] Real cost: each `LessThan(252)` expands to ~256 R1CS
+// constraints, and we instantiate it 16 times for maker + 16 for taker
+// = ~8.2k constraints, roughly 13% of the ~64k-constraint settle circuit.
+// That's a deliberate trade for the reusability invariant above, not
+// "vanishingly small". If we ever decide to keep ComputeMerkleRoot
+// internal-only and rely solely on the caller-side muting, the inner
+// check can be dropped for an immediate ~13% saving.
 template ComputeMerkleRoot(maxLeaves, depth) {
     signal input leaves[maxLeaves];
     signal input count; // actual number of leaves (rest are zero-padded)
