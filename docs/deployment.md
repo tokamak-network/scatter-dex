@@ -127,6 +127,9 @@ cast send $RELAYER_REGISTRY "register()" --rpc-url $RPC_URL --private-key $RELAY
 |----------|---------|-------------|
 | `RPC_URL` | `http://localhost:8545` | Ethereum RPC endpoint |
 | `RELAYER_PRIVATE_KEY` | — | Relayer wallet private key |
+| `COMMITMENT_POOL_ADDRESS` | — | CommitmentPool contract (auto-loaded from deployer in Docker) |
+| `PRIVATE_SETTLEMENT_ADDRESS` | — | PrivateSettlement contract (auto-loaded from deployer in Docker) |
+| `FEE_VAULT_ADDRESS` | — | FeeVault contract (auto-loaded from deployer in Docker) |
 | `PORT` | `3002` | API port |
 | `RELAYER_FEE` | `30` | Fee in basis points (0.3%) |
 | `SHARED_ORDERBOOK_URL` | — | Shared orderbook server URL (optional) |
