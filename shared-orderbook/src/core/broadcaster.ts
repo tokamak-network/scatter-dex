@@ -1,13 +1,8 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import type { OrderSummary } from "../types/order.js";
+import type { BroadcastEvent } from "@scatter-dex/types";
 
-export type BroadcastEvent =
-  | { type: "order:new"; order: OrderSummary }
-  | { type: "order:cancelled"; orderId: string; relayer: string }
-  | { type: "order:expired"; orderId: string }
-  | { type: "relayer:registered"; relayer: string; url: string }
-  | { type: "relayer:offline"; relayer: string };
+export type { BroadcastEvent } from "@scatter-dex/types";
 
 /**
  * WebSocket broadcaster — pushes real-time events to connected relayers.
