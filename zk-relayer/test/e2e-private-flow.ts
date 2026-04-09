@@ -57,11 +57,50 @@ const WETH_ABI = [
 ];
 
 const POOL_ABI = [
-  "function deposit(uint256 commitment, address token, uint256 amount) external",
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
+
+// Paths to deposit circuit artifacts (relative to zk-relayer/test/)
+const __filename_e2e = fileURLToPath(import.meta.url);
+const __dirname_e2e = path.dirname(__filename_e2e);
+const DEPOSIT_WASM = path.join(__dirname_e2e, "../../circuits/build/deposit_js/deposit.wasm");
+const DEPOSIT_ZKEY = path.join(__dirname_e2e, "../../circuits/build/deposit_final.zkey");
+
+async function makeDepositProof(input: {
+  secret: bigint;
+  salt: bigint;
+  token: string;
+  commitment: bigint;
+  amount: bigint;
+}): Promise<{
+  a: [string, string];
+  b: [[string, string], [string, string]];
+  c: [string, string];
+}> {
+  const snarkjs = await import("snarkjs");
+  const { proof } = await snarkjs.groth16.fullProve(
+    {
+      commitment: input.commitment.toString(),
+      token: BigInt(input.token).toString(),
+      amount: input.amount.toString(),
+      secret: input.secret.toString(),
+      salt: input.salt.toString(),
+    },
+    DEPOSIT_WASM,
+    DEPOSIT_ZKEY,
+  );
+  return {
+    a: [proof.pi_a[0], proof.pi_a[1]],
+    b: [
+      [proof.pi_b[0][1], proof.pi_b[0][0]],
+      [proof.pi_b[1][1], proof.pi_b[1][0]],
+    ],
+    c: [proof.pi_c[0], proof.pi_c[1]],
+  };
+}
 
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",
@@ -232,7 +271,17 @@ async function main() {
   const salt = randomFieldElement();
   const commitment = poseidonHash([ownerSecret, BigInt(weth), depositAmount, salt]);
 
-  const depositTx = await poolContract.deposit(commitment, weth, depositAmount);
+  const depositProof = await makeDepositProof({
+    secret: ownerSecret,
+    salt,
+    token: weth,
+    commitment,
+    amount: depositAmount,
+  });
+  const depositTx = await poolContract.deposit(
+    depositProof.a, depositProof.b, depositProof.c,
+    commitment, weth, depositAmount,
+  );
   const depositReceipt = await depositTx.wait();
 
   // Parse leafIndex from event

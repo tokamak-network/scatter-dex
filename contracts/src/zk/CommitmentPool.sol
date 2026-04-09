@@ -8,6 +8,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
+import {IDepositVerifier} from "./IDepositVerifier.sol";
 
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
@@ -46,6 +47,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     // ─── State ───────────────────────────────────────────────────
     IVerifier public immutable withdrawVerifier;
+    IDepositVerifier public immutable depositVerifier;
     address public authorizedSettlement;
     bool public paused;
 
@@ -55,6 +57,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _withdrawVerifier,
+        address _depositVerifier,
         uint32 _treeLevels,
         uint32 _rootHistorySize
     )
@@ -62,7 +65,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         Ownable(msg.sender)
     {
         if (_withdrawVerifier == address(0)) revert ZeroAddress();
+        if (_depositVerifier == address(0)) revert ZeroAddress();
         withdrawVerifier = IVerifier(_withdrawVerifier);
+        depositVerifier = IDepositVerifier(_depositVerifier);
     }
 
     function renounceOwnership() public pure override {
@@ -99,17 +104,41 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Deposit tokens and add a commitment to the Merkle tree.
     /// @dev commitment = Poseidon(ownerSecret, token, amount, salt) computed off-chain.
-    ///      The contract does NOT verify the commitment preimage — if the user submits
-    ///      a malformed commitment, only they are harmed (can't withdraw later).
+    ///      A ZK deposit proof is REQUIRED to bind the on-chain (commitment, token, amount)
+    ///      tuple to the Poseidon preimage. Without this, a malicious user could deposit
+    ///      1 wei while submitting a commitment claiming an arbitrary balance, then drain
+    ///      other users via withdraw / settle proofs.
+    ///      See: contracts/test/PoolDrainExploit.t.sol
+    /// @param proofA Groth16 deposit proof point A
+    /// @param proofB Groth16 deposit proof point B
+    /// @param proofC Groth16 deposit proof point C
     /// @param commitment The Poseidon hash commitment (leaf value)
     /// @param token The ERC20 token being deposited
     /// @param amount The amount being deposited
-    function deposit(uint256 commitment, address token, uint256 amount) external nonReentrant {
+    function deposit(
+        uint[2] calldata proofA,
+        uint[2][2] calldata proofB,
+        uint[2] calldata proofC,
+        uint256 commitment,
+        address token,
+        uint256 amount
+    ) external nonReentrant {
         if (paused) revert ContractPaused();
         if (commitment == 0) revert ZeroCommitment();
         if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (amount == 0) revert ZeroAmount();
+
+        // Verify the commitment binds to (token, amount)
+        // Public signals: [commitment, token (uint160), amount]
+        uint[3] memory pubSignals = [
+            commitment,
+            uint256(uint160(token)),
+            amount
+        ];
+        if (!depositVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+            revert InvalidProof();
+        }
 
         // Transfer tokens to this contract
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);

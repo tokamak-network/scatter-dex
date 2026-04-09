@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
+import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -14,6 +15,7 @@ contract MockToken is ERC20 {
 contract CommitmentPoolTest is Test {
     CommitmentPool public pool;
     MockVerifier public verifier;
+    MockDepositVerifier public depositVerifier;
     MockToken public token;
 
     address alice = address(0xA11CE);
@@ -26,7 +28,8 @@ contract CommitmentPoolTest is Test {
 
     function setUp() public {
         verifier = new MockVerifier();
-        pool = new CommitmentPool(address(verifier), 20, 30);
+        depositVerifier = new MockDepositVerifier();
+        pool = new CommitmentPool(address(verifier), address(depositVerifier), 20, 30);
         token = new MockToken();
 
         pool.setTokenWhitelist(address(token), true);
@@ -40,11 +43,19 @@ contract CommitmentPoolTest is Test {
         token.approve(address(pool), type(uint256).max);
     }
 
+    /// @dev Helper: deposit with empty proof params (MockDepositVerifier always passes).
+    function _deposit(uint256 commitment, address tok, uint256 amount) internal {
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        pool.deposit(pa, pb, pc, commitment, tok, amount);
+    }
+
     // ─── Deposit Tests ───────────────────────────────────────────
 
     function test_deposit() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         assertEq(token.balanceOf(address(pool)), 100 ether);
         assertEq(token.balanceOf(alice), 900 ether);
@@ -55,7 +66,7 @@ contract CommitmentPoolTest is Test {
         uint256 rootBefore = pool.getLastRoot();
 
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 50 ether);
+        _deposit(COMMITMENT_1, address(token), 50 ether);
 
         uint256 rootAfter = pool.getLastRoot();
         assertTrue(rootBefore != rootAfter, "root should change after deposit");
@@ -64,10 +75,10 @@ contract CommitmentPoolTest is Test {
 
     function test_deposit_multiple() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         vm.prank(bob);
-        pool.deposit(COMMITMENT_2, address(token), 200 ether);
+        _deposit(COMMITMENT_2, address(token), 200 ether);
 
         assertEq(pool.nextIndex(), 2);
         assertEq(token.balanceOf(address(pool)), 300 ether);
@@ -78,19 +89,19 @@ contract CommitmentPoolTest is Test {
         emit CommitmentPool.CommitmentInserted(COMMITMENT_1, 0, block.timestamp);
 
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
     }
 
     function test_deposit_zero_amount_reverts() public {
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.ZeroAmount.selector);
-        pool.deposit(COMMITMENT_1, address(token), 0);
+        _deposit(COMMITMENT_1, address(token), 0);
     }
 
     function test_deposit_zero_commitment_reverts() public {
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.ZeroCommitment.selector);
-        pool.deposit(0, address(token), 100 ether);
+        _deposit(0, address(token), 100 ether);
     }
 
     function test_deposit_unwhitelisted_token_reverts() public {
@@ -99,7 +110,7 @@ contract CommitmentPoolTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.TokenNotWhitelisted.selector);
-        pool.deposit(COMMITMENT_1, address(badToken), 100 ether);
+        _deposit(COMMITMENT_1, address(badToken), 100 ether);
     }
 
     function test_deposit_when_paused_reverts() public {
@@ -107,7 +118,7 @@ contract CommitmentPoolTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.ContractPaused.selector);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
     }
 
     // ─── Withdraw Tests (with mock verifier) ─────────────────────
@@ -115,7 +126,7 @@ contract CommitmentPoolTest is Test {
     function test_withdraw_full() public {
         // Deposit first
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
 
@@ -142,7 +153,7 @@ contract CommitmentPoolTest is Test {
 
     function test_withdraw_partial_creates_change() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
         uint32 indexBefore = pool.nextIndex();
@@ -169,7 +180,7 @@ contract CommitmentPoolTest is Test {
 
     function test_withdraw_double_spend_reverts() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
         uint[2] memory proofA;
@@ -194,7 +205,7 @@ contract CommitmentPoolTest is Test {
 
     function test_withdraw_invalid_proof_reverts() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
         verifier.setShouldPass(false);
@@ -209,7 +220,7 @@ contract CommitmentPoolTest is Test {
 
     function test_withdraw_when_paused_reverts() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         pool.setPaused(true);
         uint256 root = pool.getLastRoot();
@@ -224,7 +235,7 @@ contract CommitmentPoolTest is Test {
 
     function test_withdraw_emits_event() public {
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 100 ether);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
         uint[2] memory proofA;
@@ -243,11 +254,11 @@ contract CommitmentPoolTest is Test {
         uint256 root0 = pool.getLastRoot();
 
         vm.prank(alice);
-        pool.deposit(COMMITMENT_1, address(token), 50 ether);
+        _deposit(COMMITMENT_1, address(token), 50 ether);
         uint256 root1 = pool.getLastRoot();
 
         vm.prank(bob);
-        pool.deposit(COMMITMENT_2, address(token), 50 ether);
+        _deposit(COMMITMENT_2, address(token), 50 ether);
         uint256 root2 = pool.getLastRoot();
 
         // All roots should be known

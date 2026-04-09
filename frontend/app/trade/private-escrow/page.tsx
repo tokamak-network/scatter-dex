@@ -30,10 +30,12 @@ import {
   saveConfigToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
+import { generateDepositProof } from "../../lib/zk/deposit-prover";
 
-// CommitmentPool ABI (minimal)
+// CommitmentPool ABI (minimal). deposit() now requires a Groth16 binding proof
+// from circuits/deposit.circom — see contracts/test/PoolDrainExploit.t.sol.
 const POOL_ABI = [
-  "function deposit(uint256 commitment, address token, uint256 amount) external",
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
@@ -259,10 +261,18 @@ export default function PrivateEscrowPage() {
         }
       }
 
-      // Deposit
+      // Deposit — generate the binding proof first, then submit on-chain.
       setTxState("depositing");
+      const depositProof = await generateDepositProof(note, commitment);
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
-      const tx = await pool.deposit(commitment, commitTokenAddr, parsed);
+      const tx = await pool.deposit(
+        depositProof.proof.a,
+        depositProof.proof.b,
+        depositProof.proof.c,
+        commitment,
+        commitTokenAddr,
+        parsed,
+      );
       const receipt = await tx.wait();
       setTxHash(receipt.hash);
 

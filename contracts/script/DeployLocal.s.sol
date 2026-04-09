@@ -81,23 +81,9 @@ contract DeployLocal is Script {
 
         // ── ZK Private Settlement ────────────────────────────────
 
-        // 7. Deploy Groth16 verifiers
-        address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
-        address settleVerifier = _deployCode("SettleVerifier.sol:Groth16Verifier");
-        address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
-        console.log("WithdrawVerifier:", withdrawVerifier);
-        console.log("SettleVerifier:", settleVerifier);
-        console.log("ClaimVerifier:", claimVerifier);
-
-        // 8. Deploy CommitmentPool (ZK escrow)
-        CommitmentPool pool = new CommitmentPool(withdrawVerifier, 20, 30);
-        console.log("CommitmentPool:", address(pool));
-
-        // 9. Deploy PrivateSettlement
-        PrivateSettlement privateSettlement = new PrivateSettlement(
-            address(pool), settleVerifier, claimVerifier, address(weth)
-        );
-        console.log("PrivateSettlement:", address(privateSettlement));
+        // 7-9. Deploy verifiers, CommitmentPool, and PrivateSettlement.
+        //      Extracted into a helper to avoid "stack too deep".
+        (CommitmentPool pool, PrivateSettlement privateSettlement) = _deployZkCore(address(weth));
 
         // 10. Authorize + whitelist
         pool.setAuthorizedSettlement(address(privateSettlement));
@@ -139,5 +125,29 @@ contract DeployLocal is Script {
             addr := create(0, add(bytecode, 0x20), mload(bytecode))
         }
         require(addr != address(0), "deploy failed");
+    }
+
+    /// @dev Deploy verifiers + CommitmentPool + PrivateSettlement.
+    ///      Extracted into its own function to avoid "stack too deep" in run().
+    function _deployZkCore(address weth)
+        internal
+        returns (CommitmentPool pool, PrivateSettlement privateSettlement)
+    {
+        address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
+        address settleVerifier = _deployCode("SettleVerifier.sol:Groth16Verifier");
+        address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
+        address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
+        console.log("WithdrawVerifier:", withdrawVerifier);
+        console.log("SettleVerifier:", settleVerifier);
+        console.log("ClaimVerifier:", claimVerifier);
+        console.log("DepositVerifier:", depositVerifier);
+
+        pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
+        console.log("CommitmentPool:", address(pool));
+
+        privateSettlement = new PrivateSettlement(
+            address(pool), settleVerifier, claimVerifier, weth
+        );
+        console.log("PrivateSettlement:", address(privateSettlement));
     }
 }

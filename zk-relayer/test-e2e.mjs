@@ -11,6 +11,37 @@
 
 import { buildPoseidon } from "circomlibjs";
 import { ethers } from "ethers";
+import * as snarkjs from "snarkjs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEPOSIT_WASM = path.join(__dirname, "../circuits/build/deposit_js/deposit.wasm");
+const DEPOSIT_ZKEY = path.join(__dirname, "../circuits/build/deposit_final.zkey");
+
+async function makeDepositProof({ secret, salt, token, commitment, amount }) {
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    {
+      commitment: commitment.toString(),
+      token: BigInt(token).toString(),
+      amount: amount.toString(),
+      secret: secret.toString(),
+      salt: salt.toString(),
+    },
+    DEPOSIT_WASM,
+    DEPOSIT_ZKEY,
+  );
+  return {
+    a: [proof.pi_a[0], proof.pi_a[1]],
+    b: [
+      [proof.pi_b[0][1], proof.pi_b[0][0]],
+      [proof.pi_b[1][1], proof.pi_b[1][0]],
+    ],
+    c: [proof.pi_c[0], proof.pi_c[1]],
+    publicSignals,
+  };
+}
 
 const ZK_RELAYER_URL = "http://localhost:3002";
 // Claims submitted via zk-relayer API — no direct contract address needed
@@ -51,7 +82,7 @@ async function main() {
   const bobWallet = new ethers.Wallet(BOB_KEY, provider);
 
   const POOL_ABI = [
-    "function deposit(uint256 commitment, address token, uint256 amount) external",
+    "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
     "function nextIndex() view returns (uint32)",
   ];
   const ERC20_ABI = [
@@ -70,11 +101,21 @@ async function main() {
   // Capture leaf index before deposit
   const aliceLeafIndex = Number(await pool.nextIndex());
 
-  // Wrap ETH → WETH, approve, deposit
+  // Wrap ETH → WETH, approve, generate deposit proof, deposit
   const weth = new ethers.Contract(WETH, ERC20_ABI, aliceWallet);
   await (await weth.deposit({ value: aliceBalance })).wait();
   await (await weth.approve(POOL, aliceBalance)).wait();
-  await (await pool.deposit(aliceCommitment, WETH, aliceBalance)).wait();
+  const aliceDepositProof = await makeDepositProof({
+    secret: aliceSecret,
+    salt: aliceSalt,
+    token: WETH,
+    commitment: aliceCommitment,
+    amount: aliceBalance,
+  });
+  await (await pool.deposit(
+    aliceDepositProof.a, aliceDepositProof.b, aliceDepositProof.c,
+    aliceCommitment, WETH, aliceBalance,
+  )).wait();
   console.log(`Alice deposited 10 WETH at leafIndex ${aliceLeafIndex}`);
 
   // Bob: commitment for 1000 USDC
@@ -88,7 +129,17 @@ async function main() {
   const usdc = new ethers.Contract(USDC, ERC20_ABI, bobWallet);
   const poolBob = new ethers.Contract(POOL, POOL_ABI, bobWallet);
   await (await usdc.approve(POOL, bobBalance)).wait();
-  await (await poolBob.deposit(bobCommitment, USDC, bobBalance)).wait();
+  const bobDepositProof = await makeDepositProof({
+    secret: bobSecret,
+    salt: bobSalt,
+    token: USDC,
+    commitment: bobCommitment,
+    amount: bobBalance,
+  });
+  await (await poolBob.deposit(
+    bobDepositProof.a, bobDepositProof.b, bobDepositProof.c,
+    bobCommitment, USDC, bobBalance,
+  )).wait();
   console.log(`Bob deposited 1000 USDC at leafIndex ${bobLeafIndex}\n`);
 
   // Order params

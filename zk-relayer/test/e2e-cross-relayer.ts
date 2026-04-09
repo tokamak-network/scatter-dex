@@ -68,11 +68,50 @@ const ERC20_ABI = [
 ];
 
 const POOL_ABI = [
-  "function deposit(uint256 commitment, address token, uint256 amount) external",
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
+
+// Deposit circuit artifacts (relative to zk-relayer/test/)
+const __filename_e2e_cr = fileURLToPath(import.meta.url);
+const __dirname_e2e_cr = path.dirname(__filename_e2e_cr);
+const DEPOSIT_WASM = path.join(__dirname_e2e_cr, "../../circuits/build/deposit_js/deposit.wasm");
+const DEPOSIT_ZKEY = path.join(__dirname_e2e_cr, "../../circuits/build/deposit_final.zkey");
+
+async function makeDepositProof(input: {
+  secret: bigint;
+  salt: bigint;
+  token: string;
+  commitment: bigint;
+  amount: bigint;
+}): Promise<{
+  a: [string, string];
+  b: [[string, string], [string, string]];
+  c: [string, string];
+}> {
+  const snarkjs = await import("snarkjs");
+  const { proof } = await snarkjs.groth16.fullProve(
+    {
+      commitment: input.commitment.toString(),
+      token: BigInt(input.token).toString(),
+      amount: input.amount.toString(),
+      secret: input.secret.toString(),
+      salt: input.salt.toString(),
+    },
+    DEPOSIT_WASM,
+    DEPOSIT_ZKEY,
+  );
+  return {
+    a: [proof.pi_a[0], proof.pi_a[1]],
+    b: [
+      [proof.pi_b[0][1], proof.pi_b[0][0]],
+      [proof.pi_b[1][1], proof.pi_b[1][0]],
+    ],
+    c: [proof.pi_c[0], proof.pi_c[1]],
+  };
+}
 
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",
@@ -301,7 +340,13 @@ async function main() {
   const secretA = randomFieldElement();
   const saltA = randomFieldElement();
   const commitmentA = poseidonHash([secretA, BigInt(weth), wethAmount, saltA]);
-  const depositTxA = await poolContractA.deposit(commitmentA, weth, wethAmount);
+  const depositProofA = await makeDepositProof({
+    secret: secretA, salt: saltA, token: weth, commitment: commitmentA, amount: wethAmount,
+  });
+  const depositTxA = await poolContractA.deposit(
+    depositProofA.a, depositProofA.b, depositProofA.c,
+    commitmentA, weth, wethAmount,
+  );
   const receiptA = await depositTxA.wait();
   const poolIface = new ethers.Interface(POOL_ABI);
   let leafIndexA = -1;
@@ -328,7 +373,13 @@ async function main() {
   const secretB = randomFieldElement();
   const saltB = randomFieldElement();
   const commitmentB = poseidonHash([secretB, BigInt(usdc), usdcAmount, saltB]);
-  const depositTxB = await poolContractB.deposit(commitmentB, usdc, usdcAmount);
+  const depositProofB = await makeDepositProof({
+    secret: secretB, salt: saltB, token: usdc, commitment: commitmentB, amount: usdcAmount,
+  });
+  const depositTxB = await poolContractB.deposit(
+    depositProofB.a, depositProofB.b, depositProofB.c,
+    commitmentB, usdc, usdcAmount,
+  );
   const receiptB = await depositTxB.wait();
   let leafIndexB = -1;
   for (const log of receiptB.logs) {

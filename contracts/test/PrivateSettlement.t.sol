@@ -8,6 +8,7 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
+import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
@@ -22,6 +23,7 @@ contract PrivateSettlementTest is Test {
     CommitmentPool public pool;
     PrivateSettlement public settlement;
     MockVerifier public withdrawVerifier;
+    MockDepositVerifier public depositVerifier;
     MockSettleVerifier public settleVerifier;
     MockClaimVerifier public claimVerifier;
     MockWETH public weth;
@@ -53,10 +55,11 @@ contract PrivateSettlementTest is Test {
 
     function setUp() public {
         withdrawVerifier = new MockVerifier();
+        depositVerifier = new MockDepositVerifier();
         settleVerifier = new MockSettleVerifier();
         claimVerifier = new MockClaimVerifier();
 
-        pool = new CommitmentPool(address(withdrawVerifier), 20, 30);
+        pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
         settlement = new PrivateSettlement(address(pool), address(settleVerifier), address(claimVerifier), address(weth));
         usdc = new MockToken("USDC", "USDC");
@@ -81,7 +84,7 @@ contract PrivateSettlementTest is Test {
         vm.prank(alice);
         weth.approve(address(pool), type(uint256).max);
         vm.prank(alice);
-        pool.deposit(uint256(0x1234), address(weth), 10 ether);
+        pool.deposit(proofA, proofB, proofC, uint256(0x1234), address(weth), 10 ether);
     }
 
     // ─── settlePrivate Tests ─────────────────────────────────────
@@ -473,6 +476,7 @@ contract FeeVaultTest is Test {
     FeeVault public vault;
     RelayerRegistry public registry;
     MockVerifier public withdrawVerifier;
+    MockDepositVerifier public depositVerifier;
     MockSettleVerifier public settleVerifier;
     MockClaimVerifier public claimVerifier;
     MockWETH public weth;
@@ -502,13 +506,14 @@ contract FeeVaultTest is Test {
 
     function setUp() public {
         withdrawVerifier = new MockVerifier();
+        depositVerifier = new MockDepositVerifier();
         settleVerifier = new MockSettleVerifier();
         claimVerifier = new MockClaimVerifier();
         identityRegistry = new MockIdentityRegistry();
         weth = new MockWETH();
         usdc = new MockToken("USDC", "USDC");
 
-        pool = new CommitmentPool(address(withdrawVerifier), 20, 30);
+        pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
         settlement = new PrivateSettlement(address(pool), address(settleVerifier), address(claimVerifier), address(weth));
 
         // Deploy FeeVault: 5% platform fee (500 bps), treasury
@@ -540,7 +545,7 @@ contract FeeVaultTest is Test {
         vm.startPrank(alice);
         weth.deposit{value: 10 ether}();
         weth.approve(address(pool), type(uint256).max);
-        pool.deposit(uint256(0x9876), address(weth), 10 ether);
+        pool.deposit(proofA, proofB, proofC, uint256(0x9876), address(weth), 10 ether);
         vm.stopPrank();
 
         // Verify + register relayer

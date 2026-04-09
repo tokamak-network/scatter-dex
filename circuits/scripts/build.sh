@@ -6,11 +6,12 @@ cd "$(dirname "$0")/.."
 BUILD=build
 SNARKJS=./node_modules/.bin/snarkjs
 
-# Circuits to build: withdraw, settle, claim
-CIRCUITS=(withdraw settle claim)
+# Circuits to build: deposit, withdraw, settle, claim
+CIRCUITS=(deposit withdraw settle claim)
 
 # Map circuit name → Solidity verifier contract name
 declare -A VERIFIER_NAMES
+VERIFIER_NAMES[deposit]="DepositVerifier"
 VERIFIER_NAMES[withdraw]="WithdrawVerifier"
 VERIFIER_NAMES[settle]="SettleVerifier"
 VERIFIER_NAMES[claim]="ClaimVerifier"
