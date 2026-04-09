@@ -456,7 +456,9 @@ contract PrivateSettlementTest is Test {
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
             feeTokenMaker: 0,
-            feeTokenTaker: 0
+            feeTokenTaker: 0,
+            makerRelayer: address(this),
+            takerRelayer: address(this)
         });
     }
 }
@@ -552,12 +554,12 @@ contract FeeVaultTest is Test {
     function test_settlePrivate_only_active_relayer() public {
         PrivateSettlement.SettleParams memory p = _params();
 
-        // Non-relayer should be rejected
+        // Non-relayer (not in proof) should be rejected with descriptive message
         vm.prank(nonRelayer);
-        vm.expectRevert(PrivateSettlement.NotActiveRelayer.selector);
+        vm.expectRevert("sender must be maker or taker relayer");
         settlement.settlePrivate(p);
 
-        // Registered relayer should succeed
+        // Registered relayer (in proof as both maker+taker) should succeed
         vm.prank(relayer);
         settlement.settlePrivate(p);
     }
@@ -577,9 +579,10 @@ contract FeeVaultTest is Test {
         // Disable relayer gating
         settlement.setRelayerRegistry(address(0));
 
-        // Now anyone can settle
+        // Still restricted to maker/taker relayer in proof (not "anyone")
         PrivateSettlement.SettleParams memory p = _params();
-        vm.prank(nonRelayer);
+        // relayer (= makerRelayer = takerRelayer in _params) should succeed
+        vm.prank(relayer);
         settlement.settlePrivate(p);
     }
 
@@ -594,7 +597,7 @@ contract FeeVaultTest is Test {
     }
 
     function test_settlePrivate_correct_relayer_passes_proof() public {
-        settleVerifier.setEnforceRelayer(true, relayer);
+        settleVerifier.setEnforceRelayer(true, relayer, relayer);
         PrivateSettlement.SettleParams memory p = _params();
 
         vm.prank(relayer);
@@ -604,7 +607,7 @@ contract FeeVaultTest is Test {
     }
 
     function test_settlePrivate_wrong_relayer_reverts_proof() public {
-        settleVerifier.setEnforceRelayer(true, relayer);
+        settleVerifier.setEnforceRelayer(true, relayer, relayer);
         _registerRelayer2();
 
         // Different nullifiers to avoid collision with other tests
@@ -616,14 +619,16 @@ contract FeeVaultTest is Test {
         p.claimsRootMaker = bytes32(uint256(0x5333));
         p.claimsRootTaker = bytes32(uint256(0x5444));
 
-        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedRelayer → InvalidProof
+        // Set RELAYER_2 as makerRelayer so they can submit, but mock verifier expects `relayer`
+        p.makerRelayer = RELAYER_2;
+        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedMakerRelayer(=relayer) → InvalidProof
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
         vm.prank(RELAYER_2);
         settlement.settlePrivate(p);
     }
 
-    function test_settlePrivate_no_enforce_any_relayer_passes() public {
-        // enforceRelayer = false (default) → any registered relayer can settle
+    function test_settlePrivate_cross_relayer_fee_split() public {
+        // Cross-relayer: maker=relayer, taker=RELAYER_2
         _registerRelayer2();
 
         PrivateSettlement.SettleParams memory p = _params();
@@ -633,9 +638,11 @@ contract FeeVaultTest is Test {
         p.takerNonceNullifier = bytes32(uint256(0x3dd));
         p.claimsRootMaker = bytes32(uint256(0x6333));
         p.claimsRootTaker = bytes32(uint256(0x6444));
+        p.takerRelayer = RELAYER_2; // taker's relayer is different
 
+        // RELAYER_2 (takerRelayer) can submit
         vm.prank(RELAYER_2);
-        settlement.settlePrivate(p); // should pass without enforce
+        settlement.settlePrivate(p);
     }
 
     // ─── FeeVault ───────────────────────────────────────────────
@@ -786,7 +793,9 @@ contract FeeVaultTest is Test {
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
             feeTokenMaker: 0,
-            feeTokenTaker: 0
+            feeTokenTaker: 0,
+            makerRelayer: relayer,
+            takerRelayer: relayer
         });
     }
 
