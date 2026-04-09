@@ -30,17 +30,19 @@ export default function SharedOrderbookStatus({ onRelayersLoaded }: SharedOrderb
       return;
     }
     setRefreshing(true);
-    try {
-      const [serverOnline, serverStats, relayers] = await Promise.all([
-        isServerOnline(),
-        getStats(),
-        getRelayers(),
-      ]);
-      setOnline(serverOnline);
-      setStats(serverStats);
-      onRelayersLoadedRef.current?.(relayers);
-    } catch {
-      setOnline(false);
+    const [healthResult, statsResult, relayersResult] = await Promise.allSettled([
+      isServerOnline(),
+      getStats(),
+      getRelayers(),
+    ]);
+    const serverOnline = healthResult.status === "fulfilled" ? healthResult.value : false;
+    setOnline(serverOnline);
+    if (serverOnline) {
+      setStats(statsResult.status === "fulfilled" ? statsResult.value : null);
+      onRelayersLoadedRef.current?.(relayersResult.status === "fulfilled" ? relayersResult.value : []);
+    } else {
+      setStats(null);
+      onRelayersLoadedRef.current?.([]);
     }
     setRefreshing(false);
   }, []); // Stable — no external deps

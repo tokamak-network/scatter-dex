@@ -66,6 +66,11 @@ export async function getRelayers(): Promise<SharedRelayer[]> {
   return result?.relayers ?? [];
 }
 
+export async function getOrders(limit = 500): Promise<SharedOrder[]> {
+  const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(`/api/orders?limit=${limit}`);
+  return result?.orders ?? [];
+}
+
 export async function getOrdersByPair(pair: string): Promise<SharedOrder[]> {
   const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(`/api/orders/${pair}`);
   return result?.orders ?? [];

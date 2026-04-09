@@ -57,10 +57,10 @@ interface OrderFile {
     leafIndex: number;
   }>;
   createdAt: string;
-  // Enriched from relayer
+  // Enriched from relayer API response
   status?: string;
   settleTxHash?: string;
-  crossRelayer?: boolean;
+  crossRelayer?: boolean; // Requires zk-relayer to include this field in GET response (future)
 }
 
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {

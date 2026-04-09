@@ -183,7 +183,7 @@ Each relayer adds:
 - Testnet deployment guide with contract deployment and configuration
 - Security documentation and production checklist
 
-### Phase 3.5: Frontend UX (Implemented — PR #117)
+### Phase 3.5: Frontend UX (Implemented)
 
 Frontend integration following the Steam bot marketplace model:
 

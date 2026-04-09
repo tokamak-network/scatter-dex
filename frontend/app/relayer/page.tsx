@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine } from "lucide-react";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
@@ -11,7 +11,7 @@ import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
 import { shortenAddress } from "../lib/utils";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
-import { getOrdersByPair, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
+import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
 
 function formatBond(bond: bigint): string {
   const val = Number(ethers.formatEther(bond));
@@ -171,25 +171,27 @@ export default function RelayersPage() {
 
   // Shared orderbook state
   const [sharedRelayers, setSharedRelayers] = useState<SharedRelayer[]>([]);
+  const sharedRelayerMap = useMemo(() => {
+    const m = new Map<string, SharedRelayer>();
+    for (const r of sharedRelayers) m.set(r.address.toLowerCase(), r);
+    return m;
+  }, [sharedRelayers]);
   const [obViewMode, setObViewMode] = useState<"local" | "global">("local");
   const [globalOrders, setGlobalOrders] = useState<SharedOrder[]>([]);
   const [globalLoading, setGlobalLoading] = useState(false);
 
+  const globalLoadingRef = React.useRef(false);
   const loadGlobalOrders = useCallback(async () => {
-    if (globalLoading) return;
+    if (globalLoadingRef.current) return;
+    globalLoadingRef.current = true;
     setGlobalLoading(true);
     try {
-      const allOrders: SharedOrder[] = [];
-      await Promise.allSettled(
-        pairOptions.map(async (p) => {
-          const orders = await getOrdersByPair(p.value);
-          allOrders.push(...orders);
-        })
-      );
-      setGlobalOrders(allOrders);
+      const orders = await getOrders(500);
+      setGlobalOrders(orders);
     } catch { /* silent */ }
     setGlobalLoading(false);
-  }, [globalLoading, pairOptions]);
+    globalLoadingRef.current = false;
+  }, []);
 
   // FeeVault state
   const [vaultBalances, setVaultBalances] = useState<{ token: string; symbol: string; balance: bigint }[]>([]);
@@ -409,9 +411,7 @@ export default function RelayersPage() {
                 )}
                 {/* Shared orderbook info */}
                 {(() => {
-                  const shared = sharedRelayers.find(
-                    (s) => s.address.toLowerCase() === r.address.toLowerCase()
-                  );
+                  const shared = sharedRelayerMap.get(r.address.toLowerCase());
                   if (!shared) return null;
                   return (
                     <div className="mt-2 pt-2 border-t border-outline-variant/10 flex gap-3 text-[10px] text-on-surface-variant/50">
@@ -587,6 +587,7 @@ export default function RelayersPage() {
                   </div>
                 ) : (
                   <div className="bg-surface-container rounded-xl border border-outline-variant/15 overflow-hidden">
+                    {/* Pre-compute relayer lookup map for O(1) access per row */}
                     <div className="grid grid-cols-[1fr_1fr_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-outline-variant/10 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
                       <span>Sell</span>
                       <span>Buy</span>
@@ -602,11 +603,9 @@ export default function RelayersPage() {
                         const buyDec = findToken(o.buyToken)?.decimals ?? 18;
                         const sellFmt = Number(ethers.formatUnits(o.sellAmount, sellDec)).toFixed(4);
                         const buyFmt = Number(ethers.formatUnits(o.buyAmount, buyDec)).toFixed(4);
-                        const shared = sharedRelayers.find(
-                          (s) => s.address.toLowerCase() === o.relayer.toLowerCase()
-                        );
+                        const shared = sharedRelayerMap.get(o.relayer.toLowerCase());
                         const expiresIn = o.expiry - Math.floor(Date.now() / 1000);
-                        const expiryStr = expiresIn > 3600 ? `${Math.floor(expiresIn / 3600)}h` : expiresIn > 60 ? `${Math.floor(expiresIn / 60)}m` : `${expiresIn}s`;
+                        const expiryStr = expiresIn <= 0 ? "Expired" : expiresIn > 3600 ? `${Math.floor(expiresIn / 3600)}h` : expiresIn > 60 ? `${Math.floor(expiresIn / 60)}m` : `${expiresIn}s`;
 
                         return (
                           <div key={o.id} className="grid grid-cols-[1fr_1fr_80px_80px_100px] gap-2 px-4 py-2 text-xs hover:bg-surface-bright/20 transition-colors border-b border-outline-variant/5">
