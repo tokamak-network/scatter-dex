@@ -281,8 +281,9 @@ async function main() {
   const claimReleaseTime = BigInt(aliceClaim.releaseTime);
   const claimLeafIndex = 0;
 
-  // Nullifier = Poseidon(secret, leafIndex)
-  const claimNullifier = F.toObject(poseidon([claimSecret, BigInt(claimLeafIndex)]));
+  // [M4] Domain-separated claim nullifier = Poseidon(2, secret, leafIndex)
+  const TAG_CLAIM_NULL = 2n;
+  const claimNullifier = F.toObject(poseidon([TAG_CLAIM_NULL, claimSecret, BigInt(claimLeafIndex)]));
 
   const { pathElements, pathIndices, root: computedClaimsRoot } = buildMerkleTreeWithProof(aliceClaimLeaves, 4, claimLeafIndex);
 

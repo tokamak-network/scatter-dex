@@ -24,7 +24,7 @@ import { ethers } from "ethers";
 import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import { poseidon2, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +86,7 @@ const SETTLEMENT_ABI = [
 function poseidonHash(inputs: bigint[]): bigint {
   switch (inputs.length) {
     case 2: return poseidon2(inputs);
+    case 3: return poseidon3(inputs);
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
@@ -464,8 +465,9 @@ async function main() {
   const settlementContract = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, provider);
 
   // Verify nullifiers are spent (both maker and taker notes consumed)
-  const nullA = poseidonHash([secretA, saltA]);
-  const nullB = poseidonHash([secretB, saltB]);
+  // [M4] Domain-separated escrow nullifier (tag = 0)
+  const nullA = poseidonHash([0n, secretA, saltA]);
+  const nullB = poseidonHash([0n, secretB, saltB]);
   const nullASpent = await settlementContract.nullifiers(
     "0x" + nullA.toString(16).padStart(64, "0")
   );

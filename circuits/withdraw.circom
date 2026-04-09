@@ -92,10 +92,15 @@ template Withdraw(levels) {
 
     // ════════════════════════════════════════
     //  3. VERIFY NULLIFIER
+    //  [M4] Domain-separated escrow nullifier (tag 0).  Must stay in sync
+    //  with settle.circom and the off-chain computeNullifier helpers.
     // ════════════════════════════════════════
-    component nullifierComp = Poseidon(2);
-    nullifierComp.inputs[0] <== ownerSecret;
-    nullifierComp.inputs[1] <== salt;
+    var TAG_ESCROW_NULL = 0;
+
+    component nullifierComp = Poseidon(3);
+    nullifierComp.inputs[0] <== TAG_ESCROW_NULL;
+    nullifierComp.inputs[1] <== ownerSecret;
+    nullifierComp.inputs[2] <== salt;
     nullifierHash === nullifierComp.out;
 
     // ════════════════════════════════════════

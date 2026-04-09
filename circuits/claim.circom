@@ -81,11 +81,17 @@ template Claim(depth) {
 
     // ════════════════════════════════════════
     //  3. NULLIFIER
-    //     nullifier = Poseidon(secret, leafIndex)
+    //  [M4] Domain-separated claim nullifier (tag 2).  This keeps the
+    //  claim nullifier space disjoint from the escrow (tag 0) and nonce
+    //  (tag 1) nullifier spaces used by withdraw / settle.
+    //     nullifier = Poseidon(2, secret, leafIndex)
     // ════════════════════════════════════════
-    component nullComp = Poseidon(2);
-    nullComp.inputs[0] <== secret;
-    nullComp.inputs[1] <== leafIndex;
+    var TAG_CLAIM_NULL = 2;
+
+    component nullComp = Poseidon(3);
+    nullComp.inputs[0] <== TAG_CLAIM_NULL;
+    nullComp.inputs[1] <== secret;
+    nullComp.inputs[2] <== leafIndex;
     nullifier === nullComp.out;
 
     // ════════════════════════════════════════

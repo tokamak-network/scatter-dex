@@ -61,11 +61,42 @@ export async function computeCommitment(note: CommitmentNote): Promise<bigint> {
   return F.toObject(hash);
 }
 
-/** Compute nullifier = Poseidon(ownerSecret, salt). */
+// [M4] Domain tags must stay in sync with circuits/{withdraw,settle,claim}.circom
+//      and zk-relayer/src/core/zk-prover.ts.
+export const TAG_ESCROW_NULL = 0n;
+export const TAG_NONCE_NULL = 1n;
+export const TAG_CLAIM_NULL = 2n;
+
+/**
+ * Escrow nullifier (used by withdraw + settle).
+ *   nullifier = Poseidon(0, ownerSecret, salt)
+ */
 export async function computeNullifier(note: CommitmentNote): Promise<bigint> {
   const poseidon = await getPoseidon();
   const F = poseidon.F;
-  const hash = poseidon([note.ownerSecret, note.salt]);
+  const hash = poseidon([TAG_ESCROW_NULL, note.ownerSecret, note.salt]);
+  return F.toObject(hash);
+}
+
+/**
+ * Nonce nullifier (used by settle for replay protection).
+ *   nullifier = Poseidon(1, ownerSecret, nonce)
+ */
+export async function computeNonceNullifier(ownerSecret: bigint, nonce: bigint): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const hash = poseidon([TAG_NONCE_NULL, ownerSecret, nonce]);
+  return F.toObject(hash);
+}
+
+/**
+ * Claim nullifier (used by claim).
+ *   nullifier = Poseidon(2, secret, leafIndex)
+ */
+export async function computeClaimNullifier(secret: bigint, leafIndex: bigint): Promise<bigint> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const hash = poseidon([TAG_CLAIM_NULL, secret, leafIndex]);
   return F.toObject(hash);
 }
 

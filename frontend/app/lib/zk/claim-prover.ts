@@ -58,8 +58,8 @@ export async function generateClaimProof(
     throw new Error("Claim data does not match the leaf at the given index. Check your claim file.");
   }
 
-  // Compute nullifier = Poseidon(secret, leafIndex)
-  const nullifier = await poseidonHash([input.secret, BigInt(input.leafIndex)]);
+  // [M4] Domain-separated claim nullifier = Poseidon(2, secret, leafIndex)
+  const nullifier = await poseidonHash([2n, input.secret, BigInt(input.leafIndex)]);
 
   // Build claims Merkle tree (depth 4, 16 leaves)
   const { root: claimsRoot, layers } = await buildMerkleTree(input.allClaimLeaves, CLAIMS_TREE_DEPTH);

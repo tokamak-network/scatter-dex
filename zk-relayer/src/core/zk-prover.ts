@@ -50,8 +50,37 @@ export async function computeCommitment(
   return poseidonHash([secret, token, amount, salt]);
 }
 
+// [M4] Domain tags must stay in sync with circuits/{settle,withdraw,claim}.circom.
+export const TAG_ESCROW_NULL = 0n;
+export const TAG_NONCE_NULL = 1n;
+export const TAG_CLAIM_NULL = 2n;
+
+/**
+ * Escrow nullifier (used by withdraw and settle).
+ *   nullifier = Poseidon(0, secret, salt)
+ *
+ * The legacy two-input form `Poseidon(secret, salt)` was domain-collapsed
+ * with the nonce nullifier; the explicit tag makes the two preimage
+ * spaces disjoint.
+ */
 export async function computeNullifier(secret: bigint, salt: bigint): Promise<bigint> {
-  return poseidonHash([secret, salt]);
+  return poseidonHash([TAG_ESCROW_NULL, secret, salt]);
+}
+
+/**
+ * Nonce nullifier (used by settle for replay protection).
+ *   nullifier = Poseidon(1, secret, nonce)
+ */
+export async function computeNonceNullifier(secret: bigint, nonce: bigint): Promise<bigint> {
+  return poseidonHash([TAG_NONCE_NULL, secret, nonce]);
+}
+
+/**
+ * Claim nullifier (used by claim).
+ *   nullifier = Poseidon(2, secret, leafIndex)
+ */
+export async function computeClaimNullifier(secret: bigint, leafIndex: bigint): Promise<bigint> {
+  return poseidonHash([TAG_CLAIM_NULL, secret, leafIndex]);
 }
 
 // ─── Merkle Tree ─────────────────────────────────────────────
@@ -247,8 +276,8 @@ export async function generateSettleProof(input: SettleProofInput): Promise<Sett
 
   const makerNullifier = await computeNullifier(input.makerSecret, input.makerSalt);
   const takerNullifier = await computeNullifier(input.takerSecret, input.takerSalt);
-  const makerNonceNullifier = await computeNullifier(input.makerSecret, input.makerNonce);
-  const takerNonceNullifier = await computeNullifier(input.takerSecret, input.takerNonce);
+  const makerNonceNullifier = await computeNonceNullifier(input.makerSecret, input.makerNonce);
+  const takerNonceNullifier = await computeNonceNullifier(input.takerSecret, input.takerNonce);
 
   const makerNewBalance = input.makerBalance - input.makerSellAmount;
   const takerNewBalance = input.takerBalance - input.takerSellAmount;

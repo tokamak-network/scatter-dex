@@ -26,7 +26,7 @@ import { fileURLToPath } from "url";
 
 // Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22).
 // Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
-import { poseidon2, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 
 // EdDSA needs circomlibjs (WASM-based) — only used for babyJub.F field conversions
 // on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
@@ -82,12 +82,13 @@ const FEE_VAULT_ABI = [
 function poseidonHash(inputs: bigint[]): bigint {
   switch (inputs.length) {
     case 2: return poseidon2(inputs);
+    case 3: return poseidon3(inputs);
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
     case 9: return poseidon9(inputs);
     default: throw new Error(
-      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 4, 5, 8, 9)`
+      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 3, 4, 5, 8, 9)`
     );
   }
 }
@@ -388,7 +389,8 @@ async function main() {
     secret: bigint,
     amount: bigint,
   ): Promise<string> {
-    const nullifier = poseidonHash([secret, BigInt(claimIdx)]);
+    // [M4] Domain-separated claim nullifier (tag = 2)
+    const nullifier = poseidonHash([2n, secret, BigInt(claimIdx)]);
     const proof = getMerkleProof(claimsLayers, claimIdx);
 
     const { proof: zkProof } = await snarkjs.groth16.fullProve({
@@ -471,7 +473,8 @@ async function main() {
   assert(null2Spent, "Claim #2 nullifier spent");
 
   // Verify original note nullifier is spent
-  const noteNullifier = poseidonHash([ownerSecret, salt]);
+  // [M4] Domain-separated escrow nullifier (tag = 0)
+  const noteNullifier = poseidonHash([0n, ownerSecret, salt]);
   const noteSpent = await settlementContract.nullifiers(toHex(noteNullifier, 32));
   assert(noteSpent, "Original note nullifier spent");
 

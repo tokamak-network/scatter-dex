@@ -43,7 +43,8 @@ export function useClaimStatuses(
         const nullifiers = await Promise.all(
           claims.map(async (c, i) => {
             if (c.secret == null || c.leafIndex == null) return { i, nullHex: null };
-            const nullifier = await poseidonHash([BigInt(c.secret), BigInt(c.leafIndex)]);
+            // [M4] Domain-separated claim nullifier (tag = 2)
+            const nullifier = await poseidonHash([2n, BigInt(c.secret), BigInt(c.leafIndex)]);
             return { i, nullHex: toBytes32Hex(nullifier) };
           })
         );
