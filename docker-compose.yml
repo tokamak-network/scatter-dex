@@ -1,6 +1,5 @@
 services:
   # ── Anvil (mock mode only) ──────────────────────────────────
-  # Integration mode skips this — uses zk-X509's anvil instead.
   anvil:
     image: ghcr.io/foundry-rs/foundry:stable
     profiles: ["mock"]
@@ -13,9 +12,12 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Contract deployer ───────────────────────────────────────
+  # ── Contract deployer (mock mode only) ──────────────────────
+  # Only runs in mock mode. For testnet, deploy contracts manually
+  # and pass addresses via environment variables.
   deployer:
     image: ghcr.io/foundry-rs/foundry:stable
+    profiles: ["mock"]
     user: root
     volumes:
       - ./contracts:/contracts
@@ -24,27 +26,88 @@ services:
     entrypoint: ["bash", "/deploy.sh"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
+      # WARNING: Default is Anvil Account #0 (well-known key). For mock mode only.
+      - DEPLOYER_KEY=${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
       - IDENTITY_REGISTRY=${IDENTITY_REGISTRY:-}
       - RELAYER_IDENTITY_REGISTRY=${RELAYER_IDENTITY_REGISTRY:-}
 
-  # ── ZK Relayer (private settlement + gasless claims) ────────
+  # ── Shared Orderbook Server ─────────────────────────────────
+  shared-orderbook:
+    build: ./shared-orderbook
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - DB_PATH=/data/shared-orderbook.db
+    volumes:
+      - orderbook-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  # ── ZK Relayer A (primary) ──────────────────────────────────
   zk-relayer:
     build: ./zk-relayer
     depends_on:
-      deployer:
-        condition: service_completed_successfully
+      shared-orderbook:
+        condition: service_healthy
     ports:
       - "3002:3002"
     volumes:
       - shared:/shared:ro
-    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && exec npx tsx src/index.ts"]
+      - relayer-a-data:/data
+    # Source /shared/addresses.env if available (mock mode), else rely on env vars (testnet).
+    # Wait up to 30s for deployer to finish in mock mode.
+    entrypoint: ["sh", "/app/docker-entrypoint.sh"]
     environment:
       - RPC_URL=${RPC_URL:-http://anvil:8545}
-      - RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+      # WARNING: Default is Anvil Account #1 (well-known test key). Set RELAYER_A_KEY for testnet/production.
+      - RELAYER_PRIVATE_KEY=${RELAYER_A_KEY:-0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d}
+      - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS:-}
+      - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS:-}
+      - FEE_VAULT_ADDRESS=${FEE_VAULT_ADDRESS:-}
       - RELAYER_FEE=30
       - PORT=3002
+      - DB_PATH=/data/zk-relayer.db
+      - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
+      - RELAYER_PUBLIC_URL=${RELAYER_A_PUBLIC_URL:-http://zk-relayer:3002}
+      - RELAYER_NAME=Relayer-A
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+
+  # ── ZK Relayer B (cross-relayer matching) ───────────────────
+  zk-relayer-b:
+    build: ./zk-relayer
+    profiles: ["multi-relayer"]
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    volumes:
+      - shared:/shared:ro
+      - relayer-b-data:/data
+    entrypoint: ["sh", "-c", "[ -f /shared/addresses.env ] && set -a && . /shared/addresses.env && set +a; exec npx tsx src/index.ts"]
+    environment:
+      - RPC_URL=${RPC_URL:-http://anvil:8545}
+      # WARNING: Default is Anvil Account #2 (well-known test key). Set RELAYER_B_KEY for testnet/production.
+      - RELAYER_PRIVATE_KEY=${RELAYER_B_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}
+      - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS:-}
+      - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS:-}
+      - FEE_VAULT_ADDRESS=${FEE_VAULT_ADDRESS:-}
+      - RELAYER_FEE=30
+      - PORT=3003
+      - DB_PATH=/data/zk-relayer-b.db
+      - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
+      - RELAYER_PUBLIC_URL=${RELAYER_B_PUBLIC_URL:-http://zk-relayer-b:3003}
+      - RELAYER_NAME=Relayer-B
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s
       timeout: 5s
       retries: 15
@@ -59,9 +122,12 @@ services:
       - "3000:3000"
     volumes:
       - shared:/shared:ro
-    entrypoint: ["sh", "-c", "set -a && . /shared/addresses.env && set +a && export NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545} && exec npx next dev"]
+    entrypoint: ["sh", "-c", "[ -f /shared/addresses.env ] && set -a && . /shared/addresses.env && set +a; export NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545} && exec npx next dev"]
     environment:
       - NEXT_PUBLIC_RPC_URL=${NEXT_PUBLIC_RPC_URL:-http://localhost:8545}
 
 volumes:
   shared:
+  orderbook-data:
+  relayer-a-data:
+  relayer-b-data:

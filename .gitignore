@@ -35,5 +35,9 @@ node_modules/
 # Misc
 frontend/1.json
 relayer/dist/
-relayer/dist/
 .e2e-logs/
+
+# Docker volumes
+orderbook-data/
+relayer-a-data/
+relayer-b-data/

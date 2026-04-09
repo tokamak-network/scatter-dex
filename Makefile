@@ -1,13 +1,29 @@
-.PHONY: up down ps logs clean test up-integration
+.PHONY: up up-multi down ps logs clean test up-integration
 
 # ─── Mock Mode (standalone, no zk-X509) ──────────────────────
 up:
 	docker compose --profile mock up -d
 	@echo ""
 	@echo "ScatterDEX is running (mock mode)"
-	@echo "  Frontend:    http://localhost:3000"
-	@echo "  ZK Relayer:  http://localhost:3002"
-	@echo "  Anvil:       http://localhost:8545"
+	@echo "  Frontend:         http://localhost:3000"
+	@echo "  ZK Relayer A:     http://localhost:3002"
+	@echo "  Shared Orderbook: http://localhost:4000"
+	@echo "  Anvil:            http://localhost:8545"
+	@echo ""
+	@echo "  make up-multi  — start with Relayer B (cross-relayer matching)"
+	@echo "  make logs      — follow logs"
+	@echo "  make down      — stop all"
+
+# ─── Multi-Relayer Mode (cross-relayer matching) ─────────────
+up-multi:
+	docker compose --profile mock --profile multi-relayer up -d
+	@echo ""
+	@echo "ScatterDEX is running (multi-relayer mode)"
+	@echo "  Frontend:         http://localhost:3000"
+	@echo "  ZK Relayer A:     http://localhost:3002"
+	@echo "  ZK Relayer B:     http://localhost:3003"
+	@echo "  Shared Orderbook: http://localhost:4000"
+	@echo "  Anvil:            http://localhost:8545"
 	@echo ""
 	@echo "  make logs   — follow logs"
 	@echo "  make down   — stop all"
@@ -27,13 +43,14 @@ endif
 	docker compose up -d
 	@echo ""
 	@echo "ScatterDEX is running (integration mode)"
-	@echo "  Frontend:    http://localhost:3000"
-	@echo "  ZK Relayer:  http://localhost:3002"
-	@echo "  Anvil:       http://localhost:8545 (zk-X509)"
+	@echo "  Frontend:         http://localhost:3000"
+	@echo "  ZK Relayer A:     http://localhost:3002"
+	@echo "  Shared Orderbook: http://localhost:4000"
+	@echo "  Anvil:            http://localhost:8545 (zk-X509)"
 
 # ─── Management ──────────────────────────────────────────────
 down:
-	docker compose --profile mock down 2>/dev/null || docker compose down
+	docker compose --profile mock --profile multi-relayer down 2>/dev/null || docker compose down
 
 ps:
 	docker compose ps
@@ -42,7 +59,7 @@ logs:
 	docker compose logs -f
 
 clean:
-	docker compose --profile mock down -v 2>/dev/null || docker compose down -v
+	docker compose --profile mock --profile multi-relayer down -v 2>/dev/null || docker compose down -v
 
 # ─── Contract Tests ──────────────────────────────────────────
 test:
