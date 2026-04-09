@@ -87,6 +87,73 @@ describe("parsePrivateOrder", () => {
     }];
     expect(() => parsePrivateOrder(makeRawOrder({ claims }))).toThrow("160-bit address");
   });
+
+  // ─── [M8] Field-range validation ────────────────────────────
+  const BN254 = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+  const TWO_128 = 1n << 128n;
+
+  it("[M8] rejects sellAmount above 128 bits", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ sellAmount: TWO_128.toString() })))
+      .toThrow("128-bit range");
+  });
+
+  it("[M8] rejects buyAmount above 128 bits", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ buyAmount: TWO_128.toString() })))
+      .toThrow("128-bit range");
+  });
+
+  it("[M8] rejects balance above 128 bits", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ balance: TWO_128.toString() })))
+      .toThrow("128-bit range");
+  });
+
+  it("[M8] rejects maxFee above 16 bits", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ maxFee: "65536" })))
+      .toThrow("16-bit range");
+  });
+
+  it("[M8] rejects ownerSecret >= BN254 modulus", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ ownerSecret: BN254.toString() })))
+      .toThrow("BN254 scalar field modulus");
+  });
+
+  it("[M8] rejects pubKeyAx >= BN254 modulus", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ pubKeyAx: BN254.toString() })))
+      .toThrow("BN254 scalar field modulus");
+  });
+
+  it("[M8] rejects sigS >= BN254 modulus", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ sigS: BN254.toString() })))
+      .toThrow("BN254 scalar field modulus");
+  });
+
+  it("[M8] rejects negative salt", () => {
+    expect(() => parsePrivateOrder(makeRawOrder({ salt: "-1" })))
+      .toThrow("non-negative");
+  });
+
+  it("[M8] rejects claim secret >= BN254 modulus", () => {
+    const claims = [{
+      secret: BN254.toString(),
+      recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      token: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      amount: "1000", releaseTime: "9999999999",
+    }];
+    expect(() => parsePrivateOrder(makeRawOrder({ claims })))
+      .toThrow("BN254 scalar field modulus");
+  });
+
+  it("[M8] rejects claim amount above 128 bits", () => {
+    const claims = [{
+      secret: "9000",
+      recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      token: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      amount: TWO_128.toString(),
+      releaseTime: "9999999999",
+    }];
+    expect(() => parsePrivateOrder(makeRawOrder({ claims })))
+      .toThrow("128-bit range");
+  });
 });
 
 describe("pairKey", () => {

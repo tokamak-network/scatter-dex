@@ -434,6 +434,35 @@ contract PrivateSettlementTest is Test {
         settlement.settlePrivate(p2);
     }
 
+    // ─── [M7] timestamp-tolerance hardening ──────────────────────
+
+    function test_settlePrivate_rejects_future_timestamp() public {
+        // Move chain time forward so the helper picks a known block.timestamp.
+        vm.warp(1_000_000);
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        // Even one second into the future is rejected post-M7.
+        p.currentTimestamp = block.timestamp + 1;
+        vm.expectRevert(PrivateSettlement.TimestampOutOfRange.selector);
+        settlement.settlePrivate(p);
+    }
+
+    function test_settlePrivate_accepts_recent_past_timestamp() public {
+        vm.warp(1_000_000);
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        // Within the 5-minute window — still accepted (proof gen latency).
+        p.currentTimestamp = block.timestamp - 60;
+        settlement.settlePrivate(p);
+    }
+
+    function test_settlePrivate_rejects_too_old_timestamp() public {
+        vm.warp(1_000_000);
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        // Beyond the 5-minute window — rejected.
+        p.currentTimestamp = block.timestamp - 400;
+        vm.expectRevert(PrivateSettlement.TimestampOutOfRange.selector);
+        settlement.settlePrivate(p);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────
 
     function _defaultSettleParams() internal view returns (PrivateSettlement.SettleParams memory) {

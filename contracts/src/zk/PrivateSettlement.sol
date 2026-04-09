@@ -178,11 +178,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Verify the caller-provided root is known to the pool (avoids reading stale root)
         if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
 
-        // Verify the caller-provided timestamp is within tolerance of the actual block timestamp
-        if (
-            p.currentTimestamp > block.timestamp + TIMESTAMP_TOLERANCE ||
-            p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
-        ) revert TimestampOutOfRange();
+        // [M7] Verify the caller-provided timestamp is *not in the future* and
+        //      is within TIMESTAMP_TOLERANCE of block.timestamp.
+        //
+        //      The previous version allowed `currentTimestamp` to drift up to
+        //      TIMESTAMP_TOLERANCE (5 min) into the future, which meant the
+        //      circuit's `currentTimestamp <= expiry` check could pass for an
+        //      already-expired order whose expiry is up to 5 min in the past.
+        //      Tightening this to a one-sided window restores the safety margin
+        //      while still tolerating proof generation latency / minor clock
+        //      skew between the prover and the chain.
+        if (p.currentTimestamp > block.timestamp) revert TimestampOutOfRange();
+        if (p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp) revert TimestampOutOfRange();
 
         uint[18] memory pubSignals = [
             p.currentRoot,
