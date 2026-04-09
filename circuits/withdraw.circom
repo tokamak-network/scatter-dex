@@ -136,8 +136,22 @@ template Withdraw(levels) {
     newCommitment === expectedCommitment;
 
     // ════════════════════════════════════════
-    //  7. PREVENT RECIPIENT/RELAYER OPTIMIZATION
-    //     (Bind to proof so it can't be front-run)
+    //  7. BIND RECIPIENT / RELAYER INTO THE PROOF
+    //
+    //  [M6] `recipient` and `relayer` are public inputs and are therefore
+    //  already bound to the proof at the verification-key level — circom
+    //  2.x preserves declared public signals regardless of whether they
+    //  appear in any constraint inside the template. The squaring lines
+    //  below are kept as belt-and-braces:
+    //    - they silence the compiler's "signal is not constrained" warning
+    //    - they remain a defence against any future optimizer change that
+    //      would treat unused public signals as dead
+    //    - they make the constraint visible at audit time so a reader
+    //      doesn't have to know the implicit verification-key behaviour
+    //
+    //  The choice of `x * x` is the simplest constraint that touches the
+    //  signal without leaking any structural information.
+    //  See: https://docs.circom.io/circom-language/signals/#unused-signals
     // ════════════════════════════════════════
     signal recipientSq;
     recipientSq <== recipient * recipient;
