@@ -61,11 +61,11 @@ export async function computeCommitment(note: CommitmentNote): Promise<bigint> {
   return F.toObject(hash);
 }
 
-// [M4] Domain tags must stay in sync with circuits/{withdraw,settle,claim}.circom
-//      and zk-relayer/src/core/zk-prover.ts.
-export const TAG_ESCROW_NULL = 0n;
-export const TAG_NONCE_NULL = 1n;
-export const TAG_CLAIM_NULL = 2n;
+// [PR #124 review] Tag values now live in the shared `./tags` module so
+// they cannot drift between circuits/zk-prover/frontend. Re-exported here
+// for backwards compatibility with existing importers.
+export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags";
+import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags";
 
 /**
  * Escrow nullifier (used by withdraw + settle).

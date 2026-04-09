@@ -50,10 +50,11 @@ export async function computeCommitment(
   return poseidonHash([secret, token, amount, salt]);
 }
 
-// [M4] Domain tags must stay in sync with circuits/{settle,withdraw,claim}.circom.
-export const TAG_ESCROW_NULL = 0n;
-export const TAG_NONCE_NULL = 1n;
-export const TAG_CLAIM_NULL = 2n;
+// [PR #124 review] Tag values now live in the shared `./tags.ts` module
+// so they cannot drift between circuits/zk-prover/frontend. Re-exported
+// here for backwards compatibility with downstream importers.
+export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags.js";
+import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags.js";
 
 /**
  * Escrow nullifier (used by withdraw and settle).

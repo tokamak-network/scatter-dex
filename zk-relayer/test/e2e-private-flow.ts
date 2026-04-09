@@ -32,6 +32,10 @@ import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from
 // on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
+// [PR #124 review] Centralised nullifier domain tags so the inline literal
+// `2n` / `0n` cannot drift from circuits/zk-prover/frontend.
+import { TAG_ESCROW_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Config ─────────────────────────────────────────────────
@@ -389,8 +393,8 @@ async function main() {
     secret: bigint,
     amount: bigint,
   ): Promise<string> {
-    // [M4] Domain-separated claim nullifier (tag = 2)
-    const nullifier = poseidonHash([2n, secret, BigInt(claimIdx)]);
+    // [M4] Domain-separated claim nullifier (tag = TAG_CLAIM_NULL)
+    const nullifier = poseidonHash([TAG_CLAIM_NULL, secret, BigInt(claimIdx)]);
     const proof = getMerkleProof(claimsLayers, claimIdx);
 
     const { proof: zkProof } = await snarkjs.groth16.fullProve({
@@ -463,12 +467,11 @@ async function main() {
   assert(changeLogs.length > 0, `Change commitment on-chain at leaf #${(changeLogs[0] as ethers.EventLog).args.leafIndex}`);
 
   // Verify claim nullifiers are spent
-  // [M4] Domain-separated claim nullifier (tag = 2). The submitClaim helper
-  // above already uses the tagged form when generating the proof, so the
-  // verification block must match — otherwise these checks would fail even
-  // when the on-chain claim succeeded.
-  const claimNull1 = poseidonHash([2n, claimSecret1, 0n]);
-  const claimNull2 = poseidonHash([2n, claimSecret2, 1n]);
+  // [M4] Domain-separated claim nullifier (tag = TAG_CLAIM_NULL). Tag value
+  // imported from the shared module so the verification block cannot drift
+  // from submitClaim above or from the circuits.
+  const claimNull1 = poseidonHash([TAG_CLAIM_NULL, claimSecret1, 0n]);
+  const claimNull2 = poseidonHash([TAG_CLAIM_NULL, claimSecret2, 1n]);
   const [null1Spent, null2Spent] = await Promise.all([
     settlementContract.claimNullifiers(toHex(claimNull1, 32)),
     settlementContract.claimNullifiers(toHex(claimNull2, 32)),
@@ -477,8 +480,8 @@ async function main() {
   assert(null2Spent, "Claim #2 nullifier spent");
 
   // Verify original note nullifier is spent
-  // [M4] Domain-separated escrow nullifier (tag = 0)
-  const noteNullifier = poseidonHash([0n, ownerSecret, salt]);
+  // [M4] Domain-separated escrow nullifier (tag = TAG_ESCROW_NULL)
+  const noteNullifier = poseidonHash([TAG_ESCROW_NULL, ownerSecret, salt]);
   const noteSpent = await settlementContract.nullifiers(toHex(noteNullifier, 32));
   assert(noteSpent, "Original note nullifier spent");
 

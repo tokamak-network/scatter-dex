@@ -5,6 +5,7 @@ include "./node_modules/circomlib/circuits/eddsaposeidon.circom";
 include "./node_modules/circomlib/circuits/comparators.circom";
 include "./node_modules/circomlib/circuits/bitify.circom";
 include "./node_modules/circomlib/circuits/mux1.circom";
+include "./tags.circom";
 
 // Reuse from withdraw.circom
 template PoseidonMerkleProof(levels) {
@@ -223,31 +224,36 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  principle hash to the same digest under either context.  Adding
     //  a one-byte tag (0 = escrow, 1 = nonce) makes the two preimage
     //  spaces disjoint by construction.
+    //
+    //  [PR #124 review] Tag values come from the shared `tags.circom`
+    //  helper so settle / withdraw / claim cannot drift from each other.
+    //  See `circuits/tags.circom` and the matching off-chain modules
+    //  `zk-relayer/src/core/tags.ts` and `frontend/app/lib/zk/tags.ts`.
+    //  TAG_ESCROW_NULL() / TAG_NONCE_NULL() are inlined circom functions
+    //  with zero constraint cost.
     // ════════════════════════════════════════
-    var TAG_ESCROW_NULL = 0;
-    var TAG_NONCE_NULL = 1;
 
     component makerNullComp = Poseidon(3);
-    makerNullComp.inputs[0] <== TAG_ESCROW_NULL;
+    makerNullComp.inputs[0] <== TAG_ESCROW_NULL();
     makerNullComp.inputs[1] <== makerSecret;
     makerNullComp.inputs[2] <== makerSalt;
     makerNullifier === makerNullComp.out;
 
     component takerNullComp = Poseidon(3);
-    takerNullComp.inputs[0] <== TAG_ESCROW_NULL;
+    takerNullComp.inputs[0] <== TAG_ESCROW_NULL();
     takerNullComp.inputs[1] <== takerSecret;
     takerNullComp.inputs[2] <== takerSalt;
     takerNullifier === takerNullComp.out;
 
     // Nonce nullifiers (prevent replay)
     component makerNonceNull = Poseidon(3);
-    makerNonceNull.inputs[0] <== TAG_NONCE_NULL;
+    makerNonceNull.inputs[0] <== TAG_NONCE_NULL();
     makerNonceNull.inputs[1] <== makerSecret;
     makerNonceNull.inputs[2] <== makerNonce;
     makerNonceNullifier === makerNonceNull.out;
 
     component takerNonceNull = Poseidon(3);
-    takerNonceNull.inputs[0] <== TAG_NONCE_NULL;
+    takerNonceNull.inputs[0] <== TAG_NONCE_NULL();
     takerNonceNull.inputs[1] <== takerSecret;
     takerNonceNull.inputs[2] <== takerNonce;
     takerNonceNullifier === takerNonceNull.out;
@@ -660,6 +666,17 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //      (nonce nullifier collision).  Without this, a user with one
     //      keypair could in principle pass the pubkey check above by
     //      using two ephemeral keys but still spend the same UTXO twice.
+    //
+    //  [PR #124 review note] These checks are NOT redundant with the
+    //  contract-level replay protection in PrivateSettlement.settlePrivate.
+    //  That function reads `nullifiers[makerNullifier]` and
+    //  `nullifiers[takerNullifier]` separately on entry — both reads return
+    //  `false` if the nullifier hasn't been spent yet, so a tx with
+    //  `makerNullifier == takerNullifier` passes both reads and then
+    //  performs two idempotent writes (`nullifiers[X] = true` twice with the
+    //  same key). Storage writes don't revert on duplicate writes, so the
+    //  contract alone would happily settle a self-trade onto a single UTXO.
+    //  The constraint here is the only thing that catches it.
     component sameEscrowNull = IsEqual();
     sameEscrowNull.in[0] <== makerNullifier;
     sameEscrowNull.in[1] <== takerNullifier;

@@ -27,6 +27,10 @@ import { fileURLToPath } from "url";
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 
+// [PR #124 review] Centralised nullifier domain tags so the inline literal
+// `0n` cannot drift from circuits/zk-prover/frontend.
+import { TAG_ESCROW_NULL } from "../src/core/tags.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Config ─────────────────────────────────────────────────
@@ -466,8 +470,9 @@ async function main() {
 
   // Verify nullifiers are spent (both maker and taker notes consumed)
   // [M4] Domain-separated escrow nullifier (tag = 0)
-  const nullA = poseidonHash([0n, secretA, saltA]);
-  const nullB = poseidonHash([0n, secretB, saltB]);
+  // [M4] Domain-separated escrow nullifier (tag = TAG_ESCROW_NULL)
+  const nullA = poseidonHash([TAG_ESCROW_NULL, secretA, saltA]);
+  const nullB = poseidonHash([TAG_ESCROW_NULL, secretB, saltB]);
   const nullASpent = await settlementContract.nullifiers(
     "0x" + nullA.toString(16).padStart(64, "0")
   );

@@ -4,6 +4,7 @@ include "./node_modules/circomlib/circuits/poseidon.circom";
 include "./node_modules/circomlib/circuits/comparators.circom";
 include "./node_modules/circomlib/circuits/bitify.circom";
 include "./node_modules/circomlib/circuits/mux1.circom";
+include "./tags.circom";
 
 // Poseidon-based Merkle proof verification
 template PoseidonMerkleProof(levels) {
@@ -92,13 +93,13 @@ template Withdraw(levels) {
 
     // ════════════════════════════════════════
     //  3. VERIFY NULLIFIER
-    //  [M4] Domain-separated escrow nullifier (tag 0).  Must stay in sync
-    //  with settle.circom and the off-chain computeNullifier helpers.
+    //  [M4] Domain-separated escrow nullifier (tag 0). Tag value comes from
+    //  the shared `tags.circom` helper so settle / withdraw / claim cannot
+    //  drift from each other.
     // ════════════════════════════════════════
-    var TAG_ESCROW_NULL = 0;
 
     component nullifierComp = Poseidon(3);
-    nullifierComp.inputs[0] <== TAG_ESCROW_NULL;
+    nullifierComp.inputs[0] <== TAG_ESCROW_NULL();
     nullifierComp.inputs[1] <== ownerSecret;
     nullifierComp.inputs[2] <== salt;
     nullifierHash === nullifierComp.out;
