@@ -2,9 +2,11 @@ import { Router, Request, Response, RequestHandler } from "express";
 import type { PrivateOrderbook } from "../core/orderbook.js";
 import type { PrivateMatcher } from "../core/matcher.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
-import { parsePrivateOrder, serializePrivateOrder, type PrivateOrderStatus } from "../types/order.js";
+import { parsePrivateOrder, serializePrivateOrder, isCrossRelayerMatch, type PrivateOrderStatus } from "../types/order.js";
 import { poseidonHash, verifyEdDSA, computeClaimLeaf, buildMerkleTree } from "../core/zk-prover.js";
 import { config } from "../config.js";
+import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import type { CrossRelayerMatchService } from "../core/cross-relayer-matcher.js";
 
 export function createPrivateOrderRoutes(
   orderbook: PrivateOrderbook,
@@ -12,6 +14,9 @@ export function createPrivateOrderRoutes(
   submitter: PrivateSubmitter,
   writeLimiter?: RequestHandler,
   readLimiter?: RequestHandler,
+  sharedClient?: SharedOrderbookClient | null,
+  crossRelayerService?: CrossRelayerMatchService | null,
+  orderIdMap?: Map<string, string>,
 ): Router {
   const router = Router();
 
@@ -91,43 +96,114 @@ export function createPrivateOrderRoutes(
       // Add to orderbook
       const stored = orderbook.add(order);
 
-      // Try to find a match
-      const match = matcher.findMatch(stored);
-      if (match) {
-        match.maker.status = "matched";
-        match.taker.status = "matched";
-        orderbook.remove(match.maker.order);
-        orderbook.remove(match.taker.order);
-        orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "matched");
-        orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "matched");
-
-        try {
-          const txHash = await submitter.submitPrivateSettle(match);
-          match.maker.status = "settled";
-          match.maker.settleTxHash = txHash;
-          match.taker.status = "settled";
-          match.taker.settleTxHash = txHash;
-          orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "settled", txHash);
-          orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "settled", txHash);
-
-          res.json({ status: "settled", txHash });
-          return;
-        } catch (err: unknown) {
-          // Settle failed — restore DB status first (survives restart), then re-add to memory
-          orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "pending");
-          orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "pending");
-          match.maker.status = "pending";
-          match.taker.status = "pending";
-          try {
-            orderbook.add(match.maker.order);
-            orderbook.add(match.taker.order);
-          } catch (readdErr) {
-            // Memory re-add failed, but DB is already "pending" — orders will recover on restart
-            console.error("failed to re-add orders to memory (DB safe):", readdErr);
+      // Post summary to shared orderbook (fire-and-forget)
+      if (sharedClient) {
+        sharedClient.postOrder({
+          nonce: order.nonce.toString(),
+          pubKeyAx: order.pubKeyAx.toString(),
+          sellToken: "0x" + order.sellToken.toString(16).padStart(40, "0"),
+          buyToken: "0x" + order.buyToken.toString(16).padStart(40, "0"),
+          sellAmount: order.sellAmount.toString(),
+          buyAmount: order.buyAmount.toString(),
+          minFillAmount: order.buyAmount.toString(),
+          maxFee: Number(order.maxFee),
+          expiry: Number(order.expiry),
+        }).then((id) => {
+          if (id && orderIdMap) {
+            orderIdMap.set(`${order.pubKeyAx}:${order.nonce}`, id);
           }
-          console.error("private settle failed:", err instanceof Error ? err.message : "unknown");
-          res.status(500).json({ status: "settle_failed", error: "private settlement failed" });
-          return;
+        }).catch((err) => {
+          console.warn("[shared-orderbook] Failed to post order:", err instanceof Error ? err.message : "unknown");
+        });
+      }
+
+      // Try to find a match (local first, then remote)
+      const matchResult = matcher.findMatchIncludingRemote(stored);
+      if (matchResult) {
+        if (isCrossRelayerMatch(matchResult)) {
+          // Cross-relayer match → send Trade Offer to maker's relayer
+          // If no crossRelayerService, skip silently (local-only mode)
+          if (!crossRelayerService) {
+            res.json({ status: "pending", nonce: order.nonce.toString() });
+            return;
+          }
+          // Lock local order before awaiting remote settlement (prevents double-matching)
+          stored.status = "matched";
+          orderbook.persistStatus(order.pubKeyAx, order.nonce, "matched");
+          try {
+            const tradeResult = await crossRelayerService.sendTradeOffer(
+              matchResult.localOrder,
+              matchResult.remoteOrder,
+            );
+            if (tradeResult.status === "settled" && tradeResult.txHash) {
+              stored.status = "settled";
+              stored.settleTxHash = tradeResult.txHash;
+              orderbook.remove(order);
+              orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", tradeResult.txHash);
+              // Cancel settled order from shared orderbook
+              if (sharedClient && orderIdMap) {
+                const key = `${order.pubKeyAx}:${order.nonce}`;
+                const oid = orderIdMap.get(key);
+                if (oid) { sharedClient.cancelOrder(oid).catch(() => {}); orderIdMap.delete(key); }
+              }
+              res.json({ status: "settled", txHash: tradeResult.txHash, crossRelayer: true });
+              return;
+            }
+            // Trade offer rejected — restore to pending
+            console.warn("[cross-relayer] Trade offer rejected:", tradeResult.reason);
+          } catch (err) {
+            console.warn("[cross-relayer] Trade offer failed:", err instanceof Error ? err.message : "unknown");
+          }
+          // Restore to pending if not settled
+          if (stored.status === "matched") {
+            stored.status = "pending";
+            orderbook.persistStatus(order.pubKeyAx, order.nonce, "pending");
+          }
+        } else {
+          // Local match — existing settlement flow
+          const match = matchResult;
+          match.maker.status = "matched";
+          match.taker.status = "matched";
+          orderbook.remove(match.maker.order);
+          orderbook.remove(match.taker.order);
+          orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "matched");
+          orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "matched");
+
+          try {
+            const txHash = await submitter.submitPrivateSettle(match);
+            match.maker.status = "settled";
+            match.maker.settleTxHash = txHash;
+            match.taker.status = "settled";
+            match.taker.settleTxHash = txHash;
+            orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "settled", txHash);
+            orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "settled", txHash);
+
+            // Cancel settled orders from shared orderbook
+            if (sharedClient && orderIdMap) {
+              for (const m of [match.maker, match.taker]) {
+                const key = `${m.order.pubKeyAx}:${m.order.nonce}`;
+                const oid = orderIdMap.get(key);
+                if (oid) { sharedClient.cancelOrder(oid).catch(() => {}); orderIdMap.delete(key); }
+              }
+            }
+
+            res.json({ status: "settled", txHash });
+            return;
+          } catch (err: unknown) {
+            orderbook.persistStatus(match.maker.order.pubKeyAx, match.maker.order.nonce, "pending");
+            orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "pending");
+            match.maker.status = "pending";
+            match.taker.status = "pending";
+            try {
+              orderbook.add(match.maker.order);
+              orderbook.add(match.taker.order);
+            } catch (readdErr) {
+              console.error("failed to re-add orders to memory (DB safe):", readdErr);
+            }
+            console.error("private settle failed:", err instanceof Error ? err.message : "unknown");
+            res.status(500).json({ status: "settle_failed", error: "private settlement failed" });
+            return;
+          }
         }
       }
 
@@ -253,6 +329,15 @@ export function createPrivateOrderRoutes(
 
     const cancelled = orderbook.cancel(pubKeyAx, nonce);
     if (cancelled) {
+      // Notify shared orderbook of cancellation
+      if (sharedClient && orderIdMap) {
+        const key = `${pubKeyAx}:${nonce}`;
+        const orderbookId = orderIdMap.get(key);
+        if (orderbookId) {
+          sharedClient.cancelOrder(orderbookId).catch(() => {});
+          orderIdMap.delete(key);
+        }
+      }
       res.json({ status: "cancelled" });
     } else {
       res.status(404).json({ error: "order not found or already processed" });

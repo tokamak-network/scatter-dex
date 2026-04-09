@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { verifyMessage } from "ethers";
-import type { OrderSummary } from "../core/shared-orderbook-client.js";
+import type { OrderSummary } from "../types/order.js";
+import type { TradeOfferRequest, TradeOfferResponse } from "../types/order.js";
 
 /**
  * P2P order exchange routes — enables direct relayer-to-relayer communication.
@@ -14,6 +15,7 @@ import type { OrderSummary } from "../core/shared-orderbook-client.js";
 export function createP2PRoutes(
   onRemoteOrder: (order: OrderSummary) => void,
   onRemoteCancel: (orderId: string) => void,
+  onTradeOffer?: (offer: TradeOfferRequest, relayerAddress: string) => Promise<TradeOfferResponse>,
 ): Router {
   const router = Router();
 
@@ -98,6 +100,38 @@ export function createP2PRoutes(
     onRemoteCancel(orderId);
     res.json({ status: "cancelled" });
   });
+
+  /**
+   * POST /api/p2p/trade-offer — Receive a Trade Offer from a peer relayer.
+   *
+   * Steam analogy: a Trade Offer is sent when a remote relayer discovers
+   * a cross-relayer match. The receiving relayer (maker's relayer) validates
+   * the taker's full order data and settles on-chain.
+   */
+  if (onTradeOffer) {
+    router.post("/trade-offer", async (req, res) => {
+      if (!verifyRelayerAuth(req)) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const relayerAddress = (req.headers["x-relayer-address"] as string).toLowerCase();
+
+      try {
+        const offer = req.body as TradeOfferRequest;
+        if (!offer.makerNonce || !offer.makerPubKeyAx || !offer.takerOrder) {
+          res.status(400).json({ error: "missing required fields: makerNonce, makerPubKeyAx, takerOrder" });
+          return;
+        }
+
+        const result = await onTradeOffer(offer, relayerAddress);
+        res.json(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "unknown error";
+        res.status(500).json({ status: "rejected", reason: msg } satisfies TradeOfferResponse);
+      }
+    });
+  }
 
   return router;
 }

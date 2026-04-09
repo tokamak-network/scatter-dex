@@ -1,9 +1,20 @@
-import type { StoredPrivateOrder, PrivateMatch } from "../types/order.js";
+import type { StoredPrivateOrder, PrivateMatch, OrderSummary, CrossRelayerMatch, MatchResult } from "../types/order.js";
 import { pairKey } from "../types/order.js";
 import type { PrivateOrderbook } from "./orderbook.js";
+import type { RemoteOrderStore } from "./remote-orderbook.js";
 
 export class PrivateMatcher {
-  constructor(private orderbook: PrivateOrderbook) {}
+  private relayerAddress: string | null = null;
+
+  constructor(
+    private orderbook: PrivateOrderbook,
+    private remoteOrderbook: RemoteOrderStore | null = null,
+  ) {}
+
+  /** Set this relayer's address to skip own orders in remote matching */
+  setRelayerAddress(address: string): void {
+    this.relayerAddress = address.toLowerCase();
+  }
 
   /**
    * Find a matching pair for the given private order.
@@ -50,6 +61,68 @@ export class PrivateMatcher {
       if (order.sellAmount < candidate.order.buyAmount) continue;
 
       return { maker: newOrder, taker: candidate };
+    }
+
+    return null;
+  }
+
+  /**
+   * Try to find a match including remote orders from the shared orderbook.
+   * Local matches take priority — only falls back to remote if no local match.
+   */
+  findMatchIncludingRemote(newOrder: StoredPrivateOrder): MatchResult | null {
+    // 1. Try local match first
+    const localMatch = this.findMatch(newOrder);
+    if (localMatch) return localMatch;
+
+    // 2. Try remote orders (if available)
+    if (!this.remoteOrderbook) return null;
+
+    const { order } = newOrder;
+    const pair = pairKey(order.sellToken, order.buyToken);
+    const sellHex = "0x" + order.sellToken.toString(16).padStart(40, "0");
+    const buyHex = "0x" + order.buyToken.toString(16).padStart(40, "0");
+    const isSellSide = sellHex < buyHex;
+
+    // Remote counterparty orders (opposite side)
+    const candidates = isSellSide
+      ? this.remoteOrderbook.getBuyOrders(pair)
+      : this.remoteOrderbook.getSellOrders(pair);
+
+    const now = Math.floor(Date.now() / 1000);
+
+    for (const remote of candidates) {
+      if (remote.expiry <= now) continue;
+
+      // Skip own relayer's orders (already in local orderbook)
+      if (this.relayerAddress && remote.relayer.toLowerCase() === this.relayerAddress) continue;
+
+      // Token compatibility
+      const remoteSellToken = BigInt(remote.sellToken);
+      const remoteBuyToken = BigInt(remote.buyToken);
+      if (remoteSellToken !== order.buyToken) continue;
+      if (remoteBuyToken !== order.sellToken) continue;
+
+      // Price compatibility (same cross-multiply as local matcher)
+      const remoteSellAmount = BigInt(remote.sellAmount);
+      const remoteBuyAmount = BigInt(remote.buyAmount);
+
+      const compatible =
+        order.sellAmount * remoteSellAmount >=
+        order.buyAmount * remoteBuyAmount;
+      if (!compatible) continue;
+
+      // Amount compatibility
+      if (remoteSellAmount < order.buyAmount) continue;
+      if (order.sellAmount < remoteBuyAmount) continue;
+
+      // Cross-relayer match found!
+      // New order is taker (arrived later), remote order is maker (was there first)
+      return {
+        localOrder: newOrder,
+        remoteOrder: remote,
+        localSide: "taker" as const,
+      };
     }
 
     return null;

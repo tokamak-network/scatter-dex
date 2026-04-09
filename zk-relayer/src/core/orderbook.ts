@@ -142,6 +142,12 @@ export class PrivateOrderbook {
     return (this.buys.get(pair) || []).filter((o) => o.status === "pending");
   }
 
+  /** Find a pending order by (pubKeyAx, nonce) composite key */
+  getByPubKeyAndNonce(pubKeyAx: bigint, nonce: bigint): StoredPrivateOrder | null {
+    const stored = this.byPubKey.get(pubKeyAx.toString())?.get(nonce.toString());
+    return (stored && stored.status === "pending") ? stored : null;
+  }
+
   getOrdersByPubKey(pubKeyAx: bigint): StoredPrivateOrder[] {
     const orders = this.byPubKey.get(pubKeyAx.toString());
     if (!orders) return [];
