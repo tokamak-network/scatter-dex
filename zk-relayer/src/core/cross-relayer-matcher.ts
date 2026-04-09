@@ -88,8 +88,8 @@ export class CrossRelayerMatchService {
       // Match found! Local is taker, remote is maker.
       console.log(`[cross-relayer] Reactive match: local ${orderKey} ↔ remote ${summary.id}`);
 
+      this.lockingOrders.add(orderKey);
       try {
-        this.lockingOrders.add(orderKey);
         // Mark as matched first (prevents double-matching), restore on failure
         local.status = "matched";
         this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
@@ -111,15 +111,18 @@ export class CrossRelayerMatchService {
           }
           return; // Done
         }
+        // Trade offer rejected — restore to pending
+        console.warn(`[cross-relayer] Trade offer rejected for ${summary.id}:`, result.reason);
       } catch (err) {
         console.warn(`[cross-relayer] Trade offer failed for ${summary.id}:`, err instanceof Error ? err.message : "unknown");
+      } finally {
+        // Always release lock and restore pending if not settled
+        if (local.status === "matched") {
+          local.status = "pending";
+          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+        }
+        this.lockingOrders.delete(orderKey);
       }
-      // Restore to pending if not settled
-      if (local.status === "matched") {
-        local.status = "pending";
-        this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
-      }
-      this.lockingOrders.delete(orderKey);
     }
   }
 
@@ -164,6 +167,8 @@ export class CrossRelayerMatchService {
    * This relayer is the maker's relayer = settling relayer.
    */
   async handleTradeOffer(offer: TradeOfferRequest, senderRelayerAddress: string): Promise<TradeOfferResponse> {
+    console.log(`[cross-relayer] Trade offer received from relayer ${senderRelayerAddress} for maker ${offer.makerPubKeyAx}:${offer.makerNonce}`);
+
     // 1. Parse and validate the taker's order
     let takerOrder;
     try {
@@ -189,8 +194,10 @@ export class CrossRelayerMatchService {
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)
     try {
       const claimLeaves = await Promise.all(takerOrder.claims.map(c => computeClaimLeaf(c)));
-      const claimsTree = await buildMerkleTree(claimLeaves);
-      const claimsRoot = claimsTree.root;
+      // Pad to 16 leaves (max claims) with depth 4 — must match ZK circuit
+      const padded = [...claimLeaves];
+      while (padded.length < 16) padded.push(0n);
+      const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
       const msgHash = await poseidonHash([
         takerOrder.sellToken, takerOrder.buyToken,
@@ -274,7 +281,9 @@ export class CrossRelayerMatchService {
       // Restore maker to pending
       makerStored.status = "pending";
       this.orderbook.persistStatus(maker.pubKeyAx, maker.nonce, "pending");
-      try { this.orderbook.add(maker); } catch {}
+      try { this.orderbook.add(maker); } catch (readdErr) {
+        console.error("[cross-relayer] Failed to re-add maker to memory (DB safe):", readdErr);
+      }
 
       const reason = err instanceof Error ? err.message : "settlement failed";
       console.error(`[cross-relayer] Settlement failed:`, reason);
