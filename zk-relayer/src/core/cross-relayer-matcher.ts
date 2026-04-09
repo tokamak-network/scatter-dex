@@ -151,34 +151,35 @@ export class CrossRelayerMatchService {
 
     const url = `${remoteMaker.relayerUrl}/api/p2p/trade-offer`;
     const headers = await this.sharedClient.authHeaders("POST", "/api/p2p/trade-offer");
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000), // 30s timeout for settlement
-    });
-
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-      const result: TradeOfferResponse = { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
-      this.db?.recordTradeOffer({
-        direction: "sent", peerRelayer: remoteMaker.relayer,
-        makerPubKey: remoteMaker.pubKeyAx, makerNonce: remoteMaker.nonce,
-        takerPubKey: order.pubKeyAx.toString(), takerNonce: order.nonce.toString(),
-        status: "rejected", reason: result.reason,
-      });
-      return result;
-    }
-
-    const result = await res.json() as TradeOfferResponse;
-    this.db?.recordTradeOffer({
-      direction: "sent", peerRelayer: remoteMaker.relayer,
+    const auditBase = {
+      direction: "sent" as const, peerRelayer: remoteMaker.relayer,
       makerPubKey: remoteMaker.pubKeyAx, makerNonce: remoteMaker.nonce,
       takerPubKey: order.pubKeyAx.toString(), takerNonce: order.nonce.toString(),
-      status: result.status, txHash: result.txHash, reason: result.reason,
-    });
-    return result;
+    };
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const result: TradeOfferResponse = { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
+        this.db?.recordTradeOffer({ ...auditBase, status: "rejected", reason: result.reason });
+        return result;
+      }
+
+      const result = await res.json() as TradeOfferResponse;
+      this.db?.recordTradeOffer({ ...auditBase, status: result.status, txHash: result.txHash, reason: result.reason });
+      return result;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "network error";
+      this.db?.recordTradeOffer({ ...auditBase, status: "error", reason });
+      return { status: "rejected", reason };
+    }
   }
 
   // ─── Trade Offer handler (receiving side) ───
@@ -190,12 +191,22 @@ export class CrossRelayerMatchService {
   async handleTradeOffer(offer: TradeOfferRequest, senderRelayerAddress: string): Promise<TradeOfferResponse> {
     console.log(`[cross-relayer] Trade offer received from relayer ${senderRelayerAddress} for maker ${offer.makerPubKeyAx}:${offer.makerNonce}`);
 
+    const recordRejection = (reason: string, takerPubKey = "unknown", takerNonce = "unknown") => {
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: offer.makerPubKeyAx, makerNonce: offer.makerNonce,
+        takerPubKey, takerNonce, status: "rejected", reason,
+      });
+    };
+
     // 1. Parse and validate the taker's order
     let takerOrder;
     try {
       takerOrder = parsePrivateOrder(offer.takerOrder);
     } catch (err) {
-      return { status: "rejected", reason: `invalid taker order: ${err instanceof Error ? err.message : "unknown"}` };
+      const reason = `invalid taker order: ${err instanceof Error ? err.message : "unknown"}`;
+      recordRejection(reason);
+      return { status: "rejected", reason };
     }
 
     // 2. Find the local maker order by (pubKeyAx, nonce) — unique composite key
@@ -204,12 +215,16 @@ export class CrossRelayerMatchService {
     const makerStored = this.orderbook.getByPubKeyAndNonce(makerPubKeyAx, makerNonce);
 
     if (!makerStored) {
-      return { status: "rejected", reason: "maker order not found or no longer pending" };
+      const reason = "maker order not found or no longer pending";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
     }
 
     const orderKey = `${makerStored.order.pubKeyAx}:${makerStored.order.nonce}`;
     if (this.lockingOrders.has(orderKey)) {
-      return { status: "rejected", reason: "maker order is being matched" };
+      const reason = "maker order is being matched";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
     }
 
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)

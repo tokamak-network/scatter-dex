@@ -211,6 +211,7 @@ export class PrivateOrderDB {
         created_at    INTEGER NOT NULL
       );
 
+      CREATE INDEX IF NOT EXISTS idx_to_created ON trade_offers(created_at);
       CREATE INDEX IF NOT EXISTS idx_to_direction ON trade_offers(direction, created_at);
       CREATE INDEX IF NOT EXISTS idx_to_peer ON trade_offers(peer_relayer, created_at);
     `);

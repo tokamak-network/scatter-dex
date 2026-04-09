@@ -39,8 +39,8 @@ export function createRelayerStatsRoutes(
    */
   router.get("/trade-offers", ...limiter, (req, res) => {
     try {
-      const limit = Math.min(Number(req.query.limit) || 50, 200);
-      const offset = Number(req.query.offset) || 0;
+      const limit = Math.max(1, Math.min(Number(req.query.limit) || 50, 200));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
       const offers = db.getTradeOffers(limit, offset);
       res.json({ offers, count: offers.length, offset });
     } catch (err) {
