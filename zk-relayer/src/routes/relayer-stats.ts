@@ -14,13 +14,12 @@ export function createRelayerStatsRoutes(
   readLimiter?: RequestHandler,
 ): Router {
   const router = Router();
+  const limiter = readLimiter ? [readLimiter] : [];
 
   /**
    * GET /api/relayer/stats — Relayer performance statistics
-   * Used by frontend relayer profile page and dashboard.
    */
-  if (readLimiter) router.get("/stats", readLimiter);
-  router.get("/stats", (_req, res) => {
+  router.get("/stats", ...limiter, (_req, res) => {
     try {
       const stats = db.getRelayerStats();
       res.json({
@@ -29,6 +28,7 @@ export function createRelayerStatsRoutes(
         pendingOrders: orderbook.pendingOrderCount,
       });
     } catch (err) {
+      console.error("[relayer-stats] Failed to load stats:", err instanceof Error ? err.message : err);
       res.status(500).json({ error: "Failed to load stats" });
     }
   });
@@ -37,14 +37,14 @@ export function createRelayerStatsRoutes(
    * GET /api/relayer/trade-offers — Cross-relayer Trade Offer audit trail
    * Query params: ?limit=50&offset=0
    */
-  if (readLimiter) router.get("/trade-offers", readLimiter);
-  router.get("/trade-offers", (req, res) => {
+  router.get("/trade-offers", ...limiter, (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 50, 200);
       const offset = Number(req.query.offset) || 0;
       const offers = db.getTradeOffers(limit, offset);
       res.json({ offers, count: offers.length, offset });
     } catch (err) {
+      console.error("[relayer-stats] Failed to load trade offers:", err instanceof Error ? err.message : err);
       res.status(500).json({ error: "Failed to load trade offers" });
     }
   });

@@ -318,9 +318,9 @@ export class CrossRelayerMatchService {
       console.error(`[cross-relayer] Settlement failed:`, reason);
       this.db?.recordTradeOffer({
         direction: "received", peerRelayer: senderRelayerAddress,
-        makerPubKey: offer.makerPubKeyAx, makerNonce: offer.makerNonce,
+        makerPubKey: maker.pubKeyAx.toString(), makerNonce: maker.nonce.toString(),
         takerPubKey: takerOrder.pubKeyAx.toString(), takerNonce: takerOrder.nonce.toString(),
-        status: "rejected", reason,
+        status: "error", reason,
       });
       return { status: "rejected", reason };
     } finally {

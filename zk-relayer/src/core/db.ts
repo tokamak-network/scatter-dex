@@ -28,6 +28,20 @@ interface OrderRow {
   submitted_at: number;
 }
 
+export interface TradeOfferRow {
+  id: number;
+  direction: "sent" | "received";
+  peer_relayer: string;
+  maker_pub_key: string;
+  maker_nonce: string;
+  taker_pub_key: string;
+  taker_nonce: string;
+  status: string;
+  tx_hash: string | null;
+  reason: string | null;
+  created_at: number;
+}
+
 interface ClaimRow {
   pub_key_ax: string;
   nonce: string;
@@ -57,6 +71,11 @@ export class PrivateOrderDB {
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
   private selectTradeOffers: ReturnType<Database.Database["prepare"]>;
+  private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
+  private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
+  private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
+  private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
+  private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -120,6 +139,11 @@ export class PrivateOrderDB {
     this.selectTradeOffers = this.db.prepare(`
       SELECT * FROM trade_offers ORDER BY created_at DESC LIMIT @limit OFFSET @offset
     `);
+    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
+    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
+    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1");
+    this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
+    this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
   }
 
   private migrate(): void {
@@ -367,25 +391,25 @@ export class PrivateOrderDB {
     });
   }
 
-  getTradeOffers(limit = 50, offset = 0): Array<Record<string, unknown>> {
-    return this.selectTradeOffers.all({ limit, offset }) as Array<Record<string, unknown>>;
+  getTradeOffers(limit = 50, offset = 0): TradeOfferRow[] {
+    return this.selectTradeOffers.all({ limit, offset }) as TradeOfferRow[];
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
-  getRelayerStats(): Record<string, unknown> {
-    const totalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders").get() as { count: number };
-    const settledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'").get() as { count: number };
-    const crossRelayerSettled = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1").get() as { count: number };
-    const totalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers").get() as { count: number };
-    const settledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'").get() as { count: number };
+  getRelayerStats(): Record<string, number> {
+    const total = (this.statsTotalOrders.get() as { count: number }).count;
+    const settled = (this.statsSettledOrders.get() as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
 
     return {
-      totalOrders: totalOrders.count,
-      settledOrders: settledOrders.count,
-      successRate: totalOrders.count > 0 ? Math.round((settledOrders.count / totalOrders.count) * 100) : 0,
-      crossRelayerSettled: crossRelayerSettled.count,
-      totalTradeOffers: totalTradeOffers.count,
-      settledTradeOffers: settledTradeOffers.count,
+      totalOrders: total,
+      settledOrders: settled,
+      successRate: total > 0 ? Math.round((settled / total) * 100) : 0,
+      crossRelayerSettled: crossRelayer,
+      totalTradeOffers: tradeTotal,
+      settledTradeOffers: tradeSettled,
     };
   }
 
