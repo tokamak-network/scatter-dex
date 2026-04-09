@@ -120,6 +120,7 @@ describe("API integration", () => {
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
         nonce: "1",
+        pubKeyAx: "111",
       }),
     });
     expect(status).toBe(201);
@@ -140,6 +141,7 @@ describe("API integration", () => {
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
         nonce: "1",
+        pubKeyAx: "222",
       }),
     });
     expect(status).toBe(201);

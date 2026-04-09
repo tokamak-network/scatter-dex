@@ -40,23 +40,10 @@ export interface PrivateMatch {
   taker: StoredPrivateOrder;
 }
 
-// ─── Cross-relayer matching types ───
+// ─── Cross-relayer matching types (shared with @scatter-dex/types) ───
 
-export interface OrderSummary {
-  id: string;
-  relayer: string;
-  relayerUrl: string;
-  nonce: string;
-  pubKeyAx: string;        // EdDSA public key component (for maker identification in Trade Offers)
-  sellToken: string;
-  buyToken: string;
-  sellAmount: string;
-  buyAmount: string;
-  minFillAmount: string;
-  maxFee: number;
-  expiry: number;
-  createdAt: number;
-}
+export type { OrderSummary, TradeOfferRequest, TradeOfferResponse } from "@scatter-dex/types";
+import type { OrderSummary } from "@scatter-dex/types";
 
 export interface CrossRelayerMatch {
   localOrder: StoredPrivateOrder;
@@ -68,18 +55,6 @@ export type MatchResult = PrivateMatch | CrossRelayerMatch;
 
 export function isCrossRelayerMatch(m: MatchResult): m is CrossRelayerMatch {
   return "remoteOrder" in m;
-}
-
-export interface TradeOfferRequest {
-  makerNonce: string;
-  makerPubKeyAx: string;
-  takerOrder: Record<string, unknown>;
-}
-
-export interface TradeOfferResponse {
-  status: "rejected" | "settled";
-  txHash?: string;
-  reason?: string;
 }
 
 // Token pair key: sorted hex addresses joined with "-"

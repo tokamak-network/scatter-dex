@@ -1,39 +1,20 @@
 /**
- * Order summary — the public subset posted by relayers.
- * No secrets (ownerSecret, salt, balance, EdDSA keys, claims).
+ * Re-export shared types from @scatter-dex/types.
+ * Local-only types and functions (parseOrderSummary, MatchNotification) remain here.
  */
-export interface OrderSummary {
-  id: string;            // "{relayerAddress}-{nonce}" unique composite key
-  relayer: string;       // relayer Ethereum address (lowercase)
-  relayerUrl: string;    // relayer REST endpoint
-  nonce: string;         // order nonce (unique per relayer)
-  sellToken: string;     // token address (0x-prefixed hex)
-  buyToken: string;      // token address (0x-prefixed hex)
-  sellAmount: string;    // wei string
-  buyAmount: string;     // wei string
-  minFillAmount: string; // minimum fill amount (wei string)
-  maxFee: number;        // fee in basis points
-  expiry: number;        // unix timestamp (seconds)
-  createdAt: number;     // unix timestamp (seconds)
-}
+export type {
+  OrderSummary,
+  OrderStatus,
+  StoredOrder,
+  BroadcastEvent,
+} from "@scatter-dex/types";
 
-export type OrderStatus = "open" | "matched" | "cancelled" | "expired";
+export {
+  pairKey,
+  isValidPair,
+} from "@scatter-dex/types";
 
-export interface StoredOrder {
-  order: OrderSummary;
-  status: OrderStatus;
-  matchId?: string;
-}
-
-export interface MatchResult {
-  matchId: string;
-  maker: OrderSummary;
-  taker: OrderSummary;
-  settlingRelayer: string;  // maker's relayer address (Phase 1: maker's relayer settles)
-  pair: string;             // e.g. "0xabc-0xdef"
-  price: string;            // taker.sellAmount / taker.buyAmount as string
-  createdAt: number;
-}
+export type { ServerMatchResult as MatchResult } from "@scatter-dex/types";
 
 export interface MatchNotification {
   matchId: string;
@@ -44,24 +25,8 @@ export interface MatchNotification {
   price: string;
 }
 
-// Token pair key: sorted lowercase addresses joined with "-"
-export function pairKey(tokenA: string, tokenB: string): string {
-  const a = tokenA.toLowerCase();
-  const b = tokenB.toLowerCase();
-  return a < b ? `${a}-${b}` : `${b}-${a}`;
-}
-
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-
-/** Validate a "tokenA-tokenB" pair string (both must be valid addresses) */
-export function isValidPair(pair: string): [string, string] | null {
-  // Ethereum addresses contain hex chars, no "-" — safe to split on first "-" at index 42
-  const a = pair.slice(0, 42);
-  const b = pair.slice(43);
-  if (pair[42] !== "-") return null;
-  if (!ETH_ADDRESS_RE.test(a) || !ETH_ADDRESS_RE.test(b)) return null;
-  return [a, b];
-}
+import type { OrderSummary } from "@scatter-dex/types";
+import { ETH_ADDRESS_RE } from "@scatter-dex/types";
 
 export function parseOrderSummary(
   raw: Record<string, unknown>,
@@ -76,6 +41,8 @@ export function parseOrderSummary(
   const maxFee = Number(raw.maxFee);
   const expiry = Number(raw.expiry);
   const nonce = String(raw.nonce ?? "");
+  const pubKeyAx = String(raw.pubKeyAx ?? "");
+  if (!pubKeyAx) throw new Error("missing pubKeyAx");
 
   if (!ETH_ADDRESS_RE.test(sellToken)) throw new Error("invalid sellToken address");
   if (!ETH_ADDRESS_RE.test(buyToken)) throw new Error("invalid buyToken address");
@@ -99,6 +66,7 @@ export function parseOrderSummary(
     relayer: relayer.toLowerCase(),
     relayerUrl,
     nonce,
+    pubKeyAx,
     sellToken: sellToken.toLowerCase(),
     buyToken: buyToken.toLowerCase(),
     sellAmount,

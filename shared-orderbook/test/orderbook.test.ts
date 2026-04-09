@@ -8,6 +8,7 @@ function makeOrder(overrides: Partial<OrderSummary> = {}): OrderSummary {
     relayer: overrides.relayer ?? "0xrelayer1",
     relayerUrl: overrides.relayerUrl ?? "http://localhost:3002",
     nonce: overrides.nonce ?? "1",
+    pubKeyAx: overrides.pubKeyAx ?? "12345",
     sellToken: overrides.sellToken ?? "0x" + "a".repeat(40),
     buyToken: overrides.buyToken ?? "0x" + "b".repeat(40),
     sellAmount: overrides.sellAmount ?? "1000000000000000000",
