@@ -637,11 +637,24 @@ contract FeeVaultTest is Test {
         p.takerNonceNullifier = bytes32(uint256(0x3dd));
         p.claimsRootMaker = bytes32(uint256(0x6333));
         p.claimsRootTaker = bytes32(uint256(0x6444));
-        p.takerRelayer = RELAYER_2; // taker's relayer is different
+        p.takerRelayer = RELAYER_2;
 
-        // RELAYER_2 (takerRelayer) can submit
+        // Set fees: feeTokenMaker (WETH) + feeTokenTaker (USDC)
+        p.feeTokenMaker = uint96(0.1 ether);  // fee in WETH (from taker's sell) → takerRelayer
+        p.feeTokenTaker = uint96(50e18);       // fee in USDC (from maker's sell) → makerRelayer
+
+        // RELAYER_2 (takerRelayer) submits
         vm.prank(RELAYER_2);
         settlement.settlePrivate(p);
+
+        // Fee split assertions:
+        // feeTokenMaker (WETH) → takerRelayer (RELAYER_2)
+        assertEq(vault.balances(RELAYER_2, address(weth)), 0.1 ether, "takerRelayer should receive feeTokenMaker (WETH)");
+        assertEq(vault.balances(relayer, address(weth)), 0, "makerRelayer should NOT receive feeTokenMaker");
+
+        // feeTokenTaker (USDC) → makerRelayer (relayer)
+        assertEq(vault.balances(relayer, address(usdc)), 50e18, "makerRelayer should receive feeTokenTaker (USDC)");
+        assertEq(vault.balances(RELAYER_2, address(usdc)), 0, "takerRelayer should NOT receive feeTokenTaker");
     }
 
     // ─── FeeVault ───────────────────────────────────────────────
@@ -658,14 +671,16 @@ contract FeeVaultTest is Test {
         assertEq(weth.balanceOf(address(vault)), 0.1 ether, "vault should hold WETH");
     }
 
-    function test_fees_both_tokens() public {
+    function test_fees_both_tokens_same_relayer() public {
+        // Local match: same relayer for both sides → all fees go to that relayer
         PrivateSettlement.SettleParams memory p = _params();
-        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH
-        p.feeTokenTaker = uint96(100e18);       // fee in USDC
+        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH → takerRelayer (= relayer)
+        p.feeTokenTaker = uint96(100e18);       // fee in USDC → makerRelayer (= relayer)
 
         vm.prank(relayer);
         settlement.settlePrivate(p);
 
+        // Both fees go to same relayer (makerRelayer == takerRelayer)
         assertEq(vault.balances(relayer, address(weth)), 0.05 ether);
         assertEq(vault.balances(relayer, address(usdc)), 100e18);
     }
