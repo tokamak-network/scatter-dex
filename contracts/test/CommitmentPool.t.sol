@@ -21,10 +21,14 @@ contract CommitmentPoolTest is Test {
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
 
+    // Test commitment / nullifier values must be < BN254 scalar field
+    // (~2^253.9) so the upstream check in CommitmentPool.deposit() does
+    // not reject them as `FieldElementOutOfRange`. We use values with a
+    // safely-low leading nibble (0x0–0x1).
     uint256 constant COMMITMENT_1 = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
-    uint256 constant COMMITMENT_2 = 0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321;
-    uint256 constant NULLIFIER_1 = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
-    uint256 constant NULLIFIER_2 = 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+    uint256 constant COMMITMENT_2 = 0x0edcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321;
+    uint256 constant NULLIFIER_1 = 0x0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+    uint256 constant NULLIFIER_2 = 0x0bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
 
     function setUp() public {
         verifier = new MockVerifier();
@@ -111,6 +115,25 @@ contract CommitmentPoolTest is Test {
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.TokenNotWhitelisted.selector);
         _deposit(COMMITMENT_1, address(badToken), 100 ether);
+    }
+
+    function test_deposit_commitment_above_field_reverts() public {
+        // BN254 modulus + 1 — guaranteed to exceed the field.
+        uint256 BN254 = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        uint256 outOfField = BN254;
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.FieldElementOutOfRange.selector);
+        _deposit(outOfField, address(token), 100 ether);
+    }
+
+    function test_deposit_amount_above_field_reverts() public {
+        uint256 BN254 = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.FieldElementOutOfRange.selector);
+        pool.deposit(pa, pb, pc, COMMITMENT_1, address(token), BN254);
     }
 
     function test_deposit_when_paused_reverts() public {

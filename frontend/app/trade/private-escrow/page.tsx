@@ -232,6 +232,9 @@ export default function PrivateEscrowPage() {
       // For native ETH: commitment uses the WETH address (same underlying token)
       const commitTokenAddr = selectedToken.address;
       const note = generateNote(commitTokenAddr, parsed);
+      // commitment is derived inside generateDepositProof so it cannot
+      // drift from the note's preimage; we still compute it once here for
+      // event parsing / note storage below.
       const commitment = await computeCommitment(note);
 
       if (selectedToken.isNative) {
@@ -262,14 +265,16 @@ export default function PrivateEscrowPage() {
       }
 
       // Deposit — generate the binding proof first, then submit on-chain.
+      // generateDepositProof derives the commitment from the note itself,
+      // so we cannot accidentally pair a stale commitment with the proof.
       setTxState("depositing");
-      const depositProof = await generateDepositProof(note, commitment);
+      const depositProof = await generateDepositProof(note);
       const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
       const tx = await pool.deposit(
         depositProof.proof.a,
         depositProof.proof.b,
         depositProof.proof.c,
-        commitment,
+        depositProof.commitment,
         commitTokenAddr,
         parsed,
       );

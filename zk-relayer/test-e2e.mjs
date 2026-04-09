@@ -11,37 +11,8 @@
 
 import { buildPoseidon } from "circomlibjs";
 import { ethers } from "ethers";
-import * as snarkjs from "snarkjs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DEPOSIT_WASM = path.join(__dirname, "../circuits/build/deposit_js/deposit.wasm");
-const DEPOSIT_ZKEY = path.join(__dirname, "../circuits/build/deposit_final.zkey");
-
-async function makeDepositProof({ secret, salt, token, commitment, amount }) {
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    {
-      commitment: commitment.toString(),
-      token: BigInt(token).toString(),
-      amount: amount.toString(),
-      secret: secret.toString(),
-      salt: salt.toString(),
-    },
-    DEPOSIT_WASM,
-    DEPOSIT_ZKEY,
-  );
-  return {
-    a: [proof.pi_a[0], proof.pi_a[1]],
-    b: [
-      [proof.pi_b[0][1], proof.pi_b[0][0]],
-      [proof.pi_b[1][1], proof.pi_b[1][0]],
-    ],
-    c: [proof.pi_c[0], proof.pi_c[1]],
-    publicSignals,
-  };
-}
+// Shared deposit-proof helper — see test/helpers/deposit-proof.mjs
+import { makeDepositProof } from "./test/helpers/deposit-proof.mjs";
 
 const ZK_RELAYER_URL = "http://localhost:3002";
 // Claims submitted via zk-relayer API — no direct contract address needed

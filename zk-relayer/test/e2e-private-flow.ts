@@ -63,44 +63,11 @@ const POOL_ABI = [
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
 
-// Paths to deposit circuit artifacts (relative to zk-relayer/test/)
-const __filename_e2e = fileURLToPath(import.meta.url);
-const __dirname_e2e = path.dirname(__filename_e2e);
-const DEPOSIT_WASM = path.join(__dirname_e2e, "../../circuits/build/deposit_js/deposit.wasm");
-const DEPOSIT_ZKEY = path.join(__dirname_e2e, "../../circuits/build/deposit_final.zkey");
-
-async function makeDepositProof(input: {
-  secret: bigint;
-  salt: bigint;
-  token: string;
-  commitment: bigint;
-  amount: bigint;
-}): Promise<{
-  a: [string, string];
-  b: [[string, string], [string, string]];
-  c: [string, string];
-}> {
-  const snarkjs = await import("snarkjs");
-  const { proof } = await snarkjs.groth16.fullProve(
-    {
-      commitment: input.commitment.toString(),
-      token: BigInt(input.token).toString(),
-      amount: input.amount.toString(),
-      secret: input.secret.toString(),
-      salt: input.salt.toString(),
-    },
-    DEPOSIT_WASM,
-    DEPOSIT_ZKEY,
-  );
-  return {
-    a: [proof.pi_a[0], proof.pi_a[1]],
-    b: [
-      [proof.pi_b[0][1], proof.pi_b[0][0]],
-      [proof.pi_b[1][1], proof.pi_b[1][0]],
-    ],
-    c: [proof.pi_c[0], proof.pi_c[1]],
-  };
-}
+// Shared deposit-proof helper — see helpers/deposit-proof.mjs.
+// Kept in a separate JS file so the .mjs and .ts E2E suites cannot drift
+// on pi_b ordering, wasm/zkey paths, or the snarkjs version.
+// @ts-ignore — JS module imported from TypeScript via tsx
+import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",

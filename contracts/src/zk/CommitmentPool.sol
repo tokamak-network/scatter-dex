@@ -31,6 +31,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error RenounceOwnershipDisabled();
     error NotAuthorizedSettlement();
     error InsufficientPoolBalance();
+    error FieldElementOutOfRange();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -49,6 +50,15 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     IVerifier public immutable withdrawVerifier;
     IDepositVerifier public immutable depositVerifier;
     address public authorizedSettlement;
+
+    /// @dev BN254 scalar field modulus. Public signals fed into a Groth16
+    ///      verifier must satisfy `value < BN254_FIELD_MODULUS`; the
+    ///      generated verifier enforces this internally via `checkField`,
+    ///      but we re-check the deposit inputs upstream so users get a
+    ///      precise revert reason and we avoid paying ~150k gas for the
+    ///      verifier call on values that cannot possibly verify.
+    uint256 internal constant BN254_FIELD_MODULUS =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
     bool public paused;
 
     mapping(uint256 => bool) public nullifiers;
@@ -128,6 +138,16 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (amount == 0) revert ZeroAmount();
+
+        // [PR #123 review] Reject out-of-field commitment / amount upfront so
+        // the user gets a precise revert reason and we don't waste gas on a
+        // verifier call that is guaranteed to fail. The auto-generated
+        // Groth16 verifier already enforces `value < BN254_FIELD_MODULUS`
+        // for every public signal via its internal `checkField`, but
+        // failing there costs ~150k gas and surfaces only as `InvalidProof`.
+        // `token` is a uint160 by type so it cannot exceed the field.
+        if (commitment >= BN254_FIELD_MODULUS) revert FieldElementOutOfRange();
+        if (amount >= BN254_FIELD_MODULUS) revert FieldElementOutOfRange();
 
         // Verify the commitment binds to (token, amount)
         // Public signals: [commitment, token (uint160), amount]
