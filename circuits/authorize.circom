@@ -38,6 +38,31 @@ include "./tags.circom";
 //    - totalLocked             sum of claim amounts (what this user receives)
 //    - relayer                 relayer address bound to the proof
 //    - orderHash               EdDSA-signed order hash
+//    - pubKeyHash              Poseidon hash of the BabyJub signing pubkey
+//
+//  ── pubKeyHash & the signer-binding threat model (PR #127 Copilot HIGH) ──
+//
+//  The EdDSA pubkey itself is private, so we expose `pubKeyHash` as a
+//  public output and constrain it to equal Poseidon(pubKeyAx, pubKeyAy).
+//  This serves two purposes:
+//
+//   (a) Self-trade detection in the future `settleAuth` glue: the
+//       contract can compare `makerProof.pubKeyHash != takerProof.pubKeyHash`
+//       to reject the same key being on both sides.
+//   (b) Defence-in-depth against the "swap-the-pubkey" attack flagged
+//       by Copilot. A relayer that has somehow obtained a user's
+//       (secret, salt, balance) can today still sign a synthetic
+//       authorize proof with its own BabyJub key. Exposing pubKeyHash
+//       lets the surrounding contract layer enforce a deposit-time
+//       binding (user → expected pubKeyHash) so swapped keys are
+//       rejected even if the secret leaks.
+//
+//  The full fix — binding the pubkey *into the commitment preimage*
+//  (so a swapped key produces a different commitment hash and fails
+//  the merkle membership check) — requires changing deposit.circom
+//  and migrating every existing escrow. That is tracked as a follow-up
+//  to this PoC PR; this circuit's job is to expose the binding so the
+//  contract can enforce it.
 //
 //  See: project_half_proof_design.md and settle.circom for the full
 //  context on how this folds into the trustless settlement flow.
@@ -136,6 +161,7 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input totalLocked;
     signal input relayer;
     signal input orderHash;
+    signal input pubKeyHash;
 
     // ── Private inputs ──
     // Escrow commitment preimage
@@ -286,12 +312,22 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // saves ~250 constraints per instance × 16 instances ≈ ~4 000
     // R1CS constraints. Same semantics; the wider check was just over-
     // conservative.
+    //
+    // [PR #127 gemini HIGH] Every *used* claim must be paid in `buyToken`.
+    // Without this, a buggy or malicious client could sign an order for
+    // buyToken=USDC but actually distribute claim leaves denominated in
+    // a worthless token, and the proof would still verify because the
+    // claims tree only commits to (secret, recipient, token, amount,
+    // releaseTime) and totalLocked is a pure sum. The constraint is
+    // gated on `claimUsed[i].out` so padding slots (i ≥ claimCount) can
+    // still carry their default zero token without failing.
     component claimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
         claimUsed[i] = LessThan(5);
         claimUsed[i].in[0] <== i;
         claimUsed[i].in[1] <== claimCount;
         (1 - claimUsed[i].out) * claimAmounts[i] === 0;
+        claimUsed[i].out * (claimTokens[i] - buyToken) === 0;
     }
 
     // Sum claim amounts into totalLocked
@@ -353,6 +389,20 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     sigVerify.M <== orderHashComp.out;
 
     // ════════════════════════════════════════
+    //  8b. PUBKEY HASH BINDING  (PR #127 Copilot HIGH — partial fix)
+    //
+    //  Expose Poseidon(pubKeyAx, pubKeyAy) so the surrounding contract
+    //  layer can compare it against a deposit-time-registered hash, and
+    //  so settleAuth can detect self-trade by comparing the two sides.
+    //  See the threat-model note at the top of this file for the full
+    //  fix path (commitment-preimage binding is a follow-up).
+    // ════════════════════════════════════════
+    component pubKeyHashComp = Poseidon(2);
+    pubKeyHashComp.inputs[0] <== pubKeyAx;
+    pubKeyHashComp.inputs[1] <== pubKeyAy;
+    pubKeyHash === pubKeyHashComp.out;
+
+    // ════════════════════════════════════════
     //  9. RELAYER BINDING
     //     `relayer` is a public input already bound to the verification
     //     key, but we reference it explicitly so the circom optimizer
@@ -381,5 +431,6 @@ component main {public [
     claimsRoot,
     totalLocked,
     relayer,
-    orderHash
+    orderHash,
+    pubKeyHash
 ]} = Authorize(20, 16, 4);
