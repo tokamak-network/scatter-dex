@@ -1,8 +1,20 @@
 /**
  * ZK Commitment utilities for CommitmentPool.
  *
- * Commitment = Poseidon(ownerSecret, token, amount, salt)
- * Nullifier  = Poseidon(ownerSecret, salt)
+ * [issue #128] v2 commitment binds the BabyJub signing pubkey:
+ *
+ *   commitment = Poseidon(
+ *     TAG_COMMITMENT_V2, ownerSecret, token, amount, salt,
+ *     pubKeyAx, pubKeyAy
+ *   )
+ *   nullifier  = Poseidon(TAG_ESCROW_NULL, ownerSecret, salt)
+ *
+ * The pubkey binding closes the swap-the-key attack from the PR #127
+ * Copilot review. Every `CommitmentNote` now carries the pubkey it was
+ * bound to so downstream spending proofs (withdraw / settle / authorize)
+ * recompute the same hash. Losing the EdDSA private key means losing
+ * the escrow — the wallet MUST back up `ownerSecret` and the EdDSA
+ * private key together.
  */
 
 // We use circomlibjs for Poseidon in the browser.
@@ -41,31 +53,64 @@ export function randomFieldElement(): bigint {
   return value;
 }
 
-/** Generate a new commitment note (all data needed to later withdraw). */
-export function generateNote(token: string, amount: bigint) {
+export interface CommitmentNote {
+  ownerSecret: bigint;
+  token: bigint; // address as uint256
+  amount: bigint;
+  salt: bigint;
+  /** BabyJub signing pubkey x-coordinate (from deriveEdDSAKey). */
+  pubKeyAx: bigint;
+  /** BabyJub signing pubkey y-coordinate. */
+  pubKeyAy: bigint;
+}
+
+/**
+ * Generate a new commitment note bound to the caller's BabyJub pubkey.
+ *
+ * [issue #128] The pubkey is part of the commitment preimage, so the
+ * caller must supply it at generation time — typically via
+ * `deriveEdDSAKey(signer)` from `./eddsa`.
+ */
+export function generateNote(
+  token: string,
+  amount: bigint,
+  pubKey: [bigint, bigint],
+): CommitmentNote {
   return {
     ownerSecret: randomFieldElement(),
-    token: BigInt(token), // address as uint256
+    token: BigInt(token),
     amount,
     salt: randomFieldElement(),
+    pubKeyAx: pubKey[0],
+    pubKeyAy: pubKey[1],
   };
 }
 
-export type CommitmentNote = ReturnType<typeof generateNote>;
-
-/** Compute commitment = Poseidon(ownerSecret, token, amount, salt). */
+/**
+ * Compute v2 commitment:
+ *   Poseidon(TAG_COMMITMENT_V2, ownerSecret, token, amount, salt,
+ *            pubKeyAx, pubKeyAy)
+ */
 export async function computeCommitment(note: CommitmentNote): Promise<bigint> {
   const poseidon = await getPoseidon();
   const F = poseidon.F;
-  const hash = poseidon([note.ownerSecret, note.token, note.amount, note.salt]);
+  const hash = poseidon([
+    TAG_COMMITMENT_V2,
+    note.ownerSecret,
+    note.token,
+    note.amount,
+    note.salt,
+    note.pubKeyAx,
+    note.pubKeyAy,
+  ]);
   return F.toObject(hash);
 }
 
 // [PR #124 review] Tag values now live in the shared `./tags` module so
 // they cannot drift between circuits/zk-prover/frontend. Re-exported here
 // for backwards compatibility with existing importers.
-export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags";
-import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "./tags";
+export { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "./tags";
+import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "./tags";
 
 /**
  * Escrow nullifier (used by withdraw + settle).
@@ -118,24 +163,43 @@ export function toAddressHex(value: bigint | string): string {
   return "0x" + BigInt(value).toString(16).padStart(40, "0");
 }
 
-/** Serialize a note to JSON-safe format for storage/backup (hex encoding). */
+/**
+ * Serialize a note to JSON-safe format for storage/backup (hex encoding).
+ *
+ * [issue #128] The pubkey is part of the backup — if the user loses
+ * their MetaMask (and therefore the ability to re-derive the EdDSA key)
+ * they can still spend this escrow by pairing `(ownerSecret, pubKey)`
+ * with the original EdDSA private key kept elsewhere. Storing the
+ * pubkey makes the note self-contained for inspection / debugging.
+ */
 export function serializeNote(note: CommitmentNote): string {
   return JSON.stringify({
     ownerSecret: "0x" + note.ownerSecret.toString(16),
     token: "0x" + note.token.toString(16),
     amount: "0x" + note.amount.toString(16),
     salt: "0x" + note.salt.toString(16),
+    pubKeyAx: "0x" + note.pubKeyAx.toString(16),
+    pubKeyAy: "0x" + note.pubKeyAy.toString(16),
   });
 }
 
 /** Deserialize a note from JSON string. */
 export function deserializeNote(json: string): CommitmentNote {
   const parsed = JSON.parse(json);
+  if (parsed.pubKeyAx === undefined || parsed.pubKeyAy === undefined) {
+    throw new Error(
+      "deserializeNote: missing pubKeyAx/pubKeyAy — this looks like a v1 " +
+      "note from before issue #128's commitment-pubkey binding. v1 notes " +
+      "are not spendable against the v2 circuits; re-deposit required."
+    );
+  }
   return {
     ownerSecret: BigInt(parsed.ownerSecret),
     token: BigInt(parsed.token),
     amount: BigInt(parsed.amount),
     salt: BigInt(parsed.salt),
+    pubKeyAx: BigInt(parsed.pubKeyAx),
+    pubKeyAy: BigInt(parsed.pubKeyAy),
   };
 }
 

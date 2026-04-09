@@ -71,14 +71,24 @@ template Withdraw(levels) {
     signal input pathElements[levels];
     signal input pathIndices[levels];
 
+    // [issue #128] BabyJub signing pubkey is part of the commitment
+    // preimage. deposit.circom already validated curve membership and
+    // rejected the identity point, so we can treat these as well-formed
+    // here without paying the BabyCheck cost again.
+    signal input pubKeyAx;
+    signal input pubKeyAy;
+
     // ════════════════════════════════════════
-    //  1. COMPUTE COMMITMENT
+    //  1. COMPUTE COMMITMENT  (v2 — binds pubkey, see issue #128)
     // ════════════════════════════════════════
-    component commitmentHasher = Poseidon(4);
-    commitmentHasher.inputs[0] <== ownerSecret;
-    commitmentHasher.inputs[1] <== token;
-    commitmentHasher.inputs[2] <== amount;
-    commitmentHasher.inputs[3] <== salt;
+    component commitmentHasher = Poseidon(7);
+    commitmentHasher.inputs[0] <== TAG_COMMITMENT_V2();
+    commitmentHasher.inputs[1] <== ownerSecret;
+    commitmentHasher.inputs[2] <== token;
+    commitmentHasher.inputs[3] <== amount;
+    commitmentHasher.inputs[4] <== salt;
+    commitmentHasher.inputs[5] <== pubKeyAx;
+    commitmentHasher.inputs[6] <== pubKeyAy;
 
     // ════════════════════════════════════════
     //  2. VERIFY MERKLE INCLUSION
@@ -125,12 +135,15 @@ template Withdraw(levels) {
     signal changeAmount;
     changeAmount <== amount - withdrawAmount;
 
-    // Compute expected change commitment
-    component changeHasher = Poseidon(4);
-    changeHasher.inputs[0] <== ownerSecret;
-    changeHasher.inputs[1] <== token;
-    changeHasher.inputs[2] <== changeAmount;
-    changeHasher.inputs[3] <== newSalt;
+    // Compute expected change commitment (v2 — binds the same pubkey)
+    component changeHasher = Poseidon(7);
+    changeHasher.inputs[0] <== TAG_COMMITMENT_V2();
+    changeHasher.inputs[1] <== ownerSecret;
+    changeHasher.inputs[2] <== token;
+    changeHasher.inputs[3] <== changeAmount;
+    changeHasher.inputs[4] <== newSalt;
+    changeHasher.inputs[5] <== pubKeyAx;
+    changeHasher.inputs[6] <== pubKeyAy;
 
     // If changeAmount == 0, expected commitment is 0
     // If changeAmount > 0, expected commitment is the hash

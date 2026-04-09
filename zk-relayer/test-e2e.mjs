@@ -63,11 +63,23 @@ async function main() {
 
   const pool = new ethers.Contract(POOL, POOL_ABI, aliceWallet);
 
+  // [issue #128] v2 commitment binds the BabyJub signing pubkey:
+  //   commitment = Poseidon(TAG_COMMITMENT_V2, secret, token, amount,
+  //                         salt, pubKeyAx, pubKeyAy)
+  // The pubkey was already derived above (alicePubKeyAx/Ay,
+  // bobPubKeyAx/Ay), so we just include it in the commitment hash
+  // and thread it through `makeDepositProof`.
+  const TAG_COMMITMENT_V2 = 3n;
+
   // Alice: commitment for 10 WETH
   const aliceSecret = 111n;
   const aliceSalt = 222n;
   const aliceBalance = ethers.parseUnits("10", 18);
-  const aliceCommitment = F.toObject(poseidon([aliceSecret, BigInt(WETH), aliceBalance, aliceSalt]));
+  const aliceCommitment = F.toObject(poseidon([
+    TAG_COMMITMENT_V2,
+    aliceSecret, BigInt(WETH), aliceBalance, aliceSalt,
+    alicePubKeyAx, alicePubKeyAy,
+  ]));
 
   // Capture leaf index before deposit
   const aliceLeafIndex = Number(await pool.nextIndex());
@@ -82,6 +94,8 @@ async function main() {
     token: WETH,
     commitment: aliceCommitment,
     amount: aliceBalance,
+    pubKeyAx: alicePubKeyAx,
+    pubKeyAy: alicePubKeyAy,
   });
   await (await pool.deposit(
     aliceDepositProof.a, aliceDepositProof.b, aliceDepositProof.c,
@@ -93,7 +107,11 @@ async function main() {
   const bobSecret = 333n;
   const bobSalt = 444n;
   const bobBalance = ethers.parseUnits("1000", 18);
-  const bobCommitment = F.toObject(poseidon([bobSecret, BigInt(USDC), bobBalance, bobSalt]));
+  const bobCommitment = F.toObject(poseidon([
+    TAG_COMMITMENT_V2,
+    bobSecret, BigInt(USDC), bobBalance, bobSalt,
+    bobPubKeyAx, bobPubKeyAy,
+  ]));
 
   const bobLeafIndex = Number(await pool.nextIndex());
 
@@ -106,6 +124,8 @@ async function main() {
     token: USDC,
     commitment: bobCommitment,
     amount: bobBalance,
+    pubKeyAx: bobPubKeyAx,
+    pubKeyAy: bobPubKeyAy,
   });
   await (await poolBob.deposit(
     bobDepositProof.a, bobDepositProof.b, bobDepositProof.c,

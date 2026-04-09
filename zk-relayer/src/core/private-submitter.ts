@@ -173,11 +173,27 @@ export class PrivateSubmitter {
     const makerNewBal = maker.balance - maker.sellAmount;
     const takerNewBal = taker.balance - taker.sellAmount;
 
+    // [issue #128] Change commitments preserve the v2 pubkey binding —
+    // same BabyJub key the escrow was originally deposited with.
     const makerNewCommitment = makerNewBal > 0n
-      ? await computeCommitment(maker.ownerSecret, maker.sellToken, makerNewBal, makerNewSalt)
+      ? await computeCommitment(
+          maker.ownerSecret,
+          maker.sellToken,
+          makerNewBal,
+          makerNewSalt,
+          maker.pubKeyAx,
+          maker.pubKeyAy,
+        )
       : 0n;
     const takerNewCommitment = takerNewBal > 0n
-      ? await computeCommitment(taker.ownerSecret, taker.sellToken, takerNewBal, takerNewSalt)
+      ? await computeCommitment(
+          taker.ownerSecret,
+          taker.sellToken,
+          takerNewBal,
+          takerNewSalt,
+          taker.pubKeyAx,
+          taker.pubKeyAy,
+        )
       : 0n;
 
     // Token addresses (maker receives taker's sell token and vice versa)
@@ -360,11 +376,21 @@ export class PrivateSubmitter {
     // Nullifier
     const nullifier = await computeNullifier(order.ownerSecret, order.salt);
 
-    // Change commitment (validate against user's expected value)
+    // Change commitment (validate against user's expected value).
+    // [issue #128] v2 binding — relayer must use the same pubkey the
+    // user signed the order with, otherwise the computed commitment
+    // won't match `order.expectedChangeCommitment`.
     const newSalt = order.newSalt;
     const changeAmount = order.balance - order.sellAmount;
     const newCommitment = changeAmount > 0n
-      ? await computeCommitment(order.ownerSecret, order.sellToken, changeAmount, newSalt)
+      ? await computeCommitment(
+          order.ownerSecret,
+          order.sellToken,
+          changeAmount,
+          newSalt,
+          order.pubKeyAx,
+          order.pubKeyAy,
+        )
       : 0n;
     if (order.expectedChangeCommitment !== 0n && newCommitment !== order.expectedChangeCommitment) {
       throw new Error("Change commitment mismatch: relayer-computed does not match user-expected");
@@ -408,6 +434,11 @@ export class PrivateSubmitter {
       newSalt: newSalt.toString(),
       pathElements: merkleProof.pathElements.map((e) => e.toString()),
       pathIndices: merkleProof.pathIndices.map((i) => i.toString()),
+      // [issue #128] Pubkey the escrow was deposited with — withdraw
+      // recomputes the v2 commitment internally and checks it against
+      // the merkle root.
+      pubKeyAx: order.pubKeyAx.toString(),
+      pubKeyAy: order.pubKeyAy.toString(),
     };
 
     const wasmPath = path.join(__dirname, "../../../circuits/build/withdraw_js/withdraw.wasm");

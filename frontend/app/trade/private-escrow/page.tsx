@@ -32,6 +32,7 @@ import {
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { generateDepositProof } from "../../lib/zk/deposit-prover";
+import { deriveEdDSAKey } from "../../lib/zk/eddsa";
 
 // CommitmentPool ABI (minimal). deposit() now requires a Groth16 binding proof
 // from circuits/deposit.circom — see contracts/test/PoolDrainExploit.t.sol.
@@ -232,9 +233,18 @@ export default function PrivateEscrowPage() {
       const parsed = ethers.parseUnits(depositAmount, selectedToken.decimals);
       if (parsed <= 0n) return;
 
+      // [issue #128] Derive the user's deterministic BabyJub signing
+      // keypair before generating the note — the commitment preimage
+      // now binds the pubkey so every deposit must be paired with a
+      // well-known key the user can re-derive from the same MetaMask
+      // signature. The downstream setTxState("approving") inside the
+      // native/ERC20 branches covers the actual approval step; the
+      // MetaMask sign-message popup for EdDSA derivation runs first.
+      const { keyPair } = await deriveEdDSAKey(signer);
+
       // For native ETH: commitment uses the WETH address (same underlying token)
       const commitTokenAddr = selectedToken.address;
-      const note = generateNote(commitTokenAddr, parsed);
+      const note = generateNote(commitTokenAddr, parsed, keyPair.publicKey);
       // commitment is derived inside generateDepositProof so it cannot
       // drift from the note's preimage; we still compute it once here for
       // event parsing / note storage below.

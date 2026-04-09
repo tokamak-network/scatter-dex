@@ -38,31 +38,55 @@ include "./tags.circom";
 //    - totalLocked             sum of claim amounts (what this user receives)
 //    - relayer                 relayer address bound to the proof
 //    - orderHash               EdDSA-signed order hash
-//    - pubKeyHash              Poseidon hash of the BabyJub signing pubkey
 //
-//  ── pubKeyHash & the signer-binding threat model (PR #127 Copilot HIGH) ──
+//  ── pubkey binding & the deliberate absence of pubKeyHash ──
 //
-//  The EdDSA pubkey itself is private, so we expose `pubKeyHash` as a
-//  public output and constrain it to equal Poseidon(pubKeyAx, pubKeyAy).
-//  This serves two purposes:
+//  [issue #128 — full fix landed] The commitment now binds the BabyJub
+//  signing pubkey directly into its preimage via
+//  `Poseidon(TAG_COMMITMENT_V2, secret, sellToken, balance, salt,
+//            pubKeyAx, pubKeyAy)`.
+//  A leaked `(secret, sellToken, balance, salt)` is no longer enough
+//  to forge a proof: the merkle membership check inside this circuit
+//  will reject any commitment computed with a swapped pubkey, and the
+//  attacker cannot re-sign `orderHash` without the EdDSA private key.
+//  See `issue #128` for the full threat analysis.
 //
-//   (a) Self-trade detection in the future `settleAuth` glue: the
-//       contract can compare `makerProof.pubKeyHash != takerProof.pubKeyHash`
-//       to reject the same key being on both sides.
-//   (b) Defence-in-depth against the "swap-the-pubkey" attack flagged
-//       by Copilot. A relayer that has somehow obtained a user's
-//       (secret, salt, balance) can today still sign a synthetic
-//       authorize proof with its own BabyJub key. Exposing pubKeyHash
-//       lets the surrounding contract layer enforce a deposit-time
-//       binding (user → expected pubKeyHash) so swapped keys are
-//       rejected even if the secret leaks.
+//  [issue #128 design correction] An earlier draft of this circuit
+//  exposed `pubKeyHash = Poseidon(pubKeyAx, pubKeyAy)` as a public
+//  output to serve two purposes:
 //
-//  The full fix — binding the pubkey *into the commitment preimage*
-//  (so a swapped key produces a different commitment hash and fails
-//  the merkle membership check) — requires changing deposit.circom
-//  and migrating every existing escrow. That is tracked as a follow-up
-//  to this PoC PR; this circuit's job is to expose the binding so the
-//  contract can enforce it.
+//    (a) Self-trade detection in a future `settleAuth` glue contract.
+//    (b) Defence-in-depth against the swap-the-pubkey attack.
+//
+//  Both justifications fail under scrutiny:
+//
+//    (b) is redundant after the v2 commitment binding — an attacker
+//        cannot swap the pubkey without breaking merkle membership,
+//        so the contract doesn't need a separate hash to compare.
+//
+//    (a) is worse than useless. Publishing a per-trader hash on every
+//        proof turns the public signal into a linkability oracle: a
+//        chain-analysis tool can group every trade that shares the
+//        same `pubKeyHash` and then combine that clustering with the
+//        plaintext `claimRecipients` (which are ERC20 addresses) to
+//        reconstruct wallet graphs — the exact deanonymization path
+//        that Tornado Cash failed to close. And the on-chain
+//        self-trade check it would enable is not something the
+//        contract *has* to enforce: self-trading an escrow can't
+//        break fund integrity (the nullifier already prevents
+//        double-spend), and wash-trading / rebate-gaming are
+//        off-chain metrics problems a relayer can filter on its own.
+//
+//  The principled answer is to keep the pubkey *out* of any public
+//  signal. The binding lives entirely inside the merkle membership
+//  check, and self-trade prevention — if needed at all — happens in
+//  the relayer's off-chain orderbook, where the pubkey is already
+//  visible to the relayer but not to the rest of the world.
+//
+//  deposit.circom is the canonical place where the pubkey is validated
+//  (BabyCheck + identity rejection). Downstream circuits
+//  (withdraw/settle/authorize) rely on the invariant that every
+//  commitment in the merkle tree was produced by a well-formed pubkey.
 //
 //  See: project_half_proof_design.md and settle.circom for the full
 //  context on how this folds into the trustless settlement flow.
@@ -161,7 +185,6 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input totalLocked;
     signal input relayer;
     signal input orderHash;
-    signal input pubKeyHash;
 
     // ── Private inputs ──
     // Escrow commitment preimage
@@ -218,14 +241,25 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  2. COMMITMENT MEMBERSHIP
-    //     commitment = Poseidon(secret, sellToken, balance, salt)
+    //     commitment = Poseidon(
+    //       TAG_COMMITMENT_V2, secret, sellToken, balance, salt,
+    //       pubKeyAx, pubKeyAy
+    //     )
     //     ∈ commitmentRoot (Merkle)
+    //
+    //  [issue #128] The v2 commitment binds the BabyJub signing pubkey
+    //  so a swapped pubkey produces a different hash and fails merkle
+    //  membership. deposit.circom ran BabyCheck + identity rejection so
+    //  every pubKey entering the tree is well-formed.
     // ════════════════════════════════════════
-    component commitHash = Poseidon(4);
-    commitHash.inputs[0] <== secret;
-    commitHash.inputs[1] <== sellToken;
-    commitHash.inputs[2] <== balance;
-    commitHash.inputs[3] <== salt;
+    component commitHash = Poseidon(7);
+    commitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    commitHash.inputs[1] <== secret;
+    commitHash.inputs[2] <== sellToken;
+    commitHash.inputs[3] <== balance;
+    commitHash.inputs[4] <== salt;
+    commitHash.inputs[5] <== pubKeyAx;
+    commitHash.inputs[6] <== pubKeyAy;
 
     component merkle = AuthMerkleProof(commitTreeDepth);
     merkle.leaf <== commitHash.out;
@@ -276,11 +310,16 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal newBalance;
     newBalance <== balance - sellAmount;
 
-    component newCommitHash = Poseidon(4);
-    newCommitHash.inputs[0] <== secret;
-    newCommitHash.inputs[1] <== sellToken;
-    newCommitHash.inputs[2] <== newBalance;
-    newCommitHash.inputs[3] <== newSalt;
+    // Residual commitment uses the same v2 binding — same pubkey, so
+    // the residual can be spent later with the same EdDSA key.
+    component newCommitHash = Poseidon(7);
+    newCommitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    newCommitHash.inputs[1] <== secret;
+    newCommitHash.inputs[2] <== sellToken;
+    newCommitHash.inputs[3] <== newBalance;
+    newCommitHash.inputs[4] <== newSalt;
+    newCommitHash.inputs[5] <== pubKeyAx;
+    newCommitHash.inputs[6] <== pubKeyAy;
 
     component newIsZero = IsZero();
     newIsZero.in <== newBalance;
@@ -389,20 +428,6 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     sigVerify.M <== orderHashComp.out;
 
     // ════════════════════════════════════════
-    //  8b. PUBKEY HASH BINDING  (PR #127 Copilot HIGH — partial fix)
-    //
-    //  Expose Poseidon(pubKeyAx, pubKeyAy) so the surrounding contract
-    //  layer can compare it against a deposit-time-registered hash, and
-    //  so settleAuth can detect self-trade by comparing the two sides.
-    //  See the threat-model note at the top of this file for the full
-    //  fix path (commitment-preimage binding is a follow-up).
-    // ════════════════════════════════════════
-    component pubKeyHashComp = Poseidon(2);
-    pubKeyHashComp.inputs[0] <== pubKeyAx;
-    pubKeyHashComp.inputs[1] <== pubKeyAy;
-    pubKeyHash === pubKeyHashComp.out;
-
-    // ════════════════════════════════════════
     //  9. RELAYER BINDING
     //     `relayer` is a public input already bound to the verification
     //     key, but we reference it explicitly so the circom optimizer
@@ -431,6 +456,5 @@ component main {public [
     claimsRoot,
     totalLocked,
     relayer,
-    orderHash,
-    pubKeyHash
+    orderHash
 ]} = Authorize(20, 16, 4);

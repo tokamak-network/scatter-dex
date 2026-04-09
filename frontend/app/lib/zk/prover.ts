@@ -61,17 +61,27 @@ export async function generateWithdrawProof(
   const { root, layers } = await buildMerkleTree(allLeaves, treeDepth);
   const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
 
-  // Change commitment
+  // [issue #128] Change commitment must use the same v2 format as the
+  // original — tagged Poseidon including the same pubkey. Using the
+  // shared TAG constant keeps this in lock-step with the circuit.
   const changeAmount = note.amount - withdrawAmount;
   let newCommitment = 0n;
   let newSalt = 0n;
   if (changeAmount > 0n) {
     newSalt = randomFieldElement();
-    // We need to import computeCommitment-like logic for the change
     const { buildPoseidon } = await import("circomlibjs");
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
-    const h = poseidon([note.ownerSecret, note.token, changeAmount, newSalt]);
+    const { TAG_COMMITMENT_V2 } = await import("./tags");
+    const h = poseidon([
+      TAG_COMMITMENT_V2,
+      note.ownerSecret,
+      note.token,
+      changeAmount,
+      newSalt,
+      note.pubKeyAx,
+      note.pubKeyAy,
+    ]);
     newCommitment = F.toObject(h);
   }
 
@@ -93,6 +103,11 @@ export async function generateWithdrawProof(
     newSalt: newSalt.toString(),
     pathElements: pathElements.map((e) => e.toString()),
     pathIndices: pathIndices.map((i) => i.toString()),
+    // [issue #128] Pubkey the commitment was originally bound to — the
+    // circuit recomputes `Poseidon(TAG_V2, secret, token, amount, salt,
+    // Ax, Ay)` internally and checks merkle membership against it.
+    pubKeyAx: note.pubKeyAx.toString(),
+    pubKeyAy: note.pubKeyAy.toString(),
   };
 
   // Generate proof

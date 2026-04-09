@@ -198,12 +198,21 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // ════════════════════════════════════════
     //  1. COMMITMENT MEMBERSHIP (Maker)
+    //
+    //  [issue #128] Commitment binds the BabyJub signing pubkey so a
+    //  leaked `(secret, sellToken, balance, salt)` cannot be spent with
+    //  a swapped key. deposit.circom validated curve membership and
+    //  rejected identity points, so we treat makerPubKeyAx/Ay as
+    //  well-formed here.
     // ════════════════════════════════════════
-    component makerCommitHash = Poseidon(4);
-    makerCommitHash.inputs[0] <== makerSecret;
-    makerCommitHash.inputs[1] <== makerSellToken;
-    makerCommitHash.inputs[2] <== makerBalance;
-    makerCommitHash.inputs[3] <== makerSalt;
+    component makerCommitHash = Poseidon(7);
+    makerCommitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    makerCommitHash.inputs[1] <== makerSecret;
+    makerCommitHash.inputs[2] <== makerSellToken;
+    makerCommitHash.inputs[3] <== makerBalance;
+    makerCommitHash.inputs[4] <== makerSalt;
+    makerCommitHash.inputs[5] <== makerPubKeyAx;
+    makerCommitHash.inputs[6] <== makerPubKeyAy;
 
     component makerMerkle = PoseidonMerkleProof(commitTreeDepth);
     makerMerkle.leaf <== makerCommitHash.out;
@@ -214,13 +223,16 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     commitmentRoot === makerMerkle.root;
 
     // ════════════════════════════════════════
-    //  2. COMMITMENT MEMBERSHIP (Taker)
+    //  2. COMMITMENT MEMBERSHIP (Taker) — same v2 binding as maker
     // ════════════════════════════════════════
-    component takerCommitHash = Poseidon(4);
-    takerCommitHash.inputs[0] <== takerSecret;
-    takerCommitHash.inputs[1] <== takerSellToken;
-    takerCommitHash.inputs[2] <== takerBalance;
-    takerCommitHash.inputs[3] <== takerSalt;
+    component takerCommitHash = Poseidon(7);
+    takerCommitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    takerCommitHash.inputs[1] <== takerSecret;
+    takerCommitHash.inputs[2] <== takerSellToken;
+    takerCommitHash.inputs[3] <== takerBalance;
+    takerCommitHash.inputs[4] <== takerSalt;
+    takerCommitHash.inputs[5] <== takerPubKeyAx;
+    takerCommitHash.inputs[6] <== takerPubKeyAy;
 
     component takerMerkle = PoseidonMerkleProof(commitTreeDepth);
     takerMerkle.leaf <== takerCommitHash.out;
@@ -580,14 +592,20 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     //  10. NEW COMMITMENTS (after balance deduction)
     // ════════════════════════════════════════
+    // [issue #128] Residual commitments use the v2 format too — same
+    // pubkey the original escrow was deposited with, so the user can
+    // later spend the residual with the same key.
     signal makerNewBalance;
     makerNewBalance <== makerBalance - makerSellAmount;
 
-    component makerNewCommitHash = Poseidon(4);
-    makerNewCommitHash.inputs[0] <== makerSecret;
-    makerNewCommitHash.inputs[1] <== makerSellToken;
-    makerNewCommitHash.inputs[2] <== makerNewBalance;
-    makerNewCommitHash.inputs[3] <== makerNewSalt;
+    component makerNewCommitHash = Poseidon(7);
+    makerNewCommitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    makerNewCommitHash.inputs[1] <== makerSecret;
+    makerNewCommitHash.inputs[2] <== makerSellToken;
+    makerNewCommitHash.inputs[3] <== makerNewBalance;
+    makerNewCommitHash.inputs[4] <== makerNewSalt;
+    makerNewCommitHash.inputs[5] <== makerPubKeyAx;
+    makerNewCommitHash.inputs[6] <== makerPubKeyAy;
 
     // If new balance is 0, commitment should be 0
     component makerNewIsZero = IsZero();
@@ -599,11 +617,14 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal takerNewBalance;
     takerNewBalance <== takerBalance - takerSellAmount;
 
-    component takerNewCommitHash = Poseidon(4);
-    takerNewCommitHash.inputs[0] <== takerSecret;
-    takerNewCommitHash.inputs[1] <== takerSellToken;
-    takerNewCommitHash.inputs[2] <== takerNewBalance;
-    takerNewCommitHash.inputs[3] <== takerNewSalt;
+    component takerNewCommitHash = Poseidon(7);
+    takerNewCommitHash.inputs[0] <== TAG_COMMITMENT_V2();
+    takerNewCommitHash.inputs[1] <== takerSecret;
+    takerNewCommitHash.inputs[2] <== takerSellToken;
+    takerNewCommitHash.inputs[3] <== takerNewBalance;
+    takerNewCommitHash.inputs[4] <== takerNewSalt;
+    takerNewCommitHash.inputs[5] <== takerPubKeyAx;
+    takerNewCommitHash.inputs[6] <== takerPubKeyAy;
 
     component takerNewIsZero = IsZero();
     takerNewIsZero.in <== takerNewBalance;
