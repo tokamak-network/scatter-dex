@@ -1,5 +1,6 @@
 import { Wallet } from "ethers";
 import WebSocket from "ws";
+import type { OrderSummary } from "../types/order.js";
 
 /**
  * Shared Orderbook Client — connects relayer to the shared orderbook server.
@@ -19,20 +20,8 @@ export interface PeerInfo {
   lastSeen: number;
 }
 
-export interface OrderSummary {
-  id: string;
-  relayer: string;
-  relayerUrl: string;
-  nonce: string;
-  sellToken: string;
-  buyToken: string;
-  sellAmount: string;
-  buyAmount: string;
-  minFillAmount: string;
-  maxFee: number;
-  expiry: number;
-  createdAt: number;
-}
+// Re-export OrderSummary from types for backward compatibility
+export type { OrderSummary } from "../types/order.js";
 
 export interface SharedOrderbookConfig {
   serverUrl: string;          // e.g. "http://localhost:4000"
@@ -86,7 +75,7 @@ export class SharedOrderbookClient {
    * Generate auth headers with method+path bound signature
    * to prevent cross-endpoint replay attacks.
    */
-  private async authHeaders(method: string, path: string): Promise<Record<string, string>> {
+  async authHeaders(method: string, path: string): Promise<Record<string, string>> {
     const ts = Math.floor(Date.now() / 1000).toString();
     const address = this.wallet.address.toLowerCase();
     const message = `zkScatter-relay:${address}:${ts}:${method.toUpperCase()}:${path}:${this.relayerUrl}`;

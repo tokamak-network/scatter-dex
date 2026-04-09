@@ -40,6 +40,48 @@ export interface PrivateMatch {
   taker: StoredPrivateOrder;
 }
 
+// ─── Cross-relayer matching types ───
+
+export interface OrderSummary {
+  id: string;
+  relayer: string;
+  relayerUrl: string;
+  nonce: string;
+  pubKeyAx: string;        // EdDSA public key component (for maker identification in Trade Offers)
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  buyAmount: string;
+  minFillAmount: string;
+  maxFee: number;
+  expiry: number;
+  createdAt: number;
+}
+
+export interface CrossRelayerMatch {
+  localOrder: StoredPrivateOrder;
+  remoteOrder: OrderSummary;
+  localSide: "maker" | "taker";
+}
+
+export type MatchResult = PrivateMatch | CrossRelayerMatch;
+
+export function isCrossRelayerMatch(m: MatchResult): m is CrossRelayerMatch {
+  return "remoteOrder" in m;
+}
+
+export interface TradeOfferRequest {
+  makerNonce: string;
+  makerPubKeyAx: string;
+  takerOrder: Record<string, unknown>;
+}
+
+export interface TradeOfferResponse {
+  status: "rejected" | "settled";
+  txHash?: string;
+  reason?: string;
+}
+
 // Token pair key: sorted hex addresses joined with "-"
 export function pairKey(tokenA: bigint, tokenB: bigint): string {
   const a = "0x" + tokenA.toString(16).padStart(40, "0");

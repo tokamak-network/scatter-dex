@@ -37,4 +37,9 @@ export const config = {
   adminApiKey: process.env.ADMIN_API_KEY || null,
   relayerFee: parseInt(process.env.RELAYER_FEE || "30", 10),
   port: parseInt(process.env.PORT || "3002", 10),
+
+  // Shared orderbook (optional — omit to run in local-only mode)
+  sharedOrderbookUrl: process.env.SHARED_ORDERBOOK_URL || null,
+  relayerPublicUrl: process.env.RELAYER_PUBLIC_URL || null,
+  relayerName: process.env.RELAYER_NAME || undefined,
 };

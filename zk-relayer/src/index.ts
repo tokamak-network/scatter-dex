@@ -11,6 +11,10 @@ import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
 import { createPrivateClaimRoutes } from "./routes/claim.js";
 import { createVaultRoutes } from "./routes/vault.js";
+import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
+import { RemoteOrderStore } from "./core/remote-orderbook.js";
+import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
+import { createP2PRoutes } from "./routes/p2p.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -23,13 +27,57 @@ async function main() {
     console.log(`Restored ${restored} pending private orders from DB`);
   }
 
-  const matcher = new PrivateMatcher(orderbook);
   const submitter = new PrivateSubmitter();
   submitter.setDB(db);
 
   // Index existing commitments on startup
   console.log("Indexing on-chain commitments...");
   await submitter.indexCommitments();
+
+  // ─── Shared orderbook integration (optional) ───
+  let sharedClient: SharedOrderbookClient | null = null;
+  let remoteOrderbook: RemoteOrderStore | null = null;
+  let crossRelayerService: CrossRelayerMatchService | null = null;
+  const orderIdMap = new Map<string, string>();
+
+  // Create matcher (with remote orderbook if available)
+  if (config.sharedOrderbookUrl && config.relayerPublicUrl) {
+    remoteOrderbook = new RemoteOrderStore();
+  }
+  const matcher = new PrivateMatcher(orderbook, remoteOrderbook);
+  matcher.setRelayerAddress(submitter.getAddress());
+
+  if (config.sharedOrderbookUrl && config.relayerPublicUrl && remoteOrderbook) {
+    sharedClient = new SharedOrderbookClient({
+      serverUrl: config.sharedOrderbookUrl,
+      relayerWallet: submitter.getWallet(),
+      relayerUrl: config.relayerPublicUrl,
+      relayerName: config.relayerName,
+    });
+
+    crossRelayerService = new CrossRelayerMatchService(
+      orderbook, remoteOrderbook, matcher, submitter, sharedClient, orderIdMap,
+    );
+
+    sharedClient.onOrder((summary) => {
+      remoteOrderbook!.add(summary);
+      // Reactive matching: try to match against local pending orders
+      crossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
+        console.warn("[cross-relayer] Reactive match error:", err instanceof Error ? err.message : "unknown");
+      });
+    });
+
+    sharedClient.onCancel((orderId) => {
+      remoteOrderbook!.remove(orderId);
+    });
+
+    try {
+      await sharedClient.start();
+      console.log(`[shared-orderbook] Connected to ${config.sharedOrderbookUrl}`);
+    } catch (err) {
+      console.warn("[shared-orderbook] Failed to connect:", err instanceof Error ? err.message : "unknown");
+    }
+  }
 
   const app = express();
 
@@ -55,13 +103,23 @@ async function main() {
     message: { error: "too many requests" },
   });
 
-  app.use("/api/private-orders", createPrivateOrderRoutes(orderbook, matcher, submitter, writeLimiter, readLimiter));
+  app.use("/api/private-orders", createPrivateOrderRoutes(
+    orderbook, matcher, submitter, writeLimiter, readLimiter,
+    sharedClient, crossRelayerService, orderIdMap,
+  ));
   app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
-
-  // FeeVault API (relayer fee management — claim requires ADMIN_API_KEY)
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
+
+  // P2P routes (relayer-to-relayer communication)
+  app.use("/api/p2p", createP2PRoutes(
+    (order) => { remoteOrderbook?.add(order); },
+    (orderId) => { remoteOrderbook?.remove(orderId); },
+    crossRelayerService
+      ? (offer, addr) => crossRelayerService!.handleTradeOffer(offer, addr)
+      : undefined,
+  ));
 
   // Periodic expired order cleanup
   const expireInterval = setInterval(() => {
@@ -80,6 +138,14 @@ async function main() {
     }
   }, 5 * 60_000);
 
+  // Periodic remote order cleanup
+  const remoteExpireInterval = setInterval(() => {
+    if (remoteOrderbook) {
+      const removed = remoteOrderbook.purgeExpired();
+      if (removed > 0) console.log(`Purged ${removed} expired remote orders`);
+    }
+  }, 60_000);
+
   const server = app.listen(config.port, () => {
     console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
@@ -88,6 +154,10 @@ async function main() {
     console.log(`Fee: ${config.relayerFee} bps`);
     if (config.feeVaultAddress) {
       console.log(`FeeVault: ${config.feeVaultAddress}`);
+    }
+    if (config.sharedOrderbookUrl) {
+      console.log(`Shared Orderbook: ${config.sharedOrderbookUrl}`);
+      console.log(`Public URL: ${config.relayerPublicUrl}`);
     }
   });
 
@@ -99,6 +169,8 @@ async function main() {
     console.log("Shutting down...");
     clearInterval(expireInterval);
     clearInterval(reindexInterval);
+    clearInterval(remoteExpireInterval);
+    sharedClient?.stop();
     server.close(() => {
       db.close();
       process.exit(0);
