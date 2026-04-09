@@ -68,11 +68,17 @@ const ERC20_ABI = [
 ];
 
 const POOL_ABI = [
-  "function deposit(uint256 commitment, address token, uint256 amount) external",
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
+
+// Shared deposit-proof helper — see helpers/deposit-proof.mjs.
+// Kept in a separate JS file so the .mjs and .ts E2E suites cannot drift
+// on pi_b ordering, wasm/zkey paths, or the snarkjs version.
+// @ts-ignore — JS module imported from TypeScript via tsx
+import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",
@@ -301,7 +307,13 @@ async function main() {
   const secretA = randomFieldElement();
   const saltA = randomFieldElement();
   const commitmentA = poseidonHash([secretA, BigInt(weth), wethAmount, saltA]);
-  const depositTxA = await poolContractA.deposit(commitmentA, weth, wethAmount);
+  const depositProofA = await makeDepositProof({
+    secret: secretA, salt: saltA, token: weth, commitment: commitmentA, amount: wethAmount,
+  });
+  const depositTxA = await poolContractA.deposit(
+    depositProofA.a, depositProofA.b, depositProofA.c,
+    commitmentA, weth, wethAmount,
+  );
   const receiptA = await depositTxA.wait();
   const poolIface = new ethers.Interface(POOL_ABI);
   let leafIndexA = -1;
@@ -328,7 +340,13 @@ async function main() {
   const secretB = randomFieldElement();
   const saltB = randomFieldElement();
   const commitmentB = poseidonHash([secretB, BigInt(usdc), usdcAmount, saltB]);
-  const depositTxB = await poolContractB.deposit(commitmentB, usdc, usdcAmount);
+  const depositProofB = await makeDepositProof({
+    secret: secretB, salt: saltB, token: usdc, commitment: commitmentB, amount: usdcAmount,
+  });
+  const depositTxB = await poolContractB.deposit(
+    depositProofB.a, depositProofB.b, depositProofB.c,
+    commitmentB, usdc, usdcAmount,
+  );
   const receiptB = await depositTxB.wait();
   let leafIndexB = -1;
   for (const log of receiptB.logs) {

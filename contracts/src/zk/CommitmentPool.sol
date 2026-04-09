@@ -8,6 +8,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
+import {IDepositVerifier} from "./IDepositVerifier.sol";
 
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
@@ -30,6 +31,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error RenounceOwnershipDisabled();
     error NotAuthorizedSettlement();
     error InsufficientPoolBalance();
+    error FieldElementOutOfRange();
+    error NotAContract();
+    error FeeOnTransferTokenUnsupported();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -46,7 +50,17 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     // ─── State ───────────────────────────────────────────────────
     IVerifier public immutable withdrawVerifier;
+    IDepositVerifier public immutable depositVerifier;
     address public authorizedSettlement;
+
+    /// @dev BN254 scalar field modulus. Public signals fed into a Groth16
+    ///      verifier must satisfy `value < BN254_FIELD_MODULUS`; the
+    ///      generated verifier enforces this internally via `checkField`,
+    ///      but we re-check the deposit inputs upstream so users get a
+    ///      precise revert reason and we avoid paying ~150k gas for the
+    ///      verifier call on values that cannot possibly verify.
+    uint256 internal constant BN254_FIELD_MODULUS =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
     bool public paused;
 
     mapping(uint256 => bool) public nullifiers;
@@ -55,6 +69,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _withdrawVerifier,
+        address _depositVerifier,
         uint32 _treeLevels,
         uint32 _rootHistorySize
     )
@@ -62,7 +77,13 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         Ownable(msg.sender)
     {
         if (_withdrawVerifier == address(0)) revert ZeroAddress();
+        if (_depositVerifier == address(0)) revert ZeroAddress();
+        // [PR #123 review] Reject EOAs at deploy-time so a fat-fingered
+        // address surfaces immediately instead of failing inside verifyProof.
+        if (_withdrawVerifier.code.length == 0) revert NotAContract();
+        if (_depositVerifier.code.length == 0) revert NotAContract();
         withdrawVerifier = IVerifier(_withdrawVerifier);
+        depositVerifier = IDepositVerifier(_depositVerifier);
     }
 
     function renounceOwnership() public pure override {
@@ -99,20 +120,63 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Deposit tokens and add a commitment to the Merkle tree.
     /// @dev commitment = Poseidon(ownerSecret, token, amount, salt) computed off-chain.
-    ///      The contract does NOT verify the commitment preimage — if the user submits
-    ///      a malformed commitment, only they are harmed (can't withdraw later).
+    ///      A ZK deposit proof is REQUIRED to bind the on-chain (commitment, token, amount)
+    ///      tuple to the Poseidon preimage. Without this, a malicious user could deposit
+    ///      1 wei while submitting a commitment claiming an arbitrary balance, then drain
+    ///      other users via withdraw / settle proofs.
+    ///      See: contracts/test/PoolDrainExploit.t.sol
+    /// @param proofA Groth16 deposit proof point A
+    /// @param proofB Groth16 deposit proof point B
+    /// @param proofC Groth16 deposit proof point C
     /// @param commitment The Poseidon hash commitment (leaf value)
     /// @param token The ERC20 token being deposited
     /// @param amount The amount being deposited
-    function deposit(uint256 commitment, address token, uint256 amount) external nonReentrant {
+    function deposit(
+        uint[2] calldata proofA,
+        uint[2][2] calldata proofB,
+        uint[2] calldata proofC,
+        uint256 commitment,
+        address token,
+        uint256 amount
+    ) external nonReentrant {
         if (paused) revert ContractPaused();
         if (commitment == 0) revert ZeroCommitment();
         if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
         if (amount == 0) revert ZeroAmount();
 
-        // Transfer tokens to this contract
+        // [PR #123 review] Reject out-of-field commitment / amount upfront so
+        // the user gets a precise revert reason and we don't waste gas on a
+        // verifier call that is guaranteed to fail. The auto-generated
+        // Groth16 verifier already enforces `value < BN254_FIELD_MODULUS`
+        // for every public signal via its internal `checkField`, but
+        // failing there costs ~150k gas and surfaces only as `InvalidProof`.
+        // `token` is a uint160 by type so it cannot exceed the field.
+        if (commitment >= BN254_FIELD_MODULUS) revert FieldElementOutOfRange();
+        if (amount >= BN254_FIELD_MODULUS) revert FieldElementOutOfRange();
+
+        // Verify the commitment binds to (token, amount)
+        // Public signals: [commitment, token (uint160), amount]
+        uint[3] memory pubSignals = [
+            commitment,
+            uint256(uint160(token)),
+            amount
+        ];
+        if (!depositVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+            revert InvalidProof();
+        }
+
+        // [PR #123 review] Defend against fee-on-transfer / rebasing tokens.
+        // The commitment encodes the *parameter* `amount`, so the pool must
+        // actually receive exactly that many tokens — otherwise an admin who
+        // accidentally whitelists a fee-on-transfer token leaks `fee` per
+        // deposit and lets honest depositors slowly drain via overcommitted
+        // withdraw amounts. Measuring the balance delta around the transfer
+        // turns this silent loss into a hard revert.
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+        if (received != amount) revert FeeOnTransferTokenUnsupported();
 
         // Insert commitment into Merkle tree
         uint32 leafIndex = _insert(commitment);

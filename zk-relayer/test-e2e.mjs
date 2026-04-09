@@ -11,6 +11,8 @@
 
 import { buildPoseidon } from "circomlibjs";
 import { ethers } from "ethers";
+// Shared deposit-proof helper — see test/helpers/deposit-proof.mjs
+import { makeDepositProof } from "./test/helpers/deposit-proof.mjs";
 
 const ZK_RELAYER_URL = "http://localhost:3002";
 // Claims submitted via zk-relayer API — no direct contract address needed
@@ -51,7 +53,7 @@ async function main() {
   const bobWallet = new ethers.Wallet(BOB_KEY, provider);
 
   const POOL_ABI = [
-    "function deposit(uint256 commitment, address token, uint256 amount) external",
+    "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
     "function nextIndex() view returns (uint32)",
   ];
   const ERC20_ABI = [
@@ -70,11 +72,21 @@ async function main() {
   // Capture leaf index before deposit
   const aliceLeafIndex = Number(await pool.nextIndex());
 
-  // Wrap ETH → WETH, approve, deposit
+  // Wrap ETH → WETH, approve, generate deposit proof, deposit
   const weth = new ethers.Contract(WETH, ERC20_ABI, aliceWallet);
   await (await weth.deposit({ value: aliceBalance })).wait();
   await (await weth.approve(POOL, aliceBalance)).wait();
-  await (await pool.deposit(aliceCommitment, WETH, aliceBalance)).wait();
+  const aliceDepositProof = await makeDepositProof({
+    secret: aliceSecret,
+    salt: aliceSalt,
+    token: WETH,
+    commitment: aliceCommitment,
+    amount: aliceBalance,
+  });
+  await (await pool.deposit(
+    aliceDepositProof.a, aliceDepositProof.b, aliceDepositProof.c,
+    aliceCommitment, WETH, aliceBalance,
+  )).wait();
   console.log(`Alice deposited 10 WETH at leafIndex ${aliceLeafIndex}`);
 
   // Bob: commitment for 1000 USDC
@@ -88,7 +100,17 @@ async function main() {
   const usdc = new ethers.Contract(USDC, ERC20_ABI, bobWallet);
   const poolBob = new ethers.Contract(POOL, POOL_ABI, bobWallet);
   await (await usdc.approve(POOL, bobBalance)).wait();
-  await (await poolBob.deposit(bobCommitment, USDC, bobBalance)).wait();
+  const bobDepositProof = await makeDepositProof({
+    secret: bobSecret,
+    salt: bobSalt,
+    token: USDC,
+    commitment: bobCommitment,
+    amount: bobBalance,
+  });
+  await (await poolBob.deposit(
+    bobDepositProof.a, bobDepositProof.b, bobDepositProof.c,
+    bobCommitment, USDC, bobBalance,
+  )).wait();
   console.log(`Bob deposited 1000 USDC at leafIndex ${bobLeafIndex}\n`);
 
   // Order params

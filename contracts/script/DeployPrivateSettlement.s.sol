@@ -23,9 +23,12 @@ contract DeployPrivateSettlement is Script {
         address claimVerifier = _deployContract("ClaimVerifier.sol:Groth16Verifier");
         console.log("ClaimVerifier:", claimVerifier);
 
+        address depositVerifier = _deployContract("DepositVerifier.sol:Groth16Verifier");
+        console.log("DepositVerifier:", depositVerifier);
+
         // 2. Deploy CommitmentPool (ZK escrow)
         //    depth=20 (1M leaves), rootHistorySize=30
-        CommitmentPool pool = new CommitmentPool(withdrawVerifier, 20, 30);
+        CommitmentPool pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
         console.log("CommitmentPool:", address(pool));
 
         // Token addresses (deterministic from DeployLocal on anvil)

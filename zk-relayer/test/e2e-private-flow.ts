@@ -57,11 +57,17 @@ const WETH_ABI = [
 ];
 
 const POOL_ABI = [
-  "function deposit(uint256 commitment, address token, uint256 amount) external",
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
+
+// Shared deposit-proof helper — see helpers/deposit-proof.mjs.
+// Kept in a separate JS file so the .mjs and .ts E2E suites cannot drift
+// on pi_b ordering, wasm/zkey paths, or the snarkjs version.
+// @ts-ignore — JS module imported from TypeScript via tsx
+import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 
 const SETTLEMENT_ABI = [
   "function claimNullifiers(bytes32) view returns (bool)",
@@ -232,7 +238,17 @@ async function main() {
   const salt = randomFieldElement();
   const commitment = poseidonHash([ownerSecret, BigInt(weth), depositAmount, salt]);
 
-  const depositTx = await poolContract.deposit(commitment, weth, depositAmount);
+  const depositProof = await makeDepositProof({
+    secret: ownerSecret,
+    salt,
+    token: weth,
+    commitment,
+    amount: depositAmount,
+  });
+  const depositTx = await poolContract.deposit(
+    depositProof.a, depositProof.b, depositProof.c,
+    commitment, weth, depositAmount,
+  );
   const depositReceipt = await depositTx.wait();
 
   // Parse leafIndex from event
