@@ -26,7 +26,7 @@ import { fileURLToPath } from "url";
 
 // Pure-JS Poseidon (avoids ffjavascript WASM BigInt issue on Node v22).
 // Verified to produce identical outputs to circomlibjs Poseidon for all arities used here.
-import { poseidon2, poseidon4, poseidon5, poseidon8 } from "poseidon-lite";
+import { poseidon2, poseidon4, poseidon5, poseidon8, poseidon9 } from "poseidon-lite";
 
 // EdDSA needs circomlibjs (WASM-based) — only used for babyJub.F field conversions
 // on EdDSA key/signature values, NOT for hashing. All hash computations use poseidon-lite.
@@ -85,8 +85,9 @@ function poseidonHash(inputs: bigint[]): bigint {
     case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 8: return poseidon8(inputs);
+    case 9: return poseidon9(inputs);
     default: throw new Error(
-      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 4, 5, 8)`
+      `poseidonHash: unsupported arity ${inputs.length} (supported: 2, 4, 5, 8, 9)`
     );
   }
 }
@@ -291,10 +292,11 @@ async function main() {
   const expiry = chainTime + 86400n;
 
   // Hash order
+  const relayerAddr = BigInt(info.address); // relayer address bound in order hash
   const orderHash = poseidonHash([
     tokenBig, tokenBig, // same-token (scatterDirect)
     sellAmount, sellAmount, // buy = sell for same token
-    FEE_BPS, expiry, nonce, claimsRoot,
+    FEE_BPS, expiry, nonce, claimsRoot, relayerAddr,
   ]);
 
   // Sign with EdDSA
