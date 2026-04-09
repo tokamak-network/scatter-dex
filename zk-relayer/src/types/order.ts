@@ -75,7 +75,8 @@ const MAX_ADDRESS = (1n << 160n) - 1n;
 // would still reject the witness, but the user would just see an opaque
 // "Assert Failed" — far harder to debug than a precise upstream error.
 const BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const MAX_AMOUNT_128 = (1n << 128n) - 1n; // matches settle.circom range checks
+const MAX_AMOUNT_128 = (1n << 128n) - 1n; // matches settle.circom Num2Bits(128)
+const MAX_FEE_16_BIT = (1n << 16n) - 1n;  // matches settle.circom Num2Bits(16) for fee bps
 
 function validateAddress(val: bigint, name: string): void {
   if (val < 0n || val > MAX_ADDRESS) throw new Error(`${name} must be a valid 160-bit address`);
@@ -102,90 +103,88 @@ function toBigInt(val: unknown, name: string): bigint {
   }
 }
 
+// ─── [M8] Combined parse-and-validate helpers ────────────────────
+// Collapse the recurring "toBigInt → validate" pattern that
+// parsePrivateOrder used at every numeric field. Centralising the logic
+// removes copy-paste drift and makes it impossible to forget the range
+// check on a new field.
+
+/** Parse + validate as a BN254 field element. */
+function toFieldBigInt(val: unknown, name: string): bigint {
+  const v = toBigInt(val, name);
+  validateField(v, name);
+  return v;
+}
+
+/** Parse + validate as a 128-bit unsigned amount. */
+function toAmount128BigInt(val: unknown, name: string): bigint {
+  const v = toBigInt(val, name);
+  validateAmount128(v, name);
+  return v;
+}
+
+/** Parse + validate as a 160-bit ERC20 address packed into a bigint. */
+function toAddressBigInt(val: unknown, name: string): bigint {
+  const v = toBigInt(val, name);
+  validateAddress(v, name);
+  return v;
+}
+
 export function parsePrivateOrder(raw: Record<string, unknown>): PrivateOrder {
   if (typeof raw !== "object" || raw === null) throw new Error("invalid order");
 
-  const sellToken = toBigInt(raw.sellToken, "sellToken");
-  const buyToken = toBigInt(raw.buyToken, "buyToken");
-  const sellAmount = toBigInt(raw.sellAmount, "sellAmount");
-  const buyAmount = toBigInt(raw.buyAmount, "buyAmount");
-  const maxFee = toBigInt(raw.maxFee, "maxFee");
-  const expiry = toBigInt(raw.expiry, "expiry");
-  const nonce = toBigInt(raw.nonce, "nonce");
+  // [M8] Token addresses (160-bit) — parsed and range-checked together.
+  const sellToken = toAddressBigInt(raw.sellToken, "sellToken");
+  const buyToken = toAddressBigInt(raw.buyToken, "buyToken");
 
-  validateAddress(sellToken, "sellToken");
-  validateAddress(buyToken, "buyToken");
+  // [M8] Trade amounts — parsed and 128-bit range-checked together.
+  const sellAmount = toAmount128BigInt(raw.sellAmount, "sellAmount");
+  const buyAmount = toAmount128BigInt(raw.buyAmount, "buyAmount");
   if (sellAmount <= 0n) throw new Error("sellAmount must be > 0");
   if (buyAmount <= 0n) throw new Error("buyAmount must be > 0");
+
+  // [M8] maxFee is a 16-bit bps value (matches settle.circom Num2Bits(16)).
+  const maxFee = toBigInt(raw.maxFee, "maxFee");
   if (maxFee < 0n) throw new Error("maxFee must be >= 0");
+  if (maxFee > MAX_FEE_16_BIT) throw new Error("maxFee exceeds 16-bit range");
 
-  // [M8] Range checks matching the circuit's Num2Bits(128) for amounts
-  // and Num2Bits(16) for fee bps. Out-of-range values would fail in the
-  // circuit anyway but produce an opaque assertion error; rejecting them
-  // here gives the user a clear message.
-  validateAmount128(sellAmount, "sellAmount");
-  validateAmount128(buyAmount, "buyAmount");
-  if (maxFee > 65535n) throw new Error("maxFee exceeds 16-bit range");
-  validateField(expiry, "expiry");
-  validateField(nonce, "nonce");
+  // [M8] Order metadata — Poseidon inputs / replay-protection scalars.
+  const expiry = toFieldBigInt(raw.expiry, "expiry");
+  const nonce = toFieldBigInt(raw.nonce, "nonce");
 
-  const pubKeyAx = toBigInt(raw.pubKeyAx, "pubKeyAx");
-  const pubKeyAy = toBigInt(raw.pubKeyAy, "pubKeyAy");
-  const sigS = toBigInt(raw.sigS, "sigS");
-  const sigR8x = toBigInt(raw.sigR8x, "sigR8x");
-  const sigR8y = toBigInt(raw.sigR8y, "sigR8y");
+  // [M8] EdDSA components — must all live in BN254.
+  const pubKeyAx = toFieldBigInt(raw.pubKeyAx, "pubKeyAx");
+  const pubKeyAy = toFieldBigInt(raw.pubKeyAy, "pubKeyAy");
+  const sigS = toFieldBigInt(raw.sigS, "sigS");
+  const sigR8x = toFieldBigInt(raw.sigR8x, "sigR8x");
+  const sigR8y = toFieldBigInt(raw.sigR8y, "sigR8y");
 
-  // [M8] EdDSA components must all live in BN254.
-  validateField(pubKeyAx, "pubKeyAx");
-  validateField(pubKeyAy, "pubKeyAy");
-  validateField(sigS, "sigS");
-  validateField(sigR8x, "sigR8x");
-  validateField(sigR8y, "sigR8y");
+  // [M8] Escrow material — secret/salt are field elements, balance is 128-bit.
+  const ownerSecret = toFieldBigInt(raw.ownerSecret, "ownerSecret");
+  const balance = toAmount128BigInt(raw.balance, "balance");
+  const salt = toFieldBigInt(raw.salt, "salt");
 
-  const ownerSecret = toBigInt(raw.ownerSecret, "ownerSecret");
-  const balance = toBigInt(raw.balance, "balance");
-  const salt = toBigInt(raw.salt, "salt");
   const leafIndex = Number(raw.leafIndex);
   if (!Number.isInteger(leafIndex) || leafIndex < 0) throw new Error("invalid leafIndex");
 
-  // [M8] Escrow secrets must be field elements; balance is also range-checked
-  // to 128 bits to match settle.circom Num2Bits(128).
-  validateField(ownerSecret, "ownerSecret");
-  validateField(salt, "salt");
-  validateAmount128(balance, "balance");
-
-  const newSalt = toBigInt(raw.newSalt, "newSalt");
-  const expectedChangeCommitment = toBigInt(raw.expectedChangeCommitment, "expectedChangeCommitment");
-
-  // [M8] newSalt + expectedChangeCommitment are Poseidon inputs / outputs.
-  validateField(newSalt, "newSalt");
-  validateField(expectedChangeCommitment, "expectedChangeCommitment");
+  // [M8] Change-commitment Poseidon inputs / outputs.
+  const newSalt = toFieldBigInt(raw.newSalt, "newSalt");
+  const expectedChangeCommitment = toFieldBigInt(raw.expectedChangeCommitment, "expectedChangeCommitment");
 
   const rawClaims = raw.claims as Array<Record<string, unknown>>;
   if (!Array.isArray(rawClaims) || rawClaims.length === 0 || rawClaims.length > MAX_CLAIMS) {
     throw new Error(`claims must be 1-${MAX_CLAIMS}`);
   }
 
-  const claims: ClaimLeafData[] = rawClaims.map((c, i) => {
-    const recipient = toBigInt(c.recipient, `claims[${i}].recipient`);
-    const token = toBigInt(c.token, `claims[${i}].token`);
-    validateAddress(recipient, `claims[${i}].recipient`);
-    validateAddress(token, `claims[${i}].token`);
-    const claimSecret = toBigInt(c.secret, `claims[${i}].secret`);
-    const claimAmount = toBigInt(c.amount, `claims[${i}].amount`);
-    const claimReleaseTime = toBigInt(c.releaseTime, `claims[${i}].releaseTime`);
-    // [M8] Validate every Poseidon input for the claim leaf hash.
-    validateField(claimSecret, `claims[${i}].secret`);
-    validateAmount128(claimAmount, `claims[${i}].amount`);
-    validateField(claimReleaseTime, `claims[${i}].releaseTime`);
-    return {
-      secret: claimSecret,
-      recipient,
-      token,
-      amount: claimAmount,
-      releaseTime: claimReleaseTime,
-    };
-  });
+  const claims: ClaimLeafData[] = rawClaims.map((c, i) => ({
+    // [M8] Every Poseidon input for the claim leaf hash is parsed and
+    //      range-checked through the same helpers as the order body.
+    secret: toFieldBigInt(c.secret, `claims[${i}].secret`),
+    recipient: toAddressBigInt(c.recipient, `claims[${i}].recipient`),
+    token: toAddressBigInt(c.token, `claims[${i}].token`),
+    amount: toAmount128BigInt(c.amount, `claims[${i}].amount`),
+    releaseTime: toFieldBigInt(c.releaseTime, `claims[${i}].releaseTime`),
+  }));
 
   return {
     sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce,

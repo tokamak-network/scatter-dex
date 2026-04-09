@@ -188,8 +188,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         //      Tightening this to a one-sided window restores the safety margin
         //      while still tolerating proof generation latency / minor clock
         //      skew between the prover and the chain.
-        if (p.currentTimestamp > block.timestamp) revert TimestampOutOfRange();
-        if (p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp) revert TimestampOutOfRange();
+        if (
+            p.currentTimestamp > block.timestamp ||
+            p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
+        ) revert TimestampOutOfRange();
 
         uint[18] memory pubSignals = [
             p.currentRoot,
