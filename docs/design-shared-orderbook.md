@@ -167,20 +167,21 @@ WS     /ws/orders               — real-time order/cancel broadcast
 
 > **Match notification is NOT sent by the server.** Relayers discover matches locally and coordinate directly via P2P (Trade Offer pattern).
 
-### Phase 2: Relayer Integration
+### Phase 2: Relayer Integration (Implemented — PR #113)
 
 Each relayer adds:
-1. On order receipt → POST summary to shared orderbook
-2. On match notification → notify user "send secrets to settling relayer"
-3. On receiving secrets from remote user → generate proof + settle
+1. On order receipt → POST summary to shared orderbook (automatic)
+2. On remote order arrival → attempt matching against local orders
+3. On cross-relayer match → Trade Offer protocol: taker's relayer sends full order to maker's relayer
+4. Maker's relayer (settling relayer) re-verifies EdDSA, generates ZK proof, settles on-chain
 
-### Phase 3: User Experience
+> **No user interaction required for cross-relayer settlement.** The user already delegated their secrets to their relayer on order submission. The relayer handles matching and settlement automatically — analogous to Steam bots completing trades without user intervention after the initial listing.
 
-Frontend changes:
-1. User selects relayer as before
-2. If match is cross-relayer, UI shows: "Your order matched via [Relayer Y]. Approve secret transfer to [settling relayer]?"
-3. User confirms → secrets sent to settling relayer
-4. Settlement proceeds normally
+### Phase 3: Deployment (Implemented — PR #114, #115)
+
+- Docker Compose with shared orderbook server + multi-relayer support
+- Testnet deployment guide with contract deployment and configuration
+- Security documentation and production checklist
 
 ### Phase 4: Decentralization (future)
 

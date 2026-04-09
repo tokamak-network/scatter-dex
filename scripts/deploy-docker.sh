@@ -44,9 +44,10 @@ PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*PrivateSettlemen
 WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
 USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
 IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*IdentityGate:" | awk '{print $NF}')
+FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*FeeVault:" | awk '{print $NF}')
 
 # Validate all addresses were parsed
-for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC IDENTITY_GATE; do
+for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC IDENTITY_GATE FEE_VAULT; do
   if [ -z "${!var_name}" ]; then
     echo "ERROR: Failed to parse $var_name from deploy output"
     exit 1
@@ -60,6 +61,7 @@ NEXT_PUBLIC_TOKENS=$WETH:WETH:18,$USDC:USDC:18
 NEXT_PUBLIC_WETH_ADDRESS=$WETH
 COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
+FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
