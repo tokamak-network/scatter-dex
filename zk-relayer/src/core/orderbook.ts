@@ -11,6 +11,8 @@ export class PrivateOrderbook {
   private maxSize: number;
   private db: PrivateOrderDB | null = null;
 
+  get pendingOrderCount(): number { return this.pendingCount; }
+
   constructor(maxSize = 10_000) {
     this.maxSize = maxSize;
   }

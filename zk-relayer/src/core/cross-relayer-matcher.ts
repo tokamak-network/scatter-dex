@@ -16,6 +16,7 @@ import {
 } from "../types/order.js";
 import { poseidonHash, verifyEdDSA, computeClaimLeaf, buildMerkleTree } from "./zk-prover.js";
 import { config } from "../config.js";
+import type { PrivateOrderDB } from "./db.js";
 
 /**
  * Cross-relayer matching and Trade Offer service.
@@ -36,6 +37,7 @@ export class CrossRelayerMatchService {
     private submitter: PrivateSubmitter,
     private sharedClient: SharedOrderbookClient,
     private orderIdMap: Map<string, string>,
+    private db?: PrivateOrderDB,
   ) {}
 
   // ─── Reactive matching ───
@@ -159,10 +161,24 @@ export class CrossRelayerMatchService {
 
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-      return { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
+      const result: TradeOfferResponse = { status: "rejected", reason: String(errBody.reason || errBody.error || res.statusText) };
+      this.db?.recordTradeOffer({
+        direction: "sent", peerRelayer: remoteMaker.relayer,
+        makerPubKey: remoteMaker.pubKeyAx, makerNonce: remoteMaker.nonce,
+        takerPubKey: order.pubKeyAx.toString(), takerNonce: order.nonce.toString(),
+        status: "rejected", reason: result.reason,
+      });
+      return result;
     }
 
-    return await res.json() as TradeOfferResponse;
+    const result = await res.json() as TradeOfferResponse;
+    this.db?.recordTradeOffer({
+      direction: "sent", peerRelayer: remoteMaker.relayer,
+      makerPubKey: remoteMaker.pubKeyAx, makerNonce: remoteMaker.nonce,
+      takerPubKey: order.pubKeyAx.toString(), takerNonce: order.nonce.toString(),
+      status: result.status, txHash: result.txHash, reason: result.reason,
+    });
+    return result;
   }
 
   // ─── Trade Offer handler (receiving side) ───
@@ -283,6 +299,12 @@ export class CrossRelayerMatchService {
       }
 
       console.log(`[cross-relayer] Trade settled: maker=${orderKey} tx=${txHash}`);
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: maker.pubKeyAx.toString(), makerNonce: maker.nonce.toString(),
+        takerPubKey: takerOrder.pubKeyAx.toString(), takerNonce: takerOrder.nonce.toString(),
+        status: "settled", txHash,
+      });
       return { status: "settled", txHash };
     } catch (err) {
       // Restore maker to pending
@@ -294,6 +316,12 @@ export class CrossRelayerMatchService {
 
       const reason = err instanceof Error ? err.message : "settlement failed";
       console.error(`[cross-relayer] Settlement failed:`, reason);
+      this.db?.recordTradeOffer({
+        direction: "received", peerRelayer: senderRelayerAddress,
+        makerPubKey: offer.makerPubKeyAx, makerNonce: offer.makerNonce,
+        takerPubKey: takerOrder.pubKeyAx.toString(), takerNonce: takerOrder.nonce.toString(),
+        status: "rejected", reason,
+      });
       return { status: "rejected", reason };
     } finally {
       this.lockingOrders.delete(orderKey);

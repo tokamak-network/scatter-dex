@@ -55,6 +55,8 @@ export class PrivateOrderDB {
   private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
   private insertClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
+  private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
+  private selectTradeOffers: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -111,6 +113,13 @@ export class PrivateOrderDB {
     this.selectClaimsRoot = this.db.prepare(`
       SELECT 1 FROM settled_claims_roots WHERE claims_root = @claimsRoot LIMIT 1
     `);
+    this.insertTradeOffer = this.db.prepare(`
+      INSERT INTO trade_offers (direction, peer_relayer, maker_pub_key, maker_nonce, taker_pub_key, taker_nonce, status, tx_hash, reason, created_at)
+      VALUES (@direction, @peerRelayer, @makerPubKey, @makerNonce, @takerPubKey, @takerNonce, @status, @txHash, @reason, @createdAt)
+    `);
+    this.selectTradeOffers = this.db.prepare(`
+      SELECT * FROM trade_offers ORDER BY created_at DESC LIMIT @limit OFFSET @offset
+    `);
   }
 
   private migrate(): void {
@@ -162,6 +171,24 @@ export class PrivateOrderDB {
         claims_root   TEXT PRIMARY KEY,
         settled_at    INTEGER NOT NULL
       );
+
+      -- Cross-relayer Trade Offer audit trail
+      CREATE TABLE IF NOT EXISTS trade_offers (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        direction     TEXT NOT NULL,          -- 'sent' or 'received'
+        peer_relayer  TEXT NOT NULL,          -- counterparty relayer address
+        maker_pub_key TEXT NOT NULL,
+        maker_nonce   TEXT NOT NULL,
+        taker_pub_key TEXT NOT NULL,
+        taker_nonce   TEXT NOT NULL,
+        status        TEXT NOT NULL,          -- 'settled', 'rejected', 'error'
+        tx_hash       TEXT,
+        reason        TEXT,
+        created_at    INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_to_direction ON trade_offers(direction, created_at);
+      CREATE INDEX IF NOT EXISTS idx_to_peer ON trade_offers(peer_relayer, created_at);
     `);
 
     // Migration: add cross_relayer column to existing databases
@@ -311,6 +338,55 @@ export class PrivateOrderDB {
   /** Check if a claims root was settled by this relayer. */
   hasSettledClaimsRoot(claimsRoot: string): boolean {
     return !!this.selectClaimsRoot.get({ claimsRoot: claimsRoot.toLowerCase() });
+  }
+
+  // ─── Trade Offer audit trail ───
+
+  recordTradeOffer(params: {
+    direction: "sent" | "received";
+    peerRelayer: string;
+    makerPubKey: string;
+    makerNonce: string;
+    takerPubKey: string;
+    takerNonce: string;
+    status: "settled" | "rejected" | "error";
+    txHash?: string;
+    reason?: string;
+  }): void {
+    this.insertTradeOffer.run({
+      direction: params.direction,
+      peerRelayer: params.peerRelayer.toLowerCase(),
+      makerPubKey: params.makerPubKey,
+      makerNonce: params.makerNonce,
+      takerPubKey: params.takerPubKey,
+      takerNonce: params.takerNonce,
+      status: params.status,
+      txHash: params.txHash ?? null,
+      reason: params.reason ?? null,
+      createdAt: Date.now(),
+    });
+  }
+
+  getTradeOffers(limit = 50, offset = 0): Array<Record<string, unknown>> {
+    return this.selectTradeOffers.all({ limit, offset }) as Array<Record<string, unknown>>;
+  }
+
+  /** Get relayer performance statistics for dashboard/profile. */
+  getRelayerStats(): Record<string, unknown> {
+    const totalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders").get() as { count: number };
+    const settledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'").get() as { count: number };
+    const crossRelayerSettled = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1").get() as { count: number };
+    const totalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers").get() as { count: number };
+    const settledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'").get() as { count: number };
+
+    return {
+      totalOrders: totalOrders.count,
+      settledOrders: settledOrders.count,
+      successRate: totalOrders.count > 0 ? Math.round((settledOrders.count / totalOrders.count) * 100) : 0,
+      crossRelayerSettled: crossRelayerSettled.count,
+      totalTradeOffers: totalTradeOffers.count,
+      settledTradeOffers: settledTradeOffers.count,
+    };
   }
 
   close(): void {
