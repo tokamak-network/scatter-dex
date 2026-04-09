@@ -463,8 +463,12 @@ async function main() {
   assert(changeLogs.length > 0, `Change commitment on-chain at leaf #${(changeLogs[0] as ethers.EventLog).args.leafIndex}`);
 
   // Verify claim nullifiers are spent
-  const claimNull1 = poseidonHash([claimSecret1, 0n]);
-  const claimNull2 = poseidonHash([claimSecret2, 1n]);
+  // [M4] Domain-separated claim nullifier (tag = 2). The submitClaim helper
+  // above already uses the tagged form when generating the proof, so the
+  // verification block must match — otherwise these checks would fail even
+  // when the on-chain claim succeeded.
+  const claimNull1 = poseidonHash([2n, claimSecret1, 0n]);
+  const claimNull2 = poseidonHash([2n, claimSecret2, 1n]);
   const [null1Spent, null2Spent] = await Promise.all([
     settlementContract.claimNullifiers(toHex(claimNull1, 32)),
     settlementContract.claimNullifiers(toHex(claimNull2, 32)),

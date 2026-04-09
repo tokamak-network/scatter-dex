@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
-import { poseidonHash, toBytes32Hex } from "./commitment";
+import { computeClaimNullifier, toBytes32Hex } from "./commitment";
 import { getPrivateSettlementAddress } from "../config";
 import { getReadProvider, getEarliestBlock } from "../provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../contracts";
@@ -43,8 +43,9 @@ export function useClaimStatuses(
         const nullifiers = await Promise.all(
           claims.map(async (c, i) => {
             if (c.secret == null || c.leafIndex == null) return { i, nullHex: null };
-            // [M4] Domain-separated claim nullifier (tag = 2)
-            const nullifier = await poseidonHash([2n, BigInt(c.secret), BigInt(c.leafIndex)]);
+            // [M4] Use the centralised computeClaimNullifier helper so the
+            //      tag definition cannot drift from circuits/zk-prover.
+            const nullifier = await computeClaimNullifier(BigInt(c.secret), BigInt(c.leafIndex));
             return { i, nullHex: toBytes32Hex(nullifier) };
           })
         );

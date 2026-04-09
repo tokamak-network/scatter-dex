@@ -5,10 +5,10 @@
  * Claim proof proves:
  * 1. Knowledge of (secret) such that leaf = Poseidon(secret, recipient, token, amount, releaseTime)
  * 2. Leaf exists in the claimsRoot Merkle tree
- * 3. nullifier = Poseidon(secret, leafIndex)
+ * 3. nullifier = Poseidon(2, secret, leafIndex)   ← [M4] domain-separated (tag = 2)
  */
 
-import { poseidonHash, buildMerkleTree, getMerkleProof } from "./commitment";
+import { poseidonHash, buildMerkleTree, getMerkleProof, computeClaimNullifier } from "./commitment";
 
 const CLAIMS_TREE_DEPTH = 4;
 
@@ -59,7 +59,8 @@ export async function generateClaimProof(
   }
 
   // [M4] Domain-separated claim nullifier = Poseidon(2, secret, leafIndex)
-  const nullifier = await poseidonHash([2n, input.secret, BigInt(input.leafIndex)]);
+  // — uses the centralised helper so the tag definition cannot drift.
+  const nullifier = await computeClaimNullifier(input.secret, BigInt(input.leafIndex));
 
   // Build claims Merkle tree (depth 4, 16 leaves)
   const { root: claimsRoot, layers } = await buildMerkleTree(input.allClaimLeaves, CLAIMS_TREE_DEPTH);

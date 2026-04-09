@@ -265,23 +265,26 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //    maker.sell * taker.sell >= maker.buy * taker.buy
     //    (taker offers at least maker's minimum price)
     // ════════════════════════════════════════
-    // Range-check all amount-like signals to 128 bits.
+    // [M1, gemini review fix] Range-check the four trade amounts to 126 bits.
     //
-    // Why: every LessEqThan(252) below assumes its inputs fit in 252 bits.
-    // Without explicit Num2Bits checks an attacker could supply field
-    // elements larger than 2^128 (e.g. close to the BN254 modulus) and
-    // produce wrap-around behavior in the product/comparison gadgets.
+    // The previous version used Num2Bits(128). 128-bit × 128-bit can reach
+    // 2^256, which exceeds the BN254 scalar modulus r ≈ 2^253.86 and would
+    // wrap around the field — making the LessEqThan(252) comparison below
+    // give the wrong answer for adversarially-chosen amounts. Reducing to
+    // 126 bits caps each product at 2^252 < r, well inside the field, with
+    // no realistic UX impact (2^126 ≈ 8.5e37, far above any plausible
+    // ERC20 supply).
     //
-    // 128 bits is more than sufficient for any realistic ERC20 amount
-    // (uint128 max ≈ 3.4e38, while the largest realistic token supply
-    // is ~1e30) and keeps every product within the ~254-bit field.
-    component rcMakerSell = Num2Bits(128);
+    // Other 128-bit checks below (balances, totalLocked, fees) are kept at
+    // 128 bits because they only get multiplied by 16-bit fee bps, where
+    // 128 + 16 = 144 bits is comfortably inside the field.
+    component rcMakerSell = Num2Bits(126);
     rcMakerSell.in <== makerSellAmount;
-    component rcMakerBuy = Num2Bits(128);
+    component rcMakerBuy = Num2Bits(126);
     rcMakerBuy.in <== makerBuyAmount;
-    component rcTakerSell = Num2Bits(128);
+    component rcTakerSell = Num2Bits(126);
     rcTakerSell.in <== takerSellAmount;
-    component rcTakerBuy = Num2Bits(128);
+    component rcTakerBuy = Num2Bits(126);
     rcTakerBuy.in <== takerBuyAmount;
 
     // [M1] Range-check escrow balances and the locked / fee outputs.
@@ -456,6 +459,19 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         makerComputedLeaves[i] <== makerLeafHash[i].out;
     }
 
+    // [M1, gemini review fix] Range-check every claim amount to 128 bits
+    // before accumulating them into totalLockedMaker. Without this, an
+    // attacker controlling the prover could feed near-modulus values that
+    // wrap during the running sum and produce a totalLockedMaker that does
+    // not reflect the real claim distribution. With each claim bounded to
+    // 2^128 and at most maxClaimsPerSide = 16 entries, the sum is at most
+    // 16 × 2^128 = 2^132, well inside the BN254 field.
+    component rcMakerClaimAmount[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        rcMakerClaimAmount[i] = Num2Bits(128);
+        rcMakerClaimAmount[i].in <== makerClaimAmounts[i];
+    }
+
     // Unused claims (i >= count) must have amount = 0
     component makerClaimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
@@ -494,6 +510,15 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         takerLeafHash[i].inputs[3] <== takerClaimAmounts[i];
         takerLeafHash[i].inputs[4] <== takerClaimReleaseTimes[i];
         takerComputedLeaves[i] <== takerLeafHash[i].out;
+    }
+
+    // [M1, gemini review fix] Same 128-bit range check on each taker claim
+    // amount as on the maker side above. Prevents sum wrap-around in
+    // takerAmountAcc when an attacker controls the prover.
+    component rcTakerClaimAmount[maxClaimsPerSide];
+    for (var i = 0; i < maxClaimsPerSide; i++) {
+        rcTakerClaimAmount[i] = Num2Bits(128);
+        rcTakerClaimAmount[i].in <== takerClaimAmounts[i];
     }
 
     component takerClaimUsed[maxClaimsPerSide];
