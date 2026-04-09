@@ -42,13 +42,14 @@ const noopLimiter: express.RequestHandler = (_req, _res, next) => next();
 
 async function sign(wallet: Wallet, method: string, path: string) {
   const ts = Math.floor(Date.now() / 1000).toString();
-  const msg = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:${method.toUpperCase()}:${path}`;
+  const url = `http://relayer-${wallet.address.slice(2, 6)}.local:3002`;
+  const msg = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:${method.toUpperCase()}:${path}:${url}`;
   const sig = await wallet.signMessage(msg);
   return {
     "x-relayer-address": wallet.address,
     "x-relayer-signature": sig,
     "x-relayer-timestamp": ts,
-    "x-relayer-url": `http://relayer-${wallet.address.slice(2, 6)}.local:3002`,
+    "x-relayer-url": url,
     "Content-Type": "application/json",
   };
 }
@@ -375,7 +376,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
 
   it("expired timestamp is rejected (401)", async () => {
     const ts = (Math.floor(Date.now() / 1000) - 600).toString(); // 10 min ago
-    const msg = `zkScatter-relay:${relayerA.address.toLowerCase()}:${ts}:POST:/api/orders`;
+    const msg = `zkScatter-relay:${relayerA.address.toLowerCase()}:${ts}:POST:/api/orders:`;
     const sig = await relayerA.signMessage(msg);
     const { status } = await api("/api/orders", {
       method: "POST",

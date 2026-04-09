@@ -38,6 +38,9 @@ export class SharedOrderbook {
   /** relayer address → RelayerInfo */
   private relayers = new Map<string, RelayerInfo>();
 
+  /** O(1) counter for open orders */
+  private openCount = 0;
+
   /** relayer address → Set of order IDs (reverse index for fast purge) */
   private relayerOrders = new Map<string, Set<string>>();
 
@@ -119,10 +122,11 @@ export class SharedOrderbook {
       this.buySide.get(pair)!.add(order.id);
     }
 
-    // Update relayer order count + reverse index
+    // Update relayer order count + reverse index + open counter
     if (relayerInfo) relayerInfo.orderCount++;
     if (!this.relayerOrders.has(relayerKey)) this.relayerOrders.set(relayerKey, new Set());
     this.relayerOrders.get(relayerKey)!.add(order.id);
+    this.openCount++;
 
     return stored;
   }
@@ -142,9 +146,10 @@ export class SharedOrderbook {
     this.buySide.get(pair)?.delete(id);
     this.relayerOrders.get(order.relayer.toLowerCase())?.delete(id);
 
-    // Decrement relayer count
+    // Decrement relayer count + open counter
     const relayerInfo = this.relayers.get(order.relayer.toLowerCase());
     if (relayerInfo && relayerInfo.orderCount > 0) relayerInfo.orderCount--;
+    if (stored.status === "open") this.openCount--;
 
     return true;
   }
@@ -152,11 +157,12 @@ export class SharedOrderbook {
   updateStatus(id: string, status: OrderStatus, matchId?: string): void {
     const stored = this.orders.get(id);
     if (!stored) return;
+    const wasOpen = stored.status === "open";
     stored.status = status;
     if (matchId) stored.matchId = matchId;
 
     // Remove from pair index if no longer open
-    if (status !== "open") {
+    if (status !== "open" && wasOpen) {
       const { order } = stored;
       const pair = pairKey(order.sellToken, order.buyToken);
       this.sellSide.get(pair)?.delete(id);
@@ -164,6 +170,7 @@ export class SharedOrderbook {
 
       const relayerInfo = this.relayers.get(order.relayer.toLowerCase());
       if (relayerInfo && relayerInfo.orderCount > 0) relayerInfo.orderCount--;
+      this.openCount--;
     }
   }
 
@@ -205,17 +212,17 @@ export class SharedOrderbook {
       .sort((a, b) => a.order.createdAt - b.order.createdAt);
   }
 
-  /** Purge expired orders, returns count removed */
-  purgeExpired(): number {
+  /** Purge expired orders, returns expired order IDs for DB sync */
+  purgeExpired(): string[] {
     const now = Math.floor(Date.now() / 1000);
-    let count = 0;
+    const expiredIds: string[] = [];
     for (const [id, stored] of this.orders) {
       if (stored.status === "open" && stored.order.expiry <= now) {
         this.updateStatus(id, "expired");
-        count++;
+        expiredIds.push(id);
       }
     }
-    return count;
+    return expiredIds;
   }
 
   /** Purge orders from stale relayers (no heartbeat for threshold seconds) */
@@ -265,22 +272,21 @@ export class SharedOrderbook {
       const rKey = stored.order.relayer.toLowerCase();
       if (!this.relayerOrders.has(rKey)) this.relayerOrders.set(rKey, new Set());
       this.relayerOrders.get(rKey)!.add(stored.order.id);
+      this.openCount++;
       count++;
     }
     return count;
   }
 
-  /** Get orderbook stats */
+  /** Get orderbook stats — O(1) using maintained counters */
   getStats(): { totalOrders: number; pairs: number; relayers: number } {
-    const pairSet = new Set<string>();
-    for (const stored of this.orders.values()) {
-      if (stored.status === "open") {
-        pairSet.add(pairKey(stored.order.sellToken, stored.order.buyToken));
-      }
-    }
+    // Active pairs = pairs that have at least one open order in either side
+    const activePairs = new Set<string>();
+    for (const [pair, ids] of this.sellSide) { if (ids.size > 0) activePairs.add(pair); }
+    for (const [pair, ids] of this.buySide) { if (ids.size > 0) activePairs.add(pair); }
     return {
-      totalOrders: [...this.orders.values()].filter(s => s.status === "open").length,
-      pairs: pairSet.size,
+      totalOrders: this.openCount,
+      pairs: activePairs.size,
       relayers: this.relayers.size,
     };
   }

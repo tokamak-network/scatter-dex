@@ -31,7 +31,8 @@ export function createP2PRoutes(
     try {
       const method = req.method.toUpperCase();
       const path = req.originalUrl.split("?")[0];
-      const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}`;
+      const relayerUrl = (req.headers["x-relayer-url"] as string) || "";
+      const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
       const recovered = verifyMessage(message, signature);
       return recovered.toLowerCase() === address.toLowerCase();
     } catch {

@@ -53,8 +53,8 @@ export class OrderbookDB {
 
       CREATE TABLE IF NOT EXISTS matches (
         match_id TEXT PRIMARY KEY,
-        maker_id TEXT NOT NULL,
-        taker_id TEXT NOT NULL,
+        maker_id TEXT NOT NULL REFERENCES orders(id),
+        taker_id TEXT NOT NULL REFERENCES orders(id),
         settling_relayer TEXT NOT NULL,
         pair TEXT NOT NULL,
         price TEXT NOT NULL,
@@ -82,11 +82,13 @@ export class OrderbookDB {
       SELECT * FROM orders WHERE status = 'open' ORDER BY created_at ASC LIMIT ? OFFSET ?
     `);
 
+    // UNION ALL instead of OR — lets SQLite use idx_orders_pair on each branch
     this.stmtListByPair = this.db.prepare(`
-      SELECT * FROM orders
-      WHERE status = 'open'
-        AND ((sell_token = ? AND buy_token = ?) OR (sell_token = ? AND buy_token = ?))
-      ORDER BY created_at ASC
+      SELECT * FROM (
+        SELECT * FROM orders WHERE status = 'open' AND sell_token = ? AND buy_token = ?
+        UNION ALL
+        SELECT * FROM orders WHERE status = 'open' AND sell_token = ? AND buy_token = ?
+      ) ORDER BY created_at ASC
       LIMIT ? OFFSET ?
     `);
 
@@ -160,6 +162,17 @@ export class OrderbookDB {
 
   updateStatus(id: string, status: OrderStatus, matchId?: string): void {
     this.stmtUpdateStatus.run(status, matchId ?? null, id);
+  }
+
+  /** Expire specific orders by ID (synced from in-memory purge) */
+  expireByIds(ids: string[]): void {
+    if (ids.length === 0) return;
+    const txn = this.db.transaction(() => {
+      for (const id of ids) {
+        this.stmtUpdateStatus.run("expired", null, id);
+      }
+    });
+    txn();
   }
 
   deleteOrder(id: string): boolean {

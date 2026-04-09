@@ -59,12 +59,12 @@ async function main() {
   const server = http.createServer(app);
   broadcaster.attach(server);
 
-  // Periodic cleanup
+  // Periodic cleanup — sync expired IDs explicitly to avoid in-memory/DB drift
   const expireInterval = setInterval(() => {
-    const expired = orderbook.purgeExpired();
-    if (expired > 0) {
-      console.log(`Purged ${expired} expired orders`);
-      db.purgeExpired();
+    const expiredIds = orderbook.purgeExpired();
+    if (expiredIds.length > 0) {
+      console.log(`Purged ${expiredIds.length} expired orders`);
+      db.expireByIds(expiredIds);
     }
   }, 60_000);
 

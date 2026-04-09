@@ -21,7 +21,7 @@ const relayerB = new Wallet("0x" + "b2".repeat(32));
 
 async function authHeaders(wallet: Wallet, method: string, path: string, url = "http://localhost:" + PORT) {
   const ts = Math.floor(Date.now() / 1000).toString();
-  const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:${method.toUpperCase()}:${path}`;
+  const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:${method.toUpperCase()}:${path}:${url}`;
   const signature = await wallet.signMessage(message);
   return {
     "x-relayer-address": wallet.address,

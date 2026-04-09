@@ -8,7 +8,8 @@ import type { Request, Response, NextFunction } from "express";
  * The signed message includes the request method + path to prevent
  * cross-endpoint replay attacks.
  *
- * Signed message format: "zkScatter-relay:{address}:{timestamp}:{METHOD}:{path}"
+ * Signed message format: "zkScatter-relay:{address}:{timestamp}:{METHOD}:{path}:{url}"
+ * Including the URL prevents a relayer from signing with their key but spoofing another relayer's URL.
  *
  * Headers:
  *   x-relayer-address: 0x...
@@ -36,10 +37,11 @@ export function relayerAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  // Verify EIP-191 signature (includes method+path to prevent cross-endpoint replay)
+  // Verify EIP-191 signature (includes method+path+url to prevent replay and URL spoofing)
   const method = req.method.toUpperCase();
   const path = req.originalUrl.split("?")[0]; // strip query params
-  const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}`;
+  const relayerUrl = (req.headers["x-relayer-url"] as string) || "";
+  const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
   try {
     const recovered = verifyMessage(message, signature);
     if (recovered.toLowerCase() !== address.toLowerCase()) {

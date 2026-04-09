@@ -48,6 +48,8 @@ export class SharedOrderbookClient {
   private wallet: Wallet;
   private relayerUrl: string;
   private relayerName?: string;
+  private wsReconnectDelay = 1000; // exponential backoff start (ms)
+  private static readonly WS_MAX_RECONNECT_DELAY = 60_000;
   private heartbeatIntervalMs: number;
   private peerSyncIntervalMs: number;
   private ws: WebSocket | null = null;
@@ -87,7 +89,7 @@ export class SharedOrderbookClient {
   private async authHeaders(method: string, path: string): Promise<Record<string, string>> {
     const ts = Math.floor(Date.now() / 1000).toString();
     const address = this.wallet.address.toLowerCase();
-    const message = `zkScatter-relay:${address}:${ts}:${method.toUpperCase()}:${path}`;
+    const message = `zkScatter-relay:${address}:${ts}:${method.toUpperCase()}:${path}:${this.relayerUrl}`;
     const signature = await this.wallet.signMessage(message);
     return {
       "x-relayer-address": this.wallet.address,
@@ -152,6 +154,7 @@ export class SharedOrderbookClient {
 
       this.ws.onopen = () => {
         this.serverOnline = true;
+        this.wsReconnectDelay = 1000; // reset backoff on success
         console.log("[shared-orderbook] WebSocket connected");
       };
 
@@ -177,8 +180,10 @@ export class SharedOrderbookClient {
       this.ws.onclose = () => {
         this.serverOnline = false;
         if (this.stopped) return; // Don't reconnect after explicit stop()
-        console.warn("[shared-orderbook] WebSocket disconnected, reconnecting in 5s...");
-        setTimeout(() => { if (!this.stopped) this.connectWS(); }, 5000);
+        const delay = this.wsReconnectDelay;
+        this.wsReconnectDelay = Math.min(delay * 2, SharedOrderbookClient.WS_MAX_RECONNECT_DELAY);
+        console.warn(`[shared-orderbook] WebSocket disconnected, reconnecting in ${delay}ms...`);
+        setTimeout(() => { if (!this.stopped) this.connectWS(); }, delay);
       };
 
       this.ws.onerror = () => {

@@ -142,8 +142,9 @@ describe("SharedOrderbook", () => {
         expiry: Math.floor(Date.now() / 1000) - 100,
       });
       ob.addOrder(expired);
-      const count = ob.purgeExpired();
-      expect(count).toBe(1);
+      const expiredIds = ob.purgeExpired();
+      expect(expiredIds).toHaveLength(1);
+      expect(expiredIds[0]).toBe("r1-expired");
       expect(ob.getOrder("r1-expired")!.status).toBe("expired");
     });
 

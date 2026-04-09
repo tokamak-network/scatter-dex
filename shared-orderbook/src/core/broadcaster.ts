@@ -65,7 +65,9 @@ export class OrderBroadcaster {
     const data = JSON.stringify(event);
     for (const ws of this.clients) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
+        ws.send(data, (err) => {
+          if (err) console.warn("WS send failed:", err.message);
+        });
       }
     }
   }
