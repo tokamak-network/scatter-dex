@@ -456,7 +456,9 @@ contract PrivateSettlementTest is Test {
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
             feeTokenMaker: 0,
-            feeTokenTaker: 0
+            feeTokenTaker: 0,
+            makerRelayer: address(this),
+            takerRelayer: address(this)
         });
     }
 }
@@ -552,12 +554,12 @@ contract FeeVaultTest is Test {
     function test_settlePrivate_only_active_relayer() public {
         PrivateSettlement.SettleParams memory p = _params();
 
-        // Non-relayer should be rejected
+        // Non-relayer (not in proof) should be rejected
         vm.prank(nonRelayer);
-        vm.expectRevert(PrivateSettlement.NotActiveRelayer.selector);
+        vm.expectRevert(PrivateSettlement.NotMakerOrTakerRelayer.selector);
         settlement.settlePrivate(p);
 
-        // Registered relayer should succeed
+        // Registered relayer (in proof as both maker+taker) should succeed
         vm.prank(relayer);
         settlement.settlePrivate(p);
     }
@@ -573,13 +575,13 @@ contract FeeVaultTest is Test {
         settlement.scatterDirect(p);
     }
 
-    function test_disable_relayer_gate() public {
-        // Disable relayer gating
+    function test_disable_registry_still_requires_proof_relayer() public {
+        // Disable relayer registry gating
         settlement.setRelayerRegistry(address(0));
 
-        // Now anyone can settle
+        // Still restricted to maker/taker relayer bound in proof
         PrivateSettlement.SettleParams memory p = _params();
-        vm.prank(nonRelayer);
+        vm.prank(relayer); // relayer = makerRelayer = takerRelayer in _params
         settlement.settlePrivate(p);
     }
 
@@ -594,7 +596,7 @@ contract FeeVaultTest is Test {
     }
 
     function test_settlePrivate_correct_relayer_passes_proof() public {
-        settleVerifier.setEnforceRelayer(true, relayer);
+        settleVerifier.setEnforceRelayer(true, relayer, relayer);
         PrivateSettlement.SettleParams memory p = _params();
 
         vm.prank(relayer);
@@ -604,7 +606,7 @@ contract FeeVaultTest is Test {
     }
 
     function test_settlePrivate_wrong_relayer_reverts_proof() public {
-        settleVerifier.setEnforceRelayer(true, relayer);
+        settleVerifier.setEnforceRelayer(true, relayer, relayer);
         _registerRelayer2();
 
         // Different nullifiers to avoid collision with other tests
@@ -616,14 +618,16 @@ contract FeeVaultTest is Test {
         p.claimsRootMaker = bytes32(uint256(0x5333));
         p.claimsRootTaker = bytes32(uint256(0x5444));
 
-        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedRelayer → InvalidProof
+        // Set RELAYER_2 as makerRelayer so they can submit, but mock verifier expects `relayer`
+        p.makerRelayer = RELAYER_2;
+        // RELAYER_2 submits → pubSignals[16] = RELAYER_2 ≠ expectedMakerRelayer(=relayer) → InvalidProof
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
         vm.prank(RELAYER_2);
         settlement.settlePrivate(p);
     }
 
-    function test_settlePrivate_no_enforce_any_relayer_passes() public {
-        // enforceRelayer = false (default) → any registered relayer can settle
+    function test_settlePrivate_cross_relayer_fee_split() public {
+        // Cross-relayer: maker=relayer, taker=RELAYER_2
         _registerRelayer2();
 
         PrivateSettlement.SettleParams memory p = _params();
@@ -633,9 +637,24 @@ contract FeeVaultTest is Test {
         p.takerNonceNullifier = bytes32(uint256(0x3dd));
         p.claimsRootMaker = bytes32(uint256(0x6333));
         p.claimsRootTaker = bytes32(uint256(0x6444));
+        p.takerRelayer = RELAYER_2;
 
+        // Set fees: feeTokenMaker (WETH) + feeTokenTaker (USDC)
+        p.feeTokenMaker = uint96(0.1 ether);  // fee in WETH (from taker's sell) → takerRelayer
+        p.feeTokenTaker = uint96(50e18);       // fee in USDC (from maker's sell) → makerRelayer
+
+        // RELAYER_2 (takerRelayer) submits
         vm.prank(RELAYER_2);
-        settlement.settlePrivate(p); // should pass without enforce
+        settlement.settlePrivate(p);
+
+        // Fee split assertions:
+        // feeTokenMaker (WETH) → takerRelayer (RELAYER_2)
+        assertEq(vault.balances(RELAYER_2, address(weth)), 0.1 ether, "takerRelayer should receive feeTokenMaker (WETH)");
+        assertEq(vault.balances(relayer, address(weth)), 0, "makerRelayer should NOT receive feeTokenMaker");
+
+        // feeTokenTaker (USDC) → makerRelayer (relayer)
+        assertEq(vault.balances(relayer, address(usdc)), 50e18, "makerRelayer should receive feeTokenTaker (USDC)");
+        assertEq(vault.balances(RELAYER_2, address(usdc)), 0, "takerRelayer should NOT receive feeTokenTaker");
     }
 
     // ─── FeeVault ───────────────────────────────────────────────
@@ -652,14 +671,16 @@ contract FeeVaultTest is Test {
         assertEq(weth.balanceOf(address(vault)), 0.1 ether, "vault should hold WETH");
     }
 
-    function test_fees_both_tokens() public {
+    function test_fees_both_tokens_same_relayer() public {
+        // Local match: same relayer for both sides → all fees go to that relayer
         PrivateSettlement.SettleParams memory p = _params();
-        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH
-        p.feeTokenTaker = uint96(100e18);       // fee in USDC
+        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH → takerRelayer (= relayer)
+        p.feeTokenTaker = uint96(100e18);       // fee in USDC → makerRelayer (= relayer)
 
         vm.prank(relayer);
         settlement.settlePrivate(p);
 
+        // Both fees go to same relayer (makerRelayer == takerRelayer)
         assertEq(vault.balances(relayer, address(weth)), 0.05 ether);
         assertEq(vault.balances(relayer, address(usdc)), 100e18);
     }
@@ -786,7 +807,9 @@ contract FeeVaultTest is Test {
             tokenMaker: address(weth),
             tokenTaker: address(usdc),
             feeTokenMaker: 0,
-            feeTokenTaker: 0
+            feeTokenTaker: 0,
+            makerRelayer: relayer,
+            takerRelayer: relayer
         });
     }
 
