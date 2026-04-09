@@ -14,7 +14,7 @@ import type { Request, Response, NextFunction } from "express";
  *   x-relayer-address: 0x...
  *   x-relayer-signature: 0x...
  *   x-relayer-timestamp: unix timestamp (seconds)
- *   x-relayer-url: https://relayer.example.com (optional, for registration)
+ *   x-relayer-url: https://relayer.example.com (required for order/register routes)
  */
 const SIGNATURE_MAX_AGE_SEC = 300; // 5 minutes
 

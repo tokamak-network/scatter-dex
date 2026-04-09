@@ -17,19 +17,21 @@ export function createP2PRoutes(
 ): Router {
   const router = Router();
 
-  // Simple auth: verify relayer signature on P2P requests
-  function verifyRelayer(
-    address: string | undefined,
-    signature: string | undefined,
-    timestamp: string | undefined,
-  ): boolean {
+  // Auth: verify relayer signature with method+path binding (matches client format)
+  function verifyRelayerAuth(req: import("express").Request): boolean {
+    const address = req.headers["x-relayer-address"] as string | undefined;
+    const signature = req.headers["x-relayer-signature"] as string | undefined;
+    const timestamp = req.headers["x-relayer-timestamp"] as string | undefined;
     if (!address || !signature || !timestamp) return false;
+
     const ts = Number(timestamp);
     const now = Math.floor(Date.now() / 1000);
     if (Number.isNaN(ts) || Math.abs(now - ts) > 300) return false;
 
     try {
-      const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}`;
+      const method = req.method.toUpperCase();
+      const path = req.originalUrl.split("?")[0];
+      const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}`;
       const recovered = verifyMessage(message, signature);
       return recovered.toLowerCase() === address.toLowerCase();
     } catch {
@@ -41,12 +43,7 @@ export function createP2PRoutes(
    * POST /api/p2p/orders — Receive order summary from peer relayer
    */
   router.post("/orders", (req, res) => {
-    const ok = verifyRelayer(
-      req.headers["x-relayer-address"] as string,
-      req.headers["x-relayer-signature"] as string,
-      req.headers["x-relayer-timestamp"] as string,
-    );
-    if (!ok) {
+    if (!verifyRelayerAuth(req)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
@@ -59,7 +56,7 @@ export function createP2PRoutes(
       }
       // Validate all required OrderSummary fields
       const required = ["id", "relayer", "relayerUrl", "nonce", "sellToken", "buyToken",
-        "sellAmount", "buyAmount", "expiry"] as const;
+        "sellAmount", "buyAmount", "minFillAmount", "maxFee", "expiry", "createdAt"] as const;
       for (const field of required) {
         if (raw[field] === undefined || raw[field] === null || raw[field] === "") {
           res.status(400).json({ error: `missing field: ${field}` });
@@ -84,16 +81,11 @@ export function createP2PRoutes(
    * Only the owning relayer can cancel (order ID format: "{relayerAddress}-{nonce}")
    */
   router.delete("/orders/:id", (req, res) => {
-    const peerAddress = req.headers["x-relayer-address"] as string;
-    const ok = verifyRelayer(
-      peerAddress,
-      req.headers["x-relayer-signature"] as string,
-      req.headers["x-relayer-timestamp"] as string,
-    );
-    if (!ok) {
+    if (!verifyRelayerAuth(req)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    const peerAddress = (req.headers["x-relayer-address"] as string);
 
     // Verify the peer owns this order (ID starts with their address)
     const orderId = req.params.id;

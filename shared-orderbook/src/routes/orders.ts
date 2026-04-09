@@ -23,6 +23,11 @@ export function createOrderRoutes(
     try {
       const { relayerAddress, relayerUrl } = req as AuthenticatedRequest;
 
+      if (!relayerUrl) {
+        res.status(400).json({ error: "x-relayer-url header required for order posting" });
+        return;
+      }
+
       // Auto-register/heartbeat on order post
       orderbook.registerRelayer(relayerAddress, relayerUrl);
 

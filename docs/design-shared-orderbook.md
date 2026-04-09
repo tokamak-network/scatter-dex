@@ -116,16 +116,22 @@ Options:
 
 ### Phase 1: Shared Orderbook Server (MVP)
 
-A simple REST API server that relayers connect to:
+A REST/WebSocket server acting as a bulletin board. **The server does not perform matching** — each relayer matches locally against its own private orders (see Steam bot model above).
 
 ```
-POST /api/orders          — post order summary
-GET  /api/orders          — list open orders (with filters)
-GET  /api/orders/:pair    — orders for a specific token pair
-POST /api/match           — notify match (server-initiated webhook)
-DELETE /api/orders/:id    — cancel/expire order
-WS   /ws/orders           — real-time order stream (optional)
+POST   /api/orders              — post order summary (listing)
+GET    /api/orders              — list open orders (with filters)
+GET    /api/orders/:pair        — orders for a specific token pair
+DELETE /api/orders/:id          — cancel/expire order
+POST   /api/relayers/register   — register relayer (with heartbeat)
+POST   /api/relayers/heartbeat  — keep-alive ping
+GET    /api/relayers            — list active relayers
+GET    /api/peers               — peer list for P2P fallback
+GET    /api/stats               — orderbook statistics
+WS     /ws/orders               — real-time order/cancel broadcast
 ```
+
+> **Note:** The original design included `POST /api/match` for server-initiated matching. This was removed in favor of relayer-side matching — the server is a pure listing service, not a matchmaker.
 
 **Order Summary Schema:**
 ```json
@@ -144,17 +150,22 @@ WS   /ws/orders           — real-time order stream (optional)
 }
 ```
 
-**Match Notification (webhook to relayers):**
+**WebSocket Broadcast Events:**
 ```json
-{
-  "matchId": "uuid",
-  "maker": { "id": "...", "relayer": "0x...", "relayerUrl": "..." },
-  "taker": { "id": "...", "relayer": "0x...", "relayerUrl": "..." },
-  "settlingRelayer": "0x...",
-  "pair": "WETH-USDC",
-  "price": "2000"
-}
+// New order posted
+{ "type": "order:new", "order": { /* OrderSummary */ } }
+
+// Order cancelled
+{ "type": "order:cancelled", "orderId": "0x...-nonce", "relayer": "0x..." }
+
+// Relayer joined
+{ "type": "relayer:registered", "relayer": "0x...", "url": "https://..." }
+
+// Relayer went offline (stale heartbeat)
+{ "type": "relayer:offline", "relayer": "0x..." }
 ```
+
+> **Match notification is NOT sent by the server.** Relayers discover matches locally and coordinate directly via P2P (Trade Offer pattern).
 
 ### Phase 2: Relayer Integration
 

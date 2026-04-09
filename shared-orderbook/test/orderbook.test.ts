@@ -65,7 +65,7 @@ describe("SharedOrderbook", () => {
     it("rejects duplicate order id", () => {
       const order = makeOrder();
       ob.addOrder(order);
-      expect(ob.getOrder(order.id)).toBeDefined();
+      expect(() => ob.addOrder(order)).toThrow("duplicate order id");
     });
 
     it("removes an order", () => {

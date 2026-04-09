@@ -23,7 +23,7 @@ export interface RelayerInfo {
  * Modeled after Steam marketplace aggregators:
  * - Relayers = trading bots (each operates independently with private state)
  * - OrderSummary = public listing (only trade-relevant public fields)
- * - Matching = marketplace matching (central server finds buy/sell pairs)
+ * - Matching = relayer-side (each relayer finds matches against own private orders)
  * - Settlement = Trade Offer (handled by the settling relayer off-server)
  */
 export class SharedOrderbook {
@@ -89,6 +89,11 @@ export class SharedOrderbook {
   // ─── Order management (Steam listing pattern) ───
 
   addOrder(order: OrderSummary): StoredOrder {
+    // Duplicate guard — prevent index drift on re-insertion
+    if (this.orders.has(order.id)) {
+      throw new Error("duplicate order id");
+    }
+
     if (this.orders.size >= config.maxOrders) {
       throw new Error("orderbook full");
     }

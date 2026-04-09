@@ -16,8 +16,8 @@ export class OrderbookDB {
   private stmtCountByRelayer!: Database.Statement;
   private stmtPurgeExpired!: Database.Statement;
   private stmtInsertMatch!: Database.Statement;
-  private stmtGetMatch!: Database.Statement;
-  private stmtListMatches!: Database.Statement;
+  private stmtGetMatchJoin!: Database.Statement;
+  private stmtListMatchesJoin!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -107,10 +107,40 @@ export class OrderbookDB {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this.stmtGetMatch = this.db.prepare(`SELECT * FROM matches WHERE match_id = ?`);
+    this.stmtGetMatchJoin = this.db.prepare(`
+      SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
+             mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
+             mk.nonce as mk_nonce, mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
+             mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
+             mk.min_fill_amount as mk_min_fill_amount, mk.max_fee as mk_max_fee,
+             mk.expiry as mk_expiry, mk.created_at as mk_created_at,
+             tk.id as tk_id, tk.relayer as tk_relayer, tk.relayer_url as tk_relayer_url,
+             tk.nonce as tk_nonce, tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
+             tk.sell_amount as tk_sell_amount, tk.buy_amount as tk_buy_amount,
+             tk.min_fill_amount as tk_min_fill_amount, tk.max_fee as tk_max_fee,
+             tk.expiry as tk_expiry, tk.created_at as tk_created_at
+      FROM matches m
+      JOIN orders mk ON mk.id = m.maker_id
+      JOIN orders tk ON tk.id = m.taker_id
+      WHERE m.match_id = ?
+    `);
 
-    this.stmtListMatches = this.db.prepare(`
-      SELECT * FROM matches ORDER BY created_at DESC LIMIT ? OFFSET ?
+    this.stmtListMatchesJoin = this.db.prepare(`
+      SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
+             mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
+             mk.nonce as mk_nonce, mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
+             mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
+             mk.min_fill_amount as mk_min_fill_amount, mk.max_fee as mk_max_fee,
+             mk.expiry as mk_expiry, mk.created_at as mk_created_at,
+             tk.id as tk_id, tk.relayer as tk_relayer, tk.relayer_url as tk_relayer_url,
+             tk.nonce as tk_nonce, tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
+             tk.sell_amount as tk_sell_amount, tk.buy_amount as tk_buy_amount,
+             tk.min_fill_amount as tk_min_fill_amount, tk.max_fee as tk_max_fee,
+             tk.expiry as tk_expiry, tk.created_at as tk_created_at
+      FROM matches m
+      JOIN orders mk ON mk.id = m.maker_id
+      JOIN orders tk ON tk.id = m.taker_id
+      ORDER BY m.created_at DESC LIMIT ? OFFSET ?
     `);
   }
 
@@ -173,41 +203,52 @@ export class OrderbookDB {
   }
 
   getMatch(matchId: string): MatchResult | null {
-    const row = this.stmtGetMatch.get(matchId) as Record<string, unknown> | undefined;
+    const row = this.stmtGetMatchJoin.get(matchId) as Record<string, unknown> | undefined;
     if (!row) return null;
-    // Need to join with orders to get full data; for now return minimal
-    const maker = this.getOrder(row.maker_id as string);
-    const taker = this.getOrder(row.taker_id as string);
-    if (!maker || !taker) return null;
-    return {
-      matchId: row.match_id as string,
-      maker: maker.order,
-      taker: taker.order,
-      settlingRelayer: row.settling_relayer as string,
-      pair: row.pair as string,
-      price: row.price as string,
-      createdAt: row.created_at as number,
-    };
+    return this.rowToMatchResult(row);
   }
 
   listMatches(limit = 50, offset = 0): MatchResult[] {
-    const rows = this.stmtListMatches.all(limit, offset) as Record<string, unknown>[];
-    return rows
-      .map(row => {
-        const maker = this.getOrder(row.maker_id as string);
-        const taker = this.getOrder(row.taker_id as string);
-        if (!maker || !taker) return null;
-        return {
-          matchId: row.match_id as string,
-          maker: maker.order,
-          taker: taker.order,
-          settlingRelayer: row.settling_relayer as string,
-          pair: row.pair as string,
-          price: row.price as string,
-          createdAt: row.created_at as number,
-        };
-      })
-      .filter((m): m is MatchResult => m !== null);
+    const rows = this.stmtListMatchesJoin.all(limit, offset) as Record<string, unknown>[];
+    return rows.map(row => this.rowToMatchResult(row));
+  }
+
+  private rowToMatchResult(row: Record<string, unknown>): MatchResult {
+    return {
+      matchId: row.match_id as string,
+      maker: {
+        id: row.mk_id as string,
+        relayer: row.mk_relayer as string,
+        relayerUrl: row.mk_relayer_url as string,
+        nonce: row.mk_nonce as string,
+        sellToken: row.mk_sell_token as string,
+        buyToken: row.mk_buy_token as string,
+        sellAmount: row.mk_sell_amount as string,
+        buyAmount: row.mk_buy_amount as string,
+        minFillAmount: row.mk_min_fill_amount as string,
+        maxFee: row.mk_max_fee as number,
+        expiry: row.mk_expiry as number,
+        createdAt: row.mk_created_at as number,
+      },
+      taker: {
+        id: row.tk_id as string,
+        relayer: row.tk_relayer as string,
+        relayerUrl: row.tk_relayer_url as string,
+        nonce: row.tk_nonce as string,
+        sellToken: row.tk_sell_token as string,
+        buyToken: row.tk_buy_token as string,
+        sellAmount: row.tk_sell_amount as string,
+        buyAmount: row.tk_buy_amount as string,
+        minFillAmount: row.tk_min_fill_amount as string,
+        maxFee: row.tk_max_fee as number,
+        expiry: row.tk_expiry as number,
+        createdAt: row.tk_created_at as number,
+      },
+      settlingRelayer: row.settling_relayer as string,
+      pair: row.pair as string,
+      price: row.price as string,
+      createdAt: row.match_created_at as number,
+    };
   }
 
   /** Record match atomically: update both orders + insert match */

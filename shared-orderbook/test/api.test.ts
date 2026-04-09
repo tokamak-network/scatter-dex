@@ -186,8 +186,7 @@ describe("API integration", () => {
     expect(body.status).toBe("cancelled");
   });
 
-  it("DELETE /api/orders/:id — relayer B cannot cancel relayer A's order", async () => {
-    // Order already cancelled, but test the 403 path with relayer B's order
+  it("DELETE /api/orders/:id — relayer A cannot cancel relayer B's order", async () => {
     const orderId = `${relayerB.address.toLowerCase()}-1`;
     const headers = await authHeaders(relayerA, "DELETE", `/api/orders/${orderId}`); // relayer A trying to cancel B's
     const { status, body } = await fetchJSON(`/api/orders/${orderId}`, {

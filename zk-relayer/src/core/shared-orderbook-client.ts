@@ -1,5 +1,5 @@
 import { Wallet } from "ethers";
-import { config } from "../config.js";
+import WebSocket from "ws";
 
 /**
  * Shared Orderbook Client — connects relayer to the shared orderbook server.
@@ -48,9 +48,12 @@ export class SharedOrderbookClient {
   private wallet: Wallet;
   private relayerUrl: string;
   private relayerName?: string;
+  private heartbeatIntervalMs: number;
+  private peerSyncIntervalMs: number;
   private ws: WebSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private peerSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
   private serverOnline = false;
   private peers = new Map<string, PeerInfo>();
   private remoteOrders = new Map<string, OrderSummary>();
@@ -62,6 +65,8 @@ export class SharedOrderbookClient {
     this.wallet = cfg.relayerWallet;
     this.relayerUrl = cfg.relayerUrl;
     this.relayerName = cfg.relayerName;
+    this.heartbeatIntervalMs = cfg.heartbeatIntervalMs ?? 60_000;
+    this.peerSyncIntervalMs = cfg.peerSyncIntervalMs ?? 120_000;
   }
 
   /** Register callback for new remote orders (used by local matcher) */
@@ -96,6 +101,8 @@ export class SharedOrderbookClient {
   // ─── Server mode ───
 
   async start(): Promise<void> {
+    this.stopped = false;
+
     // 1. Register with server
     await this.register();
 
@@ -103,16 +110,19 @@ export class SharedOrderbookClient {
     this.connectWS();
 
     // 3. Start heartbeat
-    this.heartbeatTimer = setInterval(() => this.heartbeat(), 60_000);
+    this.heartbeatTimer = setInterval(() => this.heartbeat(), this.heartbeatIntervalMs);
 
     // 4. Start peer sync (for P2P fallback cache)
-    this.peerSyncTimer = setInterval(() => this.syncPeers(), 120_000);
+    this.peerSyncTimer = setInterval(() => this.syncPeers(), this.peerSyncIntervalMs);
     await this.syncPeers();
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.peerSyncTimer) clearInterval(this.peerSyncTimer);
+    this.heartbeatTimer = null;
+    this.peerSyncTimer = null;
     this.ws?.close();
     this.ws = null;
   }
@@ -166,8 +176,9 @@ export class SharedOrderbookClient {
 
       this.ws.onclose = () => {
         this.serverOnline = false;
+        if (this.stopped) return; // Don't reconnect after explicit stop()
         console.warn("[shared-orderbook] WebSocket disconnected, reconnecting in 5s...");
-        setTimeout(() => this.connectWS(), 5000);
+        setTimeout(() => { if (!this.stopped) this.connectWS(); }, 5000);
       };
 
       this.ws.onerror = () => {
