@@ -100,8 +100,8 @@ export class PrivateSubmitter {
   /** Submit a private settlement with ZK proof. */
   async submitPrivateSettle(
     match: PrivateMatch,
-    makerRelayerAddr: string = this.wallet.address,
-    takerRelayerAddr: string = this.wallet.address,
+    makerRelayerAddr: string,
+    takerRelayerAddr: string,
   ): Promise<string> {
     const maker = match.maker.order;
     const taker = match.taker.order;

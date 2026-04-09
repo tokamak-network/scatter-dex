@@ -160,8 +160,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Execute a private settlement with ZK proof.
-    /// Anyone can submit — relayer addresses are bound in the ZK proof.
+    /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
+    /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
     function settlePrivate(SettleParams calldata p) external nonReentrant {
+        if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotActiveRelayer();
         if (paused) revert ContractPaused();
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
@@ -382,14 +384,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Internal Fee Routing ────────────────────────────────────
 
-    /// @dev Route fee from CommitmentPool to vault or relayer.
+    /// @dev Route fee from CommitmentPool to msg.sender via vault (legacy: scatterDirect).
     function _routeFeeFromPool(address token, uint256 amount) internal {
-        if (address(feeVault) != address(0)) {
-            pool.transferFee(address(feeVault), token, amount);
-            feeVault.deposit(msg.sender, token, amount);
-        } else {
-            pool.transferFee(msg.sender, token, amount);
-        }
+        _routeFeeFromPoolTo(token, amount, msg.sender);
     }
 
     /// @dev Route fee from CommitmentPool to a specific relayer via vault.

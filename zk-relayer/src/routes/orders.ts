@@ -172,7 +172,8 @@ export function createPrivateOrderRoutes(
           orderbook.persistStatus(match.taker.order.pubKeyAx, match.taker.order.nonce, "matched");
 
           try {
-            const txHash = await submitter.submitPrivateSettle(match);
+            const localAddr = submitter.getAddress();
+            const txHash = await submitter.submitPrivateSettle(match, localAddr, localAddr);
             match.maker.status = "settled";
             match.maker.settleTxHash = txHash;
             match.taker.status = "settled";

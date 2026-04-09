@@ -153,4 +153,39 @@ describe("PrivateMatcher — cross-relayer matching", () => {
     const stored: StoredPrivateOrder = { order: newOrder, status: "pending", submittedAt: Date.now() };
     expect(localOnlyMatcher.findMatchIncludingRemote(stored)).toBeNull();
   });
+
+  it("cross-relayer match includes remote relayer address for fee split", () => {
+    remoteStore.add(makeRemoteOrder({ relayer: "0xremoterelayer" }));
+
+    const newOrder = makeLocalOrder();
+    const stored: StoredPrivateOrder = { order: newOrder, status: "pending", submittedAt: Date.now() };
+    const result = matcher.findMatchIncludingRemote(stored);
+
+    expect(result).not.toBeNull();
+    if (isCrossRelayerMatch(result!)) {
+      // Remote order carries the taker's relayer address for fee split
+      expect(result.remoteOrder.relayer).toBe("0xremoterelayer");
+      expect(result.remoteOrder.relayerUrl).toBe("http://remote:3002");
+      // Local order is taker, remote is maker — fee split will use both addresses
+      expect(result.localSide).toBe("taker");
+    }
+  });
+
+  it("local match with same relayer — both fees to same address", () => {
+    // Add a local counterparty (same relayer handles both)
+    const counterparty = makeLocalOrder({
+      sellToken: TOKEN_B, buyToken: TOKEN_A,
+      sellAmount: 2000n, buyAmount: 1000n,
+      nonce: 2n, pubKeyAx: 333n, pubKeyAy: 444n,
+    });
+    orderbook.add(counterparty);
+
+    const newOrder = makeLocalOrder();
+    const stored = orderbook.add(newOrder);
+    const result = matcher.findMatchIncludingRemote(stored);
+
+    expect(result).not.toBeNull();
+    // Local match — not a CrossRelayerMatch
+    expect(isCrossRelayerMatch(result!)).toBe(false);
+  });
 });
