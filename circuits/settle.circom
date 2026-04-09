@@ -600,11 +600,17 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //      Each relayer is also included in the order hash (signed by user),
     //      so they cannot be changed without invalidating the EdDSA signature.
     //
-    //  [M6] As in withdraw.circom and claim.circom, `makerRelayer` and
-    //  `takerRelayer` are public inputs and are already bound to the proof
-    //  at the verification-key level. The squaring statements below force
-    //  the circom optimizer to keep the signals in the witness — without a
-    //  constraint that uses them, the compiler may consider them dead.
+    //  [M6] `makerRelayer` and `takerRelayer` are public inputs and are
+    //  therefore already bound to the proof at the verification-key level.
+    //  The squaring statements below exist to prevent the circom optimizer
+    //  from dropping these signals from the witness — without at least
+    //  one constraint that *uses* them, the compiler may consider them
+    //  dead and elide them, leading to verification keys that no longer
+    //  cover the public inputs.
+    //
+    //  The choice of `x * x` is the simplest constraint that touches
+    //  every bit of the input without leaking any structural information.
+    //  See: https://docs.circom.io/circom-language/signals/#unused-signals
     // ════════════════════════════════════════
     signal makerRelayerSq;
     makerRelayerSq <== makerRelayer * makerRelayer;
