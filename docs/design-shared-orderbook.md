@@ -183,6 +183,18 @@ Each relayer adds:
 - Testnet deployment guide with contract deployment and configuration
 - Security documentation and production checklist
 
+### Phase 3.5: Frontend UX (Implemented — PR #117)
+
+Frontend integration following the Steam bot marketplace model:
+
+1. **Shared Orderbook Status Panel** — server health, stats (relayers/orders/pairs)
+2. **Relayer Card Extension** — shared orderbook registration, heartbeat, shared order count
+3. **Global Orderbook Tab** — aggregated view of all orders across relayers (Local/Global toggle)
+4. **Cross-Relayer Badge** — purple "Cross" badge on orders matched across relayers
+5. **Order Submission Notice** — informs users their order is published to shared orderbook
+
+> **Design reference**: Steam trading bot marketplaces (CSGOFloat, Buff163) where bots display inventory, stats, and trade status. zkScatter relayers are the "bots" and the shared orderbook is the "marketplace".
+
 ### Phase 4: Decentralization (future)
 
 Replace central server with:
