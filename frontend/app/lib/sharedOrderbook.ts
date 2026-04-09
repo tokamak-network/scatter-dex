@@ -44,7 +44,10 @@ async function fetchJSON<T>(path: string, timeoutMs = 5000): Promise<T | null> {
     });
     if (!res.ok) return null;
     return await res.json() as T;
-  } catch {
+  } catch (err) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[shared-orderbook] ${path}:`, err instanceof Error ? err.message : "failed");
+    }
     return null;
   }
 }

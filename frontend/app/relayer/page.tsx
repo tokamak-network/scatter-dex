@@ -175,6 +175,22 @@ export default function RelayersPage() {
   const [globalOrders, setGlobalOrders] = useState<SharedOrder[]>([]);
   const [globalLoading, setGlobalLoading] = useState(false);
 
+  const loadGlobalOrders = useCallback(async () => {
+    if (globalLoading) return;
+    setGlobalLoading(true);
+    try {
+      const allOrders: SharedOrder[] = [];
+      await Promise.allSettled(
+        pairOptions.map(async (p) => {
+          const orders = await getOrdersByPair(p.value);
+          allOrders.push(...orders);
+        })
+      );
+      setGlobalOrders(allOrders);
+    } catch { /* silent */ }
+    setGlobalLoading(false);
+  }, [globalLoading, pairOptions]);
+
   // FeeVault state
   const [vaultBalances, setVaultBalances] = useState<{ token: string; symbol: string; balance: bigint }[]>([]);
   const [vaultPlatformFee, setVaultPlatformFee] = useState<number>(0);
@@ -514,20 +530,9 @@ export default function RelayersPage() {
                   Local
                 </button>
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     setObViewMode("global");
-                    if (globalOrders.length === 0) {
-                      setGlobalLoading(true);
-                      const allOrders: SharedOrder[] = [];
-                      await Promise.allSettled(
-                        pairOptions.map(async (p) => {
-                          const orders = await getOrdersByPair(p.value);
-                          allOrders.push(...orders);
-                        })
-                      );
-                      setGlobalOrders(allOrders);
-                      setGlobalLoading(false);
-                    }
+                    loadGlobalOrders();
                   }}
                   className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
                     obViewMode === "global"

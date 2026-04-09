@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Globe, Circle, RefreshCw } from "lucide-react";
 import {
   isConfigured,
@@ -20,6 +20,10 @@ export default function SharedOrderbookStatus({ onRelayersLoaded }: SharedOrderb
   const [stats, setStats] = useState<SharedOrderbookStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Store callback in ref to avoid dependency loop
+  const onRelayersLoadedRef = React.useRef(onRelayersLoaded);
+  onRelayersLoadedRef.current = onRelayersLoaded;
+
   const refresh = useCallback(async () => {
     if (!isConfigured()) {
       setOnline(null);
@@ -34,12 +38,12 @@ export default function SharedOrderbookStatus({ onRelayersLoaded }: SharedOrderb
       ]);
       setOnline(serverOnline);
       setStats(serverStats);
-      if (onRelayersLoaded) onRelayersLoaded(relayers);
+      onRelayersLoadedRef.current?.(relayers);
     } catch {
       setOnline(false);
     }
     setRefreshing(false);
-  }, [onRelayersLoaded]);
+  }, []); // Stable — no external deps
 
   useEffect(() => {
     refresh();
@@ -62,6 +66,7 @@ export default function SharedOrderbookStatus({ onRelayersLoaded }: SharedOrderb
           <button
             onClick={refresh}
             disabled={refreshing}
+            aria-label="Refresh shared orderbook status"
             className="text-on-surface-variant/40 hover:text-on-surface-variant transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
