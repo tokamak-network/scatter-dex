@@ -33,6 +33,7 @@ export interface StoredPrivateOrder {
   status: PrivateOrderStatus;
   submittedAt: number;
   settleTxHash?: string;
+  crossRelayer?: boolean;
 }
 
 export interface PrivateMatch {
@@ -154,6 +155,7 @@ export interface PrivateOrderResponse {
   status: PrivateOrderStatus;
   submittedAt: number;
   settleTxHash?: string;
+  crossRelayer?: boolean;
 }
 
 export function serializePrivateOrder(stored: StoredPrivateOrder): PrivateOrderResponse {
@@ -171,5 +173,6 @@ export function serializePrivateOrder(stored: StoredPrivateOrder): PrivateOrderR
     status: stored.status,
     submittedAt: stored.submittedAt,
     settleTxHash: stored.settleTxHash,
+    crossRelayer: stored.crossRelayer,
   };
 }

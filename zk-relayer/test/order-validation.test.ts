@@ -19,6 +19,8 @@ function makeRawOrder(overrides: Record<string, unknown> = {}) {
     balance: "100000000000000000000",
     salt: "200",
     leafIndex: 0,
+    newSalt: "300",
+    expectedChangeCommitment: "400",
     claims: [{
       secret: "9000",
       recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
