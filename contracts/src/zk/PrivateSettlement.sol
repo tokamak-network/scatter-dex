@@ -237,9 +237,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
         }
 
-        // Transfer fees: each relayer receives the fee paid by their user
-        // feeTokenMaker (from taker's sell amount) → takerRelayer (taker's relayer earns taker's fee)
-        // feeTokenTaker (from maker's sell amount) → makerRelayer (maker's relayer earns maker's fee)
+        // Fee split: each relayer earns the fee paid by THEIR user.
+        //
+        // Naming convention:
+        //   feeTokenMaker = fee denominated in tokenMaker (= taker's sell token)
+        //                 = fee deducted from taker's sell → paid by taker → goes to takerRelayer
+        //   feeTokenTaker = fee denominated in tokenTaker (= maker's sell token)
+        //                 = fee deducted from maker's sell → paid by maker → goes to makerRelayer
+        //
+        // This looks "crossed" but is correct: the token name indicates denomination, not who pays.
         if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.takerRelayer);
         if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.makerRelayer);
 
