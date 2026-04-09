@@ -73,53 +73,90 @@ template Deposit() {
     // ════════════════════════════════════════
     //  1. PUBKEY VALIDITY
     //
-    //  Reject off-curve points and the two "x == 0" on-curve points.
-    //  Only runs in deposit, so the ~50 R1CS constraint cost is paid
-    //  once per escrow instead of per-spend.
+    //  Two checks, both local to deposit so the cost is paid once
+    //  per escrow instead of per-spend:
     //
-    //  ── Why `Ax != 0` is the right check ──
+    //    (a) BabyCheck — point is on the BabyJub curve
+    //    (b) Subgroup exclusion — point is NOT in the cofactor-8
+    //        small-order subgroup, enforced via `8·P ≠ identity`.
     //
-    //  BabyJub is the twisted Edwards curve `a·x² + y² = 1 + d·x²·y²`
-    //  with `a = 168700`, `d = 168696`. Plugging `x = 0`:
-    //       y² = 1   →   y ∈ { 1, -1 mod p }
-    //  So there are **exactly two** on-curve points with `x == 0`:
+    //  ── Why the subgroup check ──
     //
-    //    (0,  1)  — the identity element. EdDSA signatures over the
-    //               identity are trivially forgeable (R8·1 + A·1 = R8
-    //               for any message), so an escrow bound to it is
-    //               unprotected.
-    //    (0, -1)  — a point of order 2 (it lives in the cofactor-8
-    //               small-order subgroup, not in the prime-order
-    //               subgroup the standard BabyJub generator produces).
-    //               EdDSA over small-order keys is likewise broken.
+    //  BabyJub is the twisted Edwards curve
+    //       `a·x² + y² = 1 + d·x²·y²`
+    //  with `a = 168700`, `d = 168696`. Its group order is N = 8·L
+    //  where L is a large prime, so every on-curve point has an
+    //  order that divides N and sits in one of two subgroups:
     //
-    //  A single `pubKeyAx != 0` check rejects *both* of these in one
-    //  constraint. Honest users calling `eddsa.prv2pub(privKey)` with
-    //  any non-zero scalar land in the prime-order subgroup and get a
-    //  pubkey with `x != 0`, so this check never false-positives on
-    //  well-formed keys.
+    //    • The prime-order subgroup (order L) — every honest
+    //      pubkey produced by `eddsa.prv2pub(privKey)` lives here.
+    //    • The cofactor-8 small-order subgroup (order 8) — eight
+    //      points whose orders divide 8. EdDSA over any of them is
+    //      broken: the identity (order 1) gives trivially forge-
+    //      able signatures, and the other seven are "small-order
+    //      keys" that let an attacker grind a valid signature for
+    //      a small set of messages.
     //
-    //  ── What this check does NOT cover ──
+    //  If P is in the small-order subgroup then `8·P = identity`
+    //  by definition. If P is in the prime-order subgroup then
+    //  `8·P` is another prime-order point and in particular
+    //  `8·P ≠ identity`. So `8·P ≠ identity` is a necessary-and-
+    //  sufficient test for "P ∉ small-order subgroup".
     //
-    //  BabyJub has cofactor 8, so the full small-order subgroup has
-    //  eight members. Six of them have `x != 0` and slip past this
-    //  check. They are still unreachable in practice (`prv2pub` never
-    //  produces one), but an *adversarially constructed* deposit
-    //  could land on one — and the resulting escrow would be spend-
-    //  able by anyone who can forge the short-order EdDSA signature.
-    //  That is a self-inflicted denial of service, not a theft of
-    //  other users' funds (each commitment is isolated by its own
-    //  nullifier), so we accept it as out of scope for the PoC. A
-    //  full cofactor-clearing check (`8·P != 0`) can be bolted on as
-    //  a follow-up when the prover has native BabyJub scalar-mul.
+    //  Identity on BabyJub is `(0, 1)`, and the only on-curve
+    //  points with `x == 0` are `(0, 1)` and `(0, -1 mod p)` —
+    //  both of which lie in the small-order subgroup. So
+    //  `(8·P).x ≠ 0` is equivalent to `8·P ≠ identity` for any
+    //  on-curve P, which is all we need.
+    //
+    //  Implementation: three BabyDbl calls compute 8·P in affine
+    //  twisted-Edwards coordinates, then IsZero catches the
+    //  identity case.
+    //
+    //  ── History ──
+    //
+    //  [PR #127 follow-up, issue #128] First draft of this circuit
+    //  only checked `pubKeyAx != 0`, which catches the two
+    //  small-order points with `x == 0` (identity and `(0, -1)`)
+    //  but misses the six small-order points with `x != 0`. In
+    //  practice those six are unreachable via `eddsa.prv2pub`,
+    //  and an adversary who deliberately lands on one would only
+    //  brick their own escrow (nullifier isolation prevents theft
+    //  of other users' funds), so the PoC originally accepted the
+    //  gap.
+    //
+    //  [PR #129 Gemini review] Upgraded to the full subgroup
+    //  check here. The extra cost is ~50-80 R1CS constraints, only
+    //  paid at deposit, and it closes the latent concern
+    //  permanently. Downstream circuits
+    //  (withdraw / settle / authorize) still inherit the invariant
+    //  that every commitment in the merkle tree was produced by a
+    //  prime-order pubkey without paying the subgroup-check cost
+    //  themselves.
     // ════════════════════════════════════════
+
     component pubKeyOnCurve = BabyCheck();
     pubKeyOnCurve.x <== pubKeyAx;
     pubKeyOnCurve.y <== pubKeyAy;
 
-    component axIsZero = IsZero();
-    axIsZero.in <== pubKeyAx;
-    axIsZero.out === 0;
+    // 8·P via three doublings.
+    component dbl1 = BabyDbl();
+    dbl1.x <== pubKeyAx;
+    dbl1.y <== pubKeyAy;
+
+    component dbl2 = BabyDbl();
+    dbl2.x <== dbl1.xout;
+    dbl2.y <== dbl1.yout;
+
+    component dbl3 = BabyDbl();
+    dbl3.x <== dbl2.xout;
+    dbl3.y <== dbl2.yout;
+
+    // 8·P must not be the identity (0, 1). See the comment above
+    // for why `(8·P).x != 0` catches all eight small-order points.
+    component eightPxIsZero = IsZero();
+    eightPxIsZero.in <== dbl3.xout;
+    eightPxIsZero.out === 0;
 
     // ════════════════════════════════════════
     //  2. COMMITMENT BINDING  (v2 — includes pubkey)
