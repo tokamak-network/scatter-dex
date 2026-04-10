@@ -10,6 +10,7 @@ import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
 import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
 import {ICancelVerifier} from "./ICancelVerifier.sol";
+import {IBatchAuthorizeVerifier} from "./IBatchAuthorizeVerifier.sol";
 import {IWETH} from "../interfaces/IWETH.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
@@ -73,6 +74,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     event FeeVaultUpdated(address oldVault, address newVault);
     event AuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
     event CancelVerifierUpdated(address oldVerifier, address newVerifier);
+    event BatchAuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
 
     /// @notice Emitted by `cancelPrivate`. Relayers listen for this event
     ///         to detect cancelled orders and remove them from their
@@ -139,6 +141,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     IAuthorizeVerifier public authorizeVerifier;
     /// @notice Verifier for `circuits/cancel.circom` (escrow rotation cancel).
     ICancelVerifier public cancelVerifier;
+    /// @notice Optional batched verifier for `settleAuth`. When set, `settleAuth`
+    ///         uses a single 5-pairing batch check instead of 2× separate verifications,
+    ///         saving ~145K gas per settlement. Pass `address(0)` to use separate verifications.
+    IBatchAuthorizeVerifier public batchAuthorizeVerifier;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
     ///         the relayer at proof generation time) and `block.timestamp`.
@@ -212,6 +218,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
         emit CancelVerifierUpdated(address(cancelVerifier), _verifier);
         cancelVerifier = ICancelVerifier(_verifier);
+    }
+
+    /// @notice Set (or replace) the optional BatchAuthorizeVerifier.
+    ///         When set, `settleAuth` uses batched 5-pairing verification (~145K gas savings).
+    ///         Pass `address(0)` to fall back to separate 2× verifications.
+    function setBatchAuthorizeVerifier(address _verifier) external onlyOwner {
+        if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
+        emit BatchAuthorizeVerifierUpdated(address(batchAuthorizeVerifier), _verifier);
+        batchAuthorizeVerifier = IBatchAuthorizeVerifier(_verifier);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -522,16 +537,26 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!pool.isKnownRoot(p.maker.commitmentRoot)) revert UnknownRoot();
         if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
 
-        // 10. Verify both Groth16 proofs. The packed signal arrays are
-        //     held in memory across the two `verifyProof` calls to avoid
-        //     stack-too-deep when both proofs are verified back-to-back.
+        // 10. Verify both Groth16 proofs.
+        //     When batchAuthorizeVerifier is set, uses a single 5-pairing batch
+        //     check (~145K gas savings). Otherwise falls back to 2× separate.
         uint[14] memory makerSignals = _packAuthSignals(p.maker);
-        if (!authorizeVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
-            revert InvalidProof();
-        }
         uint[14] memory takerSignals = _packAuthSignals(p.taker);
-        if (!authorizeVerifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
-            revert InvalidProof();
+
+        if (address(batchAuthorizeVerifier) != address(0)) {
+            if (!batchAuthorizeVerifier.verifyBatchProof(
+                p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals,
+                p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals
+            )) {
+                revert InvalidProof();
+            }
+        } else {
+            if (!authorizeVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
+                revert InvalidProof();
+            }
+            if (!authorizeVerifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
+                revert InvalidProof();
+            }
         }
 
         // 11. Relayer registry gating (if configured)
