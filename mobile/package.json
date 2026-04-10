@@ -1,0 +1,46 @@
+{
+  "name": "mobile",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "build:zk": "node scripts/build-zk-webview.mjs",
+    "prebuild:zk": "mkdir -p .build",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@ethersproject/shims": "^5.8.0",
+    "@react-native-async-storage/async-storage": "^3.0.2",
+    "@react-navigation/bottom-tabs": "^7.15.9",
+    "@react-navigation/native": "^7.2.2",
+    "ethers": "^6.16.0",
+    "expo": "~54.0.33",
+    "expo-asset": "^55.0.14",
+    "expo-constants": "~18.0.13",
+    "expo-file-system": "^55.0.16",
+    "expo-secure-store": "^55.0.13",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-get-random-values": "^2.0.0",
+    "react-native-safe-area-context": "^5.7.0",
+    "react-native-screens": "^4.24.0",
+    "react-native-webview": "^13.16.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "assert": "^2.1.0",
+    "buffer": "^6.0.3",
+    "circomlibjs": "^0.1.7",
+    "crypto-browserify": "^3.12.1",
+    "esbuild": "^0.28.0",
+    "events": "^3.3.0",
+    "process": "^0.11.10",
+    "snarkjs": "^0.7.6",
+    "stream-browserify": "^3.0.0",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}
