@@ -91,133 +91,108 @@ contract BatchAuthorizeVerifier {
         uint[2] calldata _pA1, uint[2][2] calldata _pB1, uint[2] calldata _pC1, uint[14] calldata _pubSignals1,
         uint[2] calldata _pA2, uint[2][2] calldata _pB2, uint[2] calldata _pC2, uint[14] calldata _pubSignals2
     ) public view returns (bool) {
-        // Fiat-Shamir challenge: r = keccak256(all proof data) mod scalar_field
-        uint256 challenge;
-        assembly {
-            let ptr := mload(0x40)
-            // Copy all calldata (both proofs + signals) into memory for hashing
-            calldatacopy(ptr, 0x04, sub(calldatasize(), 0x04))
-            challenge := mod(keccak256(ptr, sub(calldatasize(), 0x04)), r_mod)
-        }
-
-        // Verify both proofs individually for now (safe baseline).
-        //
-        // TODO: Implement the batched pairing equation:
-        //   e(-A₁, B₁) · e(-r·A₂, B₂) · e(L₁ + r·L₂, γ) · e(C₁ + r·C₂, δ) · e((1+r)·α, β) = 1
-        //
-        // This requires inline assembly for:
-        //   1. Compute L₁ and L₂ (14 ecMul + ecAdd each)
-        //   2. Compute r·A₂ (1 ecMul via precompile 0x07)
-        //   3. Compute r·L₂ (1 ecMul) then L₁ + r·L₂ (1 ecAdd via precompile 0x06)
-        //   4. Compute r·C₂ (1 ecMul) then C₁ + r·C₂ (1 ecAdd)
-        //   5. Compute r·α (1 ecMul) then α + r·α (1 ecAdd)
-        //   6. Negate combined -A₁ and -r·A₂ (y → q - y)
-        //   7. Call ecPairing precompile (0x08) with 5 pairs
-        //
-        // For the initial implementation, we fall back to two separate
-        // verifications to prove correctness first, then optimize.
-        //
-        // Gas comparison (14 public inputs per proof):
-        //   Separate:  2 × (34000 + 4×45000 + 14×6000) = ~596K pairing+EC
-        //   Batched:   (34000 + 5×45000 + 28×6000 + 4×6000) = ~451K
-        //   Savings:   ~145K gas (~24%)
-
-        // Temporary: separate verification (to be replaced with batch)
+        // Phase 1: Two separate verifications (correctness baseline).
+        // Phase 2 will replace this with a single 5-pairing batch check:
+        //   r = keccak256(A₁,B₁,C₁,pub₁,A₂,B₂,C₂,pub₂, address(this), block.chainid) mod scalar_field
+        //   e(-A₁, B₁) · e(-r·A₂, B₂) · e(L₁+r·L₂, γ) · e(C₁+r·C₂, δ) · e((1+r)·α, β) = 1
+        // Expected savings: ~145K gas (~24%) from 8 → 5 pairings.
         return _verifySingle(_pA1, _pB1, _pC1, _pubSignals1)
             && _verifySingle(_pA2, _pB2, _pC2, _pubSignals2);
     }
 
     /// @dev Single proof verification (same logic as AuthorizeVerifier).
+    ///      IMPORTANT: Unlike the snarkjs-generated verifier, this function uses
+    ///      `leave` instead of assembly `return(0, 0x20)` so it can be called as
+    ///      an internal function without terminating the entire call frame.
+    /// @dev Single proof verification (same logic as AuthorizeVerifier).
+    ///      IMPORTANT: Unlike the snarkjs-generated verifier, this does NOT use
+    ///      assembly `return(0, 0x20)` — that opcode terminates the entire call
+    ///      frame, which would skip the second proof in verifyBatchProof.
+    ///      Instead, the result is assigned to the Solidity return variable.
     function _verifySingle(
         uint[2] calldata _pA, uint[2][2] calldata _pB, uint[2] calldata _pC, uint[14] calldata _pubSignals
-    ) internal view returns (bool) {
+    ) internal view returns (bool result) {
         assembly {
-            function checkField(v) {
-                if iszero(lt(v, r_mod)) {
-                    mstore(0, 0)
-                    return(0, 0x20)
+            function doVerify(pA, pB, pC, pubSignals) -> isOk {
+                isOk := 0  // default: invalid
+
+                function g1_mulAccC(pR, x, y, s) -> ok {
+                    ok := 1
+                    let mIn := mload(0x40)
+                    mstore(mIn, x)
+                    mstore(add(mIn, 32), y)
+                    mstore(add(mIn, 64), s)
+                    let success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
+                    if iszero(success) { ok := 0 leave }
+                    mstore(add(mIn, 64), mload(pR))
+                    mstore(add(mIn, 96), mload(add(pR, 32)))
+                    success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
+                    if iszero(success) { ok := 0 leave }
                 }
+
+                let pMem := mload(0x40)
+                mstore(0x40, add(pMem, 896))
+
+                // Validate all public signals ∈ F
+                for { let i := 0 } lt(i, 14) { i := add(i, 1) } {
+                    if iszero(lt(calldataload(add(pubSignals, mul(i, 32))), r_mod)) {
+                        leave
+                    }
+                }
+
+                // Compute vk_x = IC[0] + Σ pubSignals[i] · IC[i+1]
+                let _pVk := pMem
+                mstore(_pVk, IC0x)
+                mstore(add(_pVk, 32), IC0y)
+
+                if iszero(g1_mulAccC(_pVk, IC1x, IC1y, calldataload(add(pubSignals, 0)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC2x, IC2y, calldataload(add(pubSignals, 32)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC3x, IC3y, calldataload(add(pubSignals, 64)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC4x, IC4y, calldataload(add(pubSignals, 96)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC5x, IC5y, calldataload(add(pubSignals, 128)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC6x, IC6y, calldataload(add(pubSignals, 160)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC7x, IC7y, calldataload(add(pubSignals, 192)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC8x, IC8y, calldataload(add(pubSignals, 224)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC9x, IC9y, calldataload(add(pubSignals, 256)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC10x, IC10y, calldataload(add(pubSignals, 288)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC11x, IC11y, calldataload(add(pubSignals, 320)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC12x, IC12y, calldataload(add(pubSignals, 352)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC13x, IC13y, calldataload(add(pubSignals, 384)))) { leave }
+                if iszero(g1_mulAccC(_pVk, IC14x, IC14y, calldataload(add(pubSignals, 416)))) { leave }
+
+                // Pairing check: e(-A, B) · e(α, β) · e(vk_x, γ) · e(C, δ) = 1
+                let _pPairing := add(pMem, 128)
+
+                mstore(_pPairing, calldataload(pA))
+                mstore(add(_pPairing, 32), mod(sub(q_mod, calldataload(add(pA, 32))), q_mod))
+                mstore(add(_pPairing, 64), calldataload(pB))
+                mstore(add(_pPairing, 96), calldataload(add(pB, 32)))
+                mstore(add(_pPairing, 128), calldataload(add(pB, 64)))
+                mstore(add(_pPairing, 160), calldataload(add(pB, 96)))
+                mstore(add(_pPairing, 192), alphax)
+                mstore(add(_pPairing, 224), alphay)
+                mstore(add(_pPairing, 256), betax1)
+                mstore(add(_pPairing, 288), betax2)
+                mstore(add(_pPairing, 320), betay1)
+                mstore(add(_pPairing, 352), betay2)
+                mstore(add(_pPairing, 384), mload(_pVk))
+                mstore(add(_pPairing, 416), mload(add(_pVk, 32)))
+                mstore(add(_pPairing, 448), gammax1)
+                mstore(add(_pPairing, 480), gammax2)
+                mstore(add(_pPairing, 512), gammay1)
+                mstore(add(_pPairing, 544), gammay2)
+                mstore(add(_pPairing, 576), calldataload(pC))
+                mstore(add(_pPairing, 608), calldataload(add(pC, 32)))
+                mstore(add(_pPairing, 640), deltax1)
+                mstore(add(_pPairing, 672), deltax2)
+                mstore(add(_pPairing, 704), deltay1)
+                mstore(add(_pPairing, 736), deltay2)
+
+                let success := staticcall(sub(gas(), 2000), 8, _pPairing, 768, _pPairing, 0x20)
+                isOk := and(success, mload(_pPairing))
             }
 
-            function g1_mulAccC(pR, x, y, s) {
-                let success
-                let mIn := mload(0x40)
-                mstore(mIn, x)
-                mstore(add(mIn, 32), y)
-                mstore(add(mIn, 64), s)
-                success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
-                if iszero(success) { mstore(0, 0) return(0, 0x20) }
-                mstore(add(mIn, 64), mload(pR))
-                mstore(add(mIn, 96), mload(add(pR, 32)))
-                success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
-                if iszero(success) { mstore(0, 0) return(0, 0x20) }
-            }
-
-            let pMem := mload(0x40)
-            mstore(0x40, add(pMem, 896))
-
-            // Validate all public signals ∈ F
-            for { let i := 0 } lt(i, 14) { i := add(i, 1) } {
-                checkField(calldataload(add(_pubSignals, mul(i, 32))))
-            }
-
-            // Compute vk_x = IC[0] + Σ pubSignals[i] · IC[i+1]
-            let _pVk := pMem
-            mstore(_pVk, IC0x)
-            mstore(add(_pVk, 32), IC0y)
-
-            g1_mulAccC(_pVk, IC1x, IC1y, calldataload(add(_pubSignals, 0)))
-            g1_mulAccC(_pVk, IC2x, IC2y, calldataload(add(_pubSignals, 32)))
-            g1_mulAccC(_pVk, IC3x, IC3y, calldataload(add(_pubSignals, 64)))
-            g1_mulAccC(_pVk, IC4x, IC4y, calldataload(add(_pubSignals, 96)))
-            g1_mulAccC(_pVk, IC5x, IC5y, calldataload(add(_pubSignals, 128)))
-            g1_mulAccC(_pVk, IC6x, IC6y, calldataload(add(_pubSignals, 160)))
-            g1_mulAccC(_pVk, IC7x, IC7y, calldataload(add(_pubSignals, 192)))
-            g1_mulAccC(_pVk, IC8x, IC8y, calldataload(add(_pubSignals, 224)))
-            g1_mulAccC(_pVk, IC9x, IC9y, calldataload(add(_pubSignals, 256)))
-            g1_mulAccC(_pVk, IC10x, IC10y, calldataload(add(_pubSignals, 288)))
-            g1_mulAccC(_pVk, IC11x, IC11y, calldataload(add(_pubSignals, 320)))
-            g1_mulAccC(_pVk, IC12x, IC12y, calldataload(add(_pubSignals, 352)))
-            g1_mulAccC(_pVk, IC13x, IC13y, calldataload(add(_pubSignals, 384)))
-            g1_mulAccC(_pVk, IC14x, IC14y, calldataload(add(_pubSignals, 416)))
-
-            // Pairing check: e(-A, B) · e(α, β) · e(vk_x, γ) · e(C, δ) = 1
-            let _pPairing := add(pMem, 128)
-
-            // -A
-            mstore(_pPairing, calldataload(_pA))
-            mstore(add(_pPairing, 32), mod(sub(q_mod, calldataload(add(_pA, 32))), q_mod))
-            // B
-            mstore(add(_pPairing, 64), calldataload(_pB))
-            mstore(add(_pPairing, 96), calldataload(add(_pB, 32)))
-            mstore(add(_pPairing, 128), calldataload(add(_pB, 64)))
-            mstore(add(_pPairing, 160), calldataload(add(_pB, 96)))
-            // α, β
-            mstore(add(_pPairing, 192), alphax)
-            mstore(add(_pPairing, 224), alphay)
-            mstore(add(_pPairing, 256), betax1)
-            mstore(add(_pPairing, 288), betax2)
-            mstore(add(_pPairing, 320), betay1)
-            mstore(add(_pPairing, 352), betay2)
-            // vk_x, γ
-            mstore(add(_pPairing, 384), mload(_pVk))
-            mstore(add(_pPairing, 416), mload(add(_pVk, 32)))
-            mstore(add(_pPairing, 448), gammax1)
-            mstore(add(_pPairing, 480), gammax2)
-            mstore(add(_pPairing, 512), gammay1)
-            mstore(add(_pPairing, 544), gammay2)
-            // C, δ
-            mstore(add(_pPairing, 576), calldataload(_pC))
-            mstore(add(_pPairing, 608), calldataload(add(_pC, 32)))
-            mstore(add(_pPairing, 640), deltax1)
-            mstore(add(_pPairing, 672), deltax2)
-            mstore(add(_pPairing, 704), deltay1)
-            mstore(add(_pPairing, 736), deltay2)
-
-            let success := staticcall(sub(gas(), 2000), 8, _pPairing, 768, _pPairing, 0x20)
-            let isOk := and(success, mload(_pPairing))
-            mstore(0, isOk)
-            return(0, 0x20)
+            result := doVerify(_pA, _pB, _pC, _pubSignals)
         }
     }
 }
