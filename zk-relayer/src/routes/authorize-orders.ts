@@ -26,6 +26,7 @@ import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
  * commitment spend). A production deployment would persist to SQLite.
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+const MAX_AUTHORIZE_ORDERS = 10_000;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -57,7 +58,13 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 3. Dedup by nullifier ──
+      // ── 3. Size cap — prevent unbounded memory growth ──
+      if (authorizeOrders.size >= MAX_AUTHORIZE_ORDERS) {
+        res.status(503).json({ error: "Authorize order store full. Try again later." });
+        return;
+      }
+
+      // ── 4. Dedup by nullifier ──
       const nullifier = order.publicSignals.nullifier;
       if (authorizeOrders.has(nullifier)) {
         res.status(409).json({ error: "Order with this nullifier already exists" });

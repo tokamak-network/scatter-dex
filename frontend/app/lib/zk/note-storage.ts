@@ -226,6 +226,8 @@ function serializeForFile(note: StoredNote) {
       token: "0x" + note.note.token.toString(16),
       amount: "0x" + note.note.amount.toString(16),
       salt: "0x" + note.note.salt.toString(16),
+      pubKeyAx: "0x" + note.note.pubKeyAx.toString(16),
+      pubKeyAy: "0x" + note.note.pubKeyAy.toString(16),
     },
     warning: "Keep this file secret. Anyone with this data can withdraw your funds.",
   };
@@ -245,6 +247,8 @@ function deserializeFromFile(parsed: any): StoredNote {
       token: BigInt(parsed.note.token),
       amount: BigInt(parsed.note.amount),
       salt: BigInt(parsed.note.salt),
+      pubKeyAx: parsed.note.pubKeyAx ? BigInt(parsed.note.pubKeyAx) : 0n,
+      pubKeyAy: parsed.note.pubKeyAy ? BigInt(parsed.note.pubKeyAy) : 0n,
     },
   };
 }

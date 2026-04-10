@@ -516,6 +516,8 @@ export default function PrivateOrderPage() {
             token: selectedNote.note.token,
             amount: change,
             salt: changeSalt,
+            pubKeyAx: selectedNote.note.pubKeyAx,
+            pubKeyAy: selectedNote.note.pubKeyAy,
           },
           commitment: "0x" + expectedChangeCommitment.toString(16),
           tokenSymbol: sellToken.symbol,
