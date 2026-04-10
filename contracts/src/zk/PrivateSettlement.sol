@@ -417,7 +417,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint[2] proofA;
         uint[2][2] proofB;
         uint[2] proofC;
-        // 14 public signals (matching authorize.circom main block ordering)
+        // 15 public signals (matching authorize.circom output + main block ordering)
+        // [0] pubKeyBind is a circuit output = Poseidon(pubKeyAx, pubKeyAy, nullifier)
+        // [1..14] are public inputs in the order declared in component main { public [...] }
+        bytes32 pubKeyBind;  // Poseidon(pubKeyAx, pubKeyAy, nullifier) — compliance binding
         uint256 commitmentRoot;
         bytes32 nullifier;
         bytes32 nonceNullifier;
@@ -548,8 +551,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 10. Verify both Groth16 proofs.
         //     When batchAuthorizeVerifier is set, uses a single 5-pairing batch
         //     check (~70-100K gas savings). Otherwise falls back to 2× separate.
-        uint[14] memory makerSignals = _packAuthSignals(p.maker);
-        uint[14] memory takerSignals = _packAuthSignals(p.taker);
+        uint[15] memory makerSignals = _packAuthSignals(p.maker);
+        uint[15] memory takerSignals = _packAuthSignals(p.taker);
 
         if (address(batchAuthorizeVerifier) != address(0)) {
             if (!batchAuthorizeVerifier.verifyBatchProof(
@@ -642,24 +645,25 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         );
     }
 
-    /// @dev Pack an `AuthorizeProof` into the 14-element public-signal array
-    ///      that `authorize.circom`'s verifier expects, in the same order as
-    ///      the circuit's `component main { public [...] }` block.
-    function _packAuthSignals(AuthorizeProof calldata ap) internal pure returns (uint[14] memory signals) {
-        signals[0]  = ap.commitmentRoot;
-        signals[1]  = uint256(ap.nullifier);
-        signals[2]  = uint256(ap.nonceNullifier);
-        signals[3]  = uint256(ap.newCommitment);
-        signals[4]  = uint256(uint160(ap.sellToken));
-        signals[5]  = uint256(uint160(ap.buyToken));
-        signals[6]  = uint256(ap.sellAmount);
-        signals[7]  = uint256(ap.buyAmount);
-        signals[8]  = uint256(ap.maxFee);
-        signals[9]  = uint256(ap.expiry);
-        signals[10] = uint256(ap.claimsRoot);
-        signals[11] = uint256(ap.totalLocked);
-        signals[12] = uint256(uint160(ap.relayer));
-        signals[13] = uint256(ap.orderHash);
+    /// @dev Pack an `AuthorizeProof` into the 15-element public-signal array
+    ///      that `authorize.circom`'s verifier expects.
+    ///      Signal ordering: [0] = pubKeyBind (output), [1..14] = public inputs.
+    function _packAuthSignals(AuthorizeProof calldata ap) internal pure returns (uint[15] memory signals) {
+        signals[0]  = uint256(ap.pubKeyBind);
+        signals[1]  = ap.commitmentRoot;
+        signals[2]  = uint256(ap.nullifier);
+        signals[3]  = uint256(ap.nonceNullifier);
+        signals[4]  = uint256(ap.newCommitment);
+        signals[5]  = uint256(uint160(ap.sellToken));
+        signals[6]  = uint256(uint160(ap.buyToken));
+        signals[7]  = uint256(ap.sellAmount);
+        signals[8]  = uint256(ap.buyAmount);
+        signals[9]  = uint256(ap.maxFee);
+        signals[10] = uint256(ap.expiry);
+        signals[11] = uint256(ap.claimsRoot);
+        signals[12] = uint256(ap.totalLocked);
+        signals[13] = uint256(uint160(ap.relayer));
+        signals[14] = uint256(ap.orderHash);
     }
 
     // ─── cancelPrivate (escrow rotation cancel) ─────────────────────

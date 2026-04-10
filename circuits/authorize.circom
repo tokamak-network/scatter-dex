@@ -461,6 +461,33 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     signal relayerSq;
     relayerSq <== relayer * relayer;
+
+    // ════════════════════════════════════════
+    //  10. PUBKEY BINDING (compliance)
+    //     pubKeyBind = Poseidon(pubKeyAx, pubKeyAy, nullifier)
+    //
+    //     Purpose: allows the relayer to verify the user's claimed pubKey
+    //     without exposing pubKey on-chain. The nullifier is included so
+    //     pubKeyBind differs per transaction, preventing cross-trade linking.
+    //
+    //     On-chain: pubKeyBind looks like a random hash → privacy preserved.
+    //     Off-chain: relayer checks Poseidon(claimed_Ax, claimed_Ay, nullifier)
+    //                == pubKeyBind → confirms real pubKey.
+    //
+    //     This enables the regulatory compliance chain:
+    //       wallet → pubKey (user provides) → pubKeyBind (circuit verifies)
+    //       → relayer logs wallet + pubKey + nullifier + trade details
+    //       → law enforcement can trace with pubKey (via relayer subpoena)
+    //
+    //     Without pubKeyBind, a user could give a fake pubKey to the relayer
+    //     and there would be no way to detect it.
+    // ════════════════════════════════════════
+    component pubKeyBindHasher = Poseidon(3);
+    pubKeyBindHasher.inputs[0] <== pubKeyAx;
+    pubKeyBindHasher.inputs[1] <== pubKeyAy;
+    pubKeyBindHasher.inputs[2] <== nullifier;
+    signal output pubKeyBind;
+    pubKeyBind <== pubKeyBindHasher.out;
 }
 
 // Parameters:
@@ -483,3 +510,6 @@ component main {public [
     relayer,
     orderHash
 ]} = Authorize(20, 16, 4);
+// NOTE: pubKeyBind is a `signal output` inside Authorize, so it is
+// automatically public in circom 2.x. It appears as public signal #14
+// (0-indexed) in the verifier's pubSignals array, after orderHash (#13).
