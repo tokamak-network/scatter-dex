@@ -11,6 +11,7 @@ import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
+import {MockBatchAuthorizeVerifier} from "./mocks/MockBatchAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 
@@ -565,5 +566,84 @@ contract SettleAuthTest is Test {
         vm.prank(makerRelayer);
         vm.expectRevert(PrivateSettlement.DuplicateClaimsRoot.selector);
         settlement.settleAuth(p);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  Batch verifier integration
+    // ────────────────────────────────────────────────────────────
+
+    function test_settleAuth_batchVerifier_happyPath() public {
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        vm.prank(makerRelayer);
+        settlement.settleAuth(p);
+
+        // Verify settlement completed (nullifiers marked)
+        assertTrue(settlement.nullifiers(M_NULL));
+        assertTrue(settlement.nullifiers(T_NULL));
+    }
+
+    function test_settleAuth_batchVerifier_invalidProof_reverts() public {
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        batchVerifier.setShouldPass(false);
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_batchVerifier_disabledFallsBackToSingle() public {
+        // First enable batch, then disable it
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(address(0));
+
+        // Should use the single authorizeVerifier (still set from setUp)
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        vm.prank(makerRelayer);
+        settlement.settleAuth(p);
+        assertTrue(settlement.nullifiers(M_NULL));
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  setBatchAuthorizeVerifier setter tests
+    // ────────────────────────────────────────────────────────────
+
+    function test_setBatchAuthorizeVerifier_validContract() public {
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+
+        vm.expectEmit(true, true, false, false);
+        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(address(0), address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+
+        assertEq(address(settlement.batchAuthorizeVerifier()), address(batchVerifier));
+    }
+
+    function test_setBatchAuthorizeVerifier_disableWithZero() public {
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+
+        vm.expectEmit(true, true, false, false);
+        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(address(batchVerifier), address(0));
+        settlement.setBatchAuthorizeVerifier(address(0));
+
+        assertEq(address(settlement.batchAuthorizeVerifier()), address(0));
+    }
+
+    function test_setBatchAuthorizeVerifier_rejectsEOA() public {
+        address eoa = address(0xDEAD);
+        vm.expectRevert();
+        settlement.setBatchAuthorizeVerifier(eoa);
+    }
+
+    function test_setBatchAuthorizeVerifier_onlyOwner() public {
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        vm.prank(address(0xBAD));
+        vm.expectRevert();
+        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
     }
 }
