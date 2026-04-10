@@ -247,8 +247,12 @@ function deserializeFromFile(parsed: any): StoredNote {
       token: BigInt(parsed.note.token),
       amount: BigInt(parsed.note.amount),
       salt: BigInt(parsed.note.salt),
-      pubKeyAx: parsed.note.pubKeyAx ? BigInt(parsed.note.pubKeyAx) : 0n,
-      pubKeyAy: parsed.note.pubKeyAy ? BigInt(parsed.note.pubKeyAy) : 0n,
+      pubKeyAx: parsed.note.pubKeyAx
+        ? BigInt(parsed.note.pubKeyAx)
+        : (() => { throw new Error("Note missing pubKeyAx — this is a v1 note that cannot be used with v2 circuits. Re-deposit required."); })(),
+      pubKeyAy: parsed.note.pubKeyAy
+        ? BigInt(parsed.note.pubKeyAy)
+        : (() => { throw new Error("Note missing pubKeyAy — this is a v1 note that cannot be used with v2 circuits. Re-deposit required."); })(),
     },
   };
 }
