@@ -2,8 +2,9 @@
 pragma solidity ^0.8.28;
 
 /// @notice Interface for batched Groth16 verification of two authorize.circom proofs.
-///         Uses random linear combination (Fiat-Shamir) to reduce from 8 pairings to 5,
-///         saving ~24% gas on verification.
+///         Phase 1: verifies each proof separately (correctness baseline).
+///         Phase 2: will use random linear combination (Fiat-Shamir) to reduce from
+///         8 pairings to 5, saving ~24% gas on verification.
 interface IBatchAuthorizeVerifier {
     function verifyBatchProof(
         uint[2] calldata _pA1, uint[2][2] calldata _pB1, uint[2] calldata _pC1, uint[14] calldata _pubSignals1,

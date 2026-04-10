@@ -1,27 +1,27 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
+import {IBatchAuthorizeVerifier} from "./IBatchAuthorizeVerifier.sol";
+
 /// @title BatchAuthorizeVerifier
-/// @notice Batched Groth16 verification for two authorize.circom proofs using
-///         random linear combination. Saves ~37% gas on pairing operations by
-///         reducing from 8 pairings (2×4) to 5 pairings.
+/// @notice Phase 1 scaffold for batched Groth16 verification of two authorize.circom proofs.
+///         Currently verifies each proof separately (no gas savings yet).
+///         Phase 2 will implement random linear combination (Fiat-Shamir) to reduce
+///         from 8 pairings (2×4) to 5 pairings, saving ~24% gas (~145K per settleAuth).
 ///
-/// @dev The batch verification equation (Fiat-Shamir challenge r):
+/// @dev Phase 2 batch verification equation:
 ///
-///   e(-A₁, B₁) · e(-r·A₂, B₂) · e(L₁ + r·L₂, γ) · e(C₁ + r·C₂, δ) · e(α + r·α, β) = 1
+///   r = keccak256(A₁, B₁, C₁, pub₁, A₂, B₂, C₂, pub₂, address(this), block.chainid) mod r
+///   e(-A₁, B₁) · e(-r·A₂, B₂) · e(L₁ + r·L₂, γ) · e(C₁ + r·C₂, δ) · e((1+r)·α, β) = 1
 ///
-///   where L_i = IC[0] + Σⱼ pubSignals_i[j] · IC[j+1]
-///
-///   The challenge r is derived via Fiat-Shamir: r = uint256(keccak256(A₁, B₁, C₁, pub₁, A₂, B₂, C₂, pub₂)) % scalar_field_order
-///
-///   Security: the random linear combination has soundness error 1/r ≈ 2^{-254}, which is
-///   negligible. A cheating prover who has one valid and one invalid proof cannot find
-///   an r that makes the batch check pass (with non-negligible probability).
+///   Soundness error: 1/r ≈ 2^{-254} (negligible).
 ///
 ///   This contract uses the same verification key as AuthorizeVerifier.sol (same circuit,
 ///   same trusted setup). The vkey constants are duplicated here rather than read from
 ///   storage to keep everything in assembly for gas efficiency.
-contract BatchAuthorizeVerifier {
+///   WARNING: If the circuit is recompiled, both AuthorizeVerifier.sol and this file
+///   must be regenerated/updated in lock-step.
+contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
     // Scalar field size (BN254)
     uint256 constant r_mod = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
     // Base field size (BN254)
@@ -74,8 +74,6 @@ contract BatchAuthorizeVerifier {
     uint256 constant IC13y = 21372018527949030192984835514020116113593905599888109317418663858156864108011;
     uint256 constant IC14x = 15653016779368561696678677434590855505763465529083398324600681220711524398745;
     uint256 constant IC14y = 4951316924552111065974463525523253089397192817655190295699137776693752728060;
-
-    error InvalidBatchProof();
 
     /// @notice Batch-verify two Groth16 proofs from authorize.circom.
     /// @param _pA1 Proof 1 point A (G1)
