@@ -8,7 +8,7 @@ pragma solidity ^0.8.28;
 ///   [1] oldNullifier       bytes32 — escrow nullifier to burn
 ///   [2] oldNonceNullifier  bytes32 — nonce nullifier to burn
 ///   [3] newCommitment      bytes32 — rotated commitment (same balance, new salt)
-///   [4] relayer            uint160 — submitter binding
+///   [4] submitter           uint160 — msg.sender binding (user, not relayer)
 interface ICancelVerifier {
     function verifyProof(
         uint[2] calldata _pA,

@@ -42,7 +42,7 @@ include "./tags.circom";
 //    [1] oldNullifier     — escrow nullifier to burn
 //    [2] oldNonceNullifier — nonce nullifier to burn
 //    [3] newCommitment    — rotated escrow commitment (same balance)
-//    [4] relayer          — submitter binding
+//    [4] submitter        — msg.sender binding (the user, not a relayer)
 // ════════════════════════════════════════════════════════════════════
 
 // ── Poseidon Merkle membership proof (same as authorize.circom) ──
@@ -85,7 +85,7 @@ template Cancel(commitTreeDepth) {
     signal input oldNullifier;
     signal input oldNonceNullifier;
     signal input newCommitment;
-    signal input relayer;
+    signal input submitter;
 
     // ── Private inputs ──
     signal input secret;
@@ -167,17 +167,19 @@ template Cancel(commitTreeDepth) {
 
     // ════════════════════════════════════════
     //  5. EdDSA SIGNATURE VERIFICATION
-    //     The cancel message is Poseidon(oldNonceNullifier, relayer).
+    //     The cancel message is Poseidon(oldNonceNullifier, submitter).
     //     This proves:
     //       - The canceller holds the EdDSA key bound in the commitment
     //       - The cancel is intentional (signed over the specific nonce
-    //         being cancelled + the relayer submitting it)
+    //         being cancelled + the submitter's Ethereum address)
     //     The message is distinct from orderHash (Poseidon-9) so an
     //     authorize signature cannot be replayed as a cancel signature.
+    //     `submitter` binds msg.sender — prevents front-running the
+    //     cancel tx by replaying the proof from a different address.
     // ════════════════════════════════════════
     component cancelMsg = Poseidon(2);
     cancelMsg.inputs[0] <== oldNonceNullifier;
-    cancelMsg.inputs[1] <== relayer;
+    cancelMsg.inputs[1] <== submitter;
 
     component sigVerify = EdDSAPoseidonVerifier();
     sigVerify.enabled <== 1;
@@ -189,11 +191,14 @@ template Cancel(commitTreeDepth) {
     sigVerify.M <== cancelMsg.out;
 
     // ════════════════════════════════════════
-    //  6. RELAYER BINDING
-    //     Same idiom as authorize.circom / settle.circom.
+    //  6. SUBMITTER BINDING
+    //     Keeps `submitter` in the witness so the circom optimizer
+    //     doesn't prune it. Same idiom as authorize.circom / settle.circom
+    //     (where the field is called `relayer`). In cancel, the submitter
+    //     is the user, not a relayer.
     // ════════════════════════════════════════
-    signal relayerSq;
-    relayerSq <== relayer * relayer;
+    signal submitterSq;
+    submitterSq <== submitter * submitter;
 }
 
 // Parameters: commitTreeDepth=20 (matches settle/authorize/withdraw)
@@ -202,5 +207,5 @@ component main {public [
     oldNullifier,
     oldNonceNullifier,
     newCommitment,
-    relayer
+    submitter
 ]} = Cancel(20);
