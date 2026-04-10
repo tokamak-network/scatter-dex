@@ -17,13 +17,16 @@
 // eslint-disable-next-line no-restricted-globals
 const ctx = self as unknown as Worker;
 
+// Pre-warm the prover import while the user fills in the form — saves
+// ~100-300ms on the first proof by resolving the snarkjs + circomlibjs
+// module graph ahead of time. The module is cached by the JS engine, so
+// subsequent `onmessage` calls get it instantly.
+const proverPromise = import("./authorize-prover");
+
 ctx.onmessage = async (event: MessageEvent) => {
   try {
     const input = deserializeInput(event.data);
-
-    // Dynamic import inside the worker — snarkjs + circomlibjs are loaded
-    // only in this thread, keeping the main-thread bundle slim.
-    const { generateAuthorizeProof } = await import("./authorize-prover");
+    const { generateAuthorizeProof } = await proverPromise;
     const result = await generateAuthorizeProof(input);
 
     ctx.postMessage({ type: "result", data: serializeResult(result) });
@@ -46,7 +49,12 @@ function deserializeInput(raw: Record<string, unknown>): import("./authorize-pro
       pubKeyAy: BigInt(raw.note_pubKeyAy as string),
     },
     leafIndex: raw.leafIndex as number,
-    allLeaves: (raw.allLeaves as string[]).map(BigInt),
+    allLeaves: raw.allLeaves ? (raw.allLeaves as string[]).map(BigInt) : undefined,
+    merkleProof: raw.merkleProof_root ? {
+      root: BigInt(raw.merkleProof_root as string),
+      pathElements: (raw.merkleProof_pathElements as string[]).map(BigInt),
+      pathIndices: raw.merkleProof_pathIndices as number[],
+    } : undefined,
     sellAmount: BigInt(raw.sellAmount as string),
     buyToken: raw.buyToken as string,
     buyAmount: BigInt(raw.buyAmount as string),

@@ -44,6 +44,17 @@ function getWorker(): Worker | null {
 }
 
 /**
+ * Terminate the background Worker and release its memory.
+ * Call this from component unmount (useEffect cleanup) or route-change
+ * handlers to avoid leaking the snarkjs/circomlibjs heap.
+ * The Worker is re-created lazily on the next `generateAuthorizeProofInWorker` call.
+ */
+export function terminateAuthorizeWorker(): void {
+  worker?.terminate();
+  worker = null;
+}
+
+/**
  * Generate an authorize.circom proof, offloaded to a Web Worker if
  * available. Falls back to main-thread proving if the Worker cannot
  * be created.
@@ -91,7 +102,7 @@ export async function generateAuthorizeProofInWorker(
 // ─── Serialization (main thread → worker) ────────────────────────
 
 function serializeInput(input: AuthorizeProofInput): Record<string, unknown> {
-  return {
+  const result: Record<string, unknown> = {
     note_ownerSecret: input.note.ownerSecret.toString(),
     note_token: input.note.token.toString(),
     note_amount: input.note.amount.toString(),
@@ -99,7 +110,6 @@ function serializeInput(input: AuthorizeProofInput): Record<string, unknown> {
     note_pubKeyAx: input.note.pubKeyAx.toString(),
     note_pubKeyAy: input.note.pubKeyAy.toString(),
     leafIndex: input.leafIndex,
-    allLeaves: input.allLeaves.map((l) => l.toString()),
     sellAmount: input.sellAmount.toString(),
     buyToken: input.buyToken,
     buyAmount: input.buyAmount.toString(),
@@ -116,6 +126,15 @@ function serializeInput(input: AuthorizeProofInput): Record<string, unknown> {
       releaseTime: c.releaseTime.toString(),
     })),
   };
+  if (input.allLeaves) {
+    result.allLeaves = input.allLeaves.map((l) => l.toString());
+  }
+  if (input.merkleProof) {
+    result.merkleProof_root = input.merkleProof.root.toString();
+    result.merkleProof_pathElements = input.merkleProof.pathElements.map((e) => e.toString());
+    result.merkleProof_pathIndices = input.merkleProof.pathIndices;
+  }
+  return result;
 }
 
 // ─── Deserialization (worker → main thread) ──────────────────────

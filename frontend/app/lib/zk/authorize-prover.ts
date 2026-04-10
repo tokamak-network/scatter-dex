@@ -31,13 +31,11 @@ import {
   getMerkleProof,
   randomFieldElement,
   poseidonHash,
+  formatProofForSolidity,
 } from "./commitment";
 import { signEdDSA, hashOrder } from "./eddsa";
 import { TAG_COMMITMENT_V2 } from "./tags";
-
-const COMMIT_TREE_DEPTH = 20;
-const MAX_CLAIMS_PER_SIDE = 16;
-const CLAIMS_TREE_DEPTH = 4;
+import { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from "./constants";
 
 const WASM_PATH = "/zk/authorize.wasm";
 const ZKEY_PATH = "/zk/authorize_final.zkey";
@@ -59,8 +57,24 @@ export interface AuthorizeProofInput {
   /** Index of this commitment's leaf in the on-chain Merkle tree. */
   leafIndex: number;
 
-  /** All commitment leaves in the pool (fetched from CommitmentInserted events). */
-  allLeaves: bigint[];
+  /**
+   * All commitment leaves in the pool (fetched from CommitmentInserted events).
+   * Required unless `merkleProof` is provided.
+   */
+  allLeaves?: bigint[];
+
+  /**
+   * Pre-computed Merkle proof for this commitment's leaf. When provided,
+   * `allLeaves` is ignored and the expensive O(n) tree rebuild is skipped.
+   * This is the recommended path for pools with 100K+ commitments — the
+   * caller should maintain an incremental tree (e.g. via IncrementalTree
+   * from incremental-tree.ts) and supply the proof directly.
+   */
+  merkleProof?: {
+    root: bigint;
+    pathElements: bigint[];
+    pathIndices: number[];
+  };
 
   /** How much of `note.token` to sell in this trade. Must be ≤ note.amount. */
   sellAmount: bigint;
@@ -149,19 +163,31 @@ export async function generateAuthorizeProof(
   // ── 1. Commitment membership ──
   const commitment = await computeCommitment(input.note);
 
-  // Verify this commitment exists at the claimed leaf index
-  if (input.allLeaves[input.leafIndex] !== commitment) {
-    throw new Error(
-      "Commitment does not match the leaf at the given index. " +
-      "Check that the note and the on-chain tree are in sync."
-    );
-  }
+  let commitmentRoot: bigint;
+  let pathElements: bigint[];
+  let pathIndices: number[];
 
-  const { root: commitmentRoot, layers } = await buildMerkleTree(
-    input.allLeaves,
-    COMMIT_TREE_DEPTH,
-  );
-  const { pathElements, pathIndices } = getMerkleProof(layers, input.leafIndex);
+  if (input.merkleProof) {
+    // Fast path: caller supplied a pre-computed Merkle proof (e.g.
+    // from an incremental tree maintained across deposits). Skips
+    // the expensive O(n) tree rebuild for large pools.
+    ({ root: commitmentRoot, pathElements, pathIndices } = input.merkleProof);
+  } else if (input.allLeaves) {
+    // Slow path: rebuild the entire tree from all leaves.
+    if (input.allLeaves[input.leafIndex] !== commitment) {
+      throw new Error(
+        "Commitment does not match the leaf at the given index. " +
+        "Check that the note and the on-chain tree are in sync."
+      );
+    }
+    const tree = await buildMerkleTree(input.allLeaves, COMMIT_TREE_DEPTH);
+    commitmentRoot = tree.root;
+    const proof = getMerkleProof(tree.layers, input.leafIndex);
+    pathElements = proof.pathElements;
+    pathIndices = proof.pathIndices;
+  } else {
+    throw new Error("Either allLeaves or merkleProof must be provided");
+  }
 
   // ── 2. Nullifiers ──
   const nullifier = await computeNullifier(input.note);
@@ -315,14 +341,7 @@ export async function generateAuthorizeProof(
   );
 
   return {
-    proof: {
-      a: [proof.pi_a[0], proof.pi_a[1]],
-      b: [
-        [proof.pi_b[0][1], proof.pi_b[0][0]], // reversed for Solidity
-        [proof.pi_b[1][1], proof.pi_b[1][0]],
-      ],
-      c: [proof.pi_c[0], proof.pi_c[1]],
-    },
+    proof: formatProofForSolidity(proof),
     publicSignals,
     commitmentRoot,
     nullifier,
