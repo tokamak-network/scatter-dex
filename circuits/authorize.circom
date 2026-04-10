@@ -511,5 +511,6 @@ component main {public [
     orderHash
 ]} = Authorize(20, 16, 4);
 // NOTE: pubKeyBind is a `signal output` inside Authorize, so it is
-// automatically public in circom 2.x. It appears as public signal #14
-// (0-indexed) in the verifier's pubSignals array, after orderHash (#13).
+// automatically public in circom 2.x. In the verifier's pubSignals
+// array it appears first (index 0), before commitmentRoot and the
+// other explicitly listed public signals.
