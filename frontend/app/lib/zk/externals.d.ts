@@ -14,6 +14,8 @@ declare module "snarkjs" {
     prove(
       zkeyPath: string,
       wtns: { type: "mem" },
+      logger?: unknown,
+      options?: { singleThread?: boolean },
     ): Promise<{ proof: any; publicSignals: string[] }>;
     verify(
       vkey: any,
