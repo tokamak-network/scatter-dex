@@ -27,12 +27,14 @@ When we redesigned the prover model into the **Half-proof primitive** (`authoriz
 
 **zkScatter does not detect, prevent, or report self-trade at the protocol layer.**
 
+> **Naming note:** `PrivateSettlement.settleAuth(...)` is the **Half-proof entrypoint** added in PR #133 — it is distinct from the pre-existing `PrivateSettlement.settlePrivate(...)` (the monolithic settle path that this ADR is also compatible with). Both functions live in the same `PrivateSettlement` contract; this ADR's commitment that "no self-trade detection" applies to **both** entrypoints, but the Half-proof primitive (`circuits/authorize.circom` + `settleAuth(...)`) is the canonical realisation. Future references to "the half-proof flow" or just "`settleAuth`" mean the post-#133 entrypoint specifically.
+
 Concretely, this means:
 
 1. **`circuits/authorize.circom` exposes no per-trader-stable public output.** The 14 public signals are: `commitmentRoot`, `nullifier`, `nonceNullifier`, `newCommitment`, `sellToken`, `buyToken`, `sellAmount`, `buyAmount`, `maxFee`, `expiry`, `claimsRoot`, `totalLocked`, `relayer`, `orderHash`. None of these are tied to a specific trader identity across trades. Nullifiers are one-time use and unlinkable; the rest are trade parameters.
-2. **`PrivateSettlement.settleAuth(...)` does not compare pubkeys.** It does not even know the pubkeys — they are private inputs to each `authorize.circom` proof. The only cross-side checks are token compatibility, price compatibility, and the claims+fees cap. There is no `MakerTakerSameKey` revert.
+2. **`PrivateSettlement.settleAuth(...)` does not compare pubkeys.** It does not even know the pubkeys — they are private inputs to each `authorize.circom` proof. The only cross-side checks are token compatibility, price compatibility, and the claims+fees cap. There is no `MakerTakerSameKey` revert. The pre-existing `settlePrivate(...)` path is also free of any pubkey comparison after PR #129 removed `pubKeyHash` from the public-signal set, so the commitment holds regardless of which entrypoint a deployment uses.
 3. **The relayer is allowed to match a trader against themselves.** If the matching engine surfaces such a pairing, the protocol will settle it. The relayer's off-chain matching logic may filter self-matches at its own discretion (it has the user identity locally), but the protocol does not require it to.
-4. **Compliance / wash-trading concerns are handled at the dual-CA layer**, not at the protocol layer. See §"How regulator concerns are handled" below.
+4. **Compliance / wash-trading concerns are handled at the dual-CA layer**, not at the protocol layer. See §"Wash-trading is a compliance question, not a settlement question" below for the rationale.
 
 ## Rationale
 
@@ -40,14 +42,14 @@ Five reasons, in increasing order of how load-bearing they are.
 
 ### 1. There is no incentive to self-trade
 
-zkScatter uses **static fees with no rebates**. Both legs of a trade pay the gas of the settlement transaction and both legs pay the relayer fee bound in their `orderHash`. A trader who self-trades:
+zkScatter uses **static fees with no rebates**. The settlement transaction's gas is paid by the submitting relayer (`msg.sender` of `settleAuth`), and both legs pay the relayer fee bound in their `orderHash` — those fees are what economically compensate the relayer for the gas they spend submitting settlement. A trader who self-trades:
 
-- Pays the relayer fee twice (once on each leg).
-- Pays the gas for the `settleAuth` transaction.
-- Locks the same `escrow_nullifier` (rendering one of the two commitments unusable for any future trade — they consume two nullifiers but only one trade actually happens economically).
+- Pays the relayer fee twice (once on each leg), which means **double** the fee burden of a normal trade.
+- Causes the relayer to submit `settleAuth` and charge fees that cover the settlement gas, so the combined relayer-fee outflow includes the full settlement gas cost.
+- Must use **two distinct escrow commitments** to settle successfully (PR #133 added an intra-transaction check that reverts if both sides share the same escrow nullifier, so the "spend the same commitment twice" path is not even available). A self-trade therefore consumes two escrow nullifiers and two nonce nullifiers — twice the on-chain state per "trade" — even though no economic transfer happens between distinct parties.
 - Achieves nothing they could not have achieved with a `withdraw` to themselves at lower cost.
 
-There is no market-making rebate, no fee discount, no rewards programme that would convert self-trading into a rational strategy. A rational trader who looks at the fee schedule and the gas cost will simply not do this. There is nothing for the protocol to defend against.
+There is no market-making rebate, no fee discount, no rewards programme that would convert self-trading into a rational strategy. A rational trader who looks at the fee schedule and the per-leg cost being passed through via relayer fees will simply not do this. There is nothing for the protocol to defend against.
 
 ### 2. Accidental self-trade is structurally impossible (or near it)
 
@@ -55,7 +57,7 @@ In a CEX, a trader can accidentally cross their own resting orders because the m
 
 zkScatter's matching is different in two ways that close this off:
 
-- **Each `authorize.circom` proof is bound to a specific trade** via the `orderHash` public output, which is itself an EdDSA signature over `(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayer)`. The trader has to *explicitly sign* each side of the trade. Accidentally signing two opposing orders requires either malicious client software or extreme user error.
+- **Each `authorize.circom` proof is bound to a specific trade** via the `orderHash` public output, which is the **Poseidon hash** of `(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayer)`, and the proof verifies an **EdDSA signature over that hash** inside the circuit. The trader has to *explicitly sign* each side of the trade with their EdDSA private key. Accidentally signing two opposing orders requires either malicious client software or extreme user error.
 - **The relayer's off-chain matching engine has the trader's identity locally** (it generated or routed both proofs) and can trivially filter same-identity matches before constructing the `settleAuth` call. If a federation of cooperating relayers wants to filter self-matches, they can — it's an off-chain policy decision, not a protocol-layer enforcement.
 
 The "I crossed my own order by mistake" failure mode that motivates STP on a CEX does not naturally occur on zkScatter. If it did occur (e.g. via a buggy client), the trader would notice on the very next trade and the cost is small (one round of fees + gas), not catastrophic.
@@ -64,8 +66,8 @@ The "I crossed my own order by mistake" failure mode that motivates STP on a CEX
 
 The single hardest constraint a settlement protocol must enforce is that **funds cannot be created or duplicated**. zkScatter enforces this via the four-nullifier model (`escrow_nullifier` and `nonce_nullifier` for each side, all 4 marked atomically in `settleAuth`). The double-spend impossibility holds **regardless of who is on the other side**:
 
-- A self-trader who tries to use the same commitment on both sides will collide their own `escrow_nullifier` with itself and the contract will revert with `NullifierAlreadySpent`.
-- A self-trader who uses two different commitments will spend both legitimately, but the resulting "trade" is just a value-preserving rearrangement of their own UTXOs — funds are conserved by construction.
+- A self-trader who tries to use the same commitment on both sides will produce two `authorize.circom` proofs sharing the same escrow nullifier. PR #133 added an explicit intra-transaction check (`if (m.nullifier == t.nullifier) revert NullifierAlreadySpent;`) that catches this in `settleAuth(...)` before any state change, so the contract reverts. (Without that check, the per-mapping `nullifiers[...]` lookups would each see "not yet spent" and the contract would have drained `2 × totalLocked` from the pool — see the gemini security review on PR #133.)
+- A self-trader who uses two different commitments will spend both legitimately, but the resulting "trade" is just a value-preserving rearrangement of their own UTXOs — funds are conserved by construction. Both `escrow_nullifier`s are marked, both new commitments are inserted, and the trader has paid two relayer fees for what is economically a no-op.
 
 There is no fund-integrity argument for self-trade prevention. The nullifier check is the only thing that needs to hold, and it holds.
 
@@ -163,7 +165,7 @@ This decision is not permanent. It can be revisited if **all four** of the follo
 1. A regulator with jurisdiction over the deployment formally requires on-chain self-trade prevention as a condition of operation, AND the dual-CA audit path is judged insufficient to satisfy that requirement.
 2. A new privacy primitive is identified that enables on-chain self-trade detection **without** publishing a per-trader-stable public value visible to all observers (e.g. some form of accumulated proof of non-self-trade that only the contract can check). The privacy property §5 above must be preserved.
 3. The community has clearly weighed the privacy cost and accepted it, in writing.
-4. A migration path for existing pseudonymous users is specified that does not retroactively unlink their historical trades.
+4. A migration path for existing pseudonymous users is specified that does not retroactively **link or deanonymize** their historical trades. (The previous wording said "unlink", which is the opposite of the intended guardrail — the concern is retroactive linking of trades to identities, not removal of links.)
 
 If a future contributor proposes re-introducing self-trade detection without addressing all four criteria, point them at this ADR.
 
