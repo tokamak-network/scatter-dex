@@ -5,7 +5,7 @@ libs = ["lib"]
 test = "test"
 script = "script"
 solc_version = "0.8.28"
-via_ir = false
+via_ir = true  # Required for BatchAuthorizeVerifier (deep Yul function nesting)
 optimizer = true
 optimizer_runs = 200
 
