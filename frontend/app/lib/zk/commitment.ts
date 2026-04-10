@@ -270,3 +270,30 @@ export function getMerkleProof(
 
   return { pathElements, pathIndices };
 }
+
+/** Solidity-compatible proof format (a, b with reversed G2 coords, c). */
+export interface SolidityProof {
+  a: [string, string];
+  b: [[string, string], [string, string]];
+  c: [string, string];
+}
+
+/**
+ * Convert a snarkjs Groth16 proof to Solidity-compatible format.
+ * The BN254 G2 point ordering is reversed (pi_b[i][0] ↔ pi_b[i][1])
+ * to match the on-chain verifier's expectation.
+ */
+export function formatProofForSolidity(proof: {
+  pi_a: string[];
+  pi_b: string[][];
+  pi_c: string[];
+}): SolidityProof {
+  return {
+    a: [proof.pi_a[0], proof.pi_a[1]],
+    b: [
+      [proof.pi_b[0][1], proof.pi_b[0][0]],
+      [proof.pi_b[1][1], proof.pi_b[1][0]],
+    ],
+    c: [proof.pi_c[0], proof.pi_c[1]],
+  };
+}
