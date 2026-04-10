@@ -58,16 +58,16 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 3. Size cap — prevent unbounded memory growth ──
-      if (authorizeOrders.size >= MAX_AUTHORIZE_ORDERS) {
-        res.status(503).json({ error: "Authorize order store full. Try again later." });
-        return;
-      }
-
-      // ── 4. Dedup by nullifier ──
+      // ── 3. Dedup by nullifier (before size cap so retries get 409, not 503) ──
       const nullifier = order.publicSignals.nullifier;
       if (authorizeOrders.has(nullifier)) {
         res.status(409).json({ error: "Order with this nullifier already exists" });
+        return;
+      }
+
+      // ── 4. Size cap — prevent unbounded memory growth ──
+      if (authorizeOrders.size >= MAX_AUTHORIZE_ORDERS) {
+        res.status(503).json({ error: "Authorize order store full. Try again later." });
         return;
       }
 

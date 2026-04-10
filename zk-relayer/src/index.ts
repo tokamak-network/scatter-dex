@@ -187,6 +187,7 @@ async function main() {
     clearInterval(expireInterval);
     clearInterval(reindexInterval);
     clearInterval(remoteExpireInterval);
+    clearInterval(authPurgeInterval);
     sharedClient?.stop();
     server.close(() => {
       db.close();
