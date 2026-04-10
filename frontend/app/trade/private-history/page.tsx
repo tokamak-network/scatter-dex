@@ -27,7 +27,7 @@ import {
 import { toAddressHex, toBytes32Hex, computeCommitment } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
-import { getReadProvider, getEarliestBlock } from "../../lib/provider";
+import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
 import { generateCancelProof } from "../../lib/zk/cancel-prover";
 
@@ -237,12 +237,7 @@ export default function PrivateHistoryPage() {
       const poolAddr = getCommitmentPoolAddress();
       const poolContract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, provider);
 
-      // Bound the query range to avoid RPC timeouts on fresh installs
-      let fromBlock = getEarliestBlock();
-      if (fromBlock === 0) {
-        const latest = await provider.getBlockNumber();
-        fromBlock = Math.max(0, latest - 50_000);
-      }
+      const fromBlock = await getSafeFromBlock(provider);
 
       const [nextIdx, events] = await Promise.all([
         poolContract.nextIndex().then(Number),

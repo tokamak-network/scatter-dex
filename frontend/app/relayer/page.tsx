@@ -2,21 +2,17 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine } from "lucide-react";
+import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine, User } from "lucide-react";
+import Link from "next/link";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
 import { useWallet } from "../lib/wallet";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
-import { shortenAddress } from "../lib/utils";
+import { shortenAddress, formatBond } from "../lib/utils";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
-
-function formatBond(bond: bigint): string {
-  const val = Number(ethers.formatEther(bond));
-  return val % 1 === 0 ? `${val} ETH` : `${val.toFixed(2)} ETH`;
-}
 
 function feeBps(fee: number): string {
   return `${(fee / 100).toFixed(2)}%`;
@@ -379,10 +375,13 @@ export default function RelayersPage() {
 
             {/* Individual relayer cards */}
             {relayers.map((r, i) => (
-              <button
+              <div
                 key={r.address}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedIdx(i)}
-                className={`w-full rounded-xl border px-5 py-4 text-left transition-all ${
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedIdx(i); }}
+                className={`w-full rounded-xl border px-5 py-4 text-left transition-all cursor-pointer ${
                   selectedIdx === i
                     ? "border-primary bg-primary/8 ring-1 ring-primary/30"
                     : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
@@ -409,7 +408,13 @@ export default function RelayersPage() {
                     {r.url}
                   </div>
                 )}
-                {/* Shared orderbook info */}
+                <Link
+                  href={`/relayer/profile?address=${r.address}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 mt-2 text-[10px] text-primary hover:text-primary-container transition-colors"
+                >
+                  <User className="w-3 h-3" /> View Profile
+                </Link>
                 {(() => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
                   if (!shared) return null;
@@ -421,7 +426,7 @@ export default function RelayersPage() {
                     </div>
                   );
                 })()}
-              </button>
+              </div>
             ))}
           </div>
 
