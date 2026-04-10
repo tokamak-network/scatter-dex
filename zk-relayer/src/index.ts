@@ -17,7 +17,7 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders } from "./routes/authorize-orders.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -157,6 +157,12 @@ async function main() {
     }
   }, 60_000);
 
+  // Periodic authorize-order cleanup (settled/cancelled/expired)
+  const authPurgeInterval = setInterval(() => {
+    const removed = purgeNonPendingAuthorizeOrders();
+    if (removed > 0) console.log(`Purged ${removed} non-pending authorize orders`);
+  }, 60_000);
+
   const server = app.listen(config.port, () => {
     console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
@@ -181,6 +187,7 @@ async function main() {
     clearInterval(expireInterval);
     clearInterval(reindexInterval);
     clearInterval(remoteExpireInterval);
+    clearInterval(authPurgeInterval);
     sharedClient?.stop();
     server.close(() => {
       db.close();

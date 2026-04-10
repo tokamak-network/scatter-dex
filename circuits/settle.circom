@@ -547,13 +547,18 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         rcMakerClaimAmount[i].in <== makerClaimAmounts[i];
     }
 
-    // Unused claims (i >= count) must have amount = 0
+    // Unused claims (i >= count) must have amount = 0.
+    // Used claims must have token == tokenMaker (the token maker receives).
+    // [Security fix 2026-04-10] Without the token check, a malicious relayer
+    // could construct claim leaves denominated in a worthless token while
+    // the public tokenMaker signal indicates a valuable token.
     component makerClaimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
         makerClaimUsed[i] = LessThan(252);
         makerClaimUsed[i].in[0] <== i;
         makerClaimUsed[i].in[1] <== makerClaimCount;
         (1 - makerClaimUsed[i].out) * makerClaimAmounts[i] === 0;
+        makerClaimUsed[i].out * (makerClaimTokens[i] - tokenMaker) === 0;
     }
 
     // Sum maker claim amounts
@@ -602,6 +607,7 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         takerClaimUsed[i].in[0] <== i;
         takerClaimUsed[i].in[1] <== takerClaimCount;
         (1 - takerClaimUsed[i].out) * takerClaimAmounts[i] === 0;
+        takerClaimUsed[i].out * (takerClaimTokens[i] - tokenTaker) === 0;
     }
 
     signal takerAmountAcc[maxClaimsPerSide + 1];
