@@ -124,16 +124,25 @@ export async function generateCancelProof(
   );
 
   // ── 3. New commitment (escrow rotation — same balance, new salt) ──
-  const freshSalt = randomFieldElement();
-  const newCommitment = await poseidonHash([
-    TAG_COMMITMENT_V2,
-    input.note.ownerSecret,
-    input.note.token,
-    input.note.amount, // balance stays the same
-    freshSalt,
-    input.note.pubKeyAx,
-    input.note.pubKeyAy,
-  ]);
+  // Loop until newCommitment != 0 (Poseidon can theoretically output 0
+  // with negligible probability, but if it does the on-chain cancel
+  // would brick the balance). Also ensure freshSalt != old salt to
+  // avoid generating an identical commitment.
+  let freshSalt: bigint;
+  let newCommitment: bigint;
+  do {
+    freshSalt = randomFieldElement();
+    if (freshSalt === input.note.salt) continue; // avoid same-salt rotation
+    newCommitment = await poseidonHash([
+      TAG_COMMITMENT_V2,
+      input.note.ownerSecret,
+      input.note.token,
+      input.note.amount, // balance stays the same
+      freshSalt,
+      input.note.pubKeyAx,
+      input.note.pubKeyAy,
+    ]);
+  } while (newCommitment === 0n);
 
   // ── 4. Cancel message + EdDSA signature ──
   // cancelMsg = Poseidon(oldNonceNullifier, relayer)

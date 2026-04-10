@@ -662,10 +662,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (paused) revert ContractPaused();
         if (address(cancelVerifier) == address(0)) revert CancelVerifierNotSet();
 
+        // Cancel MUST produce a new commitment — otherwise the balance
+        // is permanently bricked (both nullifiers burnt, no replacement).
+        if (p.newCommitment == bytes32(0)) revert ZeroAddress();
+
         // Nullifier double-spend (before root recency — same gas
         // optimization as settleAuth: flat SLOADs before ring-buffer scan)
         if (nullifiers[p.oldNullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[p.oldNonceNullifier]) revert NullifierAlreadySpent();
+        // Intra-tx: escrow and nonce nullifiers must differ (domain-separated
+        // by TAG_ESCROW_NULL vs TAG_NONCE_NULL, but belt-and-suspenders)
+        if (p.oldNullifier == p.oldNonceNullifier) revert NullifierAlreadySpent();
 
         // Root recency
         if (!pool.isKnownRoot(p.commitmentRoot)) revert UnknownRoot();
@@ -686,10 +693,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nullifiers[p.oldNullifier] = true;
         nonceNullifiers[p.oldNonceNullifier] = true;
 
-        // Insert rotated commitment (same balance, new salt)
-        if (p.newCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(p.newCommitment));
-        }
+        // Insert rotated commitment (same balance, new salt).
+        // The zero-check at the top of this function guarantees
+        // newCommitment != 0, so this always inserts.
+        pool.insertCommitment(uint256(p.newCommitment));
 
         emit PrivateCancel(
             p.oldNullifier,
