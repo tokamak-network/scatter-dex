@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download } from "lucide-react";
+import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -11,6 +11,7 @@ import {
   deserializeKeyPairEncrypted,
   isEncryptedKeyPair,
   DERIVE_MESSAGE,
+  signEdDSA,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
 import {
