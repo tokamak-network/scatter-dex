@@ -15,7 +15,17 @@ remappings = [
     "poseidon-solidity/=lib/poseidon-solidity/contracts/",
 ]
 
-# Skip OZ internal test/fv/scripts that have unresolvable imports
+# Skip OZ internal test/fv/scripts that have unresolvable imports.
+# BatchAuthorizeVerifier requires via_ir — build separately with FOUNDRY_PROFILE=batch-verifier.
+skip = ["lib/openzeppelin-contracts/test/**", "lib/openzeppelin-contracts/fv/**", "lib/openzeppelin-contracts/scripts/**", "src/zk/BatchAuthorizeVerifier.sol"]
+
+# Profile for BatchAuthorizeVerifier which requires via_ir due to deep Yul nesting.
+# Build: FOUNDRY_PROFILE=batch-verifier forge build
+# Test:  FOUNDRY_PROFILE=batch-verifier forge test --match-contract BatchAuthorize
+[profile.batch-verifier]
+via_ir = true
+optimizer = true
+optimizer_runs = 200
 skip = ["lib/openzeppelin-contracts/test/**", "lib/openzeppelin-contracts/fv/**", "lib/openzeppelin-contracts/scripts/**"]
 
 [lint]
