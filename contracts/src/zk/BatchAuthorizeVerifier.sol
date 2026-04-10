@@ -214,9 +214,8 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
                 // r·A₂ at p+320
                 if iszero(g1_mul(add(p, 320), calldataload(pA2), calldataload(add(pA2, 32)), challenge)) { leave }
 
-                // α_combined = α + r·α  →  tmp = r·α, then Ac = α + tmp
-                if iszero(g1_mul(add(p, 128), alphax, alphay, challenge)) { leave }
-                if iszero(g1_add(add(p, 384), alphax, alphay, mload(add(p, 128)), mload(add(p, 160)))) { leave }
+                // α_combined = (1+r)·α — single ecMul instead of ecMul + ecAdd
+                if iszero(g1_mul(add(p, 384), alphax, alphay, addmod(1, challenge, r_mod))) { leave }
 
                 // 6. Build 5-pair pairing input at p+448
                 let pP := add(p, 448)
