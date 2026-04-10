@@ -136,9 +136,9 @@ export interface AuthorizeProofResult {
 /**
  * Generate a Half-proof (authorize.circom) ZK proof in the browser.
  *
- * Estimated proof generation time: ~3-5 seconds on desktop, ~10-15 on
- * mobile. The authorize circuit is ~15-17K constraints — roughly half
- * of the monolithic settle circuit.
+ * Estimated proof generation time: ~1-2 seconds on desktop, ~5-9 on
+ * mobile. The authorize circuit is 22,468 constraints (measured via
+ * `snarkjs r1cs info`, see docs/perf-proving-analysis.md).
  *
  * This function runs on the main thread. For UI-blocking avoidance,
  * call it via the existing Web Worker helper

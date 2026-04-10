@@ -2,7 +2,7 @@
 
 > **Date**: 2026-04-10
 > **Scope**: Evaluate optimization options for browser-side Groth16 proof generation
-> **Conclusion**: Current performance (22K constraints, ~1-2s desktop) is near-optimal for snarkjs. rapidsnark WASM is infeasible. SharedArrayBuffer adds marginal value since snarkjs already has an internal Worker pool.
+> **Conclusion**: Current performance (22K constraints, ~1-2s desktop) is near-optimal for snarkjs. rapidsnark WASM is infeasible. Enabling SharedArrayBuffer (via COOP/COEP headers) is critical to unlocking the ~2x speedup provided by snarkjs's internal Worker pool for shared-memory MSM parallelization.
 
 ## 1. Circuit Constraint Inventory
 
@@ -35,7 +35,7 @@ Proof: VALID (verified against vkey)
 
 ### 2.2 Browser Estimates
 
-Browser WASM runs ~2-3x slower than Node.js native code (V8 JIT vs WASM interpreter overhead, memory management differences).
+Browser proving with snarkjs is typically ~2-3x slower than running the same WASM-based prover under Node.js, likely due to differences in WASM tiering/optimization, Worker scheduling overhead, tighter browser memory limits, and JS-to-WASM boundary costs.
 
 | Environment | singleThread | multiThread (4 workers) |
 |-------------|-------------|------------------------|
@@ -104,7 +104,7 @@ If snarkjs's internal Workers are functioning:
 
 If snarkjs's internal Workers are failing silently:
 - Desktop 3-5s = singleThread result → enabling Workers would give ~2x improvement
-- This would mean current mobile 15-30s → could become 8-15s
+- Mobile: user-reported 15-30s (includes zkey loading + witness + prove); pure prove estimate from §2.2 is 8-15s singleThread / 5-9s multiThread on mid-range Android
 
 The reported "3-5s desktop" timing is consistent with **multiThread on a mid-range machine** or **singleThread on a fast M-series Mac**. Definitive determination requires browser console instrumentation (see §6).
 
