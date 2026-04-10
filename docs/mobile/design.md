@@ -6,7 +6,7 @@
 > **관련 문서**:
 > - [../../frontend/](../../frontend/) — 현재 웹 프론트엔드
 > - [../architecture-v2.md](../architecture-v2.md) — 전체 아키텍처
-> - tokamon 앱 참고: `/Users/zena/tokamak-projects/tokamon/app/`
+> - **tokamon** 앱 참고 (Expo/RN 구조 레퍼런스)
 
 ---
 
@@ -135,39 +135,39 @@
 scatter-dex/
 ├── frontend/                    (기존 웹 — 유지)
 ├── mobile/                      (신규 — Expo 앱)
-│   ├── App.js                   # 루트 (tokamon 패턴)
+│   ├── App.tsx                  # 루트 (tokamon 패턴)
 │   ├── app.config.js            # Expo 설정
 │   ├── eas.json                 # EAS Build 설정
 │   ├── package.json
 │   ├── src/
 │   │   ├── screens/             # 화면 (React Navigation)
-│   │   │   ├── HomeScreen.js        # 대시보드 (잔액, 최근 거래)
-│   │   │   ├── DepositScreen.js     # 입금 (ZK proof 생성)
-│   │   │   ├── OrderScreen.js       # 주문 생성 (authorize proof)
-│   │   │   ├── ClaimScreen.js       # 클레임
-│   │   │   ├── HistoryScreen.js     # 거래 내역
-│   │   │   └── SettingsScreen.js    # 설정
+│   │   │   ├── HomeScreen.tsx       # 대시보드 (잔액, 최근 거래)
+│   │   │   ├── DepositScreen.tsx    # 입금 (ZK proof 생성)
+│   │   │   ├── OrderScreen.tsx      # 주문 생성 (authorize proof)
+│   │   │   ├── ClaimScreen.tsx      # 클레임
+│   │   │   ├── HistoryScreen.tsx    # 거래 내역
+│   │   │   └── SettingsScreen.tsx   # 설정
 │   │   ├── components/          # 공유 UI 컴포넌트
-│   │   │   ├── WalletButton.js      # WalletConnect 연결 버튼
-│   │   │   ├── ProofProgress.js     # ZK proof 진행률
-│   │   │   ├── TokenSelector.js     # 토큰 선택
-│   │   │   └── TxStatus.js          # 트랜잭션 상태
+│   │   │   ├── WalletButton.tsx     # WalletConnect 연결 버튼
+│   │   │   ├── ProofProgress.tsx    # ZK proof 진행률
+│   │   │   ├── TokenSelector.tsx    # 토큰 선택
+│   │   │   └── TxStatus.tsx         # 트랜잭션 상태
 │   │   ├── services/            # 비즈니스 로직 (tokamon 패턴)
-│   │   │   ├── wallet.js           # WalletConnect 래퍼
-│   │   │   ├── contract.js         # ethers 컨트랙트 호출
-│   │   │   ├── relayerApi.js       # 릴레이어 API
-│   │   │   └── noteStorage.js      # 노트 암호화 저장
+│   │   │   ├── wallet.ts           # WalletConnect 래퍼
+│   │   │   ├── contract.ts         # ethers 컨트랙트 호출
+│   │   │   ├── relayerApi.ts       # 릴레이어 API
+│   │   │   └── noteStorage.ts      # 노트 암호화 저장
 │   │   ├── zk/                  # ZK 관련 (웹에서 포팅)
-│   │   │   ├── prover.js           # snarkjs 래퍼
-│   │   │   ├── commitment.js       # Poseidon 해싱
-│   │   │   ├── eddsa.js            # EdDSA 서명
-│   │   │   └── tags.js             # 도메인 분리 상수
+│   │   │   ├── prover.ts           # snarkjs 래퍼
+│   │   │   ├── commitment.ts       # Poseidon 해싱
+│   │   │   ├── eddsa.ts            # EdDSA 서명
+│   │   │   └── tags.ts             # 도메인 분리 상수
 │   │   ├── utils/
-│   │   │   ├── constants.js        # ABI, 주소, 설정
-│   │   │   └── config.js           # 환경변수
+│   │   │   ├── constants.ts        # ABI, 주소, 설정
+│   │   │   └── config.ts           # 환경변수
 │   │   └── hooks/
-│   │       ├── useProof.js         # proof 생성 상태 관리
-│   │       └── useBalance.js       # 잔액 조회
+│   │       ├── useProof.ts         # proof 생성 상태 관리
+│   │       └── useBalance.ts       # 잔액 조회
 │   ├── android/                 # Expo prebuild (자동 생성)
 │   └── ios/                     # Expo prebuild (자동 생성)
 │
@@ -279,7 +279,7 @@ export function getProvider() { return provider; }
 
 ### 5.1 PoC 검증 결과 (2026-04-10 확정)
 
-> **PoC 코드**: `/Users/zena/tokamak-project-concurrent/scatter-dex-mobile-poc/`
+> **PoC 코드**: `scatter-dex-mobile-poc/` (scatter-dex 레포 인접 디렉토리)
 
 | 환경 | 테스트 | 결과 |
 |------|--------|------|
@@ -320,9 +320,13 @@ node build-webview-html.mjs  # → zk-webview.html (4.6 MB)
 **필수 폴리필 (zk-engine-src.js 내):**
 - `Buffer` (buffer 패키지)
 - `process` (process/browser)
-- `Worker` (빈 구현 — single-threaded fallback)
+- `Worker` (빈 구현 — single-threaded fallback, 아래 성능 주의 참고)
 - `crypto` (crypto-browserify)
 - `stream` (stream-browserify)
+
+> **Worker fallback 성능 주의**: ffjavascript는 Worker 멀티스레딩으로 증명 성능을 최적화한다. 빈 Worker stub은 single-threaded fallback이므로 대형 회로(authorize ~22K constraints)에서 성능 저하 가능. 프로덕션에서는 (1) WebView 환경에서 실제 Worker를 지원하는 HTML 구조 (file:// 대신 localhost 서빙 등) 검토, (2) proof 생성 중 프로그레스 UI로 대기 시간 처리, (3) Phase 2에서 네이티브 rapidsnark 모듈 검토.
+
+> **WebView HTML 로딩 방식**: zk-webview.html (4.6 MB)을 `source={{ html }}` 인라인 대신 `expo-asset`으로 로컬 파일 URI를 얻어 `source={{ uri }}` 로 로드해야 한다. 인라인 HTML은 메모리 이슈를 유발할 수 있음.
 
 ### 5.3 zkey 파일 관리
 
