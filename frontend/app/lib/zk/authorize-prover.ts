@@ -338,36 +338,11 @@ export async function generateAuthorizeProof(
     claimCount: input.claims.length.toString(),
   };
 
-  // ── 7. Generate Groth16 proof (instrumented) ──
-  const t0 = performance.now();
-
-  // Step A: witness calculation (sequential — circuit gate evaluation)
-  const wtns = { type: "mem" as const };
-  await snarkjs.wtns.calculate(circuitInput, WASM_PATH, wtns);
-  const t1 = performance.now();
-
-  // Step B: Groth16 prove — run twice to compare singleThread vs multiThread
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const proveWithOpts = (snarkjs.groth16 as any).prove ?? snarkjs.groth16.prove;
-
-  const { proof: proofST, publicSignals: psST } = await proveWithOpts(ZKEY_PATH, wtns, undefined, { singleThread: true });
-  const t2 = performance.now();
-
-  // Re-calculate witness for multiThread test (wtns is consumed)
-  const wtns2 = { type: "mem" as const };
-  await snarkjs.wtns.calculate(circuitInput, WASM_PATH, wtns2);
-  const t3 = performance.now();
-
-  const { proof, publicSignals } = await proveWithOpts(ZKEY_PATH, wtns2);
-  const t4 = performance.now();
-
-  console.log(
-    `[authorize-prover] ⏱ witness: ${(t1 - t0).toFixed(0)}ms` +
-    ` | prove(singleThread): ${(t2 - t1).toFixed(0)}ms` +
-    ` | prove(multiThread): ${(t4 - t3).toFixed(0)}ms` +
-    ` | speedup: ${((t2 - t1) / (t4 - t3)).toFixed(1)}x` +
-    ` | Worker: ${typeof Worker !== "undefined"}` +
-    ` | cores: ${typeof navigator !== "undefined" ? navigator.hardwareConcurrency : "N/A"}`,
+  // ── 7. Generate Groth16 proof ──
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    circuitInput,
+    WASM_PATH,
+    ZKEY_PATH,
   );
 
   return {
