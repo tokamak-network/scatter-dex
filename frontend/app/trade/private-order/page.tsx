@@ -419,33 +419,80 @@ export default function PrivateOrderPage() {
         relayerAddress: BigInt(selectedZkRelayer.address),
       });
 
-      const sig = await signEdDSA(kp.privateKey, orderHash);
       const relayerUrl = selectedZkRelayer.url;
-      const res = await fetch(`${relayerUrl}/api/private-orders`, {
+
+      // ── Half-proof path: generate ZK proof in browser ──
+      // The user's secrets (ownerSecret, salt, balance) NEVER leave the browser.
+      // Only the proof + public signals are sent to the relayer.
+      setStep("signing");
+
+      // Fetch Merkle proof from relayer (fast) or build from on-chain (fallback)
+      let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
+      try {
+        const mpRes = await fetch(`${relayerUrl}/api/info/merkle-proof?leafIndex=${selectedNote.leafIndex}`);
+        if (!mpRes.ok) throw new Error("Relayer merkle-proof unavailable");
+        const mpData = await mpRes.json();
+        merkleProof = {
+          root: BigInt(mpData.root),
+          pathElements: mpData.pathElements.map((e: string) => BigInt(e)),
+          pathIndices: mpData.pathIndices,
+        };
+      } catch {
+        // Fallback: query on-chain CommitmentInserted events
+        const provider = getReadProvider();
+        const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
+        const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
+        const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
+        const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
+        const leaves: bigint[] = [];
+        for (const ev of events) {
+          const e = ev as ethers.EventLog;
+          const idx = Number(e.args.leafIndex);
+          while (leaves.length <= idx) leaves.push(0n);
+          leaves[idx] = BigInt(e.args.commitment);
+        }
+        const tree = await buildMerkleTree(leaves, 20);
+        const proof = await import("../../lib/zk/commitment").then(m => {
+          const p = m.getMerkleProof(tree.layers, selectedNote.leafIndex);
+          return p;
+        });
+        merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
+      }
+
+      // Generate authorize proof in Web Worker (secrets stay in browser)
+      const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
+      const proofResult = await generateAuthorizeProofInWorker({
+        note: selectedNote.note,
+        leafIndex: selectedNote.leafIndex,
+        merkleProof,
+        sellAmount: parsedSell,
+        buyToken: buyToken.address,
+        buyAmount: parsedBuy,
+        maxFee: BigInt(effectiveFeeBps || 30),
+        expiry: expiryTimestamp,
+        nonce,
+        relayer: selectedZkRelayer.address,
+        eddsaPrivateKey: kp.privateKey,
+        claims: claimData.map(c => ({
+          secret: BigInt(c.secret),
+          recipient: c.recipient,
+          token: c.token,
+          amount: BigInt(c.amount),
+          releaseTime: BigInt(c.releaseTime),
+        })),
+      });
+
+      // Submit proof to relayer (no secrets transmitted)
+      const res = await fetch(`${relayerUrl}/api/authorize-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sellToken: sellToken.address,
-          buyToken: buyToken.address,
-          sellAmount: parsedSell.toString(),
-          buyAmount: parsedBuy.toString(),
-          maxFee: maxFeeBps,
-          expiry: expiryTimestamp.toString(),
-          nonce: nonce.toString(),
+          proof: proofResult.proof,
+          publicSignals: proofResult.publicSignals,
+          publicSignalsArray: proofResult.publicSignals,
+          // pubKey for compliance logging (relayer verifies via pubKeyBind)
           pubKeyAx: kp.publicKey[0].toString(),
           pubKeyAy: kp.publicKey[1].toString(),
-          sigS: sig.S.toString(),
-          sigR8x: sig.R8x.toString(),
-          sigR8y: sig.R8y.toString(),
-          // Commitment info from note
-          ownerSecret: selectedNote.note.ownerSecret.toString(),
-          balance: selectedNote.note.amount.toString(),
-          salt: selectedNote.note.salt.toString(),
-          leafIndex: selectedNote.leafIndex,
-          // Change commitment: user-controlled newSalt
-          newSalt: newSalt.toString(),
-          expectedChangeCommitment: expectedChangeCommitment.toString(),
-          claims: claimData,
         }),
       });
 

@@ -76,6 +76,22 @@ export class PrivateSubmitter {
     return this.wallet;
   }
 
+  /** Get a Merkle proof for a specific leaf in the commitment tree. */
+  async getCommitmentMerkleProof(leafIndex: number): Promise<{
+    root: string;
+    pathElements: string[];
+    pathIndices: number[];
+  }> {
+    await this.indexCommitments();
+    const { root, layers } = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
+    const proof = getMerkleProof(layers, leafIndex);
+    return {
+      root: root.toString(),
+      pathElements: proof.pathElements.map((e) => e.toString()),
+      pathIndices: proof.pathIndices,
+    };
+  }
+
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
