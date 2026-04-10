@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine } from "lucide-react";
+import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, Vault, ArrowDownToLine, User } from "lucide-react";
+import Link from "next/link";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
 import { useWallet } from "../lib/wallet";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
@@ -409,6 +410,13 @@ export default function RelayersPage() {
                     {r.url}
                   </div>
                 )}
+                <Link
+                  href={`/relayer/profile?address=${r.address}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 mt-2 text-[10px] text-primary hover:text-primary-container transition-colors"
+                >
+                  <User className="w-3 h-3" /> View Profile
+                </Link>
                 {/* Shared orderbook info */}
                 {(() => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
