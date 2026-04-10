@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download } from "lucide-react";
+import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -19,9 +19,17 @@ import {
   hasFolderSelected,
   getFolderName,
   loadEdDSAKeyFromFolder,
+  loadNotes,
+  saveNote,
+  deleteNote,
+  type StoredNote,
 } from "../../lib/zk/note-storage";
-import { toAddressHex } from "../../lib/zk/commitment";
+import { toAddressHex, toBytes32Hex, computeCommitment } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
+import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
+import { getReadProvider, getEarliestBlock } from "../../lib/provider";
+import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
+import { generateCancelProof } from "../../lib/zk/cancel-prover";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "text-yellow-400",
@@ -63,6 +71,15 @@ interface OrderFile {
   crossRelayer?: boolean;
 }
 
+const CANCEL_STEP_LABEL: Record<string, string> = {
+  "loading-note": "Loading escrow note...",
+  "fetching-tree": "Fetching commitment tree...",
+  "proving": "Generating ZK proof (~2s)...",
+  "tx": "Confirm transaction in wallet...",
+  "saving": "Saving rotated note...",
+  "done": "Cancelled successfully!",
+};
+
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
   try {
     const hex = address.startsWith("0x") ? address : "0x" + BigInt(address).toString(16).padStart(40, "0");
@@ -90,6 +107,17 @@ export default function PrivateHistoryPage() {
   const [orders, setOrders] = useState<OrderFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderFile | null>(null);
+
+  // Cancel state
+  const [cancellingNonce, setCancellingNonce] = useState<string | null>(null);
+  const [cancelStep, setCancelStep] = useState<"idle" | "loading-note" | "fetching-tree" | "proving" | "tx" | "saving" | "done" | "error">("idle");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup cancel timer on unmount
+  useEffect(() => {
+    return () => { if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current); };
+  }, []);
 
   // Claim statuses for selected order
   const selectedClaims = useMemo(
@@ -178,6 +206,133 @@ export default function PrivateHistoryPage() {
   useEffect(() => {
     if (folderName) loadOrders();
   }, [folderName, loadOrders, keyPair]);
+
+  const handleCancel = useCallback(async (order: OrderFile) => {
+    if (!keyPair || !signer || !account) return;
+    const nonce = order.order.nonce;
+    setCancellingNonce(nonce);
+    setCancelStep("loading-note");
+    setCancelError(null);
+
+    try {
+      const allNotes = await loadNotes();
+      const escrowNote = allNotes.find((n) => n.leafIndex === order.order.leafIndex);
+      if (!escrowNote) {
+        throw new Error(`Escrow note not found for leafIndex ${order.order.leafIndex}. Make sure the note file is in the folder.`);
+      }
+
+      const fullNote = {
+        ...escrowNote.note,
+        pubKeyAx: keyPair.publicKey[0],
+        pubKeyAy: keyPair.publicKey[1],
+      };
+
+      const expectedCommitment = await computeCommitment(fullNote);
+      if (expectedCommitment.toString() !== BigInt(escrowNote.commitment).toString()) {
+        throw new Error("Commitment mismatch \u2014 the EdDSA key may not match this note.");
+      }
+
+      setCancelStep("fetching-tree");
+      const provider = getReadProvider();
+      const poolAddr = getCommitmentPoolAddress();
+      const poolContract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, provider);
+
+      // Bound the query range to avoid RPC timeouts on fresh installs
+      let fromBlock = getEarliestBlock();
+      if (fromBlock === 0) {
+        const latest = await provider.getBlockNumber();
+        fromBlock = Math.max(0, latest - 50_000);
+      }
+
+      const [nextIdx, events] = await Promise.all([
+        poolContract.nextIndex().then(Number),
+        poolContract.queryFilter(poolContract.filters.CommitmentInserted(), fromBlock),
+      ]);
+
+      const allLeaves: bigint[] = new Array(nextIdx).fill(0n);
+      for (const ev of events) {
+        const e = ev as ethers.EventLog;
+        allLeaves[Number(e.args.leafIndex)] = BigInt(e.args.commitment);
+      }
+
+      setCancelStep("proving");
+      const cancelResult = await generateCancelProof({
+        note: fullNote,
+        leafIndex: order.order.leafIndex,
+        allLeaves,
+        nonce: BigInt(nonce),
+        eddsaPrivateKey: keyPair.privateKey,
+        relayer: account,
+      });
+
+      setCancelStep("tx");
+      const settlement = new ethers.Contract(
+        getPrivateSettlementAddress(),
+        PRIVATE_SETTLEMENT_ABI,
+        signer,
+      );
+
+      const tx = await settlement.cancelPrivate({
+        proofA: cancelResult.proof.a,
+        proofB: cancelResult.proof.b,
+        proofC: cancelResult.proof.c,
+        commitmentRoot: cancelResult.commitmentRoot,
+        oldNullifier: toBytes32Hex(cancelResult.oldNullifier),
+        oldNonceNullifier: toBytes32Hex(cancelResult.oldNonceNullifier),
+        newCommitment: toBytes32Hex(cancelResult.newCommitment),
+      });
+      const receipt = await tx.wait();
+
+      setCancelStep("saving");
+
+      // Extract newLeafIndex — filter by pool address to avoid matching unrelated logs
+      let newLeafIndex = -1;
+      const poolAddrLower = poolAddr.toLowerCase();
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== poolAddrLower) continue;
+        try {
+          const parsed = COMMITMENT_POOL_IFACE.parseLog({ topics: [...log.topics], data: log.data });
+          if (parsed?.name === "CommitmentInserted") {
+            newLeafIndex = Number(parsed.args.leafIndex);
+            break;
+          }
+        } catch { /* skip non-pool logs */ }
+      }
+      if (newLeafIndex < 0) {
+        throw new Error("CommitmentInserted event not found in tx receipt \u2014 note may need manual recovery.");
+      }
+
+      const newNote: StoredNote = {
+        note: { ...fullNote, salt: cancelResult.freshSalt },
+        commitment: toBytes32Hex(cancelResult.newCommitment),
+        tokenSymbol: escrowNote.tokenSymbol,
+        tokenAddress: escrowNote.tokenAddress,
+        amount: escrowNote.amount,
+        leafIndex: newLeafIndex,
+        txHash: receipt.hash,
+        createdAt: Date.now(),
+      };
+      await saveNote(newNote);
+      await deleteNote(escrowNote);
+
+      setCancelStep("done");
+
+      // Optimistic update: mark this order as cancelled in both lists
+      const updater = (o: OrderFile) =>
+        o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
+      setOrders((prev) => prev.map(updater));
+      setSelectedOrder((prev) => prev ? updater(prev) : prev);
+
+      cancelTimerRef.current = setTimeout(() => {
+        setCancellingNonce(null);
+        setCancelStep("idle");
+      }, 2000);
+    } catch (e: any) {
+      console.error("Cancel failed:", e);
+      setCancelError(e?.reason || e?.message || "Unknown error");
+      setCancelStep("error");
+    }
+  }, [keyPair, signer, account]);
 
   if (!account) {
     return (
@@ -299,7 +454,7 @@ export default function PrivateHistoryPage() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={`font-bold text-xs ${STATUS_COLORS[o.status ?? ""] ?? "text-on-surface-variant/40"}`}>
-                      {o.status ?? (keyPair ? "—" : "unlock key")}
+                      {o.status ?? (keyPair ? "\u2014" : "unlock key")}
                     </span>
                     {o.crossRelayer && (
                       <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/20">
@@ -349,6 +504,49 @@ export default function PrivateHistoryPage() {
             </div>
           )}
 
+          {/* Cancel button — only for pending orders with key unlocked */}
+          {keyPair && selectedOrder.status === "pending" && (
+            <div className="space-y-2">
+              {cancellingNonce === selectedOrder.order.nonce ? (
+                <div className="space-y-2">
+                  {cancelStep === "error" ? (
+                    <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 px-4 py-3 rounded-md">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span className="break-all">{cancelError}</span>
+                    </div>
+                  ) : cancelStep === "done" ? (
+                    <div className="flex items-center gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Order cancelled. Escrow rotated to new commitment.
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-3 rounded-md">
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      {CANCEL_STEP_LABEL[cancelStep] ?? "Processing..."}
+                    </div>
+                  )}
+                  {cancelStep === "error" && (
+                    <button
+                      onClick={() => { setCancellingNonce(null); setCancelStep("idle"); setCancelError(null); }}
+                      className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleCancel(selectedOrder); }}
+                  disabled={cancellingNonce !== null}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-bold bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25 transition-colors disabled:opacity-40"
+                >
+                  <XCircle className="w-4 h-4" />
+                  Cancel Order
+                </button>
+              )}
+            </div>
+          )}
+
           <div>
             <h4 className="font-bold text-sm text-on-surface mb-2">Claims ({selectedOrder.claims.length})</h4>
             <div className="space-y-1">
@@ -376,7 +574,7 @@ export default function PrivateHistoryPage() {
                       </div>
                     </div>
                     <div className="text-xs font-mono text-on-surface-variant/60 break-all">
-                      → {toAddressHex(c.recipient)}
+                      &rarr; {toAddressHex(c.recipient)}
                     </div>
                     <div className="text-xs text-on-surface-variant/50">
                       Claimable: {new Date(Number(c.releaseTime) * 1000).toLocaleString()}

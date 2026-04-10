@@ -17,7 +17,7 @@ import {
   toBytes32Hex,
   type CommitmentNote,
 } from "../../lib/zk/commitment";
-import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
+import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE, ERC20_ABI } from "../../lib/contracts";
 import {
   isFileSystemAvailable,
   selectNotesFolder,
@@ -34,20 +34,6 @@ import {
 import { generateDepositProof } from "../../lib/zk/deposit-prover";
 import { deriveEdDSAKey } from "../../lib/zk/eddsa";
 
-// CommitmentPool ABI (minimal). deposit() now requires a Groth16 binding proof
-// from circuits/deposit.circom — see contracts/test/PoolDrainExploit.t.sol.
-const POOL_ABI = [
-  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
-  "function getLastRoot() view returns (uint256)",
-  "function nextIndex() view returns (uint32)",
-  "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
-];
-
-const ERC20_ABI = [
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function allowance(address owner, address spender) view returns (uint256)",
-  "function balanceOf(address account) view returns (uint256)",
-];
 
 type TxState = "idle" | "approving" | "depositing" | "success" | "error";
 
@@ -282,7 +268,7 @@ export default function PrivateEscrowPage() {
       // so we cannot accidentally pair a stale commitment with the proof.
       setTxState("depositing");
       const depositProof = await generateDepositProof(note);
-      const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
+      const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, signer);
       const tx = await pool.deposit(
         depositProof.proof.a,
         depositProof.proof.b,
@@ -295,11 +281,10 @@ export default function PrivateEscrowPage() {
       setTxHash(receipt.hash);
 
       // Parse leafIndex from event
-      const poolIface = new ethers.Interface(POOL_ABI);
       let leafIndex = 0;
       for (const log of receipt.logs) {
         try {
-          const p = poolIface.parseLog({ topics: log.topics as string[], data: log.data });
+          const p = COMMITMENT_POOL_IFACE.parseLog({ topics: [...log.topics], data: log.data });
           if (p?.name === "CommitmentInserted") {
             leafIndex = Number(p.args.leafIndex);
           }
