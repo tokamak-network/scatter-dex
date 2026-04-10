@@ -28,9 +28,10 @@ Existing systems resolve at most two of these three:
 | Tornado Cash | Yes | No | Yes |
 | Railgun | Yes | No | Moderate |
 | Renegade | Yes | No | No (MPC/FHE) |
+| Jigsaw [23] | Yes | No | Yes |
 | **zkScatter** | **Yes** (cryptographic) | **Yes** (Dual-CA) | **Yes** (L1 + L2) |
 
-Tornado Cash was sanctioned by OFAC because it had no accountable intermediary. Renegade achieves privacy through expensive multi-party computation. Railgun provides ZK privacy but no compliance mechanism. No existing system solves all three.
+Tornado Cash was sanctioned by OFAC because it had no accountable intermediary. Renegade achieves privacy through expensive multi-party computation. Railgun provides ZK privacy but no compliance mechanism. Jigsaw [23], the most recent privacy-trade primitive in this space, likewise leaves accountability and a regulator-facing audit surface outside of its scope. No existing system solves all three.
 
 ---
 
@@ -140,7 +141,7 @@ Verifies a complete trade inside a single ZK proof:
 - Token compatibility and price compatibility
 - Fee validation (actual fee <= user-signed maxFee)
 - Balance sufficiency
-- Claims tree roots correctly computed from claim leaves
+- Claims tree roots correctly computed from up to **N claim leaves per side**, where N is an implementation parameter set to 16 in the reference circuit (see §13 "Implementation parameters")
 - Change commitments correctly derived from residual balances
 - Self-trade prevention (different public keys)
 
@@ -454,8 +455,24 @@ A relayer necessarily knows order content (tokens, amounts, prices, claim secret
 | Gen 1 | EtherDelta | On-chain orderbook |
 | Gen 2 | Uniswap | On-chain AMM |
 | Gen 3 | 0x, CoW | Off-chain order, on-chain settle |
-| Gen 4 | Renegade, Railgun | Privacy-first (ZK/MPC) |
+| Gen 4 | Renegade, Railgun, Jigsaw [23] | Privacy-first (ZK/MPC) |
 | **Gen 5** | **zkScatter** | **ZK commitment pools + Dual-CA compliance** |
+
+### Closest Prior Art: Jigsaw [23]
+
+Jigsaw (Cryptology ePrint 2025/1147) is the nearest published construction in the privacy-trade design space and is identified here as the closest prior art to the present disclosure. Jigsaw proposes a ZK-based privacy-preserving trade primitive for DeFi, operating over shielded balances that are dissociated from settlement recipients. The construction overlaps with zkScatter's Layer 1/2 separation in that both systems reason about trade validity over hidden balances and rely on nullifier-based double-spend prevention.
+
+zkScatter differs from Jigsaw in ways that are each load-bearing, and none of these differences are incidental to the current disclosure:
+
+1. **Trade-and-claim dissociation (Layer 3).** Jigsaw couples recipient disclosure to settlement: when a trade settles, the recipient of the settled funds is visible in the settlement event. zkScatter's Layer 3 claim circuit (§4.4, §5 Phase 5) inserts a third proof step that proves Merkle inclusion of a recipient in a claims tree committed at settlement time, without revealing *which* claim is being redeemed. This is the decoupling that turns computational privacy (traffic-dependent in Tornado-class systems and recipient-linkable in Jigsaw-class systems) into traffic-independent cryptographic privacy.
+
+2. **Dual-CA compliance layer.** Jigsaw, like Tornado Cash, Railgun, Renegade, and Penumbra, has no compliance or accountability layer. zkScatter's Dual-CA identity model (§4.2, §8) is intentional and is what the present disclosure claims as the mechanism that lets privacy and regulator cooperability co-exist without forcing users to surrender either.
+
+3. **Multi-recipient claim distribution.** Jigsaw settles into a single shielded output per party. zkScatter's settle circuit authorises a *set* of claims per side (bounded by an implementation parameter N, set to 16 in the reference circuit; see §13 for the parameterisation note), enabling atomic fan-out to multiple recipients in a single trade. This is explicitly used in the reference scenario of §11 (3 maker claims + 1 taker claim).
+
+4. **Federated relayer accountability.** Jigsaw does not specify a relayer network. zkScatter's federated relayer model with public identity (§4.5) and record-only dispute registry (§9.6) is a co-designed component of the same disclosure: it is what turns the privacy architecture into a system that a regulator can reason about.
+
+The present disclosure is filed in full acknowledgement of Jigsaw as the closest prior art. Claims covering point 1 (trade-and-claim dissociation via Layer 3) and point 2 (Dual-CA coupling) are written narrowly enough to be patentable over Jigsaw, and point 3 and point 4 are not themselves claim-narrowing elements but are listed here as contextual differences.
 
 ---
 
@@ -540,6 +557,21 @@ Groth16 verification cost is constant (~200K gas) regardless of circuit size, du
 - **Recipient address revelation at claim time**: The claim transaction reveals the recipient address and amount. Fresh single-use addresses mitigate real-world identity exposure.
 - **Key management**: Users must manage EdDSA keys in addition to Ethereum keys. Deterministic derivation from MetaMask signatures simplifies this but adds UX complexity.
 
+### Implementation parameters (not claim-limiting)
+
+The following numerical values appear in the reference implementation and throughout this disclosure. They are **implementation parameters** and are not intended to limit the scope of the disclosed invention. A practitioner of ordinary skill in the art may vary any of them without departing from the inventive concept; the specific values below are chosen to balance circuit size, proof-generation time, and typical usage patterns observed in the reference scenario (§11). Any variation that preserves the inventive architecture (Layer 1/2/3 separation, dual-CA identity, ZK commitment pools, nullifier-based double-spend prevention) falls within the disclosure and does not require a continuation filing.
+
+| Parameter | Reference value | Where set | Variation without inventive change |
+|---|---|---|---|
+| **N** — maximum claims per side in a single settlement | **16** | `settle.circom` / `authorize.circom` — `maxClaimsPerSide = 16`, claims tree depth `ceil(log2(N)) = 4` | Any power-of-two `N ∈ {2, 4, 8, 16, 32, 64, …}` is valid. Changing `N` requires regenerating the circuit and re-running the trusted setup ceremony, but introduces no new inventive step. `N = 16` is chosen because the reference scenario in §11 (3 maker + 1 taker claims = 4 total per side) comfortably fits under it and the resulting claims tree depth (4) is negligible relative to the 30K-constraint total. A future production deployment targeting batch-distribution use cases may select `N = 32` or `N = 64`; this disclosure is intended to cover all such variations. |
+| **D** — commitment Merkle tree depth | **20** (capacity 2²⁰ ≈ 1M commitments) | `CommitmentPool` / `settle.circom` — `commitTreeDepth = 20` | Any `D ∈ {16, 20, 24, 28, 32}` is valid, trading off tree capacity against per-insertion constraint cost (≈ D Poseidon hashes per insert). `D = 20` is chosen to support ~1M lifetime commitments per pool, which matches Tornado Cash's reference depth and fits comfortably in the 30K-constraint budget. |
+| **ROOT_HISTORY_SIZE** — number of historical roots retained in the on-chain ring buffer | **30** (reference) | `IncrementalMerkleTree.sol` constructor argument | Any positive integer is valid. Larger values lengthen the asynchronous matching window (§circuit-split); smaller values save an equivalent number of storage slots. The specific value is a deployment-time choice. |
+| **Amount range check** — bit-width of trade amount signals | **126 bits** | `settle.circom` / `authorize.circom` — `Num2Bits(126)` on `sell/buy amounts` | **This value is NOT freely variable** — see `docs/circuit-split/bit-width-audit.md`. 126 bits is the maximum width at which the 252-bit price product fits the `LessEqThan(252)` internal representation without wrapping the BN254 scalar field. Narrower values (e.g., 125 bits) are safe; wider values (127+) are unsafe. This is a correctness constraint, not a parameter choice. |
+| **Fee bps precision** | **16 bits** (max 65535, 100% = 10000) | `settle.circom` — `Num2Bits(16)` on `makerFee`, `takerFee` | Any width `≤ 126` is safe (it leaves ample headroom when multiplied against 126-bit amounts). 16 bits is chosen because it matches the conventional basis-point encoding used in DeFi fee schedules. |
+| **REVEAL_WINDOW** — fair-exchange reveal deadline | **5 minutes** | `relayer-protocol/design.md` §5.4, §13 | Any positive duration is valid. Must match `DisputeRegistry.REVEAL_WINDOW`. Shorter windows improve throughput but tighten the timing budget for relayers; longer windows are more forgiving of network jitter. |
+
+**Claim of scope**: the disclosed invention is defined by the combination of the architectural elements described in §3-§9 (three-layer separation, dual-CA identity, ZK commitment pools, nullifier double-spend prevention, federated relayer accountability). The numerical values in the table above are provided to enable reproducibility of the reference implementation, and embodiments using different values for any row labelled "freely variable" fall within the scope of the disclosure. Only the row marked "NOT freely variable" (the 126-bit amount range check) is a correctness boundary rather than a parameter choice, and even that is a consequence of the target elliptic curve (BN254), not of the inventive concept itself — implementations targeting a different curve (BLS12-381, BW6-761, etc.) would have a different correctness boundary.
+
 ### Future Work
 
 - Formal verification of Circom circuits and Solidity contracts
@@ -611,3 +643,5 @@ Groth16 verification cost is constant (~200K gas) regardless of circuit size, du
 [21] Etherscan. "Transaction 0x4461cc699fb0b82e — Gas Price 0.357707362 Gwei." https://etherscan.io/tx/0x4461cc699fb0b82e14e0572e44dbd9390c440659dd693d249e268484b2ba9a0b, April 2025.
 
 [22] Babel, K. et al. "Clockwork Finance: Automated Analysis of Economic Security." IEEE S&P, 2023.
+
+[23] "Jigsaw: A Privacy-Preserving Trade Primitive." Cryptology ePrint Archive, Report 2025/1147, 2025. https://eprint.iacr.org/2025/1147 *(Identified as the closest prior art during the prior-art search for this disclosure; see §10 "Closest Prior Art: Jigsaw [23]". Full author list and final title to be confirmed against the ePrint record before IDS submission.)*
