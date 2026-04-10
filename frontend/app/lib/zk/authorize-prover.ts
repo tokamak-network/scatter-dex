@@ -338,11 +338,22 @@ export async function generateAuthorizeProof(
     claimCount: input.claims.length.toString(),
   };
 
-  // ── 7. Generate Groth16 proof ──
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    WASM_PATH,
-    ZKEY_PATH,
+  // ── 7. Generate Groth16 proof (instrumented) ──
+  const t0 = performance.now();
+
+  // Step A: witness calculation (sequential — circuit gate evaluation)
+  const wtns = { type: "mem" as const };
+  await snarkjs.wtns.calculate(circuitInput, WASM_PATH, wtns);
+  const t1 = performance.now();
+
+  // Step B: Groth16 prove (MSM + FFT — internally multi-threaded by snarkjs)
+  const { proof, publicSignals } = await snarkjs.groth16.prove(ZKEY_PATH, wtns);
+  const t2 = performance.now();
+
+  console.log(
+    `[authorize-prover] ⏱ witness: ${(t1 - t0).toFixed(0)}ms | prove: ${(t2 - t1).toFixed(0)}ms | total: ${(t2 - t0).toFixed(0)}ms` +
+    ` | env: ${typeof Worker !== "undefined" ? "Worker available" : "no Worker"}` +
+    ` | hardwareConcurrency: ${typeof navigator !== "undefined" ? navigator.hardwareConcurrency : "N/A"}`,
   );
 
   return {

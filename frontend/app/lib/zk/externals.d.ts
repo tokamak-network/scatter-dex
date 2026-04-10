@@ -11,10 +11,21 @@ declare module "snarkjs" {
       wasmPath: string,
       zkeyPath: string,
     ): Promise<{ proof: any; publicSignals: string[] }>;
+    prove(
+      zkeyPath: string,
+      wtns: { type: "mem" },
+    ): Promise<{ proof: any; publicSignals: string[] }>;
     verify(
       vkey: any,
       publicSignals: string[],
       proof: any,
     ): Promise<boolean>;
+  };
+  export const wtns: {
+    calculate(
+      input: Record<string, string | string[]>,
+      wasmPath: string,
+      wtns: { type: "mem" },
+    ): Promise<void>;
   };
 }
