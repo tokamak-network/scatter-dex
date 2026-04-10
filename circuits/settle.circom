@@ -319,12 +319,14 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // wrap around the field — making the LessEqThan(252) comparison below
     // give the wrong answer for adversarially-chosen amounts.
     //
-    // Reducing to 126 bits caps each product at 2^252, which matches the
+    // Reducing to 126 bits caps each amount at 2^126 - 1, so each product
+    // is bounded by (2^126 - 1)^2 ≈ 2^252 - 2^127, which matches the
     // `LessEqThan(252)` internal representation exactly. Note that the
     // LessEqThan(252) template internally computes
     //     n2b.in = in[0] + 2^252 - in[1]
-    // and calls Num2Bits(253) on it. With our products ∈ [0, 2^252), the
-    // worst-case internal value is 2·2^252 - 2 = 2^253 - 2, which fits in
+    // and calls Num2Bits(253) on it. With both products bounded by
+    // (2^126 - 1)^2, the worst case (in[0] ≈ 2^252 - 2^127, in[1] = 0)
+    // gives n2b.in ≈ 2·2^252 - 2^127 - 1 ≈ 2^253 - 2^127, which fits in
     // 253 bits and is inside the field modulus by log2(r/2^253) ≈ 0.86
     // bits. This is the tightest place in the circuit.
     //
@@ -336,8 +338,10 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //     factor (e.g., a relative haircut or a second-order fee term).
     //     That would push the chain past 253 bits.
     //  3. Do not add makerProduct to any value that could approach 2^252.
-    //     Addition alone is fine (254 bits max, still inside the field),
-    //     but any subsequent LessEqThan(252) on the sum would fail.
+    //     Addition alone keeps the sum < 2^253 (so at most 253 bits and
+    //     still inside the field), but any subsequent LessEqThan(252) on
+    //     the sum would fail because its internal Num2Bits(253) would see
+    //     a value ≥ 2^253.
     //  4. Fees are on a disjoint multiplication path
     //     (sellAmount × feeBps ≤ 142 bits) and are comfortably safe.
     //     Do not merge the fee computation with the price computation.
