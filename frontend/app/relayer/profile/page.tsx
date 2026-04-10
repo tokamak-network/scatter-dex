@@ -354,7 +354,9 @@ function RelayerProfileContent() {
             <div className="bg-surface-container rounded-lg px-4 py-3">
               <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Uptime</div>
               <div className="text-xl font-bold text-on-surface mt-1">
-                {stats.uptimeSince ? formatDuration(Date.now() - stats.uptimeSince) : "—"}
+                {stats.uptimeSince != null && Date.now() - stats.uptimeSince >= 0
+                  ? formatDuration(Date.now() - stats.uptimeSince)
+                  : "—"}
               </div>
             </div>
           </div>

@@ -77,7 +77,7 @@ export class PrivateOrderDB {
   private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsAvgSettleTime: ReturnType<Database.Database["prepare"]>;
-  private statsTotalFeeVolume: ReturnType<Database.Database["prepare"]>;
+  private statsSettledVolume: ReturnType<Database.Database["prepare"]>;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
 
@@ -152,8 +152,9 @@ export class PrivateOrderDB {
     this.statsAvgSettleTime = this.db.prepare(
       "SELECT AVG(settled_at - submitted_at) as avg_ms FROM private_orders WHERE status = 'settled' AND settled_at IS NOT NULL",
     );
-    this.statsTotalFeeVolume = this.db.prepare(
-      "SELECT sell_token, sell_amount FROM private_orders WHERE status = 'settled'",
+    this.statsSettledVolume = this.db.prepare(
+      `SELECT sell_token, COUNT(*) as count, GROUP_CONCAT(sell_amount) as amounts
+       FROM private_orders WHERE status = 'settled' GROUP BY sell_token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
@@ -444,7 +445,8 @@ export class PrivateOrderDB {
     const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
-    const startedAt = this.getMeta("started_at");
+    const startedAtRaw = this.getMeta("started_at");
+    const startedAt = startedAtRaw !== null ? Number(startedAtRaw) : NaN;
 
     return {
       totalOrders: total,
@@ -454,25 +456,22 @@ export class PrivateOrderDB {
       totalTradeOffers: tradeTotal,
       settledTradeOffers: tradeSettled,
       avgSettleTimeMs,
-      uptimeSince: startedAt ? Number(startedAt) : null,
+      uptimeSince: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
     };
   }
 
-  /** Get per-token settled volume breakdown (BigInt-safe). */
+  /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
-    const rows = this.statsTotalFeeVolume.all() as Array<{ sell_token: string; sell_amount: string }>;
-    const map = new Map<string, { count: number; total: bigint }>();
-    for (const r of rows) {
-      const entry = map.get(r.sell_token) ?? { count: 0, total: 0n };
-      entry.count++;
-      entry.total += BigInt(r.sell_amount);
-      map.set(r.sell_token, entry);
-    }
-    return [...map.entries()].map(([token, v]) => ({
-      sellToken: token,
-      count: v.count,
-      totalVolume: v.total.toString(),
-    }));
+    const rows = this.statsSettledVolume.all() as Array<{ sell_token: string; count: number; amounts: string }>;
+    return rows.map((r) => {
+      const total = r.amounts.split(",").reduce((sum, a) => sum + BigInt(a), 0n);
+      const tokenBig = BigInt(r.sell_token);
+      return {
+        sellToken: "0x" + tokenBig.toString(16).padStart(40, "0"),
+        count: r.count,
+        totalVolume: total.toString(),
+      };
+    });
   }
 
   setMeta(key: string, value: string): void {
