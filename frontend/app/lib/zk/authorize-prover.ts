@@ -141,8 +141,8 @@ export interface AuthorizeProofResult {
  * of the monolithic settle circuit.
  *
  * This function runs on the main thread. For UI-blocking avoidance,
- * wrap the call in a Web Worker (see follow-up task 1-C in
- * project_next_tasks.md).
+ * call it via the existing Web Worker helper
+ * (`authorize-worker-client.ts` / `authorize-worker.ts`).
  */
 export async function generateAuthorizeProof(
   input: AuthorizeProofInput,
@@ -174,6 +174,11 @@ export async function generateAuthorizeProof(
     ({ root: commitmentRoot, pathElements, pathIndices } = input.merkleProof);
   } else if (input.allLeaves) {
     // Slow path: rebuild the entire tree from all leaves.
+    if (input.leafIndex < 0 || input.leafIndex >= input.allLeaves.length) {
+      throw new Error(
+        `Invalid leafIndex ${input.leafIndex} for ${input.allLeaves.length} leaves`
+      );
+    }
     if (input.allLeaves[input.leafIndex] !== commitment) {
       throw new Error(
         "Commitment does not match the leaf at the given index. " +

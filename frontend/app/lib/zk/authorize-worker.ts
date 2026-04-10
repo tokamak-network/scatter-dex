@@ -9,7 +9,7 @@
  *   import { generateAuthorizeProofInWorker } from "./authorize-worker-client";
  *   const result = await generateAuthorizeProofInWorker(input);
  *
- * The Worker serializes bigints as hex strings across the postMessage
+ * The Worker serializes bigints as decimal strings across the postMessage
  * boundary (bigints are not structuredClone-safe).
  */
 

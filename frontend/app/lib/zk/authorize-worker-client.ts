@@ -10,6 +10,11 @@
  * on the hosting environment), the function falls back to running the
  * prover on the main thread (blocking but functional).
  *
+ * Concurrency: the Worker is single-threaded, so concurrent calls are
+ * serialized via an internal queue — the second call waits for the first
+ * to finish. This prevents the race condition where multiple `onmessage`
+ * listeners resolve with the same payload.
+ *
  * bigint serialization: postMessage does not support bigint natively
  * (not structuredClone-safe), so all bigints are converted to decimal
  * strings before posting and back to bigint on receipt.
@@ -54,16 +59,44 @@ export function terminateAuthorizeWorker(): void {
   worker = null;
 }
 
+// ─── Concurrency: serialize calls via a simple queue ─────────────
+// The Worker is single-threaded and can only process one proof at a
+// time. If generateAuthorizeProofInWorker is called while a proof is
+// already in-flight, the second call waits until the first finishes.
+// This prevents the race condition where multiple `onmessage` listeners
+// resolve with the same payload (gemini review #3061999359, copilot #3062004838).
+let inFlight: Promise<AuthorizeProofResult> | null = null;
+
 /**
  * Generate an authorize.circom proof, offloaded to a Web Worker if
  * available. Falls back to main-thread proving if the Worker cannot
  * be created.
+ *
+ * Calls are serialized: if a proof is already in-flight, this call
+ * waits for it to complete before starting.
  *
  * @returns The same `AuthorizeProofResult` as `generateAuthorizeProof`.
  * @throws If proof generation fails (invalid inputs, circuit constraints
  *         not satisfied, etc.).
  */
 export async function generateAuthorizeProofInWorker(
+  input: AuthorizeProofInput,
+): Promise<AuthorizeProofResult> {
+  // Wait for any in-flight proof to finish (serialization guard)
+  if (inFlight) {
+    try { await inFlight; } catch { /* ignore previous errors */ }
+  }
+
+  const promise = doGenerate(input);
+  inFlight = promise;
+  try {
+    return await promise;
+  } finally {
+    if (inFlight === promise) inFlight = null;
+  }
+}
+
+async function doGenerate(
   input: AuthorizeProofInput,
 ): Promise<AuthorizeProofResult> {
   const w = getWorker();
@@ -90,6 +123,18 @@ export async function generateAuthorizeProofInWorker(
     const onError = (err: ErrorEvent) => {
       w.removeEventListener("message", onMessage);
       w.removeEventListener("error", onError);
+
+      // Worker-level crash (e.g., unsupported feature, OOM, module load
+      // failure). Terminate the broken worker and fall back to main-thread
+      // proving for all subsequent calls (copilot #3062004871).
+      console.warn(
+        "[authorize-worker-client] Worker error — terminating and falling back.",
+        err.message,
+      );
+      worker?.terminate();
+      worker = null;
+      workerFailed = true;
+
       reject(new Error(`Worker error: ${err.message}`));
     };
 
