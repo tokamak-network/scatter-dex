@@ -485,6 +485,7 @@ export default function PrivateOrderPage() {
         } : null,
         claims: claimFiles,
         relayerUrl,
+        relayerAddress: selectedZkRelayer.address,
         note: "Each entry can be loaded individually in Private Claim. Keep this file secret.",
         createdAt: new Date().toISOString(),
       };
