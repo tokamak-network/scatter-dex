@@ -23,6 +23,7 @@ const MAX_ORDERBOOK_SIZE = 10_000;
 
 async function main() {
   const db = new PrivateOrderDB();
+  db.setMeta("started_at", Date.now().toString());
   const orderbook = new PrivateOrderbook(MAX_ORDERBOOK_SIZE);
   orderbook.setDB(db);
   const restored = orderbook.loadFromDB();

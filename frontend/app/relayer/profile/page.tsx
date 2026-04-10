@@ -4,14 +4,14 @@ import { Suspense, useState, useEffect, useCallback, useMemo, type ElementType }
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import {
-  User, Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity,
+  User, Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity, Timer,
   Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { shortenAddress, formatBond } from "../../lib/utils";
+import { shortenAddress, formatBond, formatDuration } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 
 interface Badge {
@@ -30,6 +30,7 @@ const BADGES: Badge[] = [
   { id: "high-bond",     label: "High Bond",      description: "Staked bond exceeds 1 ETH", icon: Award, color: "text-amber-400", bgColor: "bg-amber-500/15", borderColor: "border-amber-500/20" },
   { id: "veteran",       label: "Veteran",         description: "Registered for 30+ days", icon: Clock, color: "text-blue-400", bgColor: "bg-blue-500/15", borderColor: "border-blue-500/20" },
   { id: "reliable",      label: "Reliable",        description: "95%+ settlement success rate", icon: Activity, color: "text-emerald-400", bgColor: "bg-emerald-500/15", borderColor: "border-emerald-500/20" },
+  { id: "fast-settler",  label: "Fast Settler",    description: "Average settlement time under 30s", icon: Timer, color: "text-yellow-400", bgColor: "bg-yellow-500/15", borderColor: "border-yellow-500/20" },
   { id: "high-volume",   label: "High Volume",     description: "50+ orders settled", icon: Zap, color: "text-orange-400", bgColor: "bg-orange-500/15", borderColor: "border-orange-500/20" },
   { id: "cross-relayer", label: "Cross-Relayer",   description: "Participates in P2P cross-relayer matching", icon: Globe, color: "text-cyan-400", bgColor: "bg-cyan-500/15", borderColor: "border-cyan-500/20" },
   { id: "online",        label: "Online",          description: "Currently reachable and serving orders", icon: Circle, color: "text-primary", bgColor: "bg-primary/15", borderColor: "border-primary/20" },
@@ -43,6 +44,8 @@ interface RelayerStats {
   totalTradeOffers: number;
   settledTradeOffers: number;
   pendingOrders: number;
+  avgSettleTimeMs: number | null;
+  uptimeSince: number | null;
 }
 
 interface SettlementEvent {
@@ -83,6 +86,7 @@ function computeBadges(relayer: RelayerInfo, stats: RelayerStats | null): string
 
   if (stats) {
     if (stats.successRate >= 95 && stats.totalOrders >= 10) ids.push("reliable");
+    if (stats.avgSettleTimeMs != null && stats.avgSettleTimeMs <= 30_000 && stats.settledOrders >= 5) ids.push("fast-settler");
     if (stats.settledOrders >= 50) ids.push("high-volume");
     if (stats.crossRelayerSettled > 0) ids.push("cross-relayer");
   }
@@ -333,6 +337,25 @@ function RelayerProfileContent() {
             <div className="bg-surface-container rounded-lg px-4 py-3">
               <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Cross-Relayer</div>
               <div className="text-xl font-bold text-cyan-400 mt-1">{stats.crossRelayerSettled}</div>
+            </div>
+            <div className="bg-surface-container rounded-lg px-4 py-3">
+              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Avg Settle Time</div>
+              <div className="text-xl font-bold text-on-surface mt-1">
+                {stats.avgSettleTimeMs != null ? formatDuration(stats.avgSettleTimeMs) : "—"}
+              </div>
+            </div>
+            <div className="bg-surface-container rounded-lg px-4 py-3">
+              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Trade Offers</div>
+              <div className="text-xl font-bold text-on-surface mt-1">{stats.totalTradeOffers}</div>
+              {stats.settledTradeOffers > 0 && (
+                <div className="text-[10px] text-on-surface-variant/40 mt-0.5">{stats.settledTradeOffers} settled</div>
+              )}
+            </div>
+            <div className="bg-surface-container rounded-lg px-4 py-3">
+              <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Uptime</div>
+              <div className="text-xl font-bold text-on-surface mt-1">
+                {stats.uptimeSince ? formatDuration(Date.now() - stats.uptimeSince) : "—"}
+              </div>
             </div>
           </div>
         ) : (

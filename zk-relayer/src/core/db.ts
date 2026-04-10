@@ -76,6 +76,10 @@ export class PrivateOrderDB {
   private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
   private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
+  private statsAvgSettleTime: ReturnType<Database.Database["prepare"]>;
+  private statsTotalFeeVolume: ReturnType<Database.Database["prepare"]>;
+  private upsertMeta: ReturnType<Database.Database["prepare"]>;
+  private selectMeta: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     this.db = new Database(dbPath);
@@ -99,7 +103,8 @@ export class PrivateOrderDB {
     `);
     this.deleteClaims = this.db.prepare(`DELETE FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce`);
     this.updateStatusStmt = this.db.prepare(`
-      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx), cross_relayer = COALESCE(@crossRelayer, cross_relayer)
+      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx), cross_relayer = COALESCE(@crossRelayer, cross_relayer),
+        settled_at = CASE WHEN @status = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
       WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce
     `);
     this.selectPending = this.db.prepare(`
@@ -144,6 +149,16 @@ export class PrivateOrderDB {
     this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1");
     this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
     this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
+    this.statsAvgSettleTime = this.db.prepare(
+      "SELECT AVG(settled_at - submitted_at) as avg_ms FROM private_orders WHERE status = 'settled' AND settled_at IS NOT NULL",
+    );
+    this.statsTotalFeeVolume = this.db.prepare(
+      "SELECT sell_token, sell_amount FROM private_orders WHERE status = 'settled'",
+    );
+    this.upsertMeta = this.db.prepare(
+      "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
+    );
+    this.selectMeta = this.db.prepare("SELECT value FROM relayer_meta WHERE key = @key");
   }
 
   private migrate(): void {
@@ -220,6 +235,19 @@ export class PrivateOrderDB {
     try {
       this.db.exec(`ALTER TABLE private_orders ADD COLUMN cross_relayer INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
+
+    // Migration: add settled_at column for settlement time tracking
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN settled_at INTEGER`);
+    } catch { /* column already exists */ }
+
+    // Migration: relayer_meta key-value store (uptime tracking, etc.)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS relayer_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
   }
 
   save(stored: StoredPrivateOrder): void {
@@ -275,6 +303,7 @@ export class PrivateOrderDB {
       status,
       settleTx: settleTxHash ?? null,
       crossRelayer: crossRelayer ? 1 : 0,
+      settledAt: status === "settled" ? Date.now() : null,
     });
   }
 
@@ -397,12 +426,25 @@ export class PrivateOrderDB {
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
-  getRelayerStats(): Record<string, number> {
+  getRelayerStats(): {
+    totalOrders: number;
+    settledOrders: number;
+    successRate: number;
+    crossRelayerSettled: number;
+    totalTradeOffers: number;
+    settledTradeOffers: number;
+    avgSettleTimeMs: number | null;
+    uptimeSince: number | null;
+  } {
     const total = (this.statsTotalOrders.get() as { count: number }).count;
     const settled = (this.statsSettledOrders.get() as { count: number }).count;
     const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
     const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
     const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
+    const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
+    const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
+
+    const startedAt = this.getMeta("started_at");
 
     return {
       totalOrders: total,
@@ -411,7 +453,35 @@ export class PrivateOrderDB {
       crossRelayerSettled: crossRelayer,
       totalTradeOffers: tradeTotal,
       settledTradeOffers: tradeSettled,
+      avgSettleTimeMs,
+      uptimeSince: startedAt ? Number(startedAt) : null,
     };
+  }
+
+  /** Get per-token settled volume breakdown (BigInt-safe). */
+  getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
+    const rows = this.statsTotalFeeVolume.all() as Array<{ sell_token: string; sell_amount: string }>;
+    const map = new Map<string, { count: number; total: bigint }>();
+    for (const r of rows) {
+      const entry = map.get(r.sell_token) ?? { count: 0, total: 0n };
+      entry.count++;
+      entry.total += BigInt(r.sell_amount);
+      map.set(r.sell_token, entry);
+    }
+    return [...map.entries()].map(([token, v]) => ({
+      sellToken: token,
+      count: v.count,
+      totalVolume: v.total.toString(),
+    }));
+  }
+
+  setMeta(key: string, value: string): void {
+    this.upsertMeta.run({ key, value });
+  }
+
+  getMeta(key: string): string | null {
+    const row = this.selectMeta.get({ key }) as { value: string } | undefined;
+    return row?.value ?? null;
   }
 
   close(): void {

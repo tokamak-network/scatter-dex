@@ -10,20 +10,12 @@ import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
-import { shortenAddress, formatBond } from "../lib/utils";
+import { shortenAddress, formatBond, timeAgo } from "../lib/utils";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
 
 function feeBps(fee: number): string {
   return `${(fee / 100).toFixed(2)}%`;
-}
-
-function timeAgo(timestamp: number): string {
-  const diff = Math.floor(Date.now() / 1000) - timestamp;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────

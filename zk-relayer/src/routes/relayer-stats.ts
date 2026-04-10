@@ -22,10 +22,12 @@ export function createRelayerStatsRoutes(
   router.get("/stats", ...limiter, (_req, res) => {
     try {
       const stats = db.getRelayerStats();
+      const volume = db.getSettledVolume();
       res.json({
         address: submitter.getAddress(),
         ...stats,
         pendingOrders: orderbook.pendingOrderCount,
+        settledVolume: volume,
       });
     } catch (err) {
       console.error("[relayer-stats] Failed to load stats:", err instanceof Error ? err.message : err);
