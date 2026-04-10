@@ -16,6 +16,8 @@ import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
 import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
+import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
+import { createAuthorizeOrderRoutes } from "./routes/authorize-orders.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -113,6 +115,12 @@ async function main() {
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
   app.use("/api/relayer", createRelayerStatsRoutes(db, orderbook, submitter, readLimiter));
+
+  // Half-proof (trustless) order routes — settleAuth path
+  const authSubmitter = new AuthorizeSubmitter();
+  app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
+    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter,
+  ));
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(
