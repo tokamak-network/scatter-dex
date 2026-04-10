@@ -483,12 +483,31 @@ export default function PrivateOrderPage() {
       });
 
       // Submit proof to relayer (no secrets transmitted)
+      // Map snarkjs string[] to named public signals (circom 2: output first)
+      const ps = proofResult.publicSignals;
+      const namedSignals = {
+        pubKeyBind: ps[0],      // [0] circuit output
+        commitmentRoot: ps[1],  // [1..14] public inputs
+        nullifier: ps[2],
+        nonceNullifier: ps[3],
+        newCommitment: ps[4],
+        sellToken: ps[5],
+        buyToken: ps[6],
+        sellAmount: ps[7],
+        buyAmount: ps[8],
+        maxFee: ps[9],
+        expiry: ps[10],
+        claimsRoot: ps[11],
+        totalLocked: ps[12],
+        relayer: ps[13],
+        orderHash: ps[14],
+      };
       const res = await fetch(`${relayerUrl}/api/authorize-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           proof: proofResult.proof,
-          publicSignals: proofResult.publicSignals,
+          publicSignals: namedSignals,
           publicSignalsArray: proofResult.publicSignals,
           // pubKey for compliance logging (relayer verifies via pubKeyBind)
           pubKeyAx: kp.publicKey[0].toString(),

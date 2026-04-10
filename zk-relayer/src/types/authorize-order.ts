@@ -198,7 +198,7 @@ export function validateAuthorizeOrder(
   // Consistency: publicSignalsArray must match named publicSignals
   if (order.publicSignalsArray) {
     const namedValues = requiredFields.map((f) => ps[f]);
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < requiredFields.length; i++) {
       if (order.publicSignalsArray[i] !== namedValues[i]) {
         return `publicSignalsArray[${i}] (${requiredFields[i]}) does not match named publicSignals`;
       }

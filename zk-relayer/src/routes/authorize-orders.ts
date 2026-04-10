@@ -71,23 +71,18 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 4b. Verify pubKey via pubKeyBind (compliance) ──
+      // ── 4b. Verify pubKey via pubKeyBind (compliance — mandatory) ──
       const pubKeyAx = body.pubKeyAx as string | undefined;
       const pubKeyAy = body.pubKeyAy as string | undefined;
-      if (pubKeyAx && pubKeyAy && order.publicSignals.pubKeyBind) {
-        try {
-          const { buildPoseidon } = await import("circomlibjs");
-          const poseidon = await buildPoseidon();
-          const computed = poseidon.F.toObject(
-            poseidon([BigInt(pubKeyAx), BigInt(pubKeyAy), BigInt(order.publicSignals.nullifier)])
-          );
-          if (computed.toString() !== order.publicSignals.pubKeyBind) {
-            res.status(400).json({ error: "pubKey does not match pubKeyBind in proof" });
-            return;
-          }
-        } catch (e) {
-          console.warn("[authorize-orders] pubKeyBind verification failed:", e);
-        }
+      if (!pubKeyAx || !pubKeyAy) {
+        res.status(400).json({ error: "pubKeyAx and pubKeyAy are required for compliance" });
+        return;
+      }
+      const { poseidonHash: poseidonHashFn } = await import("../core/zk-prover.js");
+      const computed = await poseidonHashFn([BigInt(pubKeyAx), BigInt(pubKeyAy), BigInt(order.publicSignals.nullifier)]);
+      if (computed.toString() !== order.publicSignals.pubKeyBind) {
+        res.status(400).json({ error: "pubKey does not match pubKeyBind in proof" });
+        return;
       }
 
       // ── 5. Store the order ──
