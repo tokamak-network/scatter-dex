@@ -44,20 +44,53 @@ const SETTLE_AUTH_ABI = [
   ) p) external`,
 ];
 
+// cancelPrivate ABI — matches the CancelParams struct in PrivateSettlement.sol
+const CANCEL_PRIVATE_ABI = [
+  `function cancelPrivate(tuple(
+    uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
+    uint256 commitmentRoot,
+    bytes32 oldNullifier,
+    bytes32 oldNonceNullifier,
+    bytes32 newCommitment
+  ) p) external`,
+];
+
+// PrivateCancel event ABI — for listening to cancel events
+const PRIVATE_CANCEL_EVENT_ABI = [
+  `event PrivateCancel(bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer)`,
+];
+
 const FEE_BPS_DENOMINATOR = 10_000n;
+
+/** Callback invoked when a PrivateCancel event is detected on-chain. */
+export type CancelEventCallback = (
+  escrowNullifier: string,
+  nonceNullifier: string,
+  newCommitment: string,
+  relayer: string,
+) => void;
+
+/** Callback invoked when a PrivateCancel event is detected on-chain. */
+export type CancelEventCallback = (
+  escrowNullifier: string,
+  nonceNullifier: string,
+  newCommitment: string,
+  relayer: string,
+) => void;
 
 export class AuthorizeSubmitter {
   private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private txMutex: Promise<void> = Promise.resolve();
+  private cancelListeners: CancelEventCallback[] = [];
 
   constructor() {
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
-      SETTLE_AUTH_ABI,
+      [...SETTLE_AUTH_ABI, ...PRIVATE_CANCEL_EVENT_ABI],
       this.wallet,
     );
   }
@@ -65,6 +98,46 @@ export class AuthorizeSubmitter {
   /** Get the relayer's Ethereum address (for proof-binding validation). */
   getAddress(): string {
     return this.wallet.address;
+  }
+
+  // ─── Cancel event listener ──────────────────────────────────────
+  //
+  // The user submits cancelPrivate() directly on-chain (the relayer
+  // does NOT submit cancel — no fee incentive to do so). The relayer
+  // listens for PrivateCancel events to detect cancelled orders and
+  // remove them from the in-memory orderbook.
+
+  /**
+   * Register a callback to be invoked when a PrivateCancel event is
+   * detected on-chain. The callback receives the escrow nullifier,
+   * nonce nullifier, new commitment, and submitter address.
+   */
+  onCancel(callback: CancelEventCallback): void {
+    this.cancelListeners.push(callback);
+  }
+
+  /**
+   * Start listening for PrivateCancel events on-chain.
+   * Call this once at startup from index.ts.
+   */
+  startCancelEventListener(): void {
+    this.settlement.on(
+      "PrivateCancel",
+      (escrowNullifier: string, nonceNullifier: string, newCommitment: string, relayer: string) => {
+        console.log(
+          `[authorize-submitter] PrivateCancel detected: ` +
+          `escrow=${escrowNullifier.slice(0, 18)}... nonce=${nonceNullifier.slice(0, 18)}...`,
+        );
+        for (const listener of this.cancelListeners) {
+          try {
+            listener(escrowNullifier, nonceNullifier, newCommitment, relayer);
+          } catch (err) {
+            console.error("[authorize-submitter] Cancel listener error:", err);
+          }
+        }
+      },
+    );
+    console.log("[authorize-submitter] Listening for PrivateCancel events");
   }
 
   /**
