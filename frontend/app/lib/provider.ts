@@ -40,6 +40,18 @@ export function getEarliestBlock(): number {
   return 0;
 }
 
+/**
+ * Get a safe fromBlock for event queries, falling back to latest-50k
+ * when no deploy block is configured (avoids full-chain scan on public RPCs).
+ */
+export async function getSafeFromBlock(provider?: ethers.JsonRpcProvider): Promise<number> {
+  const fromBlock = getEarliestBlock();
+  if (fromBlock > 0) return fromBlock;
+  const p = provider ?? getReadProvider();
+  const latest = await p.getBlockNumber();
+  return Math.max(0, latest - 50_000);
+}
+
 /** Cache the earliest known block after first successful deposit tx. */
 export function cacheEarliestBlock(block: number): void {
   if (typeof window === "undefined" || !Number.isFinite(block) || block <= 0) return;

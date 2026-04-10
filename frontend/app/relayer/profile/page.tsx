@@ -9,20 +9,19 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
-import { getReadProvider, getEarliestBlock } from "../../lib/provider";
+import { getSafeFromBlock } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { shortenAddress } from "../../lib/utils";
-
-// ─── Badge definitions ──────────────────────────────────────
+import { shortenAddress, formatBond } from "../../lib/utils";
+import { PRIVATE_SETTLEMENT_ABI, PRIVATE_SETTLEMENT_IFACE } from "../../lib/contracts";
 
 interface Badge {
   id: string;
   label: string;
   description: string;
   icon: React.ElementType;
-  color: string;       // tailwind text color
-  bgColor: string;     // tailwind bg color
-  borderColor: string; // tailwind border color
+  color: string;
+  bgColor: string;
+  borderColor: string;
 }
 
 const BADGES: Badge[] = [
@@ -51,15 +50,28 @@ interface RelayerStats {
 interface SettlementEvent {
   txHash: string;
   blockNumber: number;
-  timestamp?: number;
   feeTokenMaker: bigint;
   feeTokenTaker: bigint;
 }
 
-function computeBadges(
-  relayer: RelayerInfo,
-  stats: RelayerStats | null,
-): string[] {
+function BadgeChip({ badge, earned }: { badge: Badge; earned: boolean }) {
+  const Icon = badge.icon;
+  return (
+    <div
+      title={badge.description}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+        earned
+          ? `${badge.bgColor} ${badge.color} ${badge.borderColor}`
+          : "bg-surface-container text-on-surface-variant/20 border-outline-variant/5"
+      }`}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {badge.label}
+    </div>
+  );
+}
+
+function computeBadges(relayer: RelayerInfo, stats: RelayerStats | null): string[] {
   const ids: string[] = [];
 
   if (relayer.online) ids.push("online");
@@ -77,15 +89,7 @@ function computeBadges(
     if (stats.crossRelayerSettled > 0) ids.push("cross-relayer");
   }
 
-  // "verified" badge requires checking IdentityGate — skipped for now
-  // as it needs an additional contract call. Can be added later.
-
   return ids;
-}
-
-function formatBond(bond: bigint): string {
-  const val = Number(ethers.formatEther(bond));
-  return val % 1 === 0 ? `${val} ETH` : `${val.toFixed(4)} ETH`;
 }
 
 function formatDate(ts: number): string {
@@ -93,8 +97,6 @@ function formatDate(ts: number): string {
     year: "numeric", month: "short", day: "numeric",
   });
 }
-
-// ─── Tier calculation ───────────────────────────────────────
 
 type Tier = "Bronze" | "Silver" | "Gold" | "Platinum";
 
@@ -105,8 +107,6 @@ function getTier(stats: RelayerStats | null): { tier: Tier; color: string } {
   if (stats.successRate >= 85 && stats.settledOrders >= 10) return { tier: "Silver", color: "text-gray-300" };
   return { tier: "Bronze", color: "text-amber-600" };
 }
-
-// ─── Component ──────────────────────────────────────────────
 
 export default function RelayerProfilePage() {
   const searchParams = useSearchParams();
@@ -124,7 +124,6 @@ export default function RelayerProfilePage() {
     [relayers, address],
   );
 
-  // Fetch stats from relayer API
   const loadStats = useCallback(async () => {
     if (!relayer?.online || !relayer.url) return;
     setStatsLoading(true);
@@ -144,26 +143,15 @@ export default function RelayerProfilePage() {
     }
   }, [relayer?.url, relayer?.online]);
 
-  // Fetch recent settlements from on-chain events
   const loadSettlements = useCallback(async () => {
     if (!address) return;
     setSettlementsLoading(true);
     try {
-      const provider = getReadProvider();
       const settlementAddr = getPrivateSettlementAddress();
-      const iface = new ethers.Interface([
-        "event PrivateSettledAuth(bytes32 indexed makerNullifier, bytes32 indexed takerNullifier, bytes32 claimsRootMaker, bytes32 claimsRootTaker, address indexed makerRelayer, address takerRelayer, address submitter, uint96 feeTokenMaker, uint96 feeTokenTaker)",
-        "event PrivateSettled(bytes32 indexed makerNullifier, bytes32 indexed takerNullifier, bytes32 claimsRootMaker, bytes32 claimsRootTaker, address relayer, uint96 feeTokenMaker, uint96 feeTokenTaker)",
-      ]);
-      const contract = new ethers.Contract(settlementAddr, iface, provider);
+      const contract = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI);
 
-      let fromBlock = getEarliestBlock();
-      if (fromBlock === 0) {
-        const latest = await provider.getBlockNumber();
-        fromBlock = Math.max(0, latest - 50_000);
-      }
+      const fromBlock = await getSafeFromBlock();
 
-      // Query PrivateSettledAuth events where this relayer is makerRelayer (indexed)
       const authLogs = await contract.queryFilter(
         contract.filters.PrivateSettledAuth(null, null, address),
         fromBlock,
@@ -179,7 +167,6 @@ export default function RelayerProfilePage() {
         };
       });
 
-      // Sort newest first, limit to 20
       events.sort((a, b) => b.blockNumber - a.blockNumber);
       setSettlements(events.slice(0, 20));
     } catch (e) {
@@ -196,6 +183,7 @@ export default function RelayerProfilePage() {
     () => relayer ? computeBadges(relayer, stats) : [],
     [relayer, stats],
   );
+  const badgeSet = useMemo(() => new Set(badges), [badges]);
 
   const { tier, color: tierColor } = useMemo(() => getTier(stats), [stats]);
 
@@ -231,7 +219,6 @@ export default function RelayerProfilePage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Back link */}
       <Link href="/relayer" className="flex items-center gap-1 text-xs text-on-surface-variant hover:text-primary transition-colors">
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Dashboard
       </Link>
@@ -259,14 +246,12 @@ export default function RelayerProfilePage() {
             </div>
           </div>
 
-          {/* Tier badge */}
           <div className="text-right">
             <div className={`text-2xl font-headline font-bold ${tierColor}`}>{tier}</div>
             <div className="text-[10px] text-on-surface-variant/40 mt-0.5">Settlement Tier</div>
           </div>
         </div>
 
-        {/* Key stats row */}
         <div className="grid grid-cols-4 gap-4 pt-4 border-t border-outline-variant/10">
           <div>
             <div className="text-xs text-on-surface-variant/50">Fee</div>
@@ -274,7 +259,7 @@ export default function RelayerProfilePage() {
           </div>
           <div>
             <div className="text-xs text-on-surface-variant/50">Bond</div>
-            <div className="text-lg font-bold text-on-surface">{formatBond(relayer.bond)}</div>
+            <div className="text-lg font-bold text-on-surface">{formatBond(relayer.bond, 4)}</div>
           </div>
           <div>
             <div className="text-xs text-on-surface-variant/50">Registered</div>
@@ -287,7 +272,6 @@ export default function RelayerProfilePage() {
           </div>
         </div>
 
-        {/* URL */}
         {relayer.url && (
           <a href={`${relayer.url}/api/info`} target="_blank" rel="noreferrer"
             className="flex items-center gap-1 text-xs text-primary hover:underline w-fit">
@@ -299,51 +283,10 @@ export default function RelayerProfilePage() {
       {/* Badges */}
       <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
         <h2 className="text-sm font-bold text-on-surface mb-4">Badges ({badges.length})</h2>
-        {badges.length === 0 ? (
-          <p className="text-xs text-on-surface-variant/40">No badges earned yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {badges.map((id) => {
-              const badge = BADGE_MAP.get(id);
-              if (!badge) return null;
-              const Icon = badge.icon;
-              return (
-                <div
-                  key={id}
-                  title={badge.description}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${badge.bgColor} ${badge.color} border ${badge.borderColor}`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {badge.label}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* All possible badges (dimmed if not earned) */}
-        <div className="mt-4 pt-4 border-t border-outline-variant/5">
-          <h3 className="text-[10px] text-on-surface-variant/30 uppercase tracking-wider mb-2">All badges</h3>
-          <div className="flex flex-wrap gap-2">
-            {BADGES.map((badge) => {
-              const earned = badges.includes(badge.id);
-              const Icon = badge.icon;
-              return (
-                <div
-                  key={badge.id}
-                  title={badge.description}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-opacity ${
-                    earned
-                      ? `${badge.bgColor} ${badge.color} ${badge.borderColor}`
-                      : "bg-surface-container text-on-surface-variant/20 border-outline-variant/5"
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {badge.label}
-                </div>
-              );
-            })}
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {BADGES.map((badge) => (
+            <BadgeChip key={badge.id} badge={badge} earned={badgeSet.has(badge.id)} />
+          ))}
         </div>
       </div>
 
@@ -381,7 +324,7 @@ export default function RelayerProfilePage() {
             </div>
           </div>
         ) : (
-          <p className="text-xs text-on-surface-variant/40">No stats available (unlock key or relayer offline).</p>
+          <p className="text-xs text-on-surface-variant/40">No stats available (relayer offline).</p>
         )}
       </div>
 
@@ -418,7 +361,6 @@ export default function RelayerProfilePage() {
         )}
       </div>
 
-      {/* Full address */}
       <div className="text-center text-[10px] text-on-surface-variant/20 font-mono break-all pb-8">
         {relayer.address}
       </div>

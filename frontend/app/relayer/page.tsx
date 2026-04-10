@@ -10,14 +10,9 @@ import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
-import { shortenAddress } from "../lib/utils";
+import { shortenAddress, formatBond } from "../lib/utils";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
-
-function formatBond(bond: bigint): string {
-  const val = Number(ethers.formatEther(bond));
-  return val % 1 === 0 ? `${val} ETH` : `${val.toFixed(2)} ETH`;
-}
 
 function feeBps(fee: number): string {
   return `${(fee / 100).toFixed(2)}%`;
