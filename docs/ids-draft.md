@@ -3,12 +3,14 @@
 > **Status**: Draft for review
 > **Purpose**: Satisfy the applicant's duty of disclosure under 37 CFR §1.56 / §1.97 / §1.98 for the US patent application covering the zkScatter invention disclosed in `docs/PAPER.md`. When the jurisdiction is not the US (e.g., Korean provisional → PCT), an equivalent prior-art disclosure statement is prepared from the same reference list.
 > **Scope**: This draft is limited to prior art that was **known to the applicant** at the time of filing and that is **material** to patentability under the Rule 56 standard. It is not a substitute for a professional prior-art search performed by outside counsel.
-> **Related docs**:
+> **Related docs (in repo)**:
 > - [PAPER.md](PAPER.md) §10 "Closest Prior Art: Jigsaw [23]" — the narrative disclosure of the Jigsaw reference in the specification
 > - [PAPER-ko.md](PAPER-ko.md) §10 "가장 가까운 선행기술: Jigsaw [23]" — Korean mirror
 > - [architecture-v2.md](architecture-v2.md) — Design decisions that distinguish over the references below
-> - `project_audit_findings_2026-04-09.md` (memory) — audit that surfaced the Jigsaw omission
-> - `project_patent_disclosure.md` (memory) — draft specification and provisional filing state
+>
+> **Internal-only, non-repo notes** (referenced for provenance; reviewers do **not** need access to these to review this draft):
+> - `project_audit_findings_2026-04-09.md` — historical context for how the Jigsaw omission was identified during the 2026-04-09 audit. Maintained as a private working note in the applicant team's internal memory store, not committed to this repository.
+> - `project_patent_disclosure.md` — internal patent drafting notes covering the filing-state and provenance of the disclosure. Also a private working note, not committed to this repository.
 
 ---
 

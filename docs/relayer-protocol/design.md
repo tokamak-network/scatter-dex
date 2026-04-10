@@ -216,16 +216,34 @@ Broadcast to all federated relayers via Waku gossip. Contain only public data.
 #### `ORDER_ANNOUNCE`
 ```protobuf
 message OrderAnnounce {
-  bytes order_id = 1;           // 32-byte canonical order id
-  bytes pair = 2;               // H(sellToken || buyToken)
+  bytes order_id = 1;           // 32-byte canonical order id; MUST be recomputable from the binding fields below
+  bytes pair = 2;               // H(sellToken || buyToken); indexing hint only — not part of canonical order_id
   Side side = 3;                // BUY or SELL
-  uint256 price = 4;            // uint256 fixed-point
-  uint256 amount = 5;           // uint256 base units
+  bytes price = 4;              // uint256 fixed-point quote, encoded as 32-byte big-endian (display/match)
+  bytes amount = 5;             // uint256 base units, encoded as 32-byte big-endian (display/match)
   uint64 expiry = 6;            // unix seconds
   bytes maker_relayer = 7;      // 20-byte Ethereum address of the holding relayer
   bytes maker_pubkey = 8;       // EdDSA pubkey used for order auth
   bytes merkle_root = 9;        // commitment pool root used by the proof
-  // NOTE: no proof, no nullifier, no witness data
+
+  // ─── Canonical order_id binding fields ───────────────────────
+  // These six fields are exactly the inputs to the Poseidon(6)
+  // orderId derivation in circuit-split/design.md §5.2 normative
+  // form: Poseidon(makerSellToken, tokenMaker, makerSellAmount,
+  //                makerBuyAmount, makerNonce, makerRelayer).
+  // Any taker subscribed to this gossip can recompute order_id
+  // locally and match against MakerProof.orderId on-chain.
+  bytes sell_token = 10;        // 20-byte Ethereum address (maker's sell token)
+  bytes buy_token = 11;         // 20-byte Ethereum address (maker's buy token)
+  bytes sell_amount = 12;       // uint256 base units, 32-byte big-endian
+  bytes buy_amount = 13;        // uint256 base units, 32-byte big-endian
+  bytes maker_nonce = 14;       // uint256, 32-byte big-endian; opaque to anyone except the maker
+
+  // NOTE: no proof, no nullifier, no witness data, no claim secrets,
+  // no claim recipients, no claim amounts.
+  // NOTE: all uint256 EVM values in this and other protobuf messages
+  // in this document are encoded as 32-byte big-endian unsigned
+  // integers, since protobuf has no native uint256 scalar type.
 }
 ```
 
@@ -262,8 +280,8 @@ message MatchPropose {
   bytes order_id = 1;           // maker's order
   bytes proposer_relayer = 2;   // my relayer id (taker side)
   bytes taker_order_id = 3;     // my local order id
-  uint256 matched_price = 4;
-  uint256 matched_amount = 5;
+  bytes matched_price = 4;      // uint256 fixed-point, 32-byte big-endian
+  bytes matched_amount = 5;     // uint256 base units, 32-byte big-endian
   uint64 proposal_nonce = 6;    // monotonic per (proposer, maker) pair
   uint64 expires_at = 7;        // if no ACCEPT/REJECT before this, auto-cancel
 }
@@ -272,12 +290,12 @@ message MatchPropose {
 #### `MATCH_ACCEPT` / `MATCH_REJECT`
 ```protobuf
 message MatchAccept {
-  bytes proposal_nonce = 1;     // echo of MatchPropose.proposal_nonce
+  uint64 proposal_nonce = 1;    // echo of MatchPropose.proposal_nonce — same scalar type
   uint64 round_id = 2;          // new round_id for the subsequent commit-reveal
 }
 
 message MatchReject {
-  bytes proposal_nonce = 1;
+  uint64 proposal_nonce = 1;    // echo of MatchPropose.proposal_nonce — same scalar type
   RejectReason reason = 2;
 }
 
@@ -298,16 +316,18 @@ enum RejectReason {
 message Commit {
   bytes relayer = 1;            // committing relayer id (20 bytes)
   bytes order_id = 2;
-  bytes commit_hash = 3;        // H(proof_bytes || salt), 32 bytes
+  bytes commit_hash = 3;        // keccak256(proof_bytes || salt), 32 bytes — see note below
   uint64 round_id = 4;          // monotonic per counterparty pair
   uint64 commit_time = 5;       // unix seconds
   uint64 reveal_deadline = 6;   // commit_time + REVEAL_WINDOW
-  bytes counterparty_id = 7;    // H(counterparty_relayer || round_id)
+  bytes counterparty_id = 7;    // keccak256(counterparty_relayer || round_id)
   uint32 protocol_version = 8;
   bytes eip712_signature = 9;   // signed over all above fields
 }
 ```
 The EIP-712 typed data domain must match the `DisputeRegistry` contract's expected domain (`zkScatterDisputeRegistry` v1) so that the same signature is valid both off-chain and on-chain for dispute evidence.
+
+**Hash function — `keccak256`, not Poseidon.** The `commit_hash` must be `keccak256(proof_bytes || salt)`. This is the same hash the on-chain `DisputeRegistry.recordMismatch` recomputes from the revealed `(proof_bytes, salt)` pair to detect Type 2 (`RevealCommitMismatch`) disputes (see [../dispute-registry/design.md](../dispute-registry/design.md) §"Type 2: Reveal/commit mismatch", line 217 of the reference implementation). Using Poseidon here would make on-chain mismatch verification impossible without a Poseidon precompile, which the BN254 EVM does not provide. The choice of keccak256 is intentional and load-bearing: the commit hash must be cheap to recompute on-chain. `proof_bytes` is the raw `bytes` encoding of the Groth16 proof (`proofA || proofB || proofC`), and `salt` is a 32-byte random nonce that prevents commit-hash dictionary attacks against the small space of public proof values.
 
 #### `REVEAL`
 ```protobuf
@@ -498,21 +518,21 @@ The four-step ordering (A-commit → B-commit → A-reveal → B-reveal) is the 
 Enumeration of abort points, with A and B as above:
 
 **Point 1 — B does not COMMIT after seeing A's COMMIT.**
-A times out at `2·T_C = 20 s`. The round is closed locally at A, state transitions `PROPOSED → OPEN` (per the transition table in §5.2, "MATCH_REJECT received or timeout (no COMMIT)"). A's order returns to the open orderbook for rematching. A's witness has **not** been revealed to B — only A's commit hash, which is a Poseidon-based pre-image-hiding commitment to `(proof_bytes, salt)`. The aborting relayer B learns nothing beyond the public order parameters it already saw in `ORDER_ANNOUNCE`. A's escrow nullifier has **not** been consumed on-chain, so A can rematch freely.
+A times out at `2·T_C = 20 s`. The round is closed locally at A, state transitions `PROPOSED → OPEN` (per the transition table in §5.2, "MATCH_REJECT received or timeout (no COMMIT)"). A's order returns to the open orderbook for rematching. A's witness has **not** been revealed to B — only A's commit hash, defined as `keccak256(proof_bytes || salt)` (see §4.3 `COMMIT`), a pre-image-hiding commitment that the on-chain `DisputeRegistry` can recompute from a reveal. The aborting relayer B learns nothing beyond the public order parameters it already saw in `ORDER_ANNOUNCE`. A's escrow nullifier has **not** been consumed on-chain, so A can rematch freely.
 
 **Point 2 — A does not REVEAL after both COMMITs.**
-B times out at `2·T_C + T_R`. Both commits are signed EIP-712 messages, so B has a cryptographic record that A committed and then refused to reveal. B files this record with the off-chain `DisputeRegistry` (Type 1 — abort after commit) per the `DISPUTE_CLAIM` message flow (§4.3). A's reputation is permanently recorded. B's witness has not been revealed (only B's commit hash), so B loses nothing except the round latency. B's order returns to `OPEN` and re-enters matching.
+B times out at `2·T_C + T_R`. Both commits are signed EIP-712 messages, so B has a cryptographic record that A committed and then refused to reveal. B files this record with the on-chain `DisputeRegistry.recordAbort` as a **Type 1 `AbortAfterCommit`** dispute (the registry's canonical Type 1; see [../dispute-registry/design.md](../dispute-registry/design.md) §"Type 1: Abort after commit"). A's reputation is permanently recorded. B's witness has not been revealed (only B's commit hash), so B loses nothing except the round latency. B's order returns to `OPEN` and re-enters matching.
 
 **Point 3 — B does not REVEAL after A reveals.**
 This is the **asymmetric-reveal** position — A has already sent `REVEAL(A)` and B is holding both commits plus A's revealed proof. A times out at `2·T_C + 2·T_R`. Does A lose anything?
   - B cannot submit `settlePrivate` with only A's proof. The on-chain contract requires both maker and taker proofs, and the taker proof is bound to the taker's relayer via `orderHash` (Phase 3.6). B has not produced a taker proof for this round.
   - B has seen A's proof. But A's proof is per-order (bound to `makerNonce`), and A's escrow nullifier is still unconsumed on-chain. A simply rematches with a different counterparty using a new order + new nonce. The old proof becomes worthless to B the moment A re-matches, because the nonce no longer corresponds to an open order.
-  - A files a Type 2 dispute (abort after partial reveal) with `DisputeRegistry`. The evidence is: B's signed COMMIT (proving B entered the round), A's signed REVEAL (proving A fulfilled the reveal obligation), B's absence of REVEAL before deadline (attested by A and optionally by other relayers who subscribe to the `/zkscatter/1/match/B/proto` topic).
+  - A files a **Type 1 `AbortAfterCommit`** dispute. This is the *same* registry type as Point 2 — the registry does not have a separate "partial reveal" type, because from the registry's perspective the misbehaviour is identical: B committed and then failed to reveal. A simply attaches its own signed `REVEAL` to the evidence as additional context showing that A fulfilled the reveal obligation. The evidence is: B's signed COMMIT (proving B entered the round), A's signed REVEAL (proving A fulfilled the reveal obligation), and the absence of B's REVEAL before deadline.
 
 The residual cost to A in Point 3 is **one round of latency** (up to `2·T_C + 2·T_R` ≈ 10 min) and **one burned order identifier** (must re-sign with a new nonce). There is no privacy loss, no fund loss, and no stuck state.
 
 **Point 4 — A reveals a proof that does not match its COMMIT.**
-The REVEAL message contains `commit_hash` which must equal `H(proof_bytes || salt)`. B checks this locally: if the hash doesn't match, B does not proceed to `settlePrivate` and files a Type 3 dispute (reveal-commit mismatch). This is the check at §4.3 `REVEAL` ("must match the prior COMMIT's commit_hash"). The asymmetry is the same as Point 3 — A has essentially aborted, just in a more provable way.
+The REVEAL message contains `commit_hash` which must equal `keccak256(proof_bytes || salt)`. B checks this locally: if the hash doesn't match, B does not proceed to `settlePrivate` and files a **Type 2 `RevealCommitMismatch`** dispute via `DisputeRegistry.recordMismatch`. The on-chain registry recomputes the same `keccak256(proofBytes, salt)` and verifies the inequality (see [../dispute-registry/design.md](../dispute-registry/design.md) §"Type 2: Reveal/commit mismatch", line 217). The asymmetry is the same as Point 3 — A has essentially aborted, just in a more provable way.
 
 **Point 5 — Both sides withhold.**
 No dispute is filed (both are aborting). The round times out at `2·T_C + 2·T_R`. Both orders return to `OPEN`. The only cost is latency.
@@ -533,13 +553,16 @@ The withholding scenarios in §5.4.3 all resolve to "record the misbehaviour, re
 
 Each of Points 2, 3, 4 generates a `DISPUTE_CLAIM` message (§4.3). The on-chain evidence submitted to `DisputeRegistry` is:
 
-| Dispute type | Evidence |
-|---|---|
-| Type 1 — abort after commit (Point 2) | Accuser's signed `COMMIT` + accused's signed `COMMIT` + accuser's proof-of-non-reveal (absence of REVEAL in the accuser's local message log before `reveal_deadline`) |
-| Type 2 — abort after partial reveal (Point 3) | Accuser's signed `COMMIT` + accused's signed `COMMIT` + accused's signed `REVEAL` + accuser's signed `REVEAL` + proof that the accused did not reveal before deadline |
-| Type 3 — reveal-commit mismatch (Point 4) | Accused's signed `COMMIT` + accused's signed `REVEAL` where `H(REVEAL.proof_bytes || REVEAL.salt) ≠ COMMIT.commit_hash`. This is self-contained — the dispute registry verifies the hash on-chain. |
+The dispute taxonomy here is the same taxonomy as `DisputeRegistry` ([../dispute-registry/design.md](../dispute-registry/design.md) §"Dispute types"). Point 3 ("partial reveal") is **not** a separate registry type — it is `AbortAfterCommit` with the accuser's `REVEAL` attached as additional context.
 
-The exact Solidity encoding of each evidence blob is specified in [../dispute-registry/design.md](../dispute-registry/design.md) "Evidence Schemas". The contract validates the signatures and the hash check, then emits a permanent event. No funds move.
+| Registry type | Function | Triggering point | Evidence |
+|---|---|---|---|
+| Type 1 — `AbortAfterCommit` | `recordAbort` | Point 2 (no reveal after both commits) | Accuser's signed `COMMIT` + accused's signed `COMMIT` + proof that no valid `REVEAL` from the accused was received before `reveal_deadline` |
+| Type 1 — `AbortAfterCommit` | `recordAbort` | Point 3 (accuser revealed, accused withheld) | Accuser's signed `COMMIT` + accused's signed `COMMIT` + accuser's signed `REVEAL` (additional context) + proof of accused's non-reveal before deadline |
+| Type 2 — `RevealCommitMismatch` | `recordMismatch` | Point 4 (revealed proof does not match commit) | Accused's signed `COMMIT` + accused's signed `REVEAL` where `keccak256(REVEAL.proof_bytes \|\| REVEAL.salt) != COMMIT.commit_hash`. The on-chain registry recomputes the hash with `keccak256(abi.encodePacked(proofBytes, salt))` (see dispute-registry §"Type 2", line 217). |
+| Type 3 — `DoubleCommit` | `recordDoubleCommit` | (out of scope for the §5.4.3 enumeration — see dispute-registry §"Type 3" for two conflicting commits at the same `(relayer, orderId, roundId)`) | Two of the same relayer's signed COMMITs for the same `(orderId, roundId)` with different `commitHash` values |
+
+The exact Solidity encoding of each evidence blob and the matching reverts (`CommitHashMatch`, `InvalidSignature`, etc.) are specified in [../dispute-registry/design.md](../dispute-registry/design.md) §"Evidence Schemas". The contract validates the signatures and (for Type 2) the hash check, then emits a permanent event. No funds move.
 
 #### 5.4.6 Worked example — happy path
 
@@ -565,18 +588,21 @@ t=0.30s   COMMIT(B→A)
 t=0.45s   REVEAL(A→B)              A has now revealed its proof to B
 t=0.45s+  A expects REVEAL(B) by t ≤ 2·T_C + 2·T_R = ~10m 20s
 t=10.33m  REVEAL_WINDOW deadline passes without REVEAL(B)
-t=10.33m  A constructs Type 2 evidence:
+t=10.33m  A constructs AbortAfterCommit (Type 1) evidence:
             - COMMIT(A) (self-signed)
             - COMMIT(B) (B-signed, received at t=0.30s)
-            - REVEAL(A) (self-signed)
+            - REVEAL(A) (self-signed; additional context — the
+              registry's Type 1 path is the same whether or not the
+              accuser already revealed)
             - (No REVEAL(B) — local log attests absence)
-t=10.34m  A files DISPUTE_CLAIM with DisputeRegistry on-chain
+t=10.34m  A calls DisputeRegistry.recordAbort on-chain with the above
+          evidence; the contract emits the AbortAfterCommit event
 t=10.34m  A's order returns to OPEN (state transition DISPUTED → ... not applied
           because A is the accuser, not the disputed party; A's state just resets)
 t=10.40m  A re-signs a new order with a fresh makerNonce and rematches
           against a different taker (nullifier was never consumed)
-t=∞       B's reputation carries the Type 2 record forever. Next user who
-          queries the reputation dashboard sees it.
+t=∞       B's reputation carries the AbortAfterCommit record forever.
+          Next user who queries the reputation dashboard sees it.
 ```
 
 This is the worst case the protocol has to handle, and it resolves cleanly: A loses ~10 minutes and one order nonce, B loses reputation, no funds move, no on-chain slashing is needed.
@@ -759,9 +785,9 @@ Only the major version is included in the content topic (`/zkscatter/1/...`). Mi
 ### 9.2 Version negotiation
 
 On first contact with a new peer:
-1. Exchange `RELAYER_HEARTBEAT` (which includes `supported_versions`)
-2. Use the highest mutually supported version
-3. If no overlap, refuse to interoperate (log warning)
+1. Exchange `RELAYER_HEARTBEAT` and inspect the `protocol_version` in the message envelope (every message carries this — see §9.1; `RelayerHeartbeat` does not need a separate `supported_versions` field).
+2. Interoperate only if the peer's major version matches the locally supported major version. Minor/patch differences are handled per the §9.1 compatibility rules (older minors are accepted; newer minor fields are ignored).
+3. If the major version is incompatible, refuse to interoperate and log a warning. The peer eventually drops out of the local view via heartbeat-absence detection.
 
 ### 9.3 Migration strategy
 
@@ -804,7 +830,7 @@ From [../relayer-security.md](../relayer-security.md):
 | §2 Database theft | **Weakened** — database holds only proofs, not witnesses |
 | §3 Trade Offer interception | **Replaced** — Trade Offer is gone; commit-reveal over Waku takes its place |
 | §4 Shared orderbook compromise | **Eliminated** — no central orderbook to compromise |
-| §5 Relayer private key compromise | **Unchanged** — key compromise still allows signing malicious commits; mitigated by bond slashing |
+| §5 Relayer private key compromise | **Unchanged** — key compromise still allows signing malicious commits. Mitigation is operational (immediate key rotation), reputational (any commits the compromised key signs become permanent `AbortAfterCommit` / `RevealCommitMismatch` records against the relayer's identity), and registry-level (the `RelayerRegistry` operator can deactivate the compromised entry). There is no bond slashing — see §5.4.4 and `dispute-registry/design.md` for the architectural decision to enforce via record-only reputation rather than economic penalty. |
 
 ## 11. Integration with Existing Code
 

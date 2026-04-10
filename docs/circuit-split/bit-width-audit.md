@@ -44,7 +44,7 @@ Line numbers below reference `circuits/settle.circom` at HEAD as of 2026-04-10.
 | S1 | claims accumulator (maker) | Σ of ≤ 16 × 128-bit claim amounts | — | ≤ 132 bits | equality with `totalLockedMaker` |
 | S2 | claims accumulator (taker) | Σ of ≤ 16 × 128-bit claim amounts | — | ≤ 132 bits | equality with `totalLockedTaker` |
 
-Relayer-binding squares (`makerRelayerSq`, `takerRelayerSq` at `:758, :760`) operate on 160-bit Ethereum addresses squared to 320 bits — far below 253. They are safe because the result is only constrained, never used in a wide comparison.
+Relayer-binding squares (`makerRelayerSq`, `takerRelayerSq` at `:758, :760`) operate on 160-bit Ethereum addresses squared to *up to* 320 bits as integers — that is **above** the 253-bit safe range for unique representation in the BN254 scalar field. They are nevertheless safe in this circuit because the squared value is only constrained as a field element and is **never range-checked, ordered, or compared as a wide integer**. The square's only role is to keep `relayer` in the witness so the circom optimiser cannot prune it (the same idiom as the M6 binding in `withdraw`/`claim`/`settle`). Wrapping `mod r` here is harmless precisely because nothing downstream relies on the integer value of `relayerSq`. This is the only place in either circuit where a multiplication exceeds 253 bits, and the no-comparison condition is what makes it safe.
 
 All other multiplications in the file (`pathIndices[i] * (1 - pathIndices[i])`, `(1 - isUsed[i].out) * leaves[i]`, the commitment-root hash tree, the `expectedNew` guards) involve binary or bit signals and are inherently narrow.
 

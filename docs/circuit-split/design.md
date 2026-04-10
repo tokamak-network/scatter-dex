@@ -192,14 +192,14 @@ The taker receives the maker's public signals as public inputs to its own circui
 
 ### 3.4 Shared public inputs (binding anchors)
 
-Both circuits publish the same values for these signals, so the contract can verify they agree:
+The contract binds the two proofs together by checking equality on the shared trade anchors, while validating each proof's membership root **independently**:
 
-- `commitmentRoot` — the Merkle root used for membership proofs (must be the same)
-- `currentTimestamp` — trade timestamp (must be within `TIMESTAMP_TOLERANCE`)
-- `orderId` — the unique trade identifier derived from the agreed parameters (see §5)
+- `commitmentRoot` — the Merkle root used for that proof's membership check. **The maker root and taker root need not be equal**; each is independently validated against `pool.isKnownRoot()` (the existing Tornado-style ring buffer in `IncrementalMerkleTree`). See §2.3 S1 for the full async-root rationale and `settlePrivateSplit` in §6 for the contract-side enforcement.
+- `currentTimestamp` — trade timestamp (must match across maker/taker, both within `TIMESTAMP_TOLERANCE` of `block.timestamp`)
+- `orderId` — the unique trade identifier derived from the agreed parameters (see §5; must match across maker/taker)
 - `tradeBinding` — a Poseidon hash over the negotiated parameters (see §5)
 
-The binding anchor makes it possible to verify that the two independent proofs refer to **the same trade**, without needing cross-circuit constraint sharing.
+These binding anchors make it possible to verify that the two independent proofs refer to **the same trade** without needing cross-circuit constraint sharing, while still allowing maker and taker to prove against asynchronous tree snapshots.
 
 ## 4. New Circuit Design
 
@@ -378,14 +378,16 @@ template MakerOrder(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     makerSigVerify.R8y <== makerSigR8y;
     makerSigVerify.M <== makerOrderHash.out;
 
-    // NEW: §X. orderId derivation (see §5 of this doc)
+    // NEW: §X. orderId derivation (see §5.2 of this doc — normative form)
+    // Uses makerNonce (recommended in §5.2) so the taker can recompute
+    // orderId from gossip without needing the maker's leaf hash.
     component orderIdHash = Poseidon(6);
     orderIdHash.inputs[0] <== makerSellToken;
     orderIdHash.inputs[1] <== tokenMaker;
     orderIdHash.inputs[2] <== makerSellAmount;
     orderIdHash.inputs[3] <== makerBuyAmount;
     orderIdHash.inputs[4] <== makerNonce;
-    orderIdHash.inputs[5] <== makerCommitHash.out;  // binds order to this specific leaf
+    orderIdHash.inputs[5] <== makerRelayer;
     orderId === orderIdHash.out;
 
     // NEW: §Y. tradeBinding derivation
@@ -416,9 +418,13 @@ component main {public [
     makerSellAmount,
     makerBuyAmount,
     feeTokenTaker,
-    makerRelayer,
-    makerPubKeyAx,
-    makerPubKeyAy
+    makerRelayer
+    // [D1] makerPubKeyAx / makerPubKeyAy are deliberately NOT exported.
+    // The pubkey is bound into the v2 commitment hash (see §1 and
+    // architecture-v2.md §"Design decisions / D1"). Exporting it as a
+    // public signal would create a per-trader linkability oracle. The
+    // pubkey stays private to the prover; merkle membership is the
+    // mechanism that prevents pubkey-swap attacks.
 ]} = MakerOrder(20, 16, 4);
 ```
 
@@ -488,10 +494,11 @@ template TakerMatch(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal input takerClaimReleaseTimes[maxClaimsPerSide];
     signal input takerClaimCount;
 
-    // Maker's leaf commit hash (needed for orderId verification — the taker
-    // knows this because the maker published it as part of the order announce
-    // gossip; it's included in the orderId computation as the binding anchor)
-    signal input referencedMakerLeafCommit;
+    // Maker nonce — published by the maker in ORDER_ANNOUNCE gossip so
+    // the taker can recompute orderId. Bound here as a referenced public
+    // input that the contract cross-checks against the maker proof's
+    // makerNonce public output.
+    signal input referencedMakerNonce;
 
     // ═══════════════════════════════════════════════════════════
     //  §1-§11 TAKER HALF (same structure as maker_order.circom)
@@ -500,18 +507,19 @@ template TakerMatch(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //      claims, new commitment, signature verification]
 
     // ═══════════════════════════════════════════════════════════
-    //  NEW: orderId must match the referenced maker order
+    //  NEW: orderId must match the referenced maker order — uses the
+    //  same Poseidon(6) form as maker_order.circom (see §5.2 normative
+    //  derivation: sellToken, buyToken, sellAmount, buyAmount, nonce,
+    //  relayer). All six inputs are fields the taker learns from gossip
+    //  via ORDER_ANNOUNCE.
     // ═══════════════════════════════════════════════════════════
     component orderIdHash = Poseidon(6);
     orderIdHash.inputs[0] <== referencedMakerSellToken;
     orderIdHash.inputs[1] <== referencedTokenMaker;
     orderIdHash.inputs[2] <== referencedMakerSellAmount;
     orderIdHash.inputs[3] <== referencedMakerBuyAmount;
-    // makerNonce is NOT known to taker; we use leafCommit only
-    // Actually: orderId is computed from fields the taker CAN learn from gossip.
-    // Reconsider §5 derivation.
-    orderIdHash.inputs[4] <== referencedMakerLeafCommit;  // (replaces makerNonce)
-    orderIdHash.inputs[5] <== /* placeholder */ 0;
+    orderIdHash.inputs[4] <== referencedMakerNonce;
+    orderIdHash.inputs[5] <== referencedMakerRelayer;
     orderId === orderIdHash.out;
 
     // tradeBinding must match too
@@ -543,15 +551,15 @@ component main {public [
     takerBuyAmount,
     feeTokenMaker,
     takerRelayer,
-    takerPubKeyAx,
-    takerPubKeyAy,
     referencedMakerSellToken,
     referencedTokenMaker,
     referencedMakerSellAmount,
     referencedMakerBuyAmount,
-    referencedMakerRelayer,
-    referencedMakerPubKeyAx,
-    referencedMakerPubKeyAy
+    referencedMakerNonce,
+    referencedMakerRelayer
+    // [D1] takerPubKeyAx / takerPubKeyAy and referencedMakerPubKeyAx /
+    // referencedMakerPubKeyAy are deliberately NOT exported. See the
+    // matching note on the maker_order.circom main block above.
 ]} = TakerMatch(20, 16, 4);
 ```
 
@@ -611,7 +619,7 @@ The `orderId` must be:
 - **Unique** across the history of the relayer network (so it's not replayable)
 - **Unforgeable** by the taker (so the taker can't fake matching a non-existent order)
 
-**Proposed derivation**:
+**Normative derivation** (this is the form the maker_order.circom and taker_match.circom sketches in §4 implement):
 
 ```
 orderId = Poseidon(
@@ -619,32 +627,14 @@ orderId = Poseidon(
     tokenMaker,           // public in gossip (maker's buy token)
     makerSellAmount,      // public in gossip
     makerBuyAmount,       // public in gossip
-    makerLeafCommitHash,  // Poseidon(makerSecret, makerSellToken, makerBalance, makerSalt)
+    makerNonce,           // public in gossip — taker sees it in ORDER_ANNOUNCE
     makerRelayer          // public in gossip
 )
 ```
 
-**Key insight**: `makerLeafCommitHash` is the hash of the maker's current commitment (the leaf in the Merkle tree being spent). This is the hash the maker's circuit already computes internally (`settle.circom` line 186-190). It is **known to the maker privately** but appears in the Merkle path — actually, the maker can publish the leaf hash (not the preimage) without leaking the witness. The Merkle path proof (§1) confirms this hash is in the tree.
+`makerNonce` is the binding of choice. It is unpredictable to everyone except the maker (so the taker cannot fake a non-existent order), already part of the maker's existing order hash (so it's already part of the maker's signature), and is published in `ORDER_ANNOUNCE` exactly so the taker can recompute `orderId`. The gossip schema in [../relayer-protocol/design.md](../relayer-protocol/design.md) §4.2 carries `makerNonce` in `ORDER_ANNOUNCE` for this purpose.
 
-The gossiped `ORDER_ANNOUNCE` message (see [../relayer-protocol/design.md](../relayer-protocol/design.md) §4.2) must include this `makerLeafCommitHash`. This is safe to publish because:
-- It's already implicitly revealed on-chain when the order settles (the Merkle path leads to it)
-- Publishing it in advance doesn't leak more than the nullifier, which is also eventually public
-- **BUT**: publishing the leaf hash before settlement creates an early link to the maker's wallet via timing analysis. This is a privacy trade-off.
-
-**Alternative**: bind `orderId` to the `makerNonce` instead of the leaf hash. The maker nonce is unpredictable to everyone except the maker, but the maker publishes it in `ORDER_ANNOUNCE` so the taker can see it. This gives:
-
-```
-orderId = Poseidon(
-    makerSellToken,
-    tokenMaker,
-    makerSellAmount,
-    makerBuyAmount,
-    makerNonce,
-    makerRelayer
-)
-```
-
-**Recommendation**: use `makerNonce` as the binding. It's simpler, already part of the existing order hash, and the maker is the only one who knows future nonces. The taker sees the nonce in the gossiped announcement and computes the same `orderId`.
+**Why not the maker leaf commitment?** An earlier draft used `makerLeafCommitHash` as the binding. The leaf hash is also known to the maker privately and appears in the Merkle path, so a similar argument applies. But the leaf hash is **timing-correlated with on-chain deposits**: a chain analyst who sees an `ORDER_ANNOUNCE` carrying a leaf hash, then watches the corresponding deposit on-chain, can correlate the maker's wallet with the order before settlement. The nonce-based form has no such timing leak — the nonce is opaque to anyone outside the maker's circuit. Use the nonce form throughout.
 
 ### 5.3 `tradeBinding` derivation
 
@@ -729,12 +719,14 @@ struct MakerProof {
     uint96 totalLockedMaker;
     address makerSellToken;
     address tokenMaker;
-    uint128 makerSellAmount;
-    uint128 makerBuyAmount;
+    uint128 makerSellAmount;  // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126). See docs/circuit-split/bit-width-audit.md §5.
+    uint128 makerBuyAmount;   // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126). See docs/circuit-split/bit-width-audit.md §5.
     uint96 feeTokenTaker;
     address makerRelayer;
-    uint256 makerPubKeyAx;
-    uint256 makerPubKeyAy;
+    uint256 makerNonce;       // matched against TakerProof.refMakerNonce; bound into orderId
+    // [D1] makerPubKeyAx / makerPubKeyAy intentionally NOT in this struct.
+    // The Half-proof never exposes maker pubkey as a public output (see
+    // §4.1 main block note and architecture-v2.md §"Design decisions / D1").
 }
 
 struct TakerProof {
@@ -751,20 +743,18 @@ struct TakerProof {
     uint96 totalLockedTaker;
     address takerSellToken;
     address tokenTaker;
-    uint128 takerSellAmount;
-    uint128 takerBuyAmount;
+    uint128 takerSellAmount;  // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126). See docs/circuit-split/bit-width-audit.md §5.
+    uint128 takerBuyAmount;   // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126). See docs/circuit-split/bit-width-audit.md §5.
     uint96 feeTokenMaker;
     address takerRelayer;
-    uint256 takerPubKeyAx;
-    uint256 takerPubKeyAy;
     // References to maker side (for contract-level cross-party check)
     address refMakerSellToken;
     address refTokenMaker;
     uint128 refMakerSellAmount;
     uint128 refMakerBuyAmount;
+    uint256 refMakerNonce;           // must equal MakerProof.makerNonce
     address refMakerRelayer;
-    uint256 refMakerPubKeyAx;
-    uint256 refMakerPubKeyAy;
+    // [D1] takerPubKey* / refMakerPubKey* intentionally NOT in this struct.
 }
 
 function settlePrivateSplit(
@@ -792,6 +782,7 @@ function settlePrivateSplit(
     if (t.refTokenMaker != m.tokenMaker) revert RefMismatch();
     if (t.refMakerSellAmount != m.makerSellAmount) revert RefMismatch();
     if (t.refMakerBuyAmount != m.makerBuyAmount) revert RefMismatch();
+    if (t.refMakerNonce != m.makerNonce) revert RefMismatch();
     if (t.refMakerRelayer != m.makerRelayer) revert RefMismatch();
     // [REMOVED per D1] refMakerPubKeyAx / refMakerPubKeyAy reference checks
     // are gone — Half-proof never exposes maker pubkey as a public output.
@@ -1188,8 +1179,8 @@ Integration tests covering the full Waku → circuit → contract path:
 **E2E-6**: Abort during commit-reveal
 - Relayer X commits to Relayer Y's maker order
 - Relayer X fails to reveal
-- Y records dispute via `DisputeRegistry.recordAbort` (no slash, just permanent record)
-- Assertion: X's bond slashed; Y receives reward
+- Y records dispute via `DisputeRegistry.recordAbort` (record-only — no slash, no reward; reputation impact only)
+- Assertion: dispute is permanently recorded with the corresponding event emitted; X's reputation accumulates the AbortAfterCommit record. No bond movement, no reward transfer — see [../dispute-registry/design.md](../dispute-registry/design.md) §"Why reputation works better than slashing here" for the rationale.
 
 **E2E-7**: Browser proving benchmark
 - Automated Playwright test running browser proof generation
