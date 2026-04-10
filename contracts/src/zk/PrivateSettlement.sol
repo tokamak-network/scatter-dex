@@ -9,6 +9,7 @@ import {CommitmentPool} from "./CommitmentPool.sol";
 import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
 import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
+import {ICancelVerifier} from "./ICancelVerifier.sol";
 import {IWETH} from "../interfaces/IWETH.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
@@ -47,6 +48,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error ClaimsCapExceeded();
     error FeeExceedsMax();
     error OrderExpired();
+    // ─── cancelPrivate (escrow rotation cancel) errors ──
+    error CancelVerifierNotSet();
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -69,6 +72,20 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
     event FeeVaultUpdated(address oldVault, address newVault);
     event AuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
+    event CancelVerifierUpdated(address oldVerifier, address newVerifier);
+
+    /// @notice Emitted by `cancelPrivate`. Relayers listen for this event
+    ///         to detect cancelled orders and remove them from their
+    ///         in-memory orderbook. The `escrowNullifier` is indexed so
+    ///         relayers can filter by it to find which of their orders
+    ///         was cancelled. The `nonceNullifier` identifies the specific
+    ///         order nonce that was killed.
+    event PrivateCancel(
+        bytes32 indexed escrowNullifier,
+        bytes32 indexed nonceNullifier,
+        bytes32 newCommitment,
+        address indexed relayer
+    );
 
     /// @notice Emitted by `settleAuth` (Half-proof). Distinct from
     ///         `PrivateSettled` (which `settlePrivate` emits) so off-chain
@@ -120,6 +137,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         settlement contract. Setting back to `address(0)` disables
     ///         `settleAuth` (it reverts with `AuthorizeVerifierNotSet`).
     IAuthorizeVerifier public authorizeVerifier;
+    /// @notice Verifier for `circuits/cancel.circom` (escrow rotation cancel).
+    ICancelVerifier public cancelVerifier;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
     ///         the relayer at proof generation time) and `block.timestamp`.
@@ -186,6 +205,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
         emit AuthorizeVerifierUpdated(address(authorizeVerifier), _verifier);
         authorizeVerifier = IAuthorizeVerifier(_verifier);
+    }
+
+    /// @notice Set (or replace) the CancelVerifier used by `cancelPrivate`.
+    function setCancelVerifier(address _verifier) external onlyOwner {
+        if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
+        emit CancelVerifierUpdated(address(cancelVerifier), _verifier);
+        cancelVerifier = ICancelVerifier(_verifier);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -601,6 +627,72 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         signals[11] = uint256(ap.totalLocked);
         signals[12] = uint256(uint160(ap.relayer));
         signals[13] = uint256(ap.orderHash);
+    }
+
+    // ─── cancelPrivate (escrow rotation cancel) ─────────────────────
+    //
+    // Atomically cancels a pending authorize order by burning both the
+    // escrow nullifier and the nonce nullifier, then inserting a new
+    // commitment with the same balance (rotated salt). No tokens move.
+    //
+    // After this tx mines:
+    //   - Any settleAuth using the old escrow nullifier reverts (NullifierAlreadySpent)
+    //   - The user has a fresh commitment and can make new orders immediately
+    //   - The PrivateCancel event tells relayers which order was cancelled
+    //     (relayers listen for the nonceNullifier to remove from orderbook)
+
+    struct CancelParams {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        uint256 commitmentRoot;
+        bytes32 oldNullifier;
+        bytes32 oldNonceNullifier;
+        bytes32 newCommitment;
+    }
+
+    /// @notice Cancel a pending order via escrow rotation.
+    ///         The cancel.circom proof proves the caller owns the commitment
+    ///         and signed the cancel with their EdDSA key. Only active
+    ///         relayers can submit (the relayer address is bound in the proof).
+    function cancelPrivate(CancelParams calldata p) external onlyRelayer nonReentrant {
+        if (paused) revert ContractPaused();
+        if (address(cancelVerifier) == address(0)) revert CancelVerifierNotSet();
+
+        // Root recency
+        if (!pool.isKnownRoot(p.commitmentRoot)) revert UnknownRoot();
+
+        // Nullifier double-spend
+        if (nullifiers[p.oldNullifier]) revert NullifierAlreadySpent();
+        if (nonceNullifiers[p.oldNonceNullifier]) revert NullifierAlreadySpent();
+
+        // Verify cancel proof (5 public signals)
+        uint[5] memory pubSignals = [
+            p.commitmentRoot,
+            uint256(p.oldNullifier),
+            uint256(p.oldNonceNullifier),
+            uint256(p.newCommitment),
+            uint256(uint160(msg.sender))  // relayer = msg.sender (bound in proof)
+        ];
+        if (!cancelVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
+            revert InvalidProof();
+        }
+
+        // Burn both nullifiers
+        nullifiers[p.oldNullifier] = true;
+        nonceNullifiers[p.oldNonceNullifier] = true;
+
+        // Insert rotated commitment (same balance, new salt)
+        if (p.newCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(p.newCommitment));
+        }
+
+        emit PrivateCancel(
+            p.oldNullifier,
+            p.oldNonceNullifier,
+            p.newCommitment,
+            msg.sender
+        );
     }
 
     // ─── Scatter Direct (same-token, no counterparty) ─────────────
