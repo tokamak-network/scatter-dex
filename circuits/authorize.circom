@@ -221,6 +221,31 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //    the BN254 field after a future off-chain priceCheck
     //  - balance / totalLocked / individual claim amounts to 128 bits
     //  - maxFee to 16 bits (bps)
+    //
+    //  [2026-04-10 audit] The 126-bit cap is **inherited from settle.circom
+    //  as a hard correctness boundary**, even though authorize.circom does
+    //  not itself perform a price-product comparison. The future settleAuth
+    //  glue contract (see docs/circuit-split/design.md §6) computes
+    //  `makerSellAmount * takerSellAmount` in Solidity uint256; that
+    //  multiplication does still fit even for full uint128 operands, so the
+    //  reason to keep 126 bits here is **not** EVM uint256 overflow
+    //  avoidance — `(2^128 − 1)^2 < 2^256` always holds (see
+    //  docs/circuit-split/bit-width-audit.md §5).
+    //
+    //  The real reason is **circuit-contract drift avoidance**: settle.circom
+    //  enforces 126 bits because of its in-circuit `LessEqThan(252)` price-
+    //  check headroom (see settle.circom §5 [M1]), and any settleAuth or
+    //  scatter-direct path that interoperates with the same merkle tree must
+    //  refuse the same set of "too large" amounts that settle.circom refuses.
+    //  If authorize.circom widened to 127 bits while settle.circom stayed at
+    //  126, the relayer could route the same user past two different
+    //  acceptance windows depending on which proof type they generated,
+    //  which would let an attacker construct an amount that one verifier
+    //  accepts and the other rejects.
+    //
+    //  Do NOT widen any of these range checks past 126 bits without
+    //  re-running the bit-width audit at docs/circuit-split/bit-width-audit.md.
+    //  See settle.circom §5 for the full LessEqThan(252) headroom analysis.
     // ════════════════════════════════════════
     component rcSell = Num2Bits(126);
     rcSell.in <== sellAmount;

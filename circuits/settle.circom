@@ -311,19 +311,48 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  the trade's economic intent — its constraint cost is negligible
     //  compared to the rest of the circuit.
     // ════════════════════════════════════════
-    // [M1, gemini review fix] Range-check the four trade amounts to 126 bits.
+    // [M1, gemini review fix, 2026-04-10 audit] Range-check the four trade
+    // amounts to 126 bits.
     //
     // The previous version used Num2Bits(128). 128-bit × 128-bit can reach
     // 2^256, which exceeds the BN254 scalar modulus r ≈ 2^253.86 and would
     // wrap around the field — making the LessEqThan(252) comparison below
-    // give the wrong answer for adversarially-chosen amounts. Reducing to
-    // 126 bits caps each product at 2^252 < r, well inside the field, with
-    // no realistic UX impact (2^126 ≈ 8.5e37, far above any plausible
-    // ERC20 supply).
+    // give the wrong answer for adversarially-chosen amounts.
     //
-    // Other 128-bit checks below (balances, totalLocked, fees) are kept at
-    // 128 bits because they only get multiplied by 16-bit fee bps, where
-    // 128 + 16 = 144 bits is comfortably inside the field.
+    // Reducing to 126 bits caps each amount at 2^126 - 1, so each product
+    // is bounded by (2^126 - 1)^2 ≈ 2^252 - 2^127, which matches the
+    // `LessEqThan(252)` internal representation exactly. Note that the
+    // LessEqThan(252) template internally computes
+    //     n2b.in = in[0] + 2^252 - in[1]
+    // and calls Num2Bits(253) on it. With both products bounded by
+    // (2^126 - 1)^2, the worst case (in[0] ≈ 2^252 - 2^127, in[1] = 0)
+    // gives n2b.in ≈ 2·2^252 - 2^127 - 1 ≈ 2^253 - 2^127, which fits in
+    // 253 bits and is inside the field modulus by log2(r/2^253) ≈ 0.86
+    // bits. This is the tightest place in the circuit.
+    //
+    // CONSEQUENCES — do not undo this without re-running the bit-width
+    // audit at docs/circuit-split/bit-width-audit.md:
+    //  1. Do not widen any of the four trade-amount range checks past
+    //     126 bits. Even 127 bits would break LessEqThan(252) silently.
+    //  2. Do not multiply makerProduct or takerProduct by any further
+    //     factor (e.g., a relative haircut or a second-order fee term).
+    //     That would push the chain past 253 bits.
+    //  3. Do not add makerProduct to any value that could approach 2^252.
+    //     Addition alone keeps the sum < 2^253 (so at most 253 bits and
+    //     still inside the field), but any subsequent LessEqThan(252) on
+    //     the sum would fail because its internal Num2Bits(253) would see
+    //     a value ≥ 2^253.
+    //  4. Fees are on a disjoint multiplication path
+    //     (sellAmount × feeBps ≤ 142 bits) and are comfortably safe.
+    //     Do not merge the fee computation with the price computation.
+    //
+    // Range-check costs for widening the four amounts back to 128 bits
+    // would be negligible (~8 constraints), but the correctness cost is
+    // infinite: there is no way to fit 128×128 = 256 bits into the field.
+    //
+    // Other 128-bit checks below (balances, totalLocked, fees) are kept
+    // at 128 bits because they only get multiplied by 16-bit fee bps,
+    // where 128 + 16 = 144 bits is comfortably inside the field.
     component rcMakerSell = Num2Bits(126);
     rcMakerSell.in <== makerSellAmount;
     component rcMakerBuy = Num2Bits(126);
