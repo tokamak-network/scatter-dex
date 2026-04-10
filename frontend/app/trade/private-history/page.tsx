@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
+import { shortenAddress } from "../../lib/utils";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   deriveEdDSAKey,
@@ -64,6 +65,8 @@ interface OrderFile {
     releaseTime: string;
     leafIndex: number;
   }>;
+  relayerUrl?: string;
+  relayerAddress?: string;
   createdAt: string;
   // Enriched from relayer API response
   status?: string;
@@ -483,6 +486,18 @@ export default function PrivateHistoryPage() {
               <span className="text-on-surface-variant/60">Expiry:</span>{" "}
               <span className="font-mono">{new Date(Number(selectedOrder.order.expiry) * 1000).toLocaleString()}</span>
             </div>
+            {selectedOrder.relayerAddress && (
+              <div>
+                <span className="text-on-surface-variant/60">Relayer:</span>{" "}
+                <span className="font-mono">{shortenAddress(selectedOrder.relayerAddress)}</span>
+              </div>
+            )}
+            {selectedOrder.settleTxHash && (
+              <div>
+                <span className="text-on-surface-variant/60">Settle Tx:</span>{" "}
+                <span className="font-mono">{shortenAddress(selectedOrder.settleTxHash)}</span>
+              </div>
+            )}
           </div>
 
           {selectedOrder.change && (
