@@ -143,7 +143,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ICancelVerifier public cancelVerifier;
     /// @notice Optional batched verifier for `settleAuth`. When set, `settleAuth`
     ///         uses a single 5-pairing batch check instead of 2× separate verifications,
-    ///         saving ~145K gas per settlement. Pass `address(0)` to use separate verifications.
+    ///         saving ~70-100K gas per settlement (3 fewer pairings minus extra EC ops).
+    ///         Pass `address(0)` to use separate verifications.
+    ///         NOTE: `authorizeVerifier` must still be set — this is an optimization overlay,
+    ///         not a replacement. The fallback path uses `authorizeVerifier` directly.
     IBatchAuthorizeVerifier public batchAuthorizeVerifier;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
@@ -221,8 +224,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Set (or replace) the optional BatchAuthorizeVerifier.
-    ///         When set, `settleAuth` uses batched 5-pairing verification (~145K gas savings).
+    ///         When set, `settleAuth` uses batched 5-pairing verification (~70-100K gas savings).
     ///         Pass `address(0)` to fall back to separate 2× verifications.
+    ///         Requires `authorizeVerifier` to also be set (this is an optimization overlay).
     function setBatchAuthorizeVerifier(address _verifier) external onlyOwner {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
         emit BatchAuthorizeVerifierUpdated(address(batchAuthorizeVerifier), _verifier);
@@ -539,7 +543,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // 10. Verify both Groth16 proofs.
         //     When batchAuthorizeVerifier is set, uses a single 5-pairing batch
-        //     check (~145K gas savings). Otherwise falls back to 2× separate.
+        //     check (~70-100K gas savings). Otherwise falls back to 2× separate.
         uint[14] memory makerSignals = _packAuthSignals(p.maker);
         uint[14] memory takerSignals = _packAuthSignals(p.taker);
 
