@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -112,6 +112,12 @@ export default function PrivateHistoryPage() {
   const [cancellingNonce, setCancellingNonce] = useState<string | null>(null);
   const [cancelStep, setCancelStep] = useState<"idle" | "loading-note" | "fetching-tree" | "proving" | "tx" | "saving" | "done" | "error">("idle");
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup cancel timer on unmount
+  useEffect(() => {
+    return () => { if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current); };
+  }, []);
 
   // Claim statuses for selected order
   const selectedClaims = useMemo(
@@ -228,8 +234,15 @@ export default function PrivateHistoryPage() {
 
       setCancelStep("fetching-tree");
       const provider = getReadProvider();
-      const poolContract = new ethers.Contract(getCommitmentPoolAddress(), COMMITMENT_POOL_ABI, provider);
-      const fromBlock = getEarliestBlock();
+      const poolAddr = getCommitmentPoolAddress();
+      const poolContract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, provider);
+
+      // Bound the query range to avoid RPC timeouts on fresh installs
+      let fromBlock = getEarliestBlock();
+      if (fromBlock === 0) {
+        const latest = await provider.getBlockNumber();
+        fromBlock = Math.max(0, latest - 50_000);
+      }
 
       const [nextIdx, events] = await Promise.all([
         poolContract.nextIndex().then(Number),
@@ -272,9 +285,11 @@ export default function PrivateHistoryPage() {
 
       setCancelStep("saving");
 
-      // Extract newLeafIndex from CommitmentInserted event in tx receipt
+      // Extract newLeafIndex — filter by pool address to avoid matching unrelated logs
       let newLeafIndex = -1;
+      const poolAddrLower = poolAddr.toLowerCase();
       for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== poolAddrLower) continue;
         try {
           const parsed = COMMITMENT_POOL_IFACE.parseLog({ topics: [...log.topics], data: log.data });
           if (parsed?.name === "CommitmentInserted") {
@@ -302,11 +317,16 @@ export default function PrivateHistoryPage() {
 
       setCancelStep("done");
 
-      // Optimistic update: mark this order as cancelled locally
-      setOrders((prev) => prev.map((o) =>
-        o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o
-      ));
-      setTimeout(() => { setCancellingNonce(null); setCancelStep("idle"); }, 2000);
+      // Optimistic update: mark this order as cancelled in both lists
+      const updater = (o: OrderFile) =>
+        o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
+      setOrders((prev) => prev.map(updater));
+      setSelectedOrder((prev) => prev ? updater(prev) : prev);
+
+      cancelTimerRef.current = setTimeout(() => {
+        setCancellingNonce(null);
+        setCancelStep("idle");
+      }, 2000);
     } catch (e: any) {
       console.error("Cancel failed:", e);
       setCancelError(e?.reason || e?.message || "Unknown error");
