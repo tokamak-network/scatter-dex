@@ -375,10 +375,13 @@ export default function RelayersPage() {
 
             {/* Individual relayer cards */}
             {relayers.map((r, i) => (
-              <button
+              <div
                 key={r.address}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedIdx(i)}
-                className={`w-full rounded-xl border px-5 py-4 text-left transition-all ${
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedIdx(i); }}
+                className={`w-full rounded-xl border px-5 py-4 text-left transition-all cursor-pointer ${
                   selectedIdx === i
                     ? "border-primary bg-primary/8 ring-1 ring-primary/30"
                     : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
@@ -412,7 +415,6 @@ export default function RelayersPage() {
                 >
                   <User className="w-3 h-3" /> View Profile
                 </Link>
-                {/* Shared orderbook info */}
                 {(() => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
                   if (!shared) return null;
@@ -424,7 +426,7 @@ export default function RelayersPage() {
                     </div>
                   );
                 })()}
-              </button>
+              </div>
             ))}
           </div>
 

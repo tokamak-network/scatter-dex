@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { Suspense, useState, useEffect, useCallback, useMemo, type ElementType } from "react";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import {
@@ -9,16 +9,16 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
-import { getSafeFromBlock } from "../../lib/provider";
+import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
 import { shortenAddress, formatBond } from "../../lib/utils";
-import { PRIVATE_SETTLEMENT_ABI, PRIVATE_SETTLEMENT_IFACE } from "../../lib/contracts";
+import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 
 interface Badge {
   id: string;
   label: string;
   description: string;
-  icon: React.ElementType;
+  icon: ElementType;
   color: string;
   bgColor: string;
   borderColor: string;
@@ -35,8 +35,6 @@ const BADGES: Badge[] = [
   { id: "online",        label: "Online",          description: "Currently reachable and serving orders", icon: Circle, color: "text-primary", bgColor: "bg-primary/15", borderColor: "border-primary/20" },
 ];
 
-const BADGE_MAP = new Map(BADGES.map((b) => [b.id, b]));
-
 interface RelayerStats {
   totalOrders: number;
   settledOrders: number;
@@ -50,8 +48,8 @@ interface RelayerStats {
 interface SettlementEvent {
   txHash: string;
   blockNumber: number;
-  feeTokenMaker: bigint;
-  feeTokenTaker: bigint;
+  role: "maker" | "taker";
+  fee: bigint;
 }
 
 function BadgeChip({ badge, earned }: { badge: Badge; earned: boolean }) {
@@ -89,6 +87,7 @@ function computeBadges(relayer: RelayerInfo, stats: RelayerStats | null): string
     if (stats.crossRelayerSettled > 0) ids.push("cross-relayer");
   }
 
+  // "verified" requires IdentityGate.isVerified() — future enhancement
   return ids;
 }
 
@@ -108,7 +107,16 @@ function getTier(stats: RelayerStats | null): { tier: Tier; color: string } {
   return { tier: "Bronze", color: "text-amber-600" };
 }
 
-export default function RelayerProfilePage() {
+// Wrap the page in Suspense for useSearchParams (Next.js App Router requirement)
+export default function RelayerProfileWrapper() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-[400px]"><Loader2 className="w-6 h-6 text-primary animate-spin" /></div>}>
+      <RelayerProfileContent />
+    </Suspense>
+  );
+}
+
+function RelayerProfileContent() {
   const searchParams = useSearchParams();
   const address = searchParams.get("address");
 
@@ -119,41 +127,45 @@ export default function RelayerProfilePage() {
   const [settlements, setSettlements] = useState<SettlementEvent[]>([]);
   const [settlementsLoading, setSettlementsLoading] = useState(false);
 
+  const validAddress = address && ethers.isAddress(address) ? address : null;
+
   const relayer = useMemo(
-    () => relayers.find((r) => r.address.toLowerCase() === address?.toLowerCase()),
-    [relayers, address],
+    () => relayers.find((r) => r.address.toLowerCase() === validAddress?.toLowerCase()),
+    [relayers, validAddress],
   );
 
   const loadStats = useCallback(async () => {
     if (!relayer?.online || !relayer.url) return;
     setStatsLoading(true);
     setStatsError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(`${relayer.url}/api/relayer/stats`, { signal: controller.signal });
-      clearTimeout(timeout);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStats(data);
     } catch (e: any) {
       setStatsError(e?.message || "Failed to load stats");
     } finally {
+      clearTimeout(timeout);
       setStatsLoading(false);
     }
   }, [relayer?.url, relayer?.online]);
 
   const loadSettlements = useCallback(async () => {
-    if (!address) return;
+    if (!validAddress) return;
     setSettlementsLoading(true);
     try {
+      const provider = getReadProvider();
       const settlementAddr = getPrivateSettlementAddress();
-      const contract = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI);
+      const contract = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
+      const fromBlock = await getSafeFromBlock(provider);
 
-      const fromBlock = await getSafeFromBlock();
-
+      // PrivateSettledAuth has 3 indexed params: makerNullifier, takerNullifier, makerRelayer
+      // We query where makerRelayer == address (3rd indexed param)
       const authLogs = await contract.queryFilter(
-        contract.filters.PrivateSettledAuth(null, null, address),
+        contract.filters.PrivateSettledAuth(null, null, validAddress),
         fromBlock,
       );
 
@@ -162,8 +174,8 @@ export default function RelayerProfilePage() {
         return {
           txHash: e.transactionHash,
           blockNumber: e.blockNumber,
-          feeTokenMaker: BigInt(e.args.feeTokenMaker),
-          feeTokenTaker: BigInt(e.args.feeTokenTaker),
+          role: "maker" as const,
+          fee: BigInt(e.args.feeTokenMaker),
         };
       });
 
@@ -174,7 +186,7 @@ export default function RelayerProfilePage() {
     } finally {
       setSettlementsLoading(false);
     }
-  }, [address]);
+  }, [validAddress]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadSettlements(); }, [loadSettlements]);
@@ -187,11 +199,11 @@ export default function RelayerProfilePage() {
 
   const { tier, color: tierColor } = useMemo(() => getTier(stats), [stats]);
 
-  if (!address) {
+  if (!address || !validAddress) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
         <AlertCircle className="w-10 h-10 mb-3 opacity-40" />
-        <p>No relayer address specified.</p>
+        <p>{!address ? "No relayer address specified." : "Invalid address format."}</p>
         <Link href="/relayer" className="text-primary text-sm mt-2 hover:underline">Back to Dashboard</Link>
       </div>
     );
@@ -201,7 +213,7 @@ export default function RelayerProfilePage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
         <AlertCircle className="w-10 h-10 mb-3 opacity-40" />
-        <p>Relayer {shortenAddress(address)} not found in registry.</p>
+        <p>Relayer {shortenAddress(validAddress)} not found in registry.</p>
         <Link href="/relayer" className="text-primary text-sm mt-2 hover:underline">Back to Dashboard</Link>
       </div>
     );
@@ -328,10 +340,10 @@ export default function RelayerProfilePage() {
         )}
       </div>
 
-      {/* Recent settlements */}
+      {/* Recent settlements (maker role only — takerRelayer is not indexed) */}
       <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
         <h2 className="text-sm font-bold text-on-surface mb-4">
-          Recent Settlements
+          Recent Settlements (as maker)
           {settlements.length > 0 && <span className="text-on-surface-variant/40 font-normal ml-2">({settlements.length})</span>}
         </h2>
 
@@ -346,14 +358,14 @@ export default function RelayerProfilePage() {
             <div className="grid grid-cols-[1fr_100px_100px] gap-2 text-[10px] text-on-surface-variant/30 uppercase tracking-wider px-3 py-1">
               <span>Tx Hash</span>
               <span className="text-right">Block</span>
-              <span className="text-right">Fees (wei)</span>
+              <span className="text-right">Fee Earned</span>
             </div>
             {settlements.map((s, i) => (
               <div key={i} className="grid grid-cols-[1fr_100px_100px] gap-2 px-3 py-2 text-xs hover:bg-surface-bright/20 rounded transition-colors">
                 <span className="font-mono text-primary truncate">{s.txHash}</span>
                 <span className="text-right text-on-surface-variant/60 font-mono">{s.blockNumber}</span>
                 <span className="text-right text-on-surface-variant/60 font-mono">
-                  {(s.feeTokenMaker + s.feeTokenTaker).toString()}
+                  {s.fee.toString()}
                 </span>
               </div>
             ))}

@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Radio, UserPlus, BarChart3, User } from "lucide-react";
+import { Radio, UserPlus, BarChart3 } from "lucide-react";
 
 const relayerLinks = [
   { href: "/relayer", label: "Dashboard", icon: BarChart3 },
-  { href: "/relayer/profile", label: "Profile", icon: User },
   { href: "/relayer/register", label: "Register", icon: UserPlus },
 ];
 
@@ -27,7 +26,7 @@ export default function RelayerLayout({ children }: { children: React.ReactNode 
 
         <div className="flex flex-col gap-0.5 px-2">
           {relayerLinks.map((link) => {
-            const active = link.href === "/relayer" ? pathname === "/relayer" : pathname.startsWith(link.href);
+            const active = pathname === link.href;
             const Icon = link.icon;
             return (
               <Link
