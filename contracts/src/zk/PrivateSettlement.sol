@@ -8,6 +8,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {CommitmentPool} from "./CommitmentPool.sol";
 import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
+import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
 import {IWETH} from "../interfaces/IWETH.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
@@ -39,6 +40,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error DuplicateClaimsRoot();
     error TimestampOutOfRange();
     error NotActiveRelayer();
+    // ─── settleAuth (Half-proof) errors ──
+    error AuthorizeVerifierNotSet();
+    error TokenSidesMismatch();
+    error PriceMismatch();
+    error ClaimsCapExceeded();
+    error FeeExceedsMax();
+    error OrderExpired();
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -60,6 +68,31 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     event PausedUpdated(bool paused);
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
     event FeeVaultUpdated(address oldVault, address newVault);
+    event AuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
+
+    /// @notice Emitted by `settleAuth` (Half-proof). Distinct from
+    ///         `PrivateSettled` (which `settlePrivate` emits) so off-chain
+    ///         indexers can tell the two settlement paths apart.
+    /// @dev    Solidity caps indexed event fields at 3, and the three
+    ///         indexing slots are spent on `makerNullifier`, `takerNullifier`,
+    ///         and `makerRelayer` (the first two for trade-level lookups,
+    ///         the third for "find all settlements where I was the maker
+    ///         relayer"). `takerRelayer` is included as a non-indexed field
+    ///         — indexers that need "find all settlements where I was the
+    ///         taker relayer" can scan and filter post-hoc, or build their
+    ///         own secondary index off `submitter` (which is `msg.sender`
+    ///         and is therefore one of the two relayers).
+    event PrivateSettledAuth(
+        bytes32 indexed makerNullifier,
+        bytes32 indexed takerNullifier,
+        bytes32 claimsRootMaker,
+        bytes32 claimsRootTaker,
+        address indexed makerRelayer,
+        address takerRelayer,
+        address submitter,
+        uint96 feeTokenMaker,
+        uint96 feeTokenTaker
+    );
     // ─── Data Structures ─────────────────────────────────────────
     // Packed into 2 storage slots:
     // Slot 0: token (20 bytes) + totalLocked (12 bytes) = 32 bytes
@@ -80,6 +113,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     RelayerRegistry public relayerRegistry;
     /// @notice Optional fee vault — if set, fees go to vault instead of msg.sender.
     FeeVault public feeVault;
+    /// @notice Verifier for `circuits/authorize.circom` (Half-proof).
+    ///         Must be set via `setAuthorizeVerifier` before `settleAuth` is
+    ///         callable. Mutable rather than immutable so existing deployments
+    ///         can adopt the Half-proof flow without redeploying the
+    ///         settlement contract. Setting back to `address(0)` disables
+    ///         `settleAuth` (it reverts with `AuthorizeVerifierNotSet`).
+    IAuthorizeVerifier public authorizeVerifier;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
     ///         the relayer at proof generation time) and `block.timestamp`.
@@ -89,6 +129,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         settle — see PR #125 review). Future drift is forbidden by
     ///         the upper bound in `settlePrivate`.
     uint256 public constant TIMESTAMP_TOLERANCE = 60;
+
+    /// @notice Denominator for fee basis points (1 bps = 1/10000).
+    ///         Used by `settleAuth` to bound the relayer-chosen fee against
+    ///         each side's circuit-bound `maxFee`. Same value as the bps
+    ///         denominator inside `settle.circom` §7 (`fee * 10000` checks).
+    uint256 public constant FEE_BPS_DENOMINATOR = 10_000;
+
     bool public paused;
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
@@ -131,6 +178,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_vault != address(0) && _vault.code.length == 0) revert NotAContract();
         emit FeeVaultUpdated(address(feeVault), _vault);
         feeVault = FeeVault(_vault);
+    }
+
+    /// @notice Set (or replace) the AuthorizeVerifier used by `settleAuth`.
+    ///         Pass `address(0)` to disable the Half-proof path entirely.
+    function setAuthorizeVerifier(address _verifier) external onlyOwner {
+        if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
+        emit AuthorizeVerifierUpdated(address(authorizeVerifier), _verifier);
+        authorizeVerifier = IAuthorizeVerifier(_verifier);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -282,6 +337,270 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         });
 
         emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
+    }
+
+    // ─── settleAuth (Half-proof) ─────────────────────────────────
+    //
+    // Two `circuits/authorize.circom` proofs (one per party) are matched and
+    // submitted together. Each proof carries 14 public signals; this function
+    // does the cross-party checks (token, price, claims+fees cap, fee bound)
+    // that the per-side circuit cannot prove on its own.
+    //
+    // Async-root design: each side's `commitmentRoot` is independently
+    // validated against `pool.isKnownRoot()` (the existing Tornado-style ring
+    // buffer in `IncrementalMerkleTree`). The two roots are NOT required to be
+    // equal — see `docs/circuit-split/design.md` §2.3 S1 and §6 for the full
+    // rationale. Forcing equality would couple both proofs to the same tree
+    // snapshot and collapse the matching window in any active pool.
+    //
+    // Fee model: each side's `maxFee` (in basis points) is bound into its
+    // EdDSA-signed `orderHash` inside the circuit. The relayer chooses the
+    // actual fee (`feeTokenMaker` / `feeTokenTaker`) at submission time and
+    // this contract enforces the per-side bound:
+    //   feeTokenMaker * 10000 ≤ taker.sellAmount * taker.maxFee
+    //   feeTokenTaker * 10000 ≤ maker.sellAmount * maker.maxFee
+    // The naming convention matches `settlePrivate`: `feeTokenMaker` is
+    // denominated in `tokenMaker = maker.buyToken = taker.sellToken` and is
+    // paid by the taker → goes to `taker.relayer`. `feeTokenTaker` is
+    // denominated in `tokenTaker = taker.buyToken = maker.sellToken` and is
+    // paid by the maker → goes to `maker.relayer`.
+
+    /// @notice One side of a Half-proof trade. Mirrors the public-signal
+    ///         layout of `circuits/authorize.circom` exactly.
+    struct AuthorizeProof {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        // 14 public signals (matching authorize.circom main block ordering)
+        uint256 commitmentRoot;
+        bytes32 nullifier;
+        bytes32 nonceNullifier;
+        bytes32 newCommitment;
+        address sellToken;
+        address buyToken;
+        uint128 sellAmount; // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126)
+        uint128 buyAmount;  // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126)
+        uint16  maxFee;     // bps; circuit Num2Bits(16) bound
+        uint64  expiry;     // unix seconds
+        bytes32 claimsRoot;
+        uint96  totalLocked;
+        address relayer;
+        bytes32 orderHash;
+    }
+
+    struct SettleAuthParams {
+        AuthorizeProof maker;
+        AuthorizeProof taker;
+        // Relayer-chosen fees, capped by each side's user-signed maxFee
+        uint96 feeTokenMaker;
+        uint96 feeTokenTaker;
+    }
+
+    /// @notice Execute a Half-proof private settlement. Two independent
+    ///         `authorize.circom` proofs (maker + taker) are verified and
+    ///         settled atomically. See the comment block above for the
+    ///         async-root and fee-bound model.
+    function settleAuth(SettleAuthParams calldata p) external nonReentrant {
+        // 1. Only the two proof relayers may submit
+        if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
+        if (paused) revert ContractPaused();
+        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+
+        // 2. Token whitelist (both sell tokens — i.e. tokens that will be
+        //    spent from the pool). buyTokens are checked transitively via the
+        //    cross-side equality check below.
+        if (!whitelistedTokens[p.maker.sellToken]) revert TokenNotWhitelisted();
+        if (!whitelistedTokens[p.taker.sellToken]) revert TokenNotWhitelisted();
+
+        // 3. Cross-side token compatibility (C1 in design.md §2.2)
+        if (p.maker.sellToken != p.taker.buyToken) revert TokenSidesMismatch();
+        if (p.taker.sellToken != p.maker.buyToken) revert TokenSidesMismatch();
+
+        // 4. Cross-side price compatibility (C2 in design.md §2.2)
+        //    maker.sellAmount * taker.sellAmount ≥ maker.buyAmount * taker.buyAmount
+        //    Both sellAmount and buyAmount are bound by the circuit to ≤ 2^126
+        //    via `Num2Bits(126)`, so each product fits in uint256 with ~4 bits
+        //    of slack — see docs/circuit-split/bit-width-audit.md §5 for the
+        //    full headroom analysis. Do NOT widen the AuthorizeProof field
+        //    types past uint128 without re-running that audit.
+        uint256 makerProduct = uint256(p.maker.sellAmount) * uint256(p.taker.sellAmount);
+        uint256 takerProduct = uint256(p.maker.buyAmount) * uint256(p.taker.buyAmount);
+        if (takerProduct > makerProduct) revert PriceMismatch();
+
+        // 5. Cross-side claims + fees cap (C4 in design.md §2.2)
+        //    Each side's totalLocked + the fee paid in that token must not
+        //    exceed the counterparty's sellAmount.
+        if (uint256(p.maker.totalLocked) + uint256(p.feeTokenMaker) > uint256(p.taker.sellAmount)) {
+            revert ClaimsCapExceeded();
+        }
+        if (uint256(p.taker.totalLocked) + uint256(p.feeTokenTaker) > uint256(p.maker.sellAmount)) {
+            revert ClaimsCapExceeded();
+        }
+
+        // 6. Fee upper bound: relayer-chosen fees must respect each side's
+        //    EdDSA-signed maxFee. (The minimum-receive guarantee
+        //    `totalLocked ≥ buyAmount` is already enforced inside
+        //    authorize.circom §7 per side, so we don't repeat it here.)
+        if (uint256(p.feeTokenMaker) * FEE_BPS_DENOMINATOR > uint256(p.taker.sellAmount) * uint256(p.taker.maxFee)) {
+            revert FeeExceedsMax();
+        }
+        if (uint256(p.feeTokenTaker) * FEE_BPS_DENOMINATOR > uint256(p.maker.sellAmount) * uint256(p.maker.maxFee)) {
+            revert FeeExceedsMax();
+        }
+
+        // 7. Per-side expiry: each side compares its own expiry against
+        //    block.timestamp. Unlike settlePrivate, there is no `currentTimestamp`
+        //    public input bound into the proof — the circuit only exposes
+        //    `expiry`, and this contract is responsible for the comparison.
+        if (block.timestamp > p.maker.expiry) revert OrderExpired();
+        if (block.timestamp > p.taker.expiry) revert OrderExpired();
+
+        // 8. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
+        //
+        // Ordered before the root-recency check because the nullifier path
+        // is a flat 4 cold SLOADs (~8.4k gas) whereas pool.isKnownRoot is a
+        // linear ring-buffer scan that can hit up to ROOT_HISTORY_SIZE cold
+        // SLOADs (~63k gas worst case, with default ROOT_HISTORY_SIZE=30).
+        // Replay attempts dominate the reverting-call population, so we
+        // pay the cheaper check first and short-circuit before the
+        // expensive scan.
+        //
+        // [SECURITY] The intra-transaction equality checks below are
+        // load-bearing. Without them, a malicious caller could submit two
+        // authorize.circom proofs against the **same** escrow commitment
+        // (same secret + same salt → same nullifier on both sides). The
+        // per-mapping `nullifiers[...]` checks would each see "not yet
+        // spent" because the nullifier is being processed for the first
+        // time in this transaction, and the contract would then drain
+        // `2 × totalLocked` of the underlying token from the pool while
+        // only one commitment was actually consumed — a pool drain.
+        //
+        // Token compatibility (`maker.sellToken == taker.buyToken` and
+        // vice versa) plus same-secret commitment forces both sides to
+        // trade the same token for itself, so both `transferToSettlement`
+        // calls in step 14 would withdraw from the same token's pool
+        // balance. The nonce-nullifier symmetric variant is closed for
+        // the same reason. See the security review on PR #133 (gemini
+        // comment 3061594760).
+        if (p.maker.nullifier == p.taker.nullifier) revert NullifierAlreadySpent();
+        if (p.maker.nonceNullifier == p.taker.nonceNullifier) revert NullifierAlreadySpent();
+
+        if (nullifiers[p.maker.nullifier]) revert NullifierAlreadySpent();
+        if (nullifiers[p.taker.nullifier]) revert NullifierAlreadySpent();
+        if (nonceNullifiers[p.maker.nonceNullifier]) revert NullifierAlreadySpent();
+        if (nonceNullifiers[p.taker.nonceNullifier]) revert NullifierAlreadySpent();
+
+        // 9. Per-side root recency — async-root model (see preamble).
+        //    Each side's root is independently validated against the
+        //    rolling history. Equality is NOT required.
+        if (!pool.isKnownRoot(p.maker.commitmentRoot)) revert UnknownRoot();
+        if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
+
+        // 10. Verify both Groth16 proofs. The packed signal arrays are
+        //     held in memory across the two `verifyProof` calls to avoid
+        //     stack-too-deep when both proofs are verified back-to-back.
+        uint[14] memory makerSignals = _packAuthSignals(p.maker);
+        if (!authorizeVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
+            revert InvalidProof();
+        }
+        uint[14] memory takerSignals = _packAuthSignals(p.taker);
+        if (!authorizeVerifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
+            revert InvalidProof();
+        }
+
+        // 11. Relayer registry gating (if configured)
+        if (address(relayerRegistry) != address(0)) {
+            if (!relayerRegistry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
+            if (!relayerRegistry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
+        }
+
+        // 12. Mark nullifiers
+        nullifiers[p.maker.nullifier] = true;
+        nullifiers[p.taker.nullifier] = true;
+        nonceNullifiers[p.maker.nonceNullifier] = true;
+        nonceNullifiers[p.taker.nonceNullifier] = true;
+
+        // 13. Insert residual commitments (skip zero — fully spent UTXOs)
+        if (p.maker.newCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(p.maker.newCommitment));
+        }
+        if (p.taker.newCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(p.taker.newCommitment));
+        }
+
+        // 14. Transfer claim totals from pool to settlement contract.
+        //     `maker.totalLocked` is denominated in `maker.buyToken` (the
+        //     token maker is *receiving*), and is drawn from the pool's
+        //     balance of that token (which was funded by the taker's
+        //     prior deposit of `taker.sellToken == maker.buyToken`).
+        if (p.maker.totalLocked > 0) {
+            pool.transferToSettlement(p.maker.buyToken, p.maker.totalLocked);
+        }
+        if (p.taker.totalLocked > 0) {
+            pool.transferToSettlement(p.taker.buyToken, p.taker.totalLocked);
+        }
+
+        // 15. Fee routing — same naming as settlePrivate. The fee paid by
+        //     each side goes to the *counterparty's* relayer, which is the
+        //     trustless fee split established in PR #126 / Phase 3.6.
+        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.maker.buyToken, p.feeTokenMaker, p.taker.relayer);
+        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.taker.buyToken, p.feeTokenTaker, p.maker.relayer);
+
+        // 16. Register claims groups
+        //     The duplicate-claims-root guard is gated on both sides being
+        //     non-zero so a one-sided fully-claimed settle (where one side
+        //     keeps everything internally) can still settle without colliding.
+        if (
+            p.maker.claimsRoot == p.taker.claimsRoot &&
+            p.maker.totalLocked > 0 &&
+            p.taker.totalLocked > 0
+        ) revert DuplicateClaimsRoot();
+
+        if (claimsGroups[p.maker.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        claimsGroups[p.maker.claimsRoot] = ClaimsGroup({
+            token: p.maker.buyToken,
+            totalLocked: p.maker.totalLocked,
+            totalClaimed: 0
+        });
+
+        if (claimsGroups[p.taker.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        claimsGroups[p.taker.claimsRoot] = ClaimsGroup({
+            token: p.taker.buyToken,
+            totalLocked: p.taker.totalLocked,
+            totalClaimed: 0
+        });
+
+        emit PrivateSettledAuth(
+            p.maker.nullifier,
+            p.taker.nullifier,
+            p.maker.claimsRoot,
+            p.taker.claimsRoot,
+            p.maker.relayer,
+            p.taker.relayer,
+            msg.sender,
+            p.feeTokenMaker,
+            p.feeTokenTaker
+        );
+    }
+
+    /// @dev Pack an `AuthorizeProof` into the 14-element public-signal array
+    ///      that `authorize.circom`'s verifier expects, in the same order as
+    ///      the circuit's `component main { public [...] }` block.
+    function _packAuthSignals(AuthorizeProof calldata ap) internal pure returns (uint[14] memory signals) {
+        signals[0]  = ap.commitmentRoot;
+        signals[1]  = uint256(ap.nullifier);
+        signals[2]  = uint256(ap.nonceNullifier);
+        signals[3]  = uint256(ap.newCommitment);
+        signals[4]  = uint256(uint160(ap.sellToken));
+        signals[5]  = uint256(uint160(ap.buyToken));
+        signals[6]  = uint256(ap.sellAmount);
+        signals[7]  = uint256(ap.buyAmount);
+        signals[8]  = uint256(ap.maxFee);
+        signals[9]  = uint256(ap.expiry);
+        signals[10] = uint256(ap.claimsRoot);
+        signals[11] = uint256(ap.totalLocked);
+        signals[12] = uint256(uint160(ap.relayer));
+        signals[13] = uint256(ap.orderHash);
     }
 
     // ─── Scatter Direct (same-token, no counterparty) ─────────────
