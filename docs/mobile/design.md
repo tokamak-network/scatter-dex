@@ -31,13 +31,13 @@
 | 구성 요소 | 현재 구현 |
 |-----------|----------|
 | 프레임워크 | Next.js 16.2.1 + React 19.2.4 |
-| 지갑 연동 | `window.ethereum` (EIP-1193) 직접 접근, MetaMask only |
+| 지갑 연동 | `window.ethereum` (EIP-1193 injected provider) 직접 접근, injected wallet 의존 |
 | 블록체인 | ethers 6.16.0 |
 | ZK Proof | snarkjs 0.7.6 Groth16, WASM + Web Worker |
 | 암호학 | circomlibjs (Poseidon), @noble/curves (EdDSA BabyJub) |
 | 스타일링 | Tailwind CSS 4 |
 | 상태 관리 | React Context (WalletProvider) + useState |
-| 노트 저장 | Browser FileSystem API (IndexedDB) |
+| 노트 저장 | File System Access API (`showDirectoryPicker`) + `localStorage` fallback |
 
 ### 1.2 tokamon 앱 스택 (기존 경험)
 
@@ -243,7 +243,9 @@ export async function connect() {
 }
 
 export async function disconnect() {
-  // WalletConnect 세션 종료
+  // 1. WalletConnect 세션 종료 (서버 릴레이에 disconnect 전파)
+  if (provider?.disconnect) await provider.disconnect();
+  // 2. 로컬 상태 초기화
   account = null; signer = null; provider = null;
   listeners.forEach(cb => cb({ account: null }));
 }
@@ -495,9 +497,10 @@ SE (P-256)                    Software
 
 ## 9. 미해결 질문
 
-### OQ-1. snarkjs + Hermes WASM 호환성
-- Hermes의 WASM 지원 수준 확인 필요
-- **Phase 1-2 PoC에서 결정** — 실패 시 WebView fallback
+### OQ-1. snarkjs + Hermes WASM 호환성 — 부분 해결
+- PoC에서 Hermes 직접 실행 실패 확인 — 원인은 Node API 의존성 (readline, Worker, Buffer, process, crypto)
+- **Hermes WASM 자체의 제약 여부**는 아직 미확인 (Node API를 전부 폴리필한 상태에서의 재테스트 필요)
+- 현재 결정: WebView 하이브리드로 확정, Hermes 직접 실행은 Phase 2 최적화 시 재검토
 
 ### OQ-2. WalletConnect projectId 관리
 - cloud.walletconnect.com에서 발급 필요
@@ -529,8 +532,8 @@ SE (P-256)                    Software
 | 2026-04-10 | Capacitor → Expo/RN 변경 | NFC & SE 향후 확장 가능성, tokamon 경험 재활용 |
 | 2026-04-10 | WalletConnect v2 + Web3Modal RN | MetaMask 의존 탈피, 모바일 필수 |
 | 2026-04-10 | 웹/모바일 ZK 코드 공유 (`shared/`) | 중복 제거, 단일 소스 |
-| 2026-04-10 | ZK는 WebView 하이브리드 | Hermes WASM 미지원 확인, WebView에서 fullProve+verify ALL PASS |
-| 2026-04-10 | esbuild + 폴리필 번들 | circomlibjs 브라우저 빌드 없음, Buffer/Worker/process/crypto 폴리필 필요 |
+| 2026-04-10 | ZK는 WebView 하이브리드 | PoC에서 Hermes 직접 실행 시 snarkjs/circomlibjs의 Node API 의존성(readline, Worker, Buffer, process, crypto)으로 불가 확인. Hermes WASM 자체 제약 여부는 별도 확인 필요. WebView에서 fullProve+verify ALL PASS |
+| 2026-04-10 | esbuild + 폴리필 번들 | circomlibjs 브라우저 빌드 부재 + Node 런타임 의존성 대응을 위한 번들링 전략 |
 
 ## 부록 B — WalletConnect 지원 지갑 (주요)
 
