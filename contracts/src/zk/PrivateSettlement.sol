@@ -72,8 +72,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @notice Emitted by `settleAuth` (Half-proof). Distinct from
     ///         `PrivateSettled` (which `settlePrivate` emits) so off-chain
-    ///         indexers can tell the two settlement paths apart and so the
-    ///         second relayer is also indexed.
+    ///         indexers can tell the two settlement paths apart.
+    /// @dev    Solidity caps indexed event fields at 3, and the three
+    ///         indexing slots are spent on `makerNullifier`, `takerNullifier`,
+    ///         and `makerRelayer` (the first two for trade-level lookups,
+    ///         the third for "find all settlements where I was the maker
+    ///         relayer"). `takerRelayer` is included as a non-indexed field
+    ///         — indexers that need "find all settlements where I was the
+    ///         taker relayer" can scan and filter post-hoc, or build their
+    ///         own secondary index off `submitter` (which is `msg.sender`
+    ///         and is therefore one of the two relayers).
     event PrivateSettledAuth(
         bytes32 indexed makerNullifier,
         bytes32 indexed takerNullifier,
@@ -445,6 +453,27 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
 
         // 9. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
+        //
+        // [SECURITY] The intra-transaction equality checks below are
+        // load-bearing. Without them, a malicious caller could submit two
+        // authorize.circom proofs against the **same** escrow commitment
+        // (same secret + same salt → same nullifier on both sides). The
+        // per-mapping `nullifiers[...]` checks would each see "not yet
+        // spent" because the nullifier is being processed for the first
+        // time in this transaction, and the contract would then drain
+        // `2 × totalLocked` of the underlying token from the pool while
+        // only one commitment was actually consumed — a pool drain.
+        //
+        // Token compatibility (`maker.sellToken == taker.buyToken` and
+        // vice versa) plus same-secret commitment forces both sides to
+        // trade the same token for itself, so both `transferToSettlement`
+        // calls in step 14 would withdraw from the same token's pool
+        // balance. The nonce-nullifier symmetric variant is closed for
+        // the same reason. See the security review on PR #133 (gemini
+        // comment 3061594760).
+        if (p.maker.nullifier == p.taker.nullifier) revert NullifierAlreadySpent();
+        if (p.maker.nonceNullifier == p.taker.nonceNullifier) revert NullifierAlreadySpent();
+
         if (nullifiers[p.maker.nullifier]) revert NullifierAlreadySpent();
         if (nullifiers[p.taker.nullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[p.maker.nonceNullifier]) revert NullifierAlreadySpent();

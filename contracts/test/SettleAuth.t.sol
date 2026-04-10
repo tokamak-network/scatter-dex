@@ -243,8 +243,12 @@ contract SettleAuthTest is Test {
     // ────────────────────────────────────────────────────────────
 
     function test_settleAuth_asyncRoot_differentRootsBothKnown_succeeds() public {
-        // Insert a second commitment so the pool's history has two roots:
-        // root_0 (from setUp's deposit) and root_1 (from this insert).
+        // Insert a commitment so the pool's history has two roots:
+        // the initial empty-tree root (set by IncrementalMerkleTree's
+        // constructor) and the new root from this insert. setUp() does not
+        // call pool.deposit() — the pool is funded by direct ERC20 transfers
+        // — so prior to this insert the only root in history is the
+        // empty-tree root.
         vm.prank(address(settlement));
         pool.insertCommitment(uint256(0xCAFE));
 
@@ -438,6 +442,42 @@ contract SettleAuthTest is Test {
         vm.prank(makerRelayer);
         vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
         settlement.settleAuth(p2);
+    }
+
+    /// @notice [Security regression test for PR #133 gemini #3061594760]
+    ///         An attacker submits two authorize.circom proofs against the
+    ///         **same** escrow commitment (same secret + salt → same
+    ///         escrow nullifier on both sides). Without the intra-tx
+    ///         equality check in step 9, both per-mapping checks would
+    ///         pass (the nullifier is being processed for the first time
+    ///         in this transaction) and the contract would drain
+    ///         2 × totalLocked from the pool while only one commitment
+    ///         was actually consumed. The fix is the early `if (m.nullifier
+    ///         == t.nullifier) revert NullifierAlreadySpent();` check.
+    function test_settleAuth_intraTxSameEscrowNullifier_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        // Force both sides to share the escrow nullifier
+        p.taker.nullifier = M_NULL;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.settleAuth(p);
+    }
+
+    /// @notice Symmetric to the above for the nonce nullifier. Without the
+    ///         second intra-tx equality check, an attacker who happened to
+    ///         construct two proofs colliding on the nonce nullifier (e.g.
+    ///         via a Poseidon collision in the unlikely worst case, or via
+    ///         a buggy client that re-used a nonce) could trigger the same
+    ///         pool-drain pattern.
+    function test_settleAuth_intraTxSameNonceNullifier_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        // Force both sides to share the nonce nullifier
+        p.taker.nonceNullifier = M_NONCE_NULL;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.settleAuth(p);
     }
 
     // ────────────────────────────────────────────────────────────
