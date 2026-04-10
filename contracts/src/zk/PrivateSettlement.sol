@@ -37,6 +37,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotYetReleasable();
     error TokenMismatch();
     error AmountOverflow();
+    error ZeroSellAmount();
     error OnlyWETH();
     error ClaimsGroupAlreadyExists();
     error DuplicateClaimsRoot();
@@ -452,7 +453,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
 
         // 2. Non-zero amounts — prevent empty settlements that bloat state
-        if (p.maker.sellAmount == 0 || p.taker.sellAmount == 0) revert AmountOverflow();
+        if (p.maker.sellAmount == 0 || p.taker.sellAmount == 0) revert ZeroSellAmount();
 
         // 3. Token whitelist (both sell tokens — i.e. tokens that will be
         //    spent from the pool). buyTokens are checked transitively via the

@@ -203,15 +203,19 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 }
 
 /**
- * Purge non-pending orders from the in-memory store. Call periodically
- * (e.g. from a setInterval in index.ts) to prevent unbounded memory
- * growth from accumulated settled/cancelled/expired orders.
+ * Purge non-pending and expired orders from the in-memory store.
+ * Call periodically (e.g. from a setInterval in index.ts) to prevent
+ * unbounded memory growth. Removes:
+ *   - orders with status != "pending" (settled, cancelled, etc.)
+ *   - pending orders past their expiry timestamp
  * Returns the number of entries removed.
  */
 export function purgeNonPendingAuthorizeOrders(): number {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   let removed = 0;
   for (const [key, stored] of authorizeOrders) {
-    if (stored.status !== "pending") {
+    const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
+    if (stored.status !== "pending" || expired) {
       authorizeOrders.delete(key);
       removed++;
     }
