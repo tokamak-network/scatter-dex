@@ -12,7 +12,8 @@
  * submits them as a single `settleAuth(makerProof, takerProof)`
  * transaction — the relayer never sees the user's private witness.
  *
- * Public outputs (14 signals, matching authorize.circom):
+ * Public signals (15, matching authorize.circom):
+ *   [0] pubKeyBind (output), [1..14] public inputs:
  *   commitmentRoot, nullifier, nonceNullifier, newCommitment,
  *   sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry,
  *   claimsRoot, totalLocked, relayer, orderHash

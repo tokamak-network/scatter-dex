@@ -71,11 +71,27 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 4. Store the order ──
+      // ── 4b. Verify pubKey via pubKeyBind (compliance — mandatory) ──
+      const pubKeyAx = body.pubKeyAx as string | undefined;
+      const pubKeyAy = body.pubKeyAy as string | undefined;
+      if (!pubKeyAx || !pubKeyAy) {
+        res.status(400).json({ error: "pubKeyAx and pubKeyAy are required for compliance" });
+        return;
+      }
+      const { poseidonHash: poseidonHashFn } = await import("../core/zk-prover.js");
+      const computed = await poseidonHashFn([BigInt(pubKeyAx), BigInt(pubKeyAy), BigInt(order.publicSignals.nullifier)]);
+      if (computed.toString() !== order.publicSignals.pubKeyBind) {
+        res.status(400).json({ error: "pubKey does not match pubKeyBind in proof" });
+        return;
+      }
+
+      // ── 5. Store the order ──
       const stored: StoredAuthorizeOrder = {
         order,
         status: "pending",
         submittedAt: nowSeconds,
+        pubKeyAx: pubKeyAx ?? null,
+        pubKeyAy: pubKeyAy ?? null,
       };
       authorizeOrders.set(nullifier, stored);
 
@@ -83,7 +99,8 @@ export function createAuthorizeOrderRoutes(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
         `buy=${order.publicSignals.buyToken} ` +
         `amount=${order.publicSignals.sellAmount} ` +
-        `nullifier=${nullifier.slice(0, 18)}...`,
+        `nullifier=${nullifier.slice(0, 18)}...` +
+        (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
       // ── 5. Try to match ──
