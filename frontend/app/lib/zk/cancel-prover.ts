@@ -129,7 +129,7 @@ export async function generateCancelProof(
   // would brick the balance). Also ensure freshSalt != old salt to
   // avoid generating an identical commitment.
   let freshSalt: bigint;
-  let newCommitment: bigint;
+  let newCommitment: bigint = 0n;
   do {
     freshSalt = randomFieldElement();
     if (freshSalt === input.note.salt) continue; // avoid same-salt rotation

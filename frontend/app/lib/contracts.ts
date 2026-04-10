@@ -30,8 +30,20 @@ export const ERC20_ABI = [
 export const PRIVATE_SETTLEMENT_ABI = [
   "function nullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",
+  "function cancelPrivate((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitmentRoot, bytes32 oldNullifier, bytes32 oldNonceNullifier, bytes32 newCommitment) p) external",
   "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
+  "event PrivateCancel(bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer)",
 ];
+
+export const COMMITMENT_POOL_ABI = [
+  "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
+  "function getLastRoot() view returns (uint256)",
+  "function nextIndex() view returns (uint32)",
+  "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
+];
+
+// Pre-parsed — avoids re-parsing on each cancel/deposit call
+export const COMMITMENT_POOL_IFACE = new ethers.Interface(COMMITMENT_POOL_ABI);
 
 export const FEE_VAULT_ABI = [
   "function balances(address relayer, address token) view returns (uint256)",
