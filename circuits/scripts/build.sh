@@ -6,9 +6,8 @@ cd "$(dirname "$0")/.."
 BUILD=build
 SNARKJS=./node_modules/.bin/snarkjs
 
-# Circuits to build: deposit, withdraw, settle, claim, authorize
-# (authorize is the Half-proof PoC — see project_half_proof_design.md)
-CIRCUITS=(deposit withdraw settle claim authorize)
+# Circuits to build: deposit, withdraw, settle, claim, authorize, cancel
+CIRCUITS=(deposit withdraw settle claim authorize cancel)
 
 # Map circuit name → Solidity verifier contract name
 declare -A VERIFIER_NAMES
@@ -17,6 +16,7 @@ VERIFIER_NAMES[withdraw]="WithdrawVerifier"
 VERIFIER_NAMES[settle]="SettleVerifier"
 VERIFIER_NAMES[claim]="ClaimVerifier"
 VERIFIER_NAMES[authorize]="AuthorizeVerifier"
+VERIFIER_NAMES[cancel]="CancelVerifier"
 
 echo "=== ZK Circuit Build ==="
 echo ""
