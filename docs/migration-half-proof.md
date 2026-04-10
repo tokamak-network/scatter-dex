@@ -9,7 +9,7 @@
 
 ## 1. What Changed
 
-zkScatter migrated from a **monolithic prove model** (relayer generates the full settlement proof) to a **Half-proof model** (each user proves their own side in the browser). This is a fundamental change to the trust model.
+zkScatter migrated from a **monolithic proving model** (relayer generates the full settlement proof) to a **Half-proof model** (each user proves their own side in the browser). This is a fundamental change to the trust model.
 
 ### 1.1 Commitment Format: v1 → v2
 
@@ -38,7 +38,7 @@ The half-proof model requires each user to have a **BabyJub EdDSA key pair**:
 
 - **Derived from MetaMask signature** — user signs a fixed message (`DERIVE_MESSAGE`) with their Ethereum wallet, and the signature is used as entropy to derive the EdDSA private key
 - **Deterministic** — same wallet always produces the same EdDSA key
-- **Stored encrypted** in browser localStorage, re-derivable on any device by signing the same message
+- **Stored encrypted** in the user-selected notes folder via the File System Access API (falls back to localStorage if unavailable). Re-derivable on any device by signing the same message with the same wallet
 
 ## 2. Testnet Users: What You Need to Do
 
@@ -46,10 +46,15 @@ The half-proof model requires each user to have a **BabyJub EdDSA key pair**:
 
 If you have funds in a v1 commitment (deposited before the half-proof upgrade):
 
-1. **Withdraw** using the legacy `withdraw` circuit (still supported for v1 commitments)
-2. **Re-deposit** — the new deposit flow automatically creates a v2 commitment with your EdDSA pubkey bound
+**v1 commitments are not spendable under the current stack.** The v1 verifier was removed in a clean cutover (see `circuits/tags.circom` — "no legacy verifier is kept"). The current `withdraw.circom` uses `TAG_COMMITMENT_V2` and will reject v1 preimages.
 
-There is no automatic migration. v1 commitments cannot be used for trading under the half-proof model because `authorize.circom` requires the pubkey to be part of the commitment preimage.
+To recover v1 funds, one of the following is required:
+1. **Redeploy the old v1 verifier** temporarily alongside the current contracts, or
+2. **Write a one-time migration circuit** that proves knowledge of a v1 preimage and outputs a v2 commitment
+
+Neither is currently deployed. **On testnet, v1 funds should be considered lost.** This is acceptable for testnet; a mainnet deployment would never perform a breaking commitment format change without a migration path.
+
+v1 commitments cannot be used for trading under the half-proof model because `authorize.circom` requires the pubkey to be part of the commitment preimage.
 
 ### 2.2 New Deposit Flow
 
@@ -66,10 +71,10 @@ Your funds are recoverable from two pieces of information:
 
 | Secret | Where it lives | How to back up |
 |--------|---------------|----------------|
-| `ownerSecret` | Note file (JSON) | Save the note file securely — this is the master secret for your escrow |
-| EdDSA private key | Derived from MetaMask signature | **No separate backup needed** — re-derivable from the same wallet on any device by signing the same message |
+| `ownerSecret` | Note file (JSON) in user-selected notes folder | Save the entire notes folder securely — this is the master secret for your escrow |
+| EdDSA private key | Derived from MetaMask signature | **No separate backup needed** — re-derivable from the same wallet on any device by signing the same message. Back up your wallet seed phrase |
 
-**Critical**: if you lose your `ownerSecret`, your funds are permanently locked. The EdDSA key alone cannot recover them. Always keep your note files backed up.
+**Critical**: if you lose your `ownerSecret`, your funds are permanently locked. The EdDSA key alone cannot recover them. Always keep your notes folder backed up.
 
 ## 3. Relayer Operators: What You Need to Do
 
@@ -125,7 +130,7 @@ The deposit flow now includes an additional step:
 [Connect Wallet] → [Sign Message (EdDSA derivation)] → [Approve Deposit Tx] → [Save Note]
 ```
 
-The signature popup appears **once per session** (the derived key is cached in encrypted localStorage). Users should be informed that:
+The signature popup appears **once per session** (the derived key is cached encrypted in the user-selected notes folder via the File System Access API). Users should be informed that:
 - The signature request is for key derivation, not a transaction
 - It costs no gas
 - They can verify the message content before signing
@@ -142,4 +147,4 @@ The signature popup appears **once per session** (the derived key is cached in e
 
 - **Mobile proof time**: ~15-30s on mobile devices with snarkjs WASM. rapidsnark-wasm would reduce this to ~3-8s but the npm package is not yet available for browser environments
 - **zkey download**: First proof generation requires downloading ~18 MB zkey file. Subsequent proofs use IndexedDB cache
-- **No v1→v2 auto-migration**: Users must manually withdraw and re-deposit. This is by design — automatic migration would require the contract to know the v1 preimage, which it doesn't have
+- **No v1→v2 migration path on testnet**: The v1 verifier was removed in a clean cutover. v1 funds on testnet are non-recoverable without redeploying the old verifier or writing a one-time migration circuit. Mainnet would never ship a breaking change without a migration path
