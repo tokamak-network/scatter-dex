@@ -119,7 +119,7 @@ async function main() {
   // Half-proof (trustless) order routes — settleAuth path
   const authSubmitter = new AuthorizeSubmitter();
   app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
-    authSubmitter, writeLimiter, authSubmitter.getAddress(),
+    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter,
   ));
 
   // P2P routes (relayer-to-relayer communication)

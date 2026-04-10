@@ -14,7 +14,6 @@ import { config } from "../config.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
-  AuthorizePublicSignals,
 } from "../types/authorize-order.js";
 
 // settleAuth ABI — matches the SettleAuthParams struct in PrivateSettlement.sol
@@ -122,8 +121,8 @@ export class AuthorizeSubmitter {
       buyToken: toAddress(ps.buyToken),
       sellAmount: BigInt(ps.sellAmount),
       buyAmount: BigInt(ps.buyAmount),
-      maxFee: Number(BigInt(ps.maxFee)),
-      expiry: Number(BigInt(ps.expiry)),
+      maxFee: BigInt(ps.maxFee),
+      expiry: BigInt(ps.expiry),
       claimsRoot: toBytes32(ps.claimsRoot),
       totalLocked: BigInt(ps.totalLocked),
       relayer: toAddress(ps.relayer),

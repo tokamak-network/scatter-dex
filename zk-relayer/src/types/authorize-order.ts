@@ -132,9 +132,11 @@ export function isTokenCompatible(
   maker: AuthorizePublicSignals,
   taker: AuthorizePublicSignals,
 ): boolean {
+  // Compare as BigInt, not string, to handle equivalent values with
+  // different string formatting (e.g., "0123" vs "123").
   return (
-    maker.sellToken === taker.buyToken &&
-    taker.sellToken === maker.buyToken
+    BigInt(maker.sellToken) === BigInt(taker.buyToken) &&
+    BigInt(taker.sellToken) === BigInt(maker.buyToken)
   );
 }
 
@@ -163,15 +165,39 @@ export function validateAuthorizeOrder(
     return "publicSignalsArray must have exactly 14 elements";
   }
 
+  // All 14 named fields must be present
+  const requiredFields: (keyof AuthorizePublicSignals)[] = [
+    "commitmentRoot", "nullifier", "nonceNullifier", "newCommitment",
+    "sellToken", "buyToken", "sellAmount", "buyAmount",
+    "maxFee", "expiry", "claimsRoot", "totalLocked",
+    "relayer", "orderHash",
+  ];
+  for (const field of requiredFields) {
+    if (ps[field] === undefined || ps[field] === null) {
+      return `Missing required public signal: ${field}`;
+    }
+  }
+
   // Field element range (all public signals must be < BN254 modulus)
-  for (const [key, val] of Object.entries(ps)) {
+  for (const field of requiredFields) {
+    const val = ps[field];
     try {
       const v = BigInt(val);
       if (v < 0n || v >= BN254_FIELD_MODULUS) {
-        return `${key} out of BN254 field range`;
+        return `${field} out of BN254 field range`;
       }
     } catch {
-      return `${key} is not a valid bigint string`;
+      return `${field} is not a valid bigint string`;
+    }
+  }
+
+  // Consistency: publicSignalsArray must match named publicSignals
+  if (order.publicSignalsArray) {
+    const namedValues = requiredFields.map((f) => ps[f]);
+    for (let i = 0; i < 14; i++) {
+      if (order.publicSignalsArray[i] !== namedValues[i]) {
+        return `publicSignalsArray[${i}] (${requiredFields[i]}) does not match named publicSignals`;
+      }
     }
   }
 
@@ -187,10 +213,29 @@ export function validateAuthorizeOrder(
     return `Proof bound to relayer ${proofRelayer}, expected ${relayerAddress}`;
   }
 
-  // Amounts must be positive
-  if (BigInt(ps.sellAmount) === 0n) return "sellAmount must be > 0";
-  if (BigInt(ps.buyAmount) === 0n) return "buyAmount must be > 0";
-  if (BigInt(ps.totalLocked) === 0n) return "totalLocked must be > 0";
+  // Bit-width constraints (mirror settleAuth / authorize.circom bounds)
+  const sellAmount = BigInt(ps.sellAmount);
+  const buyAmount = BigInt(ps.buyAmount);
+  const maxFee = BigInt(ps.maxFee);
+  const expiry = BigInt(ps.expiry);
+  const totalLocked = BigInt(ps.totalLocked);
+
+  if (sellAmount === 0n) return "sellAmount must be > 0";
+  if (buyAmount === 0n) return "buyAmount must be > 0";
+  if (totalLocked === 0n) return "totalLocked must be > 0";
+  if (sellAmount >= (1n << 128n)) return "sellAmount exceeds uint128";
+  if (buyAmount >= (1n << 128n)) return "buyAmount exceeds uint128";
+  if (maxFee >= (1n << 16n)) return "maxFee exceeds uint16";
+  if (expiry >= (1n << 64n)) return "expiry exceeds uint64";
+  if (totalLocked >= (1n << 96n)) return "totalLocked exceeds uint96";
+
+  // Address-range checks
+  const sellToken = BigInt(ps.sellToken);
+  const buyToken = BigInt(ps.buyToken);
+  const relayerVal = BigInt(ps.relayer);
+  if (sellToken >= (1n << 160n)) return "sellToken exceeds uint160";
+  if (buyToken >= (1n << 160n)) return "buyToken exceeds uint160";
+  if (relayerVal >= (1n << 160n)) return "relayer exceeds uint160";
 
   // Nullifiers must be nonzero
   if (BigInt(ps.nullifier) === 0n) return "nullifier must be nonzero";

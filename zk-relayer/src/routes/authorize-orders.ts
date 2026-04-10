@@ -31,6 +31,7 @@ export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
+  readLimiter?: RequestHandler,
 ): Router {
   const router = Router();
 
@@ -123,13 +124,13 @@ export function createAuthorizeOrderRoutes(
         message: "Order stored; waiting for counterparty",
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[authorize-orders] Error:", message);
-      res.status(500).json({ error: message });
+      console.error("[authorize-orders] Error:", err);
+      res.status(500).json({ error: "Internal server error" });
     }
   }) as RequestHandler);
 
   // GET /api/authorize-orders/:nullifier — check order status
+  if (readLimiter) router.get("/:nullifier", readLimiter);
   router.get("/:nullifier", ((req: Request, res: Response) => {
     const stored = authorizeOrders.get(req.params.nullifier);
     if (!stored) {
@@ -144,18 +145,15 @@ export function createAuthorizeOrderRoutes(
   }) as RequestHandler);
 
   // DELETE /api/authorize-orders/:nullifier — cancel a pending order
+  // [Copilot #3062066619] Cancel is disabled until an authenticated
+  // mechanism is implemented. Without proof of ownership (e.g., an EdDSA
+  // signature over the nullifier), anyone who knows the nullifier can
+  // cancel another user's order — a trivial DoS vector. The nullifier
+  // is part of the public on-chain trace, so it is not secret.
   router.delete("/:nullifier", ((req: Request, res: Response) => {
-    const stored = authorizeOrders.get(req.params.nullifier);
-    if (!stored) {
-      res.status(404).json({ error: "Order not found" });
-      return;
-    }
-    if (stored.status !== "pending") {
-      res.status(400).json({ error: `Cannot cancel order in '${stored.status}' status` });
-      return;
-    }
-    stored.status = "cancelled";
-    res.json({ status: "cancelled" });
+    res.status(501).json({
+      error: "Unauthenticated cancel is disabled. Use order expiry or contact the relayer operator.",
+    });
   }) as RequestHandler);
 
   return router;
@@ -180,19 +178,13 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 
     const cPs = candidate.order.publicSignals;
 
-    // Token compatibility (same as settleAuth step 3)
-    if (!isTokenCompatible(inPs, cPs) && !isTokenCompatible(cPs, inPs)) continue;
-
-    // Determine which side is maker (the existing order) and taker (the incoming)
-    // Convention: the first order to arrive is maker, the incoming is taker.
-    const makerPs = cPs;
-    const takerPs = inPs;
-
-    // Check token compatibility in the maker/taker direction
-    if (!isTokenCompatible(makerPs, takerPs)) continue;
+    // Convention: the existing order is maker, the incoming is taker.
+    // isTokenCompatible is symmetric (A.sell==B.buy ∧ B.sell==A.buy),
+    // so only one call is needed.
+    if (!isTokenCompatible(cPs, inPs)) continue;
 
     // Price compatibility (same as settleAuth step 4)
-    if (!isPriceCompatible(makerPs, takerPs)) continue;
+    if (!isPriceCompatible(cPs, inPs)) continue;
 
     return {
       maker: candidate,
@@ -201,4 +193,21 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
   }
 
   return null;
+}
+
+/**
+ * Purge non-pending orders from the in-memory store. Call periodically
+ * (e.g. from a setInterval in index.ts) to prevent unbounded memory
+ * growth from accumulated settled/cancelled/expired orders.
+ * Returns the number of entries removed.
+ */
+export function purgeNonPendingAuthorizeOrders(): number {
+  let removed = 0;
+  for (const [key, stored] of authorizeOrders) {
+    if (stored.status !== "pending") {
+      authorizeOrders.delete(key);
+      removed++;
+    }
+  }
+  return removed;
 }
