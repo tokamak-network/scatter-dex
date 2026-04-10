@@ -34,25 +34,25 @@ export interface SolidityProof {
 // ─── AuthorizeOrderFile ─────────────────────────────────────────
 
 /**
- * The 14 public signals from authorize.circom, in the same order as
- * the circuit's `component main { public [...] }` block and the
- * on-chain `IAuthorizeVerifier.verifyProof` signature.
+ * The 15 public signals from authorize.circom.
+ * Signal ordering: [0] = pubKeyBind (output), [1..14] = public inputs.
  */
 export interface AuthorizePublicSignals {
-  commitmentRoot: string;   // [0] uint256
-  nullifier: string;        // [1] bytes32
-  nonceNullifier: string;   // [2] bytes32
-  newCommitment: string;    // [3] bytes32
-  sellToken: string;        // [4] uint160 as uint256
-  buyToken: string;         // [5] uint160 as uint256
-  sellAmount: string;       // [6] uint128 (≤ 2^126 in-circuit)
-  buyAmount: string;        // [7] uint128 (≤ 2^126 in-circuit)
-  maxFee: string;           // [8] uint16 (bps)
-  expiry: string;           // [9] uint64 (unix seconds)
-  claimsRoot: string;       // [10] bytes32
-  totalLocked: string;      // [11] uint96
-  relayer: string;          // [12] uint160 as uint256
-  orderHash: string;        // [13] bytes32
+  pubKeyBind: string;       // [0] Poseidon(pubKeyAx, pubKeyAy, nullifier) — circuit output
+  commitmentRoot: string;   // [1] uint256
+  nullifier: string;        // [2] bytes32
+  nonceNullifier: string;   // [3] bytes32
+  newCommitment: string;    // [4] bytes32
+  sellToken: string;        // [5] uint160 as uint256
+  buyToken: string;         // [6] uint160 as uint256
+  sellAmount: string;       // [7] uint128 (≤ 2^126 in-circuit)
+  buyAmount: string;        // [8] uint128 (≤ 2^126 in-circuit)
+  maxFee: string;           // [9] uint16 (bps)
+  expiry: string;           // [10] uint64 (unix seconds)
+  claimsRoot: string;       // [11] bytes32
+  totalLocked: string;      // [12] uint96
+  relayer: string;          // [13] uint160 as uint256
+  orderHash: string;        // [14] bytes32
 }
 
 /**
@@ -79,7 +79,7 @@ export interface AuthorizeOrderFile {
    * Raw public signals array as produced by snarkjs (decimal strings,
    * length 14). Passed directly to the on-chain verifier. Redundant
    * with the named `publicSignals` above but kept for compatibility
-   * with the Groth16 verifier's `uint[14]` calldata layout.
+   * with the Groth16 verifier's `uint[15]` calldata layout.
    */
   publicSignalsArray: string[];
 }
@@ -94,6 +94,9 @@ export interface StoredAuthorizeOrder {
   submittedAt: number;
   settleTxHash?: string;
   crossRelayer?: boolean;
+  /** User's claimed EdDSA pubKey (verified via pubKeyBind). For compliance logging. */
+  pubKeyAx?: string | null;
+  pubKeyAy?: string | null;
 }
 
 export interface AuthorizeMatch {
@@ -161,12 +164,13 @@ export function validateAuthorizeOrder(
   if (!order.proof?.a || !order.proof?.b || !order.proof?.c) {
     return "Missing proof components";
   }
-  if (!order.publicSignalsArray || order.publicSignalsArray.length !== 14) {
-    return "publicSignalsArray must have exactly 14 elements";
+  if (!order.publicSignalsArray || order.publicSignalsArray.length !== 15) {
+    return "publicSignalsArray must have exactly 15 elements";
   }
 
-  // All 14 named fields must be present
+  // All 15 named fields must be present
   const requiredFields: (keyof AuthorizePublicSignals)[] = [
+    "pubKeyBind",
     "commitmentRoot", "nullifier", "nonceNullifier", "newCommitment",
     "sellToken", "buyToken", "sellAmount", "buyAmount",
     "maxFee", "expiry", "claimsRoot", "totalLocked",
