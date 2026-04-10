@@ -653,18 +653,22 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @notice Cancel a pending order via escrow rotation.
     ///         The cancel.circom proof proves the caller owns the commitment
-    ///         and signed the cancel with their EdDSA key. Only active
-    ///         relayers can submit (the relayer address is bound in the proof).
-    function cancelPrivate(CancelParams calldata p) external onlyRelayer nonReentrant {
+    ///         and signed the cancel with their EdDSA key.
+    ///         Anyone can submit — no relayer gating. The proof binds
+    ///         msg.sender as the submitter, and the Groth16 verification
+    ///         is the access control. The user typically submits directly
+    ///         from their own wallet (no relayer needed for cancel).
+    function cancelPrivate(CancelParams calldata p) external nonReentrant {
         if (paused) revert ContractPaused();
         if (address(cancelVerifier) == address(0)) revert CancelVerifierNotSet();
 
-        // Root recency
-        if (!pool.isKnownRoot(p.commitmentRoot)) revert UnknownRoot();
-
-        // Nullifier double-spend
+        // Nullifier double-spend (before root recency — same gas
+        // optimization as settleAuth: flat SLOADs before ring-buffer scan)
         if (nullifiers[p.oldNullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[p.oldNonceNullifier]) revert NullifierAlreadySpent();
+
+        // Root recency
+        if (!pool.isKnownRoot(p.commitmentRoot)) revert UnknownRoot();
 
         // Verify cancel proof (5 public signals)
         uint[5] memory pubSignals = [
