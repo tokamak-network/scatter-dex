@@ -129,6 +129,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         settle — see PR #125 review). Future drift is forbidden by
     ///         the upper bound in `settlePrivate`.
     uint256 public constant TIMESTAMP_TOLERANCE = 60;
+
+    /// @notice Denominator for fee basis points (1 bps = 1/10000).
+    ///         Used by `settleAuth` to bound the relayer-chosen fee against
+    ///         each side's circuit-bound `maxFee`. Same value as the bps
+    ///         denominator inside `settle.circom` §7 (`fee * 10000` checks).
+    uint256 public constant FEE_BPS_DENOMINATOR = 10_000;
+
     bool public paused;
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
@@ -394,7 +401,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         settled atomically. See the comment block above for the
     ///         async-root and fee-bound model.
     function settleAuth(SettleAuthParams calldata p) external nonReentrant {
-        // 1. Authorisation: caller must be one of the two relayers
+        // 1. Only the two proof relayers may submit
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
@@ -434,10 +441,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         //    EdDSA-signed maxFee. (The minimum-receive guarantee
         //    `totalLocked ≥ buyAmount` is already enforced inside
         //    authorize.circom §7 per side, so we don't repeat it here.)
-        if (uint256(p.feeTokenMaker) * 10000 > uint256(p.taker.sellAmount) * uint256(p.taker.maxFee)) {
+        if (uint256(p.feeTokenMaker) * FEE_BPS_DENOMINATOR > uint256(p.taker.sellAmount) * uint256(p.taker.maxFee)) {
             revert FeeExceedsMax();
         }
-        if (uint256(p.feeTokenTaker) * 10000 > uint256(p.maker.sellAmount) * uint256(p.maker.maxFee)) {
+        if (uint256(p.feeTokenTaker) * FEE_BPS_DENOMINATOR > uint256(p.maker.sellAmount) * uint256(p.maker.maxFee)) {
             revert FeeExceedsMax();
         }
 
@@ -448,11 +455,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (block.timestamp > p.maker.expiry) revert OrderExpired();
         if (block.timestamp > p.taker.expiry) revert OrderExpired();
 
-        // 8. Per-side root recency — async-root model (see comment above).
-        if (!pool.isKnownRoot(p.maker.commitmentRoot)) revert UnknownRoot();
-        if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
-
-        // 9. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
+        // 8. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
+        //
+        // Ordered before the root-recency check because the nullifier path
+        // is a flat 4 cold SLOADs (~8.4k gas) whereas pool.isKnownRoot is a
+        // linear ring-buffer scan that can hit up to ROOT_HISTORY_SIZE cold
+        // SLOADs (~63k gas worst case, with default ROOT_HISTORY_SIZE=30).
+        // Replay attempts dominate the reverting-call population, so we
+        // pay the cheaper check first and short-circuit before the
+        // expensive scan.
         //
         // [SECURITY] The intra-transaction equality checks below are
         // load-bearing. Without them, a malicious caller could submit two
@@ -479,11 +490,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (nonceNullifiers[p.maker.nonceNullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[p.taker.nonceNullifier]) revert NullifierAlreadySpent();
 
-        // 10. Verify both Groth16 proofs against the AuthorizeVerifier
-        //     The 14-element signal arrays are built by `_packAuthSignals`
-        //     in the same order as `authorize.circom`'s public outputs.
-        //     Stored to memory to avoid stack-too-deep when both proofs are
-        //     verified back-to-back.
+        // 9. Per-side root recency — async-root model (see preamble).
+        //    Each side's root is independently validated against the
+        //    rolling history. Equality is NOT required.
+        if (!pool.isKnownRoot(p.maker.commitmentRoot)) revert UnknownRoot();
+        if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
+
+        // 10. Verify both Groth16 proofs. The packed signal arrays are
+        //     held in memory across the two `verifyProof` calls to avoid
+        //     stack-too-deep when both proofs are verified back-to-back.
         uint[14] memory makerSignals = _packAuthSignals(p.maker);
         if (!authorizeVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
             revert InvalidProof();
@@ -493,13 +508,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             revert InvalidProof();
         }
 
-        // 11. Relayer registry checks (if set) — both sides
+        // 11. Relayer registry gating (if configured)
         if (address(relayerRegistry) != address(0)) {
             if (!relayerRegistry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
             if (!relayerRegistry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
         }
 
-        // 12. Mark all four nullifiers
+        // 12. Mark nullifiers
         nullifiers[p.maker.nullifier] = true;
         nullifiers[p.taker.nullifier] = true;
         nonceNullifiers[p.maker.nonceNullifier] = true;
@@ -531,8 +546,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.maker.buyToken, p.feeTokenMaker, p.taker.relayer);
         if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.taker.buyToken, p.feeTokenTaker, p.maker.relayer);
 
-        // 16. Register claims groups (with duplicate-claims-root prevention,
-        //     same as settlePrivate)
+        // 16. Register claims groups
+        //     The duplicate-claims-root guard is gated on both sides being
+        //     non-zero so a one-sided fully-claimed settle (where one side
+        //     keeps everything internally) can still settle without colliding.
         if (
             p.maker.claimsRoot == p.taker.claimsRoot &&
             p.maker.totalLocked > 0 &&
