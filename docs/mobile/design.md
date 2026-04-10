@@ -277,46 +277,54 @@ export function getProvider() { return provider; }
 
 ## 5. ZK Proof 모바일 전략
 
-### 5.1 snarkjs in React Native — 검증 필요
+### 5.1 PoC 검증 결과 (2026-04-10 확정)
 
-snarkjs는 WASM 기반. React Native에서의 동작:
+> **PoC 코드**: `/Users/zena/tokamak-project-concurrent/scatter-dex-mobile-poc/`
 
-| 환경 | WASM 지원 | 상태 |
-|------|----------|------|
-| Chrome/Safari (웹) | 완전 | 현재 동작 |
-| Capacitor WebView | 완전 | 동작 확실 |
-| React Native (Hermes) | **제한적** | 검증 필요 |
-| React Native (JSC) | **제한적** | 검증 필요 |
+| 환경 | 테스트 | 결과 |
+|------|--------|------|
+| Hermes (직접) | ethers 6 (지갑 생성 + RPC) | **PASS** |
+| Hermes (직접) | snarkjs, circomlibjs | **FAIL** — WASM/Node.js 의존성 |
+| WebView (숨김) | circomlibjs Poseidon | **PASS** |
+| WebView (숨김) | circomlibjs BabyJub EdDSA | **PASS** (sign+verify=true) |
+| WebView (숨김) | snarkjs groth16.fullProve() | **PASS** (실제 proof 생성+검증) |
 
-**Hermes (RN 기본 엔진)**: WebAssembly 지원이 제한적이었으나 최근 버전에서 개선 중.
-
-### 5.2 대안 전략 (snarkjs RN 미동작 시)
-
-**옵션 A**: react-native-webview 내에서 snarkjs 실행
-- WebView에 snarkjs 번들 로드 → 증명 생성 → postMessage로 결과 전달
-- 웹의 Web Worker 패턴과 유사
-- **가장 안전한 fallback**
-
-**옵션 B**: 릴레이어에 proof 위임
-- 사용자가 witness (private inputs)를 릴레이어에 전송
-- 릴레이어가 서버에서 proof 생성
-- **보안 트레이드오프**: witness 노출 (trustful 모드에서만 허용 가능)
-
-**옵션 C**: Expo + WASM 네이티브 모듈
-- C/C++ rapidsnark를 직접 네이티브 모듈로 빌드
-- 최고 성능이지만 개발 비용 높음
-- Phase 2 검토
-
-### 5.3 권장: Phase 1에서 PoC로 결정
+### 5.2 확정 아키텍처: Hermes + WebView 하이브리드
 
 ```
-Phase 1 PoC 순서:
-1. Hermes에서 snarkjs.groth16.fullProve() 직접 호출 시도
-2. 실패 시 → react-native-webview 내 실행 (옵션 A)
-3. 성능 측정 후 최종 결정
+┌─ Hermes (RN 엔진) ────────┐    ┌─ WebView (숨김, ZK 엔진) ─┐
+│ ethers 6                   │    │ snarkjs (Groth16 WASM)    │
+│ WalletConnect              │    │ circomlibjs (Poseidon)    │
+│ UI 렌더링                   │◄──►│ BabyJub EdDSA             │
+│ 상태 관리                   │ post│ proof 생성 + 검증         │
+│ 네비게이션                  │ Msg │                           │
+└────────────────────────────┘    └───────────────────────────┘
 ```
 
-### 5.4 zkey 파일 관리
+**Hermes에서 직접 실행 불가한 이유:**
+- snarkjs: Node.js `readline` 의존
+- circomlibjs/ffjavascript: `Worker`, `Buffer`, `process`, `crypto` 등 Node.js 글로벌 의존
+- esbuild로 브라우저 번들링 + 폴리필 후 WebView에서 정상 동작
+
+**WebView ZK 엔진 번들 빌드:**
+```bash
+# 1. circomlibjs 브라우저 번들 (esbuild)
+npx esbuild zk-engine-src.js --bundle --platform=browser --format=iife --minify \
+  --alias:stream=stream-browserify --alias:crypto=crypto-browserify \
+  --define:global=globalThis --outfile=zk-engine.min.js
+
+# 2. snarkjs + zk-engine을 HTML에 인라인
+node build-webview-html.mjs  # → zk-webview.html (4.6 MB)
+```
+
+**필수 폴리필 (zk-engine-src.js 내):**
+- `Buffer` (buffer 패키지)
+- `process` (process/browser)
+- `Worker` (빈 구현 — single-threaded fallback)
+- `crypto` (crypto-browserify)
+- `stream` (stream-browserify)
+
+### 5.3 zkey 파일 관리
 
 | 전략 | 설명 |
 |------|------|
@@ -517,6 +525,8 @@ SE (P-256)                    Software
 | 2026-04-10 | Capacitor → Expo/RN 변경 | NFC & SE 향후 확장 가능성, tokamon 경험 재활용 |
 | 2026-04-10 | WalletConnect v2 + Web3Modal RN | MetaMask 의존 탈피, 모바일 필수 |
 | 2026-04-10 | 웹/모바일 ZK 코드 공유 (`shared/`) | 중복 제거, 단일 소스 |
+| 2026-04-10 | ZK는 WebView 하이브리드 | Hermes WASM 미지원 확인, WebView에서 fullProve+verify ALL PASS |
+| 2026-04-10 | esbuild + 폴리필 번들 | circomlibjs 브라우저 빌드 없음, Buffer/Worker/process/crypto 폴리필 필요 |
 
 ## 부록 B — WalletConnect 지원 지갑 (주요)
 
