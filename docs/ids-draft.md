@@ -32,12 +32,19 @@ Each entry below is formatted to fit directly into USPTO form **PTO/SB/08a** (No
 
 ### 2.1 Closest prior art
 
-**[NPL-1] Jigsaw: A Privacy-Preserving Trade Primitive.**
-Cryptology ePrint Archive, Report 2025/1147, 2025.
+**[NPL-1] Garg, S., Goel, A., Kolonelos, D., Sinha, R. *Jigsaw: Doubly Private Smart Contracts*.**
+Cryptology ePrint Archive, Paper 2025/1147, 2025.
+First published: 2025-06-18. Last revised: 2025-10-15.
 URL: https://eprint.iacr.org/2025/1147
-Relevance: **Closest known prior art.** Proposes a ZK-based privacy-trade primitive for DeFi operating over shielded balances dissociated from settlement recipients. Overlaps with the present disclosure on Layer 1/2 balance shielding and nullifier-based double-spend prevention. Distinguished from the present disclosure by: (i) absence of a Layer 3 trade-claim dissociation step that decouples settlement-time recipient visibility from the claim redemption event; (ii) absence of a dual-CA compliance layer; (iii) single-output settlement versus the present disclosure's multi-recipient claim fan-out; (iv) absence of a federated relayer accountability model. See `PAPER.md` §10 "Closest Prior Art: Jigsaw [23]" for the full distinction.
+PDF: https://eprint.iacr.org/2025/1147.pdf
+IACR keywords: Privacy-Preserving Smart Contracts; zkSNARKs; Collaborative zkSNARKs.
+ePrint category: APPLICATIONS.
 
-> **Action item before filing**: Confirm the full author list, the canonical title (the ePrint record may carry a different main title from the "Jigsaw" short name used in the specification), and the most recent revision date from the ePrint listing at https://eprint.iacr.org/2025/1147. Update the references in `PAPER.md` §14, `PAPER-ko.md` §14, and this IDS draft to match the ePrint record verbatim before submission.
+Relevance: **Closest known prior art.** Proposes a framework for *doubly private* smart contracts addressing both on-chain and off-chain privacy, in which clients submit privacy-preserving requests to a group of mutually-untrusting servers that collaboratively match those requests. The realisation builds on the ZEXE architecture (Bowe et al., S&P 2020) and extends Collaborative zkSNARKs (Ozdemir and Boneh, USENIX 2022) to enable proof generation by a group of servers. Demonstrated on sample applications including a decentralised exchange, auctions, and voting.
+
+Distinguished from the present disclosure by: (i) collaborative multi-server proof generation versus single-prover client-side proving on the user's own device, which is the dominant architectural difference and the reason zkScatter does not require Collaborative zkSNARKs at all; (ii) absence of a dual-CA compliance layer; (iii) absence of a Layer 3 trade-claim dissociation step that decouples settlement-time recipient visibility from the claim redemption event; (iv) absence of a federated relayer accountability model with public on-chain identity. See `PAPER.md` §10 "Closest Prior Art: Jigsaw [23]" for the full distinction.
+
+> **Verification status (2026-04-10)**: The verbatim title, full author list (4 authors), publication date (2025-06-18), and last-revision date (2025-10-15) above were confirmed against the live ePrint record at https://eprint.iacr.org/2025/1147 on 2026-04-10. Re-verify immediately before IDS submission, since the ePrint record can be revised after this date.
 
 ### 2.2 Privacy-preserving DEX and DeFi primitives cited in the specification
 
@@ -115,18 +122,19 @@ Relevance: Cited in specification §8, §14. The "practical equilibrium" framing
 
 For an examiner reviewing the present application, the following single reference is identified as the primary piece of prior art against which patentability is asserted:
 
-**Closest prior art: [NPL-1] Jigsaw (ePrint 2025/1147).**
+**Closest prior art: [NPL-1] Garg, Goel, Kolonelos, Sinha. *Jigsaw: Doubly Private Smart Contracts*. Cryptology ePrint Archive, Paper 2025/1147, 2025.**
 
-The applicant acknowledges Jigsaw as the most directly related construction known to the applicant at the time of filing. The distinction over Jigsaw is summarised in `PAPER.md` §10 and falls into four load-bearing differences:
+The applicant acknowledges Jigsaw as the most directly related construction known to the applicant at the time of filing. The distinction over Jigsaw is summarised in `PAPER.md` §10 and falls into the following load-bearing differences:
 
 | # | Element | Jigsaw | Present disclosure |
 |---|---|---|---|
-| 1 | Recipient visibility at settlement | Recipient is visible in the settlement event | Layer 3 claim dissociation — recipient is revealed only at the claim step, against a claims-root committed at settlement time, without revealing which claim is being redeemed |
-| 2 | Compliance / accountability layer | None | Dual-CA identity with opposing disclosure policies — enables regulator cooperability without degrading privacy for honest users |
-| 3 | Settlement fan-out | Single shielded output per party | N-way claim fan-out per side (N = 16 in the reference circuit; parameter, not claim-narrowing element) |
-| 4 | Relayer accountability | Not specified | Federated relayer network with public identity and record-only dispute registry |
+| 1 | Proof-generation architecture | **Collaborative multi-server proving** — clients submit privacy-preserving requests to a group of mutually-untrusting servers that jointly run a Collaborative zkSNARK (Ozdemir & Boneh, USENIX 2022). Privacy depends on no majority of those servers colluding. | **Single-prover client-side proving** on the user's own device (browser / mobile). Each user proves their own side via the Half-proof primitive in `circuits/authorize.circom`. The relayer never holds witness data. Trust assumption reduces to "the user's own device is uncompromised". |
+| 2 | Compliance / accountability layer | None — Jigsaw, like Tornado Cash, Railgun, Renegade, and Penumbra, has no integrated compliance or regulator-facing audit surface. | Dual-CA identity with opposing disclosure policies — enables regulator cooperability without degrading per-user privacy. Addresses the Tornado Cash regulatory failure mode directly. |
+| 3 | Recipient visibility at settlement | Single-step collaborative match → on-chain settle. Recipient becomes visible at settlement. | Layer 3 claim dissociation — recipient is revealed only at the claim step, against a claims-root committed at settlement time, without revealing which claim is being redeemed. Turns computational privacy into traffic-independent cryptographic privacy at the recipient layer. |
+| 4 | Relayer / matcher accountability | Servers are accountable for liveness and correctness only. No on-chain identity, no regulator interface. | Federated relayer network with public Dual-CA identity in `RelayerRegistry`, record-only `DisputeRegistry`, and reputation enforcement. Accountability is the load-bearing co-design with the privacy architecture. |
+| 5 | Settlement fan-out (implementation, not a claim element) | Single shielded output per party in the sample DEX application. | N-way claim fan-out per side (N = 16 in the reference circuit; parameter, not claim-narrowing element). |
 
-Elements 1 and 2 are load-bearing claim elements. Elements 3 and 4 are described as implementation-level features and are not themselves the basis for patentability over Jigsaw.
+Elements 1, 2, 3, and 4 are each load-bearing claim elements. Element 5 is described as an implementation-level feature only and is not itself the basis for patentability over Jigsaw.
 
 ---
 
@@ -146,8 +154,8 @@ The monitoring responsibility is assigned to the applicant team (not outside cou
 
 Before submitting this IDS alongside the filing package, confirm:
 
-- [ ] The ePrint 2025/1147 bibliographic record has been re-read verbatim and the title + author list in [NPL-1] and in `PAPER.md` §14 + `PAPER-ko.md` §14 match the current ePrint listing exactly.
-- [ ] The ePrint record has not been revised in the window between the last audit (2026-04-09) and the filing date; if revised, the most recent revision date is used.
+- [x] **2026-04-10** — The ePrint 2025/1147 bibliographic record has been re-read verbatim and the title (`Jigsaw: Doubly Private Smart Contracts`), author list (Sanjam Garg, Aarushi Goel, Dimitris Kolonelos, Rohit Sinha), publication date (2025-06-18), and last-revision date (2025-10-15) in [NPL-1], `PAPER.md` §14, and `PAPER-ko.md` §14 match the current ePrint listing exactly.
+- [ ] **Re-verify immediately before filing** — confirm the ePrint record has not been revised between 2026-04-10 and the filing date. If a newer revision exists, update [NPL-1], `PAPER.md` §14, and `PAPER-ko.md` §14 to the new revision date and re-read the abstract for any material changes.
 - [ ] `PAPER.md` §10 "Closest Prior Art: Jigsaw [23]" and the Korean mirror in `PAPER-ko.md` §10 are included in the final filed specification (not dropped during formatting conversion).
 - [ ] The reference list in §2 of this IDS draft matches the reference list in `PAPER.md` §14 (same numbering, no additions missed).
 - [ ] Outside counsel has been given the opportunity to add any reference that surfaces during their independent prior-art search before the final IDS is locked for submission.
@@ -157,3 +165,4 @@ Before submitting this IDS alongside the filing package, confirm:
 ## 6. Change log
 
 - **2026-04-10** — Initial draft in response to audit finding 2026-04-09 that Jigsaw was absent from the Background section. Drafted by the applicant team; outside counsel review pending.
+- **2026-04-10 (later same day)** — Verbatim verification pass against the live ePrint 2025/1147 record. Title corrected from the speculative "Jigsaw: A Privacy-Preserving Trade Primitive" to the actual "Jigsaw: Doubly Private Smart Contracts". Full author list (Garg, Goel, Kolonelos, Sinha) added. The §3 examiner-facing distinction table was rewritten because the actual Jigsaw architecture (collaborative multi-server proving via ZEXE + Collaborative zkSNARKs, not single-prover shielded balances) differs substantially from the initial speculation; the new table reflects the real Jigsaw design and produces a stronger distinction over the present disclosure.
