@@ -255,8 +255,8 @@
 | 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
 | 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
-| 18 | DEX 가격 로딩 폴백 | 🔧 | `feat/ux18-dex-price-fallback` |
-| 19 | 다중 지갑 지원 (WalletConnect) | 🔧 | `feat/ux19-multi-wallet` |
+| 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
+| 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
 | 20 | Batch Claim | ⬜ | — |
 
 ### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
@@ -329,7 +329,7 @@
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
 | S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
-| S-H7 | Relayer | authorize orders Map 크기 제한 없음 → 메모리 DoS | ⬜ |
+| S-H7 | Relayer | authorize orders DoS 방어 (전역 cap + max expiry 24h + per-pubKey limit 50 + BigInt 정규화) | 🔧 `fix/SH7-authorize-map-dos` |
 
 #### 🟡 MEDIUM
 
