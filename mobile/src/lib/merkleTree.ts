@@ -7,8 +7,11 @@ export async function buildPoseidonMerkleTree(
   leaves: string[],
   depth: number,
 ): Promise<{ root: string; layers: string[][] }> {
-  const padded = [...leaves];
   const size = 2 ** depth;
+  if (leaves.length > size) {
+    throw new Error(`Too many leaves: ${leaves.length} exceeds tree capacity ${size}`);
+  }
+  const padded = [...leaves];
   while (padded.length < size) padded.push('0');
 
   const layers: string[][] = [padded];
@@ -33,6 +36,9 @@ export function getMerkleProofFromTree(
 ): { pathElements: string[]; pathIndices: string[] } {
   const pathElements: string[] = [];
   const pathIndices: string[] = [];
+  if (leafIndex < 0 || leafIndex >= layers[0].length) {
+    throw new Error(`Merkle proof: leafIndex ${leafIndex} out of bounds [0, ${layers[0].length})`);
+  }
   let idx = leafIndex;
 
   for (let i = 0; i < layers.length - 1; i++) {

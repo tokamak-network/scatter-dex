@@ -79,6 +79,9 @@ export const OrderService = {
       const keyPair = await EdDSAKeyService.getOrDeriveKey(signer, account);
 
       // ─── Step 2: Claims 구성 ──────────────────────────
+      if (claims.length > 16) {
+        throw new Error(`Too many claims: ${claims.length} (max 16)`);
+      }
       const claimsData = claims.map((c) => ({
         secret: generateRandomField(),
         recipient: BigInt(c.recipient).toString(),
