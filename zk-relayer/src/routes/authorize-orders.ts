@@ -32,7 +32,10 @@ const MAX_AUTHORIZE_ORDERS = 10_000;
 const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
 
-function pubKeyId(ax: string, ay: string): string { return `${ax}:${ay}`; }
+function pubKeyId(ax: string, ay: string): string {
+  // Normalize to prevent bypass via different string encodings ("1" vs "01")
+  return `${BigInt(ax).toString()}:${BigInt(ay).toString()}`;
+}
 
 function incPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
@@ -110,12 +113,14 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 4c. Per-pubKey order limit — prevent single user filling the store ──
+      // ── 4c. Per-pubKey order limit — optimistic increment before any await ──
       const pkId = pubKeyId(pubKeyAx, pubKeyAy);
       if ((pendingCountByPubKey.get(pkId) ?? 0) >= MAX_ORDERS_PER_PUBKEY) {
         res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
       }
+      // Increment immediately to prevent race conditions across concurrent requests
+      incPubKeyCount(pubKeyAx, pubKeyAy);
 
       // ── 5. Store the order ──
       const stored: StoredAuthorizeOrder = {
@@ -126,7 +131,6 @@ export function createAuthorizeOrderRoutes(
         pubKeyAy,
       };
       authorizeOrders.set(nullifier, stored);
-      pendingCountByPubKey.set(pkId, (pendingCountByPubKey.get(pkId) ?? 0) + 1);
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -265,9 +269,17 @@ export function purgeNonPendingAuthorizeOrders(): number {
   const nowSeconds = Math.floor(Date.now() / 1000);
   let removed = 0;
   for (const [key, stored] of authorizeOrders) {
+    const isPending = stored.status === "pending";
     const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
-    if (stored.status !== "pending" || expired) {
-      if (stored.pubKeyAx && stored.pubKeyAy) {
+
+    // Skip "matched" orders — they're being settled on-chain right now
+    if (stored.status === "matched") continue;
+
+    // Purge: terminal states (settled/cancelled) or expired pending orders
+    if (stored.status === "settled" || stored.status === "cancelled" || (isPending && expired)) {
+      // Only decrement counter for expired pending orders.
+      // Settled orders already had their counter decremented on settlement.
+      if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
       }
       authorizeOrders.delete(key);
