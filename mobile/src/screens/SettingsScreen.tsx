@@ -19,9 +19,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import { ConfigService } from '../services/ConfigService';
 import { ZKBridgeService } from '../services/ZKBridgeService';
-import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
+import { NoteStorageService } from '../services/NoteStorageService';
 
 export default function SettingsScreen() {
   const [noteCount, setNoteCount] = useState(0);
@@ -29,24 +30,48 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     NoteStorageService.getNoteIds().then((ids) => setNoteCount(ids.length));
+
+    // Poll ZK engine status until ready
     setZkReady(ZKBridgeService.isReady());
+    if (!ZKBridgeService.isReady()) {
+      const interval = setInterval(() => {
+        const ready = ZKBridgeService.isReady();
+        setZkReady(ready);
+        if (ready) clearInterval(interval);
+      }, 2000);
+      return () => clearInterval(interval);
+    }
   }, []);
 
   const handleExportNotes = async () => {
-    try {
-      const notes = await NoteStorageService.getAllNotes();
-      if (notes.length === 0) {
-        Alert.alert('No Notes', 'No private notes to export.');
-        return;
-      }
-      const json = JSON.stringify(notes, null, 2);
-      await Share.share({
-        message: json,
-        title: 'ScatterDEX Notes Backup',
-      });
-    } catch (err: any) {
-      Alert.alert('Export Failed', err?.message || 'Unknown error');
-    }
+    Alert.alert(
+      'Export Private Notes',
+      'WARNING: Exported data contains secret keys and salts. Anyone with this data can claim your deposited tokens. Only share through secure channels.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Export',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const notes = await NoteStorageService.getAllNotes();
+              if (notes.length === 0) {
+                Alert.alert('No Notes', 'No private notes to export.');
+                return;
+              }
+              const json = JSON.stringify(notes, null, 2);
+              await Share.share({
+                message: json,
+                title: 'ScatterDEX Notes Backup',
+              });
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : 'Unknown error';
+              Alert.alert('Export Failed', message);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleImportNotes = () => {
@@ -59,16 +84,21 @@ export default function SettingsScreen() {
 
   const handleClearCache = () => {
     Alert.alert(
-      'Clear Cache',
-      'This will reset network cache (earliest block, etc.). Notes are NOT affected.',
+      'Clear Network Cache',
+      'This removes cached block-scan data (earliest block marker). Your private notes and keys are NOT affected. After clearing, event queries will re-scan from the deploy block.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Clear',
           style: 'destructive',
           onPress: async () => {
-            await AsyncStorage.removeItem('scatterdex_earliest_block');
-            Alert.alert('Done', 'Cache cleared.');
+            try {
+              await AsyncStorage.removeItem('scatterdex_earliest_block');
+              Alert.alert('Done', 'Network cache cleared.');
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : 'Unknown error';
+              Alert.alert('Error', `Failed to clear cache: ${message}`);
+            }
           },
         },
       ],
@@ -140,8 +170,8 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>About</Text>
           <InfoRow label="App" value="ScatterDEX Mobile" />
-          <InfoRow label="Version" value="1.0.0" />
-          <InfoRow label="Framework" value="Expo 54 + React Native 0.81" />
+          <InfoRow label="Version" value={Constants.expoConfig?.version || '0.0.0'} />
+          <InfoRow label="SDK" value={`Expo ${Constants.expoConfig?.sdkVersion || '?'}`} />
         </View>
 
         <View style={{ height: 32 }} />
