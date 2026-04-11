@@ -19,6 +19,10 @@ export function getReadProvider(): ethers.JsonRpcProvider {
  * The cached value is set by cacheEarliestBlock() on first successful deposit tx.
  * localStorage key is namespaced by chainId to avoid stale values across networks.
  */
+// [L-7] Key is namespaced by chainId. Wallet-level isolation is not needed
+// here because earliest_block is chain-global metadata, not per-wallet data.
+// Per-wallet secrets (EdDSA keys) are stored encrypted in the File System API
+// folder, not in localStorage.
 function earliestBlockKey(): string {
   return `zkscatter_earliest_block_${EXPECTED_CHAIN_ID}`;
 }

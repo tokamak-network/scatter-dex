@@ -9,6 +9,22 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // [L-6] CSP: restrict script/connect sources to mitigate XSS-based key theft.
+          // 'self' + 'unsafe-inline' needed for Next.js; 'unsafe-eval' for snarkjs/wasm.
+          // connect-src allows relayer and RPC endpoints.
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob:",
+              "font-src 'self'",
+              "connect-src 'self' http://localhost:* https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com",
+              "worker-src 'self' blob:",
+              "frame-ancestors 'none'",
+            ].join("; "),
+          },
           // COOP/COEP enable SharedArrayBuffer for snarkjs Worker pool
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
           { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },

@@ -8,7 +8,7 @@
  * Flow:
  *   1. Recipient: generateMetaAddress() → { spendingKey, viewingKey, metaAddress }
  *   2. Sender:    generateStealthAddress(metaAddress) → { stealthAddress, ephemeralPubKey }
- *   3. Claim link: /claim?secret=0x...&epk=0x...
+ *   3. Claim link: /claim#secret=0x...&epk=0x... (fragment, not query)
  *   4. Recipient: deriveStealthPrivateKey(spendingKey, viewingKey, ephemeralPubKey) → wallet
  */
 
@@ -156,7 +156,10 @@ export function buildStealthClaimLink(secret: string, ephemeralPubKey: string): 
     typeof window !== "undefined" && window.location && window.location.origin
       ? window.location.origin
       : "";
-  return `${origin}/claim?secret=${encodeURIComponent(secret)}&epk=${encodeURIComponent(ephemeralPubKey)}`;
+  // [L-5] Use URL fragment (#) instead of query params (?).
+  // Fragments are never sent to the server, preventing secret leakage
+  // via server logs, referrer headers, or browser history sync.
+  return `${origin}/claim#secret=${encodeURIComponent(secret)}&epk=${encodeURIComponent(ephemeralPubKey)}`;
 }
 
 /**
