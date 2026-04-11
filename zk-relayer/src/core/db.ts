@@ -320,6 +320,34 @@ export class PrivateOrderDB {
     });
   }
 
+  /**
+   * [M-11] Atomic compare-and-swap: update status only if current status matches.
+   * Returns true if the update succeeded (row was in expectedStatus).
+   * Returns false if another instance already changed the status (race lost).
+   */
+  compareAndSwapStatus(
+    pubKeyAx: bigint, nonce: bigint,
+    expectedStatus: PrivateOrderStatus, newStatus: PrivateOrderStatus,
+    settleTxHash?: string, crossRelayer?: boolean,
+  ): boolean {
+    const result = this.db.prepare(`
+      UPDATE private_orders SET status = @newStatus,
+        settle_tx = COALESCE(@settleTx, settle_tx),
+        cross_relayer = COALESCE(@crossRelayer, cross_relayer),
+        settled_at = CASE WHEN @newStatus = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
+      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce AND status = @expectedStatus
+    `).run({
+      pubKeyAx: pubKeyAx.toString(),
+      nonce: nonce.toString(),
+      expectedStatus,
+      newStatus,
+      settleTx: settleTxHash ?? null,
+      crossRelayer: crossRelayer ? 1 : 0,
+      settledAt: newStatus === "settled" ? Date.now() : null,
+    });
+    return result.changes > 0;
+  }
+
   hasOrder(pubKeyAx: bigint, nonce: bigint): boolean {
     return !!this.selectExists.get({ pubKeyAx: pubKeyAx.toString(), nonce: nonce.toString() });
   }

@@ -96,20 +96,20 @@ export class CrossRelayerMatchService {
 
       this.lockingOrders.add(orderKey);
       try {
-        // [M-11] Optimistic lock: check DB status before matching to prevent
-        // race conditions in multi-instance deployments. If another instance
-        // already matched this order, the DB status will be "matched"/"settled".
+        // [M-11] Atomic CAS: set status pending→matched in one DB operation.
+        // If another instance already changed the status, CAS returns false.
         if (this.db) {
-          const dbOrder = this.db.getOrderByPubKeyNonce(local.order.pubKeyAx, local.order.nonce);
-          if (dbOrder && dbOrder.status !== "pending") {
-            console.log(`[cross-relayer] Order ${orderKey} already ${dbOrder.status} in DB, skipping`);
+          const won = this.db.compareAndSwapStatus(
+            local.order.pubKeyAx, local.order.nonce, "pending", "matched",
+          );
+          if (!won) {
+            console.log(`[cross-relayer] Order ${orderKey} lost CAS race, skipping`);
             continue;
           }
+        } else {
+          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
         }
-
-        // Mark as matched first (prevents double-matching), restore on failure
         local.status = "matched";
-        this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
 
         const result = await this.sendTradeOffer(local, summary);
         if (result.status === "settled" && result.txHash) {
@@ -137,7 +137,11 @@ export class CrossRelayerMatchService {
         // Always release lock and restore pending if not settled
         if (local.status === "matched") {
           local.status = "pending";
-          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          if (this.db) {
+            this.db.compareAndSwapStatus(local.order.pubKeyAx, local.order.nonce, "matched", "pending");
+          } else {
+            this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          }
         }
         this.lockingOrders.delete(orderKey);
       }
@@ -238,11 +242,12 @@ export class CrossRelayerMatchService {
       return { status: "rejected", reason };
     }
 
-    // [M-11] DB-level race guard for multi-instance deployments
+    // [M-11] Atomic CAS: attempt pending→matched transition.
+    // If another instance already matched, CAS fails and we reject.
     if (this.db) {
-      const dbOrder = this.db.getOrderByPubKeyNonce(makerPubKeyAx, makerNonce);
-      if (dbOrder && dbOrder.status !== "pending") {
-        const reason = `maker order already ${dbOrder.status}`;
+      const won = this.db.compareAndSwapStatus(makerPubKeyAx, makerNonce, "pending", "matched");
+      if (!won) {
+        const reason = "maker order already matched (CAS failed)";
         recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
         return { status: "rejected", reason };
       }
