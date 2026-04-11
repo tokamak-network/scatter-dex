@@ -18,6 +18,7 @@ import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders } from "./routes/authorize-orders.js";
+import { createHealthRoutes } from "./routes/health.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -130,8 +131,11 @@ async function main() {
   // Half-proof (trustless) order routes — settleAuth path
   const authSubmitter = new AuthorizeSubmitter();
   app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
-    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter,
+    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
   ));
+
+  // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
+  app.use("/health", createHealthRoutes(submitter, db));
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(

@@ -265,6 +265,20 @@ export class PrivateOrderDB {
         value TEXT NOT NULL
       );
     `);
+
+    // [R-6] Authorize orders persistence — survive relayer restarts
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS authorize_orders (
+        nullifier     TEXT PRIMARY KEY,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        submitted_at  INTEGER NOT NULL,
+        settle_tx     TEXT,
+        pub_key_ax    TEXT,
+        pub_key_ay    TEXT,
+        order_json    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ao_status ON authorize_orders(status);
+    `);
   }
 
   save(stored: StoredPrivateOrder): void {
@@ -525,6 +539,39 @@ export class PrivateOrderDB {
   getMeta(key: string): string | null {
     const row = this.selectMeta.get({ key }) as { value: string } | undefined;
     return row?.value ?? null;
+  }
+
+  // ─── [R-6] Authorize order persistence ───
+
+  saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null);
+  }
+
+  updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
+    this.db.prepare(`
+      UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?
+    `).run(status, settleTx ?? null, nullifier);
+  }
+
+  deleteAuthorizeOrder(nullifier: string): void {
+    this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?").run(nullifier);
+  }
+
+  loadPendingAuthorizeOrders(): Array<{ nullifier: string; status: string; submittedAt: number; orderJson: string; pubKeyAx: string | null; pubKeyAy: string | null; settleTx: string | null }> {
+    return this.db.prepare(
+      "SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx FROM authorize_orders WHERE status = 'pending'"
+    ).all() as any[];
+  }
+
+  purgeNonPendingAuthorizeOrdersDB(): number {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const result = this.db.prepare(
+      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?"
+    ).run(nowSeconds);
+    return result.changes;
   }
 
   close(): void {

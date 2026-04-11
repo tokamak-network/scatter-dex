@@ -12,6 +12,7 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 import { guardedSubmit } from "./gas-guard.js";
+import { getProvider } from "./provider.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -80,14 +81,14 @@ export type CancelEventCallback = (
 ) => void;
 
 export class AuthorizeSubmitter {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private txMutex: Promise<void> = Promise.resolve();
   private cancelListeners: CancelEventCallback[] = [];
 
   constructor() {
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    this.provider = getProvider();
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,

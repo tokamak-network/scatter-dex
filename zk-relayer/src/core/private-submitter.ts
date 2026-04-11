@@ -19,6 +19,7 @@ import {
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { guardedSubmit } from "./gas-guard.js";
+import { getProvider as _getProvider } from "./provider.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -41,7 +42,7 @@ const CLAIMS_TREE_DEPTH = 4;
 const COMMIT_TREE_DEPTH = 20;
 
 export class PrivateSubmitter {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private pool: ethers.Contract;
@@ -54,8 +55,8 @@ export class PrivateSubmitter {
     this.db = db;
   }
 
-  constructor(provider?: ethers.JsonRpcProvider) {
-    this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
+  constructor(provider?: ethers.JsonRpcProvider | ethers.FallbackProvider) {
+    this.provider = provider ?? _getProvider();
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
@@ -77,6 +78,10 @@ export class PrivateSubmitter {
     return this.wallet;
   }
 
+  getProvider(): ethers.JsonRpcProvider | ethers.FallbackProvider {
+    return this.provider;
+  }
+
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
   async getCommitmentMerkleProof(leafIndex: number): Promise<{
     root: string;
@@ -93,12 +98,22 @@ export class PrivateSubmitter {
     };
   }
 
-  /** Index all commitment deposits from on-chain events. */
+  /** Index commitment deposits from on-chain events, resuming from checkpoint. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
-    const events = await this.pool.queryFilter(filter, 0, "latest");
-    this.commitmentLeaves = [];
 
+    // [R-5] Resume from last indexed block if available
+    const checkpoint = this.db?.getMeta("index_last_block");
+    const fromBlock = checkpoint ? parseInt(checkpoint, 10) + 1 : 0;
+
+    if (fromBlock === 0) {
+      // Full re-index: clear existing leaves
+      this.commitmentLeaves = [];
+    }
+
+    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
+
+    let lastBlock = fromBlock;
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
         topics: event.topics as string[],
@@ -111,8 +126,15 @@ export class PrivateSubmitter {
         }
         this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
       }
+      if (event.blockNumber > lastBlock) lastBlock = event.blockNumber;
     }
-    console.log(`Indexed ${this.commitmentLeaves.length} commitments`);
+
+    // Persist checkpoint
+    if (events.length > 0 && this.db) {
+      this.db.setMeta("index_last_block", lastBlock.toString());
+    }
+
+    console.log(`Indexed ${this.commitmentLeaves.length} commitments (from block ${fromBlock}, ${events.length} new events)`);
   }
 
   /** Submit a private settlement with ZK proof. */
