@@ -24,7 +24,7 @@
 - **파일**: `relayer/.env:2`, `zk-relayer/.env:2,7`, `docker-compose.yml:30,67,99`
 - **내용**: Anvil 테스트 키 + Admin API 키가 버전 컨트롤에 노출. 프로덕션 배포 시 자금 탈취 위험.
 - **수정**: `.env`를 `.gitignore`에 추가, `.env.example`만 유지, 시크릿 매니저 도입
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #175)
 
 ### 🟠 HIGH (메인넷 전 필수)
 
@@ -228,7 +228,7 @@
 |---|------|--------|------|--------|
 | C-1 | settleWithDex MEV (deadline) | CRITICAL | ⚠️ 부분 | — |
 | C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | 🔧 | `fix/claim-circom-binding` |
-| C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | 🔧 | `fix/C3-remove-hardcoded-secrets` |
+| C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ✅ | PR #175 |
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | ⬜ | — |
 | H-5 | claimCount 범위 미검증 | HIGH | ⬜ | — |
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | 🔧 | `fix/H6-admin-api-key-hardening` |
