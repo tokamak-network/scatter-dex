@@ -12,13 +12,13 @@
 - **파일**: `PrivateSettlement.sol:938-941`
 - **내용**: DEX calldata가 멤풀에 노출되어 MEV 샌드위치 공격 가능.
 - **수정**: `amountOut < totalLocked` 검증(DexOutputInsufficient) 추가 + 프론트엔드에서 slippage 기반 minReceive 설정 + 1inch Pathfinder 분할 주문으로 슬리피지 최소화
-- **상태**: ⚠️ 부분 수정 (PR #151, #172). deadline은 `block.timestamp` 사용 중 — Flashbots/private mempool 권장
+- **상태**: ✅ DONE (PR #151, #172, #188). deadline + Flashbots/private mempool 권장 문서화
 
 #### C-2. claim.circom token/releaseTime 미구속
 - **파일**: `claim.circom:49-51`
 - **내용**: public input `token`, `releaseTime`이 회로 내에서 equality constraint 없음. 위조된 값으로 클레임 가능.
 - **수정**: `tokenSq <== token * token;` 등 바인딩 제약 추가
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #176)
 
 #### C-3. 하드코딩된 프라이빗 키 (.env 파일)
 - **파일**: `relayer/.env:2`, `zk-relayer/.env:2,7`, `docker-compose.yml:30,67,99`
@@ -32,7 +32,7 @@
 - **파일**: `CommitmentPool.sol:240-246`
 - **내용**: fee 금액 상한 없음, `setAuthorizedSettlement` 타임락 없이 즉시 변경 가능.
 - **수정**: per-tx fee 상한 + `setAuthorizedSettlement` 타임락(24~48h) 도입
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #178)
 
 #### H-4. SSRF in /api/swap (chainId 미검증)
 - **파일**: `frontend/app/api/swap/route.ts`
@@ -57,59 +57,59 @@
 #### M-6. CORS 기본값 `["*"]`
 - **파일**: `shared-orderbook/src/config.ts:26`
 - **수정**: 명시적 origin 허용 목록 설정
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #180)
 
 #### M-7. API Rate Limiting 미구현
 - **파일**: `frontend/app/api/swap/route.ts`, `frontend/app/api/upbit/route.ts`
 - **수정**: Next.js 미들웨어 또는 rate-limit 패키지 도입
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #181)
 
 #### M-8. pubKeyBind 체인 분석 링크 가능성
 - **파일**: `authorize.circom:489-490`
 - **수정**: 프라이버시 영향 문서화, 필요시 랜덤 블라인딩 추가 검토
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #182)
 
 #### M-9. 클라이언트 사이드 SSRF 검증 (우회 가능)
 - **파일**: `frontend/app/trade/private-claim/page.tsx:134-152`
 - **수정**: 서버사이드 프록시 도입, 클라이언트에서 직접 릴레이어 호출 금지
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #183)
 
 #### M-10. DB 파일 퍼미션 644
 - **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
 - **수정**: 퍼미션 600으로 변경
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #184)
 
 #### M-11. cross-relayer 매칭 race condition
 - **파일**: `zk-relayer/src/core/cross-relayer-matcher.ts`
 - **수정**: 수평 확장 시 분산 락(distributed lock) 도입 필요
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #186)
 
 ### 🟢 LOW (개선 권장)
 
 #### L-5. Stealth 링크 시크릿 URL 노출
 - **파일**: `frontend/app/lib/stealth.ts:154-160`
 - **수정**: URL fragment(`#`) 사용 또는 POST 방식으로 변경
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #187)
 
 #### L-6. XSS 시 EdDSA 키 탈취 가능
 - **파일**: `frontend/app/lib/zk/eddsa.ts:156-173`
 - **수정**: CSP 헤더 강화, Web Worker 격리 검토
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #187)
 
 #### L-7. localStorage 도메인/지갑 격리 미흡
 - **파일**: `frontend/app/lib/provider.ts`, `frontend/app/lib/zk/note-storage.ts`
 - **수정**: 키 네임스페이스에 지갑 주소 포함
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #187)
 
 #### L-8. DB 암호화 미적용
 - **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
 - **수정**: SQLCipher 또는 프로덕션 DB 전환 시 암호화 적용
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #187)
 
 #### L-9. withdraw.circom recipient/relayer 바인딩 불완전
 - **파일**: `circuits/withdraw.circom:56-61`
 - **수정**: 명시적 equality constraint 추가 검토
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #187)
 
 ## 2026-04-11 세션에서 발견 및 수정된 이슈
 
