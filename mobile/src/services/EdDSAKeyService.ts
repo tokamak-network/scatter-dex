@@ -23,12 +23,12 @@ export const EdDSAKeyService = {
   },
 
   async loadKey(account: string): Promise<EdDSAKeyPair | null> {
-    const stored = await SecureStore.getItemAsync(`${EDDSA_KEY_PREFIX}${account.toLowerCase().slice(-8)}`);
+    const stored = await SecureStore.getItemAsync(`${EDDSA_KEY_PREFIX}${account.toLowerCase()}`);
     return stored ? JSON.parse(stored) : null;
   },
 
   async saveKey(account: string, keyPair: EdDSAKeyPair): Promise<void> {
-    await SecureStore.setItemAsync(`${EDDSA_KEY_PREFIX}${account.toLowerCase().slice(-8)}`, JSON.stringify(keyPair));
+    await SecureStore.setItemAsync(`${EDDSA_KEY_PREFIX}${account.toLowerCase()}`, JSON.stringify(keyPair));
   },
 
   async getOrDeriveKey(signer: ethers.Signer, account: string): Promise<EdDSAKeyPair> {

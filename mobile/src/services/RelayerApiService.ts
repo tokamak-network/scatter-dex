@@ -96,13 +96,17 @@ export const RelayerApiService = {
   },
 
   async healthCheck(relayerUrl?: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch(`${relayerUrl || this.getBaseUrl()}/health`, {
-        signal: AbortSignal.timeout(5000),
+        signal: controller.signal,
       });
       return res.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timeoutId);
     }
   },
 };

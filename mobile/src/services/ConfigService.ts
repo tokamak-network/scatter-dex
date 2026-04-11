@@ -20,4 +20,5 @@ export const ConfigService = {
   getFeeVaultAddress: () => getEnv('FEE_VAULT_ADDRESS'),
   getRelayerUrl: () => getEnv('RELAYER_URL') || 'http://localhost:4000',
   getDeployBlock: () => Number(getEnv('DEPLOY_BLOCK') || '0'),
+  getWalletConnectProjectId: () => getEnv('WALLETCONNECT_PROJECT_ID') || '',
 };

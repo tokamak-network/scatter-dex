@@ -49,6 +49,7 @@ export interface OrderInput {
   expiryHours: number;       // expiry in hours from now
   claims: ClaimInput[];      // claims 분배
   relayerUrl?: string;       // 릴레이어 URL (옵션)
+  relayerAddress?: string;   // 릴레이어 주소 (옵션)
 }
 
 export const OrderService = {
@@ -62,7 +63,13 @@ export const OrderService = {
       const { note, buyToken, maxFeeBps, expiryHours, claims } = input;
       const sellAmount = ethers.parseUnits(input.sellAmount, 18);
       const buyAmount = ethers.parseUnits(input.buyAmount, 18);
-      const nonce = BigInt(Date.now());
+
+      // Use cryptographically random nonce to prevent collisions
+      const nonceBytes = new Uint8Array(8);
+      crypto.getRandomValues(nonceBytes);
+      let nonce = 0n;
+      for (const b of nonceBytes) nonce = (nonce << 8n) | BigInt(b);
+
       const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryHours * 3600);
 
       // ─── Step 1: EdDSA 키 ─────────────────────────────
@@ -95,8 +102,10 @@ export const OrderService = {
       // ─── Step 3: Order hash + EdDSA 서명 ──────────────
       onProgress({ step: 'signing_order' });
 
-      // Relayer address (default: first active relayer or placeholder)
-      const relayerAddress = '0'; // relayer가 자기 주소를 채움
+      // Use provided relayer address or '0' if relayer fills it server-side
+      const relayerAddress = input.relayerAddress
+        ? BigInt(input.relayerAddress).toString()
+        : '0';
 
       const orderHashInputs = [
         BigInt(note.token).toString(),     // sellToken
@@ -117,6 +126,7 @@ export const OrderService = {
 
       // ─── Step 4: Change commitment 계산 ────────────────
       const changeAmount = BigInt(note.amount) - sellAmount;
+      if (changeAmount < 0n) throw new Error('Sell amount exceeds note balance');
       let newSalt = '0';
       let expectedChangeCommitment = '0';
 
@@ -210,7 +220,7 @@ function generateRandomFieldStr(): string {
   do {
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
-    bytes[0] &= 0x1f;
+    bytes[0] &= 0x0f; // cap to ~252 bits (BN254 field is ~254 bits, reduce rejection rate without bias)
     value = 0n;
     for (const b of bytes) value = (value << 8n) | BigInt(b);
   } while (value >= FIELD_MODULUS);

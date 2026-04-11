@@ -53,7 +53,7 @@ export default function TradeScreen() {
 
   // Order params
   const [sellAmount, setSellAmount] = useState('');
-  const [buyTokenIdx, setBuyTokenIdx] = useState(0);
+  const [selectedBuyToken, setSelectedBuyToken] = useState<TokenInfo | null>(null);
   const [buyAmount, setBuyAmount] = useState('');
   const [feeBps, setFeeBps] = useState('30');
   const [expiryIdx, setExpiryIdx] = useState(2); // default 24h
@@ -107,7 +107,10 @@ export default function TradeScreen() {
       releaseDelaySec: Number(claimReleaseMin) * 60,
     }];
 
-    const buyTokenInfo = tokens[buyTokenIdx];
+    if (!selectedBuyToken) {
+      Alert.alert('Invalid', 'Select a buy token.');
+      return;
+    }
 
     await OrderService.execute(
       signer,
@@ -115,21 +118,22 @@ export default function TradeScreen() {
       {
         note: selectedNote,
         sellAmount,
-        buyToken: buyTokenInfo.address,
+        buyToken: selectedBuyToken.address,
         buyAmount,
-        maxFeeBps: Number(feeBps),
+        maxFeeBps: Number(feeBps) || 0,
         expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
         claims,
       },
       (p) => setProgress(p),
     );
-  }, [signer, account, selectedNote, sellAmount, buyAmount, buyTokenIdx, feeBps, expiryIdx, claimRecipient, claimReleaseMin, tokens]);
+  }, [signer, account, selectedNote, sellAmount, buyAmount, selectedBuyToken, feeBps, expiryIdx, claimRecipient, claimReleaseMin]);
 
   const handleReset = () => {
     setProgress({ step: 'idle' });
     setSellAmount('');
     setBuyAmount('');
     setSelectedNoteIdx(-1);
+    setSelectedBuyToken(null);
   };
 
   if (!account) {
@@ -203,18 +207,21 @@ export default function TradeScreen() {
               <View style={styles.tokenRow}>
                 {tokens
                   .filter((t) => t.address.toLowerCase() !== selectedNote.token.toLowerCase() || t.isNative !== (selectedNote.tokenSymbol === 'ETH'))
-                  .map((t, i) => (
-                    <TouchableOpacity
-                      key={`${t.symbol}-${t.isNative}`}
-                      style={[styles.tokenChip, buyTokenIdx === i && styles.tokenChipActive]}
-                      onPress={() => setBuyTokenIdx(i)}
-                      disabled={isProcessing}
-                    >
-                      <Text style={[styles.tokenChipText, buyTokenIdx === i && styles.tokenChipTextActive]}>
-                        {t.symbol}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  .map((t) => {
+                    const isSelected = selectedBuyToken?.symbol === t.symbol && selectedBuyToken?.isNative === t.isNative;
+                    return (
+                      <TouchableOpacity
+                        key={`${t.symbol}-${t.isNative}`}
+                        style={[styles.tokenChip, isSelected && styles.tokenChipActive]}
+                        onPress={() => setSelectedBuyToken(t)}
+                        disabled={isProcessing}
+                      >
+                        <Text style={[styles.tokenChipText, isSelected && styles.tokenChipTextActive]}>
+                          {t.symbol}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
               </View>
               <Text style={[styles.cardLabel, { marginTop: 12 }]}>Buy Amount</Text>
               <TextInput
@@ -286,9 +293,9 @@ export default function TradeScreen() {
             {/* ─── Submit / Progress ───────────────── */}
             {progress.step === 'idle' ? (
               <TouchableOpacity
-                style={[styles.submitBtn, (!sellAmount || !buyAmount) && styles.btnDisabled]}
+                style={[styles.submitBtn, (!sellAmount || !buyAmount || !selectedBuyToken) && styles.btnDisabled]}
                 onPress={handleSubmit}
-                disabled={!sellAmount || !buyAmount || isProcessing}
+                disabled={!sellAmount || !buyAmount || !selectedBuyToken || isProcessing}
               >
                 <Text style={styles.submitBtnText}>Submit Order</Text>
               </TouchableOpacity>
