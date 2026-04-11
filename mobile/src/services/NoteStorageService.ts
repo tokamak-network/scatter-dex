@@ -99,6 +99,12 @@ export const NoteStorageService = {
     return all.filter((n) => n.status === 'active');
   },
 
+  async getActiveNotesByToken(tokenAddress: string): Promise<StoredNote[]> {
+    return (await this.getActiveNotes()).filter(
+      (n) => n.token.toLowerCase() === tokenAddress.toLowerCase(),
+    );
+  },
+
   async getPrivateBalances(): Promise<Map<string, { symbol: string; total: bigint }>> {
     const notes = await this.getActiveNotes();
     const map = new Map<string, { symbol: string; total: bigint }>();
