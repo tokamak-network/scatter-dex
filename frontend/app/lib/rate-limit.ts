@@ -62,11 +62,18 @@ export function checkRateLimit(key: string, config: RateLimitConfig): RateLimitR
 
 /**
  * Get client IP from Next.js request headers.
+ *
+ * Priority: x-real-ip (set by trusted reverse proxy like nginx) >
+ *           x-forwarded-for (first entry, can be spoofed without proxy) >
+ *           fallback "unknown" (all requests share one bucket — safe default)
+ *
+ * In production, configure the reverse proxy to set x-real-ip from the
+ * actual client socket address and strip any client-provided x-real-ip.
  */
 export function getClientIp(headers: Headers): string {
   return (
-    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     headers.get("x-real-ip") ||
+    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "unknown"
   );
 }
