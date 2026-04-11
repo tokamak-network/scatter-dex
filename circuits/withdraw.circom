@@ -122,12 +122,15 @@ template Withdraw(levels) {
     tokenHash === tokenHasher.out;
 
     // ════════════════════════════════════════
-    //  5. BALANCE CHECK: withdrawAmount <= amount
+    //  5. RANGE CHECKS + BALANCE CHECK
+    //  [H2] Proves: amount ≤ 2^128−1 AND withdrawAmount ≤ amount.
+    //  The difference underflows to a huge field element if
+    //  withdrawAmount > amount, failing the Num2Bits(128) check.
     // ════════════════════════════════════════
-    component leq = LessEqThan(252);
-    leq.in[0] <== withdrawAmount;
-    leq.in[1] <== amount;
-    leq.out === 1;
+    component rcAmount = Num2Bits(128);
+    rcAmount.in <== amount;
+    component rcDiff = Num2Bits(128);
+    rcDiff.in <== amount - withdrawAmount;
 
     // ════════════════════════════════════════
     //  6. CHANGE COMMITMENT
