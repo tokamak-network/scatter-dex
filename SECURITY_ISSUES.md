@@ -232,7 +232,7 @@
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | ✅ | PR #178 |
 | H-5 | claimCount 범위 미검증 | HIGH | ✅ | PR #179 |
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
-| M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
+| M-6 | CORS `["*"]` | MEDIUM | 🔧 | `fix/M6-cors-whitelist` |
 | M-7 | API Rate Limiting | MEDIUM | 🔧 | `fix/M7-api-rate-limit` |
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | ⬜ | — |
 | M-9 | 클라이언트 SSRF (claim) | MEDIUM | ⬜ | — |
