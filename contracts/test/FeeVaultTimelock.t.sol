@@ -14,7 +14,6 @@ contract FeeVaultTimelockTest is Test {
     FeeVault public vault;
     MockERC20 public token;
 
-    address owner = address(this);
     address treasury = address(0xCAFE);
     address relayer = address(0xBEEF);
     address depositor = address(0xDEAD);
@@ -37,14 +36,14 @@ contract FeeVaultTimelockTest is Test {
         vault.scheduleFeeChange(1000);
 
         assertEq(vault.pendingFeeBps(), 1000);
-        assertEq(vault.pendingFeeEffectiveTime(), block.timestamp + 1 days);
+        assertEq(vault.pendingFeeEffectiveTime(), block.timestamp + vault.FEE_CHANGE_DELAY());
         // Current fee unchanged
         assertEq(vault.platformFeeBps(), 500);
     }
 
     function test_scheduleFeeChange_emits_event() public {
         vm.expectEmit(true, true, true, true);
-        emit FeeVault.FeeChangeScheduled(500, 1000, block.timestamp + 1 days);
+        emit FeeVault.FeeChangeScheduled(500, 1000, block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.scheduleFeeChange(1000);
     }
 
@@ -63,7 +62,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_after_delay() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.applyFeeChange();
 
         assertEq(vault.platformFeeBps(), 1000);
@@ -73,7 +72,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_reverts_before_delay() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + 1 days - 1); // 1 second early
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY() - 1); // 1 second early
 
         vm.expectRevert(FeeVault.FeeChangeNotReady.selector);
         vault.applyFeeChange();
@@ -86,7 +85,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_emits_event() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
 
         vm.expectEmit(true, true, true, true);
         emit FeeVault.PlatformFeeUpdated(500, 1000);
@@ -140,7 +139,7 @@ contract FeeVaultTimelockTest is Test {
 
         // Owner schedules and applies fee increase
         vault.scheduleFeeChange(2000); // 20%
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.applyFeeChange();
 
         // Fund and deposit new fees after the fee change
@@ -159,7 +158,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_scheduleFeeChange_to_zero() public {
         vault.scheduleFeeChange(0);
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.applyFeeChange();
 
         assertEq(vault.platformFeeBps(), 0);
@@ -179,7 +178,7 @@ contract FeeVaultTimelockTest is Test {
 
         assertEq(vault.pendingFeeBps(), 2000);
 
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 2000);
     }

@@ -808,7 +808,7 @@ contract FeeVaultTest is Test {
 
     function test_vault_platform_fee_update() public {
         vault.scheduleFeeChange(1000); // 10%
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
         vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 1000);
 
