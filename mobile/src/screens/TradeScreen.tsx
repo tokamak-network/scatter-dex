@@ -94,22 +94,22 @@ export default function TradeScreen() {
 
     try {
       if (tradeType === 'limit') {
-        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceCents = BigInt(Math.round(parsedPrice * 100));
-        const buyAmountBn = sellAmountBn * priceCents / 100n;
-        const buyAmount = buyAmountBn.toString();
+        const priceBn = ethers.parseUnits(priceClean, 18);
+        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
+        const buyAmountHuman = ethers.formatUnits(buyAmountBn, 18);
 
         const input: OrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
-          buyAmount,
+          buyAmount: buyAmountHuman,
           maxFeeBps: 50,
           expiryHours: 24,
           claims: [{
             recipient: account,
-            amount: buyAmount,
+            amount: buyAmountHuman,
             releaseDelaySec: 0,
           }],
         };
@@ -128,17 +128,18 @@ export default function TradeScreen() {
           return;
         }
 
-        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceCents = BigInt(Math.round(parsedPrice * 100));
-        const buyAmountBn = sellAmountBn * priceCents / 100n;
-        const buyAmountMin = (buyAmountBn * 995n / 1000n).toString(); // 0.5% slippage
+        const priceBn = ethers.parseUnits(priceClean, 18);
+        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
+        const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
+        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, 18);
 
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
-          buyAmount: buyAmountMin,
+          buyAmount: buyAmountMinHuman,
           slippageBps: 50,
           expiryHours: 1,
           claimRecipient: account,
