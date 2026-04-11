@@ -1,11 +1,12 @@
 /**
  * ErrorBoundary — 전역 에러 바운더리
  *
- * 렌더링 중 발생하는 unhandled error를 잡아서
- * 앱 크래시 대신 사용자에게 복구 UI를 보여준다.
+ * SafeAreaProvider 안에 위치하므로 SafeAreaView 사용 가능.
+ * deterministic crash 재발 방지를 위해 전체 JS 리로드 지원.
  */
 import React, { Component, ErrorInfo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 interface Props {
   children: React.ReactNode;
@@ -27,22 +28,28 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught:', error, info.componentStack);
   }
 
-  handleReset = () => {
-    this.setState({ hasError: false, error: null });
+  handleReload = async () => {
+    try {
+      const Updates = await import('expo-updates');
+      await Updates.reloadAsync();
+    } catch {
+      // expo-updates not available in dev — fall back to state reset
+      this.setState({ hasError: false, error: null });
+    }
   };
 
   render() {
     if (this.state.hasError) {
       return (
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message} numberOfLines={5}>
             {this.state.error?.message || 'Unknown error'}
           </Text>
-          <TouchableOpacity style={styles.button} onPress={this.handleReset}>
-            <Text style={styles.buttonText}>Try Again</Text>
+          <TouchableOpacity style={styles.button} onPress={this.handleReload}>
+            <Text style={styles.buttonText}>Reload App</Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       );
     }
 

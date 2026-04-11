@@ -23,8 +23,8 @@ export default function App() {
   }, []);
 
   return (
-    <ErrorBoundary>
-      <SafeAreaProvider>
+    <SafeAreaProvider>
+      <ErrorBoundary>
         <WalletProvider>
           <NetworkGuard>
             <View style={styles.root}>
@@ -43,8 +43,8 @@ export default function App() {
             </View>
           </NetworkGuard>
         </WalletProvider>
-      </SafeAreaProvider>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 

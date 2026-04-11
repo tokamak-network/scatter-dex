@@ -36,10 +36,6 @@
       "expo-secure-store"
     ],
     "extra": {
-      "RPC_URL": "https://rpc.thanos-sepolia.tokamak.network",
-      "CHAIN_ID": "111551119090",
-      "RELAYER_URL": "http://localhost:4000",
-      "WALLETCONNECT_PROJECT_ID": "",
       "eas": {
         "projectId": ""
       }
