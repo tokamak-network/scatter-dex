@@ -94,10 +94,10 @@ export default function TradeScreen() {
 
     try {
       if (tradeType === 'limit') {
-        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceCents = BigInt(Math.round(parsedPrice * 100));
-        const buyAmountBn = sellAmountBn * priceCents / 100n;
+        const priceBn = ethers.parseUnits(priceClean, 18);
+        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
         const buyAmountHuman = ethers.formatUnits(buyAmountBn, 18);
 
         const input: OrderInput = {
@@ -128,11 +128,11 @@ export default function TradeScreen() {
           return;
         }
 
-        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceCents = BigInt(Math.round(parsedPrice * 100));
-        const buyAmountBn = sellAmountBn * priceCents / 100n;
-        const buyAmountMin = buyAmountBn * 995n / 1000n;
+        const priceBn = ethers.parseUnits(priceClean, 18);
+        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
+        const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
         const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, 18);
 
         const input: MarketOrderInput = {
