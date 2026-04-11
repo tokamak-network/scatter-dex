@@ -117,6 +117,46 @@ async function main() {
     message: { error: "too many requests" },
   });
 
+  // ─── R-3: Health check endpoints (k8s liveness/readiness) ───
+  const startedAt = Date.now();
+
+  app.get("/health/live", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  app.get("/health/ready", async (_req, res) => {
+    try {
+      const block = await submitter.getProvider().getBlockNumber();
+      res.json({ status: "ok", block });
+    } catch {
+      res.status(503).json({ status: "unavailable", reason: "RPC unreachable" });
+    }
+  });
+
+  app.get("/health", async (_req, res) => {
+    let rpcOk = false;
+    let block = 0;
+    try {
+      block = await submitter.getProvider().getBlockNumber();
+      rpcOk = true;
+    } catch { /* rpcOk stays false */ }
+
+    const uptimeMs = Date.now() - startedAt;
+    const pendingOrders = orderbook.pendingOrderCount;
+    const wsConnected = sharedClient?.isConnected() ?? null;
+
+    const healthy = rpcOk;
+    res.status(healthy ? 200 : 503).json({
+      status: healthy ? "ok" : "degraded",
+      uptime: Math.round(uptimeMs / 1000),
+      rpc: rpcOk ? "ok" : "down",
+      block,
+      pendingOrders,
+      sharedOrderbook: wsConnected === null ? "disabled" : wsConnected ? "connected" : "disconnected",
+      relayer: submitter.getAddress(),
+    });
+  });
+
   app.use("/api/private-orders", createPrivateOrderRoutes(
     orderbook, submitter, writeLimiter, readLimiter,
     sharedClient, orderIdMap,
