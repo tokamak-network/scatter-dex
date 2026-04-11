@@ -4,6 +4,7 @@ import HomeScreen from '../screens/HomeScreen';
 import DepositScreen from '../screens/DepositScreen';
 import TradeScreen from '../screens/TradeScreen';
 import ClaimScreen from '../screens/ClaimScreen';
+import HistoryScreen from '../screens/HistoryScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
@@ -25,6 +26,7 @@ export default function TabNavigator() {
       <Tab.Screen name="Deposit" component={DepositScreen} />
       <Tab.Screen name="Trade" component={TradeScreen} />
       <Tab.Screen name="Claim" component={ClaimScreen} />
+      <Tab.Screen name="History" component={HistoryScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
