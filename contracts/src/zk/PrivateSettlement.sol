@@ -857,6 +857,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
 
         // 11. Transfer sellToken from pool to this contract
+        uint256 sellBalBefore = IERC20(proof.sellToken).balanceOf(address(this));
         pool.transferToSettlement(proof.sellToken, proof.sellAmount);
 
         // 12. Execute DEX swap (generic — works with any whitelisted router)
@@ -866,8 +867,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         IERC20(proof.sellToken).forceApprove(p.dexRouter, proof.sellAmount);
         (bool success,) = p.dexRouter.call(p.dexCalldata);
         if (!success) revert DexCallReverted();
-        // Reset approval to 0 in case the DEX didn't consume the full amount
         IERC20(proof.sellToken).forceApprove(p.dexRouter, 0);
+
+        // Return any unspent sellToken to the pool (partial fills by DEX)
+        uint256 sellRemaining = IERC20(proof.sellToken).balanceOf(address(this));
+        if (sellRemaining > sellBalBefore) {
+            IERC20(proof.sellToken).safeTransfer(address(pool), sellRemaining - sellBalBefore);
+        }
 
         uint256 amountOut = IERC20(proof.buyToken).balanceOf(address(this)) - buyBalanceBefore;
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
@@ -880,14 +886,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             totalClaimed: 0
         });
 
-        // 14. Surplus handling: positive slippage goes to protocol treasury.
-        //     If no FeeVault is set, surplus stays in the contract (can be
-        //     recovered by owner in a future upgrade if needed).
+        // 14. Surplus handling: positive slippage goes directly to FeeVault
+        //     treasury (not via deposit/claim, which would deduct platform fee).
+        //     If no FeeVault is set, surplus stays in the contract.
         if (amountOut > proof.totalLocked) {
             uint256 surplus = amountOut - proof.totalLocked;
             if (address(feeVault) != address(0)) {
-                IERC20(proof.buyToken).safeTransfer(address(feeVault), surplus);
-                feeVault.deposit(owner(), proof.buyToken, surplus);
+                IERC20(proof.buyToken).safeTransfer(feeVault.treasury(), surplus);
             }
             // else: surplus stays in contract balance (recoverable by owner)
         }

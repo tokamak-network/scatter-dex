@@ -45,8 +45,11 @@ import { useMainnetPrice } from "../../lib/useDexPrices";
 // This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
 
-// Uniswap V3 SwapRouter02 (Ethereum mainnet)
-const UNISWAP_V3_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
+// Uniswap V3 SwapRouter02 addresses per chain
+const UNISWAP_V3_ROUTERS: Record<number, string> = {
+  1: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",      // Ethereum mainnet
+  11155111: "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E", // Sepolia
+};
 
 // Pre-parsed ABI for Uniswap V3 exactInputSingle (avoid re-instantiation per submit)
 const UNISWAP_ROUTER_IFACE = new ethers.Interface([
@@ -228,16 +231,19 @@ export default function PrivateOrderPage() {
     return { marketPrice: rec?.netPrice ?? null, marketPriceSource: rec?.source ?? null };
   }, [dexPrices]);
 
-  // Auto-compute buyAmount in market mode
+  // Auto-compute buyAmount in market mode (BigInt floor to avoid rounding up)
   useEffect(() => {
-    if (orderType !== "market" || !marketPrice || !sellAmount) return;
+    if (orderType !== "market" || !marketPrice || !sellAmount || !buyToken) return;
     const sell = parseFloat(sellAmount);
     if (isNaN(sell) || sell <= 0) return;
     const slip = parseInt(slippageBps) || 50;
-    const gross = sell * marketPrice;
-    const minReceive = gross * (1 - slip / 10000);
-    const dec = Math.min(buyToken?.decimals ?? 18, 18);
-    setBuyAmount(minReceive.toFixed(dec));
+    // Compute in integer token units to guarantee floor (never round up)
+    const grossWei = ethers.parseUnits(
+      (sell * marketPrice).toFixed(Math.min(buyToken.decimals, 18)),
+      buyToken.decimals,
+    );
+    const minReceiveWei = grossWei * BigInt(10000 - slip) / 10000n;
+    setBuyAmount(ethers.formatUnits(minReceiveWei, buyToken.decimals));
   }, [orderType, marketPrice, sellAmount, slippageBps, buyToken?.decimals]);
 
   // Check which notes are spent on-chain (parallel)
@@ -631,13 +637,20 @@ export default function PrivateOrderPage() {
       const { PRIVATE_SETTLEMENT_ABI: abi } = await import("../../lib/contracts");
       const settlement = new ethers.Contract(settlementAddr, abi, signer);
 
+      // Resolve DEX router address for current chain
+      const currentChainId = chainId ?? 1;
+      const routerAddr = UNISWAP_V3_ROUTERS[currentChainId];
+      if (!routerAddr) throw new Error(`Uniswap V3 router not configured for chain ${currentChainId}. Market orders are only available on supported chains.`);
+
       // Encode DEX calldata — use Uniswap V3 with the best fee tier
       // TODO: support 1inch/Curve route selection in UI
+      // Select Uniswap V3 fee tier from the recommended DEX price.
+      // Only standard Uniswap V3 tiers (500/3000/10000) are valid; default to 3000.
       const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
-      // Parse fee tier from percentage string (e.g. "0.05%" → 500, "0.3%" → 3000, "1%" → 10000)
+      const VALID_FEE_TIERS = [100, 500, 3000, 10000] as const;
       const feeStr = bestDexPrice?.fee ?? "";
-      const feePct = parseFloat(feeStr);
-      const feeTier = !isNaN(feePct) ? Math.round(feePct * 10000) : 3000;
+      const feeParsed = Math.round(parseFloat(feeStr) * 10000);
+      const feeTier = VALID_FEE_TIERS.includes(feeParsed as typeof VALID_FEE_TIERS[number]) ? feeParsed : 3000;
 
       const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
         tokenIn: sellToken.address,
@@ -678,7 +691,7 @@ export default function PrivateOrderPage() {
           relayer: account,
           orderHash: ps[14],
         },
-        dexRouter: UNISWAP_V3_ROUTER,
+        dexRouter: routerAddr,
         dexCalldata,
       });
       await tx.wait();
@@ -710,7 +723,7 @@ export default function PrivateOrderPage() {
         try {
           await saveNote({ note: { ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token, amount: change, salt: changeSalt, pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy },
             commitment: "0x" + expectedChangeCommitment.toString(16), tokenSymbol: sellToken.symbol, tokenAddress: sellToken.address,
-            amount: ethers.formatUnits(changeAmount, sellToken.decimals), leafIndex: -1, txHash: tx.hash, createdAt: Date.now() });
+            amount: ethers.formatUnits(change, sellToken.decimals), leafIndex: -1, txHash: tx.hash, createdAt: Date.now() });
         } catch { /* */ }
       }
 

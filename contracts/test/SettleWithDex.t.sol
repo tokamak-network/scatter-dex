@@ -193,15 +193,16 @@ contract SettleWithDexTest is Test {
         settlement.settleWithDex(p);
     }
 
-    function test_settleWithDex_surplus_to_feeVault() public {
+    function test_settleWithDex_surplus_to_treasury() public {
         PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
         // swap gives 20_000 USDC, totalLocked = 19_000, surplus = 1_000
 
         vm.prank(user);
         settlement.settleWithDex(p);
 
-        uint256 surplusInVault = usdc.balanceOf(address(feeVault));
-        assertEq(surplusInVault, 1_000e18);
+        // Surplus goes directly to FeeVault's treasury address
+        uint256 surplusInTreasury = usdc.balanceOf(treasury);
+        assertEq(surplusInTreasury, 1_000e18);
     }
 
     function test_settleWithDex_multiple_dex_routers() public {
@@ -223,8 +224,8 @@ contract SettleWithDexTest is Test {
 
         // Should use second router's rate: 10 * 2100 = 21_000 USDC
         // surplus = 21_000 - 19_000 = 2_000
-        uint256 surplusInVault = usdc.balanceOf(address(feeVault));
-        assertEq(surplusInVault, 2_000e18);
+        uint256 surplusInTreasury = usdc.balanceOf(treasury);
+        assertEq(surplusInTreasury, 2_000e18);
     }
 
     // ─── Revert Cases ───────────────────────────────────────────
