@@ -26,7 +26,8 @@ const UNISWAP_ROUTER_IFACE = new ethers.Interface([
   "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
 ]);
 
-const FETCH_TIMEOUT_MS = 10_000; // 10 second timeout for 1inch API
+// Client timeout slightly longer than server (10s) to receive server's error response
+const FETCH_TIMEOUT_MS = 12_000;
 
 export interface SwapRoute {
   dexRouter: string;

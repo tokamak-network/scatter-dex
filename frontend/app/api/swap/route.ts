@@ -70,16 +70,22 @@ export async function GET(req: NextRequest) {
 
     const data = await res.json();
 
-    // Validate: router address must be the known 1inch router
-    const returnedRouter = (data.tx?.to as string)?.toLowerCase();
-    if (returnedRouter !== ONEINCH_ROUTER.toLowerCase()) {
+    // Validate: response must contain expected fields
+    if (!data.tx?.to || !data.tx?.data || !data.dstAmount) {
       return NextResponse.json(
-        { error: `Unexpected router address: ${data.tx?.to}` },
+        { error: "Malformed 1inch API response" },
         { status: 502 },
       );
     }
 
-    // Return only the fields the client needs (don't leak full API response)
+    // Validate: router address must be the known 1inch router
+    if (data.tx.to.toLowerCase() !== ONEINCH_ROUTER.toLowerCase()) {
+      return NextResponse.json(
+        { error: `Unexpected router address: ${data.tx.to}` },
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json({
       dexRouter: ONEINCH_ROUTER,
       dexCalldata: data.tx.data,
@@ -87,7 +93,11 @@ export async function GET(req: NextRequest) {
       source: "1inch",
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "timeout";
-    return NextResponse.json({ error: message }, { status: 504 });
+    const isTimeout = e instanceof DOMException && e.name === "AbortError";
+    const message = e instanceof Error ? e.message : "unknown error";
+    return NextResponse.json(
+      { error: message },
+      { status: isTimeout ? 504 : 502 },
+    );
   }
 }
