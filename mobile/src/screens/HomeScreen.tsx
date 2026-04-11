@@ -1,510 +1,191 @@
 /**
- * HomeScreen — 대시보드
- *
- * 1. 지갑 연결 카드 (Connect / 주소 표시)
- * 2. 토큰 잔액 목록 (Wallet + Private)
- * 3. Quick Action 버튼 (Deposit, Trade, Claim)
- * 4. 최근 활동
+ * HomeScreen — converted from web design prototype Home.tsx
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-  ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { useWallet } from '../contexts/WalletContext';
-import { useBalances } from '../hooks/useBalances';
-import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
-import { NoteStorageService } from '../services/NoteStorageService';
-import { ethers } from 'ethers';
-import { formatBalance, shortAddr } from '../lib/format';
+import { colors } from '../styles/theme';
 
-// ─── Sub-components ────────────────────────────────────
-
-function WalletCard() {
-  const { account, chainId, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error } = useWallet();
-  const navigation = useNavigation<any>();
-
-  const displayAddr = account ? shortAddr(account) : null;
-
-  const handleBuiltinConnect = async () => {
-    try {
-      await connectBuiltin();
-    } catch (err: any) {
-      if (err?.message === 'NO_WALLET') {
-        navigation.navigate('Settings'); // 지갑 생성 화면으로 이동
-      }
-    }
-  };
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardLabel}>Wallet</Text>
-      {account ? (
-        <>
-          <Text style={styles.address}>{displayAddr}</Text>
-          <Text style={styles.chainInfo}>
-            Chain ID: {chainId}{connectionMode !== 'none' ? ` · ${connectionMode === 'builtin' ? 'Built-in' : 'WalletConnect'}` : ''}
-          </Text>
-          <TouchableOpacity style={styles.disconnectBtn} onPress={disconnect}>
-            <Text style={styles.disconnectText}>Disconnect</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          <Text style={styles.noWallet}>No wallet connected</Text>
-          <TouchableOpacity
-            style={[styles.connectBtn, isConnecting && styles.btnDisabled]}
-            onPress={handleBuiltinConnect}
-            disabled={isConnecting}
-          >
-            {isConnecting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.connectText}>Connect Wallet</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.wcBtn, isConnecting && styles.btnDisabled]}
-            onPress={connect}
-            disabled={isConnecting}
-          >
-            <Text style={styles.wcBtnText}>WalletConnect</Text>
-          </TouchableOpacity>
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        </>
-      )}
-    </View>
-  );
-}
-
-function BalanceSection({
-  balances,
-  loading,
-  refreshKey,
-}: {
-  balances: import('../hooks/useBalances').TokenBalance[];
-  loading: boolean;
-  refreshKey: number;
-}) {
-  const { account } = useWallet();
-  const [privateBalances, setPrivateBalances] = useState<
-    { symbol: string; amount: string }[]
-  >([]);
-
-  useEffect(() => {
-    if (!account) {
-      setPrivateBalances([]);
-      return;
-    }
-    (async () => {
-      const map = await NoteStorageService.getPrivateBalances();
-      const items: { symbol: string; amount: string }[] = [];
-      for (const [, value] of map) {
-        items.push({
-          symbol: value.symbol,
-          amount: ethers.formatEther(value.total),
-        });
-      }
-      setPrivateBalances(items);
-    })();
-  }, [account, refreshKey]);
-
-  if (!account) {
-    return (
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Balances</Text>
-        <Text style={styles.emptyText}>Connect wallet to view balances</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardLabel}>Wallet Balances</Text>
-      {loading && balances.length === 0 ? (
-        <ActivityIndicator size="small" color="#95aaff" style={{ marginVertical: 12 }} />
-      ) : balances.length === 0 ? (
-        <Text style={styles.emptyText}>No tokens configured</Text>
-      ) : (
-        balances.map((item) => (
-          <View key={item.token.symbol} style={styles.balanceRow}>
-            <Text style={styles.tokenSymbol}>{item.token.symbol}</Text>
-            <Text style={styles.tokenBalance}>
-              {formatBalance(item.balance)}
-            </Text>
-          </View>
-        ))
-      )}
-
-      {privateBalances.length > 0 && (
-        <>
-          <View style={styles.divider} />
-          <Text style={[styles.cardLabel, { marginTop: 8 }]}>
-            Private Balances (Deposited)
-          </Text>
-          {privateBalances.map((item) => (
-            <View key={`priv-${item.symbol}`} style={styles.balanceRow}>
-              <View style={styles.privateTag}>
-                <Text style={styles.privateTagText}>PRIVATE</Text>
-                <Text style={[styles.tokenSymbol, { marginLeft: 6 }]}>
-                  {item.symbol}
-                </Text>
-              </View>
-              <Text style={styles.tokenBalance}>
-                {formatBalance(item.amount)}
-              </Text>
-            </View>
-          ))}
-        </>
-      )}
-    </View>
-  );
-}
-
-function QuickActions() {
-  const navigation = useNavigation<any>();
-
-  const actions = [
-    { label: 'Deposit', screen: 'Deposit', color: '#10b981' },
-    { label: 'Trade', screen: 'Trade', color: '#6366f1' },
-    { label: 'Claim', screen: 'Claim', color: '#f59e0b' },
-  ];
-
-  return (
-    <View style={styles.actionsRow}>
-      {actions.map((a) => (
-        <TouchableOpacity
-          key={a.label}
-          style={[styles.actionBtn, { borderColor: a.color }]}
-          onPress={() => navigation.navigate(a.screen)}
-        >
-          <Text style={[styles.actionText, { color: a.color }]}>{a.label}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
-const ACTIVITY_ICONS: Record<ActivityType, string> = {
-  deposit: '+',
-  settle: '⇄',
-  claim: '↓',
-  cancel: '×',
-};
-
-const ACTIVITY_COLORS: Record<ActivityType, string> = {
-  deposit: '#10b981',
-  settle: '#6366f1',
-  claim: '#f59e0b',
-  cancel: '#ef4444',
-};
-
-function RecentActivity({
-  activities,
-  loading,
-}: {
-  activities: import('../hooks/useRecentActivity').ActivityItem[];
-  loading: boolean;
-}) {
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardLabel}>Recent Activity</Text>
-      {loading && activities.length === 0 ? (
-        <ActivityIndicator size="small" color="#95aaff" style={{ marginVertical: 12 }} />
-      ) : activities.length === 0 ? (
-        <Text style={styles.emptyText}>No recent activity</Text>
-      ) : (
-        activities.slice(0, 10).map((item) => (
-          <View key={item.txHash} style={styles.activityRow}>
-            <View
-              style={[
-                styles.activityIcon,
-                { backgroundColor: ACTIVITY_COLORS[item.type] + '20' },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.activityIconText,
-                  { color: ACTIVITY_COLORS[item.type] },
-                ]}
-              >
-                {ACTIVITY_ICONS[item.type]}
-              </Text>
-            </View>
-            <View style={styles.activityInfo}>
-              <Text style={styles.activityType}>
-                {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
-              </Text>
-              <Text style={styles.activityDetail}>{item.details}</Text>
-            </View>
-            <Text style={styles.activityTx}>
-              {item.txHash.slice(0, 6)}...{item.txHash.slice(-4)}
-            </Text>
-          </View>
-        ))
-      )}
-    </View>
-  );
-}
-
-// ─── Main ──────────────────────────────────────────────
+const recentActivity = [
+  { id: '1', type: 'Trade', desc: 'Trade USDT to ETH', time: 'Today, 10:30 AM', amount: '+1.2 ETH', status: 'completed' },
+  { id: '2', type: 'Deposit', desc: 'Deposit USDC', time: 'Yesterday, 3:45 PM', amount: '+500 USDC', status: 'completed' },
+  { id: '3', type: 'Transfer', desc: 'Private Transfer', time: 'Yesterday, 2:15 PM', amount: '-250 DAI', status: 'completed' },
+];
 
 export default function HomeScreen() {
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const { balances, loading: balancesLoading, refresh: refreshBalances } = useBalances();
-  const { activities, loading: activityLoading, refresh: refreshActivity } = useRecentActivity();
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    setRefreshKey((k) => k + 1);
-    await Promise.all([refreshBalances(), refreshActivity()]);
-    setRefreshing(false);
-  };
+  const navigation = useNavigation<any>();
+  const [showBalance, setShowBalance] = useState(true);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#95aaff"
-          />
-        }
-      >
-        <Text style={styles.title}>ScatterDEX</Text>
-        <Text style={styles.subtitle}>Privacy-Preserving DEX</Text>
-        <WalletCard />
-        <QuickActions />
-        <BalanceSection balances={balances} loading={balancesLoading} refreshKey={refreshKey} />
-        <RecentActivity activities={activities} loading={activityLoading} />
-        <View style={{ height: 32 }} />
+    <View style={s.safe}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
+        {/* Header */}
+        <View style={s.header}>
+          <View style={s.headerLeft}>
+            <View style={s.avatar}>
+              <Text style={s.avatarIcon}>👤</Text>
+            </View>
+            <Text style={s.headerTitle}>Home</Text>
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={s.settingsBtn}>
+            <Text style={s.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Balance Card */}
+        <View style={s.balanceCard}>
+          <View style={s.balanceCardBg} />
+          <View style={s.balanceContent}>
+            <View style={s.balanceTop}>
+              <View style={s.balanceLeft}>
+                <Text style={s.balanceLabel}>Total Balance (Public + Private)</Text>
+                <View style={s.balanceRow}>
+                  <Text style={s.balanceAmount}>
+                    {showBalance ? '$14,250.85' : '$ ••••••'}
+                  </Text>
+                  <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+                    <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={s.balanceChange}>+$325.10 (2.33%)</Text>
+              </View>
+
+              <View style={s.balanceRight}>
+                <View style={s.connectedBadge}>
+                  <View style={s.greenDot} />
+                  <Text style={s.connectedText}>Wallet Connected</Text>
+                </View>
+                <View style={s.addrBadge}>
+                  <View style={s.addrDot} />
+                  <Text style={s.addrText}>0x7a...B3d2</Text>
+                  <Text style={s.chevronDown}>▾</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Action Buttons */}
+        <View style={s.actionsRow}>
+          <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Deposit')}>
+            <View style={[s.actionCircle]}>
+              <Text style={[s.actionIconText, { color: colors.primary }]}>↓</Text>
+            </View>
+            <Text style={s.actionLabel}>Deposit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Trade')}>
+            <View style={[s.actionCircle]}>
+              <Text style={[s.actionIconText, { color: colors.cyan }]}>⇄</Text>
+            </View>
+            <Text style={s.actionLabel}>Trade</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Claim')}>
+            <View style={[s.actionCircle]}>
+              <Text style={[s.actionIconText, { color: colors.indigo }]}>💰</Text>
+            </View>
+            <Text style={s.actionLabel}>Claim</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Recent Activity */}
+        <View style={s.section}>
+          <View style={s.sectionHeader}>
+            <Text style={s.sectionTitle}>Recent Activity</Text>
+            <TouchableOpacity style={s.seeAllBtn} onPress={() => navigation.navigate('History')}>
+              <Text style={s.seeAllText}>See All</Text>
+            </TouchableOpacity>
+          </View>
+
+          {recentActivity.map((item) => (
+            <View key={item.id} style={s.actCard}>
+              <View style={s.actLeft}>
+                <View style={s.actIconCircle}>
+                  <Text style={s.actIconText}>
+                    {item.type === 'Trade' ? '⇄' : item.type === 'Deposit' ? '↓' : '💰'}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={s.actTitle}>{item.desc}</Text>
+                  <Text style={s.actSub}>{item.time}</Text>
+                </View>
+              </View>
+              <View style={s.actRight}>
+                <Text style={[
+                  s.actAmount,
+                  item.amount.startsWith('+') ? s.amountPositive : s.amountNegative,
+                ]}>
+                  {item.amount}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View style={{ height: 96 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg, paddingTop: 40 },
+  scroll: { flex: 1, backgroundColor: colors.bg },
+  scrollContent: { paddingBottom: 24, flexGrow: 0 },
 
-// ─── Styles ────────────────────────────────────────────
+  /* Header */
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
+  avatarIcon: { fontSize: 20 },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: '#111827' },
+  settingsBtn: { padding: 8 },
+  settingsIcon: { fontSize: 24, color: '#4B5563' },
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#0a0f1e',
-  },
-  container: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#8899bb',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
-  },
+  /* Balance Card */
+  balanceCard: { marginHorizontal: 24, borderRadius: 24, padding: 24, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DBEAFE', overflow: 'hidden' },
+  balanceCardBg: { position: 'absolute', top: -64, right: -64, width: 128, height: 128, borderRadius: 64, backgroundColor: '#EFF6FF', opacity: 0.5 },
+  balanceContent: { position: 'relative', zIndex: 10 },
+  balanceTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  balanceLeft: { flexDirection: 'column', gap: 4 },
+  balanceLabel: { fontSize: 14, color: '#6B7280', fontWeight: '500' },
+  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  balanceAmount: { fontSize: 30, fontWeight: '700', letterSpacing: -0.5 },
+  eyeIcon: { fontSize: 18, color: '#9CA3AF' },
+  balanceChange: { fontSize: 14, fontWeight: '500', color: '#22C55E' },
+  balanceRight: { alignItems: 'flex-end', gap: 8 },
+  connectedBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
+  greenDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E' },
+  connectedText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
+  addrBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#F9FAFB', borderRadius: 99, borderWidth: 1, borderColor: '#F3F4F6' },
+  addrDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.primary },
+  addrText: { fontSize: 10, fontWeight: '500', color: '#4B5563' },
+  chevronDown: { fontSize: 10, color: '#4B5563' },
 
-  // Card
-  card: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  cardLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 12,
-  },
+  /* Action Buttons */
+  actionsRow: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 24 },
+  actionItem: { alignItems: 'center', gap: 8 },
+  actionCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  actionIconText: { fontSize: 28 },
+  actionLabel: { fontSize: 14, fontWeight: '600', color: '#374151' },
 
-  // Wallet Card
-  address: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#95aaff',
-    fontFamily: 'monospace',
-  },
-  chainInfo: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
-  },
-  noWallet: {
-    fontSize: 15,
-    color: '#4b5563',
-    marginBottom: 12,
-  },
-  connectBtn: {
-    backgroundColor: '#6366f1',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  connectText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  disconnectBtn: {
-    marginTop: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    alignItems: 'center',
-  },
-  disconnectText: {
-    color: '#9ca3af',
-    fontSize: 14,
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
-  wcBtn: {
-    marginTop: 8,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    alignItems: 'center',
-  },
-  wcBtnText: {
-    color: '#6b7280',
-    fontSize: 14,
-  },
-  errorText: {
-    color: '#ef4444',
-    fontSize: 12,
-    marginTop: 8,
-  },
+  /* Recent Activity Section */
+  section: { paddingHorizontal: 24, gap: 16 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  seeAllBtn: { paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#EFF6FF', borderRadius: 99 },
+  seeAllText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
 
-  // Balances
-  balanceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  tokenSymbol: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#e5e7eb',
-  },
-  tokenBalance: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#fff',
-    fontFamily: 'monospace',
-  },
-  privateTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  privateTagText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#10b981',
-    backgroundColor: '#10b98120',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#1f2937',
-    marginVertical: 8,
-  },
-
-  // Quick Actions
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-    gap: 10,
-  },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    backgroundColor: '#111827',
-    alignItems: 'center',
-  },
-  actionText: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-
-  // Activity
-  activityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1f293740',
-  },
-  activityIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  activityIconText: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  activityInfo: {
-    flex: 1,
-  },
-  activityType: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#e5e7eb',
-  },
-  activityDetail: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  activityTx: {
-    fontSize: 11,
-    color: '#4b5563',
-    fontFamily: 'monospace',
-  },
-
-  // Empty
-  emptyText: {
-    fontSize: 14,
-    color: '#4b5563',
-    textAlign: 'center',
-    paddingVertical: 12,
-  },
+  actCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1, marginBottom: 12 },
+  actLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  actIconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F9FAFB', alignItems: 'center', justifyContent: 'center' },
+  actIconText: { fontSize: 20, color: '#9CA3AF' },
+  actTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  actSub: { fontSize: 12, color: '#9CA3AF', fontWeight: '500', marginTop: 2 },
+  actRight: { alignItems: 'flex-end' },
+  actAmount: { fontWeight: '700' },
+  amountPositive: { color: '#22C55E' },
+  amountNegative: { color: '#EF4444' },
 });

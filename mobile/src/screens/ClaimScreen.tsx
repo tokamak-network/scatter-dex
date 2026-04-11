@@ -1,254 +1,157 @@
 /**
- * ClaimScreen — 정산된 토큰 클레임
- *
- * 클레임 JSON 데이터를 입력(붙여넣기)하면:
- * 1. 클레임 상태 확인 (이미 처리됐는지)
- * 2. ZK claim proof 생성
- * 3. 온체인 제출
+ * ClaimScreen — converted from web design prototype Claim.tsx
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ethers } from 'ethers';
-import { useWallet } from '../contexts/WalletContext';
-import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
-import { ConfigService } from '../services/ConfigService';
-import { shortAddr } from '../lib/format';
-import { StepProgress } from '../components/StepProgress';
-import { shared } from '../styles/theme';
+import { useNavigation } from '@react-navigation/native';
+import { colors } from '../styles/theme';
 
-const STEP_LABELS: Record<ClaimStep, string> = {
-  idle: '',
-  checking_status: 'Checking claim status...',
-  generating_proof: 'Generating ZK proof...',
-  submitting: 'Submitting claim...',
-  success: 'Claim successful!',
-  error: 'Claim failed',
-};
-
-const CLAIM_STEPS: ClaimStep[] = ['checking_status', 'generating_proof', 'submitting'];
+const claimableItems = [
+  { id: '1', asset: 'ETH', amount: '300.792 ETH', status: 'Ready to Claim' },
+  { id: '2', asset: 'USDC', amount: '0.000520', status: 'Ready to Claim' },
+  { id: '3', asset: 'ETH', amount: '0.70 USD', status: 'Ready to Claim' },
+  { id: '4', asset: 'ETH', amount: '0.00 USC', status: 'Ready to Claim' },
+];
 
 export default function ClaimScreen() {
-  const { account, signer, readProvider } = useWallet();
-  const [claimJson, setClaimJson] = useState('');
-  const [parsedClaim, setParsedClaim] = useState<ClaimData | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<ClaimProgress>({ step: 'idle' });
-
-  const isProcessing = progress.step !== 'idle' && progress.step !== 'success' && progress.step !== 'error';
-
-  const handleParse = useCallback(() => {
-    try {
-      const data = JSON.parse(claimJson);
-
-      // Validate required fields
-      if (!data.secret || !data.recipient || !data.token || !data.amount || !data.allLeaves) {
-        throw new Error('Missing required fields (secret, recipient, token, amount, allLeaves)');
-      }
-
-      const claim: ClaimData = {
-        secret: data.secret,
-        recipient: data.recipient,
-        token: data.token,
-        amount: data.amount,
-        releaseTime: data.releaseTime || '0',
-        leafIndex: data.leafIndex ?? 0,
-        allLeaves: data.allLeaves,
-      };
-
-      setParsedClaim(claim);
-      setParseError(null);
-    } catch (err: any) {
-      setParsedClaim(null);
-      setParseError(err?.message || 'Invalid JSON');
-    }
-  }, [claimJson]);
-
-  const handleClaim = useCallback(async () => {
-    if (!signer || !parsedClaim) return;
-
-    const settlementAddr = ConfigService.getPrivateSettlementAddress();
-    if (!settlementAddr) {
-      Alert.alert('Error', 'PrivateSettlement address not configured');
-      return;
-    }
-
-    await ClaimService.execute(
-      signer,
-      parsedClaim,
-      readProvider,
-      (p) => setProgress(p),
-    );
-  }, [signer, parsedClaim, readProvider]);
-
-  const handleReset = () => {
-    setProgress({ step: 'idle' });
-    setClaimJson('');
-    setParsedClaim(null);
-    setParseError(null);
-  };
-
-  if (!account) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <View style={styles.centered}>
-          <Text style={styles.title}>Claim</Text>
-          <Text style={styles.emptyText}>Connect wallet to claim tokens</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const navigation = useNavigation<any>();
+  const [progress] = useState(85);
+  const [claimTab, setClaimTab] = useState<'json' | 'notes'>('notes');
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Claim Tokens</Text>
-        <Text style={styles.subtitle}>Submit claim proof to receive settled tokens</Text>
-
-        {/* JSON Input */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Claim Data (JSON)</Text>
-          <TextInput
-            style={styles.jsonInput}
-            value={claimJson}
-            onChangeText={setClaimJson}
-            placeholder='Paste claim JSON from order file...'
-            placeholderTextColor="#4b5563"
-            multiline
-            numberOfLines={6}
-            editable={!isProcessing}
-            textAlignVertical="top"
-          />
-          {parseError && <Text style={styles.errorText}>{parseError}</Text>}
-
-          <TouchableOpacity
-            style={[styles.parseBtn, !claimJson && styles.btnDisabled]}
-            onPress={handleParse}
-            disabled={!claimJson || isProcessing}
-          >
-            <Text style={styles.parseBtnText}>Parse Claim</Text>
+    <SafeAreaView style={s.safe} edges={['top']}>
+      <View style={s.container}>
+        {/* Header */}
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+            <Text style={s.backIcon}>←</Text>
+          </TouchableOpacity>
+          <Text style={s.headerTitle}>Claim Tokens</Text>
+          <TouchableOpacity style={s.helpBtn}>
+            <Text style={s.helpIcon}>?</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Parsed Claim Summary */}
-        {parsedClaim && (
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Claim Summary</Text>
-            <SummaryRow label="Recipient" value={shortAddr(parsedClaim.recipient)} />
-            <SummaryRow label="Token" value={shortAddr(parsedClaim.token)} />
-            <SummaryRow
-              label="Amount"
-              value={`${parseFloat(ethers.formatEther(parsedClaim.amount)).toFixed(4)} tokens`}
-            />
-            <SummaryRow
-              label="Release"
-              value={
-                parsedClaim.releaseTime === '0'
-                  ? 'Immediate'
-                  : new Date(Number(parsedClaim.releaseTime) * 1000).toLocaleString()
-              }
-            />
-            <SummaryRow label="Leaf Index" value={`#${parsedClaim.leafIndex}`} />
-          </View>
-        )}
+        <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
+          <View style={s.card}>
+            {/* Title Section */}
+            <View style={s.titleSection}>
+              <Text style={s.cardTitle}>Securely Withdraw Your Tokens</Text>
+              <Text style={s.cardSubtitle}>Use ZK-proofs to anonymously claim your traded assets.</Text>
+            </View>
 
-        {/* Claim Button / Progress */}
-        {parsedClaim && progress.step === 'idle' && (
-          <TouchableOpacity style={styles.claimBtn} onPress={handleClaim}>
-            <Text style={styles.claimBtnText}>Claim with ZK Proof</Text>
-          </TouchableOpacity>
-        )}
-
-        {progress.step !== 'idle' && (
-          <View style={shared.card}>
-            <StepProgress steps={CLAIM_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
-
-            {progress.step === 'success' && progress.txHash && (
-              <View style={styles.txRow}>
-                <Text style={styles.txLabel}>Tx: </Text>
-                <Text style={styles.txHash}>{progress.txHash.slice(0, 10)}...{progress.txHash.slice(-8)}</Text>
-              </View>
-            )}
-            {progress.step === 'error' && progress.error && (
-              <Text style={styles.errorText} numberOfLines={3}>{progress.error}</Text>
-            )}
-
-            {(progress.step === 'success' || progress.step === 'error') && (
-              <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
-                <Text style={shared.resetBtnText}>
-                  {progress.step === 'success' ? 'New Claim' : 'Try Again'}
-                </Text>
+            {/* Tabs */}
+            <View style={s.tabsBg}>
+              <TouchableOpacity
+                style={[s.tab, claimTab === 'json' && s.tabInactive]}
+                onPress={() => setClaimTab('json')}
+              >
+                <Text style={[s.tabText, claimTab === 'json' && s.tabTextInactive]}>Claim JSON</Text>
               </TouchableOpacity>
-            )}
+              <TouchableOpacity
+                style={[s.tab, claimTab === 'notes' && s.tabActive]}
+                onPress={() => setClaimTab('notes')}
+              >
+                <Text style={[s.tabText, claimTab === 'notes' && s.tabTextActive]}>Claimable Notes</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Claimable Items */}
+            <View style={s.itemsList}>
+              {claimableItems.map((item) => (
+                <View key={item.id} style={s.itemRow}>
+                  <View style={s.itemLeft}>
+                    <View style={s.itemIcon}>
+                      <Text style={s.itemIconText}>🛡</Text>
+                    </View>
+                    <View>
+                      <Text style={s.itemAsset}>{item.asset}</Text>
+                      <Text style={s.itemAmount}>{item.amount}</Text>
+                    </View>
+                  </View>
+                  <View style={s.statusBadge}>
+                    <Text style={s.statusText}>{item.status}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
           </View>
-        )}
 
-        {/* Info */}
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>How to claim</Text>
-          <Text style={styles.infoText}>
-            1. After your order is settled, you receive a claim JSON{'\n'}
-            2. Paste it above and parse{'\n'}
-            3. A ZK proof proves you know the claim secret{'\n'}
-            4. Tokens are sent to the recipient address
-          </Text>
+          <View style={{ height: 200 }} />
+        </ScrollView>
+
+        {/* Bottom Proof Panel */}
+        <View style={s.bottomPanel}>
+          <View style={s.proofHeader}>
+            <Text style={s.proofLabel}>ZK Claim Proof Generation</Text>
+            <Text style={s.proofPercent}>Generating... {progress}%</Text>
+          </View>
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${progress}%` as any }]} />
+          </View>
+          <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
+          <TouchableOpacity style={s.claimBtn} activeOpacity={0.8}>
+            <Text style={s.claimBtnText}>Claim to Wallet</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={{ height: 32 }} />
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.summaryRow}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summaryValue}>{value}</Text>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0a0f1e' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#F9FAFB' },
   container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#fff', textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginTop: 4, marginBottom: 20 },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 24, gap: 24, paddingTop: 8 },
 
-  card: { backgroundColor: '#111827', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#1f2937' },
-  cardLabel: { fontSize: 13, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
+  /* Header */
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
+  backBtn: { padding: 8, marginLeft: -8 },
+  backIcon: { fontSize: 24, color: '#4B5563' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  helpBtn: { padding: 8 },
+  helpIcon: { fontSize: 20, color: '#2563EB', fontWeight: '700' },
 
-  jsonInput: { backgroundColor: '#0a0f1e', borderRadius: 8, padding: 12, color: '#e5e7eb', fontSize: 13, fontFamily: 'monospace', minHeight: 120, borderWidth: 1, borderColor: '#1f2937' },
+  /* Card */
+  card: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1, gap: 24 },
 
-  parseBtn: { marginTop: 12, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#374151', alignItems: 'center' },
-  parseBtnText: { color: '#95aaff', fontSize: 14, fontWeight: '600' },
+  /* Title */
+  titleSection: { gap: 8 },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
+  cardSubtitle: { fontSize: 14, fontWeight: '500', color: '#6B7280' },
 
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  summaryLabel: { fontSize: 14, color: '#6b7280' },
-  summaryValue: { fontSize: 14, color: '#e5e7eb', fontFamily: 'monospace' },
+  /* Tabs */
+  tabsBg: { flexDirection: 'row', backgroundColor: '#F9FAFB', padding: 4, borderRadius: 12 },
+  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  tabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  tabInactive: {},
+  tabText: { fontSize: 14, fontWeight: '700' },
+  tabTextActive: { color: '#111827' },
+  tabTextInactive: { color: '#9CA3AF' },
 
-  claimBtn: { backgroundColor: '#f59e0b', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
-  claimBtnText: { color: '#000', fontSize: 18, fontWeight: '700' },
-  btnDisabled: { opacity: 0.4 },
+  /* Items List */
+  itemsList: { gap: 12 },
+  itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  itemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  itemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
+  itemIconText: { fontSize: 18, color: '#2563EB' },
+  itemAsset: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  itemAmount: { fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 2 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
+  statusText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
 
-  txRow: { flexDirection: 'row', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#1f2937' },
-  txLabel: { fontSize: 13, color: '#6b7280' },
-  txHash: { fontSize: 13, color: '#95aaff', fontFamily: 'monospace' },
-
-  infoCard: { backgroundColor: '#111827', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1f2937' },
-  infoTitle: { fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8 },
-  infoText: { fontSize: 13, color: '#4b5563', lineHeight: 20 },
-
-  errorText: { color: '#ef4444', fontSize: 12, marginTop: 8 },
-  emptyText: { fontSize: 14, color: '#4b5563', marginTop: 12 },
+  /* Bottom Panel */
+  bottomPanel: { backgroundColor: '#FFFFFF', padding: 24, borderTopWidth: 1, borderTopColor: '#F3F4F6', gap: 16 },
+  proofHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  proofLabel: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  proofPercent: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  progressTrack: { height: 8, backgroundColor: '#F3F4F6', borderRadius: 4, overflow: 'hidden' },
+  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 4, backgroundColor: '#22C55E' },
+  proofHint: { fontSize: 12, fontWeight: '500', color: '#6B7280', textAlign: 'center' },
+  claimBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  claimBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 });

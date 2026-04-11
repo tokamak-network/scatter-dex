@@ -1,381 +1,187 @@
 /**
- * DepositScreen — 프라이빗 입금
- *
- * 1. 토큰 선택
- * 2. 금액 입력 + 지갑 잔액 표시
- * 3. Deposit 버튼 → 진행 상태 표시
- *    (EdDSA 키 유도 → approve → ZK proof → deposit → 노트 저장)
+ * DepositScreen — converted from web design prototype Deposit.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useWallet } from '../contexts/WalletContext';
-import { TokenService, TokenInfo } from '../services/TokenService';
-import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
-import { formatBalance } from '../lib/format';
-import { StepProgress } from '../components/StepProgress';
-import { shared } from '../styles/theme';
-
-const STEP_LABELS: Record<DepositStep, string> = {
-  idle: '',
-  checking: 'Checking eligibility...',
-  deriving_key: 'Deriving signing key...',
-  approving: 'Approving token...',
-  generating_proof: 'Generating ZK proof...',
-  depositing: 'Submitting deposit...',
-  saving_note: 'Saving private note...',
-  success: 'Deposit successful!',
-  error: 'Deposit failed',
-};
-
-const DEPOSIT_STEPS: DepositStep[] = ['checking', 'deriving_key', 'approving', 'generating_proof', 'depositing', 'saving_note'];
+import { useNavigation } from '@react-navigation/native';
+import { colors } from '../styles/theme';
 
 export default function DepositScreen() {
-  const { account, signer, readProvider } = useWallet();
-  const [tokens] = useState<TokenInfo[]>(() => TokenService.getTokenList());
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const [amount, setAmount] = useState('');
-  const [walletBalance, setWalletBalance] = useState<string | null>(null);
-  const [progress, setProgress] = useState<DepositProgress>({ step: 'idle' });
+  const navigation = useNavigation<any>();
+  const [step, setStep] = useState(1);
+  const [progress, setProgress] = useState(0);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  const selectedToken = tokens[selectedIdx];
-  const isProcessing = progress.step !== 'idle' && progress.step !== 'success' && progress.step !== 'error';
-
-  // 선택된 토큰 잔액 조회
   useEffect(() => {
-    if (!account || !selectedToken) {
-      setWalletBalance(null);
-      return;
+    if (isGenerating) {
+      const interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            setIsGenerating(false);
+            return 100;
+          }
+          return prev + 2;
+        });
+      }, 50);
+      return () => clearInterval(interval);
     }
-    setWalletBalance(null);
-    TokenService.getBalance(readProvider, account, selectedToken)
-      .then(setWalletBalance)
-      .catch(() => setWalletBalance('0'));
-  }, [account, selectedToken, readProvider]);
+  }, [isGenerating]);
 
-  const handleDeposit = useCallback(async () => {
-    if (!signer || !account || !selectedToken || !amount) return;
-
-    const parsed = parseFloat(amount);
-    if (isNaN(parsed) || parsed <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-      return;
-    }
-
-    setProgress({ step: 'idle' });
-
-    await DepositService.execute(
-      signer,
-      account,
-      selectedToken,
-      amount,
-      (p) => setProgress(p),
-    );
-  }, [signer, account, selectedToken, amount]);
-
-  const handleReset = () => {
-    setProgress({ step: 'idle' });
-    setAmount('');
-  };
-
-  const handleMax = () => {
-    if (walletBalance) {
-      // Leave a small buffer for gas if native token
-      if (selectedToken?.isNative) {
-        const max = Math.max(0, parseFloat(walletBalance) - 0.01);
-        setAmount(max > 0 ? max.toString() : '0');
-      } else {
-        setAmount(walletBalance);
-      }
+  const handleConfirm = () => {
+    if (step === 1) {
+      setStep(2);
+      setIsGenerating(true);
     }
   };
-
-  if (!account) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <View style={styles.centered}>
-          <Text style={styles.title}>Deposit</Text>
-          <Text style={styles.emptyText}>Connect wallet to deposit</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.title}>Deposit Privately</Text>
-        <Text style={styles.subtitle}>
-          Deposit tokens into the commitment pool with a ZK proof
-        </Text>
-
-        {/* Token Selector */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Token</Text>
-          <View style={styles.tokenRow}>
-            {tokens.map((t, i) => (
-              <TouchableOpacity
-                key={`${t.symbol}-${t.isNative}`}
-                style={[
-                  styles.tokenChip,
-                  selectedIdx === i && styles.tokenChipActive,
-                ]}
-                onPress={() => setSelectedIdx(i)}
-                disabled={isProcessing}
-              >
-                <Text
-                  style={[
-                    styles.tokenChipText,
-                    selectedIdx === i && styles.tokenChipTextActive,
-                  ]}
-                >
-                  {t.symbol}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Amount Input */}
-        <View style={styles.card}>
-          <View style={styles.amountHeader}>
-            <Text style={styles.cardLabel}>Amount</Text>
-            {walletBalance !== null && (
-              <TouchableOpacity onPress={handleMax} disabled={isProcessing}>
-                <Text style={styles.balanceText}>
-                  Balance: {formatBalance(walletBalance)}
-                  {' '}
-                  <Text style={styles.maxText}>MAX</Text>
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <TextInput
-            style={styles.amountInput}
-            value={amount}
-            onChangeText={setAmount}
-            placeholder="0.0"
-            placeholderTextColor="#4b5563"
-            keyboardType="decimal-pad"
-            editable={!isProcessing}
-          />
-        </View>
-
-        {/* Deposit Button / Progress */}
-        {progress.step === 'idle' ? (
-          <TouchableOpacity
-            style={[
-              styles.depositBtn,
-              (!amount || parseFloat(amount) <= 0) && styles.btnDisabled,
-            ]}
-            onPress={handleDeposit}
-            disabled={!amount || parseFloat(amount) <= 0}
-          >
-            <Text style={styles.depositBtnText}>Deposit</Text>
+    <SafeAreaView style={s.safe} edges={['top']}>
+      <View style={s.container}>
+        {/* Header */}
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+            <Text style={s.backIcon}>←</Text>
           </TouchableOpacity>
-        ) : (
-          <View style={shared.card}>
-            <StepProgress steps={DEPOSIT_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
+          <Text style={s.headerTitle}>Private Deposit</Text>
+          <View style={{ width: 40 }} />
+        </View>
 
-            {progress.step === 'success' && progress.txHash && (
-              <View style={styles.txHashRow}>
-                <Text style={styles.txHashLabel}>Tx: </Text>
-                <Text style={styles.txHash}>
-                  {progress.txHash.slice(0, 10)}...{progress.txHash.slice(-8)}
+        <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
+          {/* Step 1: Deposit Details */}
+          <View style={s.card}>
+            <Text style={s.cardTitle}>Step 1: Deposit Details</Text>
+
+            {/* Select Token */}
+            <View style={s.fieldGroup}>
+              <View style={s.fieldHeader}>
+                <Text style={s.fieldLabel}>Select Token</Text>
+                <Text style={s.fieldHint}>Balance: 1.245 ETH</Text>
+              </View>
+              <View style={s.tokenSelector}>
+                <View style={s.tokenLeft}>
+                  <View style={s.tokenDot} />
+                  <Text style={s.tokenText}>ETH - Ethereum</Text>
+                </View>
+                <Text style={s.chevron}>▾</Text>
+              </View>
+            </View>
+
+            {/* Enter Amount */}
+            <View style={s.fieldGroup}>
+              <Text style={s.fieldLabel}>Enter Amount</Text>
+              <View style={s.amountWrap}>
+                <TextInput
+                  style={s.amountInput}
+                  placeholder="0.5"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="decimal-pad"
+                />
+                <TouchableOpacity style={s.maxBtn}>
+                  <Text style={s.maxText}>MAX</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={s.fieldHint}>Available: 1.245 ETH</Text>
+            </View>
+          </View>
+
+          {/* Step 2: Privacy Verification */}
+          <View style={[s.card, step < 2 && s.cardDisabled]}>
+            <Text style={s.cardTitle}>Step 2: Privacy Verification</Text>
+
+            <View style={s.proofSection}>
+              {/* Progress Bar */}
+              <View style={s.progressTrack}>
+                <View style={[s.progressFill, { width: `${progress}%` as any }]} />
+              </View>
+              <Text style={s.proofStatus}>
+                {progress < 100 ? 'Generating ZK Deposit Proof...' : 'ZK Proof Generated!'}
+              </Text>
+
+              {/* Info Box */}
+              <View style={s.infoBox}>
+                <Text style={s.infoIcon}>🔒</Text>
+                <Text style={s.infoText}>
+                  Your transaction is being anonymized for secure, private pooling.
                 </Text>
               </View>
-            )}
-
-            {progress.step === 'error' && progress.error && (
-              <Text style={styles.errorText} numberOfLines={3}>
-                {progress.error}
-              </Text>
-            )}
-
-            {(progress.step === 'success' || progress.step === 'error') && (
-              <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
-                <Text style={shared.resetBtnText}>
-                  {progress.step === 'success' ? 'New Deposit' : 'Try Again'}
-                </Text>
-              </TouchableOpacity>
-            )}
+            </View>
           </View>
-        )}
 
-        {/* Info */}
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>How it works</Text>
-          <Text style={styles.infoText}>
-            1. A random secret is generated for your deposit{'\n'}
-            2. A ZK proof binds the secret to your token and amount{'\n'}
-            3. The proof is verified on-chain, and your commitment is added to the Merkle tree{'\n'}
-            4. Your private note is encrypted and saved locally
-          </Text>
+          <View style={{ height: 120 }} />
+        </ScrollView>
+
+        {/* Fixed Bottom Action */}
+        <View style={s.bottomAction}>
+          <TouchableOpacity
+            style={[s.actionBtn, isGenerating && s.actionBtnDisabled]}
+            onPress={handleConfirm}
+            disabled={isGenerating}
+            activeOpacity={0.8}
+          >
+            <Text style={s.actionBtnText}>
+              {step === 1 ? 'Confirm Deposit' : (progress < 100 ? 'Generating Proof...' : 'Complete Deposit')}
+            </Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={{ height: 32 }} />
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
 
-// ─── Styles ────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0a0f1e' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#F9FAFB' },
   container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#8899bb',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
-  },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 24, gap: 24, paddingTop: 8 },
 
-  // Card
-  card: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  cardLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
+  /* Header */
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
+  backBtn: { padding: 8, marginLeft: -8 },
+  backIcon: { fontSize: 24, color: '#4B5563' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
 
-  // Token selector
-  tokenRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  tokenChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    backgroundColor: '#1f2937',
-  },
-  tokenChipActive: {
-    borderColor: '#6366f1',
-    backgroundColor: '#6366f120',
-  },
-  tokenChipText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#9ca3af',
-  },
-  tokenChipTextActive: {
-    color: '#95aaff',
-  },
+  /* Card */
+  card: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1, gap: 24 },
+  cardDisabled: { opacity: 0.5 },
+  cardTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
 
-  // Amount
-  amountHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  balanceText: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  maxText: {
-    color: '#6366f1',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  amountInput: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    fontFamily: 'monospace',
-    paddingVertical: 8,
-  },
+  /* Field Group */
+  fieldGroup: { gap: 8 },
+  fieldHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  fieldLabel: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  fieldHint: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
 
-  // Deposit button
-  depositBtn: {
-    backgroundColor: '#10b981',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  depositBtnText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  btnDisabled: {
-    opacity: 0.4,
-  },
+  /* Token Selector */
+  tokenSelector: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  tokenLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  tokenDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#3B82F6' },
+  tokenText: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  chevron: { fontSize: 18, color: '#9CA3AF' },
 
-  txHashRow: {
-    flexDirection: 'row',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#1f2937',
-  },
-  txHashLabel: { fontSize: 13, color: '#6b7280' },
-  txHash: { fontSize: 13, color: '#95aaff', fontFamily: 'monospace' },
+  /* Amount Input */
+  amountWrap: { position: 'relative' },
+  amountInput: { padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6', fontSize: 18, fontWeight: '700', color: '#111827' },
+  maxBtn: { position: 'absolute', right: 16, top: 0, bottom: 0, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 4 },
+  maxText: { fontSize: 12, fontWeight: '700', color: '#2563EB', backgroundColor: '#EFF6FF', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, overflow: 'hidden' },
 
-  // Info
-  infoCard: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 8,
-  },
-  infoText: {
-    fontSize: 13,
-    color: '#4b5563',
-    lineHeight: 20,
-  },
+  /* Proof Section */
+  proofSection: { gap: 16 },
+  progressTrack: { height: 16, backgroundColor: '#F3F4F6', borderRadius: 8, overflow: 'hidden' },
+  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 8, backgroundColor: '#3B82F6' },
+  proofStatus: { fontSize: 14, fontWeight: '700', color: '#111827', textAlign: 'center' },
 
-  // Misc
-  emptyText: {
-    fontSize: 14,
-    color: '#4b5563',
-    marginTop: 12,
-  },
-  errorText: {
-    color: '#ef4444',
-    fontSize: 12,
-    marginTop: 8,
-  },
+  /* Info Box */
+  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  infoIcon: { fontSize: 18, marginTop: 2 },
+  infoText: { flex: 1, fontSize: 12, fontWeight: '500', color: '#6B7280', lineHeight: 18 },
+
+  /* Bottom Action */
+  bottomAction: { position: 'absolute', bottom: 96, left: 0, right: 0, paddingHorizontal: 24 },
+  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  actionBtnDisabled: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
+  actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 });
