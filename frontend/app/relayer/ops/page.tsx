@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Activity, RefreshCw, Circle, Wifi, WifiOff, Database, Clock, Package, CheckCircle2, AlertTriangle } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Activity, RefreshCw, Circle, Wifi, WifiOff, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
-import { shortenAddress } from "../../lib/utils";
+import { shortenAddress, formatDuration } from "../../lib/utils";
 
 interface HealthData {
   status: "healthy" | "degraded";
@@ -31,19 +31,6 @@ interface RelayerStatus {
   lastChecked: number;
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    return `${h}h ${m}m`;
-  }
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  return `${d}d ${h}h`;
-}
-
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <Circle
@@ -69,7 +56,7 @@ export default function OpsMonitorPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const onlineRelayers = relayers.filter((r) => r.online);
+  const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
 
   const fetchRelayerStatus = useCallback(async (relayer: RelayerInfo): Promise<RelayerStatus> => {
     const base: RelayerStatus = {
@@ -278,7 +265,7 @@ export default function OpsMonitorPage() {
                     {/* Uptime */}
                     <td className="px-3 py-3 text-right">
                       <span className="text-xs font-mono text-on-surface-variant/70">
-                        {s.health ? formatUptime(s.health.uptime) : "-"}
+                        {s.health ? formatDuration(s.health.uptime * 1000) : "-"}
                       </span>
                     </td>
 

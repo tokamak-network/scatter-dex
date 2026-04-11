@@ -41,18 +41,25 @@ export function createAuthorizeOrderRoutes(
   if (db) {
     _db = db;
     const rows = db.loadPendingAuthorizeOrders();
+    let restored = 0;
     for (const row of rows) {
-      authorizeOrders.set(row.nullifier, {
-        order: JSON.parse(row.orderJson),
-        status: row.status as StoredAuthorizeOrder["status"],
-        submittedAt: row.submittedAt,
-        pubKeyAx: row.pubKeyAx,
-        pubKeyAy: row.pubKeyAy,
-        settleTxHash: row.settleTx ?? undefined,
-      });
+      try {
+        authorizeOrders.set(row.nullifier, {
+          order: JSON.parse(row.orderJson),
+          status: row.status as StoredAuthorizeOrder["status"],
+          submittedAt: row.submittedAt,
+          pubKeyAx: row.pubKeyAx,
+          pubKeyAy: row.pubKeyAy,
+          settleTxHash: row.settleTx ?? undefined,
+        });
+        restored++;
+      } catch (err) {
+        console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
+        db.deleteAuthorizeOrder(row.nullifier);
+      }
     }
-    if (rows.length > 0) {
-      console.log(`[R-6] Restored ${rows.length} pending authorize orders from DB`);
+    if (restored > 0) {
+      console.log(`[R-6] Restored ${restored} pending authorize orders from DB`);
     }
   }
   const router = Router();

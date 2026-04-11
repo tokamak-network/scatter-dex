@@ -48,6 +48,7 @@ export class PrivateSubmitter {
   private pool: ethers.Contract;
   private commitmentLeaves: bigint[] = [];
   private txMutex: Promise<void> = Promise.resolve();
+  private indexing = false;
   private db: PrivateOrderDB | null = null;
 
   /** Attach DB for claims root tracking. */
@@ -100,41 +101,50 @@ export class PrivateSubmitter {
 
   /** Index commitment deposits from on-chain events, resuming from checkpoint. */
   async indexCommitments(): Promise<void> {
-    const filter = this.pool.filters.CommitmentInserted();
+    if (this.indexing) return;
+    this.indexing = true;
+    try {
+      const filter = this.pool.filters.CommitmentInserted();
 
-    // [R-5] Resume from last indexed block if available
-    const checkpoint = this.db?.getMeta("index_last_block");
-    const fromBlock = checkpoint ? parseInt(checkpoint, 10) + 1 : 0;
+      // [R-5] Resume from checkpoint — but only if in-memory state exists.
+      // After restart commitmentLeaves is empty, so we must do a full re-index.
+      const checkpoint = this.db?.getMeta("index_last_block");
+      const parsedCheckpoint = checkpoint != null ? parseInt(checkpoint, 10) : NaN;
+      const hasValidCheckpoint = Number.isFinite(parsedCheckpoint) && parsedCheckpoint >= 0;
+      const canResume = hasValidCheckpoint && this.commitmentLeaves.length > 0;
+      const fromBlock = canResume ? parsedCheckpoint + 1 : 0;
 
-    if (fromBlock === 0) {
-      // Full re-index: clear existing leaves
-      this.commitmentLeaves = [];
-    }
-
-    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
-
-    let lastBlock = fromBlock;
-    for (const event of events) {
-      const parsed = this.pool.interface.parseLog({
-        topics: event.topics as string[],
-        data: event.data,
-      });
-      if (parsed) {
-        const leafIndex = Number(parsed.args.leafIndex);
-        while (this.commitmentLeaves.length <= leafIndex) {
-          this.commitmentLeaves.push(0n);
-        }
-        this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
+      if (fromBlock === 0) {
+        this.commitmentLeaves = [];
       }
-      if (event.blockNumber > lastBlock) lastBlock = event.blockNumber;
-    }
 
-    // Persist checkpoint
-    if (events.length > 0 && this.db) {
-      this.db.setMeta("index_last_block", lastBlock.toString());
-    }
+      const events = await this.pool.queryFilter(filter, fromBlock, "latest");
 
-    console.log(`Indexed ${this.commitmentLeaves.length} commitments (from block ${fromBlock}, ${events.length} new events)`);
+      let lastBlock = fromBlock;
+      for (const event of events) {
+        const parsed = this.pool.interface.parseLog({
+          topics: event.topics as string[],
+          data: event.data,
+        });
+        if (parsed) {
+          const leafIndex = Number(parsed.args.leafIndex);
+          while (this.commitmentLeaves.length <= leafIndex) {
+            this.commitmentLeaves.push(0n);
+          }
+          this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
+        }
+        if (event.blockNumber > lastBlock) lastBlock = event.blockNumber;
+      }
+
+      // Persist checkpoint (even on empty results to advance past quiet ranges)
+      if (this.db && lastBlock > 0) {
+        this.db.setMeta("index_last_block", lastBlock.toString());
+      }
+
+      console.log(`Indexed ${this.commitmentLeaves.length} commitments (from block ${fromBlock}, ${events.length} new events)`);
+    } finally {
+      this.indexing = false;
+    }
   }
 
   /** Submit a private settlement with ZK proof. */

@@ -20,7 +20,7 @@ export function createHealthRoutes(
 
     // 1. RPC provider connectivity
     try {
-      await (submitter.getProvider() as any).getBlockNumber();
+      await submitter.getProvider().getBlockNumber();
       checks.rpc = "ok";
     } catch {
       checks.rpc = "error";
