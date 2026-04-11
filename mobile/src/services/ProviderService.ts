@@ -27,17 +27,24 @@ export const ProviderService = {
   },
 
   /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit. */
+  /** Returns null gracefully if pool doesn't support sanctionsList() (older deployments). */
   async getSanctionsListAddress(): Promise<string | null> {
     if (cachedSanctionsAddr !== null) return cachedSanctionsAddr;
 
     const poolAddr = ConfigService.getCommitmentPoolAddress();
     if (!poolAddr) return null;
 
-    const { COMMITMENT_POOL_ABI } = await import('../lib/contracts');
-    const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, this.getReadProvider());
-    const addr: string = await pool.sanctionsList();
-    cachedSanctionsAddr = addr;
-    return addr;
+    try {
+      const { COMMITMENT_POOL_ABI } = await import('../lib/contracts');
+      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, this.getReadProvider());
+      const addr: string = await pool.sanctionsList();
+      cachedSanctionsAddr = addr;
+      return addr;
+    } catch {
+      // Pool doesn't implement sanctionsList() — skip sanctions check
+      cachedSanctionsAddr = ethers.ZeroAddress;
+      return null;
+    }
   },
 
   reset() {
