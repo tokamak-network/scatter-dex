@@ -6,12 +6,14 @@ export function shortAddr(addr: string, prefixLen = 6, suffixLen = 4): string {
   return `${addr.slice(0, prefixLen)}...${addr.slice(-suffixLen)}`;
 }
 
-/** Format a pre-formatted decimal string to 4 decimal places. */
+/** Format a pre-formatted decimal string to 4 decimal places (string truncation, no float precision loss). */
 export function formatBalance(value: string): string {
-  const num = parseFloat(value);
-  if (isNaN(num) || num === 0) return '0';
-  if (num < 0.0001) return '< 0.0001';
-  return num.toFixed(4);
+  if (!value || value === '0') return '0';
+  const dotIdx = value.indexOf('.');
+  if (dotIdx === -1) return value;
+  const truncated = value.slice(0, dotIdx + 5);
+  if (parseFloat(truncated) === 0) return '< 0.0001';
+  return truncated;
 }
 
 /** Format wei to human-readable with string truncation (no float precision loss). */

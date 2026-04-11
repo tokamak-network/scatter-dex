@@ -15,11 +15,11 @@ export async function buildPoseidonMerkleTree(
   let current = padded;
 
   for (let d = 0; d < depth; d++) {
-    const next: string[] = [];
+    const promises: Promise<string>[] = [];
     for (let i = 0; i < current.length; i += 2) {
-      const hash = await ZKBridgeService.poseidonHash([current[i], current[i + 1]]);
-      next.push(hash);
+      promises.push(ZKBridgeService.poseidonHash([current[i], current[i + 1]]));
     }
+    const next = await Promise.all(promises);
     layers.push(next);
     current = next;
   }
