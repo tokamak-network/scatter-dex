@@ -284,10 +284,14 @@ contract SettleWithDexForkTest is Test {
         bytes32 nullifier = bytes32(uint256(0xd1));
         bytes32 nonceNull = bytes32(uint256(0xd2));
 
+        // Compute post-fee amountIn from contract state (not hardcoded)
+        uint256 feeBps = settlement.dexPlatformFeeBps();
+        uint256 amountIn = uint256(sellAmount) * (10_000 - feeBps) / 10_000;
+
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
             WETH, USDC, uint24(3000), address(settlement),
-            uint256(sellAmount) * 99 / 100, // amountIn = sellAmount - fee
+            amountIn,
             totalLocked, uint160(0)
         );
 

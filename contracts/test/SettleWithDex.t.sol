@@ -373,7 +373,7 @@ contract SettleWithDexTest is Test {
 
     function test_settleWithDex_platformFee_tooHigh_reverts() public {
         vm.expectRevert(PrivateSettlement.DexPlatformFeeTooHigh.selector);
-        settlement.setDexPlatformFee(501); // > 5% max
+        settlement.setDexPlatformFee(501); // exceeds MAX_DEX_PLATFORM_FEE_BPS (500)
     }
 
     function test_settleWithDex_platformFee_zero_noDeduction() public {
