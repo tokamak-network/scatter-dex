@@ -5,6 +5,7 @@
  * refreshInterval마다 자동 갱신한다.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ethers } from 'ethers';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 
@@ -35,7 +36,8 @@ export function useBalances() {
         tokens.map(async (token) => {
           try {
             const balance = await TokenService.getBalance(readProvider, account, token);
-            return { token, balance, rawBalance: balance };
+            const rawBalance = ethers.parseUnits(balance, token.decimals).toString();
+            return { token, balance, rawBalance };
           } catch {
             return { token, balance: '0', rawBalance: '0' };
           }

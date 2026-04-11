@@ -21,7 +21,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useWallet } from '../contexts/WalletContext';
 import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
-import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
+import { NoteStorageService } from '../services/NoteStorageService';
 import { ethers } from 'ethers';
 
 // ─── Sub-components ────────────────────────────────────
@@ -68,9 +68,11 @@ function WalletCard() {
 function BalanceSection({
   balances,
   loading,
+  refreshKey,
 }: {
   balances: import('../hooks/useBalances').TokenBalance[];
   loading: boolean;
+  refreshKey: number;
 }) {
   const { account } = useWallet();
   const [privateBalances, setPrivateBalances] = useState<
@@ -78,6 +80,10 @@ function BalanceSection({
   >([]);
 
   useEffect(() => {
+    if (!account) {
+      setPrivateBalances([]);
+      return;
+    }
     (async () => {
       const map = await NoteStorageService.getPrivateBalances();
       const items: { symbol: string; amount: string }[] = [];
@@ -89,7 +95,7 @@ function BalanceSection({
       }
       setPrivateBalances(items);
     })();
-  }, []);
+  }, [account, refreshKey]);
 
   if (!account) {
     return (
@@ -234,11 +240,13 @@ function RecentActivity({
 
 export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const { balances, loading: balancesLoading, refresh: refreshBalances } = useBalances();
   const { activities, loading: activityLoading, refresh: refreshActivity } = useRecentActivity();
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setRefreshKey((k) => k + 1);
     await Promise.all([refreshBalances(), refreshActivity()]);
     setRefreshing(false);
   };
@@ -260,7 +268,7 @@ export default function HomeScreen() {
         <Text style={styles.subtitle}>Privacy-Preserving DEX</Text>
         <WalletCard />
         <QuickActions />
-        <BalanceSection balances={balances} loading={balancesLoading} />
+        <BalanceSection balances={balances} loading={balancesLoading} refreshKey={refreshKey} />
         <RecentActivity activities={activities} loading={activityLoading} />
         <View style={{ height: 32 }} />
       </ScrollView>

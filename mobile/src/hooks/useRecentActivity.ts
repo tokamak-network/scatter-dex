@@ -9,10 +9,7 @@ import { ethers } from 'ethers';
 import { useWallet } from '../contexts/WalletContext';
 import { ConfigService } from '../services/ConfigService';
 import { ProviderService } from '../services/ProviderService';
-import {
-  COMMITMENT_POOL_ABI,
-  PRIVATE_SETTLEMENT_ABI,
-} from '../lib/contracts';
+import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
 
 export type ActivityType = 'deposit' | 'settle' | 'claim' | 'cancel';
 
@@ -39,9 +36,11 @@ export function useRecentActivity() {
 
     setLoading(true);
     try {
-      const poolAddr = ConfigService.getCommitmentPoolAddress();
       const settlementAddr = ConfigService.getPrivateSettlementAddress();
-      if (!poolAddr || !settlementAddr) return;
+      if (!settlementAddr) {
+        setActivities([]);
+        return;
+      }
 
       const fromBlock = await ProviderService.getEarliestBlock();
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);

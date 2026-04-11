@@ -9,8 +9,6 @@ import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 
-const WALLETCONNECT_PROJECT_ID = 'scatter_dex_mobile'; // TODO: cloud.walletconnect.com에서 발급
-
 interface WalletState {
   account: string | null;
   chainId: number | null;
@@ -66,8 +64,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
+      // Disconnect any existing provider before creating a new one
+      if (wcProviderRef.current) {
+        try { await wcProviderRef.current.disconnect(); } catch { /* ignore */ }
+        wcProviderRef.current = null;
+      }
+
+      const projectId = ConfigService.getWalletConnectProjectId();
+      if (!projectId) {
+        throw new Error('WALLETCONNECT_PROJECT_ID is not configured');
+      }
+
       const wcProvider = await EthereumProvider.init({
-        projectId: WALLETCONNECT_PROJECT_ID,
+        projectId,
         chains: [targetChainId],
         showQrModal: true,
         metadata: {
