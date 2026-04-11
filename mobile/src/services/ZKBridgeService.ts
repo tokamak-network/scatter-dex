@@ -52,11 +52,23 @@ class ZKBridgeServiceImpl {
 
     const { requestId, status, result, error } = parsed;
 
+    // 디버그 메시지
+    if (requestId === '__debug__') {
+      console.log('ZKBridge debug:', JSON.stringify(parsed));
+      return;
+    }
+
     // 초기화 완료 메시지
     if (requestId === '__init__') {
+      console.log('ZKBridge __init__:', status, JSON.stringify(result));
       if (status === 'success') {
         this.ready = true;
         this.readyResolve();
+      } else {
+        // ZK engine failed — still resolve to unblock app, but log error
+        console.error('ZK Engine initialization failed:', JSON.stringify(result));
+        this.ready = false;
+        this.readyResolve(); // unblock UI so user can see other screens
       }
       return;
     }

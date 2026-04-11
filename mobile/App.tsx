@@ -8,7 +8,6 @@ import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HiddenWebView from './src/components/HiddenWebView';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
-import { NetworkGuard } from './src/components/NetworkGuard';
 import TabNavigator from './src/navigation/TabNavigator';
 import { WalletProvider } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
@@ -26,22 +25,20 @@ export default function App() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <WalletProvider>
-          <NetworkGuard>
-            <View style={styles.root}>
-              <StatusBar style="light" />
-              <HiddenWebView />
-              {zkReady ? (
-                <NavigationContainer>
-                  <TabNavigator />
-                </NavigationContainer>
-              ) : (
-                <View style={styles.loading}>
-                  <ActivityIndicator size="large" color="#95aaff" />
-                  <Text style={styles.loadingText}>Initializing ZK Engine...</Text>
-                </View>
-              )}
-            </View>
-          </NetworkGuard>
+          <View style={styles.root}>
+            <StatusBar style="light" />
+            <HiddenWebView />
+            {zkReady ? (
+              <NavigationContainer>
+                <TabNavigator />
+              </NavigationContainer>
+            ) : (
+              <View style={styles.loading}>
+                <ActivityIndicator size="large" color="#95aaff" />
+                <Text style={styles.loadingText}>Initializing ZK Engine...</Text>
+              </View>
+            )}
+          </View>
         </WalletProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

@@ -7,7 +7,10 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
-import EthereumProvider from '@walletconnect/ethereum-provider';
+
+// Lazy import — @walletconnect/ethereum-provider triggers netinfo at import
+// time which crashes on some Expo SDK versions
+const getEthereumProvider = () => import('@walletconnect/ethereum-provider').then(m => m.default);
 
 interface WalletState {
   account: string | null;
@@ -38,7 +41,7 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<WalletState>(INITIAL_STATE);
 
-  const wcProviderRef = useRef<InstanceType<typeof EthereumProvider> | null>(null);
+  const wcProviderRef = useRef<any>(null);
   const readProvider = useRef(
     new ethers.JsonRpcProvider(ConfigService.getRpcUrl()),
   ).current;
@@ -75,6 +78,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw new Error('WALLETCONNECT_PROJECT_ID is not configured');
       }
 
+      const EthereumProvider = await getEthereumProvider();
       const wcProvider = await EthereumProvider.init({
         projectId,
         chains: [targetChainId],
