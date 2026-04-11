@@ -78,25 +78,17 @@ describe("estimateAndGuard", () => {
   });
 
   // ─── Test 3: Skip profitability when fee is zero ───
-  it("should skip profitability check when feeValueNativeWei = 0n", async () => {
+  it("should skip profitability check when feeValueNativeWei = 0n or omitted", async () => {
     const gasPrice = 50_000_000_000n; // 50 gwei
     const contract = mockContract(500_000n, { gasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const explicit = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    expect(explicit.profitable).toBe(true);
+    expect(explicit.reason).toBeUndefined();
+    expect(explicit.gasCostWei).toBeGreaterThan(0n);
 
-    expect(result.profitable).toBe(true);
-    expect(result.reason).toBeUndefined();
-    // gasCost is non-zero but profitability is skipped
-    expect(result.gasCostWei).toBeGreaterThan(0n);
-  });
-
-  it("should skip profitability check when feeValueNativeWei is omitted (default)", async () => {
-    const gasPrice = 50_000_000_000n;
-    const contract = mockContract(500_000n, { gasPrice });
-
-    const result = await estimateAndGuard(contract, "settlePrivate", []);
-
-    expect(result.profitable).toBe(true);
+    const defaultArg = await estimateAndGuard(contract, "settlePrivate", []);
+    expect(defaultArg.profitable).toBe(true);
   });
 
   // ─── Test 4: Missing provider fee data ───
