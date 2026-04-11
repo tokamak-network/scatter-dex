@@ -285,7 +285,7 @@
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
 | R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | 🔧 | `fix/R1-gas-estimation`, `test/R1-gas-guard-unit-tests` |
-| R-2 | TX 재시도 없음 | `tx.wait()` 실패 시 재시도 없음. 드롭된 TX 영구 미처리 | ⬜ | — |
+| R-2 | TX 재시도 없음 | 🔧 | `fix/R2-tx-retry` |
 | R-3 | 헬스체크 없음 | `/health` 엔드포인트 없음. k8s/로드밸런서 연동 불가 | ⬜ | — |
 | R-4 | RPC 페일오버 없음 | 단일 `RPC_URL`. RPC 다운 시 전체 중단 | ⬜ | — |
 | R-5 | 커밋먼트 재인덱싱 | 블록 0부터 재스캔. 체인 성장 시 성능 저하 | ⬜ | — |
@@ -348,3 +348,5 @@
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
 | S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ⬜ |
 | S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ⬜ |
+| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ⬜ |
+| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | ⬜ |

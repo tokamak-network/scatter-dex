@@ -377,8 +377,22 @@ export class CrossRelayerMatchService {
 
 }
 
-/** Serialize a PrivateOrder for network transfer (bigint → string) */
+/**
+ * Serialize a PrivateOrder for network transfer (bigint → string).
+ *
+ * [S-H6] SECURITY WARNING: This function sends ownerSecret, balance, salt
+ * in plaintext to the remote relayer. This is the legacy settle path.
+ * For the authorize (half-proof) path, cross-relayer matching should use
+ * only proof + public signals. This function is kept for backward
+ * compatibility but should be migrated to authorize-based cross-relayer
+ * matching in a future release.
+ *
+ * @deprecated Use authorize-based cross-relayer matching instead.
+ */
 function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrder): Record<string, unknown> {
+  console.warn(
+    `[S-H6] serializeOrderForTransfer: legacy path invoked for order pubKeyAx=${order.pubKeyAx.toString()} nonce=${order.nonce.toString()}. Secret fields are redacted. Migrate to authorize-based cross-relayer matching.`,
+  );
   return {
     sellToken: order.sellToken.toString(),
     buyToken: order.buyToken.toString(),
@@ -392,14 +406,15 @@ function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrd
     sigS: order.sigS.toString(),
     sigR8x: order.sigR8x.toString(),
     sigR8y: order.sigR8y.toString(),
-    ownerSecret: order.ownerSecret.toString(),
-    balance: order.balance.toString(),
-    salt: order.salt.toString(),
+    // [S-H6] Secret fields redacted — no longer transmitted to remote relayers
+    ownerSecret: "REDACTED",
+    balance: "REDACTED",
+    salt: "REDACTED",
     leafIndex: order.leafIndex,
     newSalt: order.newSalt.toString(),
     expectedChangeCommitment: order.expectedChangeCommitment.toString(),
     claims: order.claims.map(c => ({
-      secret: c.secret.toString(),
+      secret: "REDACTED",
       recipient: c.recipient.toString(),
       token: c.token.toString(),
       amount: c.amount.toString(),
