@@ -308,3 +308,43 @@
 | R-12 | AMM/DEX 라우팅 | 미매칭 주문을 DEX로 자동 라우팅 | ⬜ |
 | R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | ⬜ |
 | R-14 | 부하 테스트 | 동시 주문/정산 부하 테스트 없음 | ⬜ |
+
+### 🔴 2차 보안 감사 (2026-04-11 전체 스택 5개 영역 병렬 감사)
+
+> 기존 1차 감사 이슈(C-1~L-9) 해결 후 추가 발견. 이미 수정된 항목은 ✅ 표시.
+
+#### 🔴 CRITICAL
+
+| # | 영역 | 이슈 | 상태 |
+|---|------|------|------|
+| S-C1 | Frontend | ownerSecret를 릴레이어에 평문 전송 — half-proof 경로 전환 필요 | ⬜ |
+
+#### 🟠 HIGH
+
+| # | 영역 | 이슈 | 상태 |
+|---|------|------|------|
+| S-H1 | Circuit | settle.circom claim token 검증 누락 | ✅ 이전 세션 수정 (커밋 feeec6d) |
+| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ⬜ |
+| S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
+| S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
+| S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
+| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | ⬜ |
+| S-H7 | Relayer | authorize orders Map 크기 제한 없음 → 메모리 DoS | ⬜ |
+
+#### 🟡 MEDIUM
+
+| # | 영역 | 이슈 | 상태 |
+|---|------|------|------|
+| S-M1 | Circuit | settle.circom LessThan(252)→LessThan(5) 최적화 | ✅ PR #179 (H-5) |
+| S-M2 | Circuit | settle.circom expiry/timestamp range check 없음 | ⬜ |
+| S-M3 | Circuit | authorize.circom expiry 회로 내 미검증 (컨트랙트 의존) | ⬜ |
+| S-M4 | Circuit | cancel.circom balance range check 없음 | ⬜ |
+| S-M5 | Contract | settleAuth zero-amount 방어 없음 | ⬜ |
+| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ⬜ |
+| S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ⬜ |
+| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ⬜ |
+| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ⬜ |
+| S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
+| S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
+| S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ⬜ |
+| S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ⬜ |
