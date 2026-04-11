@@ -238,7 +238,7 @@
 | M-9 | 클라이언트 SSRF (claim) | MEDIUM | ✅ | PR #183 |
 | M-10 | DB 파일 퍼미션 | MEDIUM | ✅ | PR #184 |
 | M-11 | cross-relayer race condition | MEDIUM | ✅ | PR #186 |
-| L-5~L-9 | 5건 LOW | LOW | 🔧 | `fix/L5-L9-low-issues` |
+| L-5~L-9 | 5건 LOW | LOW | ✅ | PR #187 |
 
 ### 🟠 기능 개발
 
