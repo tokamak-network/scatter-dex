@@ -26,9 +26,25 @@ import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
  * commitment spend). A production deployment would persist to SQLite.
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+/** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
+const pendingCountByPubKey = new Map<string, number>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
 const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
+
+function pubKeyId(ax: string, ay: string): string { return `${ax}:${ay}`; }
+
+function incPubKeyCount(ax: string, ay: string): void {
+  const id = pubKeyId(ax, ay);
+  pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
+}
+
+function decPubKeyCount(ax: string, ay: string): void {
+  const id = pubKeyId(ax, ay);
+  const count = (pendingCountByPubKey.get(id) ?? 1) - 1;
+  if (count <= 0) pendingCountByPubKey.delete(id);
+  else pendingCountByPubKey.set(id, count);
+}
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -95,13 +111,8 @@ export function createAuthorizeOrderRoutes(
       }
 
       // ── 4c. Per-pubKey order limit — prevent single user filling the store ──
-      let pubKeyCount = 0;
-      for (const [, s] of authorizeOrders) {
-        if (s.status === "pending" && s.pubKeyAx === pubKeyAx && s.pubKeyAy === pubKeyAy) {
-          pubKeyCount++;
-        }
-      }
-      if (pubKeyCount >= MAX_ORDERS_PER_PUBKEY) {
+      const currentCount = pendingCountByPubKey.get(pubKeyId(pubKeyAx, pubKeyAy)) ?? 0;
+      if (currentCount >= MAX_ORDERS_PER_PUBKEY) {
         res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
       }
@@ -115,6 +126,7 @@ export function createAuthorizeOrderRoutes(
         pubKeyAy: pubKeyAy ?? null,
       };
       authorizeOrders.set(nullifier, stored);
+      incPubKeyCount(pubKeyAx, pubKeyAy);
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -136,11 +148,13 @@ export function createAuthorizeOrderRoutes(
           // Submit on-chain (fee = 0 for now; configurable in follow-up)
           const txHash = await submitter.submitAuthSettle(match, 0n);
 
-          // Mark both as settled
+          // Mark both as settled and decrement pending counts
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
+          if (match.maker.pubKeyAx && match.maker.pubKeyAy) decPubKeyCount(match.maker.pubKeyAx, match.maker.pubKeyAy);
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
+          if (match.taker.pubKeyAx && match.taker.pubKeyAy) decPubKeyCount(match.taker.pubKeyAx, match.taker.pubKeyAy);
 
           res.json({
             status: "settled",
@@ -254,6 +268,9 @@ export function purgeNonPendingAuthorizeOrders(): number {
   for (const [key, stored] of authorizeOrders) {
     const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
     if (stored.status !== "pending" || expired) {
+      if (stored.pubKeyAx && stored.pubKeyAy) {
+        decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
       authorizeOrders.delete(key);
       removed++;
     }
