@@ -19,6 +19,8 @@ export interface StoredNote {
   commitment: string;      // Poseidon hash hex
   secret: string;          // owner secret
   salt: string;            // random salt
+  pubKeyAx: string;        // EdDSA BabyJub pubkey x
+  pubKeyAy: string;        // EdDSA BabyJub pubkey y
   token: string;           // token address
   tokenSymbol: string;     // e.g., "WETH"
   amount: string;          // wei string
@@ -56,12 +58,8 @@ export const NoteStorageService = {
 
   async getAllNotes(): Promise<StoredNote[]> {
     const ids = await this.getNoteIds();
-    const notes: StoredNote[] = [];
-    for (const id of ids) {
-      const note = await this.getNote(id);
-      if (note) notes.push(note);
-    }
-    return notes;
+    const results = await Promise.all(ids.map((id) => this.getNote(id)));
+    return results.filter((n): n is StoredNote => n !== null);
   },
 
   async saveNote(note: StoredNote): Promise<void> {
