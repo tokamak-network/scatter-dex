@@ -27,6 +27,8 @@ import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
+const MAX_ORDERS_PER_PUBKEY = 50;
+const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -71,6 +73,13 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
+      // ── 4a. Max expiry duration — prevent long-lived spam orders ──
+      const expiry = Number(order.publicSignals.expiry);
+      if (expiry - nowSeconds > MAX_EXPIRY_DURATION_SECS) {
+        res.status(400).json({ error: `Expiry too far in future (max ${MAX_EXPIRY_DURATION_SECS}s)` });
+        return;
+      }
+
       // ── 4b. Verify pubKey via pubKeyBind (compliance — mandatory) ──
       const pubKeyAx = body.pubKeyAx as string | undefined;
       const pubKeyAy = body.pubKeyAy as string | undefined;
@@ -82,6 +91,18 @@ export function createAuthorizeOrderRoutes(
       const computed = await poseidonHashFn([BigInt(pubKeyAx), BigInt(pubKeyAy), BigInt(order.publicSignals.nullifier)]);
       if (computed.toString() !== order.publicSignals.pubKeyBind) {
         res.status(400).json({ error: "pubKey does not match pubKeyBind in proof" });
+        return;
+      }
+
+      // ── 4c. Per-pubKey order limit — prevent single user filling the store ──
+      let pubKeyCount = 0;
+      for (const [, s] of authorizeOrders) {
+        if (s.status === "pending" && s.pubKeyAx === pubKeyAx && s.pubKeyAy === pubKeyAy) {
+          pubKeyCount++;
+        }
+      }
+      if (pubKeyCount >= MAX_ORDERS_PER_PUBKEY) {
+        res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
       }
 

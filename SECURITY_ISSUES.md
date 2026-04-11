@@ -329,7 +329,7 @@
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
 | S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
-| S-H7 | Relayer | authorize orders Map 크기 제한 없음 → 메모리 DoS | ⬜ |
+| S-H7 | Relayer | authorize orders Map 크기 제한 없음 → 메모리 DoS | 🔧 `fix/SH7-authorize-map-dos` |
 
 #### 🟡 MEDIUM
 
