@@ -282,6 +282,15 @@ contract SettleWithDexTest is Test {
         settlement.settleWithDex(p);
     }
 
+    function test_settleWithDex_deadlineExpired_reverts() public {
+        PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
+        p.deadline = block.timestamp - 1; // already expired
+
+        vm.prank(user);
+        vm.expectRevert(PrivateSettlement.DeadlineExpired.selector);
+        settlement.settleWithDex(p);
+    }
+
     function test_settleWithDex_paused_reverts() public {
         settlement.setPaused(true);
         PrivateSettlement.SettleDexParams memory p = _defaultDexParams();

@@ -32,10 +32,10 @@ Use **Flashbots Protect** to send market order transactions through a private ch
 
 #### How to enable (frontend)
 
-The frontend automatically uses Flashbots RPC for market order transactions on Ethereum mainnet:
+For production mainnet deployment, configure the frontend to use Flashbots RPC for market order transactions:
 
 ```typescript
-// For market orders on mainnet, use Flashbots Protect RPC
+// Recommended: use Flashbots Protect RPC for market orders on mainnet
 const FLASHBOTS_RPC = "https://rpc.flashbots.net";
 
 if (chainId === 1 && orderType === "market") {
@@ -43,6 +43,8 @@ if (chainId === 1 && orderType === "market") {
   // Send tx through private mempool
 }
 ```
+
+> **Note**: This is not yet implemented in the frontend. Currently, users should add Flashbots RPC manually to their wallet (see below).
 
 #### How to enable (user/MetaMask)
 
@@ -71,4 +73,4 @@ Users can also add Flashbots Protect manually:
 |-----------|---------|----------|
 | Deadline | 30 minutes | `page.tsx` → `deadline: Date.now()/1000 + 1800` |
 | Slippage | 0.5% (50 bps) | UI slippage selector |
-| Flashbots | Auto on mainnet | `dex-aggregator.ts` |
+| Flashbots | Manual (user adds RPC) | See "How to enable" above |
