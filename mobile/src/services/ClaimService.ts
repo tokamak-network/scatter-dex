@@ -174,9 +174,10 @@ export const ClaimService = {
       const settlementAddr = ConfigService.getPrivateSettlementAddress();
       if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
 
-      // PrivateSettlement.claimWithProof(proof, claimsRoot, nullifier, recipient, token, amount, releaseTime)
+      // PrivateSettlement.claimWithProof — argument order must match on-chain:
+      // (proof, claimsRoot, claimNullifier, amount, token, recipient, releaseTime)
       const settlement = new ethers.Contract(settlementAddr, [
-        'function claimWithProof(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 nullifier, address recipient, address token, uint256 amount, uint256 releaseTime) external',
+        'function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external',
       ], signer);
 
       const claimsRootBytes32 = toBytes32Hex(treeResult.root);
@@ -188,9 +189,9 @@ export const ClaimService = {
         proof.c,
         claimsRootBytes32,
         nullifierBytes32,
-        claimData.recipient,
-        claimData.token,
         claimData.amount,
+        claimData.token,
+        claimData.recipient,
         claimData.releaseTime,
       );
 
@@ -198,8 +199,9 @@ export const ClaimService = {
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;
-    } catch (err: any) {
-      onProgress({ step: 'error', error: err?.message || 'Claim failed' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Claim failed';
+      onProgress({ step: 'error', error: message });
       return null;
     }
   },

@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ethers } from 'ethers';
 import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
+import { ConfigService } from '../services/ConfigService';
 
 const STEP_LABELS: Record<ClaimStep, string> = {
   idle: '',
@@ -69,6 +70,12 @@ export default function ClaimScreen() {
 
   const handleClaim = useCallback(async () => {
     if (!signer || !parsedClaim) return;
+
+    const settlementAddr = ConfigService.getPrivateSettlementAddress();
+    if (!settlementAddr) {
+      Alert.alert('Error', 'PrivateSettlement address not configured');
+      return;
+    }
 
     await ClaimService.execute(
       signer,

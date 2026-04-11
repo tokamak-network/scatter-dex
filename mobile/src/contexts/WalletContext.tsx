@@ -6,8 +6,6 @@ import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 
-const WALLETCONNECT_PROJECT_ID = 'scatter_dex_mobile';
-
 interface WalletState {
   account: string | null;
   chainId: number | null;
@@ -36,8 +34,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
+      const projectId = ConfigService.getWalletConnectProjectId();
+      if (!projectId) {
+        throw new Error('WALLETCONNECT_PROJECT_ID is not configured');
+      }
+
       const wc = await EthereumProvider.init({
-        projectId: WALLETCONNECT_PROJECT_ID, chains: [targetChainId], showQrModal: true,
+        projectId, chains: [targetChainId], showQrModal: true,
         metadata: { name: 'ScatterDEX', description: 'Privacy-Preserving DEX', url: 'https://scatterdex.io', icons: ['https://scatterdex.io/icon.png'] },
         qrModalOptions: { themeMode: 'dark' as const },
       });
