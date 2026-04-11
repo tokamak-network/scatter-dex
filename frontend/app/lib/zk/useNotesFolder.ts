@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   isFileSystemAvailable,
+  hasFolderSelected,
   selectNotesFolder,
   restoreNotesFolder,
   getFolderName,
@@ -15,25 +16,34 @@ import {
  * is still granted, the folder is ready immediately — no user interaction needed.
  */
 export function useNotesFolder() {
-  const [folderReady, setFolderReady] = useState(false);
-  const [folderName, setFolderName] = useState<string | null>(null);
-  const [restoring, setRestoring] = useState(true);
+  // Initialize from module state (covers case where folder was selected
+  // by another component earlier in this session)
+  const [folderReady, setFolderReady] = useState(() => hasFolderSelected());
+  const [folderName, setFolderName] = useState<string | null>(() => getFolderName());
+  const [restoring, setRestoring] = useState(() => !hasFolderSelected());
   const fsAvailable = isFileSystemAvailable();
 
   // Try to restore on mount
   useEffect(() => {
-    if (!fsAvailable) {
+    if (!fsAvailable || hasFolderSelected()) {
       setRestoring(false);
       return;
     }
 
-    restoreNotesFolder().then((restored) => {
-      if (restored) {
-        setFolderReady(true);
-        setFolderName(getFolderName());
-      }
-      setRestoring(false);
-    });
+    let cancelled = false;
+
+    restoreNotesFolder()
+      .then((restored) => {
+        if (cancelled) return;
+        if (restored) {
+          setFolderReady(true);
+          setFolderName(getFolderName());
+        }
+      })
+      .catch(() => { /* IDB or permission error — silently fall back */ })
+      .finally(() => { if (!cancelled) setRestoring(false); });
+
+    return () => { cancelled = true; };
   }, [fsAvailable]);
 
   // Manual folder selection

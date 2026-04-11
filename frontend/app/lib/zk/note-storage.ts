@@ -59,7 +59,8 @@ async function loadPersistedHandle(): Promise<FileSystemDirectoryHandle | null> 
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => reject(req.error);
     });
-  } catch {
+  } catch (e) {
+    console.warn("Failed to load persisted folder handle:", e);
     return null;
   }
 }
@@ -90,24 +91,28 @@ export function restoreNotesFolder(): Promise<boolean> {
 
 async function _doRestore(): Promise<boolean> {
   if (!isFileSystemAvailable()) return false;
-  const handle = await loadPersistedHandle();
-  if (!handle) return false;
-
-  // Verify we still have permission (browser may have revoked it)
-  const perm = await handle.queryPermission({ mode: "readwrite" });
-  if (perm === "granted") {
-    dirHandle = handle;
-    return true;
-  }
-
-  // requestPermission requires a user gesture — will fail silently on startup
   try {
+    const handle = await loadPersistedHandle();
+    if (!handle) return false;
+
+    // Verify we still have permission (browser may have revoked it)
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") {
+      dirHandle = handle;
+      return true;
+    }
+
+    // requestPermission requires a user gesture — will fail on startup,
+    // but succeeds if called from a click handler via handleSelectFolder
     const req = await handle.requestPermission({ mode: "readwrite" });
     if (req === "granted") {
       dirHandle = handle;
       return true;
     }
-  } catch { /* permission denied or no user gesture */ }
+  } catch {
+    // queryPermission/requestPermission can throw SecurityError on
+    // revoked handles or missing user gesture — safe to ignore
+  }
 
   return false;
 }
