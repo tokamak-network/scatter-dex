@@ -255,8 +255,8 @@
 | 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
 | 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
-| 18 | DEX 가격 로딩 폴백 | 🔧 | `feat/ux18-dex-price-fallback` |
-| 19 | 다중 지갑 지원 (WalletConnect) | 🔧 | `feat/ux19-multi-wallet` |
+| 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
+| 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
 | 20 | Batch Claim | ⬜ | — |
 
 ### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
@@ -324,7 +324,7 @@
 | # | 영역 | 이슈 | 상태 |
 |---|------|------|------|
 | S-H1 | Circuit | settle.circom claim token 검증 누락 | ✅ 이전 세션 수정 (커밋 feeec6d) |
-| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ⬜ |
+| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ✅ 이전 세션 수정 (Num2Bits(128) 추가) |
 | S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
