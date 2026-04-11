@@ -45,17 +45,6 @@ import { useMainnetPrice } from "../../lib/useDexPrices";
 // This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
 
-// Uniswap V3 SwapRouter02 addresses per chain
-const UNISWAP_V3_ROUTERS: Record<number, string> = {
-  1: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",      // Ethereum mainnet
-  11155111: "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E", // Sepolia
-};
-
-// Pre-parsed ABI for Uniswap V3 exactInputSingle (avoid re-instantiation per submit)
-const UNISWAP_ROUTER_IFACE = new ethers.Interface([
-  "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
-]);
-
 type OrderType = "limit" | "market";
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
 
@@ -636,40 +625,34 @@ export default function PrivateOrderPage() {
       const settlementAddr = getPrivateSettlementAddress();
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
-      // Resolve DEX router address for current chain
-      const currentChainId = chainId ?? 1;
-      const routerAddr = UNISWAP_V3_ROUTERS[currentChainId];
-      if (!routerAddr) throw new Error(`Uniswap V3 router not configured for chain ${currentChainId}. Market orders are only available on supported chains.`);
-
-      // Encode DEX calldata — use Uniswap V3 with the best fee tier
-      // TODO: support 1inch/Curve route selection in UI
-      // Select Uniswap V3 fee tier from the recommended DEX price.
-      // Only standard Uniswap V3 tiers (500/3000/10000) are valid; default to 3000.
-      const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
-      const VALID_FEE_TIERS = [100, 500, 3000, 10000] as const;
-      const feeStr = bestDexPrice?.fee ?? "";
-      const feeParsed = Math.round(parseFloat(feeStr) * 10000);
-      const feeTier = VALID_FEE_TIERS.includes(feeParsed as typeof VALID_FEE_TIERS[number]) ? feeParsed : 3000;
-
-      // Read on-chain platform fee and compute post-fee amountIn.
-      // The contract deducts this fee before approving the DEX router,
-      // so the calldata must encode the post-fee amount.
+      // Read on-chain platform fee and compute post-fee swap amount.
       const settlementRead = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
       const platformFeeBps = Number(await settlementRead.dexPlatformFeeBps?.() ?? 0n);
       const swapAmountIn = platformFeeBps > 0
         ? parsedSell - (parsedSell * BigInt(platformFeeBps) / 10000n)
         : parsedSell;
 
-      const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
-        tokenIn: sellToken.address,
-        tokenOut: buyToken.address,
-        fee: feeTier,
+      // Get best swap route via DEX aggregator (1inch → Uniswap fallback)
+      const { getBestSwapRoute } = await import("../../lib/dex-aggregator");
+      const currentChainId = chainId ?? 1;
+      // Select fee tier from recommended DEX price
+      const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
+      const feeParsed = Math.round(parseFloat(bestDexPrice?.fee ?? "0") * 10000);
+      const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : 3000;
+
+      const swapRoute = await getBestSwapRoute({
+        chainId: currentChainId,
+        sellToken: sellToken.address,
+        buyToken: buyToken.address,
+        sellAmount: swapAmountIn,
+        minReceive: parsedBuy,
         recipient: settlementAddr,
-        deadline: Math.floor(Date.now() / 1000) + 1800,
-        amountIn: swapAmountIn,
-        amountOutMinimum: parsedBuy,
-        sqrtPriceLimitX96: 0n,
-      }]);
+        slippageBps: parseInt(slippageBps) || 50,
+        feeTier,
+      });
+      if (process.env.NODE_ENV === "development") {
+        console.log(`DEX route: ${swapRoute.source} (estimated: ${ethers.formatUnits(swapRoute.estimatedOutput, buyToken.decimals)} ${buyToken.symbol})`);
+      }
 
       // Build settleWithDex params
       const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
@@ -699,8 +682,8 @@ export default function PrivateOrderPage() {
           relayer: account,
           orderHash: ps[14],
         },
-        dexRouter: routerAddr,
-        dexCalldata,
+        dexRouter: swapRoute.dexRouter,
+        dexCalldata: swapRoute.dexCalldata,
       });
       await tx.wait();
 
@@ -1240,7 +1223,7 @@ export default function PrivateOrderPage() {
                 Direct DEX Settlement
               </div>
               <p className="text-xs text-on-surface-variant/70">
-                Your order will be settled directly via Uniswap on-chain. No relayer needed — you submit the transaction yourself. Gas fees apply.
+                Your order will be routed through the best available DEX (1inch aggregator or Uniswap V3) for optimal pricing. No relayer needed — you submit the transaction yourself.
               </p>
             </div>
             )}
