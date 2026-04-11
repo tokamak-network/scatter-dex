@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === "development";
+
 const nextConfig: NextConfig = {
   async headers() {
     return [
@@ -12,15 +14,16 @@ const nextConfig: NextConfig = {
           // [L-6] CSP: restrict script/connect sources to mitigate XSS-based key theft.
           // 'self' + 'unsafe-inline' needed for Next.js; 'unsafe-eval' for snarkjs/wasm.
           // connect-src allows relayer and RPC endpoints.
+          // localhost is dev-only to prevent production data exfiltration.
           {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-              "style-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob:",
-              "font-src 'self'",
-              "connect-src 'self' http://localhost:* https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com",
+              "font-src 'self' https://fonts.gstatic.com",
+              `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com`,
               "worker-src 'self' blob:",
               "frame-ancestors 'none'",
             ].join("; "),
