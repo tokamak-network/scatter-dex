@@ -118,8 +118,8 @@ async function main() {
   });
 
   app.use("/api/private-orders", createPrivateOrderRoutes(
-    orderbook, matcher, submitter, writeLimiter, readLimiter,
-    sharedClient, crossRelayerService, orderIdMap,
+    orderbook, submitter, writeLimiter, readLimiter,
+    sharedClient, orderIdMap,
   ));
   app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
