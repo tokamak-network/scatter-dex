@@ -13,8 +13,8 @@ contract MockBatchAuthorizeVerifier is IBatchAuthorizeVerifier {
     }
 
     function verifyBatchProof(
-        uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[14] calldata,
-        uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[14] calldata
+        uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[15] calldata,
+        uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[15] calldata
     ) external view returns (bool) {
         return shouldPass;
     }

@@ -26,6 +26,7 @@ import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
  * commitment spend). A production deployment would persist to SQLite.
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+const MAX_AUTHORIZE_ORDERS = 10_000;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -57,18 +58,40 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 3. Dedup by nullifier ──
+      // ── 3. Dedup by nullifier (before size cap so retries get 409, not 503) ──
       const nullifier = order.publicSignals.nullifier;
       if (authorizeOrders.has(nullifier)) {
         res.status(409).json({ error: "Order with this nullifier already exists" });
         return;
       }
 
-      // ── 4. Store the order ──
+      // ── 4. Size cap — prevent unbounded memory growth ──
+      if (authorizeOrders.size >= MAX_AUTHORIZE_ORDERS) {
+        res.status(503).json({ error: "Authorize order store full. Try again later." });
+        return;
+      }
+
+      // ── 4b. Verify pubKey via pubKeyBind (compliance — mandatory) ──
+      const pubKeyAx = body.pubKeyAx as string | undefined;
+      const pubKeyAy = body.pubKeyAy as string | undefined;
+      if (!pubKeyAx || !pubKeyAy) {
+        res.status(400).json({ error: "pubKeyAx and pubKeyAy are required for compliance" });
+        return;
+      }
+      const { poseidonHash: poseidonHashFn } = await import("../core/zk-prover.js");
+      const computed = await poseidonHashFn([BigInt(pubKeyAx), BigInt(pubKeyAy), BigInt(order.publicSignals.nullifier)]);
+      if (computed.toString() !== order.publicSignals.pubKeyBind) {
+        res.status(400).json({ error: "pubKey does not match pubKeyBind in proof" });
+        return;
+      }
+
+      // ── 5. Store the order ──
       const stored: StoredAuthorizeOrder = {
         order,
         status: "pending",
         submittedAt: nowSeconds,
+        pubKeyAx: pubKeyAx ?? null,
+        pubKeyAy: pubKeyAy ?? null,
       };
       authorizeOrders.set(nullifier, stored);
 
@@ -76,7 +99,8 @@ export function createAuthorizeOrderRoutes(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
         `buy=${order.publicSignals.buyToken} ` +
         `amount=${order.publicSignals.sellAmount} ` +
-        `nullifier=${nullifier.slice(0, 18)}...`,
+        `nullifier=${nullifier.slice(0, 18)}...` +
+        (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
       // ── 5. Try to match ──
@@ -196,15 +220,19 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 }
 
 /**
- * Purge non-pending orders from the in-memory store. Call periodically
- * (e.g. from a setInterval in index.ts) to prevent unbounded memory
- * growth from accumulated settled/cancelled/expired orders.
+ * Purge non-pending and expired orders from the in-memory store.
+ * Call periodically (e.g. from a setInterval in index.ts) to prevent
+ * unbounded memory growth. Removes:
+ *   - orders with status != "pending" (settled, cancelled, etc.)
+ *   - pending orders past their expiry timestamp
  * Returns the number of entries removed.
  */
 export function purgeNonPendingAuthorizeOrders(): number {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   let removed = 0;
   for (const [key, stored] of authorizeOrders) {
-    if (stored.status !== "pending") {
+    const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
+    if (stored.status !== "pending" || expired) {
       authorizeOrders.delete(key);
       removed++;
     }

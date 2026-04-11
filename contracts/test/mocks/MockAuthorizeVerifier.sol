@@ -9,7 +9,7 @@ import {IAuthorizeVerifier} from "../../src/zk/IAuthorizeVerifier.sol";
 ///         path. The optional relayer-pinning mode mirrors `MockSettleVerifier`
 ///         and lets a test assert that the proof was generated for a specific
 ///         relayer (since the real Groth16 verifier cryptographically binds
-///         `relayer` as public signal #12 of the authorize circuit).
+///         `relayer` as public signal #13 of the authorize circuit).
 contract MockAuthorizeVerifier is IAuthorizeVerifier {
     bool public shouldPass = true;
     bool public enforceRelayer;
@@ -28,12 +28,13 @@ contract MockAuthorizeVerifier is IAuthorizeVerifier {
         uint[2] calldata,
         uint[2][2] calldata,
         uint[2] calldata,
-        uint[14] calldata _pubSignals
+        uint[15] calldata _pubSignals
     ) external view returns (bool) {
         if (!shouldPass) return false;
         if (enforceRelayer) {
-            // Public signal #12 is `relayer` (uint160 packed into uint256).
-            if (_pubSignals[12] != uint256(uint160(expectedRelayer))) return false;
+            // Public signal #13 is `relayer` (uint160 packed into uint256).
+            // [0]=pubKeyBind, [1..14]=public inputs
+            if (_pubSignals[13] != uint256(uint160(expectedRelayer))) return false;
         }
         return true;
     }
