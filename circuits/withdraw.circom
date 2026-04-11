@@ -122,8 +122,19 @@ template Withdraw(levels) {
     tokenHash === tokenHasher.out;
 
     // ════════════════════════════════════════
-    //  5. BALANCE CHECK: withdrawAmount <= amount
+    //  5. RANGE CHECKS + BALANCE CHECK
+    //
+    //  [H2] Without range checks, `amount` and `withdrawAmount` could be
+    //  large field elements (e.g. p-1) that LessEqThan(252) treats as
+    //  valid. An attacker could set withdrawAmount = p-1 (wraps to a huge
+    //  uint256 on-chain) and pass the circuit's comparison. The 128-bit
+    //  bound matches settle.circom / authorize.circom (see bit-width-audit.md).
     // ════════════════════════════════════════
+    component rcAmount = Num2Bits(128);
+    rcAmount.in <== amount;
+    component rcWithdraw = Num2Bits(128);
+    rcWithdraw.in <== withdrawAmount;
+
     component leq = LessEqThan(252);
     leq.in[0] <== withdrawAmount;
     leq.in[1] <== amount;
