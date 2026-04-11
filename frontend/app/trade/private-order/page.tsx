@@ -652,13 +652,23 @@ export default function PrivateOrderPage() {
       const feeParsed = Math.round(parseFloat(feeStr) * 10000);
       const feeTier = VALID_FEE_TIERS.includes(feeParsed as typeof VALID_FEE_TIERS[number]) ? feeParsed : 3000;
 
+      // Read on-chain platform fee and compute post-fee amountIn.
+      // The contract deducts this fee before approving the DEX router,
+      // so the calldata must encode the post-fee amount.
+      const { PRIVATE_SETTLEMENT_ABI: settleAbi } = await import("../../lib/contracts");
+      const settlementRead = new ethers.Contract(settlementAddr, settleAbi, readProvider);
+      const platformFeeBps = Number(await settlementRead.dexPlatformFeeBps?.() ?? 0n);
+      const swapAmountIn = platformFeeBps > 0
+        ? parsedSell - (parsedSell * BigInt(platformFeeBps) / 10000n)
+        : parsedSell;
+
       const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
         tokenIn: sellToken.address,
         tokenOut: buyToken.address,
         fee: feeTier,
         recipient: settlementAddr,
         deadline: Math.floor(Date.now() / 1000) + 1800,
-        amountIn: parsedSell,
+        amountIn: swapAmountIn,
         amountOutMinimum: parsedBuy,
         sqrtPriceLimitX96: 0n,
       }]);

@@ -290,8 +290,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     }
 
     /// @notice Set platform fee for settleWithDex (in bps). Max 500 (5%).
+    error FeeVaultRequired();
+
     function setDexPlatformFee(uint256 _bps) external onlyOwner {
         if (_bps > MAX_DEX_PLATFORM_FEE_BPS) revert DexPlatformFeeTooHigh();
+        if (_bps > 0 && address(feeVault) == address(0)) revert FeeVaultRequired();
         emit DexPlatformFeeUpdated(dexPlatformFeeBps, _bps);
         dexPlatformFeeBps = _bps;
     }
@@ -890,10 +893,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             revert InvalidProof();
         }
 
-        // 8. Relayer registry gating (if configured)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(proof.relayer)) revert NotActiveRelayer();
-        }
+        // 8. Relayer registry gating — SKIPPED for settleWithDex.
+        //    Market orders are permissionless: the user submits directly
+        //    (relayer = self). Requiring relayer registration would defeat
+        //    the purpose of permissionless DEX settlement.
 
         // 9. Mark nullifiers
         nullifiers[proof.nullifier] = true;

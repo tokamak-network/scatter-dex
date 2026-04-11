@@ -218,20 +218,20 @@ export function validateAuthorizeOrder(
   }
 
   // Bit-width constraints (mirror settleAuth / authorize.circom bounds)
-  const sellAmount = BigInt(ps.sellAmount);
-  const buyAmount = BigInt(ps.buyAmount);
-  const maxFee = BigInt(ps.maxFee);
-  const expiry = BigInt(ps.expiry);
-  const totalLocked = BigInt(ps.totalLocked);
+  const sellAmountBig = BigInt(ps.sellAmount);
+  const buyAmountBig = BigInt(ps.buyAmount);
+  const maxFeeBig = BigInt(ps.maxFee);
+  const expiryBig = BigInt(ps.expiry);
+  const totalLockedBig = BigInt(ps.totalLocked);
 
-  if (sellAmount === 0n) return "sellAmount must be > 0";
-  if (buyAmount === 0n) return "buyAmount must be > 0";
-  if (totalLocked === 0n) return "totalLocked must be > 0";
-  if (sellAmount >= (1n << 128n)) return "sellAmount exceeds uint128";
-  if (buyAmount >= (1n << 128n)) return "buyAmount exceeds uint128";
-  if (maxFee >= (1n << 16n)) return "maxFee exceeds uint16";
-  if (expiry >= (1n << 64n)) return "expiry exceeds uint64";
-  if (totalLocked >= (1n << 96n)) return "totalLocked exceeds uint96";
+  if (sellAmountBig === 0n) return "sellAmount must be > 0";
+  if (buyAmountBig === 0n) return "buyAmount must be > 0";
+  if (totalLockedBig === 0n) return "totalLocked must be > 0";
+  if (sellAmountBig >= (1n << 128n)) return "sellAmount exceeds uint128";
+  if (buyAmountBig >= (1n << 128n)) return "buyAmount exceeds uint128";
+  if (maxFeeBig >= (1n << 16n)) return "maxFee exceeds uint16";
+  if (expiryBig >= (1n << 64n)) return "expiry exceeds uint64";
+  if (totalLockedBig >= (1n << 96n)) return "totalLocked exceeds uint96";
 
   // Address-range checks
   const sellToken = BigInt(ps.sellToken);
