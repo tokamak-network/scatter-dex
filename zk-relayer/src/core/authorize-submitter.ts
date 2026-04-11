@@ -11,6 +11,8 @@
 
 import { ethers } from "ethers";
 import { config } from "../config.js";
+import { guardedSubmit } from "./gas-guard.js";
+import { getProvider } from "./provider.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -79,14 +81,14 @@ export type CancelEventCallback = (
 ) => void;
 
 export class AuthorizeSubmitter {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private txMutex: Promise<void> = Promise.resolve();
   private cancelListeners: CancelEventCallback[] = [];
 
   constructor() {
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    this.provider = getProvider();
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
@@ -166,21 +168,8 @@ export class AuthorizeSubmitter {
     };
 
     return this.withTxLock(async () => {
-      // [R-1] Gas estimation + gas price cap only.
-      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
-      // so profitability comparison against ETH gas cost is skipped until a token→native
-      // price oracle is available. Pass 0n to bypass profitability check.
-      const { estimateAndGuard } = await import("./gas-guard.js");
-      const gasCheck = await estimateAndGuard(this.settlement, "settleAuth", [params], 0n);
-      if (!gasCheck.profitable) {
-        console.warn(`[gas-guard] settleAuth rejected: ${gasCheck.reason}`);
-        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
-      }
-      console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
-
-      const tx = await this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
+      // [R-1] Gas guard — fees are token-denominated, profitability check skipped
+      const receipt = await guardedSubmit(this.settlement, "settleAuth", [params], "settleAuth");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
