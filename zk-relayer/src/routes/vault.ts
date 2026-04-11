@@ -1,5 +1,6 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { ethers } from "ethers";
+import { timingSafeEqual } from "crypto";
 import { config } from "../config.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 
@@ -30,7 +31,12 @@ function adminAuth(req: Request, res: Response, next: () => void) {
     return;
   }
   const provided = req.headers["x-admin-key"];
-  if (provided !== key) {
+  if (typeof provided !== "string") {
+    res.status(401).json({ error: "Invalid admin API key" });
+    return;
+  }
+  const providedBuf = Buffer.from(provided);
+  if (providedBuf.length !== key.length || !timingSafeEqual(providedBuf, key)) {
     res.status(401).json({ error: "Invalid admin API key" });
     return;
   }
