@@ -1,6 +1,8 @@
 # Security Issues Tracker
 
-보안 감사에서 발견된 이슈 목록.
+보안 감사에서 발견된 이슈 목록. 작업 시 **브랜치 명을 기록**하여 동시 작업 충돌 방지.
+
+> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋)
 
 ## TODO — 2026-04-11 전체 스택 보안 감사
 
@@ -213,3 +215,46 @@
 - **수정**: NatSpec 경고 주석. pagination 파라미터 추가 검토.
 - **파일**: `RelayerRegistry.sol`
 - **상태**: ✅ DONE (PR #20)
+
+---
+
+## 전체 로드맵 (보안 + 기능 + UX)
+
+> 작업 시작 시 브랜치명을 기입하여 동시 작업 충돌 방지
+
+### 🔴 미해결 보안 이슈 (메인넷 전 필수)
+
+| # | 이슈 | 심각도 | 상태 | 브랜치 |
+|---|------|--------|------|--------|
+| C-1 | settleWithDex MEV (deadline) | CRITICAL | ⚠️ 부분 | — |
+| C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | ⬜ | — |
+| C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ⬜ | — |
+| H-3 | transferFee 풀 드레인 벡터 | HIGH | ⬜ | — |
+| H-5 | claimCount 범위 미검증 | HIGH | ⬜ | — |
+| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ⬜ | — |
+| M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
+| M-7 | API Rate Limiting | MEDIUM | ⬜ | — |
+| M-8 | pubKeyBind 체인 분석 | MEDIUM | ⬜ | — |
+| M-9 | 클라이언트 SSRF (claim) | MEDIUM | ⬜ | — |
+| M-10 | DB 파일 퍼미션 | MEDIUM | ⬜ | — |
+| M-11 | cross-relayer race condition | MEDIUM | ⬜ | — |
+| L-5~L-9 | 5건 LOW | LOW | ⬜ | — |
+
+### 🟠 기능 개발
+
+| # | 작업 | 상태 | 브랜치 |
+|---|------|------|--------|
+| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | — |
+| 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
+
+### 🟡 UX 개선 (사용자 플로우 체크에서 발견)
+
+| # | 작업 | 상태 | 브랜치 |
+|---|------|------|--------|
+| 14 | 폴더 선택 전역화 (localStorage persist) | ⬜ | — |
+| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
+| 16 | 에러 메시지 사용자 친화적 | ⬜ | — |
+| 17 | 주문 후 다음 단계 안내 | ⬜ | — |
+| 18 | DEX 가격 로딩 폴백 | ⬜ | — |
+| 19 | 다중 지갑 지원 (WalletConnect) | ⬜ | — |
+| 20 | Batch Claim | ⬜ | — |
