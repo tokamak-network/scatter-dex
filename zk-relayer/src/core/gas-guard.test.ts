@@ -8,9 +8,12 @@ vi.mock("../config.js", () => ({
 import { estimateAndGuard } from "./gas-guard.js";
 
 /** Helper: create a mock contract with configurable estimateGas */
-function mockContract(estimatedGas: bigint, feeData: { gasPrice?: bigint; maxFeePerGas?: bigint } | null) {
+function mockContract(
+  estimatedGas: bigint,
+  feeData: { gasPrice?: bigint | null; maxFeePerGas?: bigint | null } | null,
+) {
   const provider = {
-    getFeeData: vi.fn().mockResolvedValue(feeData ?? {}),
+    getFeeData: vi.fn().mockResolvedValue(feeData),
   };
   const estimateGas = vi.fn().mockResolvedValue(estimatedGas);
   return {
@@ -54,7 +57,7 @@ describe("estimateAndGuard", () => {
     const gasPrice = 50_000_000_000n; // 50 gwei
     const estimatedGas = 500_000n;
     // bufferedGas = ceil(500_000 * 12 / 10) = 600_000
-    // gasCost = 600_000 * 50 gwei = 30_000_000_000_000 = 0.00003 ETH
+    // gasCost = 600_000 * 50 gwei = 30_000_000_000_000_000 = 0.03 ETH
     const contract = mockContract(estimatedGas, { gasPrice });
     const tinyFee = 1_000_000_000_000n; // 0.000001 ETH — below gas cost
 
@@ -93,7 +96,7 @@ describe("estimateAndGuard", () => {
 
   // ─── Test 4: Missing provider fee data ───
   it("should throw when provider returns no gasPrice or maxFeePerGas", async () => {
-    const contract = mockContract(100_000n, {});
+    const contract = mockContract(100_000n, { gasPrice: null, maxFeePerGas: null });
 
     await expect(
       estimateAndGuard(contract, "settlePrivate", []),
@@ -110,7 +113,7 @@ describe("estimateAndGuard", () => {
 
   it("should use maxFeePerGas when gasPrice is null", async () => {
     const maxFee = 30_000_000_000n; // 30 gwei
-    const contract = mockContract(100_000n, { maxFeePerGas: maxFee });
+    const contract = mockContract(100_000n, { gasPrice: null, maxFeePerGas: maxFee });
 
     const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
 
