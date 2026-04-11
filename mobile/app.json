@@ -36,6 +36,7 @@
       "expo-secure-store"
     ],
     "extra": {
+      "WALLETCONNECT_PROJECT_ID": "e80e4057f616c11d61a9f918da19b0ea",
       "eas": {
         "projectId": ""
       }

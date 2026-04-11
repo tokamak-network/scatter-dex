@@ -5,12 +5,11 @@
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { Alert, Linking, Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ethers } from 'ethers';
+import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
-
-// Lazy import — @walletconnect/ethereum-provider triggers netinfo at import
-// time which crashes on some Expo SDK versions
-const getEthereumProvider = () => import('@walletconnect/ethereum-provider').then(m => m.default);
+import EthereumProvider from '@walletconnect/ethereum-provider';
 
 interface WalletState {
   account: string | null;
@@ -40,6 +39,7 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<WalletState>(INITIAL_STATE);
+  const [qrUri, setQrUri] = useState<string | null>(null);
 
   const wcProviderRef = useRef<any>(null);
   const readProvider = useRef(
@@ -78,22 +78,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw new Error('WALLETCONNECT_PROJECT_ID is not configured');
       }
 
-      const EthereumProvider = await getEthereumProvider();
+      console.log('WC: init start, projectId =', projectId.slice(0, 8) + '...');
       const wcProvider = await EthereumProvider.init({
         projectId,
         chains: [targetChainId],
-        showQrModal: true,
+        showQrModal: false,
         metadata: {
           name: 'ScatterDEX',
           description: 'Privacy-Preserving DEX',
           url: 'https://scatterdex.io',
           icons: ['https://scatterdex.io/icon.png'],
         },
-        // React Native specific
-        qrModalOptions: {
-          themeMode: 'dark' as const,
-        },
       });
+      console.log('WC: init done, calling connect...');
 
       wcProviderRef.current = wcProvider;
 
@@ -117,9 +114,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
       });
 
+      // Show QR code for wallet connection
+      wcProvider.on('display_uri', (uri: string) => {
+        console.log('WalletConnect URI:', uri);
+        // Try deep link to wallet app first (works on real devices)
+        const metamaskLink = `metamask://wc?uri=${encodeURIComponent(uri)}`;
+        Linking.canOpenURL(metamaskLink).then((supported) => {
+          if (supported) {
+            Linking.openURL(metamaskLink);
+          } else {
+            // Show QR code modal (for simulator or when no wallet app installed)
+            setQrUri(uri);
+          }
+        });
+      });
+
+      console.log('WC: calling connect...');
       await wcProvider.connect();
+      console.log('WC: connected! setting up provider...');
+      setQrUri(null); // Close QR modal after connection
       await setupFromWcProvider(wcProvider);
     } catch (err: any) {
+      setQrUri(null);
       setState((s) => ({
         ...s,
         isConnecting: false,
@@ -139,9 +155,51 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   return (
     <WalletContext.Provider value={{ ...state, connect, disconnect, readProvider }}>
       {children}
+
+      {/* QR Code Modal for WalletConnect */}
+      <Modal visible={!!qrUri} transparent animationType="fade">
+        <View style={wcStyles.overlay}>
+          <View style={wcStyles.modal}>
+            <Text style={wcStyles.title}>Scan with Wallet</Text>
+            <Text style={wcStyles.desc}>
+              Open MetaMask on your phone and scan this QR code
+            </Text>
+            <View style={wcStyles.qrBox}>
+              {qrUri && <QRCode value={qrUri} size={240} backgroundColor="#fff" />}
+            </View>
+            <TouchableOpacity
+              style={wcStyles.cancelBtn}
+              onPress={() => { setQrUri(null); setState((s) => ({ ...s, isConnecting: false })); }}
+            >
+              <Text style={wcStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </WalletContext.Provider>
   );
 }
+
+const wcStyles = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  modal: {
+    backgroundColor: '#1a1f2e', borderRadius: 20, padding: 24,
+    alignItems: 'center', width: 320,
+  },
+  title: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 8 },
+  desc: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginBottom: 20 },
+  qrBox: {
+    backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 20,
+  },
+  cancelBtn: {
+    paddingVertical: 12, paddingHorizontal: 40,
+    borderRadius: 8, borderWidth: 1, borderColor: '#374151',
+  },
+  cancelText: { color: '#9ca3af', fontSize: 15, fontWeight: '600' },
+});
 
 export function useWallet(): WalletContextValue {
   const ctx = useContext(WalletContext);

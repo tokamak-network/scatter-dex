@@ -43,7 +43,7 @@ export interface MarketOrderInput {
   sellAmount: string;      // human-readable
   buyToken: string;        // address
   buyAmount: string;       // min receive (slippage-adjusted)
-  slippageBps: number;     // e.g. 50 = 0.5%
+  slippageBps: number;     // applied by UI to compute buyAmount (min receive)
   expiryHours: number;
   claimRecipient: string;  // typically self
   dexRouter: string;       // Uniswap V3 router address
@@ -64,10 +64,21 @@ export const MarketOrderService = {
     const settlementAddr = ConfigService.getPrivateSettlementAddress();
     if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
 
+    const poolAddr = ConfigService.getCommitmentPoolAddress();
+    if (!poolAddr) throw new Error('CommitmentPool address not configured');
+
     const { note, buyToken, dexRouter, uniswapFeeTier, expiryHours, claimRecipient } = input;
     const sellAmount = ethers.parseUnits(input.sellAmount, 18);
     const buyAmount = ethers.parseUnits(input.buyAmount, 18);
-    const nonce = BigInt(Date.now());
+
+    // Validate sell amount doesn't exceed note balance
+    if (sellAmount > BigInt(note.amount)) {
+      throw new Error(`Sell amount exceeds note balance (${ethers.formatEther(note.amount)}).`);
+    }
+    const nonceBytes = new Uint8Array(8);
+    crypto.getRandomValues(nonceBytes);
+    let nonce = 0n;
+    for (const b of nonceBytes) nonce = (nonce << 8n) | BigInt(b);
     const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryHours * 3600);
 
     try {
@@ -138,14 +149,42 @@ export const MarketOrderService = {
       const nullifier = await ZKBridgeService.computeNullifier('0', note.secret, note.salt);
       const nonceNullifier = await ZKBridgeService.computeNullifier('1', note.secret, nonce.toString());
 
-      // Commitment Merkle proof (fetch from relayer or on-chain)
+      // Commitment Merkle proof — fetch all commitments and build tree
       const readProvider = ProviderService.getReadProvider();
-      const pool = new ethers.Contract(ConfigService.getCommitmentPoolAddress()!, COMMITMENT_POOL_ABI, readProvider);
-      const commitmentRoot = await pool.getLastRoot();
+      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
+      const fromBlock = await ProviderService.getEarliestBlock();
 
-      // Generate authorize proof via WebView
+      const insertEvents = await pool.queryFilter(
+        pool.filters.CommitmentInserted(),
+        fromBlock,
+      );
+      const allLeaves = insertEvents.map((e) => {
+        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
+        return parsed!.args.commitment.toString();
+      });
+
+      // Compute commitment for this note and verify it's in the tree
+      const noteCommitment = await ZKBridgeService.computeCommitment({
+        tag: TAG_COMMITMENT_V2.toString(),
+        secret: note.secret,
+        token: BigInt(note.token).toString(),
+        balance: note.amount,
+        salt: note.salt,
+        pubKeyAx: keyPair.pubKeyAx,
+        pubKeyAy: keyPair.pubKeyAy,
+      });
+
+      if (note.leafIndex < 0 || allLeaves[note.leafIndex] !== noteCommitment) {
+        throw new Error('Note commitment not found in on-chain tree. Leaf index may be stale.');
+      }
+
+      const COMMIT_TREE_DEPTH = 20;
+      const { root: commitmentRoot, layers } = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+      const { getMerkleProofFromTree } = await import('../lib/merkleTree');
+      const { pathElements, pathIndices } = getMerkleProofFromTree(layers, note.leafIndex);
+
       const circuitInputs: Record<string, string | string[]> = {
-        commitmentRoot: commitmentRoot.toString(),
+        commitmentRoot,
         nullifier,
         nonceNullifier,
         newCommitment,
@@ -162,7 +201,8 @@ export const MarketOrderService = {
         secret: note.secret,
         balance: note.amount,
         salt: note.salt,
-        // Merkle proof would need full tree — simplified here, relayer provides
+        path: pathElements,
+        pathIdx: pathIndices,
         nonce: nonce.toString(),
         newSalt,
         pubKeyAx: keyPair.pubKeyAx,
@@ -259,6 +299,24 @@ export const MarketOrderService = {
           createdAt: Date.now(),
         });
       }
+
+      // Save claim data so user can later call claimWithProof
+      const claimBundle = {
+        secret: claimSecret,
+        recipient: claimRecipient,
+        token: buyToken,
+        amount: buyAmount.toString(),
+        releaseTime: '0',
+        leafIndex: 0,
+        allLeaves: claimLeaves,
+        txHash: tx.hash,
+      };
+      // Store claim in AsyncStorage for retrieval in ClaimScreen
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const existingClaims = await AsyncStorage.getItem('scatterdex_pending_claims');
+      const claims = existingClaims ? JSON.parse(existingClaims) : [];
+      claims.push(claimBundle);
+      await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(claims));
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;
