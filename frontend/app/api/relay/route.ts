@@ -10,19 +10,21 @@ const DEFAULT_RELAYER_URL = process.env.ZK_RELAYER_URL || process.env.NEXT_PUBLI
 
 // Allowed relayer origins — only these can be proxied to.
 // In production, populate from env or a registry contract query.
-const ALLOWED_RELAYER_ORIGINS = (
-  process.env.ALLOWED_RELAYER_ORIGINS?.trim()
+// Changes require a process restart to take effect.
+const ALLOWED_RELAYER_ORIGINS = new Set(
+  (process.env.ALLOWED_RELAYER_ORIGINS?.trim()
     ? process.env.ALLOWED_RELAYER_ORIGINS.split(",")
     : [DEFAULT_RELAYER_URL]
-).map(s => {
-  try { return new URL(s.trim()).origin; } catch { return null; }
-}).filter((s): s is string => s !== null);
+  ).map(s => {
+    try { return new URL(s.trim()).origin; } catch { return null; }
+  }).filter((s): s is string => s !== null)
+);
 
 /** Validate that a relayer URL is in the allowlist. */
 function validateRelayerOrigin(url: string): string | null {
   try {
     const origin = new URL(url).origin;
-    if (ALLOWED_RELAYER_ORIGINS.includes(origin)) return origin;
+    if (ALLOWED_RELAYER_ORIGINS.has(origin)) return origin;
   } catch { /* invalid URL */ }
   return null;
 }
@@ -64,10 +66,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate required claim fields
+  // Validate required claim fields (use == null to allow falsy values like 0)
   const { proofA, proofB, proofC, claimsRoot, claimNullifier, amount, token, recipient, releaseTime } = body;
-  if (!proofA || !proofB || !proofC || !claimsRoot || !claimNullifier ||
-      !amount || !token || !recipient || !releaseTime) {
+  if (proofA == null || proofB == null || proofC == null || claimsRoot == null || claimNullifier == null ||
+      amount == null || token == null || recipient == null || releaseTime == null) {
     return NextResponse.json({ error: "Missing required claim fields" }, { status: 400 });
   }
 
