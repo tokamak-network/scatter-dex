@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   isFileSystemAvailable,
-  hasFolderSelected,
   selectNotesFolder,
   restoreNotesFolder,
   getFolderName,
@@ -53,6 +52,5 @@ export function useNotesFolder() {
     folderName,
     restoring,
     handleSelectFolder,
-    hasFolderSelected,
   };
 }
