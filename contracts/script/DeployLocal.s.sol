@@ -110,6 +110,14 @@ contract DeployLocal is Script {
         } else {
             console.log("1inch Router not deployed on this chain (skipped)");
         }
+        //     Uniswap V3 SwapRouter02 — frontend fallback when 1inch unavailable
+        address UNISWAP_ROUTER02 = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+        if (UNISWAP_ROUTER02.code.length > 0) {
+            privateSettlement.setDexRouterWhitelist(UNISWAP_ROUTER02, true);
+            console.log("Uniswap SwapRouter02 whitelisted:", UNISWAP_ROUTER02);
+        } else {
+            console.log("Uniswap SwapRouter02 not deployed on this chain (skipped)");
+        }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
         vm.stopBroadcast();

@@ -635,6 +635,11 @@ export default function PrivateOrderPage() {
       // Get best swap route via DEX aggregator (1inch → Uniswap fallback)
       const { getBestSwapRoute } = await import("../../lib/dex-aggregator");
       const currentChainId = chainId ?? 1;
+      // Select fee tier from recommended DEX price
+      const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
+      const feeParsed = Math.round(parseFloat(bestDexPrice?.fee ?? "0") * 10000);
+      const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : 3000;
+
       const swapRoute = await getBestSwapRoute({
         chainId: currentChainId,
         sellToken: sellToken.address,
@@ -642,8 +647,12 @@ export default function PrivateOrderPage() {
         sellAmount: swapAmountIn,
         minReceive: parsedBuy,
         recipient: settlementAddr,
+        slippageBps: parseInt(slippageBps) || 50,
+        feeTier,
       });
-      console.log(`DEX route: ${swapRoute.source} (estimated: ${ethers.formatUnits(swapRoute.estimatedOutput, buyToken.decimals)} ${buyToken.symbol})`);
+      if (process.env.NODE_ENV === "development") {
+        console.log(`DEX route: ${swapRoute.source} (estimated: ${ethers.formatUnits(swapRoute.estimatedOutput, buyToken.decimals)} ${buyToken.symbol})`);
+      }
 
       // Build settleWithDex params
       const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);

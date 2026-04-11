@@ -26,6 +26,8 @@ const UNISWAP_ROUTER_IFACE = new ethers.Interface([
   "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
 ]);
 
+const FETCH_TIMEOUT_MS = 10_000; // 10 second timeout for 1inch API
+
 export interface SwapRoute {
   dexRouter: string;
   dexCalldata: string;
@@ -40,7 +42,9 @@ export interface SwapParams {
   sellAmount: bigint;         // post-fee amount (after platform fee deduction)
   minReceive: bigint;         // minimum acceptable output
   recipient: string;          // settlement contract address
-  apiKey?: string;            // 1inch API key (optional, uses public endpoint if omitted)
+  slippageBps?: number;       // slippage tolerance in bps (default 50 = 0.5%)
+  feeTier?: number;           // Uniswap V3 fee tier (default 3000 = 0.3%)
+  apiKey?: string;            // 1inch API key (optional)
 }
 
 /**
@@ -53,7 +57,9 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
     const route = await get1inchRoute(params);
     if (route) return route;
   } catch (e) {
-    console.warn("1inch API failed, falling back to Uniswap:", e);
+    if (process.env.NODE_ENV === "development") {
+      console.warn("1inch API failed, falling back to Uniswap:", e);
+    }
   }
 
   // Fallback: Uniswap V3 direct
@@ -65,47 +71,68 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
  * Uses the Pathfinder algorithm to find the optimal route across 400+ DEXes.
  */
 async function get1inchRoute(params: SwapParams): Promise<SwapRoute | null> {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, apiKey } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = 50, apiKey } = params;
 
   const baseUrl = `https://api.1inch.dev/swap/v6.0/${chainId}/swap`;
   const queryParams = new URLSearchParams({
     src: sellToken,
     dst: buyToken,
     amount: sellAmount.toString(),
-    from: recipient,           // settlement contract (holds the tokens)
-    slippage: "1",             // 1% slippage tolerance (1inch handles internally)
-    disableEstimate: "true",   // skip eth_estimateGas (settlement calls it)
-    compatibility: "true",     // broader DEX compatibility
+    from: recipient,
+    slippage: (slippageBps / 100).toString(), // bps → percentage (50 bps → 0.5)
+    disableEstimate: "true",
+    compatibility: "true",
   });
 
-  const headers: Record<string, string> = {
-    "Accept": "application/json",
-  };
+  const headers: Record<string, string> = { "Accept": "application/json" };
   if (apiKey) {
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  const res = await fetch(`${baseUrl}?${queryParams}`, { headers });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`1inch API error ${res.status}: ${err}`);
+  // Timeout: abort after FETCH_TIMEOUT_MS to prevent stalling the submit flow
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${baseUrl}?${queryParams}`, {
+      headers,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`1inch API error ${res.status}: ${err}`);
+    }
+
+    const data = await res.json();
+
+    // Validate: router address must be the known 1inch router
+    const returnedRouter = (data.tx.to as string).toLowerCase();
+    if (returnedRouter !== ONEINCH_ROUTER.toLowerCase()) {
+      throw new Error(`1inch API returned unexpected router ${data.tx.to} (expected ${ONEINCH_ROUTER})`);
+    }
+
+    // Validate: estimated output must meet minReceive
+    const estimated = BigInt(data.dstAmount);
+    if (estimated < minReceive) {
+      throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
+    }
+
+    return {
+      dexRouter: ONEINCH_ROUTER,  // use known address, not API response
+      dexCalldata: data.tx.data,
+      source: "1inch",
+      estimatedOutput: estimated,
+    };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const data = await res.json();
-
-  return {
-    dexRouter: data.tx.to,       // 1inch router address
-    dexCalldata: data.tx.data,   // encoded swap calldata
-    source: "1inch",
-    estimatedOutput: BigInt(data.dstAmount),
-  };
 }
 
 /**
  * Fallback: Uniswap V3 direct swap (no aggregation).
  */
 function getUniswapRoute(params: SwapParams): SwapRoute {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier = 3000 } = params;
 
   const routerAddr = UNISWAP_ROUTERS[chainId];
   if (!routerAddr) {
@@ -115,7 +142,7 @@ function getUniswapRoute(params: SwapParams): SwapRoute {
   const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
     tokenIn: sellToken,
     tokenOut: buyToken,
-    fee: 3000,                    // default 0.3% fee tier
+    fee: feeTier,
     recipient,
     deadline: Math.floor(Date.now() / 1000) + 1800,
     amountIn: sellAmount,
@@ -127,7 +154,7 @@ function getUniswapRoute(params: SwapParams): SwapRoute {
     dexRouter: routerAddr,
     dexCalldata,
     source: "uniswap",
-    estimatedOutput: minReceive,  // no quote available without RPC call
+    estimatedOutput: minReceive,
   };
 }
 
@@ -140,7 +167,6 @@ export function get1inchRouterAddress(): string {
 
 /**
  * Get all supported DEX router addresses for a chain.
- * Used by deployment scripts to whitelist routers.
  */
 export function getDexRouters(chainId: number): { name: string; address: string }[] {
   const routers: { name: string; address: string }[] = [
