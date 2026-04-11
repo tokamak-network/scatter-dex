@@ -455,13 +455,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
         if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
-        if (claimsGroups[p.claimsRootMaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[p.claimsRootMaker].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootMaker] = ClaimsGroup({
             token: p.tokenMaker,
             totalLocked: p.totalLockedMaker,
             totalClaimed: 0
         });
-        if (claimsGroups[p.claimsRootTaker].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[p.claimsRootTaker].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRootTaker] = ClaimsGroup({
             token: p.tokenTaker,
             totalLocked: p.totalLockedTaker,
@@ -705,14 +705,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.taker.totalLocked > 0
         ) revert DuplicateClaimsRoot();
 
-        if (claimsGroups[p.maker.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[p.maker.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.maker.claimsRoot] = ClaimsGroup({
             token: p.maker.buyToken,
             totalLocked: p.maker.totalLocked,
             totalClaimed: 0
         });
 
-        if (claimsGroups[p.taker.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[p.taker.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.taker.claimsRoot] = ClaimsGroup({
             token: p.taker.buyToken,
             totalLocked: p.taker.totalLocked,
@@ -959,7 +959,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
 
         // 13. Register claims group
-        if (claimsGroups[proof.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[proof.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[proof.claimsRoot] = ClaimsGroup({
             token: proof.buyToken,
             totalLocked: proof.totalLocked,
@@ -1042,7 +1042,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nullifiers[p.nullifier] = true;
 
         // Register claims group (prevent overwriting existing group)
-        if (claimsGroups[p.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        if (claimsGroups[p.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[p.claimsRoot] = ClaimsGroup({
             token: p.token,
             totalLocked: p.totalLocked,
@@ -1075,7 +1075,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _requireNotSanctioned(recipient);
 
         ClaimsGroup storage group = claimsGroups[claimsRoot];
-        if (group.totalLocked == 0) revert ClaimsGroupNotFound();
+        if (group.token == address(0)) revert ClaimsGroupNotFound();
         if (claimNullifiers[claimNullifier]) revert NullifierAlreadySpent();
         if (amount > type(uint128).max) revert AmountOverflow();
         if (group.totalClaimed + uint128(amount) > group.totalLocked) revert ExceedsTotalLocked();
