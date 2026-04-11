@@ -2,14 +2,14 @@
 
 > Last updated: 2026-04-11
 
-All issues discovered during implementation, code review (Copilot + Gemini), simplify review, and E2E testing of the `settleWithDex` market order feature.
+All issues discovered during implementation, code review (Copilot + Gemini), automated simplify reviews (3-agent parallel), and E2E testing of the `settleWithDex` market order feature. **25 issues total** (3 CRITICAL, 4 HIGH, 10 MEDIUM, 8 LOW).
 
 ## Timeline
 
 | PR/Commit | Description |
 |-----------|-------------|
 | [PR #151](https://github.com/tokamak-network/scatter-dex/pull/151) | Initial implementation: settleWithDex + BatchVerifier 15-signal + market order UI |
-| [PR #157](https://github.com/tokamak-network/scatter-dex/pull/157) | withdraw.circom range check (H2 audit finding) |
+| [PR #157](https://github.com/tokamak-network/scatter-dex/pull/157) | withdraw.circom range check (external security audit finding) |
 | [PR #160](https://github.com/tokamak-network/scatter-dex/pull/160) | Fork integration tests (Uniswap V3 + Curve) + platform fee |
 | [PR #162](https://github.com/tokamak-network/scatter-dex/pull/162) | Market order E2E test |
 | [PR #165](https://github.com/tokamak-network/scatter-dex/pull/165) | Address sanctions / compliance (SanctionsList) |
