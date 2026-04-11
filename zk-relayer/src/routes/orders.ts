@@ -29,7 +29,9 @@ export function createPrivateOrderRoutes(
       if (order.sellToken !== order.buyToken) {
         res.status(410).json({
           error: "P2P orders via this endpoint are deprecated for security reasons. Use POST /api/authorize-orders instead.",
-          migration: "Generate an authorize proof locally and submit to /api/authorize-orders.",
+          migration: "Generate an authorize proof locally and submit to /api/authorize-orders. See docs/migration-half-proof.md.",
+          legacyFlowNote:
+            "Older repo docs/scripts may still reference POST /api/private-orders as part of a legacy flow. That flow is now disabled; update those callers to use POST /api/authorize-orders.",
         });
         return;
       }
