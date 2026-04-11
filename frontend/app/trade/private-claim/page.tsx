@@ -131,21 +131,13 @@ export default function PrivateClaimPage() {
     input.click();
   }, []);
 
-  /** Validate relayer URL — must be absolute http/https, no internal addresses in production. */
+  /** Validate relayer URL format — must be absolute http/https.
+   *  SSRF protection is enforced server-side via /api/relay allowlist. */
   function validRelayerUrl(url: unknown): string | null {
     if (typeof url !== "string") return null;
     try {
       const u = new URL(url);
       if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-      // In production, block internal/private addresses to prevent SSRF
-      const host = u.hostname;
-      if (process.env.NODE_ENV === "production") {
-        if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" ||
-            host === "[::1]" || host.startsWith("169.254.") ||
-            host.startsWith("192.168.") || host.startsWith("10.") ||
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
-            host.startsWith("fc") || host.startsWith("fd")) return null;
-      }
       return u.origin;
     } catch { /* invalid */ }
     return null;
@@ -192,11 +184,11 @@ export default function PrivateClaimPage() {
     try {
       const p = await buildProof(claimData);
       setStatus("submitting");
-      const url = bundleRelayerUrl || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
-      const res = await fetch(`${url}/api/private-claim`, {
+      const res = await fetch("/api/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          relayerUrl: bundleRelayerUrl || undefined,
           proofA: p.proofResult.proof.a,
           proofB: p.proofResult.proof.b,
           proofC: p.proofResult.proof.c,
