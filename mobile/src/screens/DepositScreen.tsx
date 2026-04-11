@@ -204,8 +204,8 @@ export default function DepositScreen() {
             )}
 
             {(progress.step === 'success' || progress.step === 'error') && (
-              <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-                <Text style={styles.resetBtnText}>
+              <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
+                <Text style={shared.resetBtnText}>
                   {progress.step === 'success' ? 'New Deposit' : 'Try Again'}
                 </Text>
               </TouchableOpacity>
@@ -345,16 +345,6 @@ const styles = StyleSheet.create({
   },
   txHashLabel: { fontSize: 13, color: '#6b7280' },
   txHash: { fontSize: 13, color: '#95aaff', fontFamily: 'monospace' },
-
-  resetBtn: {
-    marginTop: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
-    alignItems: 'center',
-  },
-  resetBtnText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
 
   // Info
   infoCard: {

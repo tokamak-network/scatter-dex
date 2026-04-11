@@ -182,8 +182,8 @@ export default function ClaimScreen() {
             )}
 
             {(progress.step === 'success' || progress.step === 'error') && (
-              <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-                <Text style={styles.resetBtnText}>
+              <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
+                <Text style={shared.resetBtnText}>
                   {progress.step === 'success' ? 'New Claim' : 'Try Again'}
                 </Text>
               </TouchableOpacity>
@@ -244,9 +244,6 @@ const styles = StyleSheet.create({
   txRow: { flexDirection: 'row', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#1f2937' },
   txLabel: { fontSize: 13, color: '#6b7280' },
   txHash: { fontSize: 13, color: '#95aaff', fontFamily: 'monospace' },
-
-  resetBtn: { marginTop: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#374151', alignItems: 'center' },
-  resetBtnText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
 
   infoCard: { backgroundColor: '#111827', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1f2937' },
   infoTitle: { fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8 },

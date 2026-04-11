@@ -315,8 +315,8 @@ export default function TradeScreen() {
                 )}
 
                 {(progress.step === 'success' || progress.step === 'error') && (
-                  <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-                    <Text style={styles.resetBtnText}>
+                  <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
+                    <Text style={shared.resetBtnText}>
                       {progress.step === 'success' ? 'New Order' : 'Try Again'}
                     </Text>
                   </TouchableOpacity>
@@ -377,9 +377,6 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: '#6366f1', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
   submitBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   btnDisabled: { opacity: 0.4 },
-
-  resetBtn: { marginTop: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#374151', alignItems: 'center' },
-  resetBtnText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
 
   successText: { color: '#10b981', fontSize: 13, marginTop: 12, fontFamily: 'monospace' },
   errorText: { color: '#ef4444', fontSize: 12, marginTop: 8 },

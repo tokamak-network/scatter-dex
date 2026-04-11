@@ -17,13 +17,16 @@ interface Props<S extends string> {
 export function StepProgress<S extends string>({ steps, labels, currentStep }: Props<S>) {
   const isSuccess = currentStep === 'success';
   const isError = currentStep === 'error';
-  const currentIdx = steps.indexOf(currentStep as S);
+  const stepIdx = steps.indexOf(currentStep as S);
+  // When error/success, currentStep is not in steps array (idx=-1).
+  // For error, mark the last step as the error step.
+  const currentIdx = stepIdx >= 0 ? stepIdx : isError ? steps.length - 1 : -1;
 
   return (
     <View>
       {steps.map((step, i) => {
         const isPast = isSuccess || currentIdx > i;
-        const isCurrent = currentIdx === i && !isSuccess && !isError;
+        const isCurrent = stepIdx === i && !isSuccess && !isError;
         const isErrStep = isError && currentIdx === i;
 
         return (
