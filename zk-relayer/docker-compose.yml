@@ -10,7 +10,8 @@ services:
       - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
       - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
       - RELAYER_FEE=${RELAYER_FEE:-30}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      # WARNING: Set explicit CORS_ORIGINS in production (e.g., https://app.yourdomain.com)
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:3002}
     secrets:
       - relayer_key
     volumes:

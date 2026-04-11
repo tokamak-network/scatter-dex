@@ -26,8 +26,12 @@ async function main() {
   const app = express();
 
   // CORS
+  const corsWildcard = config.corsOrigins.includes("*");
+  if (corsWildcard) {
+    console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
+  }
   app.use(cors({
-    origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins,
+    origin: corsWildcard ? "*" : config.corsOrigins,
   }));
 
   // Body size limit

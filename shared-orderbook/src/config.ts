@@ -22,8 +22,13 @@ export const config = {
   writeRateLimit: envInt("WRITE_RATE_LIMIT", "60"),    // per minute per IP
   readRateLimit: envInt("READ_RATE_LIMIT", "300"),      // per minute per IP
 
-  // CORS
-  corsOrigins: (process.env.CORS_ORIGINS?.split(",") || ["*"]).map(s => s.trim()).filter(Boolean),
+  // CORS — explicit origin list required in production.
+  // Default allows localhost dev ports; set CORS_ORIGINS=* to allow all (not recommended).
+  corsOrigins: (process.env.CORS_ORIGINS?.split(",") || [
+    "http://localhost:3000",
+    "http://localhost:3002",
+    "http://localhost:3003",
+  ]).map(s => s.trim()).filter(Boolean),
 
   // Webhook timeout (ms)
   webhookTimeout: envInt("WEBHOOK_TIMEOUT", "5000"),
