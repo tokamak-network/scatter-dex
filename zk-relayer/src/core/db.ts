@@ -83,6 +83,10 @@ export class PrivateOrderDB {
   private selectMeta: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
+    // [L-8] For production with sensitive data, consider replacing better-sqlite3
+    // with @journeyapps/sqlcipher or migrating to PostgreSQL with TDE.
+    // Current threat model: DB file permissions (M-10) protect against
+    // unauthorized reads; encryption-at-rest adds defense-in-depth.
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
