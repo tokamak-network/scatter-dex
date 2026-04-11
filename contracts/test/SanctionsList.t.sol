@@ -28,7 +28,6 @@ contract SanctionsListTest is Test {
     SLToken token;
     MockAuthorizeVerifier authVerifier;
 
-    address owner = address(this);
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
     address sanctionedAddr = address(0xBAD);
@@ -113,8 +112,23 @@ contract SanctionsListTest is Test {
 
     function test_onlyOwner() public {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
         sanctions.addSanction(bob);
+    }
+
+    // ─── CommitmentPool Withdraw Integration ────────────────────
+
+    function test_withdraw_sanctionedSender_reverts() public {
+        // Sanctioned user cannot call withdraw even with valid proof
+        vm.prank(sanctionedAddr);
+        vm.expectRevert(CommitmentPool.AddressSanctioned.selector);
+        pool.withdraw(proofA, proofB, proofC, 0, 0, 0, address(token), 0, alice, address(0));
+    }
+
+    function test_withdraw_sanctionedRecipient_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.AddressSanctioned.selector);
+        pool.withdraw(proofA, proofB, proofC, 0, 0, 0, address(token), 0, sanctionedAddr, address(0));
     }
 
     // ─── CommitmentPool Integration ─────────────────────────────

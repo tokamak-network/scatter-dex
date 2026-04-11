@@ -300,6 +300,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @notice Set the sanctions list. Pass address(0) to disable sanctions checking.
     function setSanctionsList(address _list) external onlyOwner {
+        if (_list != address(0) && _list.code.length == 0) revert NotAContract();
         emit SanctionsListUpdated(address(sanctionsList), _list);
         sanctionsList = ISanctionsList(_list);
     }
