@@ -86,11 +86,15 @@ async function main() {
   const app = express();
 
   // Security: CORS whitelist
-  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || [
-    "http://localhost:3000",
-    "http://localhost:3002",
-    "http://localhost:3003",
-  ]).map(s => s.trim()).filter(Boolean);
+  const allowedOrigins = (
+    process.env.CORS_ORIGINS?.trim()
+      ? process.env.CORS_ORIGINS.split(",")
+      : [
+          "http://localhost:3000",
+          "http://localhost:3002",
+          "http://localhost:3003",
+        ]
+  ).map(s => s.trim()).filter(Boolean);
   const corsWildcard = allowedOrigins.includes("*");
   if (corsWildcard) {
     console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");

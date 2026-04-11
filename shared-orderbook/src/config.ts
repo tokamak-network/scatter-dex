@@ -24,11 +24,15 @@ export const config = {
 
   // CORS — explicit origin list required in production.
   // Default allows localhost dev ports; set CORS_ORIGINS=* to allow all (not recommended).
-  corsOrigins: (process.env.CORS_ORIGINS?.split(",") || [
-    "http://localhost:3000",
-    "http://localhost:3002",
-    "http://localhost:3003",
-  ]).map(s => s.trim()).filter(Boolean),
+  corsOrigins: (
+    process.env.CORS_ORIGINS?.trim()
+      ? process.env.CORS_ORIGINS.split(",")
+      : [
+          "http://localhost:3000",
+          "http://localhost:3002",
+          "http://localhost:3003",
+        ]
+  ).map(s => s.trim()).filter(Boolean),
 
   // Webhook timeout (ms)
   webhookTimeout: envInt("WEBHOOK_TIMEOUT", "5000"),
