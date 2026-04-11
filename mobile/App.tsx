@@ -25,16 +25,16 @@ export default function App() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <WalletProvider>
+          <HiddenWebView />
           <View style={styles.root}>
-            <StatusBar style="light" />
-            <HiddenWebView />
+            <StatusBar style="dark" />
             {zkReady ? (
               <NavigationContainer>
                 <TabNavigator />
               </NavigationContainer>
             ) : (
               <View style={styles.loading}>
-                <ActivityIndicator size="large" color="#95aaff" />
+                <ActivityIndicator size="large" color="#3B82F6" />
                 <Text style={styles.loadingText}>Initializing ZK Engine...</Text>
               </View>
             )}
@@ -46,7 +46,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a0f1e' },
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  loadingText: { color: '#8899bb', marginTop: 16, fontSize: 14 },
+  loadingText: { color: '#9CA3AF', marginTop: 16, fontSize: 14 },
 });

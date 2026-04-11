@@ -1,63 +1,61 @@
 /**
- * Shared design tokens and styles used across all screens.
+ * Design tokens — Light theme (ScatterDEX design spec)
  */
 import { StyleSheet } from 'react-native';
 
 export const colors = {
-  bg: '#0a0f1e',
-  card: '#111827',
-  border: '#1f2937',
-  borderLight: '#374151',
-  text: '#fff',
-  textSecondary: '#e5e7eb',
-  textMuted: '#9ca3af',
-  textDim: '#6b7280',
-  textDimmer: '#4b5563',
-  accent: '#95aaff',
-  primary: '#6366f1',
-  success: '#10b981',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  subtitleText: '#8899bb',
+  bg: '#FFFFFF',
+  bgSecondary: '#F9FAFB',
+  card: '#FFFFFF',
+
+  border: '#F0F0F0',
+  borderMedium: '#E5E7EB',
+
+  text: '#111827',
+  textSecondary: '#4B5563',
+  textMuted: '#9CA3AF',
+  textDim: '#D1D5DB',
+
+  primary: '#3B82F6',
+  primaryLight: '#EFF6FF',
+  primaryDark: '#2563EB',
+
+  success: '#22C55E',
+  successLight: '#F0FDF4',
+  warning: '#F59E0B',
+  warningLight: '#FFFBEB',
+  danger: '#EF4444',
+  dangerLight: '#FEF2F2',
+
+  cyan: '#06B6D4',
+  cyanLight: '#ECFEFF',
+  indigo: '#6366F1',
+  indigoLight: '#EEF2FF',
+  orange: '#F97316',
+  orangeLight: '#FFF7ED',
+  blueBorder: '#DBEAFE',
+  gray500: '#6B7280',
+  // Backwards compat — used by StepProgress and other shared components
+  accent: '#3B82F6',
+  textDimmer: '#D1D5DB',
 } as const;
 
 export const shared = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.bg },
-  container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingHorizontal: 20 },
 
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  cardLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textDim,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
 
-  title: { fontSize: 24, fontWeight: 'bold', color: colors.text, textAlign: 'center' },
-  subtitle: { fontSize: 14, color: colors.subtitleText, textAlign: 'center', marginTop: 4, marginBottom: 20 },
-
-  emptyText: { fontSize: 14, color: colors.textDimmer, textAlign: 'center', paddingVertical: 12 },
-  errorText: { color: colors.danger, fontSize: 12, marginTop: 8 },
+  title: { fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },
+  emptyText: { fontSize: 14, color: colors.textMuted, textAlign: 'center', paddingVertical: 20 },
+  errorText: { color: colors.danger, fontSize: 13, marginTop: 8 },
   btnDisabled: { opacity: 0.4 },
-
-  resetBtn: {
-    marginTop: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    alignItems: 'center',
-  },
-  resetBtnText: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
 });

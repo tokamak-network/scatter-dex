@@ -1,495 +1,277 @@
 /**
- * TradeScreen — 프라이빗 주문 생성
- *
- * 1. 사용할 노트 선택 (active deposits)
- * 2. Sell/Buy 토큰 + 금액
- * 3. Fee, Expiry 설정
- * 4. Claims 수령자 설정
- * 5. 릴레이어에 주문 제출
+ * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ethers } from 'ethers';
-import { useWallet } from '../contexts/WalletContext';
-import { TokenService, TokenInfo } from '../services/TokenService';
-import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
-import { OrderService, OrderProgress, OrderStep, ClaimInput } from '../services/OrderService';
-import { MarketOrderService, MarketOrderProgress, MarketOrderStep } from '../services/MarketOrderService';
-import { ConfigService } from '../services/ConfigService';
-import { StepProgress } from '../components/StepProgress';
-import { shared } from '../styles/theme';
+import { useNavigation } from '@react-navigation/native';
+import { colors } from '../styles/theme';
 
-type OrderType = 'limit' | 'market';
-
-const STEP_LABELS: Record<OrderStep, string> = {
-  idle: '',
-  deriving_key: 'Deriving signing key...',
-  signing_order: 'Signing order (EdDSA)...',
-  submitting: 'Submitting to relayer...',
-  saving_change: 'Saving change note...',
-  success: 'Order submitted!',
-  error: 'Order failed',
-};
-
-const ORDER_STEPS: OrderStep[] = ['deriving_key', 'signing_order', 'submitting', 'saving_change'];
-
-const MARKET_STEP_LABELS: Record<MarketOrderStep, string> = {
-  idle: '',
-  checking: 'Checking eligibility...',
-  generating_proof: 'Generating authorize proof...',
-  submitting: 'Settling via DEX...',
-  saving: 'Saving notes...',
-  success: 'Market order settled!',
-  error: 'Market order failed',
-};
-
-const MARKET_STEPS: MarketOrderStep[] = ['checking', 'generating_proof', 'submitting', 'saving'];
-
-const SLIPPAGE_OPTIONS = [
-  { label: '0.1%', bps: 10 },
-  { label: '0.5%', bps: 50 },
-  { label: '1%', bps: 100 },
-  { label: '3%', bps: 300 },
-];
-
-const EXPIRY_OPTIONS = [
-  { label: '1h', hours: 1 },
-  { label: '6h', hours: 6 },
-  { label: '24h', hours: 24 },
-  { label: '7d', hours: 168 },
+const orderBookData = [
+  { id: '1', name: 'Sample Order', type: 'Buy', price: '1,850 USDC' },
+  { id: '2', name: 'Sample Order', type: 'Sell', price: '4,500 USDC' },
 ];
 
 export default function TradeScreen() {
-  const { account, signer } = useWallet();
-  const [tokens] = useState<TokenInfo[]>(() => TokenService.getTokenList());
-  const [orderType, setOrderType] = useState<OrderType>('limit');
-
-  // Note selection
-  const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
-  const [selectedNoteIdx, setSelectedNoteIdx] = useState<number>(-1);
-  const [loadingNotes, setLoadingNotes] = useState(false);
-
-  // Order params
-  const [sellAmount, setSellAmount] = useState('');
-  const [selectedBuyToken, setSelectedBuyToken] = useState<TokenInfo | null>(null);
-  const [buyAmount, setBuyAmount] = useState('');
-  const [feeBps, setFeeBps] = useState('30');
-  const [expiryIdx, setExpiryIdx] = useState(2); // default 24h
-
-  // Market order specific
-  const [slippageIdx, setSlippageIdx] = useState(1); // default 0.5%
-
-  // Claims
-  const [claimRecipient, setClaimRecipient] = useState('');
-  const [claimReleaseMin, setClaimReleaseMin] = useState('0');
-
-  // Progress (shared union for both order types)
-  const [progress, setProgress] = useState<OrderProgress | MarketOrderProgress>({ step: 'idle' });
-
-  const selectedNote = selectedNoteIdx >= 0 ? activeNotes[selectedNoteIdx] : null;
-  const isProcessing = progress.step !== 'idle' && progress.step !== 'success' && progress.step !== 'error';
-
-  // Load active notes
-  useEffect(() => {
-    if (!account) return;
-    setLoadingNotes(true);
-    NoteStorageService.getActiveNotes()
-      .then(setActiveNotes)
-      .finally(() => setLoadingNotes(false));
-  }, [account, progress.step]);
-
-  const handleSubmit = useCallback(async () => {
-    if (!signer || !account || !selectedNote) return;
-
-    const parsedSell = parseFloat(sellAmount);
-    const parsedBuy = parseFloat(buyAmount);
-    if (isNaN(parsedSell) || parsedSell <= 0 || isNaN(parsedBuy) || parsedBuy <= 0) {
-      Alert.alert('Invalid', 'Enter valid sell and buy amounts.');
-      return;
-    }
-
-    // Validate sell amount doesn't exceed note balance
-    const noteBalance = parseFloat(ethers.formatEther(selectedNote.amount));
-    if (parsedSell > noteBalance) {
-      Alert.alert('Insufficient', `Sell amount exceeds note balance (${noteBalance.toFixed(4)}).`);
-      return;
-    }
-
-    // Default claim: send to connected account
-    const recipient = claimRecipient || account;
-    if (!ethers.isAddress(recipient)) {
-      Alert.alert('Invalid', 'Enter a valid recipient address.');
-      return;
-    }
-
-    const claims: ClaimInput[] = [{
-      recipient,
-      amount: buyAmount,
-      releaseDelaySec: Number(claimReleaseMin) * 60,
-    }];
-
-    if (!selectedBuyToken) {
-      Alert.alert('Invalid', 'Select a buy token.');
-      return;
-    }
-
-    if (orderType === 'market') {
-      const dexRouter = ConfigService.getUniswapRouterAddress();
-      if (!dexRouter) {
-        Alert.alert('Not configured', 'Uniswap router address not set.');
-        return;
-      }
-      await MarketOrderService.execute(
-        signer,
-        account,
-        {
-          note: selectedNote,
-          sellAmount,
-          buyToken: selectedBuyToken.address,
-          buyAmount,
-          slippageBps: SLIPPAGE_OPTIONS[slippageIdx].bps,
-          expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
-          claimRecipient: recipient,
-          dexRouter,
-          uniswapFeeTier: 3000,
-        },
-        (p) => setProgress(p),
-      );
-    } else {
-      await OrderService.execute(
-        signer,
-        account,
-        {
-          note: selectedNote,
-          sellAmount,
-          buyToken: selectedBuyToken.address,
-          buyAmount,
-          maxFeeBps: Number(feeBps) || 0,
-          expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
-          claims,
-        },
-        (p) => setProgress(p),
-      );
-    }
-  }, [signer, account, selectedNote, sellAmount, buyAmount, selectedBuyToken, feeBps, expiryIdx, claimRecipient, claimReleaseMin, orderType, slippageIdx]);
-
-  const handleReset = () => {
-    setProgress({ step: 'idle' });
-    setSellAmount('');
-    setBuyAmount('');
-    setSelectedNoteIdx(-1);
-    setSelectedBuyToken(null);
-  };
-
-  if (!account) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <View style={styles.centered}>
-          <Text style={styles.title}>Trade</Text>
-          <Text style={styles.emptyText}>Connect wallet to trade</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const navigation = useNavigation<any>();
+  const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
+  const [amount, setAmount] = useState('1.5');
+  const [price, setPrice] = useState('1,850.25');
+  const [orderTab, setOrderTab] = useState<'book' | 'recent'>('book');
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Create Private Order</Text>
-
-        {/* ─── Order Type Selector ─────────────────── */}
-        <View style={styles.orderTypeRow}>
-          <TouchableOpacity
-            style={[styles.orderTypeBtn, orderType === 'limit' && styles.orderTypeBtnActive]}
-            onPress={() => setOrderType('limit')}
-            disabled={isProcessing}
-          >
-            <Text style={[styles.orderTypeText, orderType === 'limit' && styles.orderTypeTextActive]}>Limit</Text>
+    <SafeAreaView style={s.safe} edges={['top']}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
+        {/* Header */}
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+            <Text style={s.backIcon}>←</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.orderTypeBtn, orderType === 'market' && styles.orderTypeBtnActive]}
-            onPress={() => setOrderType('market')}
-            disabled={isProcessing}
-          >
-            <Text style={[styles.orderTypeText, orderType === 'market' && styles.orderTypeTextActive]}>Market</Text>
-          </TouchableOpacity>
+          <Text style={s.headerTitle}>Private Trade</Text>
+          <View style={s.profileWrap}>
+            <View style={s.profileCircle}>
+              <Text style={s.profileIcon}>👤</Text>
+            </View>
+            <View style={s.shieldBadge}>
+              <Text style={s.shieldIcon}>🛡</Text>
+            </View>
+          </View>
         </View>
 
-        <Text style={styles.subtitle}>
-          {orderType === 'limit' ? 'Submit to relayer for P2P matching' : 'Swap directly via DEX on-chain'}
-        </Text>
-
-        {/* ─── Note Selection ──────────────────────── */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Select Deposit Note</Text>
-          {loadingNotes ? (
-            <ActivityIndicator size="small" color="#95aaff" />
-          ) : activeNotes.length === 0 ? (
-            <Text style={styles.emptyText}>No active notes. Deposit first.</Text>
-          ) : (
-            activeNotes.map((note, i) => (
-              <TouchableOpacity
-                key={note.id}
-                style={[styles.noteRow, selectedNoteIdx === i && styles.noteRowActive]}
-                onPress={() => {
-                  setSelectedNoteIdx(i);
-                  setSellAmount(ethers.formatEther(note.amount));
-                }}
-                disabled={isProcessing}
-              >
-                <View>
-                  <Text style={styles.noteSymbol}>{note.tokenSymbol}</Text>
-                  <Text style={styles.noteAmount}>
-                    {parseFloat(ethers.formatEther(note.amount)).toFixed(4)}
-                  </Text>
-                </View>
-                <Text style={styles.noteLeaf}>Leaf #{note.leafIndex}</Text>
-              </TouchableOpacity>
-            ))
-          )}
+        {/* Tabs */}
+        <View style={s.tabsWrap}>
+          <View style={s.tabsBg}>
+            <TouchableOpacity
+              style={[s.tab, tradeType === 'limit' && s.tabActive]}
+              onPress={() => setTradeType('limit')}
+            >
+              <Text style={[s.tabText, tradeType === 'limit' && s.tabTextActive]}>Limit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.tab, tradeType === 'market' && s.tabActive]}
+              onPress={() => setTradeType('market')}
+            >
+              <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>Market</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {selectedNote && (
-          <>
-            {/* ─── Sell Amount ──────────────────────── */}
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>
-                Sell ({selectedNote.tokenSymbol})
-              </Text>
+        {/* Token Selector */}
+        <View style={s.tokenRow}>
+          <View style={s.tokenBox}>
+            <View style={s.tokenInner}>
+              <View style={[s.tokenDot, { backgroundColor: '#3B82F6' }]} />
+              <Text style={s.tokenName}>ETH</Text>
+              <Text style={s.tokenChevron}>▾</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={s.swapBtn}>
+            <Text style={s.swapIcon}>⇄</Text>
+          </TouchableOpacity>
+          <View style={s.tokenBox}>
+            <View style={s.tokenInner}>
+              <View style={[s.tokenDot, { backgroundColor: '#22C55E' }]} />
+              <Text style={s.tokenName}>USDC</Text>
+              <Text style={s.tokenChevron}>▾</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Price & Chart */}
+        <View style={s.priceSection}>
+          <View style={s.priceRow}>
+            <Text style={s.priceText}>ETH = $1,850.25 USDC</Text>
+            <View style={s.changeBadge}>
+              <Text style={s.changeText}>+1.2%</Text>
+            </View>
+          </View>
+          <View style={s.chartPlaceholder}>
+            <Text style={s.chartText}>Chart</Text>
+          </View>
+        </View>
+
+        {/* Inputs */}
+        <View style={s.inputsRow}>
+          <View style={s.inputCol}>
+            <Text style={s.inputLabel}>Amount (ETH)</Text>
+            <View style={s.inputWrap}>
               <TextInput
-                style={styles.amountInput}
-                value={sellAmount}
-                onChangeText={setSellAmount}
-                placeholder="0.0"
-                placeholderTextColor="#4b5563"
+                style={s.input}
+                value={amount}
+                onChangeText={setAmount}
                 keyboardType="decimal-pad"
-                editable={!isProcessing}
               />
-            </View>
-
-            {/* ─── Buy Token + Amount ──────────────── */}
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>Buy Token</Text>
-              <View style={styles.tokenRow}>
-                {tokens
-                  .filter((t) => t.address.toLowerCase() !== selectedNote.token.toLowerCase() || t.isNative !== (selectedNote.tokenSymbol === 'ETH'))
-                  .map((t) => {
-                    const isSelected = selectedBuyToken?.symbol === t.symbol && selectedBuyToken?.isNative === t.isNative;
-                    return (
-                      <TouchableOpacity
-                        key={`${t.symbol}-${t.isNative}`}
-                        style={[styles.tokenChip, isSelected && styles.tokenChipActive]}
-                        onPress={() => setSelectedBuyToken(t)}
-                        disabled={isProcessing}
-                      >
-                        <Text style={[styles.tokenChipText, isSelected && styles.tokenChipTextActive]}>
-                          {t.symbol}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-              </View>
-              <Text style={[styles.cardLabel, { marginTop: 12 }]}>Buy Amount</Text>
-              <TextInput
-                style={styles.amountInput}
-                value={buyAmount}
-                onChangeText={setBuyAmount}
-                placeholder="0.0"
-                placeholderTextColor="#4b5563"
-                keyboardType="decimal-pad"
-                editable={!isProcessing}
-              />
-            </View>
-
-            {/* ─── Fee/Slippage + Expiry ────────────── */}
-            <View style={styles.card}>
-              <View style={styles.rowBetween}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  {orderType === 'limit' ? (
-                    <>
-                      <Text style={styles.cardLabel}>Max Fee (bps)</Text>
-                      <TextInput
-                        style={styles.smallInput}
-                        value={feeBps}
-                        onChangeText={setFeeBps}
-                        keyboardType="number-pad"
-                        editable={!isProcessing}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.cardLabel}>Slippage</Text>
-                      <View style={styles.tokenRow}>
-                        {SLIPPAGE_OPTIONS.map((opt, i) => (
-                          <TouchableOpacity
-                            key={opt.label}
-                            style={[styles.expiryChip, slippageIdx === i && styles.expiryChipActive]}
-                            onPress={() => setSlippageIdx(i)}
-                            disabled={isProcessing}
-                          >
-                            <Text style={[styles.expiryText, slippageIdx === i && styles.expiryTextActive]}>
-                              {opt.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </>
-                  )}
-                </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.cardLabel}>Expiry</Text>
-                  <View style={styles.tokenRow}>
-                    {EXPIRY_OPTIONS.map((opt, i) => (
-                      <TouchableOpacity
-                        key={opt.label}
-                        style={[styles.expiryChip, expiryIdx === i && styles.expiryChipActive]}
-                        onPress={() => setExpiryIdx(i)}
-                        disabled={isProcessing}
-                      >
-                        <Text style={[styles.expiryText, expiryIdx === i && styles.expiryTextActive]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* ─── Claim Recipient ─────────────────── */}
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>Claim Recipient</Text>
-              <TextInput
-                style={styles.addressInput}
-                value={claimRecipient}
-                onChangeText={setClaimRecipient}
-                placeholder={account ? `${account.slice(0, 14)}... (default: self)` : '0x...'}
-                placeholderTextColor="#4b5563"
-                autoCapitalize="none"
-                editable={!isProcessing}
-              />
-              <Text style={[styles.cardLabel, { marginTop: 12 }]}>Release Delay (min)</Text>
-              <TextInput
-                style={styles.smallInput}
-                value={claimReleaseMin}
-                onChangeText={setClaimReleaseMin}
-                keyboardType="number-pad"
-                editable={!isProcessing}
-              />
-            </View>
-
-            {/* ─── Submit / Progress ───────────────── */}
-            {progress.step === 'idle' ? (
-              <TouchableOpacity
-                style={[styles.submitBtn, (!sellAmount || !buyAmount || !selectedBuyToken) && styles.btnDisabled]}
-                onPress={handleSubmit}
-                disabled={!sellAmount || !buyAmount || !selectedBuyToken || isProcessing}
-              >
-                <Text style={styles.submitBtnText}>Submit Order</Text>
+              <TouchableOpacity style={s.maxBtn}>
+                <Text style={s.maxText}>MAX</Text>
               </TouchableOpacity>
-            ) : (
-              <View style={shared.card}>
-                {orderType === 'limit' ? (
-                  <StepProgress steps={ORDER_STEPS} labels={STEP_LABELS} currentStep={progress.step as OrderStep | 'success' | 'error'} />
-                ) : (
-                  <StepProgress steps={MARKET_STEPS} labels={MARKET_STEP_LABELS} currentStep={progress.step as MarketOrderStep | 'success' | 'error'} />
-                )}
+            </View>
+            <Text style={s.inputHint}>Private Balance: 5.2 ETH</Text>
+          </View>
+          <View style={s.inputCol}>
+            <Text style={s.inputLabel}>Amount (USDC)</Text>
+            <View style={s.inputWrap}>
+              <TextInput
+                style={[s.input, s.inputReadonly]}
+                value="2,775.37"
+                editable={false}
+              />
+            </View>
+            <Text style={s.inputHint}>Private Balance: 4,500 USDC</Text>
+          </View>
+        </View>
 
-                {progress.step === 'success' && (
-                  <Text style={styles.successText}>
-                    {'orderId' in progress && progress.orderId
-                      ? `Order ID: ${progress.orderId}`
-                      : 'txHash' in progress && progress.txHash
-                        ? `Tx: ${progress.txHash.slice(0, 10)}...${progress.txHash.slice(-6)}`
-                        : 'Settled!'}
-                  </Text>
-                )}
-                {progress.step === 'error' && progress.error && (
-                  <Text style={styles.errorText} numberOfLines={3}>{progress.error}</Text>
-                )}
-
-                {(progress.step === 'success' || progress.step === 'error') && (
-                  <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
-                    <Text style={shared.resetBtnText}>
-                      {progress.step === 'success' ? 'New Order' : 'Try Again'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-          </>
+        {/* Limit Price */}
+        {tradeType === 'limit' && (
+          <View style={s.limitSection}>
+            <Text style={s.inputLabel}>Limit Price</Text>
+            <View style={s.limitRow}>
+              <TextInput
+                style={s.limitInput}
+                value={price}
+                onChangeText={setPrice}
+                keyboardType="decimal-pad"
+              />
+              <Text style={s.limitUnit}>USDC</Text>
+              <View style={s.limitDivider} />
+              <TouchableOpacity style={s.pmBtn}>
+                <Text style={s.pmText}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.pmBtn}>
+                <Text style={s.pmText}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
 
-        <View style={{ height: 32 }} />
+        {/* Action Button */}
+        <View style={s.actionWrap}>
+          <TouchableOpacity style={s.actionBtn} activeOpacity={0.8}>
+            <Text style={s.actionBtnText}>
+              {tradeType === 'limit' ? 'Place Order' : 'Swap Now'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Order Book */}
+        <View style={s.orderSection}>
+          <View style={s.orderTabs}>
+            <TouchableOpacity
+              style={[s.orderTab, orderTab === 'book' && s.orderTabActive]}
+              onPress={() => setOrderTab('book')}
+            >
+              <Text style={[s.orderTabText, orderTab === 'book' && s.orderTabTextActive]}>Order Book</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.orderTab, orderTab === 'recent' && s.orderTabActive]}
+              onPress={() => setOrderTab('recent')}
+            >
+              <Text style={[s.orderTabText, orderTab === 'recent' && s.orderTabTextActive]}>Recent Trades</Text>
+            </TouchableOpacity>
+          </View>
+          {orderBookData.map((order) => (
+            <View key={order.id} style={s.orderRow}>
+              <Text style={s.orderName}>{order.name}</Text>
+              <View style={s.orderRight}>
+                <View style={[s.orderTypeBadge, order.type === 'Buy' ? s.orderBuy : s.orderSell]}>
+                  <Text style={[s.orderTypeText, order.type === 'Buy' ? s.orderBuyText : s.orderSellText]}>{order.type}</Text>
+                </View>
+                <Text style={s.orderPrice}>{order.price}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View style={{ height: 96 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ─── Styles ────────────────────────────────────────────
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { flex: 1 },
+  scrollContent: { gap: 24, paddingBottom: 24 },
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#0a0f1e' },
-  container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#fff', textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginTop: 4, marginBottom: 20 },
+  /* Header */
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16 },
+  backBtn: { padding: 8, marginLeft: -8 },
+  backIcon: { fontSize: 24, color: '#4B5563' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  profileWrap: { position: 'relative' },
+  profileCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
+  profileIcon: { fontSize: 20, color: '#4B5563' },
+  shieldBadge: { position: 'absolute', top: -4, right: -4, width: 20, height: 20, borderRadius: 10, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  shieldIcon: { fontSize: 8, color: '#FFFFFF' },
 
-  // Order type selector
-  orderTypeRow: { flexDirection: 'row', marginBottom: 12, gap: 8 },
-  orderTypeBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: '#111827', borderWidth: 1, borderColor: '#1f2937', alignItems: 'center' },
-  orderTypeBtnActive: { borderColor: '#6366f1', backgroundColor: '#6366f115' },
-  orderTypeText: { fontSize: 15, fontWeight: '600', color: '#6b7280' },
-  orderTypeTextActive: { color: '#95aaff' },
+  /* Tabs */
+  tabsWrap: { paddingHorizontal: 24 },
+  tabsBg: { flexDirection: 'row', backgroundColor: '#F9FAFB', padding: 4, borderRadius: 12 },
+  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  tabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  tabText: { fontSize: 14, fontWeight: '700', color: '#9CA3AF' },
+  tabTextActive: { color: '#2563EB' },
 
-  card: { backgroundColor: '#111827', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#1f2937' },
-  cardLabel: { fontSize: 13, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
+  /* Token Selector */
+  tokenRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, gap: 16 },
+  tokenBox: { flex: 1, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6' },
+  tokenInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tokenDot: { width: 24, height: 24, borderRadius: 12 },
+  tokenName: { fontSize: 14, fontWeight: '700' },
+  tokenChevron: { fontSize: 14, color: '#9CA3AF' },
+  swapBtn: { padding: 8 },
+  swapIcon: { fontSize: 20, color: '#9CA3AF' },
 
-  // Note selection
-  noteRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#1f2937', marginBottom: 8 },
-  noteRowActive: { borderColor: '#6366f1', backgroundColor: '#6366f110' },
-  noteSymbol: { fontSize: 16, fontWeight: '700', color: '#e5e7eb' },
-  noteAmount: { fontSize: 14, color: '#95aaff', fontFamily: 'monospace', marginTop: 2 },
-  noteLeaf: { fontSize: 12, color: '#4b5563' },
+  /* Price & Chart */
+  priceSection: { paddingHorizontal: 24, gap: 8 },
+  priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+  priceText: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  changeBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  changeText: { fontSize: 12, fontWeight: '700', color: '#22C55E' },
+  chartPlaceholder: { height: 160, width: '100%', marginTop: 16, backgroundColor: '#F9FAFB', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  chartText: { fontSize: 14, color: '#9CA3AF', fontWeight: '500' },
 
-  // Token selector
-  tokenRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  tokenChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#374151', backgroundColor: '#1f2937' },
-  tokenChipActive: { borderColor: '#6366f1', backgroundColor: '#6366f120' },
-  tokenChipText: { fontSize: 14, fontWeight: '600', color: '#9ca3af' },
-  tokenChipTextActive: { color: '#95aaff' },
+  /* Inputs */
+  inputsRow: { flexDirection: 'row', paddingHorizontal: 24, gap: 16 },
+  inputCol: { flex: 1, gap: 8 },
+  inputLabel: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  inputWrap: { position: 'relative' },
+  input: { padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', fontSize: 14, fontWeight: '700', color: '#111827' },
+  inputReadonly: { backgroundColor: '#F3F4F6', color: '#6B7280' },
+  maxBtn: { position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' },
+  maxText: { fontSize: 10, fontWeight: '700', color: '#2563EB' },
+  inputHint: { fontSize: 10, color: '#9CA3AF', fontWeight: '500' },
 
-  // Inputs
-  amountInput: { fontSize: 24, fontWeight: '700', color: '#fff', fontFamily: 'monospace', paddingVertical: 6 },
-  smallInput: { fontSize: 18, fontWeight: '600', color: '#fff', fontFamily: 'monospace', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#1f2937' },
-  addressInput: { fontSize: 14, color: '#fff', fontFamily: 'monospace', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1f2937' },
+  /* Limit Price */
+  limitSection: { paddingHorizontal: 24, gap: 8 },
+  limitRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6' },
+  limitInput: { flex: 1, fontSize: 14, fontWeight: '700', color: '#111827' },
+  limitUnit: { fontSize: 12, fontWeight: '700', color: '#9CA3AF' },
+  limitDivider: { width: 1, height: 20, backgroundColor: '#E5E7EB' },
+  pmBtn: { padding: 4 },
+  pmText: { fontSize: 16, color: '#2563EB', fontWeight: '700' },
 
-  // Expiry
-  expiryChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#374151' },
-  expiryChipActive: { borderColor: '#6366f1', backgroundColor: '#6366f120' },
-  expiryText: { fontSize: 13, color: '#9ca3af' },
-  expiryTextActive: { color: '#95aaff' },
+  /* Action */
+  actionWrap: { paddingHorizontal: 24, marginTop: 8 },
+  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 
-  // Layout
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between' },
-
-  // Submit
-  submitBtn: { backgroundColor: '#6366f1', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
-  submitBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  btnDisabled: { opacity: 0.4 },
-
-  successText: { color: '#10b981', fontSize: 13, marginTop: 12, fontFamily: 'monospace' },
-  errorText: { color: '#ef4444', fontSize: 12, marginTop: 8 },
-  emptyText: { fontSize: 14, color: '#4b5563', textAlign: 'center', paddingVertical: 12 },
+  /* Order Book */
+  orderSection: { paddingHorizontal: 24, gap: 16 },
+  orderTabs: { flexDirection: 'row', gap: 24, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  orderTab: { paddingBottom: 8 },
+  orderTabActive: { borderBottomWidth: 2, borderBottomColor: '#2563EB' },
+  orderTabText: { fontSize: 14, fontWeight: '700', color: '#9CA3AF' },
+  orderTabTextActive: { color: '#111827' },
+  orderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
+  orderName: { fontSize: 12, fontWeight: '500', color: '#6B7280' },
+  orderRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  orderTypeBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+  orderBuy: { backgroundColor: '#EFF6FF' },
+  orderSell: { backgroundColor: '#FFF7ED' },
+  orderTypeText: { fontSize: 12, fontWeight: '500' },
+  orderBuyText: { color: '#2563EB' },
+  orderSellText: { color: '#EA580C' },
+  orderPrice: { fontSize: 12, fontWeight: '700', color: '#111827' },
 });
