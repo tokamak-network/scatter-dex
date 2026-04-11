@@ -20,6 +20,51 @@ export interface StoredNote {
 const DIR_HANDLE_KEY = "zkscatter_dir_handle";
 const NOTES_PREFIX = "zkscatter-note-";
 
+// ─── IndexedDB persistence for FileSystemDirectoryHandle ────
+// The File System Access API's directory handle can be serialized
+// into IndexedDB via the structured clone algorithm, allowing it
+// to survive page reloads and browser restarts.
+
+// Lazy singleton — one IDB connection for the lifetime of the page.
+let _dbPromise: Promise<IDBDatabase> | null = null;
+
+function openHandleDB(): Promise<IDBDatabase> {
+  if (!_dbPromise) {
+    _dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open("zkscatter-fs", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("handles");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => { _dbPromise = null; reject(req.error); };
+    });
+  }
+  return _dbPromise;
+}
+
+async function persistHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openHandleDB();
+  const tx = db.transaction("handles", "readwrite");
+  tx.objectStore("handles").put(handle, DIR_HANDLE_KEY);
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadPersistedHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await openHandleDB();
+    const tx = db.transaction("handles", "readonly");
+    const req = tx.objectStore("handles").get(DIR_HANDLE_KEY);
+    return await new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn("Failed to load persisted folder handle:", e);
+    return null;
+  }
+}
+
 // ─── File System Access API ──────────────────────────────────
 
 let dirHandle: FileSystemDirectoryHandle | null = null;
@@ -29,18 +74,67 @@ export function isFileSystemAvailable(): boolean {
   return typeof window !== "undefined" && "showDirectoryPicker" in window;
 }
 
-/** Prompt user to select a folder for note storage. */
+// Deduplicate concurrent restoreNotesFolder calls (multiple pages mounting)
+let _restorePromise: Promise<boolean> | null = null;
+
+/**
+ * Try to restore a previously selected folder from IndexedDB.
+ * Returns true if the handle was restored and permission is still granted.
+ * Deduplicates concurrent calls (safe for multiple hook mounts).
+ */
+export function restoreNotesFolder(): Promise<boolean> {
+  if (dirHandle) return Promise.resolve(true);
+  if (_restorePromise) return _restorePromise;
+  _restorePromise = _doRestore();
+  return _restorePromise;
+}
+
+async function _doRestore(): Promise<boolean> {
+  if (!isFileSystemAvailable()) return false;
+  try {
+    const handle = await loadPersistedHandle();
+    if (!handle) return false;
+
+    // Verify we still have permission (browser may have revoked it)
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") {
+      dirHandle = handle;
+      return true;
+    }
+
+    // requestPermission requires a user gesture — will fail on startup,
+    // but succeeds if called from a click handler via handleSelectFolder
+    const req = await handle.requestPermission({ mode: "readwrite" });
+    if (req === "granted") {
+      dirHandle = handle;
+      return true;
+    }
+  } catch {
+    // queryPermission/requestPermission can throw SecurityError on
+    // revoked handles or missing user gesture — safe to ignore
+  }
+
+  return false;
+}
+
+/** Prompt user to select a folder for note storage. Persists to IndexedDB. */
 export async function selectNotesFolder(): Promise<boolean> {
   if (!isFileSystemAvailable()) return false;
   try {
     dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
-    return true;
   } catch {
     return false; // user cancelled
   }
+  // Persist separately — folder selection succeeds even if IDB fails
+  try {
+    await persistHandle(dirHandle);
+  } catch (e) {
+    console.warn("Failed to persist folder handle to IndexedDB:", e);
+  }
+  return true;
 }
 
-/** Check if a folder is already selected (from current session). */
+/** Check if a folder is already selected (from current session or restored). */
 export function hasFolderSelected(): boolean {
   return dirHandle !== null;
 }
