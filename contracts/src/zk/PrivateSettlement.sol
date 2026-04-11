@@ -12,6 +12,7 @@ import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
 import {ICancelVerifier} from "./ICancelVerifier.sol";
 import {IBatchAuthorizeVerifier} from "./IBatchAuthorizeVerifier.sol";
 import {IWETH} from "../interfaces/IWETH.sol";
+
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
 import {FeeVault} from "../FeeVault.sol";
@@ -52,6 +53,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error OrderExpired();
     // ─── cancelPrivate (escrow rotation cancel) errors ──
     error CancelVerifierNotSet();
+    // ─── settleWithDex errors ──
+    error DexRouterNotWhitelisted();
+    error DexCallReverted();
+    error DexOutputInsufficient(uint256 actual, uint256 required);
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -113,6 +118,20 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint96 feeTokenMaker,
         uint96 feeTokenTaker
     );
+    /// @notice Emitted by `settleWithDex` when a user swaps via an external DEX.
+    event SettledWithDex(
+        bytes32 indexed nullifier,
+        bytes32 indexed claimsRoot,
+        address sellToken,
+        address buyToken,
+        uint128 sellAmount,
+        uint256 amountOut,
+        uint96  totalLocked,
+        address indexed submitter
+    );
+
+    event DexRouterWhitelistUpdated(address indexed router, bool allowed);
+
     // ─── Data Structures ─────────────────────────────────────────
     // Packed into 2 storage slots:
     // Slot 0: token (20 bytes) + totalLocked (12 bytes) = 32 bytes
@@ -149,6 +168,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         NOTE: `authorizeVerifier` must still be set — this is an optimization overlay,
     ///         not a replacement. The fallback path uses `authorizeVerifier` directly.
     IBatchAuthorizeVerifier public batchAuthorizeVerifier;
+    /// @notice Whitelisted DEX routers for `settleWithDex`.
+    ///         Supports any DEX (Uniswap, 1inch, Curve, PancakeSwap, etc.).
+    ///         Each router must be explicitly whitelisted by the owner.
+    mapping(address => bool) public whitelistedDexRouters;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
     ///         the relayer at proof generation time) and `block.timestamp`.
@@ -232,6 +255,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
         emit BatchAuthorizeVerifierUpdated(address(batchAuthorizeVerifier), _verifier);
         batchAuthorizeVerifier = IBatchAuthorizeVerifier(_verifier);
+    }
+
+    /// @notice Whitelist or revoke a DEX router for `settleWithDex`.
+    ///         Supports any DEX: Uniswap V3, 1inch, Curve, PancakeSwap, etc.
+    function setDexRouterWhitelist(address _router, bool _allowed) external onlyOwner {
+        if (_router == address(0)) revert ZeroAddress();
+        if (_allowed && _router.code.length == 0) revert NotAContract();
+        whitelistedDexRouters[_router] = _allowed;
+        emit DexRouterWhitelistUpdated(_router, _allowed);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -739,6 +771,140 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.oldNullifier,
             p.oldNonceNullifier,
             p.newCommitment,
+            msg.sender
+        );
+    }
+
+    // ─── settleWithDex (single-party DEX swap, permissionless) ────
+    //
+    // Allows a user to trade directly against any whitelisted external DEX
+    // (Uniswap, 1inch, Curve, PancakeSwap, etc.) without needing a counterparty
+    // or relayer. The user generates a single authorize.circom proof proving
+    // commitment ownership + trade intent, then submits it along with
+    // DEX-specific swap parameters.
+    //
+    // Flow:
+    //   1. Verify authorize proof (single, not paired)
+    //   2. Burn nullifiers, insert residual commitment
+    //   3. Extract sellToken from pool
+    //   4. Swap via whitelisted DEX router: sellToken → buyToken
+    //   5. Register claims group for buyToken output
+    //   6. Surplus (amountOut − totalLocked) → protocol treasury
+
+    struct SettleDexParams {
+        AuthorizeProof proof;
+        address dexRouter;    // any whitelisted DEX router (Uniswap, 1inch, Curve, etc.)
+        bytes   dexCalldata;  // encoded swap call for the specific DEX
+    }
+
+    /// @notice Execute a private settlement via any whitelisted external DEX.
+    ///         The user generates a single authorize.circom proof and swaps
+    ///         their escrowed tokens on-chain through any supported DEX router.
+    ///         No counterparty needed — permissionless market order.
+    ///
+    /// @dev    The contract is DEX-agnostic: it approves `dexRouter` for
+    ///         `sellAmount`, forwards `dexCalldata` as-is, then checks
+    ///         that at least `totalLocked` of `buyToken` was received.
+    ///         The frontend constructs the appropriate calldata for the
+    ///         chosen DEX (e.g. Uniswap exactInputSingle, 1inch swap, etc.).
+    function settleWithDex(SettleDexParams calldata p) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
+
+        AuthorizeProof calldata proof = p.proof;
+
+        // 1. Relayer binding — msg.sender must match the relayer in the proof.
+        //    For permissionless mode, user sets relayer = own address.
+        if (msg.sender != proof.relayer) revert NotMakerOrTakerRelayer();
+
+        // 2. Token whitelist
+        if (!whitelistedTokens[proof.sellToken]) revert TokenNotWhitelisted();
+        if (!whitelistedTokens[proof.buyToken]) revert TokenNotWhitelisted();
+
+        // 3. Non-zero sell amount
+        if (proof.sellAmount == 0) revert ZeroSellAmount();
+
+        // 4. Expiry
+        if (block.timestamp > proof.expiry) revert OrderExpired();
+
+        // 5. Nullifier double-spend (escrow + nonce)
+        if (proof.nullifier == proof.nonceNullifier) revert NullifierAlreadySpent();
+        if (nullifiers[proof.nullifier]) revert NullifierAlreadySpent();
+        if (nonceNullifiers[proof.nonceNullifier]) revert NullifierAlreadySpent();
+
+        // 6. Root recency
+        if (!pool.isKnownRoot(proof.commitmentRoot)) revert UnknownRoot();
+
+        // 7. Verify Groth16 proof
+        uint[15] memory signals = _packAuthSignals(proof);
+        if (!authorizeVerifier.verifyProof(proof.proofA, proof.proofB, proof.proofC, signals)) {
+            revert InvalidProof();
+        }
+
+        // 8. Relayer registry gating (if configured)
+        if (address(relayerRegistry) != address(0)) {
+            if (!relayerRegistry.isActiveRelayer(proof.relayer)) revert NotActiveRelayer();
+        }
+
+        // 9. Mark nullifiers
+        nullifiers[proof.nullifier] = true;
+        nonceNullifiers[proof.nonceNullifier] = true;
+
+        // 10. Insert residual commitment (change UTXO)
+        if (proof.newCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(proof.newCommitment));
+        }
+
+        // 11. Transfer sellToken from pool to this contract
+        uint256 sellBalBefore = IERC20(proof.sellToken).balanceOf(address(this));
+        pool.transferToSettlement(proof.sellToken, proof.sellAmount);
+
+        // 12. Execute DEX swap (generic — works with any whitelisted router)
+        //     Snapshot buyToken balance before swap to measure actual output.
+        uint256 buyBalanceBefore = IERC20(proof.buyToken).balanceOf(address(this));
+
+        IERC20(proof.sellToken).forceApprove(p.dexRouter, proof.sellAmount);
+        (bool success,) = p.dexRouter.call(p.dexCalldata);
+        if (!success) revert DexCallReverted();
+        IERC20(proof.sellToken).forceApprove(p.dexRouter, 0);
+
+        // Return any unspent sellToken to the pool (partial fills by DEX)
+        uint256 sellRemaining = IERC20(proof.sellToken).balanceOf(address(this));
+        if (sellRemaining > sellBalBefore) {
+            IERC20(proof.sellToken).safeTransfer(address(pool), sellRemaining - sellBalBefore);
+        }
+
+        uint256 amountOut = IERC20(proof.buyToken).balanceOf(address(this)) - buyBalanceBefore;
+        if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
+
+        // 13. Register claims group
+        if (claimsGroups[proof.claimsRoot].totalLocked != 0) revert ClaimsGroupAlreadyExists();
+        claimsGroups[proof.claimsRoot] = ClaimsGroup({
+            token: proof.buyToken,
+            totalLocked: proof.totalLocked,
+            totalClaimed: 0
+        });
+
+        // 14. Surplus handling: positive slippage goes directly to FeeVault
+        //     treasury (not via deposit/claim, which would deduct platform fee).
+        //     If no FeeVault is set, surplus stays in the contract.
+        if (amountOut > proof.totalLocked) {
+            uint256 surplus = amountOut - proof.totalLocked;
+            if (address(feeVault) != address(0)) {
+                IERC20(proof.buyToken).safeTransfer(feeVault.treasury(), surplus);
+            }
+            // else: surplus stays in contract balance (recoverable by owner)
+        }
+
+        emit SettledWithDex(
+            proof.nullifier,
+            proof.claimsRoot,
+            proof.sellToken,
+            proof.buyToken,
+            proof.sellAmount,
+            amountOut,
+            proof.totalLocked,
             msg.sender
         );
     }
