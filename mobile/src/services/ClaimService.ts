@@ -151,11 +151,7 @@ export const ClaimService = {
       const settlementAddr = ConfigService.getPrivateSettlementAddress();
       if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
 
-      // PrivateSettlement.claimWithProof — argument order must match on-chain:
-      // (proof, claimsRoot, claimNullifier, amount, token, recipient, releaseTime)
-      const settlement = new ethers.Contract(settlementAddr, [
-        'function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external',
-      ], signer);
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
       const claimsRootBytes32 = toBytes32Hex(treeResult.root);
       const nullifierBytes32 = toBytes32Hex(nullifier);

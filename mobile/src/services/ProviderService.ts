@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from './ConfigService';
 
 let readProvider: ethers.JsonRpcProvider | null = null;
+let cachedSanctionsAddr: string | null = null;
 
 export const ProviderService = {
   getReadProvider(): ethers.JsonRpcProvider {
@@ -25,7 +26,22 @@ export const ProviderService = {
     await AsyncStorage.setItem('scatterdex_earliest_block', String(block));
   },
 
+  /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit. */
+  async getSanctionsListAddress(): Promise<string | null> {
+    if (cachedSanctionsAddr !== null) return cachedSanctionsAddr;
+
+    const poolAddr = ConfigService.getCommitmentPoolAddress();
+    if (!poolAddr) return null;
+
+    const { COMMITMENT_POOL_ABI } = await import('../lib/contracts');
+    const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, this.getReadProvider());
+    const addr: string = await pool.sanctionsList();
+    cachedSanctionsAddr = addr;
+    return addr;
+  },
+
   reset() {
     readProvider = null;
+    cachedSanctionsAddr = null;
   },
 };
