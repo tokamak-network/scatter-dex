@@ -1,7 +1,7 @@
 /**
  * Simple in-memory rate limiter for Next.js API routes.
  *
- * Uses a sliding window per IP address. No external dependencies.
+ * Uses a fixed window per IP address. No external dependencies.
  * For production with multiple instances, replace with Redis-based limiter.
  */
 
