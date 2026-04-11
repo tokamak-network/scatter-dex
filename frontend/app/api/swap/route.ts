@@ -36,6 +36,20 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Validate chainId is a positive integer
+  if (!/^\d+$/.test(chainId)) {
+    return NextResponse.json({ error: "Invalid chainId" }, { status: 400 });
+  }
+
+  // Validate addresses are hex
+  if (!/^0x[0-9a-fA-F]{40}$/.test(src) || !/^0x[0-9a-fA-F]{40}$/.test(dst)) {
+    return NextResponse.json({ error: "Invalid token address" }, { status: 400 });
+  }
+
+  if (!/^0x[0-9a-fA-F]{40}$/.test(from)) {
+    return NextResponse.json({ error: "Invalid from address" }, { status: 400 });
+  }
+
   const queryParams = new URLSearchParams({
     src,
     dst,
@@ -63,7 +77,7 @@ export async function GET(req: NextRequest) {
     if (!res.ok) {
       const errText = await res.text().catch(() => "unknown error");
       return NextResponse.json(
-        { error: `1inch API error: ${errText}` },
+        { error: `1inch API error: ${errText.slice(0, 200)}` },
         { status: res.status },
       );
     }
