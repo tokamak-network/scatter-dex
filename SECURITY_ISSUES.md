@@ -235,7 +235,7 @@
 | M-6 | CORS `["*"]` | MEDIUM | ✅ | PR #180 |
 | M-7 | API Rate Limiting | MEDIUM | ✅ | PR #181 |
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | 🔧 | `fix/M8-pubkeybind-privacy` |
-| M-9 | 클라이언트 SSRF (claim) | MEDIUM | ⬜ | — |
+| M-9 | 클라이언트 SSRF (claim) | MEDIUM | 🔧 | `fix/M9-client-ssrf-proxy` |
 | M-10 | DB 파일 퍼미션 | MEDIUM | ⬜ | — |
 | M-11 | cross-relayer race condition | MEDIUM | ⬜ | — |
 | L-5~L-9 | 5건 LOW | LOW | ⬜ | — |
