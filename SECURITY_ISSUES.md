@@ -229,7 +229,7 @@
 | C-1 | settleWithDex MEV (deadline) | CRITICAL | ⚠️ 부분 | — |
 | C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | ✅ | PR #176 |
 | C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ✅ | PR #175 |
-| H-3 | transferFee 풀 드레인 벡터 | HIGH | 🔧 | `fix/H3-transfer-fee-cap` |
+| H-3 | transferFee 풀 드레인 벡터 | HIGH | ✅ | PR #178 |
 | H-5 | claimCount 범위 미검증 | HIGH | 🔧 | `fix/H5-claimcount-range-check` |
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
 | M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
