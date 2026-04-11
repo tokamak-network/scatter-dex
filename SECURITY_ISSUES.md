@@ -284,12 +284,12 @@
 
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
-| R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | 🔧 | `fix/R1-gas-estimation`, `test/R1-gas-guard-unit-tests` |
+| R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | ✅ | PR #198, #200 |
 | R-2 | TX 재시도 없음 | 🔧 | `fix/R2-tx-retry` |
-| R-3 | 헬스체크 없음 | `/health` 엔드포인트 (RPC + DB 체크) | 🔧 | `fix/R3-R6-relayer-hardening` |
-| R-4 | RPC 페일오버 없음 | FallbackProvider + `RPC_URLS_FALLBACK` env var | 🔧 | `fix/R3-R6-relayer-hardening` |
-| R-5 | 커밋먼트 재인덱싱 | DB 체크포인트로 마지막 인덱싱 블록 저장, 재시작 시 이어서 스캔 | 🔧 | `fix/R3-R6-relayer-hardening` |
-| R-6 | authorize 주문 인메모리 | SQLite `authorize_orders` 테이블 + 재시작 시 pending 주문 복원 | 🔧 | `fix/R3-R6-relayer-hardening` |
+| R-3 | 헬스체크 없음 | `/health` 엔드포인트 (RPC + DB 체크) | ✅ | PR #202 |
+| R-4 | RPC 페일오버 없음 | FallbackProvider + `RPC_URLS_FALLBACK` env var | ✅ | PR #202 |
+| R-5 | 커밋먼트 재인덱싱 | DB 체크포인트로 마지막 인덱싱 블록 저장, 재시작 시 이어서 스캔 | ✅ | PR #202 |
+| R-6 | authorize 주문 인메모리 | SQLite `authorize_orders` 테이블 + 재시작 시 pending 주문 복원 | ✅ | PR #202 |
 
 #### 🟠 HIGH (강력 권장)
 
@@ -317,7 +317,7 @@
 
 | # | 영역 | 이슈 | 상태 |
 |---|------|------|------|
-| S-C1 | Frontend/Relayer | ownerSecret 레거시 경로 제거 — UI는 이미 authorize 사용 중, 릴레이어 레거시 엔드포인트 비활성화 필요 | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
+| S-C1 | Frontend/Relayer | ownerSecret 레거시 경로 제거 — UI는 이미 authorize 사용 중, 릴레이어 레거시 엔드포인트 비활성화 필요 | ✅ PR #197 |
 
 #### 🟠 HIGH
 
@@ -328,8 +328,8 @@
 | S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
-| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
-| S-H7 | Relayer | authorize orders DoS 방어 (전역 cap + max expiry 24h + per-pubKey limit 50 + BigInt 정규화) | 🔧 `fix/SH7-authorize-map-dos` |
+| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | ✅ PR #197 |
+| S-H7 | Relayer | authorize orders DoS 방어 (전역 cap + max expiry 24h + per-pubKey limit 50 + BigInt 정규화) | ✅ PR #203 |
 
 #### 🟡 MEDIUM
 
