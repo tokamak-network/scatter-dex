@@ -93,11 +93,18 @@ function extractMessage(error: unknown): string {
   return str === "[object Object]" ? "Unknown error" : str;
 }
 
+// Pre-compute regex patterns for contract errors (avoid recreating per call)
+const CONTRACT_ERROR_PATTERNS: Array<[RegExp, string]> = Object.entries(CONTRACT_ERRORS).map(
+  ([name, message]) => [new RegExp(`\\b${name}\\b`), message]
+);
+
 /**
  * Convert a raw error into a user-friendly message.
  * Returns the friendly message, or the original message if no match is found.
+ * Logs the full error for debugging.
  */
 export function friendlyError(error: unknown): string {
+  console.error("[friendlyError] raw:", error);
   const raw = extractMessage(error);
 
   // 1. Wallet/user actions first (highest signal — user consciously acted)
@@ -105,9 +112,9 @@ export function friendlyError(error: unknown): string {
     if (pattern.test(raw)) return message;
   }
 
-  // 2. Solidity custom errors (word-boundary match to avoid false positives)
-  for (const [name, message] of Object.entries(CONTRACT_ERRORS)) {
-    if (new RegExp(`\\b${name}\\b`).test(raw)) return message;
+  // 2. Solidity custom errors (pre-compiled word-boundary regex)
+  for (const [pattern, message] of CONTRACT_ERROR_PATTERNS) {
+    if (pattern.test(raw)) return message;
   }
 
   // 3. ZK proof patterns
