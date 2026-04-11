@@ -237,7 +237,7 @@
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | 🔧 | `fix/M8-pubkeybind-privacy` |
 | M-9 | 클라이언트 SSRF (claim) | MEDIUM | ✅ | PR #183 |
 | M-10 | DB 파일 퍼미션 | MEDIUM | ✅ | PR #184 |
-| M-11 | cross-relayer race condition | MEDIUM | ⬜ | — |
+| M-11 | cross-relayer race condition | MEDIUM | 🔧 | `fix/M11-cross-relayer-race` |
 | L-5~L-9 | 5건 LOW | LOW | ⬜ | — |
 
 ### 🟠 기능 개발
