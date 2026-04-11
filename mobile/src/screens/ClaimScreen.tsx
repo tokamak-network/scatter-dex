@@ -138,7 +138,7 @@ export default function ClaimScreen() {
     setProgress(0);
     setCurrentStep('idle');
 
-    const onProgress = (p: ClaimProgress) => {
+    const onProgress = async (p: ClaimProgress) => {
       setCurrentStep(p.step);
       setProgress(STEP_PROGRESS[p.step] || 0);
       if (p.step === 'success') {
@@ -150,7 +150,7 @@ export default function ClaimScreen() {
           const updated = pendingClaims.filter((_, i) => i !== selectedClaimIndex);
           setPendingClaims(updated);
           setSelectedClaimIndex(null);
-          AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
+          await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
         }
       }
       if (p.step === 'error') {

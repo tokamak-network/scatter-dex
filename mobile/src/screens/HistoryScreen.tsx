@@ -35,12 +35,14 @@ interface ActivityItem {
   type: string;
   desc: string;
   time: string;
+  createdAt: number;
   status: string;
   statusType: StatusType;
 }
 
 function noteToActivity(note: StoredNote, orderStatuses: Map<string, OrderStatus>): ActivityItem {
-  const orderStatus = orderStatuses.get(note.id);
+  // Look up by commitment (canonical note identifier) — orderId from relayer maps to commitment
+  const orderStatus = orderStatuses.get(note.commitment);
   let type = 'Deposit';
   let statusType: StatusType = 'confirmed';
   let statusLabel = 'Confirmed';
@@ -72,6 +74,7 @@ function noteToActivity(note: StoredNote, orderStatuses: Map<string, OrderStatus
     type,
     desc: `${formatAmount(note.amount)} ${note.tokenSymbol}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`,
     time: formatDate(note.createdAt),
+    createdAt: note.createdAt,
     status: statusLabel,
     statusType,
   };
@@ -133,8 +136,8 @@ export default function HistoryScreen() {
     return allNotes
       .map((note) => noteToActivity(note, orderStatuses))
       .sort((a, b) => {
-        // Sort by time descending (most recent first)
-        return b.time.localeCompare(a.time);
+        // Sort by createdAt timestamp descending (most recent first)
+        return b.createdAt - a.createdAt;
       });
   }, [allNotes, orderStatuses]);
 

@@ -90,21 +90,32 @@ export default function DepositScreen() {
       setDepositError(null);
       setProgress(0);
 
-      const onProgress = (p: DepositProgress) => {
-        setProgress(STEP_PROGRESS[p.step] || 0);
-        if (p.step === 'success') {
-          setIsGenerating(false);
-          setProgress(100);
-        }
-        if (p.step === 'error') {
-          setIsGenerating(false);
-          setDepositError(p.error || 'Deposit failed');
-        }
-      };
+      try {
+        const onProgress = (p: DepositProgress) => {
+          setProgress(STEP_PROGRESS[p.step] || 0);
+          if (p.step === 'success') {
+            setIsGenerating(false);
+            setProgress(100);
+          }
+          if (p.step === 'error') {
+            setIsGenerating(false);
+            setDepositError(p.error || 'Deposit failed');
+          }
+        };
 
-      await DepositService.execute(signer, account, selectedToken, amount, onProgress);
+        await DepositService.execute(signer, account, selectedToken, amount, onProgress);
+      } catch (err: any) {
+        setIsGenerating(false);
+        setDepositError(err?.message || 'Deposit failed unexpectedly');
+      }
+    } else if (step === 2 && progress >= 100 && !isGenerating) {
+      // Complete Deposit — reset to step 1
+      setStep(1);
+      setAmount('');
+      setProgress(0);
+      setDepositError(null);
     }
-  }, [step, account, signer, selectedToken, amount]);
+  }, [step, account, signer, selectedToken, amount, progress, isGenerating]);
 
   const displayBalance = loadingBalance ? '...' : (balance ? `${formatBalance(balance)} ${selectedToken?.symbol || ''}` : '—');
 

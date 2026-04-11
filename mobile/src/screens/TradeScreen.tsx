@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { ethers } from 'ethers';
 import { colors } from '../styles/theme';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
@@ -82,18 +83,27 @@ export default function TradeScreen() {
       return;
     }
 
+    const buyToken = ConfigService.getWethAddress() || '';
+    if (!buyToken) {
+      Alert.alert('Configuration Error', 'Buy token address is not configured.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 
     try {
       if (tradeType === 'limit') {
         const parsedPrice = parseFloat(price.replace(/,/g, ''));
-        const buyAmount = (parsedAmount * parsedPrice).toString();
+        const sellAmountBn = ethers.parseUnits(amount, 18);
+        const priceCents = BigInt(Math.round(parsedPrice * 100));
+        const buyAmountBn = sellAmountBn * priceCents / 100n;
+        const buyAmount = buyAmountBn.toString();
 
         const input: OrderInput = {
           note: selectedNote,
           sellAmount: amount,
-          buyToken: ConfigService.getWethAddress() || '',
+          buyToken,
           buyAmount,
           maxFeeBps: 50,
           expiryHours: 24,
@@ -111,18 +121,28 @@ export default function TradeScreen() {
           }
         });
       } else {
+        const dexRouter = ConfigService.getUniswapRouterAddress();
+        if (!dexRouter) {
+          setSubmitting(false);
+          Alert.alert('Configuration Error', 'DEX router address is not configured.');
+          return;
+        }
+
         const parsedPrice = parseFloat(price.replace(/,/g, ''));
-        const buyAmountMin = (parsedAmount * parsedPrice * 0.995).toString(); // 0.5% slippage
+        const sellAmountBn = ethers.parseUnits(amount, 18);
+        const priceCents = BigInt(Math.round(parsedPrice * 100));
+        const buyAmountBn = sellAmountBn * priceCents / 100n;
+        const buyAmountMin = (buyAmountBn * 995n / 1000n).toString(); // 0.5% slippage
 
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
-          buyToken: ConfigService.getWethAddress() || '',
+          buyToken,
           buyAmount: buyAmountMin,
           slippageBps: 50,
           expiryHours: 1,
           claimRecipient: account,
-          dexRouter: ConfigService.getUniswapRouterAddress(),
+          dexRouter,
           uniswapFeeTier: 3000,
         };
 
@@ -227,7 +247,7 @@ export default function TradeScreen() {
               <TouchableOpacity
                 style={s.maxBtn}
                 onPress={() => {
-                  if (selectedNote) setAmount(formatAmount(selectedNote.amount));
+                  if (selectedNote) setAmount(ethers.formatEther(selectedNote.amount));
                 }}
               >
                 <Text style={s.maxText}>MAX</Text>

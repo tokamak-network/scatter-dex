@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
+  Modal, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -52,6 +53,8 @@ export default function SettingsScreen() {
   const [networks, setNetworks] = useState<NetworkConfig[]>([]);
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [walletLoading, setWalletLoading] = useState(false);
+  const [importModalVisible, setImportModalVisible] = useState(false);
+  const [importMnemonic, setImportMnemonic] = useState('');
 
   // Load biometric setting on mount
   useEffect(() => {
@@ -187,27 +190,28 @@ export default function SettingsScreen() {
   }, [connectBuiltin]);
 
   const handleImportWallet = useCallback(() => {
-    Alert.prompt(
-      'Import Wallet',
-      'Enter your mnemonic seed phrase:',
-      async (mnemonic) => {
-        if (!mnemonic?.trim()) return;
-        setWalletLoading(true);
-        try {
-          const address = await KeySecurityService.importFromMnemonic(mnemonic);
-          Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
-          try {
-            await connectBuiltin();
-          } catch { /* NO_WALLET handled in context */ }
-        } catch (err: any) {
-          Alert.alert('Error', err?.message || 'Failed to import wallet');
-        } finally {
-          setWalletLoading(false);
-        }
-      },
-      'plain-text',
-    );
-  }, [connectBuiltin]);
+    setImportMnemonic('');
+    setImportModalVisible(true);
+  }, []);
+
+  const handleImportConfirm = useCallback(async () => {
+    const mnemonic = importMnemonic.trim();
+    if (!mnemonic) return;
+    setImportModalVisible(false);
+    setImportMnemonic('');
+    setWalletLoading(true);
+    try {
+      const address = await KeySecurityService.importFromMnemonic(mnemonic);
+      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      try {
+        await connectBuiltin();
+      } catch { /* NO_WALLET handled in context */ }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to import wallet');
+    } finally {
+      setWalletLoading(false);
+    }
+  }, [importMnemonic, connectBuiltin]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -362,6 +366,47 @@ export default function SettingsScreen() {
 
         <View style={{ height: 96 }} />
       </ScrollView>
+
+      {/* Import Wallet Modal (cross-platform replacement for Alert.prompt) */}
+      <Modal
+        visible={importModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImportModalVisible(false)}
+      >
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <Text style={s.modalTitle}>Import Wallet</Text>
+            <Text style={s.modalSubtitle}>Enter your mnemonic seed phrase:</Text>
+            <TextInput
+              style={s.modalInput}
+              placeholder="Enter mnemonic..."
+              placeholderTextColor="#9CA3AF"
+              value={importMnemonic}
+              onChangeText={setImportMnemonic}
+              multiline
+              numberOfLines={3}
+              autoFocus
+              textAlignVertical="top"
+            />
+            <View style={s.modalButtons}>
+              <TouchableOpacity
+                style={s.modalBtnCancel}
+                onPress={() => { setImportModalVisible(false); setImportMnemonic(''); }}
+              >
+                <Text style={s.modalBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.modalBtnConfirm, !importMnemonic.trim() && { opacity: 0.4 }]}
+                onPress={handleImportConfirm}
+                disabled={!importMnemonic.trim()}
+              >
+                <Text style={s.modalBtnConfirmText}>Import</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -407,4 +452,16 @@ const s = StyleSheet.create({
   badgeWrap: { marginTop: 2, backgroundColor: '#FEF2F2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, alignSelf: 'flex-start' },
   badgeText: { fontSize: 10, fontWeight: '700', color: '#EF4444' },
   chevron: { fontSize: 24, color: '#D1D5DB', fontWeight: '300' },
+
+  /* Import Wallet Modal */
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalContent: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', gap: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  modalSubtitle: { fontSize: 14, color: '#6B7280' },
+  modalInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 14, color: '#111827', minHeight: 80 },
+  modalButtons: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },
+  modalBtnCancel: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F3F4F6' },
+  modalBtnCancelText: { fontSize: 14, fontWeight: '700', color: '#6B7280' },
+  modalBtnConfirm: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#2563EB' },
+  modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
 });

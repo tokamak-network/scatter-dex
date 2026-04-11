@@ -1,7 +1,7 @@
 /**
  * HomeScreen — design spec + real service integration
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator,
@@ -28,13 +28,21 @@ export default function HomeScreen() {
   const [showBalance, setShowBalance] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [privateTotal, setPrivateTotal] = useState('0');
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    return () => { isMounted.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!account) { setPrivateTotal('0'); return; }
     NoteStorageService.getPrivateBalances().then((map) => {
+      if (!isMounted.current) return;
       let total = 0n;
       for (const [, v] of map) total += v.total;
       setPrivateTotal(ethers.formatEther(total));
+    }).catch(() => {
+      // Ignore errors when component is unmounted
     });
   }, [account]);
 
