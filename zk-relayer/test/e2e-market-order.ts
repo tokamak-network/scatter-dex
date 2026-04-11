@@ -43,8 +43,9 @@ const CLAIMS_TREE_DEPTH = 4;
 const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
 const PLATFORM_FEE_BPS = 100n; // 1% — set during test
 
-// USDC address from DeployLocal (MockToken, 18 decimals on local anvil)
-const USDC_ADDRESS = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
+// USDC address — default from DeployLocal on fresh anvil. Override via env var.
+const USDC_ADDRESS = process.env.E2E_USDC_ADDRESS
+  ?? "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
 
 const USER_KEY = process.env.E2E_PRIVATE_KEY
   ?? "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";

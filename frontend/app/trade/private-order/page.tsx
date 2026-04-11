@@ -634,8 +634,7 @@ export default function PrivateOrderPage() {
       // Call settleWithDex on-chain
       const ps = proofResult.publicSignals;
       const settlementAddr = getPrivateSettlementAddress();
-      const { PRIVATE_SETTLEMENT_ABI: abi } = await import("../../lib/contracts");
-      const settlement = new ethers.Contract(settlementAddr, abi, signer);
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
       // Resolve DEX router address for current chain
       const currentChainId = chainId ?? 1;
@@ -655,8 +654,7 @@ export default function PrivateOrderPage() {
       // Read on-chain platform fee and compute post-fee amountIn.
       // The contract deducts this fee before approving the DEX router,
       // so the calldata must encode the post-fee amount.
-      const { PRIVATE_SETTLEMENT_ABI: settleAbi } = await import("../../lib/contracts");
-      const settlementRead = new ethers.Contract(settlementAddr, settleAbi, readProvider);
+      const settlementRead = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
       const platformFeeBps = Number(await settlementRead.dexPlatformFeeBps?.() ?? 0n);
       const swapAmountIn = platformFeeBps > 0
         ? parsedSell - (parsedSell * BigInt(platformFeeBps) / 10000n)

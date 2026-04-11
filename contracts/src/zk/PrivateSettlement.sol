@@ -251,6 +251,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// @notice Set the fee vault. Pass address(0) to send fees directly to relayer (legacy mode).
     function setFeeVault(address _vault) external onlyOwner {
         if (_vault != address(0) && _vault.code.length == 0) revert NotAContract();
+        // Reset dex platform fee if vault is being removed (prevents stuck fee config)
+        if (_vault == address(0) && dexPlatformFeeBps > 0) {
+            emit DexPlatformFeeUpdated(dexPlatformFeeBps, 0);
+            dexPlatformFeeBps = 0;
+        }
         emit FeeVaultUpdated(address(feeVault), _vault);
         feeVault = FeeVault(_vault);
     }
@@ -869,9 +874,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         //    For permissionless mode, user sets relayer = own address.
         if (msg.sender != proof.relayer) revert NotMakerOrTakerRelayer();
 
-        // 2. Token whitelist
+        // 2. Token whitelist + same-token guard
         if (!whitelistedTokens[proof.sellToken]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[proof.buyToken]) revert TokenNotWhitelisted();
+        if (proof.sellToken == proof.buyToken) revert TokenSidesMismatch();
 
         // 3. Non-zero sell amount
         if (proof.sellAmount == 0) revert ZeroSellAmount();
