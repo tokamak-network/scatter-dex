@@ -255,8 +255,8 @@
 | 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
 | 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
-| 18 | DEX 가격 로딩 폴백 | 🔧 | `feat/ux18-dex-price-fallback` |
-| 19 | 다중 지갑 지원 (WalletConnect) | 🔧 | `feat/ux19-multi-wallet` |
+| 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
+| 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
 | 20 | Batch Claim | ⬜ | — |
 
 ### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
@@ -285,7 +285,7 @@
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
 | R-1 | 가스 추정 없음 | 🔧 | `fix/R1-gas-estimation` |
-| R-2 | TX 재시도 없음 | 🔧 | `fix/R2-tx-retry` |
+| R-2 | TX 재시도 없음 | send-phase retry + wait timeout + receipt recovery + pending TX DB | 🔧 | `fix/R2-tx-retry` |
 | R-3 | 헬스체크 없음 | `/health` 엔드포인트 없음. k8s/로드밸런서 연동 불가 | ⬜ | — |
 | R-4 | RPC 페일오버 없음 | 단일 `RPC_URL`. RPC 다운 시 전체 중단 | ⬜ | — |
 | R-5 | 커밋먼트 재인덱싱 | 블록 0부터 재스캔. 체인 성장 시 성능 저하 | ⬜ | — |

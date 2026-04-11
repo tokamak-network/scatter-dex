@@ -18,6 +18,7 @@ import {
 } from "./zk-prover.js";
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
+import { sendAndWait } from "./tx-retry.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -74,6 +75,10 @@ export class PrivateSubmitter {
 
   getWallet(): ethers.Wallet {
     return this.wallet;
+  }
+
+  getProvider(): ethers.JsonRpcProvider {
+    return this.provider;
   }
 
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
@@ -326,8 +331,8 @@ export class PrivateSubmitter {
     const crTakerHex = "0x" + claimsRootTaker.toString(16).padStart(64, "0");
 
     // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
-    return this.withTxLock(async () => {
-      const tx = await this.settlement.settlePrivate({
+    const txHash = await this.sendTx(
+      () => this.settlement.settlePrivate({
         proofA,
         proofB,
         proofC,
@@ -349,24 +354,22 @@ export class PrivateSubmitter {
         feeTokenTaker,
         makerRelayer: makerRelayerAddr,
         takerRelayer: takerRelayerAddr,
-      });
+      }),
+      "settlePrivate",
+    );
 
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
-      console.log(`Private settlement tx: ${txHash}`);
+    console.log(`Private settlement tx: ${txHash}`);
 
-      // Record claims roots so this relayer only pays gas for its own claims.
-      // Best-effort: chain tx already succeeded, DB failure must not break the flow.
-      try {
-        this.db?.saveSettledClaimsRoot(crMakerHex);
-        this.db?.saveSettledClaimsRoot(crTakerHex);
-      } catch (err) {
-        console.warn("Failed to persist settled claims roots:", err);
-      }
+    // Record claims roots so this relayer only pays gas for its own claims.
+    // Best-effort: chain tx already succeeded, DB failure must not break the flow.
+    try {
+      this.db?.saveSettledClaimsRoot(crMakerHex);
+      this.db?.saveSettledClaimsRoot(crTakerHex);
+    } catch (err) {
+      console.warn("Failed to persist settled claims roots:", err);
+    }
 
-      return txHash;
-    });
+    return txHash;
   }
 
   /** Submit a scatter-direct (same-token, no counterparty) using withdraw proof. */
@@ -471,8 +474,8 @@ export class PrivateSubmitter {
     const proofC: [bigint, bigint] = [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])];
     const crHex = "0x" + claimsRoot.toString(16).padStart(64, "0");
 
-    return this.withTxLock(async () => {
-      const tx = await this.settlement.scatterDirect({
+    const txHash = await this.sendTx(
+      () => this.settlement.scatterDirect({
         proofA,
         proofB,
         proofC,
@@ -484,23 +487,21 @@ export class PrivateSubmitter {
         claimsRoot: crHex,
         totalLocked,
         fee,
-      });
+      }),
+      "scatterDirect",
+    );
 
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
-      console.log(`ScatterDirect tx: ${txHash}`);
+    console.log(`ScatterDirect tx: ${txHash}`);
 
-      // Record claims root so this relayer only pays gas for its own claims.
-      // Best-effort: chain tx already succeeded, DB failure must not break the flow.
-      try {
-        this.db?.saveSettledClaimsRoot(crHex);
-      } catch (err) {
-        console.warn(`Failed to persist claims root ${crHex}:`, err);
-      }
+    // Record claims root so this relayer only pays gas for its own claims.
+    // Best-effort: chain tx already succeeded, DB failure must not break the flow.
+    try {
+      this.db?.saveSettledClaimsRoot(crHex);
+    } catch (err) {
+      console.warn(`Failed to persist claims root ${crHex}:`, err);
+    }
 
-      return txHash;
-    });
+    return txHash;
   }
 
   private claimVkeyCache: any = null;
@@ -564,8 +565,8 @@ export class PrivateSubmitter {
     const valid = await this.verifyClaimProof(params.proofA, params.proofB, params.proofC, publicSignals);
     if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
 
-    return this.withTxLock(async () => {
-      const tx = await this.settlement.claimWithProof(
+    const txHash = await this.sendTx(
+      () => this.settlement.claimWithProof(
         params.proofA,
         params.proofB,
         params.proofC,
@@ -575,14 +576,12 @@ export class PrivateSubmitter {
         params.token,
         params.recipient,
         params.releaseTime,
-      );
+      ),
+      "claimWithProof",
+    );
 
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Claim transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
-      console.log(`Gasless claim tx: ${txHash}`);
-      return txHash;
-    });
+    console.log(`Gasless claim tx: ${txHash}`);
+    return txHash;
   }
 
   /** Claim accumulated fees from FeeVault for a specific token. Uses tx mutex. */
@@ -596,11 +595,22 @@ export class PrivateSubmitter {
     const balance = await vault.balances(this.wallet.address, token);
     if (balance === 0n) throw new Error("No fees to claim for this token");
 
+    const txHash = await this.sendTx(() => vault.claim(token), "claimVaultFee");
+    console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
+    return txHash;
+  }
+
+  /** Send TX with retry, DB tracking, and mutex serialization. */
+  private sendTx(
+    sendFn: () => Promise<ethers.TransactionResponse>,
+    label: string,
+  ): Promise<string> {
     return this.withTxLock(async () => {
-      const tx = await vault.claim(token);
-      const receipt = await tx.wait();
-      const txHash = receipt.hash ?? receipt.transactionHash;
-      console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
+      const { txHash } = await sendAndWait(sendFn, this.provider, {
+        label,
+        onTxHash: (hash) => { this.db?.savePendingTx(hash, label); },
+      });
+      this.db?.removePendingTx(txHash);
       return txHash;
     });
   }
