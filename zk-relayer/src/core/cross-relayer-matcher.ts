@@ -96,6 +96,17 @@ export class CrossRelayerMatchService {
 
       this.lockingOrders.add(orderKey);
       try {
+        // [M-11] Optimistic lock: check DB status before matching to prevent
+        // race conditions in multi-instance deployments. If another instance
+        // already matched this order, the DB status will be "matched"/"settled".
+        if (this.db) {
+          const dbOrder = this.db.getOrderByPubKeyNonce(local.order.pubKeyAx, local.order.nonce);
+          if (dbOrder && dbOrder.status !== "pending") {
+            console.log(`[cross-relayer] Order ${orderKey} already ${dbOrder.status} in DB, skipping`);
+            continue;
+          }
+        }
+
         // Mark as matched first (prevents double-matching), restore on failure
         local.status = "matched";
         this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
@@ -225,6 +236,16 @@ export class CrossRelayerMatchService {
       const reason = "maker order is being matched";
       recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
       return { status: "rejected", reason };
+    }
+
+    // [M-11] DB-level race guard for multi-instance deployments
+    if (this.db) {
+      const dbOrder = this.db.getOrderByPubKeyNonce(makerPubKeyAx, makerNonce);
+      if (dbOrder && dbOrder.status !== "pending") {
+        const reason = `maker order already ${dbOrder.status}`;
+        recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+        return { status: "rejected", reason };
+      }
     }
 
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)
