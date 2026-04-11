@@ -22,6 +22,7 @@ import { ethers } from 'ethers';
 import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
 import { ConfigService } from '../services/ConfigService';
+import { shortAddr } from '../lib/format';
 
 const STEP_LABELS: Record<ClaimStep, string> = {
   idle: '',
@@ -230,11 +231,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <Text style={styles.summaryValue}>{value}</Text>
     </View>
   );
-}
-
-function shortAddr(addr: string): string {
-  if (!addr || addr.length < 10) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 const styles = StyleSheet.create({

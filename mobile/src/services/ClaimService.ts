@@ -8,13 +8,15 @@
  * 4. 릴레이어 또는 직접 온체인 제출
  */
 import { ethers } from 'ethers';
-import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
-import { Asset } from 'expo-asset';
 import { ZKBridgeService } from './ZKBridgeService';
 import { ConfigService } from './ConfigService';
 import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
 import { TAG_CLAIM_NULL } from '../lib/zk/tags';
 import { CLAIMS_TREE_DEPTH } from '../lib/zk/constants';
+import { toBytes32Hex } from '../lib/format';
+import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { formatProofForSolidity } from '../lib/proofFormat';
+import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
 
 export type ClaimStep =
   | 'idle'
@@ -40,23 +42,6 @@ export interface ClaimData {
   allLeaves: string[];     // all 16 claim leaf hashes (decimal strings)
 }
 
-const circuitCache = new Map<number, string>();
-
-async function loadCircuitFileB64(assetModule: number): Promise<string> {
-  const cached = circuitCache.get(assetModule);
-  if (cached) return cached;
-
-  const asset = Asset.fromModule(assetModule);
-  await asset.downloadAsync();
-  if (!asset.localUri) throw new Error('Failed to download circuit asset');
-  const b64 = await readAsStringAsync(asset.localUri, { encoding: EncodingType.Base64 });
-  circuitCache.set(assetModule, b64);
-  return b64;
-}
-
-function toBytes32Hex(value: string): string {
-  return '0x' + BigInt(value).toString(16).padStart(64, '0');
-}
 
 export const ClaimService = {
   /** Returns { claimed, nullifier } so execute() can reuse the nullifier. */
@@ -121,7 +106,7 @@ export const ClaimService = {
       }
 
       // Build claims Merkle tree and get proof
-      const treeResult = await buildClaimsTree(claimData.allLeaves);
+      const treeResult = await buildPoseidonMerkleTree(claimData.allLeaves, CLAIMS_TREE_DEPTH);
       const { pathElements, pathIndices } = getMerkleProofFromTree(
         treeResult.layers,
         claimData.leafIndex,
@@ -158,15 +143,7 @@ export const ClaimService = {
         zkeyB64,
       );
 
-      // Format proof for Solidity
-      const proof = {
-        a: [proofResult.proof.pi_a[0], proofResult.proof.pi_a[1]] as [string, string],
-        b: [
-          [proofResult.proof.pi_b[0][1], proofResult.proof.pi_b[0][0]],
-          [proofResult.proof.pi_b[1][1], proofResult.proof.pi_b[1][0]],
-        ] as [[string, string], [string, string]],
-        c: [proofResult.proof.pi_c[0], proofResult.proof.pi_c[1]] as [string, string],
-      };
+      const proof = formatProofForSolidity(proofResult.proof);
 
       // ─── Step 3: 온체인 제출 ───────────────────────────
       onProgress({ step: 'submitting' });
@@ -207,47 +184,3 @@ export const ClaimService = {
   },
 };
 
-// ─── Helpers ───────────────────────────────────────────
-
-async function buildClaimsTree(leaves: string[]): Promise<{
-  root: string;
-  layers: string[][];
-}> {
-  const padded = [...leaves];
-  const size = 2 ** CLAIMS_TREE_DEPTH;
-  while (padded.length < size) padded.push('0');
-
-  const layers: string[][] = [padded];
-  let current = padded;
-
-  for (let d = 0; d < CLAIMS_TREE_DEPTH; d++) {
-    const next: string[] = [];
-    for (let i = 0; i < current.length; i += 2) {
-      const hash = await ZKBridgeService.poseidonHash([current[i], current[i + 1]]);
-      next.push(hash);
-    }
-    layers.push(next);
-    current = next;
-  }
-
-  return { root: current[0], layers };
-}
-
-function getMerkleProofFromTree(
-  layers: string[][],
-  leafIndex: number,
-): { pathElements: string[]; pathIndices: string[] } {
-  const pathElements: string[] = [];
-  const pathIndices: string[] = [];
-  let idx = leafIndex;
-
-  for (let i = 0; i < layers.length - 1; i++) {
-    const isRight = idx % 2;
-    const siblingIdx = isRight ? idx - 1 : idx + 1;
-    pathElements.push(layers[i][siblingIdx] ?? '0');
-    pathIndices.push(isRight.toString());
-    idx = Math.floor(idx / 2);
-  }
-
-  return { pathElements, pathIndices };
-}

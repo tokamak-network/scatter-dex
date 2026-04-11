@@ -16,11 +16,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ethers } from 'ethers';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
+import { formatAmount, formatDate } from '../lib/format';
 
 type TabKey = 'notes' | 'orders';
 
@@ -228,22 +228,6 @@ function OrdersTab({ orders }: { orders: OrderStatus[] }) {
       ))}
     </View>
   );
-}
-
-function formatAmount(wei: string): string {
-  const formatted = ethers.formatEther(wei);
-  // Truncate to 4 decimal places without floating-point rounding
-  const dotIdx = formatted.indexOf('.');
-  if (dotIdx === -1) return formatted;
-  const truncated = formatted.slice(0, dotIdx + 5); // 4 decimal places
-  if (parseFloat(truncated) === 0 && BigInt(wei) > 0n) return '< 0.0001';
-  return truncated;
-}
-
-function formatDate(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const styles = StyleSheet.create({

@@ -23,22 +23,21 @@ import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { ethers } from 'ethers';
+import { formatBalance, shortAddr } from '../lib/format';
 
 // ─── Sub-components ────────────────────────────────────
 
 function WalletCard() {
   const { account, chainId, isConnecting, connect, disconnect, error } = useWallet();
 
-  const shortAddr = account
-    ? `${account.slice(0, 6)}...${account.slice(-4)}`
-    : null;
+  const displayAddr = account ? shortAddr(account) : null;
 
   return (
     <View style={styles.card}>
       <Text style={styles.cardLabel}>Wallet</Text>
       {account ? (
         <>
-          <Text style={styles.address}>{shortAddr}</Text>
+          <Text style={styles.address}>{displayAddr}</Text>
           <Text style={styles.chainInfo}>Chain ID: {chainId}</Text>
           <TouchableOpacity style={styles.disconnectBtn} onPress={disconnect}>
             <Text style={styles.disconnectText}>Disconnect</Text>
@@ -276,14 +275,6 @@ export default function HomeScreen() {
   );
 }
 
-// ─── Helpers ───────────────────────────────────────────
-
-function formatBalance(value: string): string {
-  const num = parseFloat(value);
-  if (isNaN(num) || num === 0) return '0';
-  if (num < 0.0001) return '< 0.0001';
-  return num.toFixed(4);
-}
 
 // ─── Styles ────────────────────────────────────────────
 

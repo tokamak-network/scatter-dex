@@ -28,12 +28,13 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught:', error, info.componentStack);
   }
 
-  handleReload = async () => {
+  handleReload = () => {
+    // In production builds, attempt full JS reload. Falls back to state reset in dev.
     try {
-      const Updates = await import('expo-updates');
-      await Updates.reloadAsync();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { reloadAsync } = require('expo-updates') as { reloadAsync: () => Promise<void> };
+      reloadAsync().catch(() => this.setState({ hasError: false, error: null }));
     } catch {
-      // expo-updates not available in dev — fall back to state reset
       this.setState({ hasError: false, error: null });
     }
   };
