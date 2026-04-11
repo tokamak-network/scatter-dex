@@ -290,7 +290,7 @@ contract RelayerRegistryTest is Test {
         attacker.registerAndRequestExit();
         vm.warp(block.timestamp + 7 days);
 
-        vm.expectRevert();
+        vm.expectRevert(RelayerRegistry.BondTransferFailed.selector);
         attacker.attack();
     }
 }
