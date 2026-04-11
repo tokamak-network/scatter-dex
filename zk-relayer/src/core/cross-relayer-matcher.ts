@@ -389,8 +389,12 @@ export class CrossRelayerMatchService {
  *
  * @deprecated Use authorize-based cross-relayer matching instead.
  */
+let _warnedLegacy = false;
 function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrder): Record<string, unknown> {
-  console.warn("[S-H6] serializeOrderForTransfer: sending ownerSecret to remote relayer (legacy path)");
+  if (!_warnedLegacy) {
+    console.warn("[S-H6] serializeOrderForTransfer: sending ownerSecret to remote relayer (legacy path). Migrate to authorize-based cross-relayer matching.");
+    _warnedLegacy = true;
+  }
   return {
     sellToken: order.sellToken.toString(),
     buyToken: order.buyToken.toString(),
