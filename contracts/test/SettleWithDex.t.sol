@@ -169,7 +169,7 @@ contract SettleWithDexTest is Test {
         assertTrue(settlement.nonceNullifiers(NULL_NONCE));
 
         // Claims group registered
-        (address token, uint96 locked, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
         assertEq(claimed, 0);
@@ -377,7 +377,7 @@ contract SettleWithDexTest is Test {
         assertEq(feeInTreasury, 0.1 ether, "Treasury should receive 1% WETH platform fee");
 
         // Claims group should still be registered
-        (address token, uint96 locked,) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked,, address token) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
     }
