@@ -1,25 +1,164 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { ethers } from 'ethers';
 import { colors } from '../styles/theme';
-
-const orderBookData = [
-  { id: '1', name: 'Sample Order', type: 'Buy', price: '1,850 USDC' },
-  { id: '2', name: 'Sample Order', type: 'Sell', price: '4,500 USDC' },
-];
+import { useWallet } from '../contexts/WalletContext';
+import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
+import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
+import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../services/MarketOrderService';
+import { ConfigService } from '../services/ConfigService';
+import { formatAmount } from '../lib/format';
 
 export default function TradeScreen() {
   const navigation = useNavigation<any>();
+  const { account, signer, readProvider } = useWallet();
+
   const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
-  const [amount, setAmount] = useState('1.5');
-  const [price, setPrice] = useState('1,850.25');
+  const [amount, setAmount] = useState('');
+  const [price, setPrice] = useState('1850.25');
   const [orderTab, setOrderTab] = useState<'book' | 'recent'>('book');
+
+  // Real data
+  const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
+  const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load active notes
+  useEffect(() => {
+    let cancelled = false;
+    const loadNotes = async () => {
+      setLoading(true);
+      try {
+        const notes = await NoteStorageService.getActiveNotes();
+        if (!cancelled) {
+          setActiveNotes(notes);
+          if (notes.length > 0 && !selectedNote) {
+            setSelectedNote(notes[0]);
+          }
+        }
+      } catch {
+        if (!cancelled) setActiveNotes([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    loadNotes();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Compute USDC equivalent
+  const usdcAmount = (() => {
+    const a = parseFloat(amount);
+    const p = parseFloat(price.replace(/,/g, ''));
+    if (isNaN(a) || isNaN(p)) return '—';
+    return (a * p).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  })();
+
+  // Private balance for selected note
+  const privateBalance = selectedNote
+    ? `${formatAmount(selectedNote.amount)} ${selectedNote.tokenSymbol}`
+    : '—';
+
+  const handlePlaceOrder = useCallback(async () => {
+    if (!account || !signer) {
+      Alert.alert('Wallet not connected', 'Please connect your wallet first.');
+      return;
+    }
+    if (!selectedNote) {
+      Alert.alert('No note selected', 'You need active notes to trade. Make a deposit first.');
+      return;
+    }
+    const parsedAmount = parseFloat(amount);
+    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) {
+      Alert.alert('Invalid amount', 'Please enter a valid trade amount.');
+      return;
+    }
+
+    const buyToken = ConfigService.getWethAddress() || '';
+    if (!buyToken) {
+      Alert.alert('Configuration Error', 'Buy token address is not configured.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      if (tradeType === 'limit') {
+        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const sellAmountBn = ethers.parseUnits(amount, 18);
+        const priceCents = BigInt(Math.round(parsedPrice * 100));
+        const buyAmountBn = sellAmountBn * priceCents / 100n;
+        const buyAmount = buyAmountBn.toString();
+
+        const input: OrderInput = {
+          note: selectedNote,
+          sellAmount: amount,
+          buyToken,
+          buyAmount,
+          maxFeeBps: 50,
+          expiryHours: 24,
+          claims: [{
+            recipient: account,
+            amount: buyAmount,
+            releaseDelaySec: 0,
+          }],
+        };
+
+        await OrderService.execute(signer, account, input, (p: OrderProgress) => {
+          if (p.step === 'error') setError(p.error || 'Order failed');
+          if (p.step === 'success') {
+            Alert.alert('Order Placed', `Order ID: ${p.orderId || 'submitted'}`);
+          }
+        });
+      } else {
+        const dexRouter = ConfigService.getUniswapRouterAddress();
+        if (!dexRouter) {
+          setSubmitting(false);
+          Alert.alert('Configuration Error', 'DEX router address is not configured.');
+          return;
+        }
+
+        const parsedPrice = parseFloat(price.replace(/,/g, ''));
+        const sellAmountBn = ethers.parseUnits(amount, 18);
+        const priceCents = BigInt(Math.round(parsedPrice * 100));
+        const buyAmountBn = sellAmountBn * priceCents / 100n;
+        const buyAmountMin = (buyAmountBn * 995n / 1000n).toString(); // 0.5% slippage
+
+        const input: MarketOrderInput = {
+          note: selectedNote,
+          sellAmount: amount,
+          buyToken,
+          buyAmount: buyAmountMin,
+          slippageBps: 50,
+          expiryHours: 1,
+          claimRecipient: account,
+          dexRouter,
+          uniswapFeeTier: 3000,
+        };
+
+        await MarketOrderService.execute(signer, account, input, (p: MarketOrderProgress) => {
+          if (p.step === 'error') setError(p.error || 'Market order failed');
+          if (p.step === 'success') {
+            Alert.alert('Swap Complete', `Tx: ${p.txHash || 'confirmed'}`);
+          }
+        });
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Trade failed');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [account, signer, selectedNote, amount, price, tradeType]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -63,7 +202,7 @@ export default function TradeScreen() {
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
               <View style={[s.tokenDot, { backgroundColor: '#3B82F6' }]} />
-              <Text style={s.tokenName}>ETH</Text>
+              <Text style={s.tokenName}>{selectedNote?.tokenSymbol || 'ETH'}</Text>
               <Text style={s.tokenChevron}>▾</Text>
             </View>
           </View>
@@ -82,7 +221,7 @@ export default function TradeScreen() {
         {/* Price & Chart */}
         <View style={s.priceSection}>
           <View style={s.priceRow}>
-            <Text style={s.priceText}>ETH = $1,850.25 USDC</Text>
+            <Text style={s.priceText}>ETH = ${price} USDC</Text>
             <View style={s.changeBadge}>
               <Text style={s.changeText}>+1.2%</Text>
             </View>
@@ -95,26 +234,35 @@ export default function TradeScreen() {
         {/* Inputs */}
         <View style={s.inputsRow}>
           <View style={s.inputCol}>
-            <Text style={s.inputLabel}>Amount (ETH)</Text>
+            <Text style={s.inputLabel}>Amount ({selectedNote?.tokenSymbol || 'ETH'})</Text>
             <View style={s.inputWrap}>
               <TextInput
                 style={s.input}
                 value={amount}
                 onChangeText={setAmount}
                 keyboardType="decimal-pad"
+                placeholder="0.0"
+                placeholderTextColor="#9CA3AF"
               />
-              <TouchableOpacity style={s.maxBtn}>
+              <TouchableOpacity
+                style={s.maxBtn}
+                onPress={() => {
+                  if (selectedNote) setAmount(ethers.formatEther(selectedNote.amount));
+                }}
+              >
                 <Text style={s.maxText}>MAX</Text>
               </TouchableOpacity>
             </View>
-            <Text style={s.inputHint}>Private Balance: 5.2 ETH</Text>
+            <Text style={s.inputHint}>
+              {loading ? 'Loading...' : `Private Balance: ${privateBalance}`}
+            </Text>
           </View>
           <View style={s.inputCol}>
             <Text style={s.inputLabel}>Amount (USDC)</Text>
             <View style={s.inputWrap}>
               <TextInput
                 style={[s.input, s.inputReadonly]}
-                value="2,775.37"
+                value={usdcAmount}
                 editable={false}
               />
             </View>
@@ -135,22 +283,44 @@ export default function TradeScreen() {
               />
               <Text style={s.limitUnit}>USDC</Text>
               <View style={s.limitDivider} />
-              <TouchableOpacity style={s.pmBtn}>
+              <TouchableOpacity style={s.pmBtn} onPress={() => {
+                const p = parseFloat(price.replace(/,/g, ''));
+                if (!isNaN(p)) setPrice((p - 1).toFixed(2));
+              }}>
                 <Text style={s.pmText}>−</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.pmBtn}>
+              <TouchableOpacity style={s.pmBtn} onPress={() => {
+                const p = parseFloat(price.replace(/,/g, ''));
+                if (!isNaN(p)) setPrice((p + 1).toFixed(2));
+              }}>
                 <Text style={s.pmText}>+</Text>
               </TouchableOpacity>
             </View>
           </View>
         )}
 
+        {/* Error display */}
+        {error && (
+          <View style={s.actionWrap}>
+            <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '600', textAlign: 'center' }}>{error}</Text>
+          </View>
+        )}
+
         {/* Action Button */}
         <View style={s.actionWrap}>
-          <TouchableOpacity style={s.actionBtn} activeOpacity={0.8}>
-            <Text style={s.actionBtnText}>
-              {tradeType === 'limit' ? 'Place Order' : 'Swap Now'}
-            </Text>
+          <TouchableOpacity
+            style={[s.actionBtn, submitting && s.actionBtnDisabled]}
+            activeOpacity={0.8}
+            onPress={handlePlaceOrder}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={s.actionBtnText}>
+                {tradeType === 'limit' ? 'Place Order' : 'Swap Now'}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -170,17 +340,27 @@ export default function TradeScreen() {
               <Text style={[s.orderTabText, orderTab === 'recent' && s.orderTabTextActive]}>Recent Trades</Text>
             </TouchableOpacity>
           </View>
-          {orderBookData.map((order) => (
-            <View key={order.id} style={s.orderRow}>
-              <Text style={s.orderName}>{order.name}</Text>
-              <View style={s.orderRight}>
-                <View style={[s.orderTypeBadge, order.type === 'Buy' ? s.orderBuy : s.orderSell]}>
-                  <Text style={[s.orderTypeText, order.type === 'Buy' ? s.orderBuyText : s.orderSellText]}>{order.type}</Text>
+          {activeNotes.length === 0 ? (
+            <Text style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', paddingVertical: 16 }}>
+              {loading ? 'Loading notes...' : 'No active notes found. Deposit first to trade.'}
+            </Text>
+          ) : (
+            activeNotes.map((note) => (
+              <TouchableOpacity
+                key={note.id}
+                style={[s.orderRow, selectedNote?.id === note.id && { backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8 }]}
+                onPress={() => setSelectedNote(note)}
+              >
+                <Text style={s.orderName}>{note.tokenSymbol} Note</Text>
+                <View style={s.orderRight}>
+                  <View style={[s.orderTypeBadge, s.orderBuy]}>
+                    <Text style={[s.orderTypeText, s.orderBuyText]}>{note.status}</Text>
+                  </View>
+                  <Text style={s.orderPrice}>{formatAmount(note.amount)} {note.tokenSymbol}</Text>
                 </View>
-                <Text style={s.orderPrice}>{order.price}</Text>
-              </View>
-            </View>
-          ))}
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
         <View style={{ height: 96 }} />
@@ -255,6 +435,7 @@ const s = StyleSheet.create({
   /* Action */
   actionWrap: { paddingHorizontal: 24, marginTop: 8 },
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  actionBtnDisabled: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
   actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 
   /* Order Book */

@@ -1,13 +1,20 @@
 /**
  * SettingsScreen — converted from web design prototype Settings.tsx
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
+  Modal, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../styles/theme';
+import { useWallet } from '../contexts/WalletContext';
+import { KeySecurityService } from '../services/KeySecurityService';
+import { NetworkService, NetworkConfig } from '../services/NetworkService';
+import { ConfigService } from '../services/ConfigService';
+import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
+import { shortAddr } from '../lib/format';
 
 interface ToggleItem {
   id: string;
@@ -36,13 +43,175 @@ const managementItems: ManagementItem[] = [
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
+  const { account, signer, connectBuiltin, disconnect, connectionMode } = useWallet();
+
   const [toggles, setToggles] = useState<Record<string, boolean>>(
     Object.fromEntries(securityItems.map(item => [item.id, item.defaultValue]))
   );
+  const [loadingToggles, setLoadingToggles] = useState(true);
+  const [eddsaKey, setEddsaKey] = useState<EdDSAKeyPair | null>(null);
+  const [networks, setNetworks] = useState<NetworkConfig[]>([]);
+  const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [importModalVisible, setImportModalVisible] = useState(false);
+  const [importMnemonic, setImportMnemonic] = useState('');
 
-  const handleToggle = (id: string) => {
-    setToggles((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  // Load biometric setting on mount
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const biometricEnabled = await KeySecurityService.isBiometricEnabled();
+        if (!cancelled) {
+          setToggles((prev) => ({ ...prev, biometrics: biometricEnabled }));
+        }
+      } catch { /* ignore */ }
+      finally {
+        if (!cancelled) setLoadingToggles(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load networks
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const all = await NetworkService.getAllNetworks();
+        const selected = await NetworkService.getSelectedNetwork();
+        if (!cancelled) {
+          setNetworks(all);
+          setSelectedNetworkId(selected.id);
+        }
+      } catch { /* ignore */ }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load EdDSA key if wallet is connected
+  useEffect(() => {
+    let cancelled = false;
+    if (account) {
+      EdDSAKeyService.loadKey(account)
+        .then((key) => { if (!cancelled) setEddsaKey(key); })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [account]);
+
+  const handleToggle = useCallback(async (id: string) => {
+    const newValue = !toggles[id];
+    setToggles((prev) => ({ ...prev, [id]: newValue }));
+
+    if (id === 'biometrics') {
+      try {
+        await KeySecurityService.setBiometricEnabled(newValue);
+      } catch (err: any) {
+        // Revert on failure
+        setToggles((prev) => ({ ...prev, [id]: !newValue }));
+        Alert.alert('Error', err?.message || 'Failed to update biometric setting');
+      }
+    }
+  }, [toggles]);
+
+  const handleManagementPress = useCallback(async (id: string) => {
+    if (id === 'backup') {
+      try {
+        const mnemonic = await KeySecurityService.getMnemonic();
+        if (mnemonic) {
+          Alert.alert(
+            'Recovery Phrase',
+            'Store this securely. Never share it with anyone.\n\n' + mnemonic,
+            [{ text: 'I have saved it', style: 'destructive' }],
+          );
+        } else {
+          Alert.alert('No Recovery Phrase', 'No mnemonic found. This wallet may have been imported via private key.');
+        }
+      } catch (err: any) {
+        Alert.alert('Error', err?.message || 'Failed to retrieve recovery phrase');
+      }
+    } else if (id === 'eddsa') {
+      if (!account) {
+        Alert.alert('Wallet not connected', 'Connect your wallet first to manage EdDSA keys.');
+        return;
+      }
+      try {
+        const key = await EdDSAKeyService.loadKey(account);
+        if (key) {
+          Alert.alert(
+            'EdDSA Key',
+            `Public Key X: ${shortAddr(key.pubKeyAx, 10, 8)}\nPublic Key Y: ${shortAddr(key.pubKeyAy, 10, 8)}`,
+            [{ text: 'OK' }],
+          );
+          setEddsaKey(key);
+        } else {
+          Alert.alert('No EdDSA Key', 'EdDSA key will be derived automatically when you make your first trade.');
+        }
+      } catch (err: any) {
+        Alert.alert('Error', err?.message || 'Failed to load EdDSA key');
+      }
+    }
+  }, [account]);
+
+  const handleNetworkSelect = useCallback(async (networkId: string) => {
+    try {
+      await NetworkService.selectNetwork(networkId);
+      setSelectedNetworkId(networkId);
+      Alert.alert('Network Changed', 'Please restart the app for changes to take effect.');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to switch network');
+    }
+  }, []);
+
+  const handleCreateWallet = useCallback(async () => {
+    setWalletLoading(true);
+    try {
+      const { mnemonic, address } = await KeySecurityService.createWallet();
+      Alert.alert(
+        'Wallet Created',
+        `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        [{
+          text: 'I have saved it',
+          onPress: async () => {
+            try {
+              await connectBuiltin();
+            } catch { /* NO_WALLET handled in context */ }
+          },
+        }],
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to create wallet');
+    } finally {
+      setWalletLoading(false);
+    }
+  }, [connectBuiltin]);
+
+  const handleImportWallet = useCallback(() => {
+    setImportMnemonic('');
+    setImportModalVisible(true);
+  }, []);
+
+  const handleImportConfirm = useCallback(async () => {
+    const mnemonic = importMnemonic.trim();
+    if (!mnemonic) return;
+    setImportModalVisible(false);
+    setImportMnemonic('');
+    setWalletLoading(true);
+    try {
+      const address = await KeySecurityService.importFromMnemonic(mnemonic);
+      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      try {
+        await connectBuiltin();
+      } catch { /* NO_WALLET handled in context */ }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to import wallet');
+    } finally {
+      setWalletLoading(false);
+    }
+  }, [importMnemonic, connectBuiltin]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -56,6 +225,66 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
+        {/* Wallet Section */}
+        <View style={s.sectionGroup}>
+          <Text style={s.sectionTitle}>Wallet</Text>
+          {account ? (
+            <View style={s.toggleRow}>
+              <View style={s.toggleLeft}>
+                <View style={s.toggleIcon}>
+                  <Text style={s.toggleIconText}>👛</Text>
+                </View>
+                <View>
+                  <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
+                  <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                    {connectionMode === 'builtin' ? 'Built-in Wallet' : 'WalletConnect'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#FEF2F2', borderRadius: 8 }}
+                onPress={() => {
+                  Alert.alert('Disconnect', 'Are you sure?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Disconnect', style: 'destructive', onPress: disconnect },
+                  ]);
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#EF4444' }}>Disconnect</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ gap: 8 }}>
+              <TouchableOpacity
+                style={s.linkRow}
+                onPress={handleCreateWallet}
+                disabled={walletLoading}
+              >
+                <View style={s.linkLeft}>
+                  <View style={[s.linkIcon, s.linkIconPrimary]}>
+                    <Text style={s.linkIconText}>➕</Text>
+                  </View>
+                  <Text style={s.linkLabel}>Create New Wallet</Text>
+                </View>
+                {walletLoading ? <ActivityIndicator size="small" /> : <Text style={s.chevron}>›</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.linkRow}
+                onPress={handleImportWallet}
+                disabled={walletLoading}
+              >
+                <View style={s.linkLeft}>
+                  <View style={[s.linkIcon, s.linkIconPrimary]}>
+                    <Text style={s.linkIconText}>📥</Text>
+                  </View>
+                  <Text style={s.linkLabel}>Import Wallet</Text>
+                </View>
+                <Text style={s.chevron}>›</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         {/* Security Toggles */}
         <View style={s.sectionGroup}>
           {securityItems.map((item) => (
@@ -70,6 +299,7 @@ export default function SettingsScreen() {
                 style={[s.switch, toggles[item.id] ? s.switchOn : s.switchOff]}
                 onPress={() => handleToggle(item.id)}
                 activeOpacity={0.7}
+                disabled={loadingToggles}
               >
                 <View style={[s.switchThumb, toggles[item.id] ? s.thumbOn : s.thumbOff]} />
               </TouchableOpacity>
@@ -85,7 +315,7 @@ export default function SettingsScreen() {
               key={item.id}
               style={s.linkRow}
               activeOpacity={0.7}
-              onPress={() => { /* TODO: navigate to key management / backup screen */ }}
+              onPress={() => handleManagementPress(item.id)}
             >
               <View style={s.linkLeft}>
                 <View style={[s.linkIcon, item.id === 'backup' ? s.linkIconDanger : s.linkIconPrimary]}>
@@ -105,8 +335,78 @@ export default function SettingsScreen() {
           ))}
         </View>
 
+        {/* Network Selection */}
+        <View style={s.sectionGroup}>
+          <Text style={s.sectionTitle}>Network</Text>
+          {networks.map((net) => (
+            <TouchableOpacity
+              key={net.id}
+              style={s.toggleRow}
+              onPress={() => handleNetworkSelect(net.id)}
+            >
+              <View style={s.toggleLeft}>
+                <View style={s.toggleIcon}>
+                  <Text style={s.toggleIconText}>🌐</Text>
+                </View>
+                <View>
+                  <Text style={s.toggleLabel}>{net.name}</Text>
+                  <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                    Chain ID: {net.chainId}
+                  </Text>
+                </View>
+              </View>
+              {selectedNetworkId === net.id && (
+                <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 8 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+
         <View style={{ height: 96 }} />
       </ScrollView>
+
+      {/* Import Wallet Modal (cross-platform replacement for Alert.prompt) */}
+      <Modal
+        visible={importModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImportModalVisible(false)}
+      >
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <Text style={s.modalTitle}>Import Wallet</Text>
+            <Text style={s.modalSubtitle}>Enter your mnemonic seed phrase:</Text>
+            <TextInput
+              style={s.modalInput}
+              placeholder="Enter mnemonic..."
+              placeholderTextColor="#9CA3AF"
+              value={importMnemonic}
+              onChangeText={setImportMnemonic}
+              multiline
+              numberOfLines={3}
+              autoFocus
+              textAlignVertical="top"
+            />
+            <View style={s.modalButtons}>
+              <TouchableOpacity
+                style={s.modalBtnCancel}
+                onPress={() => { setImportModalVisible(false); setImportMnemonic(''); }}
+              >
+                <Text style={s.modalBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.modalBtnConfirm, !importMnemonic.trim() && { opacity: 0.4 }]}
+                onPress={handleImportConfirm}
+                disabled={!importMnemonic.trim()}
+              >
+                <Text style={s.modalBtnConfirmText}>Import</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -152,4 +452,16 @@ const s = StyleSheet.create({
   badgeWrap: { marginTop: 2, backgroundColor: '#FEF2F2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, alignSelf: 'flex-start' },
   badgeText: { fontSize: 10, fontWeight: '700', color: '#EF4444' },
   chevron: { fontSize: 24, color: '#D1D5DB', fontWeight: '300' },
+
+  /* Import Wallet Modal */
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalContent: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', gap: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  modalSubtitle: { fontSize: 14, color: '#6B7280' },
+  modalInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 14, color: '#111827', minHeight: 80 },
+  modalButtons: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },
+  modalBtnCancel: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F3F4F6' },
+  modalBtnCancelText: { fontSize: 14, fontWeight: '700', color: '#6B7280' },
+  modalBtnConfirm: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#2563EB' },
+  modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
 });
