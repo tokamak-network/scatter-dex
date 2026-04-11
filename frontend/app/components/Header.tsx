@@ -96,7 +96,7 @@ export default function Header() {
               </button>
             ) : (
               <button
-                onClick={connect}
+                onClick={() => connect()}
                 className="gradient-btn text-on-primary-fixed px-5 py-2 rounded-md font-semibold text-sm active:scale-95 duration-100 transition-all"
               >
                 Connect Wallet

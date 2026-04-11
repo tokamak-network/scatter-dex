@@ -10,8 +10,8 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Window {
     ethereum?: ethers.Eip1193Provider & {
-      on(event: string, handler: (...args: any[]) => void): void;
-      removeListener(event: string, handler: (...args: any[]) => void): void;
+      on?(event: string, handler: (...args: any[]) => void): void;
+      removeListener?(event: string, handler: (...args: any[]) => void): void;
       isMetaMask?: boolean;
       isCoinbaseWallet?: boolean;
       isRabby?: boolean;
@@ -34,6 +34,7 @@ interface WalletState {
   signer: ethers.Signer | null;
   walletName: string | null;
   availableWallets: WalletInfo[];
+  connectError: string | null;
   connect: (walletProvider?: ethers.Eip1193Provider) => Promise<void>;
   disconnect: () => void;
 }
@@ -46,6 +47,7 @@ const WalletCtx = createContext<WalletState>({
   signer: null,
   walletName: null,
   availableWallets: [],
+  connectError: null,
   connect: async () => {},
   disconnect: () => {},
 });
@@ -58,24 +60,21 @@ export function useWallet() {
  * Detect available wallet providers in the browser.
  * Supports: MetaMask, Coinbase Wallet, Rabby, and any EIP-1193 provider.
  */
+/**
+ * Detect the wallet name from a provider's flags.
+ * Check specific flags BEFORE isMetaMask — many wallets set isMetaMask=true
+ * for compatibility (Rabby, Coinbase, etc.).
+ */
+function detectWalletName(provider: any): string {
+  if (provider.isRabby) return "Rabby";
+  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
+  if (provider.isMetaMask) return "MetaMask";
+  return "Browser Wallet";
+}
+
 function detectWallets(): WalletInfo[] {
   if (typeof window === "undefined" || !window.ethereum) return [];
-
-  const wallets: WalletInfo[] = [];
-  const eth = window.ethereum;
-
-  // Detect wallet type from provider flags
-  if (eth.isMetaMask) {
-    wallets.push({ name: "MetaMask", provider: eth });
-  } else if (eth.isCoinbaseWallet) {
-    wallets.push({ name: "Coinbase Wallet", provider: eth });
-  } else if (eth.isRabby) {
-    wallets.push({ name: "Rabby", provider: eth });
-  } else {
-    wallets.push({ name: "Browser Wallet", provider: eth });
-  }
-
-  return wallets;
+  return [{ name: detectWalletName(window.ethereum), provider: window.ethereum }];
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -100,6 +99,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const accounts = await target.request({ method: "eth_accounts" });
       if (accounts.length > 0) {
         setAccount(accounts[0]);
+        setWalletName(detectWalletName(target));
         try {
           setSigner(await bp.getSigner());
         } catch (e) {
@@ -151,32 +151,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   }, [setupProvider, activeEip1193]);
 
+  /** Error message when no wallet is detected (rendered by UI layer) */
+  const [connectError, setConnectError] = useState<string | null>(null);
+
   const connect = async (walletProvider?: ethers.Eip1193Provider) => {
     const target = walletProvider || window.ethereum;
     if (!target) {
-      // No wallet found — show helpful message
-      alert(
-        "No wallet detected.\n\n" +
-        "Install one of these:\n" +
-        "• MetaMask (metamask.io)\n" +
-        "• Coinbase Wallet (coinbase.com/wallet)\n" +
-        "• Rabby (rabby.io)"
-      );
+      setConnectError("No wallet detected. Install MetaMask, Coinbase Wallet, or Rabby.");
       return;
     }
+    setConnectError(null);
 
-    setActiveEip1193(target);
-
-    // Detect wallet name
-    const anyTarget = target as any;
-    if (anyTarget.isMetaMask) setWalletName("MetaMask");
-    else if (anyTarget.isCoinbaseWallet) setWalletName("Coinbase Wallet");
-    else if (anyTarget.isRabby) setWalletName("Rabby");
-    else setWalletName("Browser Wallet");
-
-    const accounts = await target.request({ method: "eth_requestAccounts" });
-    if (accounts.length > 0) {
-      await setupProvider(target);
+    try {
+      const accounts = await target.request({ method: "eth_requestAccounts" });
+      if (accounts.length > 0) {
+        setActiveEip1193(target);
+        await setupProvider(target);
+      }
+    } catch (e) {
+      console.warn("Wallet connection rejected:", e);
+      // Don't set activeEip1193/walletName on failure
     }
   };
 
@@ -191,7 +185,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   return (
     <WalletCtx.Provider value={{
       account, chainId, provider, readProvider, signer,
-      walletName, availableWallets, connect, disconnect,
+      walletName, availableWallets, connectError, connect, disconnect,
     }}>
       {children}
     </WalletCtx.Provider>

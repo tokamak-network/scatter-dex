@@ -739,7 +739,7 @@ export default function PrivateOrderPage() {
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
         <Shield className="w-12 h-12 mb-4 opacity-40" />
         <p className="text-lg font-medium mb-4">Connect wallet to create private orders</p>
-        <button onClick={connect} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
+        <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
           Connect Wallet
         </button>
       </div>
