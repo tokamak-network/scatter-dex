@@ -227,7 +227,7 @@
 | # | 이슈 | 심각도 | 상태 | 브랜치 |
 |---|------|--------|------|--------|
 | C-1 | settleWithDex MEV (deadline) | CRITICAL | ⚠️ 부분 | — |
-| C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | ⬜ | — |
+| C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | 🔧 | `fix/claim-circom-binding` |
 | C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | 🔧 | `fix/C3-remove-hardcoded-secrets` |
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | ⬜ | — |
 | H-5 | claimCount 범위 미검증 | HIGH | ⬜ | — |
