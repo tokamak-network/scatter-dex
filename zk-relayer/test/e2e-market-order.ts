@@ -17,7 +17,7 @@
  *   6. Verify: nullifiers spent, claims group registered
  *   7. Verify: platform fee sent to treasury (DexPlatformFeeCollected event)
  *   8. Advance time + claim via claim.circom proof
- *   9. Verify: recipient received buyToken (WETH via same-token mock swap)
+ *   9. Verify: recipient received buyToken (USDC via WETH→USDC mock swap)
  */
 
 import { ethers } from "ethers";
@@ -42,6 +42,9 @@ const ZK_RELAYER_URL = process.env.ZK_RELAYER_URL ?? "http://localhost:3002";
 const CLAIMS_TREE_DEPTH = 4;
 const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
 const PLATFORM_FEE_BPS = 100n; // 1% — set during test
+
+// USDC address from DeployLocal (MockToken, 18 decimals on local anvil)
+const USDC_ADDRESS = "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
 
 const USER_KEY = process.env.E2E_PRIVATE_KEY
   ?? "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
@@ -156,9 +159,11 @@ async function main() {
   const mockDexAddress = await mockDex.getAddress();
   console.log(`  MockDexRouter deployed: ${mockDexAddress}`);
 
-  // Fund MockDexRouter with WETH (simulates DEX liquidity)
-  await (await wethContract.deposit({ value: ethers.parseEther("100") })).wait();
-  await (await wethContract.transfer(mockDexAddress, ethers.parseEther("50"))).wait();
+  // Fund MockDexRouter with USDC (simulates DEX liquidity for WETH→USDC swap)
+  const USDC_ABI = ["function mint(address,uint256) external", "function balanceOf(address) view returns (uint256)"];
+  const usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
+  // Mint USDC to MockDexRouter (MockToken has public mint)
+  await (await usdcContract.mint(mockDexAddress, ethers.parseEther("1000000"))).wait();
 
   // Deploy MockAuthorizeVerifier (accepts any proof)
   const MOCK_AUTH_ARTIFACT = path.join(__dirname, "../../contracts/out/MockAuthorizeVerifier.sol/MockAuthorizeVerifier.json");
@@ -240,13 +245,14 @@ async function main() {
   const changeAmount = depositAmount - sellAmount;
   const changeSalt = randomFieldElement();
 
-  // Claims: single claim to recipient (same-token: sell WETH, buy WETH via mock DEX)
+  // Claims: single claim to recipient (WETH → USDC swap via mock DEX, 1:1 rate)
   const feeAmount = (sellAmount * PLATFORM_FEE_BPS) / 10000n;
   const swapInput = sellAmount - feeAmount; // what DEX receives after fee
   const totalLocked = swapInput; // 1:1 mock swap → output = swapInput
   const claimSecret = randomFieldElement();
+  const buyTokenAddr = USDC_ADDRESS;
   const claims = [
-    { secret: claimSecret, recipient: BigInt(RECIPIENT), token: BigInt(weth), amount: totalLocked, releaseTime },
+    { secret: claimSecret, recipient: BigInt(RECIPIENT), token: BigInt(buyTokenAddr), amount: totalLocked, releaseTime },
   ];
 
   // Build commitment tree Merkle proof from on-chain events
@@ -279,7 +285,7 @@ async function main() {
 
   // Sign order with EdDSA — uses the ACTUAL claimsRoot, not a placeholder
   const orderHash = poseidonHash([
-    BigInt(weth), BigInt(weth), sellAmount, buyAmount,
+    BigInt(weth), BigInt(buyTokenAddr), sellAmount, buyAmount,
     0n, expiry, nonce, claimsRootValue, BigInt(userAddr),
   ]);
   const sig = eddsa.signPoseidon(eddsaPrivKey, F.e(orderHash.toString()));
@@ -298,7 +304,7 @@ async function main() {
     path: commitProof.pathElements,
     pathIdx: commitProof.pathIndices,
     sellToken: BigInt(weth),
-    buyToken: BigInt(weth),
+    buyToken: BigInt(buyTokenAddr),
     sellAmount,
     buyAmount,
     maxFee: 0n,
@@ -329,9 +335,44 @@ async function main() {
   // Encode MockDexRouter.swap calldata
   const dexIface = new ethers.Interface(MOCK_DEX_ROUTER_ABI);
   const dexCalldata = dexIface.encodeFunctionData("swap", [
-    weth, weth, swapInput, settlementAddr,
+    weth, buyTokenAddr, swapInput, settlementAddr,
   ]);
 
+  // Debug: try staticCall first to get detailed revert
+  try {
+    await settlement.settleWithDex.staticCall({
+      proof: {
+        proofA: proofResult.formatted.proofA,
+        proofB: proofResult.formatted.proofB,
+        proofC: proofResult.formatted.proofC,
+        pubKeyBind: toHex(BigInt(ps[0]), 32),
+        commitmentRoot: ps[1],
+        nullifier: toHex(BigInt(ps[2]), 32),
+        nonceNullifier: toHex(BigInt(ps[3]), 32),
+        newCommitment: toHex(BigInt(ps[4]), 32),
+        sellToken: weth,
+        buyToken: buyTokenAddr,
+        sellAmount,
+        buyAmount,
+        maxFee: 0,
+        expiry,
+        claimsRoot: toHex(claimsRootValue, 32),
+        totalLocked,
+        relayer: userAddr,
+        orderHash: toHex(BigInt(ps[14]), 32),
+      },
+      dexRouter: mockDexAddress,
+      dexCalldata,
+    });
+    console.log("  staticCall succeeded");
+  } catch (e: any) {
+    console.log("  staticCall failed:", e.message?.slice(0, 300));
+    // Try to decode revert data
+    if (e.data) console.log("  revert data:", e.data);
+    if (e.revert) console.log("  revert:", JSON.stringify(e.revert));
+  }
+
+  // Use gasLimit override to bypass estimateGas and get tx hash for debugging
   const settleTx = await settlement.settleWithDex({
     proof: {
       proofA: proofResult.formatted.proofA,
@@ -343,7 +384,7 @@ async function main() {
       nonceNullifier: toHex(BigInt(ps[3]), 32),
       newCommitment: toHex(BigInt(ps[4]), 32),
       sellToken: weth,
-      buyToken: weth,
+      buyToken: buyTokenAddr,
       sellAmount,
       buyAmount,
       maxFee: 0,
@@ -355,8 +396,10 @@ async function main() {
     },
     dexRouter: mockDexAddress,
     dexCalldata,
-  });
+  }, { gasLimit: 5_000_000 });
+  console.log(`  TX sent: ${settleTx.hash}`);
   const settleReceipt = await settleTx.wait();
+  console.log(`  TX status: ${settleReceipt?.status}`);
   assert(true, `settleWithDex TX: ${settleTx.hash}`);
 
   // ─── Step 6: Verify on-chain state ─────────────────────────
@@ -369,8 +412,8 @@ async function main() {
   assert(nonceSpent, "Nonce nullifier spent");
 
   const group = await settlement.claimsGroups(toHex(claimsRootValue, 32));
-  assert(group.token.toLowerCase() === weth.toLowerCase(), `Claims group token: WETH`);
-  assert(group.totalLocked === totalLocked, `Claims group locked: ${ethers.formatEther(group.totalLocked)} WETH`);
+  assert(group.token.toLowerCase() === buyTokenAddr.toLowerCase(), `Claims group token: USDC`);
+  assert(group.totalLocked === totalLocked, `Claims group locked: ${ethers.formatEther(group.totalLocked)} USDC`);
 
   // ─── Step 7: Verify platform fee ───────────────────────────
   console.log("\n[7/9] Verifying platform fee...");
@@ -427,7 +470,7 @@ async function main() {
     claimsRoot: claimsRootValue.toString(),
     nullifier: claimNullifier.toString(),
     amount: totalLocked.toString(),
-    token: BigInt(weth).toString(),
+    token: BigInt(buyTokenAddr).toString(),
     recipient: BigInt(RECIPIENT).toString(),
     releaseTime: releaseTime.toString(),
     secret: claimSecret.toString(),
@@ -444,7 +487,7 @@ async function main() {
     toHex(claimsRootValue, 32),
     toHex(claimNullifier, 32),
     totalLocked,
-    weth,
+    buyTokenAddr,
     RECIPIENT,
     releaseTime,
   );

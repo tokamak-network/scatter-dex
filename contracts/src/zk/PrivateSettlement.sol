@@ -934,10 +934,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!success) revert DexCallReverted();
         IERC20(proof.sellToken).forceApprove(p.dexRouter, 0);
 
-        // Return any unspent sellToken to the pool (partial fills by DEX)
-        uint256 sellRemaining = IERC20(proof.sellToken).balanceOf(address(this));
-        if (sellRemaining > sellBalBefore) {
-            IERC20(proof.sellToken).safeTransfer(address(pool), sellRemaining - sellBalBefore);
+        // Return any unspent sellToken to the pool (partial fills by DEX).
+        // Skip when sellToken == buyToken to avoid draining the buyToken balance
+        // that the amountOut check needs to measure.
+        if (proof.sellToken != proof.buyToken) {
+            uint256 sellRemaining = IERC20(proof.sellToken).balanceOf(address(this));
+            if (sellRemaining > sellBalBefore) {
+                IERC20(proof.sellToken).safeTransfer(address(pool), sellRemaining - sellBalBefore);
+            }
         }
 
         uint256 amountOut = IERC20(proof.buyToken).balanceOf(address(this)) - buyBalanceBefore;
