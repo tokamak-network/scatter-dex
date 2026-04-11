@@ -115,6 +115,10 @@ template Claim(depth) {
     amountSq <== amount * amount;
     signal recipientSq;
     recipientSq <== recipient * recipient;
+    signal tokenSq;
+    tokenSq <== token * token;
+    signal releaseTimeSq;
+    releaseTimeSq <== releaseTime * releaseTime;
 }
 
 // depth=4 → max 16 claim leaves per side (supports 10 actual claims)
