@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet } from "lucide-react";
+import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, BookOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -39,11 +39,16 @@ import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
 import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
+import { useMainnetPrice } from "../../lib/useDexPrices";
 
 // EdDSA key is AES-GCM encrypted and stored in the notes folder (File System API).
 // This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
 
+// Uniswap V3 SwapRouter02 (Ethereum mainnet)
+const UNISWAP_V3_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
+
+type OrderType = "limit" | "market";
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
 
 type RecipientMode = "standard" | "stealth";
@@ -89,6 +94,8 @@ export default function PrivateOrderPage() {
   const [price, setPrice] = useState("");
   const [changeSalt, setChangeSalt] = useState<bigint | null>(null);
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
+  const [orderType, setOrderType] = useState<OrderType>("limit");
+  const [slippageBps, setSlippageBps] = useState("50"); // 0.5% default
 
   // Claims
   const nextClaimId = useRef(1);
@@ -98,6 +105,29 @@ export default function PrivateOrderPage() {
 
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
+
+  // DEX prices for market order mode (only fetched when market tab is active)
+  const dexPrices = useMainnetPrice(
+    orderType === "market" ? sellToken?.symbol : undefined,
+    orderType === "market" ? buyToken?.symbol : undefined,
+    "sell",
+  );
+  const { marketPrice, marketPriceSource } = useMemo(() => {
+    const rec = dexPrices.find((p) => p.recommended && p.netPrice !== null);
+    return { marketPrice: rec?.netPrice ?? null, marketPriceSource: rec?.source ?? null };
+  }, [dexPrices]);
+
+  // Auto-compute buyAmount in market mode
+  useEffect(() => {
+    if (orderType !== "market" || !marketPrice || !sellAmount) return;
+    const sell = parseFloat(sellAmount);
+    if (isNaN(sell) || sell <= 0) return;
+    const slip = parseInt(slippageBps) || 50;
+    const gross = sell * marketPrice;
+    const minReceive = gross * (1 - slip / 10000);
+    const dec = Math.min(buyToken?.decimals ?? 18, 18);
+    setBuyAmount(minReceive.toFixed(dec));
+  }, [orderType, marketPrice, sellAmount, slippageBps, buyToken?.decimals]);
 
   // Check which notes are spent on-chain (parallel)
   useEffect(() => {
@@ -612,6 +642,225 @@ export default function PrivateOrderPage() {
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
 
+  // ── Market Order Submit: generate proof + call settleWithDex on-chain ──
+  const handleMarketSubmit = useCallback(async () => {
+    if (!sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote || !signer || !account) return;
+    const kp = keyPair;
+    if (!kp) { setError("Unlock or generate a trading key first"); return; }
+
+    setStep("signing");
+
+    setError(null);
+
+    try {
+      const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
+      const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
+      const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
+      const nonce = BigInt(Date.now());
+
+      if (parsedSell > selectedNote.note.amount) {
+        throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
+      }
+
+      const change = selectedNote.note.amount - parsedSell;
+      const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
+      let expectedChangeCommitment = 0n;
+      if (change > 0n && changeSalt) {
+        const changeNote: CommitmentNote = {
+          ownerSecret: selectedNote.note.ownerSecret,
+          token: selectedNote.note.token,
+          amount: change,
+          salt: changeSalt,
+          pubKeyAx: selectedNote.note.pubKeyAx,
+          pubKeyAy: selectedNote.note.pubKeyAy,
+        };
+        expectedChangeCommitment = await computeCommitment(changeNote);
+      }
+
+      // Build claims — market order: single claim to self (simple)
+      const claimDataWithEpk = claims.map((c, idx) => {
+        let recipient: string;
+        let ephemeralPubKey: string | undefined;
+        if (c.mode === "stealth") {
+          if (!c.address || !isMetaAddress(c.address)) throw new Error(`Claim #${idx + 1}: Invalid meta-address`);
+          const stealth = generateStealthAddress(c.address);
+          recipient = stealth.stealthAddress;
+          ephemeralPubKey = stealth.ephemeralPubKey;
+        } else {
+          if (c.address && !ethers.isAddress(c.address)) throw new Error(`Claim #${idx + 1}: Invalid address`);
+          recipient = c.address || account || ethers.ZeroAddress;
+        }
+        const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
+        const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
+        const claimSecret = randomFieldElement();
+        const claimAmount = c.amount ? ethers.parseUnits(c.amount, buyToken.decimals).toString() : "0";
+        return { secret: claimSecret.toString(), recipient: BigInt(recipient).toString(), token: BigInt(buyToken.address).toString(), amount: claimAmount, releaseTime: releaseTime.toString(), ephemeralPubKey };
+      });
+      const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
+
+      const claimLeafHashes = await Promise.all(
+        claimData.map((c) => poseidonHash([BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime)]))
+      );
+      const padded = [...claimLeafHashes];
+      while (padded.length < 16) padded.push(0n);
+      const { root: claimsRoot } = await buildMerkleTree(padded, 4);
+
+      // Market order: relayer = self (permissionless), maxFee = 0
+      const orderHash = await hashOrder({
+        sellToken: BigInt(sellToken.address),
+        buyToken: BigInt(buyToken.address),
+        sellAmount: parsedSell,
+        buyAmount: parsedBuy,
+        maxFee: 0n,
+        expiry: expiryTimestamp,
+        nonce,
+        claimsRoot,
+        relayerAddress: BigInt(account),
+      });
+
+      // Fetch Merkle proof
+      let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
+      try {
+        const relayerUrl = zkRelayers[selectedRelayerIdx]?.url;
+        if (!relayerUrl) throw new Error("no relayer");
+        const mpRes = await fetch(`${relayerUrl}/api/info/merkle-proof?leafIndex=${selectedNote.leafIndex}`);
+        if (!mpRes.ok) throw new Error("unavailable");
+        const mpData = await mpRes.json();
+        merkleProof = { root: BigInt(mpData.root), pathElements: mpData.pathElements.map((e: string) => BigInt(e)), pathIndices: mpData.pathIndices };
+      } catch {
+        const provider = getReadProvider();
+        const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
+        const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
+        const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
+        const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
+        const leaves: bigint[] = [];
+        for (const ev of events) { const e = ev as ethers.EventLog; const idx = Number(e.args.leafIndex); while (leaves.length <= idx) leaves.push(0n); leaves[idx] = BigInt(e.args.commitment); }
+        const tree = await buildMerkleTree(leaves, 20);
+        const proof = await import("../../lib/zk/commitment").then(m => m.getMerkleProof(tree.layers, selectedNote.leafIndex));
+        merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
+      }
+
+      // Generate authorize proof in Web Worker
+      const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
+      const proofResult = await generateAuthorizeProofInWorker({
+        note: selectedNote.note,
+        leafIndex: selectedNote.leafIndex,
+        merkleProof,
+        sellAmount: parsedSell,
+        buyToken: buyToken.address,
+        buyAmount: parsedBuy,
+        maxFee: 0n,
+        expiry: expiryTimestamp,
+        nonce,
+        relayer: account,
+        eddsaPrivateKey: kp.privateKey,
+        claims: claimData.map(c => ({
+          secret: BigInt(c.secret), recipient: c.recipient, token: c.token,
+          amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime),
+        })),
+      });
+
+      // Call settleWithDex on-chain
+      const ps = proofResult.publicSignals;
+      const settlementAddr = getPrivateSettlementAddress();
+      const { PRIVATE_SETTLEMENT_ABI: abi } = await import("../../lib/contracts");
+      const settlement = new ethers.Contract(settlementAddr, abi, signer);
+
+      // Encode DEX calldata — use Uniswap V3 with the best fee tier
+      // TODO: support 1inch/Curve route selection in UI
+      const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
+      // Parse fee tier from percentage string (e.g. "0.05%" → 500, "0.3%" → 3000, "1%" → 10000)
+      const feeStr = bestDexPrice?.fee ?? "";
+      const feePct = parseFloat(feeStr);
+      const feeTier = !isNaN(feePct) ? Math.round(feePct * 10000) : 3000;
+
+      const routerIface = new ethers.Interface([
+        "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
+      ]);
+      const dexCalldata = routerIface.encodeFunctionData("exactInputSingle", [{
+        tokenIn: sellToken.address,
+        tokenOut: buyToken.address,
+        fee: feeTier,
+        recipient: settlementAddr,
+        deadline: Math.floor(Date.now() / 1000) + 1800,
+        amountIn: parsedSell,
+        amountOutMinimum: parsedBuy,
+        sqrtPriceLimitX96: 0n,
+      }]);
+
+      // Build settleWithDex params
+      const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
+      const proofA = [BigInt(proofResult.proof.pi_a[0]), BigInt(proofResult.proof.pi_a[1])];
+      const proofB = [
+        [BigInt(proofResult.proof.pi_b[0][1]), BigInt(proofResult.proof.pi_b[0][0])],
+        [BigInt(proofResult.proof.pi_b[1][1]), BigInt(proofResult.proof.pi_b[1][0])],
+      ];
+      const proofC = [BigInt(proofResult.proof.pi_c[0]), BigInt(proofResult.proof.pi_c[1])];
+
+      const tx = await settlement.settleWithDex({
+        proof: {
+          proofA, proofB, proofC,
+          pubKeyBind: ps[0],
+          commitmentRoot: ps[1],
+          nullifier: ps[2],
+          nonceNullifier: ps[3],
+          newCommitment: ps[4],
+          sellToken: sellToken.address,
+          buyToken: buyToken.address,
+          sellAmount: parsedSell,
+          buyAmount: parsedBuy,
+          maxFee: 0,
+          expiry: expiryTimestamp,
+          claimsRoot: ps[11],
+          totalLocked,
+          relayer: account,
+          orderHash: ps[14],
+        },
+        dexRouter: UNISWAP_V3_ROUTER,
+        dexCalldata,
+      });
+      await tx.wait();
+
+      // Save claim files
+      const claimFiles = claimDataWithEpk.map((c, idx) => ({
+        secret: c.secret, recipient: c.recipient, token: c.token,
+        amount: c.amount, releaseTime: c.releaseTime, leafIndex: idx,
+        allLeaves: padded.map((l) => l.toString()),
+        ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
+      }));
+      const bundle = {
+        order: { sellToken: sellToken.address, buyToken: buyToken.address, sellAmount: parsedSell.toString(), buyAmount: parsedBuy.toString(), maxFee: 0, expiry: expiryTimestamp.toString(), nonce: nonce.toString(), leafIndex: selectedNote.leafIndex, type: "market" },
+        change: change > 0n ? { amount: change.toString(), salt: newSalt.toString(), expectedCommitment: expectedChangeCommitment.toString() } : null,
+        claims: claimFiles,
+        txHash: tx.hash,
+        note: "Market order settled via DEX. Each entry can be loaded in Private Claim.",
+        createdAt: new Date().toISOString(),
+      };
+      const bundleJson = JSON.stringify(bundle, null, 2);
+      const claimsFilename = `zkscatter-market-claims-${Date.now()}.json`;
+      try { await saveFileToFolder(claimsFilename, bundleJson); } catch { /* */ }
+      const blob = new Blob([bundleJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = claimsFilename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (change > 0n && changeSalt) {
+        try {
+          await saveNote({ note: { ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token, amount: change, salt: changeSalt, pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy },
+            commitment: "0x" + expectedChangeCommitment.toString(16), tokenSymbol: sellToken.symbol, tokenAddress: sellToken.address,
+            amount: ethers.formatUnits(changeAmount, sellToken.decimals), leafIndex: -1, txHash: tx.hash, createdAt: Date.now() });
+        } catch { /* */ }
+      }
+
+      setStep("submitted");
+      setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
+      setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Market order failed");
+      setStep("error");
+    }
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, changeAmount, dexPrices, zkRelayers, selectedRelayerIdx]);
+
   if (!account) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
@@ -636,6 +885,31 @@ export default function PrivateOrderPage() {
           <p className="text-sm text-on-surface-variant/70 mt-1">
             ZK-private order. Your identity and trade details are hidden on-chain.
           </p>
+          {/* Order Type Toggle */}
+          <div className="flex gap-1 mt-3 bg-surface-container-low/50 p-1 rounded-lg w-fit">
+            <button
+              onClick={() => setOrderType("limit")}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-bold transition-all ${
+                orderType === "limit"
+                  ? "bg-primary text-on-primary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-bright/50"
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              Limit
+            </button>
+            <button
+              onClick={() => setOrderType("market")}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-bold transition-all ${
+                orderType === "market"
+                  ? "bg-tertiary text-on-tertiary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-bright/50"
+              }`}
+            >
+              <Zap className="w-4 h-4" />
+              Market
+            </button>
+          </div>
         </div>
 
         {/* Order Form — always visible */}
@@ -783,16 +1057,27 @@ export default function PrivateOrderPage() {
                 )}
               </div>
               <div>
-                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Buy Amount</label>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">
+                  {orderType === "market" ? "Min Receive (after slippage)" : "Buy Amount"}
+                </label>
                 <input
                   type="text"
                   inputMode="decimal"
                   value={buyAmount}
                   onChange={(e) => setBuyAmount(e.target.value)}
-                  className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"
+                  readOnly={orderType === "market"}
+                  className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 ${
+                    orderType === "market" ? "opacity-70" : ""
+                  }`}
                   placeholder="0.00"
                 />
-                {sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
+                {orderType === "market" && marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
+                  <div className="text-xs text-on-surface-variant mt-1">
+                    DEX rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
+                    <span className="text-tertiary ml-1">({marketPriceSource})</span>
+                  </div>
+                )}
+                {orderType === "limit" && sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
                   <div className="text-xs text-on-surface-variant mt-1">
                     Price: {(parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
                   </div>
@@ -805,6 +1090,7 @@ export default function PrivateOrderPage() {
             {/* 3. Fee & Expiry */}
             <div className="bg-surface-container/30 rounded-xl p-6 border border-outline-variant/10 space-y-4">
             <div className="grid grid-cols-2 gap-4">
+              {orderType === "limit" ? (
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Max Relay Fee</label>
                 <div className="flex gap-1.5">
@@ -840,6 +1126,41 @@ export default function PrivateOrderPage() {
                   </div>
                 )}
               </div>
+              ) : (
+              <div>
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Slippage Tolerance</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { label: "0.1%", bps: "10" },
+                    { label: "0.5%", bps: "50" },
+                    { label: "1%", bps: "100" },
+                    { label: "3%", bps: "300" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.bps}
+                      type="button"
+                      onClick={() => setSlippageBps(opt.bps)}
+                      className={`flex-1 py-2 rounded-md text-xs font-bold transition-all ${
+                        slippageBps === opt.bps
+                          ? "bg-tertiary text-on-tertiary"
+                          : "bg-surface-container-low text-on-surface-variant hover:bg-surface-bright"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
+                  <div className="text-xs text-on-surface-variant mt-1">
+                    Expected: ~{(parseFloat(sellAmount) * marketPrice).toFixed(4)} {buyToken?.symbol}
+                    <span className="text-tertiary ml-1">(no relay fee)</span>
+                  </div>
+                )}
+                {!marketPrice && (
+                  <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
+                )}
+              </div>
+              )}
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
                 <select
@@ -1003,7 +1324,8 @@ export default function PrivateOrderPage() {
             {/* 5. ZK Relayer & Trading Key & Submit */}
             <div className="bg-surface-container/60 rounded-xl p-6 border border-outline-variant/10 space-y-4">
 
-            {/* ZK Relayer selection */}
+            {/* ZK Relayer selection — only for limit orders */}
+            {orderType === "limit" && (
             <div className="space-y-3">
               <h3 className="font-headline font-bold text-base flex items-center gap-2">
                 <Shield className="w-4 h-4 text-primary" />
@@ -1025,6 +1347,20 @@ export default function PrivateOrderPage() {
                 </select>
               )}
             </div>
+            )}
+
+            {/* Market order info */}
+            {orderType === "market" && (
+            <div className="bg-tertiary/5 border border-tertiary/15 rounded-lg px-4 py-3 space-y-1">
+              <div className="flex items-center gap-2 text-sm font-bold text-tertiary">
+                <Zap className="w-4 h-4" />
+                Direct DEX Settlement
+              </div>
+              <p className="text-xs text-on-surface-variant/70">
+                Your order will be settled directly via Uniswap on-chain. No relayer needed — you submit the transaction yourself. Gas fees apply.
+              </p>
+            </div>
+            )}
 
             {/* Trading Key */}
             <div className="pt-4 border-t border-outline-variant/10 space-y-3">
@@ -1061,16 +1397,30 @@ export default function PrivateOrderPage() {
               <div className="text-xs p-3 rounded-md bg-error/5 text-error">{error}</div>
             )}
 
+            {orderType === "limit" ? (
             <button
               onClick={handleSubmit}
               disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001)}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
-              {!selectedNote ? "Select a Commitment Note" : "Submit Private Order"}
+              {!selectedNote ? "Select a Commitment Note" : "Submit Limit Order"}
             </button>
+            ) : (
+            <button
+              onClick={handleMarketSubmit}
+              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || !marketPrice || step === "signing" || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
+            >
+              {step === "signing" ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Executing...</span>
+              ) : !selectedNote ? "Select a Commitment Note" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
+            </button>
+            )}
 
             <div className="text-xs text-on-surface-variant/40 text-center">
-              Order signed with EdDSA (Baby Jubjub). Hidden on-chain via ZK proof.
+              {orderType === "limit"
+                ? "Order signed with EdDSA (Baby Jubjub). Hidden on-chain via ZK proof."
+                : "Market order executed directly via DEX. ZK proof hides your identity on-chain."}
             </div>
           </div>
           </div>
@@ -1088,9 +1438,13 @@ export default function PrivateOrderPage() {
         {step === "submitted" && (
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
             <Check className="w-12 h-12 text-emerald-400 mx-auto" />
-            <p className="text-on-surface font-bold text-lg">Private Order Submitted</p>
+            <p className="text-on-surface font-bold text-lg">
+              {orderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
+            </p>
             <p className="text-sm text-on-surface-variant/70">
-              Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity.
+              {orderType === "market"
+                ? "Your market order has been settled via DEX on-chain. Claim your tokens on the Private Claim page."
+                : "Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity."}
             </p>
             {process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL && (
               <div className="bg-primary/5 border border-primary/15 rounded-lg px-4 py-3 text-xs text-on-surface-variant/60 text-left">
