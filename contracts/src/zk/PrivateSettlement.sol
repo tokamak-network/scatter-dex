@@ -40,6 +40,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error TokenMismatch();
     error AmountOverflow();
     error ZeroSellAmount();
+    error ZeroBuyAmount();
+    error BothTotalLockedZero();
     error OnlyWETH();
     error ClaimsGroupAlreadyExists();
     error DuplicateClaimsRoot();
@@ -542,8 +544,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
 
-        // 2. Non-zero amounts — prevent empty settlements that bloat state
+        // 2. Non-zero amounts — prevent empty settlements that bloat state.
+        //    buyAmount == 0 would collapse the price check (step 4) to
+        //    `0 > X`, allowing tokens to be given away for free.
+        //    Both totalLocked == 0 is blocked because it creates empty
+        //    ClaimsGroup storage with no value; one side zero is valid
+        //    (fully-claimed partial fill where that side keeps nothing).
         if (p.maker.sellAmount == 0 || p.taker.sellAmount == 0) revert ZeroSellAmount();
+        if (p.maker.buyAmount == 0 || p.taker.buyAmount == 0) revert ZeroBuyAmount();
+        if (p.maker.totalLocked == 0 && p.taker.totalLocked == 0) revert BothTotalLockedZero();
 
         // 3. Token whitelist (both sell tokens — i.e. tokens that will be
         //    spent from the pool). buyTokens are checked transitively via the

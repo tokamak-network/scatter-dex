@@ -339,7 +339,7 @@
 | S-M2 | Circuit | settle.circom expiry/timestamp range check 없음 | ⬜ |
 | S-M3 | Circuit | authorize.circom expiry 회로 내 미검증 (컨트랙트 의존) | ⬜ |
 | S-M4 | Circuit | cancel.circom balance range check 없음 | ⬜ |
-| S-M5 | Contract | settleAuth zero-amount 방어 없음 | ⬜ |
+| S-M5 | Contract | settleAuth zero-amount 방어 없음 | 🔧 IN PROGRESS |
 | S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ⬜ |
 | S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ⬜ |
 | S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ⬜ |

@@ -242,6 +242,47 @@ contract SettleAuthTest is Test {
     }
 
     // ────────────────────────────────────────────────────────────
+    //  Zero-amount guards (S-M5)
+    // ────────────────────────────────────────────────────────────
+
+    function test_settleAuth_zeroBuyAmountMaker_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.maker.buyAmount = 0;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_zeroBuyAmountTaker_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.taker.buyAmount = 0;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_zeroTotalLockedBothSides_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.maker.totalLocked = 0;
+        p.taker.totalLocked = 0;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.BothTotalLockedZero.selector);
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_zeroTotalLockedOneSide_succeeds() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.maker.totalLocked = 0;
+
+        vm.prank(makerRelayer);
+        settlement.settleAuth(p);
+        assertTrue(settlement.nullifiers(M_NULL));
+    }
+
+    // ────────────────────────────────────────────────────────────
     //  Async-root invariant — the load-bearing PR #130 design change
     // ────────────────────────────────────────────────────────────
 
@@ -319,21 +360,13 @@ contract SettleAuthTest is Test {
     }
 
     function test_settleAuth_priceMismatch_reverts() public {
-        // The price check is "defense in depth" — see settle.circom §5 [M2]
-        // for the proof that it is strictly implied by the receive guarantee
-        // and the claims+fees cap when both pass. To trigger PriceMismatch
-        // *in isolation* in the contract, the test must arrange inputs where
-        // the cap (which the contract checks at step 5) trivially passes
-        // (totalLocked = 0) but the price product still fails at step 4.
-        //
-        // Note: a real authorize.circom proof would never carry totalLocked=0
-        // alongside a non-zero buyAmount because the in-circuit §7 check
-        // `totalLocked ≥ buyAmount` would reject it. The mock verifier
-        // accepts any signal, which is what lets us isolate the contract-level
-        // check here.
+        // To trigger PriceMismatch in isolation, we set one side's
+        // totalLocked to 0 (which is valid — the ZeroTotalLocked guard
+        // only fires when *both* are zero) and keep totalLocked small
+        // enough on the other side so the cap check passes.
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
         p.maker.totalLocked = 0;
-        p.taker.totalLocked = 0;
+        p.taker.totalLocked = 1;
 
         // Maker: 10 sell, 18 buy (price = 1.8 buy/sell)
         // Taker: 17 sell, 10 buy (price = 1.7 sell/buy → maker doesn't get enough)
