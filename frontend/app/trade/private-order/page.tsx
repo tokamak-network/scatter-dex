@@ -40,6 +40,7 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 import { useMainnetPrice } from "../../lib/useDexPrices";
+import { friendlyError } from "../../lib/error-messages";
 
 // EdDSA key is AES-GCM encrypted and stored in the notes folder (File System API).
 // This protects against extension/physical access. Does NOT protect against XSS.
@@ -450,7 +451,6 @@ export default function PrivateOrderPage() {
         setStep("create_order");
       }
     } catch (e: unknown) {
-      const { friendlyError } = await import("../../lib/error-messages");
       setError(friendlyError(e));
     } finally {
       setKeyLoading(false);
@@ -605,8 +605,7 @@ export default function PrivateOrderPage() {
       setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      const fe = await import("../../lib/error-messages");
-      setError(fe.friendlyError(e));
+      setError(friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
@@ -731,8 +730,7 @@ export default function PrivateOrderPage() {
       setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      const fe = await import("../../lib/error-messages");
-      setError(fe.friendlyError(e));
+      setError(friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, changeAmount, dexPrices, zkRelayers, selectedRelayerIdx]);

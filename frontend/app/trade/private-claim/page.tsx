@@ -9,6 +9,7 @@ import { getPrivateSettlementAddress } from "../../lib/config";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
 import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
+import { friendlyError } from "../../lib/error-messages";
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";
 type ClaimMode = "relayer" | "wallet";
@@ -209,7 +210,6 @@ export default function PrivateClaimPage() {
       setTxHash(result.txHash || "");
       setStatus("success");
     } catch (e: unknown) {
-      const { friendlyError } = await import("../../lib/error-messages");
       setError(friendlyError(e));
       setStatus("error");
     }
@@ -242,7 +242,6 @@ export default function PrivateClaimPage() {
       setStatus("success");
     } catch (e: any) {
       console.error("Wallet claim failed:", e);
-      const { friendlyError } = await import("../../lib/error-messages");
       setError(friendlyError(e));
       setStatus("error");
     }

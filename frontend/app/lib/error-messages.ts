@@ -72,23 +72,45 @@ const ZK_PATTERNS: Array<[RegExp, string]> = [
 ];
 
 /**
+ * Extract the most useful error string from an error object.
+ * ethers v6 wraps revert reasons in nested objects.
+ */
+function extractMessage(error: unknown): string {
+  if (error == null) return "Unknown error";
+  if (typeof error === "string") return error;
+  const e = error as Record<string, unknown>;
+  // ethers v6: shortMessage is the cleanest summary
+  if (typeof e.shortMessage === "string") return e.shortMessage;
+  // ethers v6: reason contains the revert string
+  if (typeof e.reason === "string") return e.reason;
+  // ethers v6: nested info.error
+  if (e.info && typeof (e.info as Record<string, unknown>).error === "object") {
+    const inner = (e.info as Record<string, unknown>).error as Record<string, unknown>;
+    if (typeof inner.message === "string") return inner.message;
+  }
+  if (error instanceof Error) return error.message;
+  const str = String(error);
+  return str === "[object Object]" ? "Unknown error" : str;
+}
+
+/**
  * Convert a raw error into a user-friendly message.
  * Returns the friendly message, or the original message if no match is found.
  */
 export function friendlyError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = extractMessage(error);
 
-  // 1. Check Solidity custom errors (e.g., "InvalidProof()" or "reverted with custom error 'InvalidProof'")
-  for (const [name, message] of Object.entries(CONTRACT_ERRORS)) {
-    if (raw.includes(name)) return message;
-  }
-
-  // 2. Check wallet/network patterns
+  // 1. Wallet/user actions first (highest signal — user consciously acted)
   for (const [pattern, message] of WALLET_PATTERNS) {
     if (pattern.test(raw)) return message;
   }
 
-  // 3. Check ZK patterns
+  // 2. Solidity custom errors (word-boundary match to avoid false positives)
+  for (const [name, message] of Object.entries(CONTRACT_ERRORS)) {
+    if (new RegExp(`\\b${name}\\b`).test(raw)) return message;
+  }
+
+  // 3. ZK proof patterns
   for (const [pattern, message] of ZK_PATTERNS) {
     if (pattern.test(raw)) return message;
   }

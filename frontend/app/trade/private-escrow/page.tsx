@@ -33,6 +33,7 @@ import {
 } from "../../lib/zk/note-storage";
 import { generateDepositProof } from "../../lib/zk/deposit-prover";
 import { deriveEdDSAKey } from "../../lib/zk/eddsa";
+import { friendlyError } from "../../lib/error-messages";
 
 
 type TxState = "idle" | "approving" | "depositing" | "success" | "error";
@@ -314,7 +315,6 @@ export default function PrivateEscrowPage() {
       setDepositAmount("");
     } catch (e: unknown) {
       setTxState("error");
-      const { friendlyError } = await import("../../lib/error-messages");
       setTxError(friendlyError(e));
     }
   }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes]);
