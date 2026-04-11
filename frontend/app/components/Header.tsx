@@ -26,7 +26,7 @@ function shortenRpc(url: string) {
 
 export default function Header() {
   const pathname = usePathname();
-  const { account, chainId, connect, disconnect } = useWallet();
+  const { account, chainId, walletName, connect, disconnect } = useWallet();
 
   const isWrongNetwork = account && chainId !== null && chainId !== EXPECTED_CHAIN_ID;
 
@@ -91,6 +91,7 @@ export default function Header() {
                 onClick={disconnect}
                 className="bg-surface-container text-on-surface px-5 py-2 rounded-md font-semibold text-sm border border-outline-variant/20 hover:bg-surface-bright transition-all font-mono"
               >
+                {walletName && <span className="text-on-surface-variant mr-1">{walletName}</span>}
                 {shortenAddress(account)}
               </button>
             ) : (
