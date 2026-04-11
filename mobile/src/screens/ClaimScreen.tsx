@@ -18,7 +18,7 @@ const claimableItems = [
 
 export default function ClaimScreen() {
   const navigation = useNavigation<any>();
-  const [progress] = useState(85);
+  const progress = 85;
   const [claimTab, setClaimTab] = useState<'json' | 'notes'>('notes');
 
   return (

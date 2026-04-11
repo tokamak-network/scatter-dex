@@ -31,6 +31,10 @@ export const colors = {
   cyanLight: '#ECFEFF',
   indigo: '#6366F1',
   indigoLight: '#EEF2FF',
+  orange: '#F97316',
+  orangeLight: '#FFF7ED',
+  blueBorder: '#DBEAFE',
+  gray500: '#6B7280',
 } as const;
 
 export const shared = StyleSheet.create({
