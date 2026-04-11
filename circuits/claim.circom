@@ -99,10 +99,10 @@ template Claim(depth) {
     // ════════════════════════════════════════
     //  4. BIND PUBLIC INPUTS (prevent optimization)
     //
-    //  [M6] `amount` and `recipient` are public inputs and are therefore
-    //  already bound to the proof at the verification-key level. The
-    //  squaring statements below exist to prevent the circom optimizer
-    //  from dropping these signals from the witness — without at least
+    //  [M6][C-2] `amount`, `recipient`, `token`, and `releaseTime` are
+    //  public inputs bound to the proof at the verification-key level.
+    //  The squaring statements below prevent the circom optimizer from
+    //  dropping these signals from the witness — without at least
     //  one constraint that *uses* them, the compiler may consider them
     //  dead and elide them, leading to verification keys that no longer
     //  cover the public inputs.
