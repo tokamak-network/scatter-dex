@@ -1,5 +1,5 @@
 /**
- * KeySecurityService — Trust Wallet 수준 키 보안
+ * KeySecurityService — 하드웨어 기반 키 보안
  *
  * 레이어 1: 앱 잠금 (생체인증 / PIN)
  * 레이어 2: Keychain(iOS) / Keystore(Android) 암호화 저장
@@ -7,8 +7,9 @@
  *
  * 키 저장 구조:
  *   expo-secure-store (하드웨어 백 암호화)
- *     └─ 'scatterdex_wallet' → 암호화된 프라이빗 키
- *     └─ 'scatterdex_mnemonic' → 암호화된 시드 구문
+ *     └─ WALLET_KEY → 프라이빗 키 (암호화)
+ *     └─ MNEMONIC_KEY → 시드 구문 (암호화)
+ *     └─ ADDRESS_KEY → 지갑 주소 (생체인증 없이 접근)
  */
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -16,25 +17,18 @@ import { ethers } from 'ethers';
 
 const WALLET_KEY = 'scatterdex_wallet_pk';
 const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';
+const ADDRESS_KEY = 'scatterdex_wallet_address';
 const AUTH_ENABLED_KEY = 'scatterdex_biometric_enabled';
-
-export interface WalletInfo {
-  address: string;
-  privateKey: string;
-}
 
 export const KeySecurityService = {
   // ─── 생체인증 ──────────────────────────────────────
 
-  /** 기기에서 생체인증을 지원하는지 확인 */
   async isBiometricAvailable(): Promise<boolean> {
     const compatible = await LocalAuthentication.hasHardwareAsync();
     if (!compatible) return false;
-    const enrolled = await LocalAuthentication.isEnrolledAsync();
-    return enrolled;
+    return LocalAuthentication.isEnrolledAsync();
   },
 
-  /** 생체인증 요청 — Face ID / 지문 / PIN */
   async authenticate(reason: string = 'Authenticate to access your wallet'): Promise<boolean> {
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: reason,
@@ -44,74 +38,65 @@ export const KeySecurityService = {
     return result.success;
   },
 
-  /** 생체인증 활성화 여부 */
   async isBiometricEnabled(): Promise<boolean> {
     const val = await SecureStore.getItemAsync(AUTH_ENABLED_KEY);
     return val === 'true';
   },
 
-  /** 생체인증 활성화/비활성화 */
   async setBiometricEnabled(enabled: boolean): Promise<void> {
     await SecureStore.setItemAsync(AUTH_ENABLED_KEY, enabled ? 'true' : 'false');
   },
 
   // ─── 지갑 생성/복구 ────────────────────────────────
 
-  /** 새 지갑 생성 — 시드 구문 + 프라이빗 키 생성 후 Keychain 저장 */
-  async createWallet(): Promise<{ mnemonic: string; wallet: WalletInfo }> {
+  async createWallet(): Promise<{ mnemonic: string; address: string }> {
     const hdWallet = ethers.Wallet.createRandom();
     const mnemonic = hdWallet.mnemonic!.phrase;
-    const privateKey = hdWallet.privateKey;
-    const address = hdWallet.address;
 
-    // Keychain/Keystore에 암호화 저장
-    await SecureStore.setItemAsync(WALLET_KEY, privateKey, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
-    await SecureStore.setItemAsync(MNEMONIC_KEY, mnemonic, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
-
-    return { mnemonic, wallet: { address, privateKey } };
+    await this._saveWallet(hdWallet.privateKey, hdWallet.address, mnemonic);
+    return { mnemonic, address: hdWallet.address };
   },
 
-  /** 시드 구문으로 지갑 복구 */
-  async importFromMnemonic(mnemonic: string): Promise<WalletInfo> {
+  async importFromMnemonic(mnemonic: string): Promise<string> {
     const hdWallet = ethers.Wallet.fromPhrase(mnemonic.trim());
-    const privateKey = hdWallet.privateKey;
-    const address = hdWallet.address;
-
-    await SecureStore.setItemAsync(WALLET_KEY, privateKey, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
-    await SecureStore.setItemAsync(MNEMONIC_KEY, mnemonic.trim(), {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
-
-    return { address, privateKey };
+    await this._saveWallet(hdWallet.privateKey, hdWallet.address, mnemonic.trim());
+    return hdWallet.address;
   },
 
-  /** 프라이빗 키로 지갑 가져오기 (개발/테스트용) */
-  async importFromPrivateKey(privateKey: string): Promise<WalletInfo> {
-    const wallet = new ethers.Wallet(privateKey);
-    const address = wallet.address;
+  async importFromPrivateKey(privateKey: string): Promise<string> {
+    const pk = privateKey.trim().startsWith('0x') ? privateKey.trim() : `0x${privateKey.trim()}`;
+    const wallet = new ethers.Wallet(pk);
+    // No mnemonic for raw key imports
+    await this._saveWallet(pk, wallet.address, null);
+    return wallet.address;
+  },
 
+  /** Internal: save wallet data to Keychain/Keystore */
+  async _saveWallet(privateKey: string, address: string, mnemonic: string | null): Promise<void> {
     await SecureStore.setItemAsync(WALLET_KEY, privateKey, {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     });
-
-    return { address, privateKey };
+    await SecureStore.setItemAsync(ADDRESS_KEY, address);
+    if (mnemonic) {
+      await SecureStore.setItemAsync(MNEMONIC_KEY, mnemonic, {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
+    }
   },
 
   // ─── 키 접근 (생체인증 게이팅) ──────────────────────
 
-  /** 저장된 지갑 존재 여부 */
   async hasWallet(): Promise<boolean> {
-    const pk = await SecureStore.getItemAsync(WALLET_KEY);
-    return !!pk;
+    const addr = await SecureStore.getItemAsync(ADDRESS_KEY);
+    return !!addr;
   },
 
-  /** 프라이빗 키 로드 — 생체인증 필요 */
+  /** 지갑 주소 — 생체인증 불필요 (주소는 공개 정보) */
+  async getAddress(): Promise<string | null> {
+    return SecureStore.getItemAsync(ADDRESS_KEY);
+  },
+
+  /** 프라이빗 키 — 생체인증 필요 */
   async getPrivateKey(): Promise<string | null> {
     const biometricEnabled = await this.isBiometricEnabled();
     if (biometricEnabled) {
@@ -121,27 +106,18 @@ export const KeySecurityService = {
     return SecureStore.getItemAsync(WALLET_KEY);
   },
 
-  /** ethers.Wallet 인스턴스 생성 — 생체인증 필요 */
+  /** ethers.Wallet Signer 생성 — 생체인증 필요 */
   async getSigner(provider: ethers.JsonRpcProvider): Promise<ethers.Wallet | null> {
     const pk = await this.getPrivateKey();
     if (!pk) return null;
     return new ethers.Wallet(pk, provider);
   },
 
-  /** 지갑 주소만 로드 (생체인증 불필요) */
-  async getAddress(): Promise<string | null> {
-    const pk = await SecureStore.getItemAsync(WALLET_KEY);
-    if (!pk) return null;
-    try {
-      const wallet = new ethers.Wallet(pk);
-      return wallet.address;
-    } catch {
-      return null;
-    }
-  },
-
-  /** 시드 구문 조회 — 반드시 생체인증 */
+  /** 시드 구문 조회 — 항상 생체인증 필요 */
   async getMnemonic(): Promise<string | null> {
+    const hasMnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY);
+    if (!hasMnemonic) return null;
+
     const ok = await this.authenticate('Authenticate to view recovery phrase');
     if (!ok) return null;
     return SecureStore.getItemAsync(MNEMONIC_KEY);
@@ -149,16 +125,18 @@ export const KeySecurityService = {
 
   // ─── 트랜잭션 서명 게이팅 ──────────────────────────
 
-  /** 트랜잭션 서명 전 생체인증 확인 */
+  /** 트랜잭션 서명 전 생체인증 (biometric 토글이 켜진 경우만) */
   async authorizeTransaction(description: string): Promise<boolean> {
+    const biometricEnabled = await this.isBiometricEnabled();
+    if (!biometricEnabled) return true; // 토글 OFF → 자동 승인
     return this.authenticate(`Approve: ${description}`);
   },
 
   // ─── 지갑 삭제 ────────────────────────────────────
 
-  /** 지갑 데이터 완전 삭제 */
   async deleteWallet(): Promise<void> {
     await SecureStore.deleteItemAsync(WALLET_KEY);
     await SecureStore.deleteItemAsync(MNEMONIC_KEY);
+    await SecureStore.deleteItemAsync(ADDRESS_KEY);
   },
 };

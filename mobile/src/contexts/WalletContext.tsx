@@ -138,8 +138,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.log('WC: calling connect...');
       await wcProvider.connect();
       console.log('WC: connected! setting up provider...');
-      setQrUri(null); // Close QR modal after connection
+      setQrUri(null);
       await setupFromWcProvider(wcProvider);
+      setConnectionMode('walletconnect');
     } catch (err: any) {
       setQrUri(null);
       setState((s) => ({
@@ -154,12 +155,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connectBuiltin = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
-      const hasWallet = await KeySecurityService.hasWallet();
-      if (!hasWallet) {
-        throw new Error('NO_WALLET'); // UI에서 생성/복구 화면으로 분기
+      // Tear down existing WalletConnect session if any
+      if (wcProviderRef.current) {
+        try { await wcProviderRef.current.disconnect(); } catch { /* ignore */ }
+        wcProviderRef.current = null;
       }
 
-      // 생체인증 후 signer 획득
+      const hasWallet = await KeySecurityService.hasWallet();
+      if (!hasWallet) {
+        throw new Error('NO_WALLET');
+      }
+
       const signer = await KeySecurityService.getSigner(readProvider);
       if (!signer) {
         throw new Error('Authentication failed');

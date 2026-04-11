@@ -25,9 +25,11 @@ import { ConfigService } from '../services/ConfigService';
 import { ZKBridgeService } from '../services/ZKBridgeService';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { KeySecurityService } from '../services/KeySecurityService';
+import { useWallet } from '../contexts/WalletContext';
 import { shortAddr } from '../lib/format';
 
 export default function SettingsScreen() {
+  const { disconnect } = useWallet();
   const [noteCount, setNoteCount] = useState(0);
   const [zkReady, setZkReady] = useState(false);
   const [hasWallet, setHasWallet] = useState(false);
@@ -66,10 +68,10 @@ export default function SettingsScreen() {
   }, []);
 
   const handleCreateWallet = async () => {
-    const { mnemonic, wallet } = await KeySecurityService.createWallet();
+    const { mnemonic, address } = await KeySecurityService.createWallet();
     Alert.alert(
       'Wallet Created',
-      `Address: ${shortAddr(wallet.address)}\n\nRecovery phrase (save securely):\n\n${mnemonic}`,
+      `Address: ${shortAddr(address)}\n\nWARNING: Write down your recovery phrase and store it securely. Do not screenshot.\n\n${mnemonic}`,
       [{ text: 'I saved it' }],
     );
     await loadWalletState();
@@ -78,8 +80,8 @@ export default function SettingsScreen() {
   const handleImportMnemonic = async () => {
     if (!mnemonicInput.trim()) return;
     try {
-      const w = await KeySecurityService.importFromMnemonic(mnemonicInput);
-      Alert.alert('Imported', `Address: ${shortAddr(w.address)}`);
+      const address = await KeySecurityService.importFromMnemonic(mnemonicInput);
+      Alert.alert('Imported', `Address: ${shortAddr(address)}`);
       setMnemonicInput('');
       await loadWalletState();
     } catch (e: any) {
@@ -90,8 +92,8 @@ export default function SettingsScreen() {
   const handleImportPK = async () => {
     if (!pkInput.trim()) return;
     try {
-      const w = await KeySecurityService.importFromPrivateKey(pkInput.trim());
-      Alert.alert('Imported', `Address: ${shortAddr(w.address)}`);
+      const address = await KeySecurityService.importFromPrivateKey(pkInput.trim());
+      Alert.alert('Imported', `Address: ${shortAddr(address)}`);
       setPkInput('');
       await loadWalletState();
     } catch (e: any) {
@@ -99,10 +101,15 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleDeleteWallet = () => {
+  const handleDeleteWallet = async () => {
+    // Require biometric auth before deletion
+    const authOk = await KeySecurityService.authenticate('Authenticate to delete wallet');
+    if (!authOk) return;
+
     Alert.alert('Delete Wallet', 'This will permanently remove your wallet from this device. Make sure you have backed up your recovery phrase.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
+        await disconnect(); // Disconnect wallet context first
         await KeySecurityService.deleteWallet();
         await loadWalletState();
       }},
@@ -223,6 +230,9 @@ export default function SettingsScreen() {
                 value={mnemonicInput}
                 onChangeText={setMnemonicInput}
                 multiline
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
               />
               {mnemonicInput.trim() ? (
                 <TouchableOpacity style={styles.importBtn} onPress={handleImportMnemonic}>

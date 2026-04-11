@@ -50,7 +50,7 @@ function WalletCard() {
         <>
           <Text style={styles.address}>{displayAddr}</Text>
           <Text style={styles.chainInfo}>
-            Chain ID: {chainId} · {connectionMode === 'builtin' ? 'Built-in' : 'WalletConnect'}
+            Chain ID: {chainId}{connectionMode !== 'none' ? ` · ${connectionMode === 'builtin' ? 'Built-in' : 'WalletConnect'}` : ''}
           </Text>
           <TouchableOpacity style={styles.disconnectBtn} onPress={disconnect}>
             <Text style={styles.disconnectText}>Disconnect</Text>
