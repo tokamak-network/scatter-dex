@@ -36,6 +36,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error NotAContract();
     error FeeOnTransferTokenUnsupported();
     error AddressSanctioned();
+    error FeeExceedsMax();
+    error TimelockNotExpired();
+    error NoPendingSettlement();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -71,6 +74,16 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot deposit or withdraw.
     ISanctionsList public sanctionsList;
 
+    /// @notice Maximum fee per transferFee call (bps of pool balance). 1000 = 10%.
+    uint256 public constant MAX_FEE_BPS = 1000;
+
+    /// @notice Timelock delay for setAuthorizedSettlement (24 hours).
+    uint256 public constant SETTLEMENT_TIMELOCK = 24 hours;
+
+    /// @notice Pending settlement address (2-step change with timelock).
+    address public pendingSettlement;
+    uint256 public pendingSettlementActivateAt;
+
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _withdrawVerifier,
@@ -104,7 +117,32 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event AuthorizedSettlementUpdated(address indexed settlement);
 
+    event SettlementChangeQueued(address indexed newSettlement, uint256 activateAt);
+
+    /// @notice Queue a settlement address change (activates after SETTLEMENT_TIMELOCK).
+    function queueSetAuthorizedSettlement(address _settlement) external onlyOwner {
+        if (_settlement == address(0)) revert ZeroAddress();
+        pendingSettlement = _settlement;
+        pendingSettlementActivateAt = block.timestamp + SETTLEMENT_TIMELOCK;
+        emit SettlementChangeQueued(_settlement, pendingSettlementActivateAt);
+    }
+
+    /// @notice Activate a queued settlement change after timelock expires.
+    function activateAuthorizedSettlement() external onlyOwner {
+        if (pendingSettlement == address(0)) revert NoPendingSettlement();
+        if (block.timestamp < pendingSettlementActivateAt) revert TimelockNotExpired();
+        authorizedSettlement = pendingSettlement;
+        emit AuthorizedSettlementUpdated(pendingSettlement);
+        pendingSettlement = address(0);
+        pendingSettlementActivateAt = 0;
+    }
+
+    /// @notice Immediate set for initial deployment only (when no settlement is set yet).
     function setAuthorizedSettlement(address _settlement) external onlyOwner {
+        if (authorizedSettlement != address(0)) {
+            // After initial setup, must use 2-step timelock
+            revert TimelockNotExpired();
+        }
         if (_settlement == address(0)) revert ZeroAddress();
         authorizedSettlement = _settlement;
         emit AuthorizedSettlementUpdated(_settlement);
@@ -240,7 +278,10 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     function transferFee(address recipient, address token, uint256 amount) external nonReentrant {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
         if (recipient == address(0)) revert ZeroAddress();
-        if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance < amount) revert InsufficientPoolBalance();
+        // [H-3] Cap fee at MAX_FEE_BPS of pool balance to prevent drain
+        if (amount > balance * MAX_FEE_BPS / 10_000) revert FeeExceedsMax();
         IERC20(token).safeTransfer(recipient, amount);
         emit FeeTransferred(recipient, token, amount);
     }
