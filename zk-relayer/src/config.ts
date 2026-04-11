@@ -47,4 +47,7 @@ export const config = {
   sharedOrderbookUrl: process.env.SHARED_ORDERBOOK_URL || null,
   relayerPublicUrl: process.env.RELAYER_PUBLIC_URL || null,
   relayerName: process.env.RELAYER_NAME || undefined,
+
+  // [R-1] Gas guard: max gas price in gwei (default 100)
+  maxGasPriceGwei: parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10),
 };

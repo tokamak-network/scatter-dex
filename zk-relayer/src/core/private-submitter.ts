@@ -327,7 +327,9 @@ export class PrivateSubmitter {
 
     // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
     return this.withTxLock(async () => {
-      const tx = await this.settlement.settlePrivate({
+      // [R-1] Gas estimation + profitability check
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const settleParams = {
         proofA,
         proofB,
         proofC,
@@ -349,8 +351,17 @@ export class PrivateSubmitter {
         feeTokenTaker,
         makerRelayer: makerRelayerAddr,
         takerRelayer: takerRelayerAddr,
-      });
+      };
 
+      const feeWei = BigInt(feeTokenMaker) + BigInt(feeTokenTaker);
+      const gasCheck = await estimateAndGuard(this.settlement, "settlePrivate", [settleParams], feeWei);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settlePrivate unprofitable: ${gasCheck.reason}`);
+        throw new Error(`Settlement unprofitable: gas ${gasCheck.gasCostEth} ETH > fee`);
+      }
+      console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH, profitable=true`);
+
+      const tx = await this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
@@ -472,7 +483,7 @@ export class PrivateSubmitter {
     const crHex = "0x" + claimsRoot.toString(16).padStart(64, "0");
 
     return this.withTxLock(async () => {
-      const tx = await this.settlement.scatterDirect({
+      const scatterParams = {
         proofA,
         proofB,
         proofC,
@@ -484,8 +495,17 @@ export class PrivateSubmitter {
         claimsRoot: crHex,
         totalLocked,
         fee,
-      });
+      };
 
+      // [R-1] Gas estimation + profitability check
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirect", [scatterParams], BigInt(fee));
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] scatterDirect unprofitable: ${gasCheck.reason}`);
+        throw new Error(`ScatterDirect unprofitable: gas ${gasCheck.gasCostEth} ETH > fee`);
+      }
+
+      const tx = await this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;

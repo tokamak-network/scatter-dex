@@ -166,8 +166,17 @@ export class AuthorizeSubmitter {
     };
 
     return this.withTxLock(async () => {
-      console.log("[authorize-submitter] Submitting settleAuth...");
-      const tx = await this.settlement.settleAuth(params);
+      // [R-1] Gas estimation + profitability check
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const feeWei = BigInt(feeTokenMaker) + BigInt(feeTokenTaker);
+      const gasCheck = await estimateAndGuard(this.settlement, "settleAuth", [params], feeWei);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settleAuth unprofitable: ${gasCheck.reason}`);
+        throw new Error(`Settlement unprofitable: gas ${gasCheck.gasCostEth} ETH > fee`);
+      }
+      console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH, profitable=true`);
+
+      const tx = await this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
