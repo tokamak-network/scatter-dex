@@ -28,9 +28,20 @@ import { formatBalance, shortAddr } from '../lib/format';
 // ─── Sub-components ────────────────────────────────────
 
 function WalletCard() {
-  const { account, chainId, isConnecting, connect, disconnect, error } = useWallet();
+  const { account, chainId, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error } = useWallet();
+  const navigation = useNavigation<any>();
 
   const displayAddr = account ? shortAddr(account) : null;
+
+  const handleBuiltinConnect = async () => {
+    try {
+      await connectBuiltin();
+    } catch (err: any) {
+      if (err?.message === 'NO_WALLET') {
+        navigation.navigate('Settings'); // 지갑 생성 화면으로 이동
+      }
+    }
+  };
 
   return (
     <View style={styles.card}>
@@ -38,7 +49,9 @@ function WalletCard() {
       {account ? (
         <>
           <Text style={styles.address}>{displayAddr}</Text>
-          <Text style={styles.chainInfo}>Chain ID: {chainId}</Text>
+          <Text style={styles.chainInfo}>
+            Chain ID: {chainId}{connectionMode !== 'none' ? ` · ${connectionMode === 'builtin' ? 'Built-in' : 'WalletConnect'}` : ''}
+          </Text>
           <TouchableOpacity style={styles.disconnectBtn} onPress={disconnect}>
             <Text style={styles.disconnectText}>Disconnect</Text>
           </TouchableOpacity>
@@ -48,7 +61,7 @@ function WalletCard() {
           <Text style={styles.noWallet}>No wallet connected</Text>
           <TouchableOpacity
             style={[styles.connectBtn, isConnecting && styles.btnDisabled]}
-            onPress={connect}
+            onPress={handleBuiltinConnect}
             disabled={isConnecting}
           >
             {isConnecting ? (
@@ -56,6 +69,13 @@ function WalletCard() {
             ) : (
               <Text style={styles.connectText}>Connect Wallet</Text>
             )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.wcBtn, isConnecting && styles.btnDisabled]}
+            onPress={connect}
+            disabled={isConnecting}
+          >
+            <Text style={styles.wcBtnText}>WalletConnect</Text>
           </TouchableOpacity>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </>
@@ -364,6 +384,18 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.5,
+  },
+  wcBtn: {
+    marginTop: 8,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#374151',
+    alignItems: 'center',
+  },
+  wcBtnText: {
+    color: '#6b7280',
+    fontSize: 14,
   },
   errorText: {
     color: '#ef4444',
