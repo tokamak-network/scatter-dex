@@ -850,6 +850,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         AuthorizeProof proof;
         address dexRouter;    // any whitelisted DEX router (Uniswap, 1inch, Curve, etc.)
         bytes   dexCalldata;  // encoded swap call for the specific DEX
+        uint256 deadline;     // [C-1] tx must be mined before this timestamp
     }
 
     /// @notice Execute a private settlement via any whitelisted external DEX.
@@ -862,7 +863,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         that at least `totalLocked` of `buyToken` was received.
     ///         The frontend constructs the appropriate calldata for the
     ///         chosen DEX (e.g. Uniswap exactInputSingle, 1inch swap, etc.).
+    error DeadlineExpired();
+
     function settleWithDex(SettleDexParams calldata p) external nonReentrant {
+        // [C-1] Deadline: reject stale transactions that miners held in mempool
+        if (block.timestamp > p.deadline) revert DeadlineExpired();
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();

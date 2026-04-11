@@ -684,6 +684,7 @@ export default function PrivateOrderPage() {
         },
         dexRouter: swapRoute.dexRouter,
         dexCalldata: swapRoute.dexCalldata,
+        deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
       });
       await tx.wait();
 

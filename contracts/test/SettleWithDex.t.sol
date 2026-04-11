@@ -151,7 +151,8 @@ contract SettleWithDexTest is Test {
                 orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: _encodeDexCalldata()
+            dexCalldata: _encodeDexCalldata(),
+            deadline: block.timestamp + 1800
         });
     }
 
@@ -355,7 +356,8 @@ contract SettleWithDexTest is Test {
                 relayer: user, orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement)))
+            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
