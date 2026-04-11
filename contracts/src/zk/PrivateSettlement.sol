@@ -16,6 +16,7 @@ import {IWETH} from "../interfaces/IWETH.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
 import {FeeVault} from "../FeeVault.sol";
+import {SanctionsList} from "../SanctionsList.sol";
 
 /// @title PrivateSettlement
 /// @notice ZK-based private settlement for ScatterDEX.
@@ -58,6 +59,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error DexCallReverted();
     error DexOutputInsufficient(uint256 actual, uint256 required);
     error DexPlatformFeeTooHigh();
+    error AddressSanctioned();
 
     uint256 public constant MAX_DEX_PLATFORM_FEE_BPS = 500; // 5%
 
@@ -214,6 +216,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     mapping(bytes32 => ClaimsGroup) public claimsGroups;
     mapping(address => bool) public whitelistedTokens;
 
+    /// @notice Optional sanctions list. If set, sanctioned addresses cannot claim or settle.
+    SanctionsList public sanctionsList;
+
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _pool,
@@ -289,6 +294,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_bps > MAX_DEX_PLATFORM_FEE_BPS) revert DexPlatformFeeTooHigh();
         emit DexPlatformFeeUpdated(dexPlatformFeeBps, _bps);
         dexPlatformFeeBps = _bps;
+    }
+
+    event SanctionsListUpdated(address indexed oldList, address indexed newList);
+
+    /// @notice Set the sanctions list. Pass address(0) to disable sanctions checking.
+    function setSanctionsList(address _list) external onlyOwner {
+        emit SanctionsListUpdated(address(sanctionsList), _list);
+        sanctionsList = SanctionsList(_list);
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -834,6 +847,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         chosen DEX (e.g. Uniswap exactInputSingle, 1inch swap, etc.).
     function settleWithDex(SettleDexParams calldata p) external nonReentrant {
         if (paused) revert ContractPaused();
+        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(msg.sender)) revert AddressSanctioned();
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
 
@@ -1031,6 +1045,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ) external nonReentrant {
         if (paused) revert ContractPaused();
         if (recipient == address(0)) revert ZeroAddress();
+        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(recipient)) revert AddressSanctioned();
 
         ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.totalLocked == 0) revert ClaimsGroupNotFound();

@@ -9,6 +9,7 @@ import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
 import {IDepositVerifier} from "./IDepositVerifier.sol";
+import {SanctionsList} from "../SanctionsList.sol";
 
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
@@ -34,6 +35,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error FieldElementOutOfRange();
     error NotAContract();
     error FeeOnTransferTokenUnsupported();
+    error AddressSanctioned();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -65,6 +67,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     mapping(uint256 => bool) public nullifiers;
     mapping(address => bool) public whitelistedTokens;
+
+    /// @notice Optional sanctions list. If set, sanctioned addresses cannot deposit or withdraw.
+    SanctionsList public sanctionsList;
 
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
@@ -116,6 +121,22 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         emit TokenWhitelistUpdated(token, allowed);
     }
 
+    event SanctionsListUpdated(address indexed oldList, address indexed newList);
+
+    /// @notice Set the sanctions list. Pass address(0) to disable sanctions checking.
+    function setSanctionsList(address _list) external onlyOwner {
+        emit SanctionsListUpdated(address(sanctionsList), _list);
+        sanctionsList = SanctionsList(_list);
+    }
+
+    /// @dev Revert if address is sanctioned (when sanctions list is configured).
+    modifier notSanctioned(address addr) {
+        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(addr)) {
+            revert AddressSanctioned();
+        }
+        _;
+    }
+
     // ─── Deposit ─────────────────────────────────────────────────
 
     /// @notice Deposit tokens and add a commitment to the Merkle tree.
@@ -138,7 +159,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         uint256 commitment,
         address token,
         uint256 amount
-    ) external nonReentrant {
+    ) external nonReentrant notSanctioned(msg.sender) {
         if (paused) revert ContractPaused();
         if (commitment == 0) revert ZeroCommitment();
         if (token == address(0)) revert ZeroAddress();
@@ -252,7 +273,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
         uint256 amount,
         address recipient,
         address relayer
-    ) external nonReentrant {
+    ) external nonReentrant notSanctioned(msg.sender) notSanctioned(recipient) {
         if (paused) revert ContractPaused();
         _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
     }
