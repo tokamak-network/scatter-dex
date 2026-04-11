@@ -263,25 +263,6 @@ contract SettleAuthTest is Test {
         settlement.settleAuth(p);
     }
 
-    function test_settleAuth_zeroTotalLockedBothSides_reverts() public {
-        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
-        p.maker.totalLocked = 0;
-        p.taker.totalLocked = 0;
-
-        vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.BothTotalLockedZero.selector);
-        settlement.settleAuth(p);
-    }
-
-    function test_settleAuth_zeroTotalLockedOneSide_succeeds() public {
-        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
-        p.maker.totalLocked = 0;
-
-        vm.prank(makerRelayer);
-        settlement.settleAuth(p);
-        assertTrue(settlement.nullifiers(M_NULL));
-    }
-
     // ────────────────────────────────────────────────────────────
     //  Async-root invariant — the load-bearing PR #130 design change
     // ────────────────────────────────────────────────────────────
@@ -360,12 +341,18 @@ contract SettleAuthTest is Test {
     }
 
     function test_settleAuth_priceMismatch_reverts() public {
-        // To trigger PriceMismatch in isolation, we set one side's
-        // totalLocked to 0 (which is valid — the ZeroTotalLocked guard
-        // only fires when *both* are zero) and keep totalLocked small
-        // enough on the other side so the cap check passes.
+        // To trigger PriceMismatch in isolation, the test must arrange
+        // inputs where the cap (step 5) trivially passes but the price
+        // product still fails at step 4. We set totalLocked to 1 on
+        // both sides so the cap check passes trivially.
+        //
+        // Note: a real authorize.circom proof would never carry
+        // totalLocked=1 alongside a large buyAmount because the
+        // in-circuit check `totalLocked >= buyAmount` would reject it.
+        // The MockVerifier accepts any signal, which is what lets us
+        // isolate the contract-level price check here.
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
-        p.maker.totalLocked = 0;
+        p.maker.totalLocked = 1;
         p.taker.totalLocked = 1;
 
         // Maker: 10 sell, 18 buy (price = 1.8 buy/sell)
