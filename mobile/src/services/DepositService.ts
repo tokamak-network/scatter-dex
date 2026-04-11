@@ -48,17 +48,20 @@ const WETH_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ];
 
-/**
- * Load a circuit file (wasm or zkey) as base64 for ZKBridgeService.
- * Files are bundled in assets/ and loaded via expo-asset.
- */
+/** Cache circuit files in memory — they never change at runtime. */
+const circuitCache = new Map<number, string>();
+
 async function loadCircuitFileB64(assetModule: number): Promise<string> {
+  const cached = circuitCache.get(assetModule);
+  if (cached) return cached;
+
   const asset = Asset.fromModule(assetModule);
   await asset.downloadAsync();
   if (!asset.localUri) throw new Error('Failed to download circuit asset');
   const b64 = await readAsStringAsync(asset.localUri, {
     encoding: EncodingType.Base64,
   });
+  circuitCache.set(assetModule, b64);
   return b64;
 }
 
@@ -86,8 +89,8 @@ export const DepositService = {
 
       // ─── Step 2: Commitment note 생성 ──────────────────
       // random secret + salt 생성 (ZKBridgeService를 통해 WebView에서 실행)
-      const secret = generateRandomHex();
-      const salt = generateRandomHex();
+      const secret = generateRandomField();
+      const salt = generateRandomField();
 
       // commitment = Poseidon(TAG_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy)
       const commitment = await ZKBridgeService.computeCommitment({
@@ -243,7 +246,7 @@ export const DepositService = {
  * Generate a random field element as decimal string.
  * Uses crypto.getRandomValues (polyfilled by react-native-get-random-values).
  */
-function generateRandomHex(): string {
+function generateRandomField(): string {
   const FIELD_MODULUS =
     21888242871839275222246405745257275088548364400416034343698204186575808495617n;
   let value: bigint;
