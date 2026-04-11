@@ -454,4 +454,66 @@ describe("authorize.circom (Half-proof PoC)", () => {
 
     await expectWitnessFailure(input);
   }, 120000);
+
+  test("[H-5] claimCount > maxClaimsPerSide (32) should fail witness generation", async () => {
+    const secret = randomField();
+    const salt = randomField();
+    const sellToken = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9");
+    const buyToken = BigInt("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const balance = 10n * 10n ** 18n;
+    const privKey = crypto.randomBytes(32);
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+    const claims = [{
+      secret: randomField(),
+      recipient: BigInt("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+      token: buyToken,
+      amount: balance,
+      releaseTime: expiry,
+    }];
+
+    const input = await buildAuthorizeInput({
+      secret, salt, sellToken, balance, buyToken,
+      sellAmount: balance, buyAmount: 21000n * 10n ** 18n,
+      maxFee: 60n, expiry, nonce: 5n,
+      newSalt: randomField(),
+      claims, relayer: BigInt("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+      privKey,
+    });
+
+    // Tamper claimCount to 32 (exceeds 5-bit Num2Bits range)
+    input.claimCount = "32";
+    await expectWitnessFailure(input);
+  }, 120000);
+
+  test("[H-5] claimCount = 17 (within Num2Bits(5) but > maxClaimsPerSide) should fail", async () => {
+    const secret = randomField();
+    const salt = randomField();
+    const sellToken = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9");
+    const buyToken = BigInt("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const balance = 10n * 10n ** 18n;
+    const privKey = crypto.randomBytes(32);
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+    const claims = [{
+      secret: randomField(),
+      recipient: BigInt("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+      token: buyToken,
+      amount: balance,
+      releaseTime: expiry,
+    }];
+
+    const input = await buildAuthorizeInput({
+      secret, salt, sellToken, balance, buyToken,
+      sellAmount: balance, buyAmount: 21000n * 10n ** 18n,
+      maxFee: 60n, expiry, nonce: 6n,
+      newSalt: randomField(),
+      claims, relayer: BigInt("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+      privKey,
+    });
+
+    // Tamper claimCount to 17 (passes Num2Bits(5) but fails LessEqThan)
+    input.claimCount = "17";
+    await expectWitnessFailure(input);
+  }, 120000);
 });
