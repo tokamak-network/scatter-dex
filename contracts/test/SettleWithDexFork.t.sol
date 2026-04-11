@@ -153,7 +153,7 @@ contract SettleWithDexForkTest is Test {
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
             proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xe3)), bytes32(uint256(0xe4))),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata
+            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -203,7 +203,7 @@ contract SettleWithDexForkTest is Test {
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
             proof: _makeAuthProof(USDC, DAI, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xc3)), bytes32(uint256(0xc4))),
             dexRouter: CURVE_3POOL,
-            dexCalldata: dexCalldata
+            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
         });
 
         // Curve 3pool pulls tokens via transferFrom, so settlement must approve
@@ -245,7 +245,7 @@ contract SettleWithDexForkTest is Test {
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
             proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, bytes32(uint256(0xf1)), bytes32(uint256(0xf2)), bytes32(uint256(0xf3)), bytes32(uint256(0xf4))),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata
+            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -263,7 +263,8 @@ contract SettleWithDexForkTest is Test {
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
             proof: _makeAuthProof(WETH, USDC, 1 ether, 1000e6, bytes32(uint256(0xa1)), bytes32(uint256(0xa2)), bytes32(uint256(0xa3)), bytes32(uint256(0xa4))),
             dexRouter: fakeRouter,
-            dexCalldata: ""
+            dexCalldata: "",
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -301,7 +302,7 @@ contract SettleWithDexForkTest is Test {
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
             proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xd3)), bytes32(uint256(0xd4))),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata
+            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
         });
 
         vm.prank(user);

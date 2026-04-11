@@ -684,6 +684,7 @@ export default function PrivateOrderPage() {
         },
         dexRouter: swapRoute.dexRouter,
         dexCalldata: swapRoute.dexCalldata,
+        deadline: expiryTimestamp, // use proof's expiry (derived from chain time + 24h)
       });
       await tx.wait();
 

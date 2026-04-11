@@ -151,7 +151,8 @@ contract SettleWithDexTest is Test {
                 orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: _encodeDexCalldata()
+            dexCalldata: _encodeDexCalldata(),
+            deadline: block.timestamp + 1800
         });
     }
 
@@ -281,6 +282,15 @@ contract SettleWithDexTest is Test {
         settlement.settleWithDex(p);
     }
 
+    function test_settleWithDex_deadlineExpired_reverts() public {
+        PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
+        p.deadline = block.timestamp - 1; // already expired
+
+        vm.prank(user);
+        vm.expectRevert(PrivateSettlement.DeadlineExpired.selector);
+        settlement.settleWithDex(p);
+    }
+
     function test_settleWithDex_paused_reverts() public {
         settlement.setPaused(true);
         PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
@@ -355,7 +365,8 @@ contract SettleWithDexTest is Test {
                 relayer: user, orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement)))
+            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);

@@ -199,7 +199,7 @@ contract SanctionsListTest is Test {
                 relayer: sanctionedAddr, orderHash: bytes32(uint256(0x55))
             }),
             dexRouter: address(authVerifier),
-            dexCalldata: ""
+            dexCalldata: "", deadline: block.timestamp + 1800
         });
 
         vm.prank(sanctionedAddr);
