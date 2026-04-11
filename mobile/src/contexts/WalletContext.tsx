@@ -10,6 +10,7 @@ import { ethers } from 'ethers';
 import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
 import EthereumProvider from '@walletconnect/ethereum-provider';
+import { KeySecurityService } from '../services/KeySecurityService';
 
 interface WalletState {
   account: string | null;
@@ -20,8 +21,12 @@ interface WalletState {
   error: string | null;
 }
 
+type ConnectionMode = 'none' | 'builtin' | 'walletconnect';
+
 interface WalletContextValue extends WalletState {
-  connect: () => Promise<void>;
+  connectionMode: ConnectionMode;
+  connect: () => Promise<void>;              // WalletConnect
+  connectBuiltin: () => Promise<void>;       // 앱 내장 지갑
   disconnect: () => Promise<void>;
   readProvider: ethers.JsonRpcProvider;
 }
@@ -39,6 +44,7 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<WalletState>(INITIAL_STATE);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('none');
   const [qrUri, setQrUri] = useState<string | null>(null);
 
   const wcProviderRef = useRef<any>(null);
@@ -144,16 +150,57 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [targetChainId, setupFromWcProvider]);
 
+  // ─── 앱 내장 지갑 연결 ──────────────────────────────
+  const connectBuiltin = useCallback(async () => {
+    setState((s) => ({ ...s, isConnecting: true, error: null }));
+    try {
+      const hasWallet = await KeySecurityService.hasWallet();
+      if (!hasWallet) {
+        throw new Error('NO_WALLET'); // UI에서 생성/복구 화면으로 분기
+      }
+
+      // 생체인증 후 signer 획득
+      const signer = await KeySecurityService.getSigner(readProvider);
+      if (!signer) {
+        throw new Error('Authentication failed');
+      }
+
+      const address = await signer.getAddress();
+      const network = await readProvider.getNetwork();
+
+      setState({
+        account: address,
+        chainId: Number(network.chainId),
+        provider: null, // 내장 지갑은 BrowserProvider 없음
+        signer,
+        isConnecting: false,
+        error: null,
+      });
+      setConnectionMode('builtin');
+    } catch (err: any) {
+      setState((s) => ({
+        ...s,
+        isConnecting: false,
+        error: err?.message === 'NO_WALLET' ? null : (err?.message || 'Failed to connect'),
+      }));
+      if (err?.message === 'NO_WALLET') {
+        // 지갑이 없으면 에러가 아니라 생성 필요 상태
+        throw err; // 호출자가 처리
+      }
+    }
+  }, [readProvider]);
+
   const disconnect = useCallback(async () => {
     if (wcProviderRef.current) {
       await wcProviderRef.current.disconnect();
       wcProviderRef.current = null;
     }
     setState(INITIAL_STATE);
+    setConnectionMode('none');
   }, []);
 
   return (
-    <WalletContext.Provider value={{ ...state, connect, disconnect, readProvider }}>
+    <WalletContext.Provider value={{ ...state, connectionMode, connect, connectBuiltin, disconnect, readProvider }}>
       {children}
 
       {/* QR Code Modal for WalletConnect */}
