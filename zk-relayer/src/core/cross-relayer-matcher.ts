@@ -377,8 +377,20 @@ export class CrossRelayerMatchService {
 
 }
 
-/** Serialize a PrivateOrder for network transfer (bigint → string) */
+/**
+ * Serialize a PrivateOrder for network transfer (bigint → string).
+ *
+ * [S-H6] SECURITY WARNING: This function sends ownerSecret, balance, salt
+ * in plaintext to the remote relayer. This is the legacy settle path.
+ * For the authorize (half-proof) path, cross-relayer matching should use
+ * only proof + public signals. This function is kept for backward
+ * compatibility but should be migrated to authorize-based cross-relayer
+ * matching in a future release.
+ *
+ * @deprecated Use authorize-based cross-relayer matching instead.
+ */
 function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrder): Record<string, unknown> {
+  console.warn("[S-H6] serializeOrderForTransfer: sending ownerSecret to remote relayer (legacy path)");
   return {
     sellToken: order.sellToken.toString(),
     buyToken: order.buyToken.toString(),
