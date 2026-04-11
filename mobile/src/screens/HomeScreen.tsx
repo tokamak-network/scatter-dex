@@ -23,6 +23,7 @@ import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { ethers } from 'ethers';
+import { formatBalance } from '../lib/format';
 
 // ─── Sub-components ────────────────────────────────────
 
@@ -276,14 +277,6 @@ export default function HomeScreen() {
   );
 }
 
-// ─── Helpers ───────────────────────────────────────────
-
-function formatBalance(value: string): string {
-  const num = parseFloat(value);
-  if (isNaN(num) || num === 0) return '0';
-  if (num < 0.0001) return '< 0.0001';
-  return num.toFixed(4);
-}
 
 // ─── Styles ────────────────────────────────────────────
 

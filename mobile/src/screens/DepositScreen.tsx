@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
+import { formatBalance } from '../lib/format';
 
 const STEP_LABELS: Record<DepositStep, string> = {
   idle: '',
@@ -279,15 +280,6 @@ function ProgressIndicator({ progress }: { progress: DepositProgress }) {
       )}
     </View>
   );
-}
-
-// ─── Helpers ───────────────────────────────────────────
-
-function formatBalance(value: string): string {
-  const num = parseFloat(value);
-  if (isNaN(num) || num === 0) return '0';
-  if (num < 0.0001) return '< 0.0001';
-  return num.toFixed(4);
 }
 
 // ─── Styles ────────────────────────────────────────────

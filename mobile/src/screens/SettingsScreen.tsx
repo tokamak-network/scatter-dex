@@ -23,6 +23,7 @@ import Constants from 'expo-constants';
 import { ConfigService } from '../services/ConfigService';
 import { ZKBridgeService } from '../services/ZKBridgeService';
 import { NoteStorageService } from '../services/NoteStorageService';
+import { shortAddr } from '../lib/format';
 
 export default function SettingsScreen() {
   const [noteCount, setNoteCount] = useState(0);
@@ -127,8 +128,8 @@ export default function SettingsScreen() {
         {/* Contracts */}
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Contracts</Text>
-          <InfoRow label="CommitmentPool" value={shortAddr(poolAddr)} />
-          <InfoRow label="PrivateSettlement" value={shortAddr(settlementAddr)} />
+          <InfoRow label="CommitmentPool" value={shortAddr(poolAddr, 10, 6)} />
+          <InfoRow label="PrivateSettlement" value={shortAddr(settlementAddr, 10, 6)} />
         </View>
 
         {/* Notes */}
@@ -201,11 +202,6 @@ function InfoRow({
       </Text>
     </View>
   );
-}
-
-function shortAddr(addr: string): string {
-  if (!addr || addr.length < 10) return addr || '—';
-  return `${addr.slice(0, 10)}...${addr.slice(-6)}`;
 }
 
 const styles = StyleSheet.create({

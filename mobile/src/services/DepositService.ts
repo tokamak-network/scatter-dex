@@ -10,8 +10,6 @@
  * 7. 노트 저장 (NoteStorageService)
  */
 import { ethers } from 'ethers';
-import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
-import { Asset } from 'expo-asset';
 import { ZKBridgeService } from './ZKBridgeService';
 import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
@@ -24,6 +22,9 @@ import {
   ERC20_ABI,
 } from '../lib/contracts';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
+import { generateRandomField } from '../lib/crypto';
+import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { formatProofForSolidity } from '../lib/proofFormat';
 
 export type DepositStep =
   | 'idle'
@@ -48,22 +49,6 @@ const WETH_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ];
 
-/** Cache circuit files in memory — they never change at runtime. */
-const circuitCache = new Map<number, string>();
-
-async function loadCircuitFileB64(assetModule: number): Promise<string> {
-  const cached = circuitCache.get(assetModule);
-  if (cached) return cached;
-
-  const asset = Asset.fromModule(assetModule);
-  await asset.downloadAsync();
-  if (!asset.localUri) throw new Error('Failed to download circuit asset');
-  const b64 = await readAsStringAsync(asset.localUri, {
-    encoding: EncodingType.Base64,
-  });
-  circuitCache.set(assetModule, b64);
-  return b64;
-}
 
 export const DepositService = {
   /**
@@ -167,15 +152,7 @@ export const DepositService = {
         zkeyB64,
       );
 
-      // Format proof for Solidity (reverse G2 coords)
-      const proof = {
-        a: [proofResult.proof.pi_a[0], proofResult.proof.pi_a[1]] as [string, string],
-        b: [
-          [proofResult.proof.pi_b[0][1], proofResult.proof.pi_b[0][0]],
-          [proofResult.proof.pi_b[1][1], proofResult.proof.pi_b[1][0]],
-        ] as [[string, string], [string, string]],
-        c: [proofResult.proof.pi_c[0], proofResult.proof.pi_c[1]] as [string, string],
-      };
+      const proof = formatProofForSolidity(proofResult.proof);
 
       // ─── Step 5: CommitmentPool.deposit() ──────────────
       onProgress({ step: 'depositing' });
@@ -243,22 +220,3 @@ export const DepositService = {
   },
 };
 
-/**
- * Generate a random field element as decimal string.
- * Uses crypto.getRandomValues (polyfilled by react-native-get-random-values).
- */
-function generateRandomField(): string {
-  const FIELD_MODULUS =
-    21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-  let value: bigint;
-  do {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    bytes[0] &= 0x1f; // cap to ~253 bits
-    value = 0n;
-    for (const b of bytes) {
-      value = (value << 8n) | BigInt(b);
-    }
-  } while (value >= FIELD_MODULUS);
-  return value.toString();
-}

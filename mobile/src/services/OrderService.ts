@@ -18,6 +18,8 @@ import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
 import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
+import { generateRandomField } from '../lib/crypto';
+import { buildPoseidonMerkleTree } from '../lib/merkleTree';
 
 export type OrderStep =
   | 'idle'
@@ -78,7 +80,7 @@ export const OrderService = {
 
       // ─── Step 2: Claims 구성 ──────────────────────────
       const claimsData = claims.map((c) => ({
-        secret: generateRandomFieldStr(),
+        secret: generateRandomField(),
         recipient: BigInt(c.recipient).toString(),
         token: BigInt(buyToken).toString(),
         amount: ethers.parseUnits(c.amount, 18).toString(),
@@ -97,7 +99,7 @@ export const OrderService = {
       while (claimLeafHashes.length < 16) claimLeafHashes.push('0');
 
       // Build claims tree (depth 4)
-      const claimsRoot = await buildMerkleRoot(claimLeafHashes, 4);
+      const { root: claimsRoot } = await buildPoseidonMerkleTree(claimLeafHashes, 4);
 
       // ─── Step 3: Order hash + EdDSA 서명 ──────────────
       onProgress({ step: 'signing_order' });
@@ -131,7 +133,7 @@ export const OrderService = {
       let expectedChangeCommitment = '0';
 
       if (changeAmount > 0n) {
-        newSalt = generateRandomFieldStr();
+        newSalt = generateRandomField();
         expectedChangeCommitment = await ZKBridgeService.computeCommitment({
           tag: TAG_COMMITMENT_V2.toString(),
           secret: note.secret,
@@ -212,38 +214,4 @@ export const OrderService = {
   },
 };
 
-// ─── Helpers ───────────────────────────────────────────
-
-function generateRandomFieldStr(): string {
-  const FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-  let value: bigint;
-  do {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    bytes[0] &= 0x0f; // cap to ~252 bits (BN254 field is ~254 bits, reduce rejection rate without bias)
-    value = 0n;
-    for (const b of bytes) value = (value << 8n) | BigInt(b);
-  } while (value >= FIELD_MODULUS);
-  return value.toString();
-}
-
-/**
- * Simple Merkle root from leaf hashes (string decimal).
- * Pairs leaves with Poseidon hash, pads with zeros.
- */
-async function buildMerkleRoot(leaves: string[], depth: number): Promise<string> {
-  let current = [...leaves];
-  const size = 2 ** depth;
-  while (current.length < size) current.push('0');
-
-  for (let d = 0; d < depth; d++) {
-    const next: string[] = [];
-    for (let i = 0; i < current.length; i += 2) {
-      const hash = await ZKBridgeService.poseidonHash([current[i], current[i + 1]]);
-      next.push(hash);
-    }
-    current = next;
-  }
-  return current[0];
-}
 
