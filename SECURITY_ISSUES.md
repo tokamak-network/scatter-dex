@@ -340,7 +340,7 @@
 | S-M3 | Circuit | authorize.circom expiry 회로 내 미검증 (컨트랙트 의존) | ✅ 의도적 설계 — orderHash에 EdDSA 서명, 컨트랙트 settleAuth()에서 block.timestamp 검증 |
 | S-M4 | Circuit | cancel.circom balance range check 없음 | ⬜ |
 | S-M5 | Contract | settleAuth zero-amount 방어 없음 | 🔧 PR #204 |
-| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ⬜ |
+| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | 🔧 IN PROGRESS |
 | S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ⬜ |
 | S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ⬜ |
 | S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ⬜ |
