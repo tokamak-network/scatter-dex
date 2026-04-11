@@ -37,8 +37,8 @@ export const config = {
   adminApiKey: (() => {
     const key = process.env.ADMIN_API_KEY;
     if (!key) return null;
-    if (key.length < 32) throw new Error("ADMIN_API_KEY must be at least 32 characters");
-    return key;
+    if (Buffer.byteLength(key, "utf8") < 32) throw new Error("ADMIN_API_KEY must be at least 32 bytes");
+    return Buffer.from(key);
   })(),
   relayerFee: parseInt(process.env.RELAYER_FEE || "30", 10),
   port: parseInt(process.env.PORT || "3002", 10),

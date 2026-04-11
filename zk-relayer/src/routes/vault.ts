@@ -31,8 +31,12 @@ function adminAuth(req: Request, res: Response, next: () => void) {
     return;
   }
   const provided = req.headers["x-admin-key"];
-  if (typeof provided !== "string" || provided.length !== key.length ||
-      !timingSafeEqual(Buffer.from(provided), Buffer.from(key))) {
+  if (typeof provided !== "string") {
+    res.status(401).json({ error: "Invalid admin API key" });
+    return;
+  }
+  const providedBuf = Buffer.from(provided);
+  if (providedBuf.length !== key.length || !timingSafeEqual(providedBuf, key)) {
     res.status(401).json({ error: "Invalid admin API key" });
     return;
   }
