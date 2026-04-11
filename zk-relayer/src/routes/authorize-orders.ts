@@ -292,7 +292,7 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
  * Called by admin API to clear the order queue before maintenance or shutdown.
  */
 export function drainAuthorizeOrders(): number {
-  let drained = 0;
+  const toDelete: string[] = [];
   for (const [key, stored] of authorizeOrders) {
     if (stored.status !== "pending") continue;
     stored.status = "cancelled";
@@ -300,9 +300,12 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
-    drained++;
+    toDelete.push(key);
   }
-  return drained;
+  for (const key of toDelete) {
+    authorizeOrders.delete(key);
+  }
+  return toDelete.length;
 }
 
 /** Get current authorize order counts by status. */

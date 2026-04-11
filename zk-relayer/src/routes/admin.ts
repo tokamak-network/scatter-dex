@@ -13,26 +13,29 @@
 
 import { Router, Request, Response, RequestHandler } from "express";
 import { adminAuth } from "../middleware/admin-auth.js";
-import { config } from "../config.js";
+import { config, updateRelayerFee } from "../config.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { PrivateOrderbook } from "../core/orderbook.js";
 
-/** Shared pause state — checked by order submission routes. */
 let paused = false;
 
 export function isPaused(): boolean {
   return paused;
 }
 
-export function createAdminRoutes(
-  submitter: PrivateSubmitter,
-  db: PrivateOrderDB,
-  orderbook: PrivateOrderbook,
-  drainAuthorizeOrdersFn: () => number,
-  getAuthorizeOrderStatsFn: () => { pending: number; matched: number; total: number },
-  writeLimiter?: RequestHandler,
-): Router {
+export interface AdminRouteDeps {
+  submitter: PrivateSubmitter;
+  db: PrivateOrderDB;
+  orderbook: PrivateOrderbook;
+  drainAuthorizeOrders: () => number;
+  getAuthorizeOrderStats: () => { pending: number; matched: number; total: number };
+  writeLimiter?: RequestHandler;
+}
+
+export function createAdminRoutes(deps: AdminRouteDeps): Router {
+  const { submitter, db, orderbook, drainAuthorizeOrders: drainAuthFn, getAuthorizeOrderStats: getAuthStatsFn, writeLimiter } = deps;
+
   // Restore pause state from DB on startup
   const savedPause = db.getMeta("paused");
   if (savedPause === "true") {
@@ -41,18 +44,19 @@ export function createAdminRoutes(
   }
 
   const router = Router();
+  const wl = writeLimiter ? [writeLimiter] : [];
 
-  // All admin routes require authentication
   router.use(adminAuth);
 
   // GET /api/admin/status — relayer overview
   router.get("/status", async (_req: Request, res: Response) => {
     try {
-      const provider = submitter.getProvider();
       const wallet = submitter.getWallet();
-      const ethBalance = await provider.getBalance(wallet.address);
-      const stats = db.getRelayerStats();
-      const authStats = getAuthorizeOrderStatsFn();
+      const [ethBalance, stats, authStats] = await Promise.all([
+        submitter.getProvider().getBalance(wallet.address),
+        Promise.resolve(db.getRelayerStats()),
+        Promise.resolve(getAuthStatsFn()),
+      ]);
 
       res.json({
         paused,
@@ -101,9 +105,7 @@ export function createAdminRoutes(
     }
   });
 
-  // PUT /api/admin/fee — update relayer fee at runtime
-  if (writeLimiter) router.put("/fee", writeLimiter);
-  router.put("/fee", (req: Request, res: Response) => {
+  router.put("/fee", ...wl, (req: Request, res: Response) => {
     const { feeBps } = req.body;
     if (typeof feeBps !== "number" || !Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) {
       res.status(400).json({ error: "feeBps must be an integer between 0 and 10000" });
@@ -111,16 +113,14 @@ export function createAdminRoutes(
     }
 
     const oldFee = config.relayerFee;
-    (config as { relayerFee: number }).relayerFee = feeBps;
+    updateRelayerFee(feeBps);
     db.setMeta("relayerFee", feeBps.toString());
 
     console.log(`[admin] Fee changed: ${oldFee} → ${feeBps} bps`);
     res.json({ status: "updated", oldFeeBps: oldFee, newFeeBps: feeBps });
   });
 
-  // POST /api/admin/pause — stop accepting new orders
-  if (writeLimiter) router.post("/pause", writeLimiter);
-  router.post("/pause", (_req: Request, res: Response) => {
+  router.post("/pause", ...wl, (_req: Request, res: Response) => {
     if (paused) {
       res.status(409).json({ error: "Relayer is already paused" });
       return;
@@ -131,9 +131,7 @@ export function createAdminRoutes(
     res.json({ status: "paused" });
   });
 
-  // POST /api/admin/resume — start accepting new orders again
-  if (writeLimiter) router.post("/resume", writeLimiter);
-  router.post("/resume", (_req: Request, res: Response) => {
+  router.post("/resume", ...wl, (_req: Request, res: Response) => {
     if (!paused) {
       res.status(409).json({ error: "Relayer is not paused" });
       return;
@@ -144,14 +142,9 @@ export function createAdminRoutes(
     res.json({ status: "resumed" });
   });
 
-  // POST /api/admin/drain — cancel all pending orders
-  if (writeLimiter) router.post("/drain", writeLimiter);
-  router.post("/drain", (_req: Request, res: Response) => {
-    // Drain private orders (legacy path)
+  router.post("/drain", ...wl, (_req: Request, res: Response) => {
     const privateRemoved = orderbook.cancelAll();
-
-    // Drain authorize orders (half-proof path)
-    const authRemoved = drainAuthorizeOrdersFn();
+    const authRemoved = drainAuthFn();
 
     console.log(`[admin] Drained orders: ${privateRemoved} private, ${authRemoved} authorize`);
     res.json({

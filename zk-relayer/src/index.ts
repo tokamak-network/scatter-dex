@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { config } from "./config.js";
+import { config, updateRelayerFee } from "./config.js";
 import { PrivateOrderbook } from "./core/orderbook.js";
 import { PrivateMatcher } from "./core/matcher.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
@@ -32,7 +32,7 @@ async function main() {
   if (savedFee !== null) {
     const parsedFee = parseInt(savedFee, 10);
     if (Number.isFinite(parsedFee) && parsedFee >= 0 && parsedFee <= 10_000) {
-      (config as { relayerFee: number }).relayerFee = parsedFee;
+      updateRelayerFee(parsedFee);
       console.log(`[admin] Restored fee from DB: ${parsedFee} bps`);
     }
   }
@@ -181,11 +181,11 @@ async function main() {
   ));
 
   // [R-7] Admin API — fee, pause/resume, drain, balance
-  app.use("/api/admin", createAdminRoutes(
+  app.use("/api/admin", createAdminRoutes({
     submitter, db, orderbook,
     drainAuthorizeOrders, getAuthorizeOrderStats,
     writeLimiter,
-  ));
+  }));
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
   app.use("/health", createHealthRoutes(submitter, db));
