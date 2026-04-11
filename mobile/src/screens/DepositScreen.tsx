@@ -14,7 +14,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +21,8 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { formatBalance } from '../lib/format';
+import { StepProgress } from '../components/StepProgress';
+import { shared } from '../styles/theme';
 
 const STEP_LABELS: Record<DepositStep, string> = {
   idle: '',
@@ -33,6 +34,8 @@ const STEP_LABELS: Record<DepositStep, string> = {
   success: 'Deposit successful!',
   error: 'Deposit failed',
 };
+
+const DEPOSIT_STEPS: DepositStep[] = ['deriving_key', 'approving', 'generating_proof', 'depositing', 'saving_note'];
 
 export default function DepositScreen() {
   const { account, signer, readProvider } = useWallet();
@@ -182,8 +185,23 @@ export default function DepositScreen() {
             <Text style={styles.depositBtnText}>Deposit</Text>
           </TouchableOpacity>
         ) : (
-          <View style={styles.progressCard}>
-            <ProgressIndicator progress={progress} />
+          <View style={shared.card}>
+            <StepProgress steps={DEPOSIT_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
+
+            {progress.step === 'success' && progress.txHash && (
+              <View style={styles.txHashRow}>
+                <Text style={styles.txHashLabel}>Tx: </Text>
+                <Text style={styles.txHash}>
+                  {progress.txHash.slice(0, 10)}...{progress.txHash.slice(-8)}
+                </Text>
+              </View>
+            )}
+
+            {progress.step === 'error' && progress.error && (
+              <Text style={styles.errorText} numberOfLines={3}>
+                {progress.error}
+              </Text>
+            )}
 
             {(progress.step === 'success' || progress.step === 'error') && (
               <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
@@ -209,76 +227,6 @@ export default function DepositScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
-  );
-}
-
-// ─── Sub-components ────────────────────────────────────
-
-function ProgressIndicator({ progress }: { progress: DepositProgress }) {
-  const steps: DepositStep[] = [
-    'deriving_key',
-    'approving',
-    'generating_proof',
-    'depositing',
-    'saving_note',
-  ];
-
-  const currentIdx = steps.indexOf(progress.step);
-  const isSuccess = progress.step === 'success';
-  const isError = progress.step === 'error';
-
-  return (
-    <View>
-      {steps.map((step, i) => {
-        const isPast = isSuccess || currentIdx > i;
-        const isCurrent = currentIdx === i && !isSuccess && !isError;
-        const isErrorStep = isError && currentIdx === i;
-
-        return (
-          <View key={step} style={styles.stepRow}>
-            <View
-              style={[
-                styles.stepDot,
-                isPast && styles.stepDotDone,
-                isCurrent && styles.stepDotActive,
-                isErrorStep && styles.stepDotError,
-              ]}
-            >
-              {isCurrent && (
-                <ActivityIndicator size="small" color="#95aaff" />
-              )}
-              {isPast && <Text style={styles.stepCheck}>✓</Text>}
-              {isErrorStep && <Text style={styles.stepX}>!</Text>}
-            </View>
-            <Text
-              style={[
-                styles.stepLabel,
-                isPast && styles.stepLabelDone,
-                isCurrent && styles.stepLabelActive,
-                isErrorStep && styles.stepLabelError,
-              ]}
-            >
-              {STEP_LABELS[step]}
-            </Text>
-          </View>
-        );
-      })}
-
-      {isSuccess && progress.txHash && (
-        <View style={styles.txHashRow}>
-          <Text style={styles.txHashLabel}>Tx: </Text>
-          <Text style={styles.txHash}>
-            {progress.txHash.slice(0, 10)}...{progress.txHash.slice(-8)}
-          </Text>
-        </View>
-      )}
-
-      {isError && progress.error && (
-        <Text style={styles.errorText} numberOfLines={3}>
-          {progress.error}
-        </Text>
-      )}
-    </View>
   );
 }
 
@@ -387,39 +335,6 @@ const styles = StyleSheet.create({
   btnDisabled: {
     opacity: 0.4,
   },
-
-  // Progress
-  progressCard: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  stepDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#1f2937',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  stepDotDone: { backgroundColor: '#10b98130' },
-  stepDotActive: { backgroundColor: '#6366f130' },
-  stepDotError: { backgroundColor: '#ef444430' },
-  stepCheck: { color: '#10b981', fontSize: 14, fontWeight: '700' },
-  stepX: { color: '#ef4444', fontSize: 14, fontWeight: '700' },
-  stepLabel: { fontSize: 14, color: '#4b5563' },
-  stepLabelDone: { color: '#10b981' },
-  stepLabelActive: { color: '#95aaff', fontWeight: '600' },
-  stepLabelError: { color: '#ef4444' },
 
   txHashRow: {
     flexDirection: 'row',
