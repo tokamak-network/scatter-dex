@@ -8,12 +8,11 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 
-/** Gas buffer: multiply by 12n / 10n = 1.2x (20% safety margin) */
 const GAS_BUFFER_NUMERATOR = 12n;
 const GAS_BUFFER_DENOMINATOR = 10n;
 
-/** Maximum gas price the relayer is willing to pay (in gwei) */
 const MAX_GAS_PRICE_GWEI = BigInt(config.maxGasPriceGwei);
+const MAX_GAS_PRICE_WEI = MAX_GAS_PRICE_GWEI * 10n ** 9n;
 
 export interface GasEstimateResult {
   estimatedGas: bigint;
@@ -27,58 +26,72 @@ export interface GasEstimateResult {
 /**
  * Estimate gas for a contract call and check profitability.
  *
- * @param contract - ethers Contract instance
- * @param method - method name (e.g. "settlePrivate")
- * @param args - method arguments
- * @param feeValueNativeWei - expected fee revenue denominated in native gas token (wei).
- *   Pass 0n to skip profitability check (e.g. when fee is in ERC20 tokens
- *   that haven't been converted to a native-wei equivalent).
- * @returns Gas estimate + profitability check
+ * @param feeValueNativeWei - fee revenue in native gas token (wei).
+ *   Pass 0n to skip profitability check (e.g. when fee is in ERC20 tokens).
  */
 export async function estimateAndGuard(
   contract: ethers.Contract,
   method: string,
-  args: any[],
+  args: unknown[],
   feeValueNativeWei: bigint = 0n,
 ): Promise<GasEstimateResult> {
   const provider = contract.runner?.provider;
   if (!provider) throw new Error("Contract has no provider");
 
-  // Estimate gas
   const estimatedGas = await contract[method].estimateGas(...args);
   const bufferedGas = (estimatedGas * GAS_BUFFER_NUMERATOR + GAS_BUFFER_DENOMINATOR - 1n) / GAS_BUFFER_DENOMINATOR;
 
-  // Get current gas price — throw if unavailable to avoid silently passing all checks
   const feeData = await (provider as ethers.Provider).getFeeData();
   const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
   if (gasPrice == null) {
     throw new Error("Unable to determine gas price from provider fee data");
   }
 
-  // Check gas price cap
-  const maxGasPriceWei = MAX_GAS_PRICE_GWEI * 10n ** 9n;
-  if (gasPrice > maxGasPriceWei) {
+  const gasCostWei = bufferedGas * gasPrice;
+  const gasCostEth = ethers.formatEther(gasCostWei);
+
+  if (gasPrice > MAX_GAS_PRICE_WEI) {
     return {
       estimatedGas: bufferedGas,
       gasPrice,
-      gasCostWei: bufferedGas * gasPrice,
-      gasCostEth: ethers.formatEther(bufferedGas * gasPrice),
+      gasCostWei,
+      gasCostEth,
       profitable: false,
       reason: `Gas price ${ethers.formatUnits(gasPrice, "gwei")} gwei exceeds max ${MAX_GAS_PRICE_GWEI} gwei`,
     };
   }
 
-  const gasCostWei = bufferedGas * gasPrice;
-
-  // Profitability check (skip if feeValueNativeWei = 0)
   const profitable = feeValueNativeWei === 0n || gasCostWei < feeValueNativeWei;
 
   return {
     estimatedGas: bufferedGas,
     gasPrice,
     gasCostWei,
-    gasCostEth: ethers.formatEther(gasCostWei),
+    gasCostEth,
     profitable,
-    reason: profitable ? undefined : `Gas cost ${ethers.formatEther(gasCostWei)} ETH exceeds fee ${ethers.formatEther(feeValueNativeWei)} ETH`,
+    reason: profitable ? undefined : `Gas cost ${gasCostEth} ETH exceeds fee ${ethers.formatEther(feeValueNativeWei)} ETH`,
   };
+}
+
+/**
+ * Run gas guard, throw if rejected, then submit the transaction.
+ * Consolidates the guard→check→log→submit pattern used by all settlement paths.
+ */
+export async function guardedSubmit(
+  contract: ethers.Contract,
+  method: string,
+  args: unknown[],
+  label: string,
+): Promise<ethers.TransactionReceipt> {
+  const gasCheck = await estimateAndGuard(contract, method, args, 0n);
+  if (!gasCheck.profitable) {
+    console.warn(`[gas-guard] ${label} rejected: ${gasCheck.reason}`);
+    throw new Error(`${label} rejected: ${gasCheck.reason}`);
+  }
+  console.log(`[gas-guard] ${label}: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+
+  const tx = await contract[method](...args, { gasLimit: gasCheck.estimatedGas });
+  const receipt = await tx.wait();
+  if (!receipt) throw new Error(`${label} transaction failed: no receipt`);
+  return receipt;
 }

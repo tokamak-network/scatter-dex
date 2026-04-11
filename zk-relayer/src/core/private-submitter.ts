@@ -18,6 +18,7 @@ import {
 } from "./zk-prover.js";
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
+import { guardedSubmit } from "./gas-guard.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -353,20 +354,8 @@ export class PrivateSubmitter {
         takerRelayer: takerRelayerAddr,
       };
 
-      // [R-1] Gas estimation + gas price cap only.
-      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
-      // so profitability comparison against ETH gas cost is skipped until a token→native
-      // price oracle is available. Pass 0n to bypass profitability check.
-      const gasCheck = await estimateAndGuard(this.settlement, "settlePrivate", [settleParams], 0n);
-      if (!gasCheck.profitable) {
-        console.warn(`[gas-guard] settlePrivate rejected: ${gasCheck.reason}`);
-        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
-      }
-      console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
-
-      const tx = await this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
+      // [R-1] Gas guard — fees are token-denominated, profitability check skipped
+      const receipt = await guardedSubmit(this.settlement, "settlePrivate", [settleParams], "settlePrivate");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`Private settlement tx: ${txHash}`);
 
@@ -500,19 +489,8 @@ export class PrivateSubmitter {
         fee,
       };
 
-      // [R-1] Gas estimation + gas price cap only.
-      // `fee` is denominated in the withdrawn ERC20 token, not native gas wei.
-      // Skip profitability comparison until token→native conversion is available.
-      const { estimateAndGuard } = await import("./gas-guard.js");
-      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirect", [scatterParams], 0n);
-      if (!gasCheck.profitable) {
-        console.warn(`[gas-guard] scatterDirect rejected: ${gasCheck.reason}`);
-        throw new Error(`ScatterDirect rejected: ${gasCheck.reason}`);
-      }
-
-      const tx = await this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
+      // [R-1] Gas guard — fee is token-denominated, profitability check skipped
+      const receipt = await guardedSubmit(this.settlement, "scatterDirect", [scatterParams], "scatterDirect");
       const txHash = receipt.hash ?? receipt.transactionHash;
       console.log(`ScatterDirect tx: ${txHash}`);
 
