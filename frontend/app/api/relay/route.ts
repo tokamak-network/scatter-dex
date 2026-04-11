@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
     body = await req.json();
+    if (!body || typeof body !== "object") throw new Error();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -81,7 +82,15 @@ export async function POST(req: NextRequest) {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
-    const data = await res.json().catch(() => ({ error: "Non-JSON response from relayer" }));
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON response from relayer" },
+        { status: 502 },
+      );
+    }
 
     if (!res.ok) {
       return NextResponse.json(
