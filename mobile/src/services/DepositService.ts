@@ -20,6 +20,7 @@ import {
   COMMITMENT_POOL_ABI,
   COMMITMENT_POOL_IFACE,
   ERC20_ABI,
+  SANCTIONS_LIST_ABI,
 } from '../lib/contracts';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -28,6 +29,7 @@ import { formatProofForSolidity } from '../lib/proofFormat';
 
 export type DepositStep =
   | 'idle'
+  | 'checking'
   | 'deriving_key'
   | 'approving'
   | 'generating_proof'
@@ -69,6 +71,16 @@ export const DepositService = {
     const parsedAmount = ethers.parseUnits(amount, token.decimals);
 
     try {
+      onProgress({ step: 'checking' });
+      const sanctionsAddr = await ProviderService.getSanctionsListAddress();
+      if (sanctionsAddr && sanctionsAddr !== ethers.ZeroAddress) {
+        const readProvider = ProviderService.getReadProvider();
+        const sanctions = new ethers.Contract(sanctionsAddr, SANCTIONS_LIST_ABI, readProvider);
+        if (await sanctions.isSanctioned(account)) {
+          throw new Error('Your address is on the sanctions list and cannot deposit.');
+        }
+      }
+
       // ─── Step 1: EdDSA 키 유도 ─────────────────────────
       onProgress({ step: 'deriving_key' });
       const keyPair = await EdDSAKeyService.getOrDeriveKey(signer, account);

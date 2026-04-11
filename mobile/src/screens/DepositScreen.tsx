@@ -26,6 +26,7 @@ import { shared } from '../styles/theme';
 
 const STEP_LABELS: Record<DepositStep, string> = {
   idle: '',
+  checking: 'Checking eligibility...',
   deriving_key: 'Deriving signing key...',
   approving: 'Approving token...',
   generating_proof: 'Generating ZK proof...',
@@ -35,7 +36,7 @@ const STEP_LABELS: Record<DepositStep, string> = {
   error: 'Deposit failed',
 };
 
-const DEPOSIT_STEPS: DepositStep[] = ['deriving_key', 'approving', 'generating_proof', 'depositing', 'saving_note'];
+const DEPOSIT_STEPS: DepositStep[] = ['checking', 'deriving_key', 'approving', 'generating_proof', 'depositing', 'saving_note'];
 
 export default function DepositScreen() {
   const { account, signer, readProvider } = useWallet();
