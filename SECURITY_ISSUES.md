@@ -234,11 +234,11 @@
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
 | M-6 | CORS `["*"]` | MEDIUM | ✅ | PR #180 |
 | M-7 | API Rate Limiting | MEDIUM | ✅ | PR #181 |
-| M-8 | pubKeyBind 체인 분석 | MEDIUM | 🔧 | `fix/M8-pubkeybind-privacy` |
+| M-8 | pubKeyBind 체인 분석 | MEDIUM | ✅ | PR #182 |
 | M-9 | 클라이언트 SSRF (claim) | MEDIUM | ✅ | PR #183 |
 | M-10 | DB 파일 퍼미션 | MEDIUM | ✅ | PR #184 |
 | M-11 | cross-relayer race condition | MEDIUM | 🔧 | `fix/M11-cross-relayer-race` |
-| L-5~L-9 | 5건 LOW | LOW | ⬜ | — |
+| L-5~L-9 | 5건 LOW | LOW | 🔧 | `fix/L5-L9-low-issues` |
 
 ### 🟠 기능 개발
 
