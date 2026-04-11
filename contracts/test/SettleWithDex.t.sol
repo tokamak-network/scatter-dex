@@ -331,4 +331,62 @@ contract SettleWithDexTest is Test {
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
         settlement.settleWithDex(p);
     }
+
+    // ─── Platform Fee Tests ────────────────────────��────────
+
+    function test_settleWithDex_platformFee() public {
+        // Set 1% platform fee (100 bps)
+        settlement.setDexPlatformFee(100);
+
+        // sellAmount = 10 WETH, 1% fee = 0.1 WETH → DEX gets 9.9 WETH
+        // 9.9 WETH × 2000 rate = 19,800 USDC (still >= totalLocked 19,000)
+        // IMPORTANT: dexCalldata must encode amountIn = 9.9 ether (post-fee)
+        // because the contract only approves swapAmount to the router.
+        PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
+            proof: PrivateSettlement.AuthorizeProof({
+                proofA: proofA, proofB: proofB, proofC: proofC,
+                pubKeyBind: PUB_KEY_BIND, commitmentRoot: pool.getLastRoot(),
+                nullifier: NULL_ESCROW, nonceNullifier: NULL_NONCE,
+                newCommitment: NEW_COMMITMENT,
+                sellToken: address(weth), buyToken: address(usdc),
+                sellAmount: 10 ether, buyAmount: 19_000e18, maxFee: 0,
+                expiry: uint64(block.timestamp + 300),
+                claimsRoot: CLAIMS_ROOT, totalLocked: 19_000e18,
+                relayer: user, orderHash: ORDER_HASH
+            }),
+            dexRouter: address(dexRouter),
+            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement)))
+        });
+
+        vm.prank(user);
+        settlement.settleWithDex(p);
+
+        // Platform fee (0.1 WETH) should go to treasury in sellToken (WETH)
+        uint256 feeInTreasury = weth.balanceOf(treasury);
+        assertEq(feeInTreasury, 0.1 ether, "Treasury should receive 1% WETH platform fee");
+
+        // Claims group should still be registered
+        (address token, uint96 locked,) = settlement.claimsGroups(CLAIMS_ROOT);
+        assertEq(token, address(usdc));
+        assertEq(locked, 19_000e18);
+    }
+
+    function test_settleWithDex_platformFee_tooHigh_reverts() public {
+        vm.expectRevert(PrivateSettlement.DexPlatformFeeTooHigh.selector);
+        settlement.setDexPlatformFee(501); // > 5% max
+    }
+
+    function test_settleWithDex_platformFee_zero_noDeduction() public {
+        // Default is 0, no fee deducted
+        assertEq(settlement.dexPlatformFeeBps(), 0);
+
+        PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
+
+        vm.prank(user);
+        settlement.settleWithDex(p);
+
+        // No WETH fee to treasury
+        uint256 feeInTreasury = weth.balanceOf(treasury);
+        assertEq(feeInTreasury, 0);
+    }
 }
