@@ -317,7 +317,7 @@
 
 | # | 영역 | 이슈 | 상태 |
 |---|------|------|------|
-| S-C1 | Frontend | ownerSecret를 릴레이어에 평문 전송 — half-proof 경로 전환 필요 | ⬜ |
+| S-C1 | Frontend/Relayer | ownerSecret 레거시 경로 제거 — UI는 이미 authorize 사용 중, 릴레이어 레거시 엔드포인트 비활성화 필요 | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
 
 #### 🟠 HIGH
 
@@ -328,7 +328,7 @@
 | S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
-| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | ⬜ |
+| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | 🔧 `fix/SC1-SH6-remove-legacy-secrets` |
 | S-H7 | Relayer | authorize orders Map 크기 제한 없음 → 메모리 DoS | ⬜ |
 
 #### 🟡 MEDIUM
