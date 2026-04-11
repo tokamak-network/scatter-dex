@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
 
+// Additional CSP connect-src origins for custom RPC/relayer endpoints.
+// Set CSP_EXTRA_CONNECT_SRC="https://rpc.example.com https://relayer.example.com" in .env
+const extraConnectSrc = process.env.CSP_EXTRA_CONNECT_SRC?.trim() || "";
+
 const nextConfig: NextConfig = {
   async headers() {
     return [
@@ -23,7 +27,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob:",
               "font-src 'self' https://fonts.gstatic.com",
-              `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com`,
+              `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com${extraConnectSrc ? " " + extraConnectSrc : ""}`,
               "worker-src 'self' blob:",
               "frame-ancestors 'none'",
             ].join("; "),

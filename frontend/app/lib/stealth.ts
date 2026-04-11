@@ -158,7 +158,8 @@ export function buildStealthClaimLink(secret: string, ephemeralPubKey: string): 
       : "";
   // [L-5] Use URL fragment (#) instead of query params (?).
   // Fragments are never sent to the server, preventing secret leakage
-  // via server logs, referrer headers, or browser history sync.
+  // via server logs and referrer headers. Note: fragments ARE stored
+  // in browser history — users should use private/incognito mode.
   return `${origin}/claim#secret=${encodeURIComponent(secret)}&epk=${encodeURIComponent(ephemeralPubKey)}`;
 }
 
