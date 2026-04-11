@@ -20,6 +20,47 @@ export interface StoredNote {
 const DIR_HANDLE_KEY = "zkscatter_dir_handle";
 const NOTES_PREFIX = "zkscatter-note-";
 
+// ─── IndexedDB persistence for FileSystemDirectoryHandle ────
+// The File System Access API's directory handle can be serialized
+// into IndexedDB via the structured clone algorithm, allowing it
+// to survive page reloads and browser restarts.
+
+function openHandleDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("zkscatter-fs", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("handles");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function persistHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openHandleDB();
+  const tx = db.transaction("handles", "readwrite");
+  tx.objectStore("handles").put(handle, DIR_HANDLE_KEY);
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function loadPersistedHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await openHandleDB();
+    const tx = db.transaction("handles", "readonly");
+    const req = tx.objectStore("handles").get(DIR_HANDLE_KEY);
+    const handle = await new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return handle;
+  } catch {
+    return null;
+  }
+}
+
 // ─── File System Access API ──────────────────────────────────
 
 let dirHandle: FileSystemDirectoryHandle | null = null;
@@ -29,18 +70,49 @@ export function isFileSystemAvailable(): boolean {
   return typeof window !== "undefined" && "showDirectoryPicker" in window;
 }
 
-/** Prompt user to select a folder for note storage. */
+/**
+ * Try to restore a previously selected folder from IndexedDB.
+ * Returns true if the handle was restored and permission is still granted.
+ * Call this on app startup before checking hasFolderSelected().
+ */
+export async function restoreNotesFolder(): Promise<boolean> {
+  if (!isFileSystemAvailable()) return false;
+  const handle = await loadPersistedHandle();
+  if (!handle) return false;
+
+  // Verify we still have permission (browser may have revoked it)
+  const perm = await handle.queryPermission({ mode: "readwrite" });
+  if (perm === "granted") {
+    dirHandle = handle;
+    return true;
+  }
+
+  // Try to re-request permission (requires user gesture — will fail silently
+  // if called outside a click handler, which is fine for startup)
+  try {
+    const req = await handle.requestPermission({ mode: "readwrite" });
+    if (req === "granted") {
+      dirHandle = handle;
+      return true;
+    }
+  } catch { /* permission denied or no user gesture */ }
+
+  return false;
+}
+
+/** Prompt user to select a folder for note storage. Persists to IndexedDB. */
 export async function selectNotesFolder(): Promise<boolean> {
   if (!isFileSystemAvailable()) return false;
   try {
     dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+    await persistHandle(dirHandle);
     return true;
   } catch {
     return false; // user cancelled
   }
 }
 
-/** Check if a folder is already selected (from current session). */
+/** Check if a folder is already selected (from current session or restored). */
 export function hasFolderSelected(): boolean {
   return dirHandle !== null;
 }
