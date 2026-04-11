@@ -48,6 +48,11 @@ const MAX_CLAIMS = 10;
 // Uniswap V3 SwapRouter02 (Ethereum mainnet)
 const UNISWAP_V3_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
 
+// Pre-parsed ABI for Uniswap V3 exactInputSingle (avoid re-instantiation per submit)
+const UNISWAP_ROUTER_IFACE = new ethers.Interface([
+  "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
+]);
+
 type OrderType = "limit" | "market";
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
 
@@ -60,6 +65,112 @@ interface ClaimRow {
   amount: string;
   delay: string;
   delayUnit: "min" | "hr" | "day";
+}
+
+// ── Shared order-building logic (used by both limit and market handlers) ──
+
+interface BuildOrderParams {
+  sellToken: TokenInfo;
+  buyToken: TokenInfo;
+  sellAmount: string;
+  buyAmount: string;
+  expiry: string;
+  claims: ClaimRow[];
+  account: string;
+  selectedNote: StoredNote;
+  changeSalt: bigint | null;
+  maxFee: bigint;
+  relayerAddress: string;
+  eddsaPrivateKey: Uint8Array;
+  zkRelayerUrl?: string;
+}
+
+async function buildOrderProof(params: BuildOrderParams) {
+  const { sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, changeSalt, maxFee, relayerAddress, eddsaPrivateKey, zkRelayerUrl } = params;
+
+  const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
+  const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
+  const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
+  const nonce = BigInt(Date.now());
+
+  if (parsedSell > selectedNote.note.amount) {
+    throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
+  }
+
+  // Change commitment
+  const change = selectedNote.note.amount - parsedSell;
+  const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
+  let expectedChangeCommitment = 0n;
+  if (change > 0n && changeSalt) {
+    expectedChangeCommitment = await computeCommitment({
+      ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token,
+      amount: change, salt: changeSalt,
+      pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy,
+    });
+  }
+
+  // Build claims data (with optional ephemeralPubKey for stealth)
+  const claimDataWithEpk = claims.map((c, idx) => {
+    let recipient: string;
+    let ephemeralPubKey: string | undefined;
+    if (c.mode === "stealth") {
+      if (!c.address || !isMetaAddress(c.address)) throw new Error(`Claim #${idx + 1}: Stealth mode requires a valid meta-address (st:eth:0x...)`);
+      const stealth = generateStealthAddress(c.address);
+      recipient = stealth.stealthAddress;
+      ephemeralPubKey = stealth.ephemeralPubKey;
+    } else if (c.address && !ethers.isAddress(c.address)) {
+      throw new Error(`Claim #${idx + 1}: Invalid recipient address`);
+    } else {
+      recipient = c.address || account || ethers.ZeroAddress;
+    }
+    const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
+    const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
+    const claimSecret = randomFieldElement();
+    const claimAmount = c.amount ? ethers.parseUnits(c.amount, buyToken.decimals).toString() : "0";
+    return { secret: claimSecret.toString(), recipient: BigInt(recipient).toString(), token: BigInt(buyToken.address).toString(), amount: claimAmount, releaseTime: releaseTime.toString(), ephemeralPubKey };
+  });
+  const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
+
+  // Compute claimsRoot
+  const claimLeafHashes = await Promise.all(
+    claimData.map((c) => poseidonHash([BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime)]))
+  );
+  const padded = [...claimLeafHashes];
+  while (padded.length < 16) padded.push(0n);
+  const { root: claimsRoot } = await buildMerkleTree(padded, 4);
+
+  // Fetch Merkle proof (relayer fast path, then on-chain fallback)
+  let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
+  try {
+    if (!zkRelayerUrl) throw new Error("no relayer");
+    const mpRes = await fetch(`${zkRelayerUrl}/api/info/merkle-proof?leafIndex=${selectedNote.leafIndex}`);
+    if (!mpRes.ok) throw new Error("unavailable");
+    const mpData = await mpRes.json();
+    merkleProof = { root: BigInt(mpData.root), pathElements: mpData.pathElements.map((e: string) => BigInt(e)), pathIndices: mpData.pathIndices };
+  } catch {
+    const provider = getReadProvider();
+    const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
+    const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
+    const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
+    const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
+    const leaves: bigint[] = [];
+    for (const ev of events) { const e = ev as ethers.EventLog; const idx = Number(e.args.leafIndex); while (leaves.length <= idx) leaves.push(0n); leaves[idx] = BigInt(e.args.commitment); }
+    const tree = await buildMerkleTree(leaves, 20);
+    const proof = await import("../../lib/zk/commitment").then(m => m.getMerkleProof(tree.layers, selectedNote.leafIndex));
+    merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
+  }
+
+  // Generate authorize proof in Web Worker
+  const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
+  const proofResult = await generateAuthorizeProofInWorker({
+    note: selectedNote.note, leafIndex: selectedNote.leafIndex, merkleProof,
+    sellAmount: parsedSell, buyToken: buyToken.address, buyAmount: parsedBuy,
+    maxFee, expiry: expiryTimestamp, nonce, relayer: relayerAddress,
+    eddsaPrivateKey,
+    claims: claimData.map(c => ({ secret: BigInt(c.secret), recipient: c.recipient, token: c.token, amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime) })),
+  });
+
+  return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
 }
 
 export default function PrivateOrderPage() {
@@ -344,173 +455,28 @@ export default function PrivateOrderPage() {
     }
   }, [signer, account]);
 
-  // Submit private order — auto-generates key if not present
+  // Submit limit order — generate proof + send to relayer
   const handleSubmit = useCallback(async () => {
     if (!sellToken || !buyToken || !sellAmount || !buyAmount || !selectedNote || !signer || !account) return;
 
     const kp = keyPair;
-    if (!kp) {
-      setError("Unlock or generate a trading key first");
-      return;
-    }
+    if (!kp) { setError("Unlock or generate a trading key first"); return; }
 
     setStep("signing");
     setError(null);
 
     try {
-      const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
-      const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
-      const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
-      const nonce = BigInt(Date.now());
-
-      // Validate sell amount doesn't exceed note balance
-      if (parsedSell > selectedNote.note.amount) {
-        throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
-      }
-
-      // Use pre-generated changeSalt for change commitment.
-      // [issue #128] The change commitment preserves the original
-      // escrow's pubkey binding — the user retains the residual with
-      // the same BabyJub key.
-      const change = selectedNote.note.amount - parsedSell;
-      const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
-      let expectedChangeCommitment = 0n;
-      if (change > 0n && changeSalt) {
-        const changeNote: CommitmentNote = {
-          ownerSecret: selectedNote.note.ownerSecret,
-          token: selectedNote.note.token,
-          amount: change,
-          salt: changeSalt,
-          pubKeyAx: selectedNote.note.pubKeyAx,
-          pubKeyAy: selectedNote.note.pubKeyAy,
-        };
-        expectedChangeCommitment = await computeCommitment(changeNote);
-      }
-
-      // Build claims data (with optional ephemeralPubKey for stealth)
-      const claimDataWithEpk = claims.map((c, idx) => {
-        let recipient: string;
-        let ephemeralPubKey: string | undefined;
-
-        if (c.mode === "stealth") {
-          if (!c.address || !isMetaAddress(c.address)) {
-            throw new Error(`Claim #${idx + 1}: Stealth mode requires a valid meta-address (st:eth:0x...)`);
-          }
-          const stealth = generateStealthAddress(c.address);
-          recipient = stealth.stealthAddress;
-          ephemeralPubKey = stealth.ephemeralPubKey;
-        } else if (c.address && !ethers.isAddress(c.address)) {
-          throw new Error(`Claim #${idx + 1}: Invalid recipient address`);
-        } else {
-          recipient = c.address || account || ethers.ZeroAddress;
-        }
-        const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
-        const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
-        const claimSecret = randomFieldElement();
-        const claimAmount = c.amount
-          ? ethers.parseUnits(c.amount, buyToken.decimals).toString()
-          : "0";
-
-        return {
-          secret: claimSecret.toString(),
-          recipient: BigInt(recipient).toString(),
-          token: BigInt(buyToken.address).toString(),
-          amount: claimAmount,
-          releaseTime: releaseTime.toString(),
-          ephemeralPubKey,
-        };
-      });
-      const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
-
-      // Compute claim leaf hashes and claimsRoot
-      const claimLeafHashes = await Promise.all(
-        claimData.map((c) => poseidonHash([
-          BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime),
-        ]))
-      );
-      const padded = [...claimLeafHashes];
-      while (padded.length < 16) padded.push(0n);
-      const { root: claimsRoot } = await buildMerkleTree(padded, 4);
-
-      // Compute order hash and sign with EdDSA
-      // Submit to zk-relayer with commitment info from note
       const selectedZkRelayer = zkRelayers[selectedRelayerIdx];
       if (!selectedZkRelayer) throw new Error("No ZK relayer selected");
 
-      const orderHash = await hashOrder({
-        sellToken: BigInt(sellToken.address),
-        buyToken: BigInt(buyToken.address),
-        sellAmount: parsedSell,
-        buyAmount: parsedBuy,
-        maxFee: BigInt(effectiveFeeBps || 30),
-        expiry: expiryTimestamp,
-        nonce,
-        claimsRoot,
-        relayerAddress: BigInt(selectedZkRelayer.address),
+      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
+        sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
+        selectedNote, changeSalt, maxFee: BigInt(effectiveFeeBps || 30),
+        relayerAddress: selectedZkRelayer.address, eddsaPrivateKey: kp.privateKey,
+        zkRelayerUrl: selectedZkRelayer.url,
       });
 
       const relayerUrl = selectedZkRelayer.url;
-
-      // ── Half-proof path: generate ZK proof in browser ──
-      // The user's secrets (ownerSecret, salt, balance) NEVER leave the browser.
-      // Only the proof + public signals are sent to the relayer.
-      setStep("signing");
-
-      // Fetch Merkle proof from relayer (fast) or build from on-chain (fallback)
-      let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
-      try {
-        const mpRes = await fetch(`${relayerUrl}/api/info/merkle-proof?leafIndex=${selectedNote.leafIndex}`);
-        if (!mpRes.ok) throw new Error("Relayer merkle-proof unavailable");
-        const mpData = await mpRes.json();
-        merkleProof = {
-          root: BigInt(mpData.root),
-          pathElements: mpData.pathElements.map((e: string) => BigInt(e)),
-          pathIndices: mpData.pathIndices,
-        };
-      } catch {
-        // Fallback: query on-chain CommitmentInserted events
-        const provider = getReadProvider();
-        const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
-        const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
-        const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
-        const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
-        const leaves: bigint[] = [];
-        for (const ev of events) {
-          const e = ev as ethers.EventLog;
-          const idx = Number(e.args.leafIndex);
-          while (leaves.length <= idx) leaves.push(0n);
-          leaves[idx] = BigInt(e.args.commitment);
-        }
-        const tree = await buildMerkleTree(leaves, 20);
-        const proof = await import("../../lib/zk/commitment").then(m => {
-          const p = m.getMerkleProof(tree.layers, selectedNote.leafIndex);
-          return p;
-        });
-        merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
-      }
-
-      // Generate authorize proof in Web Worker (secrets stay in browser)
-      const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
-      const proofResult = await generateAuthorizeProofInWorker({
-        note: selectedNote.note,
-        leafIndex: selectedNote.leafIndex,
-        merkleProof,
-        sellAmount: parsedSell,
-        buyToken: buyToken.address,
-        buyAmount: parsedBuy,
-        maxFee: BigInt(effectiveFeeBps || 30),
-        expiry: expiryTimestamp,
-        nonce,
-        relayer: selectedZkRelayer.address,
-        eddsaPrivateKey: kp.privateKey,
-        claims: claimData.map(c => ({
-          secret: BigInt(c.secret),
-          recipient: c.recipient,
-          token: c.token,
-          amount: BigInt(c.amount),
-          releaseTime: BigInt(c.releaseTime),
-        })),
-      });
 
       // Submit proof to relayer (no secrets transmitted)
       // Map snarkjs string[] to named public signals (circom 2: output first)
@@ -649,115 +615,14 @@ export default function PrivateOrderPage() {
     if (!kp) { setError("Unlock or generate a trading key first"); return; }
 
     setStep("signing");
-
     setError(null);
 
     try {
-      const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
-      const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
-      const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
-      const nonce = BigInt(Date.now());
-
-      if (parsedSell > selectedNote.note.amount) {
-        throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
-      }
-
-      const change = selectedNote.note.amount - parsedSell;
-      const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
-      let expectedChangeCommitment = 0n;
-      if (change > 0n && changeSalt) {
-        const changeNote: CommitmentNote = {
-          ownerSecret: selectedNote.note.ownerSecret,
-          token: selectedNote.note.token,
-          amount: change,
-          salt: changeSalt,
-          pubKeyAx: selectedNote.note.pubKeyAx,
-          pubKeyAy: selectedNote.note.pubKeyAy,
-        };
-        expectedChangeCommitment = await computeCommitment(changeNote);
-      }
-
-      // Build claims — market order: single claim to self (simple)
-      const claimDataWithEpk = claims.map((c, idx) => {
-        let recipient: string;
-        let ephemeralPubKey: string | undefined;
-        if (c.mode === "stealth") {
-          if (!c.address || !isMetaAddress(c.address)) throw new Error(`Claim #${idx + 1}: Invalid meta-address`);
-          const stealth = generateStealthAddress(c.address);
-          recipient = stealth.stealthAddress;
-          ephemeralPubKey = stealth.ephemeralPubKey;
-        } else {
-          if (c.address && !ethers.isAddress(c.address)) throw new Error(`Claim #${idx + 1}: Invalid address`);
-          recipient = c.address || account || ethers.ZeroAddress;
-        }
-        const delaySec = (parseInt(c.delay) || 1) * (c.delayUnit === "day" ? 86400 : c.delayUnit === "hr" ? 3600 : 60);
-        const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
-        const claimSecret = randomFieldElement();
-        const claimAmount = c.amount ? ethers.parseUnits(c.amount, buyToken.decimals).toString() : "0";
-        return { secret: claimSecret.toString(), recipient: BigInt(recipient).toString(), token: BigInt(buyToken.address).toString(), amount: claimAmount, releaseTime: releaseTime.toString(), ephemeralPubKey };
-      });
-      const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
-
-      const claimLeafHashes = await Promise.all(
-        claimData.map((c) => poseidonHash([BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime)]))
-      );
-      const padded = [...claimLeafHashes];
-      while (padded.length < 16) padded.push(0n);
-      const { root: claimsRoot } = await buildMerkleTree(padded, 4);
-
-      // Market order: relayer = self (permissionless), maxFee = 0
-      const orderHash = await hashOrder({
-        sellToken: BigInt(sellToken.address),
-        buyToken: BigInt(buyToken.address),
-        sellAmount: parsedSell,
-        buyAmount: parsedBuy,
-        maxFee: 0n,
-        expiry: expiryTimestamp,
-        nonce,
-        claimsRoot,
-        relayerAddress: BigInt(account),
-      });
-
-      // Fetch Merkle proof
-      let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
-      try {
-        const relayerUrl = zkRelayers[selectedRelayerIdx]?.url;
-        if (!relayerUrl) throw new Error("no relayer");
-        const mpRes = await fetch(`${relayerUrl}/api/info/merkle-proof?leafIndex=${selectedNote.leafIndex}`);
-        if (!mpRes.ok) throw new Error("unavailable");
-        const mpData = await mpRes.json();
-        merkleProof = { root: BigInt(mpData.root), pathElements: mpData.pathElements.map((e: string) => BigInt(e)), pathIndices: mpData.pathIndices };
-      } catch {
-        const provider = getReadProvider();
-        const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
-        const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
-        const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
-        const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
-        const leaves: bigint[] = [];
-        for (const ev of events) { const e = ev as ethers.EventLog; const idx = Number(e.args.leafIndex); while (leaves.length <= idx) leaves.push(0n); leaves[idx] = BigInt(e.args.commitment); }
-        const tree = await buildMerkleTree(leaves, 20);
-        const proof = await import("../../lib/zk/commitment").then(m => m.getMerkleProof(tree.layers, selectedNote.leafIndex));
-        merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
-      }
-
-      // Generate authorize proof in Web Worker
-      const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
-      const proofResult = await generateAuthorizeProofInWorker({
-        note: selectedNote.note,
-        leafIndex: selectedNote.leafIndex,
-        merkleProof,
-        sellAmount: parsedSell,
-        buyToken: buyToken.address,
-        buyAmount: parsedBuy,
-        maxFee: 0n,
-        expiry: expiryTimestamp,
-        nonce,
-        relayer: account,
-        eddsaPrivateKey: kp.privateKey,
-        claims: claimData.map(c => ({
-          secret: BigInt(c.secret), recipient: c.recipient, token: c.token,
-          amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime),
-        })),
+      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
+        sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
+        selectedNote, changeSalt, maxFee: 0n,
+        relayerAddress: account, eddsaPrivateKey: kp.privateKey,
+        zkRelayerUrl: zkRelayers[selectedRelayerIdx]?.url,
       });
 
       // Call settleWithDex on-chain
@@ -774,10 +639,7 @@ export default function PrivateOrderPage() {
       const feePct = parseFloat(feeStr);
       const feeTier = !isNaN(feePct) ? Math.round(feePct * 10000) : 3000;
 
-      const routerIface = new ethers.Interface([
-        "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
-      ]);
-      const dexCalldata = routerIface.encodeFunctionData("exactInputSingle", [{
+      const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
         tokenIn: sellToken.address,
         tokenOut: buyToken.address,
         fee: feeTier,
