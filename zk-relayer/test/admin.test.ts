@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PrivateOrderbook } from "../src/core/orderbook.js";
 import { makePrivateOrder, resetNonceCounter } from "./helpers.js";
 
@@ -46,9 +46,15 @@ describe("Admin API — cancelAll (orderbook drain)", () => {
 
 describe("Admin API — isPaused module", () => {
   it("isPaused exports a boolean function", async () => {
+    // Mock config to avoid requiring RELAYER_PRIVATE_KEY env var
+    vi.doMock("../src/config.js", () => ({
+      config: { adminApiKey: null, relayerFee: 0 },
+      updateRelayerFee: vi.fn(),
+    }));
     const { isPaused } = await import("../src/routes/admin.js");
     expect(typeof isPaused).toBe("function");
     // Default state (no DB) — not paused
     expect(isPaused()).toBe(false);
+    vi.doUnmock("../src/config.js");
   });
 });

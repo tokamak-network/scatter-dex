@@ -154,6 +154,14 @@ async function main() {
     message: { error: "too many requests" },
   });
 
+  // [R-7] Admin API — fee, pause/resume, drain, balance
+  // Register BEFORE pauseGuard so pause state is restored from DB before routes use it
+  app.use("/api/admin", createAdminRoutes({
+    submitter, db, orderbook,
+    drainAuthorizeOrders, getAuthorizeOrderStats,
+    writeLimiter,
+  }));
+
   // [R-7] Pause guard — reject new order submissions (POST only) when paused
   const pauseGuard: express.RequestHandler = (req, res, next) => {
     if (isPaused() && req.method === "POST") {
@@ -179,13 +187,6 @@ async function main() {
   app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
   ));
-
-  // [R-7] Admin API — fee, pause/resume, drain, balance
-  app.use("/api/admin", createAdminRoutes({
-    submitter, db, orderbook,
-    drainAuthorizeOrders, getAuthorizeOrderStats,
-    writeLimiter,
-  }));
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
   app.use("/health", createHealthRoutes(submitter, db));

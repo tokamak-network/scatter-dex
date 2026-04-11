@@ -38,8 +38,8 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
 
   // Restore pause state from DB on startup
   const savedPause = db.getMeta("paused");
-  if (savedPause === "true") {
-    paused = true;
+  paused = savedPause === "true";
+  if (paused) {
     console.log("[admin] Relayer is paused (restored from DB)");
   }
 
@@ -52,11 +52,10 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   router.get("/status", async (_req: Request, res: Response) => {
     try {
       const wallet = submitter.getWallet();
-      const [ethBalance, stats, authStats] = await Promise.all([
-        submitter.getProvider().getBalance(wallet.address),
-        Promise.resolve(db.getRelayerStats()),
-        Promise.resolve(getAuthStatsFn()),
-      ]);
+      const ethBalancePromise = submitter.getProvider().getBalance(wallet.address);
+      const stats = db.getRelayerStats();
+      const authStats = getAuthStatsFn();
+      const ethBalance = await ethBalancePromise;
 
       res.json({
         paused,

@@ -10,12 +10,12 @@ export function adminAuth(req: Request, res: Response, next: () => void) {
     return;
   }
   const provided = req.headers["x-admin-key"];
-  if (typeof provided !== "string") {
+  if (typeof provided !== "string" || Buffer.byteLength(provided) !== key.length) {
     res.status(401).json({ error: "Invalid admin API key" });
     return;
   }
   const providedBuf = Buffer.from(provided);
-  if (providedBuf.length !== key.length || !timingSafeEqual(providedBuf, key)) {
+  if (!timingSafeEqual(providedBuf, key)) {
     res.status(401).json({ error: "Invalid admin API key" });
     return;
   }
