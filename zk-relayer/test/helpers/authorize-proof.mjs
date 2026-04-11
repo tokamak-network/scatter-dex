@@ -40,6 +40,12 @@ export const AUTHORIZE_ZKEY = path.join(__dirname, "../../../circuits/build/auth
  * @param {bigint} input.sigR8y          EdDSA signature R8 y
  * @param {Array} input.claims           Array of { secret, recipient, token, amount, releaseTime }
  * @param {number} input.claimCount      Number of active claims
+ * @param {bigint} input.nullifier       Poseidon(TAG_ESCROW_NULL, secret, salt)
+ * @param {bigint} input.nonceNullifier  Poseidon(TAG_NONCE_NULL, secret, nonce)
+ * @param {bigint} input.newCommitment   Change commitment hash (0n if fully spent)
+ * @param {bigint} input.claimsRoot      Merkle root of claims tree
+ * @param {bigint} input.totalLocked     Sum of claim amounts
+ * @param {bigint} input.orderHash       Poseidon(sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, nonce, claimsRoot, relayer)
  *
  * @returns {Promise<{proof: any, publicSignals: string[]}>}
  */
@@ -80,21 +86,21 @@ export async function makeAuthorizeProof(input) {
   }
 
   const circuitInput = {
-    // Public inputs
+    // Public inputs — circuit constrains these equal to internally computed values
     commitmentRoot: input.commitmentRoot.toString(),
-    nullifier: "0", // computed inside circuit
-    nonceNullifier: "0", // computed inside circuit
-    newCommitment: "0", // computed inside circuit
+    nullifier: input.nullifier.toString(),
+    nonceNullifier: input.nonceNullifier.toString(),
+    newCommitment: input.newCommitment.toString(),
     sellToken: input.sellToken.toString(),
     buyToken: input.buyToken.toString(),
     sellAmount: input.sellAmount.toString(),
     buyAmount: input.buyAmount.toString(),
     maxFee: input.maxFee.toString(),
     expiry: input.expiry.toString(),
-    claimsRoot: "0", // computed inside circuit
-    totalLocked: "0", // computed inside circuit
+    claimsRoot: input.claimsRoot.toString(),
+    totalLocked: input.totalLocked.toString(),
     relayer: input.relayer.toString(),
-    orderHash: "0", // computed inside circuit
+    orderHash: input.orderHash.toString(),
 
     // Private inputs
     secret: input.secret.toString(),

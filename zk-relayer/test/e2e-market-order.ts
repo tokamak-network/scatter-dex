@@ -17,7 +17,7 @@
  *   6. Verify: nullifiers spent, claims group registered
  *   7. Verify: platform fee sent to treasury (DexPlatformFeeCollected event)
  *   8. Advance time + claim via claim.circom proof
- *   9. Verify: recipient received buyToken (USDC mock)
+ *   9. Verify: recipient received buyToken (WETH via same-token mock swap)
  */
 
 import { ethers } from "ethers";
@@ -25,7 +25,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
-import { TAG_CLAIM_NULL } from "../src/core/tags.js";
+import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
 
 // @ts-ignore — JS module
@@ -240,13 +240,25 @@ async function main() {
   const commitTree = buildTree(leaves, commitTreeDepth);
   const commitProof = getMerkleProof(commitTree.layers, leafIndex);
 
-  // Sign order with EdDSA
-  const orderHash = poseidon9([
+  // Compute claims tree root (needed for orderHash and proof input)
+  const claimLeafHashes = claims.map((c) =>
+    poseidonHash([c.secret, c.recipient, c.token, c.amount, c.releaseTime])
+  );
+  const paddedClaimLeaves = [...claimLeafHashes];
+  while (paddedClaimLeaves.length < CLAIMS_TREE_SIZE) paddedClaimLeaves.push(0n);
+  const { root: claimsRootValue, layers: claimsLayers } = buildTree(paddedClaimLeaves, CLAIMS_TREE_DEPTH);
+
+  // Compute all public inputs that the circuit constrains (must match internal computation)
+  const escrowNullifier = poseidonHash([TAG_ESCROW_NULL, ownerSecret, salt]);
+  const nonceNullifier = poseidonHash([TAG_NONCE_NULL, ownerSecret, nonce]);
+  const newCommitmentValue = changeAmount > 0n
+    ? computeCommitmentV2(ownerSecret, BigInt(weth), changeAmount, changeSalt, pubKeyAx, pubKeyAy)
+    : 0n;
+
+  // Sign order with EdDSA — uses the ACTUAL claimsRoot, not a placeholder
+  const orderHash = poseidonHash([
     BigInt(weth), BigInt(weth), sellAmount, buyAmount,
-    0n, // maxFee = 0 (no relayer)
-    expiry, nonce,
-    0n, // claimsRoot placeholder — computed by circuit
-    BigInt(userAddr), // relayer = self
+    0n, expiry, nonce, claimsRootValue, BigInt(userAddr),
   ]);
   const sig = eddsa.signPoseidon(eddsaPrivKey, F.e(orderHash.toString()));
   const sigS = sig.S;
@@ -264,7 +276,7 @@ async function main() {
     path: commitProof.pathElements,
     pathIdx: commitProof.pathIndices,
     sellToken: BigInt(weth),
-    buyToken: BigInt(weth), // same-token swap via mock
+    buyToken: BigInt(weth),
     sellAmount,
     buyAmount,
     maxFee: 0n,
@@ -276,6 +288,13 @@ async function main() {
     sigS, sigR8x, sigR8y,
     claims,
     claimCount: claims.length,
+    // Public inputs that circuit constrains
+    nullifier: escrowNullifier,
+    nonceNullifier,
+    newCommitment: newCommitmentValue,
+    claimsRoot: claimsRootValue,
+    totalLocked,
+    orderHash,
   });
 
   const ps = proofResult.publicSignals;
@@ -307,7 +326,7 @@ async function main() {
       buyAmount,
       maxFee: 0,
       expiry,
-      claimsRoot: toHex(BigInt(ps[11]), 32),
+      claimsRoot: toHex(claimsRootValue, 32),
       totalLocked,
       relayer: userAddr,
       orderHash: toHex(BigInt(ps[14]), 32),
@@ -327,8 +346,7 @@ async function main() {
   const nonceSpent = await settlement.nonceNullifiers(toHex(BigInt(ps[3]), 32));
   assert(nonceSpent, "Nonce nullifier spent");
 
-  const claimsRoot = BigInt(ps[11]);
-  const group = await settlement.claimsGroups(toHex(claimsRoot, 32));
+  const group = await settlement.claimsGroups(toHex(claimsRootValue, 32));
   assert(group.token.toLowerCase() === weth.toLowerCase(), `Claims group token: WETH`);
   assert(group.totalLocked === totalLocked, `Claims group locked: ${ethers.formatEther(group.totalLocked)} WETH`);
 
@@ -374,12 +392,7 @@ async function main() {
     await provider.send("evm_mine", []);
   }
 
-  // Build claim proof
-  const claimLeaves = claims.map((c) => poseidonHash([c.secret, c.recipient, c.token, c.amount, c.releaseTime]));
-  const paddedClaimLeaves = [...claimLeaves];
-  while (paddedClaimLeaves.length < CLAIMS_TREE_SIZE) paddedClaimLeaves.push(0n);
-  const { layers: claimsLayers } = buildTree(paddedClaimLeaves, CLAIMS_TREE_DEPTH);
-
+  // Build claim proof (claimsLayers already computed in Step 3)
   const claimIdx = 0;
   const claimNullifier = poseidonHash([TAG_CLAIM_NULL, claimSecret, BigInt(claimIdx)]);
   const claimMerkleProof = getMerkleProof(claimsLayers, claimIdx);
@@ -389,7 +402,7 @@ async function main() {
   const CLAIM_ZKEY = path.join(__dirname, "../../circuits/build/claim_final.zkey");
 
   const { proof: claimZkProof } = await snarkjs.groth16.fullProve({
-    claimsRoot: claimsRoot.toString(),
+    claimsRoot: claimsRootValue.toString(),
     nullifier: claimNullifier.toString(),
     amount: totalLocked.toString(),
     token: BigInt(weth).toString(),
@@ -406,7 +419,7 @@ async function main() {
     [claimZkProof.pi_a[0], claimZkProof.pi_a[1]],
     [[claimZkProof.pi_b[0][1], claimZkProof.pi_b[0][0]], [claimZkProof.pi_b[1][1], claimZkProof.pi_b[1][0]]],
     [claimZkProof.pi_c[0], claimZkProof.pi_c[1]],
-    toHex(claimsRoot, 32),
+    toHex(claimsRootValue, 32),
     toHex(claimNullifier, 32),
     totalLocked,
     weth,
@@ -422,7 +435,7 @@ async function main() {
   const claimNullSpent = await settlement.claimNullifiers(toHex(claimNullifier, 32));
   assert(claimNullSpent, "Claim nullifier spent");
 
-  const groupAfter = await settlement.claimsGroups(toHex(claimsRoot, 32));
+  const groupAfter = await settlement.claimsGroups(toHex(claimsRootValue, 32));
   assert(groupAfter.totalClaimed === totalLocked, "Claims fully claimed");
 
   console.log("\n═══════════════════════════════════════════════════════");
