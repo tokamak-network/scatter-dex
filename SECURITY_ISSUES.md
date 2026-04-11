@@ -231,7 +231,7 @@
 | C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | 🔧 | `fix/C3-remove-hardcoded-secrets` |
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | ⬜ | — |
 | H-5 | claimCount 범위 미검증 | HIGH | ⬜ | — |
-| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ⬜ | — |
+| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | 🔧 | `fix/H6-admin-api-key-hardening` |
 | M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
 | M-7 | API Rate Limiting | MEDIUM | ⬜ | — |
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | ⬜ | — |
