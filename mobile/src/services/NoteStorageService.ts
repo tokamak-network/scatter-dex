@@ -29,13 +29,26 @@ export const NoteStorageService = {
   async getNoteIds(): Promise<string[]> {
     const raw = await AsyncStorage.getItem(NOTE_INDEX_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed;
+    } catch {
+      console.warn('NoteStorageService: corrupted note index, resetting');
+      await AsyncStorage.removeItem(NOTE_INDEX_KEY);
+      return [];
+    }
   },
 
   async getNote(id: string): Promise<StoredNote | null> {
     const raw = await SecureStore.getItemAsync(`${NOTE_PREFIX}${id}`);
     if (!raw) return null;
-    return JSON.parse(raw);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      console.warn(`NoteStorageService: corrupted note data for ${id}`);
+      return null;
+    }
   },
 
   async getAllNotes(): Promise<StoredNote[]> {

@@ -79,6 +79,7 @@ export const DepositService = {
     const poolAddress = ConfigService.getCommitmentPoolAddress();
     const wethAddress = ConfigService.getWethAddress();
     if (!poolAddress) throw new Error('CommitmentPool address not configured');
+    if (token.isNative && !wethAddress) throw new Error('WETH address not configured for native token deposit');
 
     const parsedAmount = ethers.parseUnits(amount, token.decimals);
 

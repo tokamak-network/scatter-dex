@@ -54,7 +54,7 @@ export default function DepositScreen() {
     TokenService.getBalance(readProvider, account, selectedToken)
       .then(setWalletBalance)
       .catch(() => setWalletBalance('0'));
-  }, [account, selectedToken, readProvider, progress.step]);
+  }, [account, selectedToken, readProvider]);
 
   const handleDeposit = useCallback(async () => {
     if (!signer || !account || !selectedToken || !amount) return;

@@ -54,7 +54,7 @@ export const EdDSAKeyService = {
    * 저장된 키가 있으면 로드, 없으면 null
    */
   async loadKey(account: string): Promise<EdDSAKeyPair | null> {
-    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase().slice(-8)}`;
+    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`;
     const stored = await SecureStore.getItemAsync(key);
     if (!stored) return null;
     return JSON.parse(stored);
@@ -64,7 +64,7 @@ export const EdDSAKeyService = {
    * 키를 expo-secure-store에 저장
    */
   async saveKey(account: string, keyPair: EdDSAKeyPair): Promise<void> {
-    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase().slice(-8)}`;
+    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`;
     await SecureStore.setItemAsync(key, JSON.stringify(keyPair));
   },
 
@@ -88,7 +88,7 @@ export const EdDSAKeyService = {
    * 저장된 키 삭제
    */
   async deleteKey(account: string): Promise<void> {
-    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase().slice(-8)}`;
+    const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`;
     await SecureStore.deleteItemAsync(key);
   },
 };
