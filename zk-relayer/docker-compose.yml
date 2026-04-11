@@ -11,7 +11,7 @@ services:
       - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
       - RELAYER_FEE=${RELAYER_FEE:-30}
       # WARNING: Set explicit CORS_ORIGINS in production (e.g., https://app.yourdomain.com)
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:3002}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:3002,http://localhost:3003}
     secrets:
       - relayer_key
     volumes:

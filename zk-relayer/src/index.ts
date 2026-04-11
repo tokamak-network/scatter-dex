@@ -86,10 +86,16 @@ async function main() {
   const app = express();
 
   // Security: CORS whitelist
-  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3000", "http://localhost:3002"])
-    .map(s => s.trim())
-    .filter(Boolean);
-  app.use(cors({ origin: allowedOrigins }));
+  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || [
+    "http://localhost:3000",
+    "http://localhost:3002",
+    "http://localhost:3003",
+  ]).map(s => s.trim()).filter(Boolean);
+  const corsWildcard = allowedOrigins.includes("*");
+  if (corsWildcard) {
+    console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
+  }
+  app.use(cors({ origin: corsWildcard ? "*" : allowedOrigins }));
 
   // Security: body size limit
   app.use(express.json({ limit: "10kb" }));
