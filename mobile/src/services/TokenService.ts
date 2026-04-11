@@ -16,37 +16,21 @@ export interface TokenInfo {
   isNative: boolean;     // true = ETH (auto-wrap/unwrap via WETH)
 }
 
-// 하드코딩된 기본 토큰 목록 (환경변수 미설정 시 fallback)
-const DEFAULT_TOKENS: TokenInfo[] = [
-  {
-    address: ConfigService.getWethAddress(),
-    symbol: 'ETH',
-    decimals: 18,
-    isNative: true,
-  },
-  {
-    address: ConfigService.getWethAddress(),
-    symbol: 'WETH',
-    decimals: 18,
-    isNative: false,
-  },
-];
-
 let cachedTokenList: TokenInfo[] | null = null;
+
+function buildDefaultTokens(): TokenInfo[] {
+  const wethAddr = ConfigService.getWethAddress();
+  if (!wethAddr) return [];
+  return [
+    { address: wethAddr, symbol: 'ETH', decimals: 18, isNative: true },
+    { address: wethAddr, symbol: 'WETH', decimals: 18, isNative: false },
+  ];
+}
 
 export const TokenService = {
   getTokenList(): TokenInfo[] {
     if (cachedTokenList) return cachedTokenList;
-
-    // TODO: 환경변수 기반 동적 토큰 목록 (웹과 동일 포맷: "addr:symbol:decimals,...")
-    // 현재는 WETH 주소가 설정되어 있으면 기본 목록 사용
-    const wethAddr = ConfigService.getWethAddress();
-    if (!wethAddr) {
-      cachedTokenList = [];
-      return cachedTokenList;
-    }
-
-    cachedTokenList = DEFAULT_TOKENS;
+    cachedTokenList = buildDefaultTokens();
     return cachedTokenList;
   },
 

@@ -29,21 +29,18 @@ export interface StoredNote {
 }
 
 export const NoteStorageService = {
-  /** 모든 노트 ID 목록 로드 */
   async getNoteIds(): Promise<string[]> {
     const raw = await AsyncStorage.getItem(NOTE_INDEX_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   },
 
-  /** 특정 노트 로드 (SecureStore에서 복호화) */
   async getNote(id: string): Promise<StoredNote | null> {
     const raw = await SecureStore.getItemAsync(`${NOTE_PREFIX}${id}`);
     if (!raw) return null;
     return JSON.parse(raw);
   },
 
-  /** 모든 노트 로드 */
   async getAllNotes(): Promise<StoredNote[]> {
     const ids = await this.getNoteIds();
     const notes: StoredNote[] = [];
@@ -54,15 +51,12 @@ export const NoteStorageService = {
     return notes;
   },
 
-  /** 노트 저장 */
   async saveNote(note: StoredNote): Promise<void> {
-    // SecureStore에 암호화 저장
     await SecureStore.setItemAsync(
       `${NOTE_PREFIX}${note.id}`,
       JSON.stringify(note),
     );
 
-    // 인덱스 업데이트
     const ids = await this.getNoteIds();
     if (!ids.includes(note.id)) {
       ids.push(note.id);
@@ -70,7 +64,6 @@ export const NoteStorageService = {
     }
   },
 
-  /** 노트 상태 업데이트 */
   async updateNoteStatus(id: string, status: StoredNote['status']): Promise<void> {
     const note = await this.getNote(id);
     if (!note) return;
@@ -81,7 +74,6 @@ export const NoteStorageService = {
     );
   },
 
-  /** 노트 삭제 */
   async deleteNote(id: string): Promise<void> {
     await SecureStore.deleteItemAsync(`${NOTE_PREFIX}${id}`);
     const ids = await this.getNoteIds();
@@ -89,13 +81,11 @@ export const NoteStorageService = {
     await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(updated));
   },
 
-  /** active 노트만 필터링 */
   async getActiveNotes(): Promise<StoredNote[]> {
     const all = await this.getAllNotes();
     return all.filter((n) => n.status === 'active');
   },
 
-  /** 토큰별 잔액 합계 (active 노트 기준) */
   async getPrivateBalances(): Promise<Map<string, { symbol: string; total: bigint }>> {
     const notes = await this.getActiveNotes();
     const map = new Map<string, { symbol: string; total: bigint }>();

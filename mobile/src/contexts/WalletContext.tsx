@@ -4,12 +4,9 @@
  * tokamon의 wallet.js 리스너 패턴을 React Context로 래핑.
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
-
-// WalletConnect imports
-import { WalletConnectModal, useWalletConnectModal } from '@walletconnect/modal-react-native';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 
 const WALLETCONNECT_PROJECT_ID = 'scatter_dex_mobile'; // TODO: cloud.walletconnect.com에서 발급
@@ -29,17 +26,19 @@ interface WalletContextValue extends WalletState {
   readProvider: ethers.JsonRpcProvider;
 }
 
+const INITIAL_STATE: WalletState = {
+  account: null,
+  chainId: null,
+  provider: null,
+  signer: null,
+  isConnecting: false,
+  error: null,
+};
+
 const WalletContext = createContext<WalletContextValue | null>(null);
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<WalletState>({
-    account: null,
-    chainId: null,
-    provider: null,
-    signer: null,
-    isConnecting: false,
-    error: null,
-  });
+  const [state, setState] = useState<WalletState>(INITIAL_STATE);
 
   const wcProviderRef = useRef<InstanceType<typeof EthereumProvider> | null>(null);
   const readProvider = useRef(
@@ -87,14 +86,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       // 이벤트 바인딩
       wcProvider.on('disconnect', () => {
-        setState({
-          account: null,
-          chainId: null,
-          provider: null,
-          signer: null,
-          isConnecting: false,
-          error: null,
-        });
+        setState(INITIAL_STATE);
         wcProviderRef.current = null;
       });
 
@@ -128,14 +120,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       await wcProviderRef.current.disconnect();
       wcProviderRef.current = null;
     }
-    setState({
-      account: null,
-      chainId: null,
-      provider: null,
-      signer: null,
-      isConnecting: false,
-      error: null,
-    });
+    setState(INITIAL_STATE);
   }, []);
 
   return (

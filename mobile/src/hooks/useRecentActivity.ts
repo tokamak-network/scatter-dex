@@ -44,16 +44,18 @@ export function useRecentActivity() {
       if (!poolAddr || !settlementAddr) return;
 
       const fromBlock = await ProviderService.getEarliestBlock();
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
+
+      // Parallel RPC queries
+      const [settleResult, claimResult] = await Promise.allSettled([
+        settlement.queryFilter(settlement.filters.PrivateSettledAuth(), fromBlock),
+        settlement.queryFilter(settlement.filters.PrivateClaim(null, null, account), fromBlock),
+      ]);
+
       const items: ActivityItem[] = [];
 
-      // PrivateSettledAuth 이벤트 (settle)
-      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
-      try {
-        const settleLogs = await settlement.queryFilter(
-          settlement.filters.PrivateSettledAuth(),
-          fromBlock,
-        );
-        for (const log of settleLogs.slice(-MAX_ITEMS)) {
+      if (settleResult.status === 'fulfilled') {
+        for (const log of settleResult.value.slice(-MAX_ITEMS)) {
           items.push({
             type: 'settle',
             txHash: log.transactionHash,
@@ -62,15 +64,10 @@ export function useRecentActivity() {
             details: 'Order settled',
           });
         }
-      } catch { /* contract may not be deployed */ }
+      }
 
-      // PrivateClaim 이벤트 — recipient가 자신인 것만
-      try {
-        const claimLogs = await settlement.queryFilter(
-          settlement.filters.PrivateClaim(null, null, account),
-          fromBlock,
-        );
-        for (const log of claimLogs.slice(-MAX_ITEMS)) {
+      if (claimResult.status === 'fulfilled') {
+        for (const log of claimResult.value.slice(-MAX_ITEMS)) {
           const parsed = settlement.interface.parseLog({
             topics: log.topics as string[],
             data: log.data,
@@ -86,9 +83,8 @@ export function useRecentActivity() {
             details: `Claimed ${amount}`,
           });
         }
-      } catch { /* ok */ }
+      }
 
-      // 블록번호 기준 정렬 (최신 먼저)
       items.sort((a, b) => b.blockNumber - a.blockNumber);
       setActivities(items.slice(0, MAX_ITEMS));
     } finally {

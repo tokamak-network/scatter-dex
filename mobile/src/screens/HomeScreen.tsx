@@ -65,9 +65,14 @@ function WalletCard() {
   );
 }
 
-function BalanceSection() {
+function BalanceSection({
+  balances,
+  loading,
+}: {
+  balances: import('../hooks/useBalances').TokenBalance[];
+  loading: boolean;
+}) {
   const { account } = useWallet();
-  const { balances, loading } = useBalances();
   const [privateBalances, setPrivateBalances] = useState<
     { symbol: string; amount: string }[]
   >([]);
@@ -176,8 +181,13 @@ const ACTIVITY_COLORS: Record<ActivityType, string> = {
   cancel: '#ef4444',
 };
 
-function RecentActivity() {
-  const { activities, loading } = useRecentActivity();
+function RecentActivity({
+  activities,
+  loading,
+}: {
+  activities: import('../hooks/useRecentActivity').ActivityItem[];
+  loading: boolean;
+}) {
 
   return (
     <View style={styles.card}>
@@ -224,8 +234,8 @@ function RecentActivity() {
 
 export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
-  const { refresh: refreshBalances } = useBalances();
-  const { refresh: refreshActivity } = useRecentActivity();
+  const { balances, loading: balancesLoading, refresh: refreshBalances } = useBalances();
+  const { activities, loading: activityLoading, refresh: refreshActivity } = useRecentActivity();
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -246,22 +256,12 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* Header */}
         <Text style={styles.title}>ScatterDEX</Text>
         <Text style={styles.subtitle}>Privacy-Preserving DEX</Text>
-
-        {/* Wallet Connection */}
         <WalletCard />
-
-        {/* Quick Actions */}
         <QuickActions />
-
-        {/* Balances */}
-        <BalanceSection />
-
-        {/* Recent Activity */}
-        <RecentActivity />
-
+        <BalanceSection balances={balances} loading={balancesLoading} />
+        <RecentActivity activities={activities} loading={activityLoading} />
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
