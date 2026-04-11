@@ -258,3 +258,20 @@
 | 18 | DEX 가격 로딩 폴백 | 🔧 | `feat/ux18-dex-price-fallback` |
 | 19 | 다중 지갑 지원 (WalletConnect) | 🔧 | `feat/ux19-multi-wallet` |
 | 20 | Batch Claim | ⬜ | — |
+
+### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
+
+| # | 작업 | 상태 | 브랜치 |
+|---|------|------|--------|
+| 22 | Order 키 파생 UX — 폼 입력 후 "키 먼저 설정" 오류 방지 | 🔧 | `fix/ux22-23-order-flow` |
+| 23 | Limit↔Market 전환 시 가격/금액 상태 초기화 | 🔧 | `fix/ux22-23-order-flow` |
+
+### 🟢 보강 가능 (점검 결과)
+
+| # | 작업 | 상태 |
+|---|------|------|
+| 24 | Safari File System API 미지원 대체 경로 | ⬜ |
+| 25 | Claims 10개 도달 시 사유 표시 | ⬜ |
+| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ |
+| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⬜ |
+| 28 | 가스비 추정 패널 더 눈에 띄게 | ⬜ |
