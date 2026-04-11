@@ -285,7 +285,7 @@
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
 | R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | 🔧 | `fix/R1-gas-estimation`, `test/R1-gas-guard-unit-tests` |
-| R-2 | TX 재시도 없음 | 🔧 | `fix/R2-tx-retry` |
+| R-2 | TX 재시도 없음 | send-phase retry + wait timeout + receipt recovery + pending TX DB | 🔧 | `fix/R2-tx-retry` |
 | R-3 | 헬스체크 없음 | `/health` 엔드포인트 (RPC + DB 체크) | 🔧 | `fix/R3-R6-relayer-hardening` |
 | R-4 | RPC 페일오버 없음 | FallbackProvider + `RPC_URLS_FALLBACK` env var | 🔧 | `fix/R3-R6-relayer-hardening` |
 | R-5 | 커밋먼트 재인덱싱 | DB 체크포인트로 마지막 인덱싱 블록 저장, 재시작 시 이어서 스캔 | 🔧 | `fix/R3-R6-relayer-hardening` |

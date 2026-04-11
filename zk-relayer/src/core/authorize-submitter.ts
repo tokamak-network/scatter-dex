@@ -11,8 +11,8 @@
 
 import { ethers } from "ethers";
 import { config } from "../config.js";
-import { guardedSubmit } from "./gas-guard.js";
-import { getProvider } from "./provider.js";
+import { sendAndWait } from "./tx-retry.js";
+import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -72,23 +72,21 @@ export type CancelEventCallback = (
   relayer: string,
 ) => void;
 
-/** Callback invoked when a PrivateCancel event is detected on-chain. */
-export type CancelEventCallback = (
-  escrowNullifier: string,
-  nonceNullifier: string,
-  newCommitment: string,
-  relayer: string,
-) => void;
-
 export class AuthorizeSubmitter {
-  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
+  private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private txMutex: Promise<void> = Promise.resolve();
   private cancelListeners: CancelEventCallback[] = [];
+  private db: PrivateOrderDB | null = null;
+
+  /** Attach DB for pending TX tracking. */
+  setDB(db: PrivateOrderDB): void {
+    this.db = db;
+  }
 
   constructor() {
-    this.provider = getProvider();
+    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
@@ -168,9 +166,28 @@ export class AuthorizeSubmitter {
     };
 
     return this.withTxLock(async () => {
-      // [R-1] Gas guard — fees are token-denominated, profitability check skipped
-      const receipt = await guardedSubmit(this.settlement, "settleAuth", [params], "settleAuth");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-1] Gas estimation + gas price cap only.
+      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
+      // so profitability comparison against ETH gas cost is skipped until a token→native
+      // price oracle is available. Pass 0n to bypass profitability check.
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "settleAuth", [params], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settleAuth rejected: ${gasCheck.reason}`);
+        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
+      }
+      console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const { txHash } = await sendAndWait(
+        () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "settleAuth",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "settleAuth"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });

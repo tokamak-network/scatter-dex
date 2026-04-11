@@ -35,6 +35,30 @@ async function main() {
   const submitter = new PrivateSubmitter();
   submitter.setDB(db);
 
+  // R-2: Recover pending TXs from previous run (receipt check only, no resend)
+  const pendingTxs = db.getPendingTxs();
+  if (pendingTxs.length > 0) {
+    console.log(`[tx-recovery] Found ${pendingTxs.length} pending TX(s) from previous run`);
+    const provider = submitter.getProvider();
+    await Promise.all(pendingTxs.map(async (ptx) => {
+      try {
+        const receipt = await provider.getTransactionReceipt(ptx.tx_hash);
+        if (receipt) {
+          const status = receipt.status === 1 ? "confirmed" : "reverted";
+          console.log(`[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... → ${status}`);
+          db.removePendingTx(ptx.tx_hash);
+        } else {
+          const ageMin = Math.round((Date.now() - ptx.created_at) / 60_000);
+          console.warn(
+            `[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... still pending (${ageMin}min old). Check manually.`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[tx-recovery] Failed to check ${ptx.tx_hash.slice(0, 18)}...:`, err);
+      }
+    }));
+  }
+
   // Index existing commitments on startup
   console.log("Indexing on-chain commitments...");
   await submitter.indexCommitments();
@@ -130,6 +154,7 @@ async function main() {
 
   // Half-proof (trustless) order routes — settleAuth path
   const authSubmitter = new AuthorizeSubmitter();
+  authSubmitter.setDB(db);
   app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
   ));

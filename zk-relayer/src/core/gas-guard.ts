@@ -7,6 +7,7 @@
 
 import { ethers } from "ethers";
 import { config } from "../config.js";
+import { sendAndWait, type SendAndWaitOptions } from "./tx-retry.js";
 
 const GAS_BUFFER_NUMERATOR = 12n;
 const GAS_BUFFER_DENOMINATOR = 10n;
