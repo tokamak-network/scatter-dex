@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
 import type { StoredPrivateOrder, PrivateOrder, PrivateOrderStatus } from "../types/order.js";
 import type { ClaimLeafData } from "./zk-prover.js";
@@ -85,7 +86,18 @@ export class PrivateOrderDB {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+
     this.migrate();
+
+    // [M-10] Restrict DB file permissions to owner-only (600).
+    // Runs AFTER migrate() so WAL/SHM files (created by first write) are also covered.
+    try {
+      fs.chmodSync(dbPath, 0o600);
+      if (fs.existsSync(`${dbPath}-wal`)) fs.chmodSync(`${dbPath}-wal`, 0o600);
+      if (fs.existsSync(`${dbPath}-shm`)) fs.chmodSync(`${dbPath}-shm`, 0o600);
+    } catch (e) {
+      console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
+    }
 
     this.insertOrder = this.db.prepare(`
       INSERT OR REPLACE INTO private_orders
