@@ -19,6 +19,7 @@ import {
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { guardedSubmit } from "./gas-guard.js";
+import { getProvider as _getProvider } from "./provider.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -41,12 +42,13 @@ const CLAIMS_TREE_DEPTH = 4;
 const COMMIT_TREE_DEPTH = 20;
 
 export class PrivateSubmitter {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.JsonRpcProvider | ethers.FallbackProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private pool: ethers.Contract;
   private commitmentLeaves: bigint[] = [];
   private txMutex: Promise<void> = Promise.resolve();
+  private indexing = false;
   private db: PrivateOrderDB | null = null;
 
   /** Attach DB for claims root tracking. */
@@ -54,8 +56,8 @@ export class PrivateSubmitter {
     this.db = db;
   }
 
-  constructor(provider?: ethers.JsonRpcProvider) {
-    this.provider = provider ?? new ethers.JsonRpcProvider(config.rpcUrl);
+  constructor(provider?: ethers.JsonRpcProvider | ethers.FallbackProvider) {
+    this.provider = provider ?? _getProvider();
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
@@ -77,6 +79,10 @@ export class PrivateSubmitter {
     return this.wallet;
   }
 
+  getProvider(): ethers.JsonRpcProvider | ethers.FallbackProvider {
+    return this.provider;
+  }
+
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
   async getCommitmentMerkleProof(leafIndex: number): Promise<{
     root: string;
@@ -93,26 +99,52 @@ export class PrivateSubmitter {
     };
   }
 
-  /** Index all commitment deposits from on-chain events. */
+  /** Index commitment deposits from on-chain events, resuming from checkpoint. */
   async indexCommitments(): Promise<void> {
-    const filter = this.pool.filters.CommitmentInserted();
-    const events = await this.pool.queryFilter(filter, 0, "latest");
-    this.commitmentLeaves = [];
+    if (this.indexing) return;
+    this.indexing = true;
+    try {
+      const filter = this.pool.filters.CommitmentInserted();
 
-    for (const event of events) {
-      const parsed = this.pool.interface.parseLog({
-        topics: event.topics as string[],
-        data: event.data,
-      });
-      if (parsed) {
-        const leafIndex = Number(parsed.args.leafIndex);
-        while (this.commitmentLeaves.length <= leafIndex) {
-          this.commitmentLeaves.push(0n);
-        }
-        this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
+      // [R-5] Resume from checkpoint — but only if in-memory state exists.
+      // After restart commitmentLeaves is empty, so we must do a full re-index.
+      const checkpoint = this.db?.getMeta("index_last_block");
+      const parsedCheckpoint = checkpoint != null ? parseInt(checkpoint, 10) : NaN;
+      const hasValidCheckpoint = Number.isFinite(parsedCheckpoint) && parsedCheckpoint >= 0;
+      const canResume = hasValidCheckpoint && this.commitmentLeaves.length > 0;
+      const fromBlock = canResume ? parsedCheckpoint + 1 : 0;
+
+      if (fromBlock === 0) {
+        this.commitmentLeaves = [];
       }
+
+      const events = await this.pool.queryFilter(filter, fromBlock, "latest");
+
+      let lastBlock = fromBlock;
+      for (const event of events) {
+        const parsed = this.pool.interface.parseLog({
+          topics: event.topics as string[],
+          data: event.data,
+        });
+        if (parsed) {
+          const leafIndex = Number(parsed.args.leafIndex);
+          while (this.commitmentLeaves.length <= leafIndex) {
+            this.commitmentLeaves.push(0n);
+          }
+          this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
+        }
+        if (event.blockNumber > lastBlock) lastBlock = event.blockNumber;
+      }
+
+      // Persist checkpoint (even on empty results to advance past quiet ranges)
+      if (this.db && lastBlock > 0) {
+        this.db.setMeta("index_last_block", lastBlock.toString());
+      }
+
+      console.log(`Indexed ${this.commitmentLeaves.length} commitments (from block ${fromBlock}, ${events.length} new events)`);
+    } finally {
+      this.indexing = false;
     }
-    console.log(`Indexed ${this.commitmentLeaves.length} commitments`);
   }
 
   /** Submit a private settlement with ZK proof. */

@@ -20,20 +20,48 @@ import {
   type AuthorizeMatch,
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
+import type { PrivateOrderDB } from "../core/db.js";
 
 /**
- * In-memory store for authorize orders. Keyed by nullifier (unique per
- * commitment spend). A production deployment would persist to SQLite.
+ * [R-6] In-memory cache backed by SQLite. On startup, pending orders
+ * are reloaded from DB so they survive relayer restarts.
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
+let _db: PrivateOrderDB | null = null;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
   readLimiter?: RequestHandler,
+  db?: PrivateOrderDB,
 ): Router {
+  // [R-6] Persist authorize orders to SQLite
+  if (db) {
+    _db = db;
+    const rows = db.loadPendingAuthorizeOrders();
+    let restored = 0;
+    for (const row of rows) {
+      try {
+        authorizeOrders.set(row.nullifier, {
+          order: JSON.parse(row.orderJson),
+          status: row.status as StoredAuthorizeOrder["status"],
+          submittedAt: row.submittedAt,
+          pubKeyAx: row.pubKeyAx,
+          pubKeyAy: row.pubKeyAy,
+          settleTxHash: row.settleTx ?? undefined,
+        });
+        restored++;
+      } catch (err) {
+        console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
+        db.deleteAuthorizeOrder(row.nullifier);
+      }
+    }
+    if (restored > 0) {
+      console.log(`[R-6] Restored ${restored} pending authorize orders from DB`);
+    }
+  }
   const router = Router();
 
   // POST /api/authorize-orders — submit a Half-proof order
@@ -94,6 +122,7 @@ export function createAuthorizeOrderRoutes(
         pubKeyAy: pubKeyAy ?? null,
       };
       authorizeOrders.set(nullifier, stored);
+      _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -120,6 +149,8 @@ export function createAuthorizeOrderRoutes(
           match.maker.settleTxHash = txHash;
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
+          _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
+          _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
 
           res.json({
             status: "settled",
@@ -237,5 +268,7 @@ export function purgeNonPendingAuthorizeOrders(): number {
       removed++;
     }
   }
+  // [R-6] Also purge from DB
+  _db?.purgeNonPendingAuthorizeOrdersDB();
   return removed;
 }

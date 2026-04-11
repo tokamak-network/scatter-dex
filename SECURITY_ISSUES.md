@@ -286,10 +286,10 @@
 |---|------|------|------|--------|
 | R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | 🔧 | `fix/R1-gas-estimation`, `test/R1-gas-guard-unit-tests` |
 | R-2 | TX 재시도 없음 | 🔧 | `fix/R2-tx-retry` |
-| R-3 | 헬스체크 없음 | `/health` 엔드포인트 없음. k8s/로드밸런서 연동 불가 | ⬜ | — |
-| R-4 | RPC 페일오버 없음 | 단일 `RPC_URL`. RPC 다운 시 전체 중단 | ⬜ | — |
-| R-5 | 커밋먼트 재인덱싱 | 블록 0부터 재스캔. 체인 성장 시 성능 저하 | ⬜ | — |
-| R-6 | authorize 주문 인메모리 | 크래시 시 authorize 주문 유실 | ⬜ | — |
+| R-3 | 헬스체크 없음 | `/health` 엔드포인트 (RPC + DB 체크) | 🔧 | `fix/R3-R6-relayer-hardening` |
+| R-4 | RPC 페일오버 없음 | FallbackProvider + `RPC_URLS_FALLBACK` env var | 🔧 | `fix/R3-R6-relayer-hardening` |
+| R-5 | 커밋먼트 재인덱싱 | DB 체크포인트로 마지막 인덱싱 블록 저장, 재시작 시 이어서 스캔 | 🔧 | `fix/R3-R6-relayer-hardening` |
+| R-6 | authorize 주문 인메모리 | SQLite `authorize_orders` 테이블 + 재시작 시 pending 주문 복원 | 🔧 | `fix/R3-R6-relayer-hardening` |
 
 #### 🟠 HIGH (강력 권장)
 

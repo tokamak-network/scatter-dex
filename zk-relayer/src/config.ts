@@ -30,6 +30,8 @@ function loadPrivateKey(): string {
 
 export const config = {
   rpcUrl: process.env.RPC_URL || "http://localhost:8545",
+  // [R-4] Comma-separated fallback RPC URLs (optional)
+  rpcUrlsFallback: (process.env.RPC_URLS_FALLBACK || "").split(",").map(s => s.trim()).filter(Boolean),
   relayerPrivateKey: loadPrivateKey(),
   commitmentPoolAddress: requireEnv("COMMITMENT_POOL_ADDRESS"),
   privateSettlementAddress: requireEnv("PRIVATE_SETTLEMENT_ADDRESS"),

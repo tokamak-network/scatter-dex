@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Radio, UserPlus, BarChart3 } from "lucide-react";
+import { Radio, UserPlus, BarChart3, Activity } from "lucide-react";
 
 const relayerLinks = [
   { href: "/relayer", label: "Dashboard", icon: BarChart3 },
+  { href: "/relayer/ops", label: "Ops Monitor", icon: Activity },
   { href: "/relayer/register", label: "Register", icon: UserPlus },
 ];
 
