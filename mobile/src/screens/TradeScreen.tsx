@@ -24,6 +24,8 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderProgress, OrderStep, ClaimInput } from '../services/OrderService';
+import { StepProgress } from '../components/StepProgress';
+import { shared } from '../styles/theme';
 
 const STEP_LABELS: Record<OrderStep, string> = {
   idle: '',
@@ -34,6 +36,8 @@ const STEP_LABELS: Record<OrderStep, string> = {
   success: 'Order submitted!',
   error: 'Order failed',
 };
+
+const ORDER_STEPS: OrderStep[] = ['deriving_key', 'signing_order', 'submitting', 'saving_change'];
 
 const EXPIRY_OPTIONS = [
   { label: '1h', hours: 1 },
@@ -300,27 +304,8 @@ export default function TradeScreen() {
                 <Text style={styles.submitBtnText}>Submit Order</Text>
               </TouchableOpacity>
             ) : (
-              <View style={styles.progressCard}>
-                {(['deriving_key', 'signing_order', 'submitting', 'saving_change'] as OrderStep[]).map((step, i) => {
-                  const steps: OrderStep[] = ['deriving_key', 'signing_order', 'submitting', 'saving_change'];
-                  const currentIdx = steps.indexOf(progress.step);
-                  const isPast = progress.step === 'success' || currentIdx > i;
-                  const isCurrent = currentIdx === i && progress.step !== 'success' && progress.step !== 'error';
-                  const isErr = progress.step === 'error' && currentIdx === i;
-
-                  return (
-                    <View key={step} style={styles.stepRow}>
-                      <View style={[styles.stepDot, isPast && styles.stepDotDone, isCurrent && styles.stepDotActive, isErr && styles.stepDotError]}>
-                        {isCurrent && <ActivityIndicator size="small" color="#95aaff" />}
-                        {isPast && <Text style={styles.stepCheck}>✓</Text>}
-                        {isErr && <Text style={styles.stepX}>!</Text>}
-                      </View>
-                      <Text style={[styles.stepLabel, isPast && styles.stepLabelDone, isCurrent && styles.stepLabelActive, isErr && styles.stepLabelError]}>
-                        {STEP_LABELS[step]}
-                      </Text>
-                    </View>
-                  );
-                })}
+              <View style={shared.card}>
+                <StepProgress steps={ORDER_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
 
                 {progress.step === 'success' && progress.orderId && (
                   <Text style={styles.successText}>Order ID: {progress.orderId}</Text>
@@ -330,8 +315,8 @@ export default function TradeScreen() {
                 )}
 
                 {(progress.step === 'success' || progress.step === 'error') && (
-                  <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-                    <Text style={styles.resetBtnText}>
+                  <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
+                    <Text style={shared.resetBtnText}>
                       {progress.step === 'success' ? 'New Order' : 'Try Again'}
                     </Text>
                   </TouchableOpacity>
@@ -392,23 +377,6 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: '#6366f1', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
   submitBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   btnDisabled: { opacity: 0.4 },
-
-  // Progress
-  progressCard: { backgroundColor: '#111827', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#1f2937' },
-  stepRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
-  stepDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  stepDotDone: { backgroundColor: '#10b98130' },
-  stepDotActive: { backgroundColor: '#6366f130' },
-  stepDotError: { backgroundColor: '#ef444430' },
-  stepCheck: { color: '#10b981', fontSize: 14, fontWeight: '700' },
-  stepX: { color: '#ef4444', fontSize: 14, fontWeight: '700' },
-  stepLabel: { fontSize: 14, color: '#4b5563' },
-  stepLabelDone: { color: '#10b981' },
-  stepLabelActive: { color: '#95aaff', fontWeight: '600' },
-  stepLabelError: { color: '#ef4444' },
-
-  resetBtn: { marginTop: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#374151', alignItems: 'center' },
-  resetBtnText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
 
   successText: { color: '#10b981', fontSize: 13, marginTop: 12, fontFamily: 'monospace' },
   errorText: { color: '#ef4444', fontSize: 12, marginTop: 8 },

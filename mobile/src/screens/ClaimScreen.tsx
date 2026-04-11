@@ -14,7 +14,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +22,8 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
 import { ConfigService } from '../services/ConfigService';
 import { shortAddr } from '../lib/format';
+import { StepProgress } from '../components/StepProgress';
+import { shared } from '../styles/theme';
 
 const STEP_LABELS: Record<ClaimStep, string> = {
   idle: '',
@@ -32,6 +33,8 @@ const STEP_LABELS: Record<ClaimStep, string> = {
   success: 'Claim successful!',
   error: 'Claim failed',
 };
+
+const CLAIM_STEPS: ClaimStep[] = ['checking_status', 'generating_proof', 'submitting'];
 
 export default function ClaimScreen() {
   const { account, signer, readProvider } = useWallet();
@@ -165,27 +168,8 @@ export default function ClaimScreen() {
         )}
 
         {progress.step !== 'idle' && (
-          <View style={styles.progressCard}>
-            {(['checking_status', 'generating_proof', 'submitting'] as ClaimStep[]).map((step, i) => {
-              const steps: ClaimStep[] = ['checking_status', 'generating_proof', 'submitting'];
-              const currentIdx = steps.indexOf(progress.step);
-              const isPast = progress.step === 'success' || currentIdx > i;
-              const isCurrent = currentIdx === i && progress.step !== 'success' && progress.step !== 'error';
-              const isErr = progress.step === 'error' && currentIdx === i;
-
-              return (
-                <View key={step} style={styles.stepRow}>
-                  <View style={[styles.stepDot, isPast && styles.stepDotDone, isCurrent && styles.stepDotActive, isErr && styles.stepDotError]}>
-                    {isCurrent && <ActivityIndicator size="small" color="#95aaff" />}
-                    {isPast && <Text style={styles.stepCheck}>✓</Text>}
-                    {isErr && <Text style={styles.stepX}>!</Text>}
-                  </View>
-                  <Text style={[styles.stepLabel, isPast && styles.stepLabelDone, isCurrent && styles.stepLabelActive, isErr && styles.stepLabelError]}>
-                    {STEP_LABELS[step]}
-                  </Text>
-                </View>
-              );
-            })}
+          <View style={shared.card}>
+            <StepProgress steps={CLAIM_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
 
             {progress.step === 'success' && progress.txHash && (
               <View style={styles.txRow}>
@@ -198,8 +182,8 @@ export default function ClaimScreen() {
             )}
 
             {(progress.step === 'success' || progress.step === 'error') && (
-              <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-                <Text style={styles.resetBtnText}>
+              <TouchableOpacity style={shared.resetBtn} onPress={handleReset}>
+                <Text style={shared.resetBtnText}>
                   {progress.step === 'success' ? 'New Claim' : 'Try Again'}
                 </Text>
               </TouchableOpacity>
@@ -257,25 +241,9 @@ const styles = StyleSheet.create({
   claimBtnText: { color: '#000', fontSize: 18, fontWeight: '700' },
   btnDisabled: { opacity: 0.4 },
 
-  progressCard: { backgroundColor: '#111827', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#1f2937' },
-  stepRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
-  stepDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  stepDotDone: { backgroundColor: '#10b98130' },
-  stepDotActive: { backgroundColor: '#6366f130' },
-  stepDotError: { backgroundColor: '#ef444430' },
-  stepCheck: { color: '#10b981', fontSize: 14, fontWeight: '700' },
-  stepX: { color: '#ef4444', fontSize: 14, fontWeight: '700' },
-  stepLabel: { fontSize: 14, color: '#4b5563' },
-  stepLabelDone: { color: '#10b981' },
-  stepLabelActive: { color: '#95aaff', fontWeight: '600' },
-  stepLabelError: { color: '#ef4444' },
-
   txRow: { flexDirection: 'row', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#1f2937' },
   txLabel: { fontSize: 13, color: '#6b7280' },
   txHash: { fontSize: 13, color: '#95aaff', fontFamily: 'monospace' },
-
-  resetBtn: { marginTop: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#374151', alignItems: 'center' },
-  resetBtnText: { color: '#9ca3af', fontSize: 14, fontWeight: '600' },
 
   infoCard: { backgroundColor: '#111827', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1f2937' },
   infoTitle: { fontSize: 13, fontWeight: '600', color: '#6b7280', marginBottom: 8 },
