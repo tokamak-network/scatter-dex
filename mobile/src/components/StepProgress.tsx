@@ -10,13 +10,14 @@ import { colors } from '../styles/theme';
 interface Props<S extends string> {
   steps: S[];
   labels: Record<S, string>;
-  currentStep: S;
+  /** Current step — can also be 'success' or 'error' (terminal states not in steps array). */
+  currentStep: S | 'success' | 'error';
 }
 
 export function StepProgress<S extends string>({ steps, labels, currentStep }: Props<S>) {
-  const isSuccess = currentStep === ('success' as S);
-  const isError = currentStep === ('error' as S);
-  const currentIdx = steps.indexOf(currentStep);
+  const isSuccess = currentStep === 'success';
+  const isError = currentStep === 'error';
+  const currentIdx = steps.indexOf(currentStep as S);
 
   return (
     <View>

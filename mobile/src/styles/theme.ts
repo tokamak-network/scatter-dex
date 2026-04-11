@@ -18,6 +18,7 @@ export const colors = {
   success: '#10b981',
   warning: '#f59e0b',
   danger: '#ef4444',
+  subtitleText: '#8899bb',
 } as const;
 
 export const shared = StyleSheet.create({
@@ -44,7 +45,7 @@ export const shared = StyleSheet.create({
   },
 
   title: { fontSize: 24, fontWeight: 'bold', color: colors.text, textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginTop: 4, marginBottom: 20 },
+  subtitle: { fontSize: 14, color: colors.subtitleText, textAlign: 'center', marginTop: 4, marginBottom: 20 },
 
   emptyText: { fontSize: 14, color: colors.textDimmer, textAlign: 'center', paddingVertical: 12 },
   errorText: { color: colors.danger, fontSize: 12, marginTop: 8 },
