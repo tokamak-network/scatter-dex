@@ -44,7 +44,6 @@ export interface SwapParams {
   recipient: string;          // settlement contract address
   slippageBps?: number;       // slippage tolerance in bps (default 50 = 0.5%)
   feeTier?: number;           // Uniswap V3 fee tier (default 3000 = 0.3%)
-  apiKey?: string;            // 1inch API key (optional)
 }
 
 /**
@@ -67,60 +66,45 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
 }
 
 /**
- * Get swap calldata from 1inch Swap API.
- * Uses the Pathfinder algorithm to find the optimal route across 400+ DEXes.
+ * Get swap calldata from 1inch via server-side proxy (/api/swap).
+ * The API key stays on the server — never exposed to the browser.
  */
 async function get1inchRoute(params: SwapParams): Promise<SwapRoute | null> {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = 50, apiKey } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = 50 } = params;
 
-  const baseUrl = `https://api.1inch.dev/swap/v6.0/${chainId}/swap`;
   const queryParams = new URLSearchParams({
+    chainId: chainId.toString(),
     src: sellToken,
     dst: buyToken,
     amount: sellAmount.toString(),
     from: recipient,
-    slippage: (slippageBps / 100).toString(), // bps → percentage (50 bps → 0.5)
-    disableEstimate: "true",
-    compatibility: "true",
+    slippage: (slippageBps / 100).toString(),
   });
 
-  const headers: Record<string, string> = { "Accept": "application/json" };
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
-
-  // Timeout: abort after FETCH_TIMEOUT_MS to prevent stalling the submit flow
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${baseUrl}?${queryParams}`, {
-      headers,
+    const res = await fetch(`/api/swap?${queryParams}`, {
       signal: controller.signal,
     });
     if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`1inch API error ${res.status}: ${err}`);
+      const err = await res.json().catch(() => ({ error: "unknown" }));
+      throw new Error(`Swap API error ${res.status}: ${err.error}`);
     }
 
     const data = await res.json();
 
-    // Validate: router address must be the known 1inch router
-    const returnedRouter = (data.tx.to as string).toLowerCase();
-    if (returnedRouter !== ONEINCH_ROUTER.toLowerCase()) {
-      throw new Error(`1inch API returned unexpected router ${data.tx.to} (expected ${ONEINCH_ROUTER})`);
-    }
-
     // Validate: estimated output must meet minReceive
-    const estimated = BigInt(data.dstAmount);
+    const estimated = BigInt(data.estimatedOutput);
     if (estimated < minReceive) {
       throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
     }
 
     return {
-      dexRouter: ONEINCH_ROUTER,  // use known address, not API response
-      dexCalldata: data.tx.data,
-      source: "1inch",
+      dexRouter: data.dexRouter,
+      dexCalldata: data.dexCalldata,
+      source: data.source,
       estimatedOutput: estimated,
     };
   } finally {

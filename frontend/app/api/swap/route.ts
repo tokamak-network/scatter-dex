@@ -1,0 +1,93 @@
+import { NextRequest, NextResponse } from "next/server";
+
+/**
+ * Server-side proxy for 1inch Swap API.
+ *
+ * Why server-side:
+ *   - API key stays on the server (never exposed to browser)
+ *   - Avoids CORS issues with 1inch API
+ *   - Can add rate limiting, caching, logging
+ *
+ * Client calls: GET /api/swap?chainId=1&src=0x...&dst=0x...&amount=1000&from=0x...&slippage=0.5
+ * Server calls: https://api.1inch.dev/swap/v6.0/{chainId}/swap?...
+ */
+
+const ONEINCH_BASE_URL = "https://api.1inch.dev/swap/v6.0";
+const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY; // server-only env var (not NEXT_PUBLIC_)
+const FETCH_TIMEOUT_MS = 10_000;
+
+// Known 1inch Aggregation Router V6 address (same on all EVM chains)
+const ONEINCH_ROUTER = "0x111111125421cA6dc452d289314280a0f8842A65";
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl;
+
+  const chainId = searchParams.get("chainId");
+  const src = searchParams.get("src");
+  const dst = searchParams.get("dst");
+  const amount = searchParams.get("amount");
+  const from = searchParams.get("from");
+  const slippage = searchParams.get("slippage") ?? "0.5";
+
+  if (!chainId || !src || !dst || !amount || !from) {
+    return NextResponse.json(
+      { error: "Missing required params: chainId, src, dst, amount, from" },
+      { status: 400 },
+    );
+  }
+
+  const queryParams = new URLSearchParams({
+    src,
+    dst,
+    amount,
+    from,
+    slippage,
+    disableEstimate: "true",
+    compatibility: "true",
+  });
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (ONEINCH_API_KEY) {
+    headers["Authorization"] = `Bearer ${ONEINCH_API_KEY}`;
+  }
+
+  try {
+    const res = await fetch(
+      `${ONEINCH_BASE_URL}/${chainId}/swap?${queryParams}`,
+      {
+        headers,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "unknown error");
+      return NextResponse.json(
+        { error: `1inch API error: ${errText}` },
+        { status: res.status },
+      );
+    }
+
+    const data = await res.json();
+
+    // Validate: router address must be the known 1inch router
+    const returnedRouter = (data.tx?.to as string)?.toLowerCase();
+    if (returnedRouter !== ONEINCH_ROUTER.toLowerCase()) {
+      return NextResponse.json(
+        { error: `Unexpected router address: ${data.tx?.to}` },
+        { status: 502 },
+      );
+    }
+
+    // Return only the fields the client needs (don't leak full API response)
+    return NextResponse.json({
+      dexRouter: ONEINCH_ROUTER,
+      dexCalldata: data.tx.data,
+      estimatedOutput: data.dstAmount,
+      source: "1inch",
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "timeout";
+    return NextResponse.json({ error: message }, { status: 504 });
+  }
+}
