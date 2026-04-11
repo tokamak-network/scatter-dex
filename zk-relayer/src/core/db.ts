@@ -87,7 +87,10 @@ export class PrivateOrderDB {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
 
-    // [M-10] Restrict DB file permissions to owner-only (600)
+    this.migrate();
+
+    // [M-10] Restrict DB file permissions to owner-only (600).
+    // Runs AFTER migrate() so WAL/SHM files (created by first write) are also covered.
     try {
       fs.chmodSync(dbPath, 0o600);
       if (fs.existsSync(`${dbPath}-wal`)) fs.chmodSync(`${dbPath}-wal`, 0o600);
@@ -95,8 +98,6 @@ export class PrivateOrderDB {
     } catch (e) {
       console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
     }
-
-    this.migrate();
 
     this.insertOrder = this.db.prepare(`
       INSERT OR REPLACE INTO private_orders
