@@ -256,5 +256,5 @@
 | 16 | 에러 메시지 사용자 친화적 | 🔧 | `feat/ux16-friendly-errors` |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
 | 18 | DEX 가격 로딩 폴백 | 🔧 | `feat/ux18-dex-price-fallback` |
-| 19 | 다중 지갑 지원 (WalletConnect) | ⬜ | — |
+| 19 | 다중 지갑 지원 (WalletConnect) | 🔧 | `feat/ux19-multi-wallet` |
 | 20 | Batch Claim | ⬜ | — |
