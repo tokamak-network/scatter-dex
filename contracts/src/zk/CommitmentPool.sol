@@ -39,6 +39,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error FeeExceedsMax();
     error TimelockNotExpired();
     error NoPendingSettlement();
+    error SettlementAlreadySet();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -84,6 +85,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     address public pendingSettlement;
     uint256 public pendingSettlementActivateAt;
 
+
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _withdrawVerifier,
@@ -122,6 +124,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     /// @notice Queue a settlement address change (activates after SETTLEMENT_TIMELOCK).
     function queueSetAuthorizedSettlement(address _settlement) external onlyOwner {
         if (_settlement == address(0)) revert ZeroAddress();
+        if (_settlement.code.length == 0) revert NotAContract();
         pendingSettlement = _settlement;
         pendingSettlementActivateAt = block.timestamp + SETTLEMENT_TIMELOCK;
         emit SettlementChangeQueued(_settlement, pendingSettlementActivateAt);
@@ -139,11 +142,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Immediate set for initial deployment only (when no settlement is set yet).
     function setAuthorizedSettlement(address _settlement) external onlyOwner {
-        if (authorizedSettlement != address(0)) {
-            // After initial setup, must use 2-step timelock
-            revert TimelockNotExpired();
-        }
+        if (authorizedSettlement != address(0)) revert SettlementAlreadySet();
         if (_settlement == address(0)) revert ZeroAddress();
+        if (_settlement.code.length == 0) revert NotAContract();
         authorizedSettlement = _settlement;
         emit AuthorizedSettlementUpdated(_settlement);
     }
