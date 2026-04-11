@@ -5,6 +5,7 @@
   "scripts": {
     "build:zk": "node scripts/build-zk-webview.mjs",
     "prebuild:zk": "mkdir -p .build",
+    "copy:circuits": "bash scripts/copy-zk-assets.sh",
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
