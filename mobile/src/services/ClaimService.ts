@@ -40,39 +40,41 @@ export interface ClaimData {
   allLeaves: string[];     // all 16 claim leaf hashes (decimal strings)
 }
 
+const circuitCache = new Map<number, string>();
+
 async function loadCircuitFileB64(assetModule: number): Promise<string> {
+  const cached = circuitCache.get(assetModule);
+  if (cached) return cached;
+
   const asset = Asset.fromModule(assetModule);
   await asset.downloadAsync();
   if (!asset.localUri) throw new Error('Failed to download circuit asset');
-  return readAsStringAsync(asset.localUri, { encoding: EncodingType.Base64 });
+  const b64 = await readAsStringAsync(asset.localUri, { encoding: EncodingType.Base64 });
+  circuitCache.set(assetModule, b64);
+  return b64;
+}
+
+function toBytes32Hex(value: string): string {
+  return '0x' + BigInt(value).toString(16).padStart(64, '0');
 }
 
 export const ClaimService = {
-  /**
-   * 온체인에서 이미 클레임되었는지 확인
-   */
-  async isAlreadyClaimed(
+  /** Returns { claimed, nullifier } so execute() can reuse the nullifier. */
+  async checkClaimStatus(
     claimData: ClaimData,
     provider: ethers.JsonRpcProvider,
-  ): Promise<boolean> {
+  ): Promise<{ claimed: boolean; nullifier: string }> {
     const settlementAddr = ConfigService.getPrivateSettlementAddress();
-    if (!settlementAddr) return false;
-
-    // nullifier = Poseidon(TAG_CLAIM_NULL, secret, leafIndex)
     const nullifier = await ZKBridgeService.computeNullifier(
       TAG_CLAIM_NULL.toString(),
       claimData.secret,
       claimData.leafIndex.toString(),
     );
+    if (!settlementAddr) return { claimed: false, nullifier };
 
-    const settlement = new ethers.Contract(
-      settlementAddr,
-      PRIVATE_SETTLEMENT_ABI,
-      provider,
-    );
-
-    const nullifierBytes32 = '0x' + BigInt(nullifier).toString(16).padStart(64, '0');
-    return settlement.claimNullifiers(nullifierBytes32);
+    const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
+    const claimed = await settlement.claimNullifiers(toBytes32Hex(nullifier));
+    return { claimed, nullifier };
   },
 
   /**
@@ -88,7 +90,7 @@ export const ClaimService = {
       // ─── Step 1: 상태 확인 ─────────────────────────────
       onProgress({ step: 'checking_status' });
 
-      const alreadyClaimed = await this.isAlreadyClaimed(claimData, readProvider);
+      const { claimed: alreadyClaimed, nullifier } = await this.checkClaimStatus(claimData, readProvider);
       if (alreadyClaimed) {
         throw new Error('This claim has already been processed.');
       }
@@ -123,13 +125,6 @@ export const ClaimService = {
       const { pathElements, pathIndices } = getMerkleProofFromTree(
         treeResult.layers,
         claimData.leafIndex,
-      );
-
-      // Compute nullifier
-      const nullifier = await ZKBridgeService.computeNullifier(
-        TAG_CLAIM_NULL.toString(),
-        claimData.secret,
-        claimData.leafIndex.toString(),
       );
 
       const circuitInputs: Record<string, string | string[]> = {
@@ -184,8 +179,8 @@ export const ClaimService = {
         'function claimWithProof(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 nullifier, address recipient, address token, uint256 amount, uint256 releaseTime) external',
       ], signer);
 
-      const claimsRootBytes32 = '0x' + BigInt(treeResult.root).toString(16).padStart(64, '0');
-      const nullifierBytes32 = '0x' + BigInt(nullifier).toString(16).padStart(64, '0');
+      const claimsRootBytes32 = toBytes32Hex(treeResult.root);
+      const nullifierBytes32 = toBytes32Hex(nullifier);
 
       const tx = await settlement.claimWithProof(
         proof.a,
