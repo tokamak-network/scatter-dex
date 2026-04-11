@@ -24,9 +24,9 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { poseidon2, poseidon3, poseidon5, poseidon7, poseidon9 } from "poseidon-lite";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
-import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
+import { TAG_CLAIM_NULL } from "../src/core/tags.js";
+import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
 
 // @ts-ignore — JS module
 import { makeDepositProof } from "./helpers/deposit-proof.mjs";
@@ -95,77 +95,7 @@ const MOCK_DEX_ROUTER_ABI = [
   "function swap(address tokenIn, address tokenOut, uint256 amountIn, address recipient) external returns (uint256)",
 ];
 
-// ─── Helpers ──────────────────────────────────────────────
-
-function poseidonHash(inputs: bigint[]): bigint {
-  switch (inputs.length) {
-    case 2: return poseidon2(inputs);
-    case 3: return poseidon3(inputs);
-    case 5: return poseidon5(inputs);
-    case 7: return poseidon7(inputs);
-    case 9: return poseidon9(inputs);
-    default: throw new Error(`poseidonHash: unsupported arity ${inputs.length}`);
-  }
-}
-
-function computeCommitmentV2(secret: bigint, token: bigint, amount: bigint, salt: bigint, pubKeyAx: bigint, pubKeyAy: bigint): bigint {
-  return poseidonHash([TAG_COMMITMENT_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy]);
-}
-
-const BN254_ORDER = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-function randomFieldElement(): bigint {
-  let value: bigint;
-  do {
-    const bytes = new Uint8Array(32);
-    globalThis.crypto.getRandomValues(bytes);
-    bytes[0] &= 0x3f;
-    value = 0n;
-    for (const b of bytes) value = (value << 8n) | BigInt(b);
-  } while (value >= BN254_ORDER);
-  return value;
-}
-
-function toHex(n: bigint, bytes: number): string {
-  return "0x" + n.toString(16).padStart(bytes * 2, "0");
-}
-
-function assert(condition: boolean, msg: string) {
-  if (!condition) throw new Error(msg);
-  console.log(`  ✓ ${msg}`);
-}
-
-async function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-function buildTree(leaves: bigint[], depth: number) {
-  const zeros: bigint[] = [0n];
-  for (let i = 1; i <= depth; i++) zeros.push(poseidonHash([zeros[i - 1], zeros[i - 1]]));
-  const size = 2 ** depth;
-  const padded = [...leaves];
-  while (padded.length < size) padded.push(zeros[0]);
-  const layers: bigint[][] = [padded];
-  let current = padded;
-  for (let i = 0; i < depth; i++) {
-    const next: bigint[] = [];
-    for (let j = 0; j < current.length; j += 2) next.push(poseidonHash([current[j], current[j + 1]]));
-    layers.push(next);
-    current = next;
-  }
-  return { root: current[0], layers };
-}
-
-function getMerkleProof(layers: bigint[][], idx: number) {
-  const pathElements: bigint[] = [];
-  const pathIndices: number[] = [];
-  let index = idx;
-  for (let i = 0; i < layers.length - 1; i++) {
-    const isRight = index % 2;
-    const siblingIndex = isRight ? index - 1 : index + 1;
-    pathElements.push(layers[i][siblingIndex] ?? 0n);
-    pathIndices.push(isRight);
-    index = Math.floor(index / 2);
-  }
-  return { pathElements, pathIndices };
-}
+// Helpers imported from ./helpers/common.ts
 
 // ─── Main ───────────────────────────────────────────────────
 
@@ -202,85 +132,20 @@ async function main() {
   // ─── Step 1: Deploy MockDexRouter ──────────────────────────
   console.log("[1/9] Deploying MockDexRouter...");
 
-  // Deploy a minimal mock DEX: receives WETH, sends back WETH (same-token swap for simplicity)
-  // In a real scenario this would be WETH → USDC, but on local anvil we use same-token
-  // to avoid needing a second token's liquidity. The settleWithDex contract doesn't care
-  // about the swap mechanics — it only checks balance delta.
-
-  // We'll use a Foundry-style inline deployer: deploy the MockDexRouter from SettleWithDex.t.sol
-  // For simplicity, use a pre-compiled bytecode approach or just use the existing pool tokens.
-  // Actually, let's use a simpler approach: the "DEX" is just a contract that receives WETH
-  // and sends back WETH at 1:1 (identity swap). This proves the plumbing works.
-
-  // Deploy inline using ethers ContractFactory with minimal bytecode
-  // This mock: receives transferFrom(tokenIn, amountIn), transfers tokenOut to recipient
-  const MockDexFactory = new ethers.ContractFactory(
-    ["function swap(address,address,uint256,address) external returns (uint256)"],
-    // Minimal Solidity compiled bytecode for a swap mock is complex.
-    // Instead, impersonate the settlement owner and use a simpler approach:
-    // We fund a regular EOA as "DEX" and have it do the transfer via a helper contract.
-    // SIMPLEST: just use `weth.transfer` from a funded address.
-    // Actually, the cleanest approach is to skip MockDexRouter deployment entirely
-    // and test with a trivial "identity" swap where the calldata just calls
-    // weth.transfer(settlement, swapAmount) from a pre-funded address.
-    "0x", // placeholder
-    wallet,
-  );
-
-  // Better approach: deploy MockDexRouter via forge create or use raw bytecode
-  // For now, let's just verify the authorize proof generation + on-chain submission
-  // works with a mock that transfers tokens. We'll use Anvil's `eth_sendTransaction`
-  // with a pre-funded contract.
-
-  // Actually the simplest robust approach: deploy via raw creation code
-  // Let me use a different strategy — create a contract that when called with
-  // `swap(tokenIn, tokenOut, amountIn, recipient)`, does:
-  //   IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn)
-  //   IERC20(tokenOut).transfer(recipient, amountIn)  // 1:1 rate
-
-  // Deploy using ethers with ABI + bytecode from forge
-  // For this E2E, we'll use Anvil's impersonation to act as settlement owner
+  // Impersonate settlement owner for admin operations
   const ownerAddr: string = await settlement.owner();
   console.log(`Settlement owner: ${ownerAddr}`);
-
-  // Impersonate owner to set platform fee and whitelist
   await provider.send("anvil_impersonateAccount", [ownerAddr]);
   const ownerSigner = await provider.getSigner(ownerAddr);
   const settlementAsOwner = new ethers.Contract(settlementAddr, SETTLEMENT_ABI, ownerSigner);
 
-  // For the DEX mock, we'll create a minimal contract using Anvil's setCode
-  const mockDexAddr = "0x" + "D" + "0".repeat(38) + "1"; // deterministic address
-  // Mock DEX bytecode: on any call, transferFrom(sender, self, amountIn) then transfer(recipient, amountIn)
-  // This is complex in raw bytecode. Simpler: use a Solidity artifact.
-  // SIMPLEST for E2E: deploy via `forge create` or just test with same-token where
-  // the "swap" is a no-op (calldata that does nothing, but settlement already has the tokens).
-
-  // Final simplest approach: the test proves the authorize proof works.
-  // For the DEX swap, we just need the settlement to end up with buyToken.
-  // On local anvil, we can use `deal` to simulate the DEX output:
-  //   1. settleWithDex transfers sellToken to dexRouter
-  //   2. dexRouter "swaps" (we fake this with deal)
-  //   3. settlement checks balance delta
-
-  // Let's use Anvil's ability to set storage/balance. The flow:
-  // - Whitelist a simple address as "dexRouter"
-  // - The dexCalldata calls nothing (or a function that fails gracefully)
-  // - We pre-fund the settlement with buyToken so the balance delta check passes
-
-  // Actually this defeats the purpose. Let me deploy a proper mock.
-  // Use forge script to deploy, or inline creation tx.
-
-  // I'll use ethers to deploy from Solidity source via the already-compiled artifact
-  // Check if MockDexRouter from the Foundry test can be reused
+  // Deploy MockDexRouter from Foundry compiled artifact (1:1 same-token swap)
+  const MOCK_DEX_ARTIFACT = path.join(__dirname, "../../contracts/out/SettleWithDex.t.sol/MockDexRouter.json");
   const mockDexBytecode = await (async () => {
-    // Read the compiled artifact from forge
     const fs = await import("fs");
-    const artifactPath = path.join(__dirname, "../../contracts/out/SettleWithDex.t.sol/MockDexRouter.json");
-    if (fs.existsSync(artifactPath)) {
-      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
-      return artifact.bytecode.object;
+    if (fs.existsSync(MOCK_DEX_ARTIFACT)) {
+      return JSON.parse(fs.readFileSync(MOCK_DEX_ARTIFACT, "utf8")).bytecode.object;
     }
-    // Fallback: compile inline
     throw new Error("MockDexRouter artifact not found. Run `cd contracts && forge build --force` first.");
   })();
 
