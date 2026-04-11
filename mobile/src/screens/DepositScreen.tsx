@@ -123,7 +123,7 @@ export default function DepositScreen() {
       setProgress(0);
       setDepositError(null);
     }
-  }, [step, account, signer, selectedToken, amount, progress, isGenerating]);
+  }, [step, account, signer, selectedToken, amount, progress, isGenerating, depositError]);
 
   const displayBalance = loadingBalance ? '...' : (balance ? `${formatBalance(balance)} ${selectedToken?.symbol || ''}` : '—');
 
