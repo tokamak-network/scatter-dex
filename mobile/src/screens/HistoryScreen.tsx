@@ -49,21 +49,30 @@ export default function HistoryScreen() {
   }, []);
 
   const fetchOrders = useCallback(async () => {
-    if (!account || !signer) return;
+    if (!account || !signer) {
+      setOrders([]);
+      return;
+    }
     try {
       const keyPair = await EdDSAKeyService.loadKey(account);
-      if (!keyPair) return;
+      if (!keyPair) {
+        setOrders([]);
+        return;
+      }
       const statuses = await RelayerApiService.getOrderStatus(keyPair.pubKeyAx);
       setOrders(statuses);
-    } catch {
-      // relayer may be offline
+    } catch (err: unknown) {
+      console.warn('Failed to fetch orders:', err instanceof Error ? err.message : err);
     }
   }, [account, signer]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchNotes(), fetchOrders()]);
-    setLoading(false);
+    try {
+      await Promise.all([fetchNotes(), fetchOrders()]);
+    } finally {
+      setLoading(false);
+    }
   }, [fetchNotes, fetchOrders]);
 
   useEffect(() => {
@@ -173,7 +182,7 @@ function NotesTab({ notes }: { notes: StoredNote[] }) {
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Created</Text>
             <Text style={styles.detailValue}>
-              {new Date(note.createdAt).toLocaleString()}
+              {formatDate(note.createdAt)}
             </Text>
           </View>
         </View>
@@ -222,10 +231,19 @@ function OrdersTab({ orders }: { orders: OrderStatus[] }) {
 }
 
 function formatAmount(wei: string): string {
-  const num = parseFloat(ethers.formatEther(wei));
-  if (num === 0) return '0';
-  if (num < 0.0001) return '< 0.0001';
-  return num.toFixed(4);
+  const formatted = ethers.formatEther(wei);
+  // Truncate to 4 decimal places without floating-point rounding
+  const dotIdx = formatted.indexOf('.');
+  if (dotIdx === -1) return formatted;
+  const truncated = formatted.slice(0, dotIdx + 5); // 4 decimal places
+  if (parseFloat(truncated) === 0 && BigInt(wei) > 0n) return '< 0.0001';
+  return truncated;
+}
+
+function formatDate(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const styles = StyleSheet.create({
