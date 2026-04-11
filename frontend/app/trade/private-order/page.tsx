@@ -199,6 +199,7 @@ export default function PrivateOrderPage() {
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
   const [orderType, setOrderType] = useState<OrderType>("limit");
   const [slippageBps, setSlippageBps] = useState("50"); // 0.5% default
+  const [manualPrice, setManualPrice] = useState(""); // fallback when DEX prices fail
 
   // Claims
   const nextClaimId = useRef(1);
@@ -217,8 +218,12 @@ export default function PrivateOrderPage() {
   );
   const { marketPrice, marketPriceSource } = useMemo(() => {
     const rec = dexPrices.find((p) => p.recommended && p.netPrice !== null);
-    return { marketPrice: rec?.netPrice ?? null, marketPriceSource: rec?.source ?? null };
-  }, [dexPrices]);
+    if (rec?.netPrice) return { marketPrice: rec.netPrice, marketPriceSource: rec.source ?? "DEX" };
+    // Fallback: manual price input
+    const manual = parseFloat(manualPrice);
+    if (!isNaN(manual) && manual > 0) return { marketPrice: manual, marketPriceSource: "manual" };
+    return { marketPrice: null, marketPriceSource: null };
+  }, [dexPrices, manualPrice]);
 
   // Auto-compute buyAmount in market mode (BigInt floor to avoid rounding up)
   useEffect(() => {
@@ -274,10 +279,11 @@ export default function PrivateOrderPage() {
     [availableNotes, selectedCommitment],
   );
 
-  // Reset note selection when sell token changes or notes list changes
+  // Reset note selection + manual price when sell/buy token changes
   useEffect(() => {
     setSelectedCommitment(null);
-  }, [sellTokenIdx]);
+    setManualPrice("");
+  }, [sellTokenIdx, buyTokenIdx]);
 
   // Clear selection if selected note no longer exists in available list
   useEffect(() => {
@@ -940,8 +946,8 @@ export default function PrivateOrderPage() {
                 />
                 {orderType === "market" && marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
                   <div className="text-xs text-on-surface-variant mt-1">
-                    DEX rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
-                    <span className="text-tertiary ml-1">({marketPriceSource})</span>
+                    {marketPriceSource === "manual" ? "Manual" : "DEX"} rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
+                    <span className={`ml-1 ${marketPriceSource === "manual" ? "text-warning" : "text-tertiary"}`}>({marketPriceSource})</span>
                   </div>
                 )}
                 {orderType === "limit" && sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
@@ -1023,8 +1029,22 @@ export default function PrivateOrderPage() {
                     <span className="text-tertiary ml-1">(no relay fee)</span>
                   </div>
                 )}
-                {!marketPrice && (
+                {!marketPrice && dexPrices.some(p => p.loading) && (
                   <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
+                )}
+                {!dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
+                  <div className="space-y-1 mt-1">
+                    <div className="text-xs text-error" id="manual-price-label">DEX price unavailable. Enter price manually:</div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text" inputMode="decimal" value={manualPrice}
+                        onChange={(e) => setManualPrice(e.target.value)}
+                        placeholder={`1 ${sellToken?.symbol} = ? ${buyToken?.symbol}`}
+                        aria-labelledby="manual-price-label"
+                        className="flex-1 bg-white/10 border border-outline-variant/30 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-tertiary text-on-surface"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
               )}
