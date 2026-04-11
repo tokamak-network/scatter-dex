@@ -50,7 +50,7 @@
 - **파일**: `zk-relayer/.env:7`, `zk-relayer/src/routes/vault.ts:25-37`
 - **내용**: 하드코딩된 dev 키 + 타이밍 공격 취약한 단순 문자열 비교.
 - **수정**: 환경변수로 분리 + `crypto.timingSafeEqual` 사용
-- **상태**: ⬜ TODO
+- **상태**: ✅ DONE (PR #177)
 
 ### 🟡 MEDIUM (강력 권장)
 
@@ -231,7 +231,7 @@
 | C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ✅ | PR #175 |
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | 🔧 | `fix/H3-transfer-fee-cap` |
 | H-5 | claimCount 범위 미검증 | HIGH | ⬜ | — |
-| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | 🔧 | `fix/H6-admin-api-key-hardening` |
+| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
 | M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
 | M-7 | API Rate Limiting | MEDIUM | ⬜ | — |
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | ⬜ | — |
