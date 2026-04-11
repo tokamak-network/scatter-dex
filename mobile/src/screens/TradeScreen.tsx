@@ -98,18 +98,18 @@ export default function TradeScreen() {
         const sellAmountBn = ethers.parseUnits(amount, 18);
         const priceCents = BigInt(Math.round(parsedPrice * 100));
         const buyAmountBn = sellAmountBn * priceCents / 100n;
-        const buyAmount = buyAmountBn.toString();
+        const buyAmountHuman = ethers.formatUnits(buyAmountBn, 18);
 
         const input: OrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
-          buyAmount,
+          buyAmount: buyAmountHuman,
           maxFeeBps: 50,
           expiryHours: 24,
           claims: [{
             recipient: account,
-            amount: buyAmount,
+            amount: buyAmountHuman,
             releaseDelaySec: 0,
           }],
         };
@@ -132,13 +132,14 @@ export default function TradeScreen() {
         const sellAmountBn = ethers.parseUnits(amount, 18);
         const priceCents = BigInt(Math.round(parsedPrice * 100));
         const buyAmountBn = sellAmountBn * priceCents / 100n;
-        const buyAmountMin = (buyAmountBn * 995n / 1000n).toString(); // 0.5% slippage
+        const buyAmountMin = buyAmountBn * 995n / 1000n;
+        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, 18);
 
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
-          buyAmount: buyAmountMin,
+          buyAmount: buyAmountMinHuman,
           slippageBps: 50,
           expiryHours: 1,
           claimRecipient: account,

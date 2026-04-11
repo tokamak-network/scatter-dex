@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useWallet } from '../contexts/WalletContext';
@@ -104,7 +104,12 @@ export default function HomeScreen() {
                       {connectionMode === 'builtin' ? 'Built-in' : 'WalletConnect'}
                     </Text>
                   </View>
-                  <TouchableOpacity style={s.addrBadge} onPress={disconnect}>
+                  <TouchableOpacity style={s.addrBadge} onPress={() => {
+                    Alert.alert('Wallet', 'Disconnect wallet?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Disconnect', style: 'destructive', onPress: disconnect },
+                    ]);
+                  }}>
                     <View style={s.addrDot} />
                     <Text style={s.addrText}>{shortAddr(account)}</Text>
                     <Text style={s.chevronDown}>▾</Text>

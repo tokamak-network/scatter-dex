@@ -69,6 +69,14 @@ export default function DepositScreen() {
   }, [balance]);
 
   const handleConfirm = useCallback(async () => {
+    // Reset from error state
+    if (depositError) {
+      setDepositError(null);
+      setStep(1);
+      setProgress(0);
+      return;
+    }
+
     if (step === 1) {
       // Validate
       if (!account || !signer) {
@@ -231,7 +239,13 @@ export default function DepositScreen() {
             activeOpacity={0.8}
           >
             <Text style={s.actionBtnText}>
-              {step === 1 ? 'Confirm Deposit' : (progress < 100 ? 'Generating Proof...' : 'Complete Deposit')}
+              {depositError
+                ? 'Try Again'
+                : step === 1
+                  ? 'Confirm Deposit'
+                  : progress < 100
+                    ? 'Generating Proof...'
+                    : 'Complete Deposit'}
             </Text>
           </TouchableOpacity>
         </View>
