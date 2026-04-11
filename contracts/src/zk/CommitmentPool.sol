@@ -9,7 +9,7 @@ import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
 import {IDepositVerifier} from "./IDepositVerifier.sol";
-import {SanctionsList} from "../SanctionsList.sol";
+import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
@@ -69,7 +69,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     mapping(address => bool) public whitelistedTokens;
 
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot deposit or withdraw.
-    SanctionsList public sanctionsList;
+    ISanctionsList public sanctionsList;
 
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
@@ -126,12 +126,14 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     /// @notice Set the sanctions list. Pass address(0) to disable sanctions checking.
     function setSanctionsList(address _list) external onlyOwner {
         emit SanctionsListUpdated(address(sanctionsList), _list);
-        sanctionsList = SanctionsList(_list);
+        sanctionsList = ISanctionsList(_list);
     }
 
     /// @dev Revert if address is sanctioned (when sanctions list is configured).
+    ///      Caches storage read to avoid double SLOAD when used twice on withdraw.
     modifier notSanctioned(address addr) {
-        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(addr)) {
+        ISanctionsList _list = sanctionsList;
+        if (address(_list) != address(0) && _list.isSanctioned(addr)) {
             revert AddressSanctioned();
         }
         _;

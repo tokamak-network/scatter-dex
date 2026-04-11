@@ -16,7 +16,7 @@ import {IWETH} from "../interfaces/IWETH.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
 import {FeeVault} from "../FeeVault.sol";
-import {SanctionsList} from "../SanctionsList.sol";
+import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 
 /// @title PrivateSettlement
 /// @notice ZK-based private settlement for ScatterDEX.
@@ -217,7 +217,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     mapping(address => bool) public whitelistedTokens;
 
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot claim or settle.
-    SanctionsList public sanctionsList;
+    ISanctionsList public sanctionsList;
 
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
@@ -301,7 +301,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// @notice Set the sanctions list. Pass address(0) to disable sanctions checking.
     function setSanctionsList(address _list) external onlyOwner {
         emit SanctionsListUpdated(address(sanctionsList), _list);
-        sanctionsList = SanctionsList(_list);
+        sanctionsList = ISanctionsList(_list);
+    }
+
+    /// @dev Revert if address is sanctioned.
+    function _requireNotSanctioned(address addr) internal view {
+        ISanctionsList _list = sanctionsList;
+        if (address(_list) != address(0) && _list.isSanctioned(addr)) revert AddressSanctioned();
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -345,6 +351,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
         if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
+        _requireNotSanctioned(msg.sender);
         if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
 
@@ -523,6 +530,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 1. Only the two proof relayers may submit
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
+        _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
 
         // 2. Non-zero amounts — prevent empty settlements that bloat state
@@ -847,7 +855,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         chosen DEX (e.g. Uniswap exactInputSingle, 1inch swap, etc.).
     function settleWithDex(SettleDexParams calldata p) external nonReentrant {
         if (paused) revert ContractPaused();
-        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(msg.sender)) revert AddressSanctioned();
+        _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
 
@@ -1045,7 +1053,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ) external nonReentrant {
         if (paused) revert ContractPaused();
         if (recipient == address(0)) revert ZeroAddress();
-        if (address(sanctionsList) != address(0) && sanctionsList.isSanctioned(recipient)) revert AddressSanctioned();
+        _requireNotSanctioned(recipient);
 
         ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.totalLocked == 0) revert ClaimsGroupNotFound();

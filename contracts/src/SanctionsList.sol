@@ -2,26 +2,24 @@
 pragma solidity ^0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
 
 /// @title SanctionsList
 /// @notice On-chain address blocklist for OFAC SDN and other sanctions compliance.
-///         Owner can add/remove addresses. Integrates with CommitmentPool and
-///         PrivateSettlement to block sanctioned addresses from depositing,
-///         withdrawing, claiming, or settling.
-///
-/// @dev    Follows the Chainalysis SanctionsList interface pattern so it can
-///         be replaced with the Chainalysis oracle (0x40C57923...) if desired.
-///         The isSanctioned(address) view function is the integration point.
-contract SanctionsList is Ownable2Step {
+/// @dev    Implements ISanctionsList so it can be swapped with the Chainalysis
+///         oracle (0x40C57923...) or any other compatible blocklist.
+contract SanctionsList is Ownable2Step, ISanctionsList {
     mapping(address => bool) public sanctioned;
+
+    uint256 public constant MAX_BATCH_SIZE = 200;
 
     event AddressSanctioned(address indexed addr);
     event AddressUnsanctioned(address indexed addr);
-    event BatchSanctioned(address[] addrs);
 
     error ZeroAddress();
     error AlreadySanctioned();
     error NotSanctioned();
+    error BatchTooLarge();
     error RenounceOwnershipDisabled();
 
     constructor() Ownable(msg.sender) {}
@@ -31,7 +29,7 @@ contract SanctionsList is Ownable2Step {
     }
 
     /// @notice Check if an address is sanctioned.
-    function isSanctioned(address addr) external view returns (bool) {
+    function isSanctioned(address addr) external view override returns (bool) {
         return sanctioned[addr];
     }
 
@@ -51,12 +49,26 @@ contract SanctionsList is Ownable2Step {
     }
 
     /// @notice Batch-add addresses (e.g. OFAC SDN list update).
+    ///         Silently skips zero addresses and duplicates for convenience.
+    ///         Emits individual AddressSanctioned events only for newly added.
     function addSanctionsBatch(address[] calldata addrs) external onlyOwner {
+        if (addrs.length > MAX_BATCH_SIZE) revert BatchTooLarge();
         for (uint256 i = 0; i < addrs.length; i++) {
             if (addrs[i] != address(0) && !sanctioned[addrs[i]]) {
                 sanctioned[addrs[i]] = true;
+                emit AddressSanctioned(addrs[i]);
             }
         }
-        emit BatchSanctioned(addrs);
+    }
+
+    /// @notice Batch-remove addresses (e.g. OFAC delisting).
+    function removeSanctionsBatch(address[] calldata addrs) external onlyOwner {
+        if (addrs.length > MAX_BATCH_SIZE) revert BatchTooLarge();
+        for (uint256 i = 0; i < addrs.length; i++) {
+            if (sanctioned[addrs[i]]) {
+                sanctioned[addrs[i]] = false;
+                emit AddressUnsanctioned(addrs[i]);
+            }
+        }
     }
 }
