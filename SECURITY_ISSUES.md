@@ -295,7 +295,7 @@
 
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
-| R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | ⬜ | — |
+| R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | 🔧 | `feat/R7-admin-api` |
 | R-8 | 메트릭스 없음 | Prometheus 미연동. 가스비/매칭률/proof 시간 미추적 | ⬜ | — |
 | R-9 | 운영 문서 없음 | 배포 가이드, 설정 레퍼런스, 트러블슈팅 가이드 없음 | ⬜ | — |
 | R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | ⬜ | — |

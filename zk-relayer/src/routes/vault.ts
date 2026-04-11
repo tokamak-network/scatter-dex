@@ -1,7 +1,7 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { ethers } from "ethers";
-import { timingSafeEqual } from "crypto";
 import { config } from "../config.js";
+import { adminAuth } from "../middleware/admin-auth.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 
 const FEE_VAULT_ABI = [
@@ -21,27 +21,6 @@ const TOKEN_ENTRIES = (process.env.TOKEN_LIST || "")
     return { addr: parts[0]?.trim(), symbol: parts[1]?.trim() || parts[0]?.slice(0, 10) || "?", decimals: parseInt(parts[2] || "18", 10) };
   })
   .filter((e) => e.addr);
-
-/** Simple admin auth middleware using ADMIN_API_KEY env var. */
-function adminAuth(req: Request, res: Response, next: () => void) {
-  const key = config.adminApiKey;
-  if (!key) {
-    // No key configured — reject all admin requests
-    res.status(403).json({ error: "Admin API key not configured on this relayer" });
-    return;
-  }
-  const provided = req.headers["x-admin-key"];
-  if (typeof provided !== "string") {
-    res.status(401).json({ error: "Invalid admin API key" });
-    return;
-  }
-  const providedBuf = Buffer.from(provided);
-  if (providedBuf.length !== key.length || !timingSafeEqual(providedBuf, key)) {
-    res.status(401).json({ error: "Invalid admin API key" });
-    return;
-  }
-  next();
-}
 
 export function createVaultRoutes(
   submitter: PrivateSubmitter,
