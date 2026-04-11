@@ -5,8 +5,10 @@ import React, { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HiddenWebView from './src/components/HiddenWebView';
 import TabNavigator from './src/navigation/TabNavigator';
+import { WalletProvider } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
 
 export default function App() {
@@ -19,23 +21,24 @@ export default function App() {
   }, []);
 
   return (
-    <View style={styles.root}>
-      <StatusBar style="light" />
-
-      {/* 숨겨진 WebView — ZK 엔진 */}
-      <HiddenWebView />
-
-      {zkReady ? (
-        <NavigationContainer>
-          <TabNavigator />
-        </NavigationContainer>
-      ) : (
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#95aaff" />
-          <Text style={styles.loadingText}>Initializing ZK Engine...</Text>
+    <SafeAreaProvider>
+      <WalletProvider>
+        <View style={styles.root}>
+          <StatusBar style="light" />
+          <HiddenWebView />
+          {zkReady ? (
+            <NavigationContainer>
+              <TabNavigator />
+            </NavigationContainer>
+          ) : (
+            <View style={styles.loading}>
+              <ActivityIndicator size="large" color="#95aaff" />
+              <Text style={styles.loadingText}>Initializing ZK Engine...</Text>
+            </View>
+          )}
         </View>
-      )}
-    </View>
+      </WalletProvider>
+    </SafeAreaProvider>
   );
 }
 
