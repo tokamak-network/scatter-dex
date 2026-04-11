@@ -1,14 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Copy compiled ZK circuit files from circuits/build/ to mobile/assets/zk/
 #
 # Prerequisites: run circuits/scripts/build.sh first to compile circuits.
-#
-# Usage: cd mobile && bash scripts/copy-zk-assets.sh
+# Can be run from any directory — resolves paths relative to this script.
 
 set -e
 
-CIRCUITS_BUILD="../circuits/build"
-ASSETS_ZK="assets/zk"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MOBILE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CIRCUITS_BUILD="$MOBILE_DIR/../circuits/build"
+ASSETS_ZK="$MOBILE_DIR/assets/zk"
 
 REQUIRED_CIRCUITS=(deposit claim)
 
