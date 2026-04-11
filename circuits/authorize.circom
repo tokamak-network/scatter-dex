@@ -258,6 +258,12 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     component rcMaxFee = Num2Bits(16);
     rcMaxFee.in <== maxFee;
 
+    // [H-5] claimCount must fit in 5 bits (0..31), which covers the valid
+    // range 0..maxClaimsPerSide (16). Without this, a field-arithmetic
+    // overflow could bypass the LessThan(5) gate in the claim-used loop.
+    component rcClaimCount = Num2Bits(5);
+    rcClaimCount.in <== claimCount;
+
     component rcClaimAmount[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
         rcClaimAmount[i] = Num2Bits(128);
