@@ -27,8 +27,10 @@ export interface SendAndWaitOptions {
   receiptPollIntervalMs?: number;
   /** Label for logging (e.g. "settlePrivate"). */
   label?: string;
-  /** Callback when txHash is known (before receipt). Use to persist hash. */
+  /** Callback when txHash is known (before receipt). Use to persist hash. Best-effort: errors are logged, not thrown. */
   onTxHash?: (txHash: string) => void;
+  /** Callback when receipt is obtained (before revert check). Use to clean up pending TX tracking. Best-effort: errors are logged, not thrown. */
+  onReceipt?: (txHash: string, reverted: boolean) => void;
 }
 
 const defaults = {
@@ -104,6 +106,7 @@ export async function sendAndWait(
     receiptPollIntervalMs = defaults.receiptPollIntervalMs,
     label = "tx",
     onTxHash,
+    onReceipt,
   } = opts;
 
   // ── Phase 1: Send with retry ──────────────────────────────
@@ -131,7 +134,11 @@ export async function sendAndWait(
 
   const txHash = tx.hash;
   console.log(`[tx-retry] ${label} sent: ${txHash}`);
-  onTxHash?.(txHash);
+
+  // Best-effort: DB failure must not abort the TX wait flow
+  try { onTxHash?.(txHash); } catch (err) {
+    console.warn(`[tx-retry] ${label} onTxHash callback failed (non-fatal):`, err);
+  }
 
   // ── Phase 2: Wait with timeout ────────────────────────────
   let receipt = await waitWithTimeout(tx, waitTimeoutMs);
@@ -150,8 +157,14 @@ export async function sendAndWait(
     );
   }
 
-  // ── Phase 3: Revert check ─────────────────────────────────
-  if (receipt.status === 0) {
+  // ── Phase 3: Cleanup + revert check ───────────────────────
+  // onReceipt fires BEFORE revert throw so pending TX is always cleaned up
+  const reverted = receipt.status === 0;
+  try { onReceipt?.(receipt.hash, reverted); } catch (err) {
+    console.warn(`[tx-retry] ${label} onReceipt callback failed (non-fatal):`, err);
+  }
+
+  if (reverted) {
     throw new Error(
       `[tx-retry] ${label} reverted on-chain (txHash=${txHash}). Not retrying.`,
     );

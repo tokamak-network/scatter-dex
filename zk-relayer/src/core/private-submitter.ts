@@ -376,9 +376,9 @@ export class PrivateSubmitter {
         {
           label: "settlePrivate",
           onTxHash: (hash) => { this.db?.savePendingTx(hash, "settlePrivate"); },
+          onReceipt: (hash) => { this.db?.removePendingTx(hash); },
         },
       );
-      this.db?.removePendingTx(txHash);
       console.log(`Private settlement tx: ${txHash}`);
 
       // Record claims roots so this relayer only pays gas for its own claims.
@@ -528,9 +528,9 @@ export class PrivateSubmitter {
         {
           label: "scatterDirect",
           onTxHash: (hash) => { this.db?.savePendingTx(hash, "scatterDirect"); },
+          onReceipt: (hash) => { this.db?.removePendingTx(hash); },
         },
       );
-      this.db?.removePendingTx(txHash);
       console.log(`ScatterDirect tx: ${txHash}`);
 
       // Record claims root so this relayer only pays gas for its own claims.
@@ -623,9 +623,9 @@ export class PrivateSubmitter {
         {
           label: "claimWithProof",
           onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimWithProof"); },
+          onReceipt: (hash) => { this.db?.removePendingTx(hash); },
         },
       );
-      this.db?.removePendingTx(txHash);
       console.log(`Gasless claim tx: ${txHash}`);
       return txHash;
     });
@@ -649,9 +649,9 @@ export class PrivateSubmitter {
         {
           label: "claimVaultFee",
           onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimVaultFee"); },
+          onReceipt: (hash) => { this.db?.removePendingTx(hash); },
         },
       );
-      this.db?.removePendingTx(txHash);
       console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
       return txHash;
     });

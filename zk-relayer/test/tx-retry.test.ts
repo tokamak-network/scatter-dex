@@ -120,6 +120,36 @@ describe("sendAndWait", () => {
     ).rejects.toThrow("reverted on-chain");
   });
 
+  it("calls onReceipt even on revert (for cleanup)", async () => {
+    const txResp = mockTxResponse("0xreverted");
+    txResp.wait.mockResolvedValue({ hash: "0xreverted", status: 0 });
+    const onReceipt = vi.fn();
+
+    await sendAndWait(
+      () => Promise.resolve(txResp) as any,
+      mockProvider() as any,
+      { label: "test", onReceipt },
+    ).catch(() => {});
+
+    expect(onReceipt).toHaveBeenCalledWith("0xreverted", true);
+  });
+
+  it("onTxHash failure does not abort TX wait", async () => {
+    const txResp = mockTxResponse("0xdb-fail");
+    txResp.wait.mockResolvedValue({ hash: "0xdb-fail", status: 1 });
+
+    const result = await sendAndWait(
+      () => Promise.resolve(txResp) as any,
+      mockProvider() as any,
+      {
+        label: "test",
+        onTxHash: () => { throw new Error("DB write failed"); },
+      },
+    );
+
+    expect(result.txHash).toBe("0xdb-fail");
+  });
+
   it("polls receipt when wait times out", async () => {
     const txResp = mockTxResponse("0xslow");
     txResp.wait.mockImplementation(() => new Promise(() => {}));

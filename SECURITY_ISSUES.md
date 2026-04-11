@@ -284,7 +284,7 @@
 
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
-| R-1 | 가스 추정 없음 | 🔧 | `fix/R1-gas-estimation` |
+| R-1 | 가스 추정 없음 | estimateGas + gas price cap guard | ✅ | PR #198 |
 | R-2 | TX 재시도 없음 | send-phase retry + wait timeout + receipt recovery + pending TX DB | 🔧 | `fix/R2-tx-retry` |
 | R-3 | 헬스체크 없음 | `/health` 엔드포인트 없음. k8s/로드밸런서 연동 불가 | ⬜ | — |
 | R-4 | RPC 페일오버 없음 | 단일 `RPC_URL`. RPC 다운 시 전체 중단 | ⬜ | — |

@@ -185,9 +185,9 @@ export class AuthorizeSubmitter {
         {
           label: "settleAuth",
           onTxHash: (hash) => { this.db?.savePendingTx(hash, "settleAuth"); },
+          onReceipt: (hash) => { this.db?.removePendingTx(hash); },
         },
       );
-      this.db?.removePendingTx(txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });
