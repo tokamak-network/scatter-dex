@@ -100,7 +100,17 @@ contract DeployLocal is Script {
         // 12. Wire relayer registry + fee vault to PrivateSettlement
         privateSettlement.setRelayerRegistry(address(relayerRegistry));
         privateSettlement.setFeeVault(address(vault));
-        console.log("ZK contracts configured (relayer gate + fee vault)");
+
+        // 13. Whitelist DEX routers for settleWithDex (market orders)
+        //     1inch Aggregation Router V6 — same address on all EVM chains
+        address ONEINCH_ROUTER = 0x111111125421cA6dc452d289314280a0f8842A65;
+        if (ONEINCH_ROUTER.code.length > 0) {
+            privateSettlement.setDexRouterWhitelist(ONEINCH_ROUTER, true);
+            console.log("1inch Router whitelisted:", ONEINCH_ROUTER);
+        } else {
+            console.log("1inch Router not deployed on this chain (skipped)");
+        }
+        console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
         vm.stopBroadcast();
 
