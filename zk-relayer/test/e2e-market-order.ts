@@ -110,8 +110,9 @@ async function main() {
     throw new Error(`Refusing to run on chain ${chainId}. Set E2E_ALLOW_NON_LOCAL=1 to override.`);
   }
 
-  const wallet = new ethers.Wallet(USER_KEY, provider);
-  const userAddr = wallet.address;
+  const baseWallet = new ethers.Wallet(USER_KEY, provider);
+  const wallet = new ethers.NonceManager(baseWallet);
+  const userAddr = baseWallet.address;
   console.log(`User: ${userAddr}`);
 
   // Get contract addresses from relayer
@@ -159,8 +160,29 @@ async function main() {
   await (await wethContract.deposit({ value: ethers.parseEther("100") })).wait();
   await (await wethContract.transfer(mockDexAddress, ethers.parseEther("50"))).wait();
 
-  // Whitelist MockDexRouter + set platform fee
+  // Deploy MockAuthorizeVerifier (accepts any proof)
+  const MOCK_AUTH_ARTIFACT = path.join(__dirname, "../../contracts/out/MockAuthorizeVerifier.sol/MockAuthorizeVerifier.json");
+  const mockAuthBytecode = await (async () => {
+    const fs = await import("fs");
+    if (fs.existsSync(MOCK_AUTH_ARTIFACT)) {
+      return JSON.parse(fs.readFileSync(MOCK_AUTH_ARTIFACT, "utf8")).bytecode.object;
+    }
+    throw new Error("MockAuthorizeVerifier artifact not found. Run `cd contracts && forge build --force` first.");
+  })();
+  const mockAuthFactory = new ethers.ContractFactory(
+    ["function verifyProof(uint256[2],uint256[2][2],uint256[2],uint256[15]) external view returns (bool)"],
+    mockAuthBytecode, wallet,
+  );
+  const mockAuth = await mockAuthFactory.deploy();
+  await mockAuth.waitForDeployment();
+  const mockAuthAddress = await mockAuth.getAddress();
+  console.log(`  MockAuthorizeVerifier deployed: ${mockAuthAddress}`);
+
+  // Whitelist MockDexRouter + set AuthorizeVerifier + set platform fee
   await (await settlementAsOwner.setDexRouterWhitelist(mockDexAddress, true)).wait();
+  const setAuthAbi = ["function setAuthorizeVerifier(address) external"];
+  const settlementForAuth = new ethers.Contract(settlementAddr, setAuthAbi, ownerSigner);
+  await (await settlementForAuth.setAuthorizeVerifier(mockAuthAddress)).wait();
   await (await settlementAsOwner.setDexPlatformFee(PLATFORM_FEE_BPS)).wait();
   await provider.send("anvil_stopImpersonatingAccount", [ownerAddr]);
 
