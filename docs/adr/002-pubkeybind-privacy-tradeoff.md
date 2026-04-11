@@ -1,11 +1,11 @@
 # ADR-002: pubKeyBind Privacy Tradeoff
 
-> Status: Accepted
-> Date: 2026-04-11
+> **Status**: Accepted
+> **Decision date**: 2026-04-11
 
 ## Context
 
-`authorize.circom` outputs `pubKeyBind = Poseidon(pubKeyAx, pubKeyAy, nullifier)` as a public signal. This value is visible on-chain in the `settleAuth` and `settleWithDex` events.
+`authorize.circom` outputs `pubKeyBind = Poseidon(pubKeyAx, pubKeyAy, nullifier)` as a public signal. This value is visible on-chain through the `settleAuth` and `settleWithDex` transactions, including in the `AuthorizeProof` calldata and verifier public signals.
 
 ## Privacy Analysis
 
@@ -51,6 +51,6 @@ Without pubKeyBind, a user could provide a fake pubKey to the relayer. The relay
 
 ## References
 
-- `circuits/authorize.circom` lines 485-501
+- `circuits/authorize.circom` lines 485-507
 - `docs/PAPER.md` § 8 (Compliance Model)
 - `docs/adr/001-no-self-trade-detection.md` (related privacy decision)
