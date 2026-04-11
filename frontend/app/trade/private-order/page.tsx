@@ -240,6 +240,13 @@ export default function PrivateOrderPage() {
     setBuyAmount(ethers.formatUnits(minReceiveWei, buyToken.decimals));
   }, [orderType, marketPrice, sellAmount, slippageBps, buyToken?.decimals]);
 
+  // [#23] Reset price/amount when switching between Limit and Market
+  useEffect(() => {
+    setBuyAmount("");
+    setPrice("");
+    setManualPrice("");
+  }, [orderType]);
+
   // Check which notes are spent on-chain (parallel)
   useEffect(() => {
     if (notes.length === 0) return;
@@ -1286,21 +1293,23 @@ export default function PrivateOrderPage() {
 
             {orderType === "limit" ? (
             <button
-              onClick={handleSubmit}
-              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001)}
+              onClick={!keyPair ? handleDeriveKey : handleSubmit}
+              disabled={!sellAmount || !buyAmount || !selectedNote || (keyPair && zkRelayers.length === 0) || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001) || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
-              {!selectedNote ? "Select a Commitment Note" : "Submit Limit Order"}
+              {keyLoading ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Unlocking Key...</span>
+              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Key & Submit" : "Submit Limit Order"}
             </button>
             ) : (
             <button
-              onClick={handleMarketSubmit}
-              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || !marketPrice || step === "signing" || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
+              disabled={!sellAmount || !buyAmount || !selectedNote || (keyPair && !marketPrice) || step === "signing" || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
-              {step === "signing" ? (
-                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Executing...</span>
-              ) : !selectedNote ? "Select a Commitment Note" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
+              {step === "signing" || keyLoading ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {keyLoading ? "Unlocking Key..." : "Executing..."}</span>
+              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Key & Execute" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
             </button>
             )}
 
