@@ -209,7 +209,8 @@ export default function PrivateClaimPage() {
       setTxHash(result.txHash || "");
       setStatus("success");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Claim failed");
+      const { friendlyError } = await import("../../lib/error-messages");
+      setError(friendlyError(e));
       setStatus("error");
     }
   }, [claimData, bundleRelayerUrl]);
@@ -241,15 +242,8 @@ export default function PrivateClaimPage() {
       setStatus("success");
     } catch (e: any) {
       console.error("Wallet claim failed:", e);
-      let message = "Claim failed";
-      if (e.code === "ACTION_REJECTED") {
-        message = "Transaction rejected in wallet.";
-      } else if (e.reason) {
-        message = e.reason;
-      } else if (e instanceof Error) {
-        message = e.message;
-      }
-      setError(message);
+      const { friendlyError } = await import("../../lib/error-messages");
+      setError(friendlyError(e));
       setStatus("error");
     }
   }, [claimData, signer]);

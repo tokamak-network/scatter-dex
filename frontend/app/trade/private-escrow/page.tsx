@@ -314,7 +314,8 @@ export default function PrivateEscrowPage() {
       setDepositAmount("");
     } catch (e: unknown) {
       setTxState("error");
-      setTxError(e instanceof Error ? e.message : "Deposit failed");
+      const { friendlyError } = await import("../../lib/error-messages");
+      setTxError(friendlyError(e));
     }
   }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes]);
 

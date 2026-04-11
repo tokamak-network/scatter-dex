@@ -450,7 +450,8 @@ export default function PrivateOrderPage() {
         setStep("create_order");
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Key derivation failed");
+      const { friendlyError } = await import("../../lib/error-messages");
+      setError(friendlyError(e));
     } finally {
       setKeyLoading(false);
     }
@@ -604,7 +605,8 @@ export default function PrivateOrderPage() {
       setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Order submission failed");
+      const fe = await import("../../lib/error-messages");
+      setError(fe.friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
@@ -729,7 +731,8 @@ export default function PrivateOrderPage() {
       setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Market order failed");
+      const fe = await import("../../lib/error-messages");
+      setError(fe.friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, changeAmount, dexPrices, zkRelayers, selectedRelayerIdx]);
