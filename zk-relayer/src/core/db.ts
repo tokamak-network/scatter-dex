@@ -81,6 +81,9 @@ export class PrivateOrderDB {
   private statsSettledVolume: ReturnType<Database.Database["prepare"]>;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
+  private insertPendingTx: ReturnType<Database.Database["prepare"]>;
+  private deletePendingTx: ReturnType<Database.Database["prepare"]>;
+  private selectPendingTxs: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -176,6 +179,11 @@ export class PrivateOrderDB {
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
     );
     this.selectMeta = this.db.prepare("SELECT value FROM relayer_meta WHERE key = @key");
+    this.insertPendingTx = this.db.prepare(
+      "INSERT OR IGNORE INTO pending_txs (tx_hash, label, created_at) VALUES (@txHash, @label, @createdAt)",
+    );
+    this.deletePendingTx = this.db.prepare("DELETE FROM pending_txs WHERE tx_hash = @txHash");
+    this.selectPendingTxs = this.db.prepare("SELECT * FROM pending_txs ORDER BY created_at ASC");
   }
 
   private migrate(): void {
@@ -263,6 +271,15 @@ export class PrivateOrderDB {
       CREATE TABLE IF NOT EXISTS relayer_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+    `);
+
+    // Migration: R-2 pending TX tracking for receipt recovery on restart
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_txs (
+        tx_hash    TEXT PRIMARY KEY,
+        label      TEXT NOT NULL,
+        created_at INTEGER NOT NULL
       );
     `);
   }
@@ -525,6 +542,20 @@ export class PrivateOrderDB {
   getMeta(key: string): string | null {
     const row = this.selectMeta.get({ key }) as { value: string } | undefined;
     return row?.value ?? null;
+  }
+
+  // ─── Pending TX tracking (R-2) ───
+
+  savePendingTx(txHash: string, label: string): void {
+    this.insertPendingTx.run({ txHash: txHash.toLowerCase(), label, createdAt: Date.now() });
+  }
+
+  removePendingTx(txHash: string): void {
+    this.deletePendingTx.run({ txHash: txHash.toLowerCase() });
+  }
+
+  getPendingTxs(): Array<{ tx_hash: string; label: string; created_at: number }> {
+    return this.selectPendingTxs.all({}) as Array<{ tx_hash: string; label: string; created_at: number }>;
   }
 
   close(): void {

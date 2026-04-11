@@ -11,6 +11,8 @@
 
 import { ethers } from "ethers";
 import { config } from "../config.js";
+import { sendAndWait } from "./tx-retry.js";
+import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -70,20 +72,18 @@ export type CancelEventCallback = (
   relayer: string,
 ) => void;
 
-/** Callback invoked when a PrivateCancel event is detected on-chain. */
-export type CancelEventCallback = (
-  escrowNullifier: string,
-  nonceNullifier: string,
-  newCommitment: string,
-  relayer: string,
-) => void;
-
 export class AuthorizeSubmitter {
   private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
   private settlement: ethers.Contract;
   private txMutex: Promise<void> = Promise.resolve();
   private cancelListeners: CancelEventCallback[] = [];
+  private db: PrivateOrderDB | null = null;
+
+  /** Attach DB for pending TX tracking. */
+  setDB(db: PrivateOrderDB): void {
+    this.db = db;
+  }
 
   constructor() {
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
@@ -178,10 +178,16 @@ export class AuthorizeSubmitter {
       }
       console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
 
-      const tx = await this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const { txHash } = await sendAndWait(
+        () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "settleAuth",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "settleAuth"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });

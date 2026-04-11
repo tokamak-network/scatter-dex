@@ -18,6 +18,7 @@ import {
 } from "./zk-prover.js";
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
+import { sendAndWait } from "./tx-retry.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -74,6 +75,10 @@ export class PrivateSubmitter {
 
   getWallet(): ethers.Wallet {
     return this.wallet;
+  }
+
+  getProvider(): ethers.JsonRpcProvider {
+    return this.provider;
   }
 
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
@@ -364,10 +369,16 @@ export class PrivateSubmitter {
       }
       console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
 
-      const tx = await this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const { txHash } = await sendAndWait(
+        () => this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "settlePrivate",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "settlePrivate"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`Private settlement tx: ${txHash}`);
 
       // Record claims roots so this relayer only pays gas for its own claims.
@@ -510,10 +521,16 @@ export class PrivateSubmitter {
         throw new Error(`ScatterDirect rejected: ${gasCheck.reason}`);
       }
 
-      const tx = await this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas });
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const { txHash } = await sendAndWait(
+        () => this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "scatterDirect",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "scatterDirect"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`ScatterDirect tx: ${txHash}`);
 
       // Record claims root so this relayer only pays gas for its own claims.
@@ -590,21 +607,25 @@ export class PrivateSubmitter {
     if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
 
     return this.withTxLock(async () => {
-      const tx = await this.settlement.claimWithProof(
-        params.proofA,
-        params.proofB,
-        params.proofC,
-        params.claimsRoot,
-        params.claimNullifier,
-        params.amount,
-        params.token,
-        params.recipient,
-        params.releaseTime,
+      const { txHash } = await sendAndWait(
+        () => this.settlement.claimWithProof(
+          params.proofA,
+          params.proofB,
+          params.proofC,
+          params.claimsRoot,
+          params.claimNullifier,
+          params.amount,
+          params.token,
+          params.recipient,
+          params.releaseTime,
+        ),
+        this.provider,
+        {
+          label: "claimWithProof",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimWithProof"); },
+        },
       );
-
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Claim transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      this.db?.removePendingTx(txHash);
       console.log(`Gasless claim tx: ${txHash}`);
       return txHash;
     });
@@ -622,9 +643,15 @@ export class PrivateSubmitter {
     if (balance === 0n) throw new Error("No fees to claim for this token");
 
     return this.withTxLock(async () => {
-      const tx = await vault.claim(token);
-      const receipt = await tx.wait();
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      const { txHash } = await sendAndWait(
+        () => vault.claim(token),
+        this.provider,
+        {
+          label: "claimVaultFee",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimVaultFee"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
       return txHash;
     });
