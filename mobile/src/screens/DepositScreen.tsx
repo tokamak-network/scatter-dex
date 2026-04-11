@@ -1,43 +1,112 @@
 /**
  * DepositScreen — converted from web design prototype Deposit.tsx
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../styles/theme';
+import { useWallet } from '../contexts/WalletContext';
+import { TokenService, TokenInfo } from '../services/TokenService';
+import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
+import { formatBalance } from '../lib/format';
+
+const STEP_PROGRESS: Record<DepositStep, number> = {
+  idle: 0,
+  checking: 10,
+  deriving_key: 20,
+  approving: 35,
+  generating_proof: 50,
+  depositing: 75,
+  saving_note: 90,
+  success: 100,
+  error: 0,
+};
 
 export default function DepositScreen() {
   const navigation = useNavigation<any>();
+  const { account, signer, readProvider } = useWallet();
+
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
   const [progress, setProgress] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [depositError, setDepositError] = useState<string | null>(null);
 
+  // Token selection
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null);
+  const [tokenPickerOpen, setTokenPickerOpen] = useState(false);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+
+  // Load token list
   useEffect(() => {
-    if (isGenerating) {
-      const interval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setIsGenerating(false);
-            return 100;
-          }
-          return prev + 2;
-        });
-      }, 50);
-      return () => clearInterval(interval);
-    }
-  }, [isGenerating]);
+    const list = TokenService.getTokenList();
+    setTokens(list);
+    if (list.length > 0) setSelectedToken(list[0]);
+  }, []);
 
-  const handleConfirm = () => {
+  // Fetch balance when token or account changes
+  useEffect(() => {
+    if (!account || !selectedToken || !readProvider) {
+      setBalance(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingBalance(true);
+    TokenService.getBalance(readProvider, account, selectedToken)
+      .then((bal) => { if (!cancelled) setBalance(bal); })
+      .catch(() => { if (!cancelled) setBalance(null); })
+      .finally(() => { if (!cancelled) setLoadingBalance(false); });
+    return () => { cancelled = true; };
+  }, [account, selectedToken, readProvider]);
+
+  const handleMaxPress = useCallback(() => {
+    if (balance) setAmount(balance);
+  }, [balance]);
+
+  const handleConfirm = useCallback(async () => {
     if (step === 1) {
+      // Validate
+      if (!account || !signer) {
+        Alert.alert('Wallet not connected', 'Please connect your wallet first.');
+        return;
+      }
+      if (!selectedToken) {
+        Alert.alert('No token selected', 'Please select a token to deposit.');
+        return;
+      }
+      const parsed = parseFloat(amount);
+      if (!amount || isNaN(parsed) || parsed <= 0) {
+        Alert.alert('Invalid amount', 'Please enter a valid deposit amount.');
+        return;
+      }
+
       setStep(2);
       setIsGenerating(true);
+      setDepositError(null);
+      setProgress(0);
+
+      const onProgress = (p: DepositProgress) => {
+        setProgress(STEP_PROGRESS[p.step] || 0);
+        if (p.step === 'success') {
+          setIsGenerating(false);
+          setProgress(100);
+        }
+        if (p.step === 'error') {
+          setIsGenerating(false);
+          setDepositError(p.error || 'Deposit failed');
+        }
+      };
+
+      await DepositService.execute(signer, account, selectedToken, amount, onProgress);
     }
-  };
+  }, [step, account, signer, selectedToken, amount]);
+
+  const displayBalance = loadingBalance ? '...' : (balance ? `${formatBalance(balance)} ${selectedToken?.symbol || ''}` : '—');
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -60,15 +129,36 @@ export default function DepositScreen() {
             <View style={s.fieldGroup}>
               <View style={s.fieldHeader}>
                 <Text style={s.fieldLabel}>Select Token</Text>
-                <Text style={s.fieldHint}>Balance: 1.245 ETH</Text>
+                <Text style={s.fieldHint}>Balance: {displayBalance}</Text>
               </View>
-              <View style={s.tokenSelector}>
+              <TouchableOpacity
+                style={s.tokenSelector}
+                onPress={() => setTokenPickerOpen(!tokenPickerOpen)}
+                activeOpacity={0.7}
+              >
                 <View style={s.tokenLeft}>
                   <View style={s.tokenDot} />
-                  <Text style={s.tokenText}>ETH - Ethereum</Text>
+                  <Text style={s.tokenText}>
+                    {selectedToken ? `${selectedToken.symbol}${selectedToken.isNative ? ' - Native' : ''}` : 'Select token'}
+                  </Text>
                 </View>
                 <Text style={s.chevron}>▾</Text>
-              </View>
+              </TouchableOpacity>
+              {tokenPickerOpen && tokens.length > 0 && (
+                <View style={s.tokenDropdown}>
+                  {tokens.map((t, i) => (
+                    <TouchableOpacity
+                      key={`${t.address}-${t.isNative}`}
+                      style={s.tokenDropdownItem}
+                      onPress={() => { setSelectedToken(t); setTokenPickerOpen(false); }}
+                    >
+                      <Text style={s.tokenDropdownText}>
+                        {t.symbol}{t.isNative ? ' (Native)' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
 
             {/* Enter Amount */}
@@ -83,11 +173,11 @@ export default function DepositScreen() {
                   value={amount}
                   onChangeText={setAmount}
                 />
-                <TouchableOpacity style={s.maxBtn}>
+                <TouchableOpacity style={s.maxBtn} onPress={handleMaxPress}>
                   <Text style={s.maxText}>MAX</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={s.fieldHint}>Available: 1.245 ETH</Text>
+              <Text style={s.fieldHint}>Available: {displayBalance}</Text>
             </View>
           </View>
 
@@ -101,7 +191,11 @@ export default function DepositScreen() {
                 <View style={[s.progressFill, { width: `${progress}%` as any }]} />
               </View>
               <Text style={s.proofStatus}>
-                {progress < 100 ? 'Generating ZK Deposit Proof...' : 'ZK Proof Generated!'}
+                {depositError
+                  ? depositError
+                  : progress < 100
+                    ? 'Generating ZK Deposit Proof...'
+                    : 'ZK Proof Generated!'}
               </Text>
 
               {/* Info Box */}
@@ -164,6 +258,9 @@ const s = StyleSheet.create({
   tokenDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#3B82F6' },
   tokenText: { fontSize: 15, fontWeight: '700', color: '#111827' },
   chevron: { fontSize: 18, color: '#9CA3AF' },
+  tokenDropdown: { backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', overflow: 'hidden' },
+  tokenDropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  tokenDropdownText: { fontSize: 14, fontWeight: '600', color: '#111827' },
 
   /* Amount Input */
   amountWrap: { position: 'relative' },

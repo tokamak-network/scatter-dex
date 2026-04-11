@@ -1,25 +1,177 @@
 /**
  * ClaimScreen — converted from web design prototype Claim.tsx
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../styles/theme';
+import { useWallet } from '../contexts/WalletContext';
+import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
+import { formatAmount } from '../lib/format';
 
-const claimableItems = [
-  { id: '1', asset: 'ETH', amount: '300.792 ETH', status: 'Ready to Claim' },
-  { id: '2', asset: 'USDC', amount: '0.000520 USDC', status: 'Ready to Claim' },
-  { id: '3', asset: 'USDT', amount: '0.70 USDT', status: 'Ready to Claim' },
-  { id: '4', asset: 'USDC', amount: '1,250.00 USDC', status: 'Ready to Claim' },
-];
+interface PendingClaim {
+  secret: string;
+  recipient: string;
+  token: string;
+  amount: string;
+  releaseTime: string;
+  leafIndex: number;
+  allLeaves: string[];
+  txHash: string;
+}
 
 export default function ClaimScreen() {
   const navigation = useNavigation<any>();
-  const progress = 85;
+  const { account, signer, readProvider } = useWallet();
+
   const [claimTab, setClaimTab] = useState<'json' | 'notes'>('notes');
+
+  // Claim JSON tab
+  const [jsonInput, setJsonInput] = useState('');
+  const [parsedJsonClaim, setParsedJsonClaim] = useState<ClaimData | null>(null);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  // Claimable Notes tab
+  const [pendingClaims, setPendingClaims] = useState<PendingClaim[]>([]);
+  const [loadingClaims, setLoadingClaims] = useState(false);
+  const [selectedClaimIndex, setSelectedClaimIndex] = useState<number | null>(null);
+
+  // Progress
+  const [progress, setProgress] = useState(0);
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<ClaimStep>('idle');
+
+  const STEP_PROGRESS: Record<ClaimStep, number> = {
+    idle: 0,
+    checking_status: 15,
+    generating_proof: 50,
+    submitting: 80,
+    success: 100,
+    error: 0,
+  };
+
+  // Load pending claims from AsyncStorage
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoadingClaims(true);
+      try {
+        const raw = await AsyncStorage.getItem('scatterdex_pending_claims');
+        if (!cancelled && raw) {
+          const claims: PendingClaim[] = JSON.parse(raw);
+          setPendingClaims(claims);
+        }
+      } catch {
+        if (!cancelled) setPendingClaims([]);
+      } finally {
+        if (!cancelled) setLoadingClaims(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Parse JSON input
+  const handleParseJson = useCallback(() => {
+    setJsonError(null);
+    setParsedJsonClaim(null);
+    try {
+      const parsed = JSON.parse(jsonInput);
+      // Validate required fields
+      if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.allLeaves) {
+        throw new Error('Missing required fields: secret, recipient, token, amount, allLeaves');
+      }
+      const claimData: ClaimData = {
+        secret: parsed.secret,
+        recipient: parsed.recipient,
+        token: parsed.token,
+        amount: parsed.amount,
+        releaseTime: parsed.releaseTime || '0',
+        leafIndex: parsed.leafIndex || 0,
+        allLeaves: parsed.allLeaves,
+      };
+      setParsedJsonClaim(claimData);
+    } catch (err: any) {
+      setJsonError(err?.message || 'Invalid JSON');
+    }
+  }, [jsonInput]);
+
+  // Execute claim
+  const handleClaim = useCallback(async () => {
+    if (!signer || !readProvider) {
+      Alert.alert('Wallet not connected', 'Please connect your wallet to claim.');
+      return;
+    }
+
+    let claimData: ClaimData | null = null;
+
+    if (claimTab === 'json') {
+      claimData = parsedJsonClaim;
+      if (!claimData) {
+        Alert.alert('No claim data', 'Please paste and parse valid claim JSON first.');
+        return;
+      }
+    } else {
+      if (selectedClaimIndex === null || !pendingClaims[selectedClaimIndex]) {
+        Alert.alert('No claim selected', 'Please select a claimable note.');
+        return;
+      }
+      const pc = pendingClaims[selectedClaimIndex];
+      claimData = {
+        secret: pc.secret,
+        recipient: pc.recipient,
+        token: pc.token,
+        amount: pc.amount,
+        releaseTime: pc.releaseTime || '0',
+        leafIndex: pc.leafIndex,
+        allLeaves: pc.allLeaves,
+      };
+    }
+
+    setClaiming(true);
+    setClaimError(null);
+    setProgress(0);
+    setCurrentStep('idle');
+
+    const onProgress = (p: ClaimProgress) => {
+      setCurrentStep(p.step);
+      setProgress(STEP_PROGRESS[p.step] || 0);
+      if (p.step === 'success') {
+        setClaiming(false);
+        setProgress(100);
+        Alert.alert('Claim Successful', `Tx: ${p.txHash || 'confirmed'}`);
+        // Remove claimed item from pending claims
+        if (claimTab === 'notes' && selectedClaimIndex !== null) {
+          const updated = pendingClaims.filter((_, i) => i !== selectedClaimIndex);
+          setPendingClaims(updated);
+          setSelectedClaimIndex(null);
+          AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
+        }
+      }
+      if (p.step === 'error') {
+        setClaiming(false);
+        setClaimError(p.error || 'Claim failed');
+      }
+    };
+
+    await ClaimService.execute(signer, claimData, readProvider, onProgress);
+  }, [signer, readProvider, claimTab, parsedJsonClaim, selectedClaimIndex, pendingClaims]);
+
+  const progressLabel = (() => {
+    if (claimError) return claimError;
+    switch (currentStep) {
+      case 'checking_status': return 'Checking claim status...';
+      case 'generating_proof': return `Generating ZK Claim Proof... ${progress}%`;
+      case 'submitting': return 'Submitting to blockchain...';
+      case 'success': return 'Claim complete!';
+      default: return progress > 0 ? `Generating... ${progress}%` : 'Ready to claim';
+    }
+  })();
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -59,25 +211,75 @@ export default function ClaimScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Claimable Items */}
-            <View style={s.itemsList}>
-              {claimableItems.map((item) => (
-                <View key={item.id} style={s.itemRow}>
-                  <View style={s.itemLeft}>
-                    <View style={s.itemIcon}>
-                      <Text style={s.itemIconText}>🛡</Text>
+            {/* Tab Content */}
+            {claimTab === 'json' ? (
+              <View style={s.itemsList}>
+                <TextInput
+                  style={s.jsonInput}
+                  placeholder='Paste claim JSON here...'
+                  placeholderTextColor="#9CA3AF"
+                  multiline
+                  numberOfLines={6}
+                  value={jsonInput}
+                  onChangeText={setJsonInput}
+                  textAlignVertical="top"
+                />
+                <TouchableOpacity style={s.parseBtn} onPress={handleParseJson}>
+                  <Text style={s.parseBtnText}>Parse JSON</Text>
+                </TouchableOpacity>
+                {jsonError && <Text style={s.errorText}>{jsonError}</Text>}
+                {parsedJsonClaim && (
+                  <View style={s.itemRow}>
+                    <View style={s.itemLeft}>
+                      <View style={s.itemIcon}>
+                        <Text style={s.itemIconText}>🛡</Text>
+                      </View>
+                      <View>
+                        <Text style={s.itemAsset}>Parsed Claim</Text>
+                        <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
+                      </View>
                     </View>
-                    <View>
-                      <Text style={s.itemAsset}>{item.asset}</Text>
-                      <Text style={s.itemAmount}>{item.amount}</Text>
+                    <View style={s.statusBadge}>
+                      <Text style={s.statusText}>Ready to Claim</Text>
                     </View>
                   </View>
-                  <View style={s.statusBadge}>
-                    <Text style={s.statusText}>{item.status}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
+                )}
+              </View>
+            ) : (
+              <View style={s.itemsList}>
+                {loadingClaims ? (
+                  <ActivityIndicator color="#2563EB" style={{ paddingVertical: 20 }} />
+                ) : pendingClaims.length === 0 ? (
+                  <Text style={{ fontSize: 13, color: '#9CA3AF', textAlign: 'center', paddingVertical: 20 }}>
+                    No pending claims found. Trade to generate claimable notes.
+                  </Text>
+                ) : (
+                  pendingClaims.map((item, index) => (
+                    <TouchableOpacity
+                      key={`${item.txHash}-${index}`}
+                      style={[
+                        s.itemRow,
+                        selectedClaimIndex === index && { borderColor: '#2563EB', borderWidth: 2 },
+                      ]}
+                      onPress={() => setSelectedClaimIndex(index)}
+                    >
+                      <View style={s.itemLeft}>
+                        <View style={s.itemIcon}>
+                          <Text style={s.itemIconText}>🛡</Text>
+                        </View>
+                        <View>
+                          <Text style={s.itemAsset}>Claim #{index + 1}</Text>
+                          <Text style={s.itemAmount}>{formatAmount(item.amount)} tokens</Text>
+                        </View>
+                      </View>
+                      <View style={s.statusBadge}>
+                        <Text style={s.statusText}>Ready to Claim</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            )}
           </View>
 
           <View style={{ height: 200 }} />
@@ -87,14 +289,23 @@ export default function ClaimScreen() {
         <View style={s.bottomPanel}>
           <View style={s.proofHeader}>
             <Text style={s.proofLabel}>ZK Claim Proof Generation</Text>
-            <Text style={s.proofPercent}>Generating... {progress}%</Text>
+            <Text style={s.proofPercent}>{progressLabel}</Text>
           </View>
           <View style={s.progressTrack}>
             <View style={[s.progressFill, { width: `${progress}%` as any }]} />
           </View>
           <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
-          <TouchableOpacity style={s.claimBtn} activeOpacity={0.8}>
-            <Text style={s.claimBtnText}>Claim to Wallet</Text>
+          <TouchableOpacity
+            style={[s.claimBtn, claiming && { backgroundColor: '#9CA3AF' }]}
+            activeOpacity={0.8}
+            onPress={handleClaim}
+            disabled={claiming}
+          >
+            {claiming ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={s.claimBtnText}>Claim to Wallet</Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -143,6 +354,12 @@ const s = StyleSheet.create({
   itemAmount: { fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 2 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
   statusText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
+
+  /* JSON Input */
+  jsonInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 13, color: '#111827', minHeight: 120, fontFamily: 'monospace' },
+  parseBtn: { backgroundColor: '#EFF6FF', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  parseBtnText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
+  errorText: { fontSize: 12, color: '#EF4444', fontWeight: '600' },
 
   /* Bottom Panel */
   bottomPanel: { backgroundColor: '#FFFFFF', padding: 24, borderTopWidth: 1, borderTopColor: '#F3F4F6', gap: 16 },
