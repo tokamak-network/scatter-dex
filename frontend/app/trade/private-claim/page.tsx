@@ -192,11 +192,11 @@ export default function PrivateClaimPage() {
     try {
       const p = await buildProof(claimData);
       setStatus("submitting");
-      const url = bundleRelayerUrl || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
-      const res = await fetch(`${url}/api/private-claim`, {
+      const res = await fetch("/api/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          relayerUrl: bundleRelayerUrl || undefined,
           proofA: p.proofResult.proof.a,
           proofB: p.proofResult.proof.b,
           proofC: p.proofResult.proof.c,
