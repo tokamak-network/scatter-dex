@@ -57,6 +57,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error DexRouterNotWhitelisted();
     error DexCallReverted();
     error DexOutputInsufficient(uint256 actual, uint256 required);
+    error DexPlatformFeeTooHigh();
+
+    uint256 public constant MAX_DEX_PLATFORM_FEE_BPS = 500; // 5%
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -131,6 +134,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     );
 
     event DexRouterWhitelistUpdated(address indexed router, bool allowed);
+    event DexPlatformFeeUpdated(uint256 oldBps, uint256 newBps);
+    /// @notice Emitted when platform fee is collected from a settleWithDex trade.
+    ///         Distinguishes DEX platform fees from relayer fees (FeeClaimed)
+    ///         and surplus (SettledWithDex.amountOut − totalLocked).
+    event DexPlatformFeeCollected(
+        bytes32 indexed nullifier,
+        address indexed token,
+        uint256 amount,
+        address treasury
+    );
 
     // ─── Data Structures ─────────────────────────────────────────
     // Packed into 2 storage slots:
@@ -172,6 +185,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         Supports any DEX (Uniswap, 1inch, Curve, PancakeSwap, etc.).
     ///         Each router must be explicitly whitelisted by the owner.
     mapping(address => bool) public whitelistedDexRouters;
+
+    /// @notice Platform fee for settleWithDex (in basis points).
+    ///         Deducted from sellAmount before the DEX swap. Sent to FeeVault treasury.
+    ///         Similar to Tangem/MetaMask swap fee model. 0 = no fee. Max 500 (5%).
+    uint256 public dexPlatformFeeBps;
 
     /// @notice Maximum past skew allowed between `currentTimestamp` (set by
     ///         the relayer at proof generation time) and `block.timestamp`.
@@ -264,6 +282,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_allowed && _router.code.length == 0) revert NotAContract();
         whitelistedDexRouters[_router] = _allowed;
         emit DexRouterWhitelistUpdated(_router, _allowed);
+    }
+
+    /// @notice Set platform fee for settleWithDex (in bps). Max 500 (5%).
+    function setDexPlatformFee(uint256 _bps) external onlyOwner {
+        if (_bps > MAX_DEX_PLATFORM_FEE_BPS) revert DexPlatformFeeTooHigh();
+        emit DexPlatformFeeUpdated(dexPlatformFeeBps, _bps);
+        dexPlatformFeeBps = _bps;
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -860,11 +885,25 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint256 sellBalBefore = IERC20(proof.sellToken).balanceOf(address(this));
         pool.transferToSettlement(proof.sellToken, proof.sellAmount);
 
+        // 11b. Deduct platform fee from sellAmount before DEX swap.
+        //      Fee goes directly to FeeVault treasury (not via deposit/claim)
+        //      to avoid double-deduction from the relayer claim flow.
+        uint256 swapAmount = proof.sellAmount;
+        if (dexPlatformFeeBps > 0) {
+            uint256 platformFee = uint256(proof.sellAmount) * dexPlatformFeeBps / FEE_BPS_DENOMINATOR;
+            swapAmount = uint256(proof.sellAmount) - platformFee;
+            if (platformFee > 0) {
+                address _treasury = feeVault.treasury();
+                IERC20(proof.sellToken).safeTransfer(_treasury, platformFee);
+                emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, _treasury);
+            }
+        }
+
         // 12. Execute DEX swap (generic — works with any whitelisted router)
         //     Snapshot buyToken balance before swap to measure actual output.
         uint256 buyBalanceBefore = IERC20(proof.buyToken).balanceOf(address(this));
 
-        IERC20(proof.sellToken).forceApprove(p.dexRouter, proof.sellAmount);
+        IERC20(proof.sellToken).forceApprove(p.dexRouter, swapAmount);
         (bool success,) = p.dexRouter.call(p.dexCalldata);
         if (!success) revert DexCallReverted();
         IERC20(proof.sellToken).forceApprove(p.dexRouter, 0);
