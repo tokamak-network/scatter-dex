@@ -5,20 +5,28 @@ import { checkRateLimit, getClientIp } from "../../lib/rate-limit";
 const RATE_LIMIT = { limit: 10, windowMs: 60_000 };
 const FETCH_TIMEOUT_MS = 30_000;
 
-// Default relayer URL (server-only, not NEXT_PUBLIC_)
+// Default relayer URL: prefer server-side ZK_RELAYER_URL, fall back to
+// NEXT_PUBLIC_ZK_RELAYER_URL for compatibility, then localhost for local dev.
 const DEFAULT_RELAYER_URL = process.env.ZK_RELAYER_URL || process.env.NEXT_PUBLIC_ZK_RELAYER_URL || "http://localhost:3002";
+
+function toOrigin(url: string): string | null {
+  try { return new URL(url.trim()).origin; } catch { return null; }
+}
 
 // Allowed relayer origins — only these can be proxied to.
 // In production, populate from env or a registry contract query.
 // Changes require a process restart to take effect.
-const ALLOWED_RELAYER_ORIGINS = new Set(
-  (process.env.ALLOWED_RELAYER_ORIGINS?.trim()
-    ? process.env.ALLOWED_RELAYER_ORIGINS.split(",")
-    : [DEFAULT_RELAYER_URL]
-  ).map(s => {
-    try { return new URL(s.trim()).origin; } catch { return null; }
-  }).filter((s): s is string => s !== null)
-);
+const ALLOWED_RELAYER_ORIGINS: Set<string> = (() => {
+  const configured = process.env.ALLOWED_RELAYER_ORIGINS?.trim();
+  if (!configured) return new Set([toOrigin(DEFAULT_RELAYER_URL)!]);
+
+  const origins = configured.split(",").map(toOrigin).filter((s): s is string => s !== null);
+  if (origins.length === 0) {
+    console.warn("ALLOWED_RELAYER_ORIGINS contains no valid URLs; falling back to DEFAULT_RELAYER_URL.");
+    return new Set([toOrigin(DEFAULT_RELAYER_URL)!]);
+  }
+  return new Set(origins);
+})();
 
 /** Validate that a relayer URL is in the allowlist. */
 function validateRelayerOrigin(url: string): string | null {
