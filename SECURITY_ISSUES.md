@@ -43,8 +43,8 @@
 #### H-5. claimCount 범위 미검증 (ZK 회로)
 - **파일**: `authorize.circom:214`, `settle.circom:189,197`
 - **내용**: `claimCount`에 범위 검증 없어 필드 산술 오버플로로 로직 우회 가능.
-- **수정**: `Num2Bits(5)` 범위 체크 추가 (`claimCount ≤ 16`)
-- **상태**: ⬜ TODO
+- **수정**: `Num2Bits(5)` + `LessEqThan(5)` 범위 체크 추가 (`claimCount ≤ 16`). settle.circom도 동일 수정 + `LessThan(252)` → `LessThan(5)` 최적화 (~7,900 constraints 절감)
+- **상태**: ✅ DONE (PR #179)
 
 #### H-6. Admin API 키 노출 + 약한 검증
 - **파일**: `zk-relayer/.env:7`, `zk-relayer/src/routes/vault.ts:25-37`
@@ -230,7 +230,7 @@
 | C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | ✅ | PR #176 |
 | C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ✅ | PR #175 |
 | H-3 | transferFee 풀 드레인 벡터 | HIGH | ✅ | PR #178 |
-| H-5 | claimCount 범위 미검증 | HIGH | 🔧 | `fix/H5-claimcount-range-check` |
+| H-5 | claimCount 범위 미검증 | HIGH | ✅ | PR #179 |
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
 | M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
 | M-7 | API Rate Limiting | MEDIUM | 🔧 | `fix/M7-api-rate-limit` |
