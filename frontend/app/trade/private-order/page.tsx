@@ -279,10 +279,11 @@ export default function PrivateOrderPage() {
     [availableNotes, selectedCommitment],
   );
 
-  // Reset note selection when sell token changes or notes list changes
+  // Reset note selection + manual price when sell/buy token changes
   useEffect(() => {
     setSelectedCommitment(null);
-  }, [sellTokenIdx]);
+    setManualPrice("");
+  }, [sellTokenIdx, buyTokenIdx]);
 
   // Clear selection if selected note no longer exists in available list
   useEffect(() => {
@@ -1031,14 +1032,15 @@ export default function PrivateOrderPage() {
                 {!marketPrice && dexPrices.some(p => p.loading) && (
                   <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
                 )}
-                {!marketPrice && !dexPrices.some(p => p.loading) && (
+                {!dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
                   <div className="space-y-1 mt-1">
-                    <div className="text-xs text-error">DEX price unavailable. Enter price manually:</div>
+                    <div className="text-xs text-error" id="manual-price-label">DEX price unavailable. Enter price manually:</div>
                     <div className="flex gap-2 items-center">
                       <input
                         type="text" inputMode="decimal" value={manualPrice}
                         onChange={(e) => setManualPrice(e.target.value)}
                         placeholder={`1 ${sellToken?.symbol} = ? ${buyToken?.symbol}`}
+                        aria-labelledby="manual-price-label"
                         className="flex-1 bg-white/10 border border-outline-variant/30 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-tertiary text-on-surface"
                       />
                     </div>
