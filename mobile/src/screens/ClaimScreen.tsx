@@ -12,8 +12,8 @@ import { colors } from '../styles/theme';
 const claimableItems = [
   { id: '1', asset: 'ETH', amount: '300.792 ETH', status: 'Ready to Claim' },
   { id: '2', asset: 'USDC', amount: '0.000520 USDC', status: 'Ready to Claim' },
-  { id: '3', asset: 'ETH', amount: '0.70 ETH', status: 'Ready to Claim' },
-  { id: '4', asset: 'USDC', amount: '0.00 USDC', status: 'Ready to Claim' },
+  { id: '3', asset: 'USDT', amount: '0.70 USDT', status: 'Ready to Claim' },
+  { id: '4', asset: 'USDC', amount: '1,250.00 USDC', status: 'Ready to Claim' },
 ];
 
 export default function ClaimScreen() {
@@ -46,10 +46,10 @@ export default function ClaimScreen() {
             {/* Tabs */}
             <View style={s.tabsBg}>
               <TouchableOpacity
-                style={[s.tab, claimTab === 'json' && s.tabInactive]}
+                style={[s.tab, claimTab === 'json' && s.tabActive]}
                 onPress={() => setClaimTab('json')}
               >
-                <Text style={[s.tabText, claimTab === 'json' && s.tabTextInactive]}>Claim JSON</Text>
+                <Text style={[s.tabText, claimTab === 'json' && s.tabTextActive]}>Claim JSON</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.tab, claimTab === 'notes' && s.tabActive]}

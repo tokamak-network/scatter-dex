@@ -25,6 +25,7 @@ export default function App() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <WalletProvider>
+          <HiddenWebView />
           <View style={styles.root}>
             <StatusBar style="dark" />
             {zkReady ? (

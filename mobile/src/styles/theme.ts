@@ -35,6 +35,9 @@ export const colors = {
   orangeLight: '#FFF7ED',
   blueBorder: '#DBEAFE',
   gray500: '#6B7280',
+  // Backwards compat — used by StepProgress and other shared components
+  accent: '#3B82F6',
+  textDimmer: '#D1D5DB',
 } as const;
 
 export const shared = StyleSheet.create({
