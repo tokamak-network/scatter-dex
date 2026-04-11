@@ -41,7 +41,7 @@ function incPubKeyCount(ax: string, ay: string): void {
 
 function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
-  const count = (pendingCountByPubKey.get(id) ?? 1) - 1;
+  const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
   if (count <= 0) pendingCountByPubKey.delete(id);
   else pendingCountByPubKey.set(id, count);
 }
@@ -111,8 +111,8 @@ export function createAuthorizeOrderRoutes(
       }
 
       // ── 4c. Per-pubKey order limit — prevent single user filling the store ──
-      const currentCount = pendingCountByPubKey.get(pubKeyId(pubKeyAx, pubKeyAy)) ?? 0;
-      if (currentCount >= MAX_ORDERS_PER_PUBKEY) {
+      const pkId = pubKeyId(pubKeyAx, pubKeyAy);
+      if ((pendingCountByPubKey.get(pkId) ?? 0) >= MAX_ORDERS_PER_PUBKEY) {
         res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
       }
@@ -122,11 +122,11 @@ export function createAuthorizeOrderRoutes(
         order,
         status: "pending",
         submittedAt: nowSeconds,
-        pubKeyAx: pubKeyAx ?? null,
-        pubKeyAy: pubKeyAy ?? null,
+        pubKeyAx,
+        pubKeyAy,
       };
       authorizeOrders.set(nullifier, stored);
-      incPubKeyCount(pubKeyAx, pubKeyAy);
+      pendingCountByPubKey.set(pkId, (pendingCountByPubKey.get(pkId) ?? 0) + 1);
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -148,13 +148,12 @@ export function createAuthorizeOrderRoutes(
           // Submit on-chain (fee = 0 for now; configurable in follow-up)
           const txHash = await submitter.submitAuthSettle(match, 0n);
 
-          // Mark both as settled and decrement pending counts
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
-          if (match.maker.pubKeyAx && match.maker.pubKeyAy) decPubKeyCount(match.maker.pubKeyAx, match.maker.pubKeyAy);
+          decPubKeyCount(match.maker.pubKeyAx!, match.maker.pubKeyAy!);
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
-          if (match.taker.pubKeyAx && match.taker.pubKeyAy) decPubKeyCount(match.taker.pubKeyAx, match.taker.pubKeyAy);
+          decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
 
           res.json({
             status: "settled",
