@@ -1,6 +1,157 @@
 # Security Issues Tracker
 
-보안 감사에서 발견된 이슈 목록. 모든 이슈 해결 완료.
+보안 감사에서 발견된 이슈 목록.
+
+## TODO — 2026-04-11 전체 스택 보안 감사
+
+### 🔴 CRITICAL (즉시 조치)
+
+#### C-1. settleWithDex 프론트러닝/샌드위치 공격
+- **파일**: `PrivateSettlement.sol:938-941`
+- **내용**: DEX calldata가 멤풀에 노출되어 MEV 샌드위치 공격 가능.
+- **수정**: `amountOut < totalLocked` 검증(DexOutputInsufficient) 추가 + 프론트엔드에서 slippage 기반 minReceive 설정 + 1inch Pathfinder 분할 주문으로 슬리피지 최소화
+- **상태**: ⚠️ 부분 수정 (PR #151, #172). deadline은 `block.timestamp` 사용 중 — Flashbots/private mempool 권장
+
+#### C-2. claim.circom token/releaseTime 미구속
+- **파일**: `claim.circom:49-51`
+- **내용**: public input `token`, `releaseTime`이 회로 내에서 equality constraint 없음. 위조된 값으로 클레임 가능.
+- **수정**: `tokenSq <== token * token;` 등 바인딩 제약 추가
+- **상태**: ⬜ TODO
+
+#### C-3. 하드코딩된 프라이빗 키 (.env 파일)
+- **파일**: `relayer/.env:2`, `zk-relayer/.env:2,7`, `docker-compose.yml:30,67,99`
+- **내용**: Anvil 테스트 키 + Admin API 키가 버전 컨트롤에 노출. 프로덕션 배포 시 자금 탈취 위험.
+- **수정**: `.env`를 `.gitignore`에 추가, `.env.example`만 유지, 시크릿 매니저 도입
+- **상태**: ⬜ TODO
+
+### 🟠 HIGH (메인넷 전 필수)
+
+#### H-3. transferFee 풀 드레인 벡터
+- **파일**: `CommitmentPool.sol:240-246`
+- **내용**: fee 금액 상한 없음, `setAuthorizedSettlement` 타임락 없이 즉시 변경 가능.
+- **수정**: per-tx fee 상한 + `setAuthorizedSettlement` 타임락(24~48h) 도입
+- **상태**: ⬜ TODO
+
+#### H-4. SSRF in /api/swap (chainId 미검증)
+- **파일**: `frontend/app/api/swap/route.ts`
+- **내용**: `chainId` 파라미터가 URL에 직접 삽입됨. 서버사이드 요청 위조 가능.
+- **수정**: chainId 숫자 검증 + src/dst/from 주소 형식 검증 + 에러 텍스트 200자 절삭
+- **상태**: ✅ DONE (PR #174, 커밋 3a9bdbc + fe3b10a)
+
+#### H-5. claimCount 범위 미검증 (ZK 회로)
+- **파일**: `authorize.circom:214`, `settle.circom:189,197`
+- **내용**: `claimCount`에 범위 검증 없어 필드 산술 오버플로로 로직 우회 가능.
+- **수정**: `Num2Bits(5)` 범위 체크 추가 (`claimCount ≤ 16`)
+- **상태**: ⬜ TODO
+
+#### H-6. Admin API 키 노출 + 약한 검증
+- **파일**: `zk-relayer/.env:7`, `zk-relayer/src/routes/vault.ts:25-37`
+- **내용**: 하드코딩된 dev 키 + 타이밍 공격 취약한 단순 문자열 비교.
+- **수정**: 환경변수로 분리 + `crypto.timingSafeEqual` 사용
+- **상태**: ⬜ TODO
+
+### 🟡 MEDIUM (강력 권장)
+
+#### M-6. CORS 기본값 `["*"]`
+- **파일**: `shared-orderbook/src/config.ts:26`
+- **수정**: 명시적 origin 허용 목록 설정
+- **상태**: ⬜ TODO
+
+#### M-7. API Rate Limiting 미구현
+- **파일**: `frontend/app/api/swap/route.ts`, `frontend/app/api/upbit/route.ts`
+- **수정**: Next.js 미들웨어 또는 rate-limit 패키지 도입
+- **상태**: ⬜ TODO
+
+#### M-8. pubKeyBind 체인 분석 링크 가능성
+- **파일**: `authorize.circom:489-490`
+- **수정**: 프라이버시 영향 문서화, 필요시 랜덤 블라인딩 추가 검토
+- **상태**: ⬜ TODO
+
+#### M-9. 클라이언트 사이드 SSRF 검증 (우회 가능)
+- **파일**: `frontend/app/trade/private-claim/page.tsx:134-152`
+- **수정**: 서버사이드 프록시 도입, 클라이언트에서 직접 릴레이어 호출 금지
+- **상태**: ⬜ TODO
+
+#### M-10. DB 파일 퍼미션 644
+- **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
+- **수정**: 퍼미션 600으로 변경
+- **상태**: ⬜ TODO
+
+#### M-11. cross-relayer 매칭 race condition
+- **파일**: `zk-relayer/src/core/cross-relayer-matcher.ts`
+- **수정**: 수평 확장 시 분산 락(distributed lock) 도입 필요
+- **상태**: ⬜ TODO
+
+### 🟢 LOW (개선 권장)
+
+#### L-5. Stealth 링크 시크릿 URL 노출
+- **파일**: `frontend/app/lib/stealth.ts:154-160`
+- **수정**: URL fragment(`#`) 사용 또는 POST 방식으로 변경
+- **상태**: ⬜ TODO
+
+#### L-6. XSS 시 EdDSA 키 탈취 가능
+- **파일**: `frontend/app/lib/zk/eddsa.ts:156-173`
+- **수정**: CSP 헤더 강화, Web Worker 격리 검토
+- **상태**: ⬜ TODO
+
+#### L-7. localStorage 도메인/지갑 격리 미흡
+- **파일**: `frontend/app/lib/provider.ts`, `frontend/app/lib/zk/note-storage.ts`
+- **수정**: 키 네임스페이스에 지갑 주소 포함
+- **상태**: ⬜ TODO
+
+#### L-8. DB 암호화 미적용
+- **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
+- **수정**: SQLCipher 또는 프로덕션 DB 전환 시 암호화 적용
+- **상태**: ⬜ TODO
+
+#### L-9. withdraw.circom recipient/relayer 바인딩 불완전
+- **파일**: `circuits/withdraw.circom:56-61`
+- **수정**: 명시적 equality constraint 추가 검토
+- **상태**: ⬜ TODO
+
+## 2026-04-11 세션에서 발견 및 수정된 이슈
+
+### settleWithDex 관련 (25건 — docs/settleWithDex-audit-log.md 참조)
+
+#### ✅ C-4. feeVault 미설정 + dexPlatformFeeBps > 0 → revert
+- **커밋**: ab4f847
+- **수정**: `FeeVaultRequired` 에러 + `setFeeVault(0)` 시 fee 자동 리셋
+
+#### ✅ C-5. 프론트엔드 DEX calldata에 full sellAmount 인코딩 (fee 차감 전)
+- **커밋**: ab4f847
+- **수정**: on-chain `dexPlatformFeeBps` 읽어서 post-fee swapAmountIn 계산
+
+#### ✅ C-6. sellToken == buyToken 시 Panic(17) underflow
+- **커밋**: 75db603, d25a4f3
+- **수정**: unspent sellToken 반환 가드 + `TokenSidesMismatch` revert 추가
+
+#### ✅ H-7. settleWithDex 릴레이어 레지스트리 체크가 일반 사용자 차단
+- **커밋**: ab4f847
+- **수정**: 시장가는 permissionless — 릴레이어 체크 제거
+
+#### ✅ H-8. settleAuth/settlePrivate sanctions 체크 누락
+- **커밋**: feeec6d
+- **수정**: `_requireNotSanctioned(msg.sender)` 추가
+
+#### ✅ H-9. WithdrawVerifier delta == gamma (phase-2 미실행)
+- **커밋**: 0b578c9
+- **수정**: dev phase-2 contribution 추가, 독립 delta 생성
+
+#### ✅ M-12. DexSwapFailed 가 두 실패 구분 불가
+- **커밋**: 3b40e73
+- **수정**: `DexCallReverted` + `DexOutputInsufficient(actual, required)` 분리
+
+#### ✅ M-13. Uniswap router 주소 오류 (SwapRouter vs SwapRouter02)
+- **커밋**: 3b40e73
+- **수정**: 0xE592 → 0x68b3 + per-chain map
+
+#### ✅ M-14. minReceive 부동소수점 반올림
+- **커밋**: 3b40e73
+- **수정**: BigInt 정수 연산으로 floor 보장
+
+#### ✅ M-15. setSanctionsList EOA 체크 없음
+- **커밋**: 206dc51
+- **수정**: `code.length` 검증 추가
 
 ## 작업 완료
 
