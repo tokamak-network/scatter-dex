@@ -492,6 +492,12 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //
     //     Without pubKeyBind, a user could give a fake pubKey to the relayer
     //     and there would be no way to detect it.
+    //
+    //     PRIVACY NOTE [M-8]: pubKeyBind is per-trade unique (different
+    //     nullifier each time), so observers without the user's pubKey cannot link trades.
+    //     However, a relayer who knows the user's pubKey CAN recompute
+    //     pubKeyBind and link all trades by that user. This is intentional
+    //     for compliance. See docs/adr/002-pubkeybind-privacy-tradeoff.md.
     // ════════════════════════════════════════
     component pubKeyBindHasher = Poseidon(3);
     pubKeyBindHasher.inputs[0] <== pubKeyAx;
