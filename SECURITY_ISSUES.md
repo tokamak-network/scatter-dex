@@ -324,7 +324,7 @@
 | # | 영역 | 이슈 | 상태 |
 |---|------|------|------|
 | S-H1 | Circuit | settle.circom claim token 검증 누락 | ✅ 이전 세션 수정 (커밋 feeec6d) |
-| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ⬜ |
+| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ✅ 이미 수정됨 (`Num2Bits(128)` on amount + amount-withdrawAmount, withdraw.circom:125-133) |
 | S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
 | S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
