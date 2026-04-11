@@ -49,5 +49,12 @@ export const config = {
   relayerName: process.env.RELAYER_NAME || undefined,
 
   // [R-1] Gas guard: max gas price in gwei (default 100)
-  maxGasPriceGwei: parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10),
+  maxGasPriceGwei: (() => {
+    const parsed = parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      console.warn(`[config] Invalid MAX_GAS_PRICE_GWEI="${process.env.MAX_GAS_PRICE_GWEI}", using default 100`);
+      return 100;
+    }
+    return parsed;
+  })(),
 };
