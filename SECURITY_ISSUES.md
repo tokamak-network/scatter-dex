@@ -233,7 +233,7 @@
 | H-5 | claimCount 범위 미검증 | HIGH | 🔧 | `fix/H5-claimcount-range-check` |
 | H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
 | M-6 | CORS `["*"]` | MEDIUM | ⬜ | — |
-| M-7 | API Rate Limiting | MEDIUM | ⬜ | — |
+| M-7 | API Rate Limiting | MEDIUM | 🔧 | `fix/M7-api-rate-limit` |
 | M-8 | pubKeyBind 체인 분석 | MEDIUM | ⬜ | — |
 | M-9 | 클라이언트 SSRF (claim) | MEDIUM | ⬜ | — |
 | M-10 | DB 파일 퍼미션 | MEDIUM | ⬜ | — |
