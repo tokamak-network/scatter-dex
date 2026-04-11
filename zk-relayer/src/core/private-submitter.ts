@@ -327,7 +327,9 @@ export class PrivateSubmitter {
 
     // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
     return this.withTxLock(async () => {
-      const tx = await this.settlement.settlePrivate({
+      // [R-1] Gas estimation + profitability check
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const settleParams = {
         proofA,
         proofB,
         proofC,
@@ -349,8 +351,20 @@ export class PrivateSubmitter {
         feeTokenTaker,
         makerRelayer: makerRelayerAddr,
         takerRelayer: takerRelayerAddr,
-      });
+      };
 
+      // [R-1] Gas estimation + gas price cap only.
+      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
+      // so profitability comparison against ETH gas cost is skipped until a token→native
+      // price oracle is available. Pass 0n to bypass profitability check.
+      const gasCheck = await estimateAndGuard(this.settlement, "settlePrivate", [settleParams], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settlePrivate rejected: ${gasCheck.reason}`);
+        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
+      }
+      console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+
+      const tx = await this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
@@ -472,7 +486,7 @@ export class PrivateSubmitter {
     const crHex = "0x" + claimsRoot.toString(16).padStart(64, "0");
 
     return this.withTxLock(async () => {
-      const tx = await this.settlement.scatterDirect({
+      const scatterParams = {
         proofA,
         proofB,
         proofC,
@@ -484,8 +498,19 @@ export class PrivateSubmitter {
         claimsRoot: crHex,
         totalLocked,
         fee,
-      });
+      };
 
+      // [R-1] Gas estimation + gas price cap only.
+      // `fee` is denominated in the withdrawn ERC20 token, not native gas wei.
+      // Skip profitability comparison until token→native conversion is available.
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirect", [scatterParams], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] scatterDirect rejected: ${gasCheck.reason}`);
+        throw new Error(`ScatterDirect rejected: ${gasCheck.reason}`);
+      }
+
+      const tx = await this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;

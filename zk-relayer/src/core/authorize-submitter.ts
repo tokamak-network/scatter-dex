@@ -166,8 +166,19 @@ export class AuthorizeSubmitter {
     };
 
     return this.withTxLock(async () => {
-      console.log("[authorize-submitter] Submitting settleAuth...");
-      const tx = await this.settlement.settleAuth(params);
+      // [R-1] Gas estimation + gas price cap only.
+      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
+      // so profitability comparison against ETH gas cost is skipped until a token→native
+      // price oracle is available. Pass 0n to bypass profitability check.
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "settleAuth", [params], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settleAuth rejected: ${gasCheck.reason}`);
+        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
+      }
+      console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+
+      const tx = await this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas });
       const receipt = await tx.wait();
       if (!receipt) throw new Error("Transaction failed: no receipt");
       const txHash = receipt.hash ?? receipt.transactionHash;
