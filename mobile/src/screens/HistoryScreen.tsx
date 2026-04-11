@@ -84,7 +84,12 @@ export default function HistoryScreen() {
 
         {/* Activity List */}
         <View style={s.listSection}>
-          {activities.map((item) => (
+          {activities.filter((item) => {
+            if (tab === 'active') return item.statusType === 'matching' || item.statusType === 'verified';
+            if (tab === 'spent') return item.statusType === 'confirmed';
+            if (tab === 'pending') return item.statusType === 'waiting';
+            return true;
+          }).map((item) => (
             <View key={item.id} style={s.actRow}>
               <View style={s.actLeft}>
                 <View style={s.actIcon}>

@@ -11,9 +11,9 @@ import { colors } from '../styles/theme';
 
 const claimableItems = [
   { id: '1', asset: 'ETH', amount: '300.792 ETH', status: 'Ready to Claim' },
-  { id: '2', asset: 'USDC', amount: '0.000520', status: 'Ready to Claim' },
-  { id: '3', asset: 'ETH', amount: '0.70 USD', status: 'Ready to Claim' },
-  { id: '4', asset: 'ETH', amount: '0.00 USC', status: 'Ready to Claim' },
+  { id: '2', asset: 'USDC', amount: '0.000520 USDC', status: 'Ready to Claim' },
+  { id: '3', asset: 'ETH', amount: '0.70 ETH', status: 'Ready to Claim' },
+  { id: '4', asset: 'USDC', amount: '0.00 USDC', status: 'Ready to Claim' },
 ];
 
 export default function ClaimScreen() {

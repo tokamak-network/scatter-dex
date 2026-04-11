@@ -36,11 +36,9 @@ const managementItems: ManagementItem[] = [
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
-  const [toggles, setToggles] = useState<Record<string, boolean>>({
-    biometrics: true,
-    signing: true,
-    lock: false,
-  });
+  const [toggles, setToggles] = useState<Record<string, boolean>>(
+    Object.fromEntries(securityItems.map(item => [item.id, item.defaultValue]))
+  );
 
   const handleToggle = (id: string) => {
     setToggles((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -87,6 +85,7 @@ export default function SettingsScreen() {
               key={item.id}
               style={s.linkRow}
               activeOpacity={0.7}
+              onPress={() => { /* TODO: navigate to key management / backup screen */ }}
             >
               <View style={s.linkLeft}>
                 <View style={[s.linkIcon, item.id === 'backup' ? s.linkIconDanger : s.linkIconPrimary]}>

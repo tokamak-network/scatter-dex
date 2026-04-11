@@ -12,6 +12,7 @@ import { colors } from '../styles/theme';
 export default function DepositScreen() {
   const navigation = useNavigation<any>();
   const [step, setStep] = useState(1);
+  const [amount, setAmount] = useState('');
   const [progress, setProgress] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -79,6 +80,8 @@ export default function DepositScreen() {
                   placeholder="0.5"
                   placeholderTextColor="#9CA3AF"
                   keyboardType="decimal-pad"
+                  value={amount}
+                  onChangeText={setAmount}
                 />
                 <TouchableOpacity style={s.maxBtn}>
                   <Text style={s.maxText}>MAX</Text>
