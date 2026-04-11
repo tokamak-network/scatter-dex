@@ -332,7 +332,7 @@ contract SettleWithDexTest is Test {
         settlement.settleWithDex(p);
     }
 
-    // ─── Platform Fee Tests ────────────────────────��────────
+    // ─── Platform Fee Tests ─────────────────────────────────
 
     function test_settleWithDex_platformFee() public {
         // Set 1% platform fee (100 bps)

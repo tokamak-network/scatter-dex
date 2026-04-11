@@ -892,9 +892,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (dexPlatformFeeBps > 0) {
             uint256 platformFee = uint256(proof.sellAmount) * dexPlatformFeeBps / FEE_BPS_DENOMINATOR;
             swapAmount = uint256(proof.sellAmount) - platformFee;
-            address _treasury = feeVault.treasury();
-            IERC20(proof.sellToken).safeTransfer(_treasury, platformFee);
-            emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, _treasury);
+            if (platformFee > 0) {
+                address _treasury = feeVault.treasury();
+                IERC20(proof.sellToken).safeTransfer(_treasury, platformFee);
+                emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, _treasury);
+            }
         }
 
         // 12. Execute DEX swap (generic — works with any whitelisted router)
