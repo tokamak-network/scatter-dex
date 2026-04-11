@@ -24,8 +24,12 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderProgress, OrderStep, ClaimInput } from '../services/OrderService';
+import { MarketOrderService, MarketOrderProgress, MarketOrderStep } from '../services/MarketOrderService';
+import { ConfigService } from '../services/ConfigService';
 import { StepProgress } from '../components/StepProgress';
 import { shared } from '../styles/theme';
+
+type OrderType = 'limit' | 'market';
 
 const STEP_LABELS: Record<OrderStep, string> = {
   idle: '',
@@ -39,6 +43,25 @@ const STEP_LABELS: Record<OrderStep, string> = {
 
 const ORDER_STEPS: OrderStep[] = ['deriving_key', 'signing_order', 'submitting', 'saving_change'];
 
+const MARKET_STEP_LABELS: Record<MarketOrderStep, string> = {
+  idle: '',
+  checking: 'Checking eligibility...',
+  generating_proof: 'Generating authorize proof...',
+  submitting: 'Settling via DEX...',
+  saving: 'Saving notes...',
+  success: 'Market order settled!',
+  error: 'Market order failed',
+};
+
+const MARKET_STEPS: MarketOrderStep[] = ['checking', 'generating_proof', 'submitting', 'saving'];
+
+const SLIPPAGE_OPTIONS = [
+  { label: '0.1%', bps: 10 },
+  { label: '0.5%', bps: 50 },
+  { label: '1%', bps: 100 },
+  { label: '3%', bps: 300 },
+];
+
 const EXPIRY_OPTIONS = [
   { label: '1h', hours: 1 },
   { label: '6h', hours: 6 },
@@ -49,6 +72,7 @@ const EXPIRY_OPTIONS = [
 export default function TradeScreen() {
   const { account, signer } = useWallet();
   const [tokens] = useState<TokenInfo[]>(() => TokenService.getTokenList());
+  const [orderType, setOrderType] = useState<OrderType>('limit');
 
   // Note selection
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -62,12 +86,15 @@ export default function TradeScreen() {
   const [feeBps, setFeeBps] = useState('30');
   const [expiryIdx, setExpiryIdx] = useState(2); // default 24h
 
+  // Market order specific
+  const [slippageIdx, setSlippageIdx] = useState(1); // default 0.5%
+
   // Claims
   const [claimRecipient, setClaimRecipient] = useState('');
   const [claimReleaseMin, setClaimReleaseMin] = useState('0');
 
-  // Progress
-  const [progress, setProgress] = useState<OrderProgress>({ step: 'idle' });
+  // Progress (shared union for both order types)
+  const [progress, setProgress] = useState<OrderProgress | MarketOrderProgress>({ step: 'idle' });
 
   const selectedNote = selectedNoteIdx >= 0 ? activeNotes[selectedNoteIdx] : null;
   const isProcessing = progress.step !== 'idle' && progress.step !== 'success' && progress.step !== 'error';
@@ -116,21 +143,45 @@ export default function TradeScreen() {
       return;
     }
 
-    await OrderService.execute(
-      signer,
-      account,
-      {
-        note: selectedNote,
-        sellAmount,
-        buyToken: selectedBuyToken.address,
-        buyAmount,
-        maxFeeBps: Number(feeBps) || 0,
-        expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
-        claims,
-      },
-      (p) => setProgress(p),
-    );
-  }, [signer, account, selectedNote, sellAmount, buyAmount, selectedBuyToken, feeBps, expiryIdx, claimRecipient, claimReleaseMin]);
+    if (orderType === 'market') {
+      const dexRouter = ConfigService.getUniswapRouterAddress();
+      if (!dexRouter) {
+        Alert.alert('Not configured', 'Uniswap router address not set.');
+        return;
+      }
+      await MarketOrderService.execute(
+        signer,
+        account,
+        {
+          note: selectedNote,
+          sellAmount,
+          buyToken: selectedBuyToken.address,
+          buyAmount,
+          slippageBps: SLIPPAGE_OPTIONS[slippageIdx].bps,
+          expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
+          claimRecipient: recipient,
+          dexRouter,
+          uniswapFeeTier: 3000,
+        },
+        (p) => setProgress(p),
+      );
+    } else {
+      await OrderService.execute(
+        signer,
+        account,
+        {
+          note: selectedNote,
+          sellAmount,
+          buyToken: selectedBuyToken.address,
+          buyAmount,
+          maxFeeBps: Number(feeBps) || 0,
+          expiryHours: EXPIRY_OPTIONS[expiryIdx].hours,
+          claims,
+        },
+        (p) => setProgress(p),
+      );
+    }
+  }, [signer, account, selectedNote, sellAmount, buyAmount, selectedBuyToken, feeBps, expiryIdx, claimRecipient, claimReleaseMin, orderType, slippageIdx]);
 
   const handleReset = () => {
     setProgress({ step: 'idle' });
@@ -155,7 +206,28 @@ export default function TradeScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Create Private Order</Text>
-        <Text style={styles.subtitle}>Submit an order to the relayer for matching</Text>
+
+        {/* ─── Order Type Selector ─────────────────── */}
+        <View style={styles.orderTypeRow}>
+          <TouchableOpacity
+            style={[styles.orderTypeBtn, orderType === 'limit' && styles.orderTypeBtnActive]}
+            onPress={() => setOrderType('limit')}
+            disabled={isProcessing}
+          >
+            <Text style={[styles.orderTypeText, orderType === 'limit' && styles.orderTypeTextActive]}>Limit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.orderTypeBtn, orderType === 'market' && styles.orderTypeBtnActive]}
+            onPress={() => setOrderType('market')}
+            disabled={isProcessing}
+          >
+            <Text style={[styles.orderTypeText, orderType === 'market' && styles.orderTypeTextActive]}>Market</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.subtitle}>
+          {orderType === 'limit' ? 'Submit to relayer for P2P matching' : 'Swap directly via DEX on-chain'}
+        </Text>
 
         {/* ─── Note Selection ──────────────────────── */}
         <View style={styles.card}>
@@ -239,18 +311,40 @@ export default function TradeScreen() {
               />
             </View>
 
-            {/* ─── Fee + Expiry ─────────────────────── */}
+            {/* ─── Fee/Slippage + Expiry ────────────── */}
             <View style={styles.card}>
               <View style={styles.rowBetween}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.cardLabel}>Max Fee (bps)</Text>
-                  <TextInput
-                    style={styles.smallInput}
-                    value={feeBps}
-                    onChangeText={setFeeBps}
-                    keyboardType="number-pad"
-                    editable={!isProcessing}
-                  />
+                  {orderType === 'limit' ? (
+                    <>
+                      <Text style={styles.cardLabel}>Max Fee (bps)</Text>
+                      <TextInput
+                        style={styles.smallInput}
+                        value={feeBps}
+                        onChangeText={setFeeBps}
+                        keyboardType="number-pad"
+                        editable={!isProcessing}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.cardLabel}>Slippage</Text>
+                      <View style={styles.tokenRow}>
+                        {SLIPPAGE_OPTIONS.map((opt, i) => (
+                          <TouchableOpacity
+                            key={opt.label}
+                            style={[styles.expiryChip, slippageIdx === i && styles.expiryChipActive]}
+                            onPress={() => setSlippageIdx(i)}
+                            disabled={isProcessing}
+                          >
+                            <Text style={[styles.expiryText, slippageIdx === i && styles.expiryTextActive]}>
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
                   <Text style={styles.cardLabel}>Expiry</Text>
@@ -305,10 +399,20 @@ export default function TradeScreen() {
               </TouchableOpacity>
             ) : (
               <View style={shared.card}>
-                <StepProgress steps={ORDER_STEPS} labels={STEP_LABELS} currentStep={progress.step} />
+                {orderType === 'limit' ? (
+                  <StepProgress steps={ORDER_STEPS} labels={STEP_LABELS} currentStep={progress.step as OrderStep | 'success' | 'error'} />
+                ) : (
+                  <StepProgress steps={MARKET_STEPS} labels={MARKET_STEP_LABELS} currentStep={progress.step as MarketOrderStep | 'success' | 'error'} />
+                )}
 
-                {progress.step === 'success' && progress.orderId && (
-                  <Text style={styles.successText}>Order ID: {progress.orderId}</Text>
+                {progress.step === 'success' && (
+                  <Text style={styles.successText}>
+                    {'orderId' in progress && progress.orderId
+                      ? `Order ID: ${progress.orderId}`
+                      : 'txHash' in progress && progress.txHash
+                        ? `Tx: ${progress.txHash.slice(0, 10)}...${progress.txHash.slice(-6)}`
+                        : 'Settled!'}
+                  </Text>
                 )}
                 {progress.step === 'error' && progress.error && (
                   <Text style={styles.errorText} numberOfLines={3}>{progress.error}</Text>
@@ -341,6 +445,13 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 24, fontWeight: 'bold', color: '#fff', textAlign: 'center' },
   subtitle: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginTop: 4, marginBottom: 20 },
+
+  // Order type selector
+  orderTypeRow: { flexDirection: 'row', marginBottom: 12, gap: 8 },
+  orderTypeBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: '#111827', borderWidth: 1, borderColor: '#1f2937', alignItems: 'center' },
+  orderTypeBtnActive: { borderColor: '#6366f1', backgroundColor: '#6366f115' },
+  orderTypeText: { fontSize: 15, fontWeight: '600', color: '#6b7280' },
+  orderTypeTextActive: { color: '#95aaff' },
 
   card: { backgroundColor: '#111827', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#1f2937' },
   cardLabel: { fontSize: 13, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },

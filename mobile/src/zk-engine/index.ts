@@ -23,11 +23,16 @@ if (typeof globalThis.Worker === 'undefined') {
 }
 
 // ─── circomlibjs 초기화 ───────────────────────────────
-import { buildPoseidon, buildEddsa, buildBabyjub } from 'circomlibjs';
+try {
+  const { buildPoseidon, buildEddsa, buildBabyjub } = require('circomlibjs');
 
-(window as any)._zkEngine = {
-  buildPoseidon,
-  buildEddsa,
-  buildBabyjub,
-};
-(window as any)._zkEngineReady = true;
+  (window as any)._zkEngine = {
+    buildPoseidon,
+    buildEddsa,
+    buildBabyjub,
+  };
+  (window as any)._zkEngineReady = true;
+} catch (e: any) {
+  (window as any)._zkEngineError = e?.message || String(e);
+  console.error('ZK Engine init error:', e);
+}
