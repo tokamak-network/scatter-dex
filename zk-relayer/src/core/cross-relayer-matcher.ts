@@ -96,9 +96,20 @@ export class CrossRelayerMatchService {
 
       this.lockingOrders.add(orderKey);
       try {
-        // Mark as matched first (prevents double-matching), restore on failure
+        // [M-11] Atomic CAS: set status pending→matched in one DB operation.
+        // If another instance already changed the status, CAS returns false.
+        if (this.db) {
+          const won = this.db.compareAndSwapStatus(
+            local.order.pubKeyAx, local.order.nonce, "pending", "matched",
+          );
+          if (!won) {
+            console.log(`[cross-relayer] Order ${orderKey} lost CAS race, skipping`);
+            continue;
+          }
+        } else {
+          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
+        }
         local.status = "matched";
-        this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
 
         const result = await this.sendTradeOffer(local, summary);
         if (result.status === "settled" && result.txHash) {
@@ -126,7 +137,11 @@ export class CrossRelayerMatchService {
         // Always release lock and restore pending if not settled
         if (local.status === "matched") {
           local.status = "pending";
-          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          if (this.db) {
+            this.db.compareAndSwapStatus(local.order.pubKeyAx, local.order.nonce, "matched", "pending");
+          } else {
+            this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          }
         }
         this.lockingOrders.delete(orderKey);
       }
@@ -225,6 +240,17 @@ export class CrossRelayerMatchService {
       const reason = "maker order is being matched";
       recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
       return { status: "rejected", reason };
+    }
+
+    // [M-11] Atomic CAS: attempt pending→matched transition.
+    // If another instance already matched, CAS fails and we reject.
+    if (this.db) {
+      const won = this.db.compareAndSwapStatus(makerPubKeyAx, makerNonce, "pending", "matched");
+      if (!won) {
+        const reason = "maker order already matched (CAS failed)";
+        recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+        return { status: "rejected", reason };
+      }
     }
 
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)
