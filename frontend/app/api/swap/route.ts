@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "../../lib/rate-limit";
+
+// 30 requests per minute per IP (swap quotes)
+const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
 
 /**
  * Server-side proxy for 1inch Swap API.
@@ -20,6 +24,16 @@ const FETCH_TIMEOUT_MS = 10_000;
 const ONEINCH_ROUTER = "0x111111125421cA6dc452d289314280a0f8842A65";
 
 export async function GET(req: NextRequest) {
+  // Rate limit: 30 req/min per IP
+  const ip = getClientIp(req.headers);
+  const rl = checkRateLimit(`swap:${ip}`, RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Try again later." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
+
   const { searchParams } = req.nextUrl;
 
   const chainId = searchParams.get("chainId");
