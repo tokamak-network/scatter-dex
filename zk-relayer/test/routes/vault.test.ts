@@ -15,7 +15,8 @@ vi.mock("ethers", async () => {
   return { ...actual, Contract: MockContract, ethers: { ...actual.ethers, Contract: MockContract } };
 });
 
-const ADMIN_KEY = process.env.ADMIN_API_KEY as string;
+const ADMIN_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
 
 // vault.ts parses TOKEN_LIST at module load, so control it via
 // resetModules + dynamic import. This keeps the test hermetic regardless
