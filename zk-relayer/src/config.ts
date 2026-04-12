@@ -60,3 +60,8 @@ export const config = {
     return parsed;
   })(),
 };
+
+/** [R-7] Update relayer fee at runtime (admin API). */
+export function updateRelayerFee(feeBps: number): void {
+  config.relayerFee = feeBps;
+}

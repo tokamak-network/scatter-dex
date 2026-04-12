@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { config } from "./config.js";
+import { config, updateRelayerFee } from "./config.js";
 import { PrivateOrderbook } from "./core/orderbook.js";
 import { PrivateMatcher } from "./core/matcher.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
@@ -17,14 +17,26 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats } from "./routes/authorize-orders.js";
 import { createHealthRoutes } from "./routes/health.js";
+import { createAdminRoutes, isPaused } from "./routes/admin.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
 async function main() {
   const db = new PrivateOrderDB();
   db.setMeta("started_at", Date.now().toString());
+
+  // [R-7] Restore runtime fee from DB (if previously changed via admin API)
+  const savedFee = db.getMeta("relayerFee");
+  if (savedFee !== null) {
+    const parsedFee = parseInt(savedFee, 10);
+    if (Number.isFinite(parsedFee) && parsedFee >= 0 && parsedFee <= 10_000) {
+      updateRelayerFee(parsedFee);
+      console.log(`[admin] Restored fee from DB: ${parsedFee} bps`);
+    }
+  }
+
   const orderbook = new PrivateOrderbook(MAX_ORDERBOOK_SIZE);
   orderbook.setDB(db);
   const restored = orderbook.loadFromDB();
@@ -142,7 +154,24 @@ async function main() {
     message: { error: "too many requests" },
   });
 
-  app.use("/api/private-orders", createPrivateOrderRoutes(
+  // [R-7] Admin API — fee, pause/resume, drain, balance
+  // Register BEFORE pauseGuard so pause state is restored from DB before routes use it
+  app.use("/api/admin", createAdminRoutes({
+    submitter, db, orderbook,
+    drainAuthorizeOrders, getAuthorizeOrderStats,
+    writeLimiter,
+  }));
+
+  // [R-7] Pause guard — reject new order submissions (POST only) when paused
+  const pauseGuard: express.RequestHandler = (req, res, next) => {
+    if (isPaused() && req.method === "POST") {
+      res.status(503).json({ error: "Relayer is paused — not accepting new orders" });
+      return;
+    }
+    next();
+  };
+
+  app.use("/api/private-orders", pauseGuard, createPrivateOrderRoutes(
     orderbook, submitter, writeLimiter, readLimiter,
     sharedClient, orderIdMap,
   ));
@@ -155,7 +184,7 @@ async function main() {
   // Half-proof (trustless) order routes — settleAuth path
   const authSubmitter = new AuthorizeSubmitter();
   authSubmitter.setDB(db);
-  app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
+  app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
   ));
 

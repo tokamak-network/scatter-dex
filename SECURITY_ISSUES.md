@@ -341,12 +341,12 @@
 | S-M4 | Circuit | cancel.circom balance range check 없음 | 🔧 `fix/SM4-cancel-balance-range-check` |
 | S-M5 | Contract | settleAuth zero-amount 방어 없음 | 🔧 PR #204 |
 | S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | 🔧 IN PROGRESS |
-| S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | 🔧 `fix/SM7-feevault-frontrun` |
-| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | 🔧 `fix/SM8-trade-offer-validation` |
+| S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ✅ PR #209 |
+| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | 🔧 PR #210 |
 | S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ⬜ |
 | S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
 | S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ⬜ |
 | S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ✅ PR #206 |
 | S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ⬜ |
-| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | ⬜ |
+| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | 🔧 IN PROGRESS |

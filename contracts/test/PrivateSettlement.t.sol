@@ -807,7 +807,9 @@ contract FeeVaultTest is Test {
     // ─── Platform Fee Admin ─────────────────────────────────────
 
     function test_vault_platform_fee_update() public {
-        vault.setPlatformFee(1000); // 10%
+        vault.scheduleFeeChange(1000); // 10%
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 1000);
 
         // Settle with fee
@@ -825,7 +827,7 @@ contract FeeVaultTest is Test {
 
     function test_vault_max_platform_fee() public {
         vm.expectRevert(FeeVault.FeeTooHigh.selector);
-        vault.setPlatformFee(5001); // > 50%
+        vault.scheduleFeeChange(5001); // > 50%
     }
 
     // ─── Helpers ─────────────────────────────────────────────────

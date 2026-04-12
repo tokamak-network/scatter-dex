@@ -186,6 +186,24 @@ export class PrivateOrderbook {
     this.db?.updateStatus(pubKeyAx, nonce, status, settleTxHash, crossRelayer);
   }
 
+  /** [R-7] Cancel all pending orders — used by admin drain endpoint. */
+  cancelAll(): number {
+    const toRemove: PrivateOrder[] = [];
+    for (const [, orders] of this.byPubKey) {
+      for (const [, stored] of orders) {
+        if (stored.status === "pending") {
+          stored.status = "cancelled";
+          this.db?.updateStatus(stored.order.pubKeyAx, stored.order.nonce, "cancelled");
+          toRemove.push(stored.order);
+        }
+      }
+    }
+    for (const order of toRemove) {
+      this.remove(order);
+    }
+    return toRemove.length;
+  }
+
   purgeExpired(): number {
     const now = BigInt(Math.floor(Date.now() / 1000));
     const toRemove: PrivateOrder[] = [];

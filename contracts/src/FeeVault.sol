@@ -24,6 +24,13 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     uint256 public platformFeeBps;
     uint256 public constant MAX_PLATFORM_FEE = 5000; // 50%
 
+    /// @notice Timelock delay for fee changes (prevents front-running relayer claims).
+    uint256 public constant FEE_CHANGE_DELAY = 1 days;
+
+    /// @notice Pending fee change (timelock).
+    uint256 public pendingFeeBps;
+    uint256 public pendingFeeEffectiveTime;
+
     /// @notice Treasury address that receives platform fees.
     address public treasury;
 
@@ -33,6 +40,8 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     // ─── Events ─────────────────────────────────────────────────
     event FeeDeposited(address indexed relayer, address indexed token, uint256 amount);
     event FeeClaimed(address indexed relayer, address indexed token, uint256 amount, uint256 platformFee);
+    event FeeChangeScheduled(uint256 currentBps, uint256 newBps, uint256 effectiveTime);
+    event FeeChangeCancelled(uint256 cancelledBps);
     event PlatformFeeUpdated(uint256 oldBps, uint256 newBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event DepositorUpdated(address indexed depositor, bool authorized);
@@ -44,6 +53,8 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     error NothingToClaim();
     error RenounceOwnershipDisabled();
     error InsufficientTokenBalance();
+    error NoFeeChangePending();
+    error FeeChangeNotReady();
 
     constructor(address _treasury, uint256 _platformFeeBps) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
@@ -110,11 +121,32 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
         emit DepositorUpdated(depositor, authorized);
     }
 
-    /// @notice Update the platform fee rate. Max 50% (5000 bps).
-    function setPlatformFee(uint256 _bps) external onlyOwner {
+    /// @notice Schedule a platform fee change. Takes effect after FEE_CHANGE_DELAY.
+    ///         Relayers can observe the pending change on-chain and claim at the
+    ///         current rate before the new fee activates.
+    function scheduleFeeChange(uint256 _bps) external onlyOwner {
         if (_bps > MAX_PLATFORM_FEE) revert FeeTooHigh();
-        emit PlatformFeeUpdated(platformFeeBps, _bps);
-        platformFeeBps = _bps;
+        pendingFeeBps = _bps;
+        pendingFeeEffectiveTime = block.timestamp + FEE_CHANGE_DELAY;
+        emit FeeChangeScheduled(platformFeeBps, _bps, pendingFeeEffectiveTime);
+    }
+
+    /// @notice Apply the pending fee change after the timelock has elapsed.
+    function applyFeeChange() external onlyOwner {
+        if (pendingFeeEffectiveTime == 0) revert NoFeeChangePending();
+        if (block.timestamp < pendingFeeEffectiveTime) revert FeeChangeNotReady();
+        emit PlatformFeeUpdated(platformFeeBps, pendingFeeBps);
+        platformFeeBps = pendingFeeBps;
+        pendingFeeBps = 0;
+        pendingFeeEffectiveTime = 0;
+    }
+
+    /// @notice Cancel a pending fee change.
+    function cancelFeeChange() external onlyOwner {
+        if (pendingFeeEffectiveTime == 0) revert NoFeeChangePending();
+        emit FeeChangeCancelled(pendingFeeBps);
+        pendingFeeBps = 0;
+        pendingFeeEffectiveTime = 0;
     }
 
     /// @notice Update the treasury address that receives platform fees.
