@@ -22,11 +22,13 @@ const CLAIM_WITH_PROOF_ABI = [
 // Mirrors PrivateSettlement.MAX_CLAIM_BATCH_SIZE.
 const MAX_BATCH_SIZE = 20;
 
-// Groth16 proof → Solidity tuple (G2 points use [imag, real] row order).
+// Solidity tuple. NOTE: `claim-prover.ts` already returns proof.b in Solidity
+// [imag, real] G2 order (see claim-prover.ts:96-102), so we DO NOT swap again
+// here — double-swap was a pre-existing bug in the single-claim wallet path.
 function toSolidityProofTuple(p: { a: string[]; b: string[][]; c: string[] }) {
   return {
     a: p.a.map(BigInt),
-    b: p.b.map((row: string[]) => [BigInt(row[1]), BigInt(row[0])]),
+    b: p.b.map((row: string[]) => row.map(BigInt)),
     c: p.c.map(BigInt),
   };
 }
@@ -83,7 +85,13 @@ export default function PrivateClaimPage() {
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHashes, setTxHashes] = useState<string[]>([]);
-  const [batchProgress, setBatchProgress] = useState<{ chunk: number; totalChunks: number; claims: number } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{
+    chunk: number;
+    totalChunks: number;
+    claims: number;
+    phase: "generating" | "submitting";
+    proofDone?: number;
+  } | null>(null);
 
   const claimedMap = useClaimStatuses(allClaims, { includeTxHash: true });
 
@@ -246,7 +254,8 @@ export default function PrivateClaimPage() {
         throw new Error(errMsg);
       }
       const result = await res.json();
-      setTxHashes([result.txHash || ""]);
+      if (!result.txHash) throw new Error("Relayer response missing txHash.");
+      setTxHashes([result.txHash]);
       setStatus("success");
     } catch (e: unknown) {
       setError(friendlyError(e));
@@ -270,7 +279,9 @@ export default function PrivateClaimPage() {
         c.amount, c.token, c.recipient, c.releaseTime,
       );
       const receipt = await tx.wait();
-      setTxHashes([receipt.hash ?? receipt.transactionHash ?? ""]);
+      const hash = receipt.hash ?? receipt.transactionHash;
+      if (!hash) throw new Error("Tx receipt missing hash.");
+      setTxHashes([hash]);
       setStatus("success");
     } catch (e: any) {
       console.error("Wallet claim failed:", e);
@@ -279,7 +290,7 @@ export default function PrivateClaimPage() {
     }
   }, [claimData, signer]);
 
-  const eligibleIndices = useMemo(() => {
+  const eligibleClaims = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
     return allClaims
       .map((c, i) => ({ c, i }))
@@ -287,36 +298,51 @@ export default function PrivateClaimPage() {
   }, [allClaims, claimedMap]);
 
   const handleClaimBatchViaWallet = useCallback(async () => {
-    if (!signer || eligibleIndices.length === 0) return;
+    if (!signer || eligibleClaims.length === 0) return;
     setStatus("generating");
     setError(null);
     setTxHashes([]);
     setBatchProgress(null);
 
     try {
-      // Proof gen is CPU-heavy and runs on the main thread — keep sequential
-      // so the progress UI can repaint between proofs.
-      const built: Awaited<ReturnType<typeof buildProof>>[] = [];
-      for (const { c } of eligibleIndices) {
-        built.push(await buildProof(c));
-      }
-
-      setStatus("submitting");
-
-      const chunks: typeof built[] = [];
-      for (let i = 0; i < built.length; i += MAX_BATCH_SIZE) {
-        chunks.push(built.slice(i, i + MAX_BATCH_SIZE));
-      }
-
+      // Per-chunk build-then-submit: first tx lands sooner (no wait for all N
+      // proofs), and a later chunk failure doesn't waste CPU on unused proofs.
       const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
+      const totalChunks = Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE);
       const hashes: string[] = [];
 
-      for (let ci = 0; ci < chunks.length; ci++) {
-        setBatchProgress({ chunk: ci + 1, totalChunks: chunks.length, claims: chunks[ci].length });
-        const params = chunks[ci].map(toClaimParams);
+      for (let ci = 0; ci < totalChunks; ci++) {
+        const chunkClaims = eligibleClaims.slice(ci * MAX_BATCH_SIZE, (ci + 1) * MAX_BATCH_SIZE);
+
+        // Proof gen is CPU-heavy and runs on the main thread — keep sequential
+        // so the progress UI can repaint between proofs.
+        setStatus("generating");
+        const builtChunk: BuiltProof[] = [];
+        for (let pi = 0; pi < chunkClaims.length; pi++) {
+          setBatchProgress({
+            chunk: ci + 1,
+            totalChunks,
+            claims: chunkClaims.length,
+            phase: "generating",
+            proofDone: pi,
+          });
+          builtChunk.push(await buildProof(chunkClaims[pi].c));
+        }
+
+        setStatus("submitting");
+        setBatchProgress({
+          chunk: ci + 1,
+          totalChunks,
+          claims: chunkClaims.length,
+          phase: "submitting",
+        });
+
+        const params = builtChunk.map(toClaimParams);
         const tx = await settlement.claimWithProofBatch(params);
         const receipt = await tx.wait();
-        hashes.push(receipt.hash ?? receipt.transactionHash ?? "");
+        const hash = receipt.hash ?? receipt.transactionHash;
+        if (!hash) throw new Error(`Batch ${ci + 1} tx receipt missing hash.`);
+        hashes.push(hash);
         setTxHashes([...hashes]);
       }
 
@@ -328,7 +354,7 @@ export default function PrivateClaimPage() {
       setStatus("error");
       setBatchProgress(null);
     }
-  }, [signer, eligibleIndices]);
+  }, [signer, eligibleClaims]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -523,7 +549,7 @@ export default function PrivateClaimPage() {
             <div className="text-xs p-3 rounded-md bg-error/5 text-error">{error}</div>
           )}
 
-          {allClaims.length > 1 && eligibleIndices.length >= 2 && (
+          {allClaims.length > 1 && eligibleClaims.length >= 2 && (
             <button
               onClick={handleClaimBatchViaWallet}
               disabled={!signer}
@@ -531,9 +557,9 @@ export default function PrivateClaimPage() {
             >
               <Wallet className="w-4 h-4" />
               {signer
-                ? `Claim All ${eligibleIndices.length} via Wallet${
-                    Math.ceil(eligibleIndices.length / MAX_BATCH_SIZE) > 1
-                      ? ` (${Math.ceil(eligibleIndices.length / MAX_BATCH_SIZE)} txs)`
+                ? `Claim All ${eligibleClaims.length} via Wallet${
+                    Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE) > 1
+                      ? ` (${Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE)} txs)`
                       : ""
                   }`
                 : "Connect Wallet to Batch Claim"}
@@ -602,8 +628,19 @@ export default function PrivateClaimPage() {
       {status === "generating" && (
         <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
           <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
-          <p className="text-on-surface font-medium">Generating ZK proof...</p>
+          <p className="text-on-surface font-medium">
+            {batchProgress
+              ? `Generating proof ${(batchProgress.proofDone ?? 0) + 1} of ${batchProgress.claims} (batch ${batchProgress.chunk}/${batchProgress.totalChunks})...`
+              : "Generating ZK proof..."}
+          </p>
           <p className="text-xs text-on-surface-variant">This may take a few seconds.</p>
+          {batchProgress && txHashes.length > 0 && (
+            <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
+              {txHashes.map((h, i) => (
+                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -624,7 +661,7 @@ export default function PrivateClaimPage() {
           {batchProgress && txHashes.length > 0 && (
             <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
               {txHashes.map((h, i) => (
-                <div key={i} className="break-all">#{i + 1}: {h}</div>
+                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
               ))}
             </div>
           )}
