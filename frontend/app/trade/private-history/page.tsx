@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -115,12 +115,6 @@ export default function PrivateHistoryPage() {
   const [cancellingNonce, setCancellingNonce] = useState<string | null>(null);
   const [cancelStep, setCancelStep] = useState<"idle" | "loading-note" | "fetching-tree" | "proving" | "tx" | "saving" | "done" | "error">("idle");
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Cleanup cancel timer on unmount
-  useEffect(() => {
-    return () => { if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current); };
-  }, []);
 
   // Claim statuses for selected order
   const selectedClaims = useMemo(
@@ -321,10 +315,8 @@ export default function PrivateHistoryPage() {
       setOrders((prev) => prev.map(updater));
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
 
-      cancelTimerRef.current = setTimeout(() => {
-        setCancellingNonce(null);
-        setCancelStep("idle");
-      }, 2000);
+      // Stay in "done" state until user explicitly dismisses — previously auto-dismissed
+      // after 2s, which users could miss and then be confused about the cancel outcome.
     } catch (e: any) {
       console.error("Cancel failed:", e);
       setCancelError(e?.reason || e?.message || "Unknown error");
@@ -525,9 +517,17 @@ export default function PrivateHistoryPage() {
                       <span className="break-all">{cancelError}</span>
                     </div>
                   ) : cancelStep === "done" ? (
-                    <div className="flex items-center gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Order cancelled. Escrow rotated to new commitment.
+                    <div className="flex items-center justify-between gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>Order cancelled. Escrow rotated to new commitment.</span>
+                      </div>
+                      <button
+                        onClick={() => { setCancellingNonce(null); setCancelStep("idle"); }}
+                        className="shrink-0 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors"
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-3 rounded-md">

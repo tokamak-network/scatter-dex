@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
 import { ethers } from "ethers";
 import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, BookOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -1348,12 +1349,28 @@ export default function PrivateOrderPage() {
                 <span className="text-primary font-semibold">Shared Orderbook:</span> Your order summary is also published to the shared orderbook, enabling cross-relayer matching with other relayers for better liquidity.
               </div>
             )}
-            <button
-              onClick={() => { setStep("create_order"); refreshNotes(); }}
-              className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
-            >
-              Create Another Order
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              <Link
+                href="/trade/private-history"
+                className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
+              >
+                View My Orders
+              </Link>
+              {orderType === "market" && (
+                <Link
+                  href="/trade/private-claim"
+                  className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+                >
+                  Go to Claim
+                </Link>
+              )}
+              <button
+                onClick={() => { setStep("create_order"); refreshNotes(); }}
+                className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+              >
+                Create Another Order
+              </button>
+            </div>
           </div>
         )}
       </div>
