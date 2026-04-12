@@ -140,7 +140,11 @@ async function doGenerate(
 
     w.addEventListener("message", onMessage);
     w.addEventListener("error", onError);
-    w.postMessage(serializeInput(input));
+    const serialized = serializeInput(input);
+    w.postMessage(serialized);
+    // [S-M12] Zero the serialized private key after posting to worker
+    const rawKey = serialized.eddsaPrivateKey;
+    if (Array.isArray(rawKey)) (rawKey as number[]).fill(0);
   });
 }
 

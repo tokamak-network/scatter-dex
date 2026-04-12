@@ -150,6 +150,8 @@ export async function generateCancelProof(
   const relayer = BigInt(input.relayer);
   const cancelMsg = await poseidonHash([oldNonceNullifier, relayer]);
   const sig = await signEdDSA(input.eddsaPrivateKey, cancelMsg);
+  // [S-M12] Zero private key immediately after signing — no longer needed
+  input.eddsaPrivateKey.fill(0);
 
   // ── 5. Assemble circuit input ──
   const circuitInput = {

@@ -264,6 +264,8 @@ export async function generateAuthorizeProof(
   });
 
   const sig: EdDSASignature = await signEdDSA(input.eddsaPrivateKey, orderHash);
+  // [S-M12] Zero private key immediately after signing — no longer needed
+  input.eddsaPrivateKey.fill(0);
 
   // ── 6. Assemble circuit input ──
   // The field names must match `authorize.circom`'s signal declarations

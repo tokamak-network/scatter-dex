@@ -24,8 +24,10 @@ const ctx = self as unknown as Worker;
 const proverPromise = import("./authorize-prover");
 
 ctx.onmessage = async (event: MessageEvent) => {
+  let eddsaKey: Uint8Array | null = null;
   try {
     const input = deserializeInput(event.data);
+    eddsaKey = input.eddsaPrivateKey;
     const { generateAuthorizeProof } = await proverPromise;
     const result = await generateAuthorizeProof(input);
 
@@ -33,6 +35,12 @@ ctx.onmessage = async (event: MessageEvent) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.postMessage({ type: "error", message });
+  } finally {
+    // [S-M12] Zero sensitive key material after proof generation
+    eddsaKey?.fill(0);
+    // Zero the raw serialized key array in the incoming message
+    const rawKey = event.data.eddsaPrivateKey;
+    if (Array.isArray(rawKey)) rawKey.fill(0);
   }
 };
 
