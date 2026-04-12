@@ -4,6 +4,7 @@ import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { parsePrivateOrder, serializePrivateOrder, type PrivateOrderStatus } from "../types/order.js";
 import { poseidonHash, verifyEdDSA, computeClaimLeaf, buildMerkleTree } from "../core/zk-prover.js";
 import { config } from "../config.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 
 export function createPrivateOrderRoutes(
@@ -55,6 +56,9 @@ export function createPrivateOrderRoutes(
       const now = BigInt(Math.floor(Date.now() / 1000));
       if (order.expiry <= now) { res.status(400).json({ error: "order expired" }); return; }
       if (orderbook.hasNonce(order.pubKeyAx, order.nonce)) { res.status(400).json({ error: "duplicate nonce" }); return; }
+
+      // [R-8] Record order submission for throughput metrics
+      recordOrderSubmitted();
 
       // ScatterDirect: same-token redistribution
       const stored = orderbook.add(order);

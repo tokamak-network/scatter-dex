@@ -9,6 +9,7 @@ export function createRelayerRoutes(
   broadcaster: OrderBroadcaster,
   writeLimiter: RequestHandler,
   readLimiter: RequestHandler,
+  relayerWriteLimiter?: RequestHandler,
 ): Router {
   const router = Router();
 
@@ -17,7 +18,9 @@ export function createRelayerRoutes(
    * Body: { name?: string }
    * Requires relayer authentication.
    */
-  router.post("/register", writeLimiter, relayerAuth, (req, res) => {
+  const registerMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) registerMiddleware.push(relayerWriteLimiter);
+  router.post("/register", ...registerMiddleware, (req, res) => {
     try {
       const { relayerAddress, relayerUrl } = req as AuthenticatedRequest;
       const name = req.body.name as string | undefined;
@@ -41,7 +44,9 @@ export function createRelayerRoutes(
    * POST /api/relayers/heartbeat — Heartbeat (keep-alive)
    * Requires relayer authentication.
    */
-  router.post("/heartbeat", writeLimiter, relayerAuth, (req, res) => {
+  const heartbeatMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) heartbeatMiddleware.push(relayerWriteLimiter);
+  router.post("/heartbeat", ...heartbeatMiddleware, (req, res) => {
     const { relayerAddress } = req as AuthenticatedRequest;
     const ok = orderbook.heartbeat(relayerAddress);
     if (!ok) {

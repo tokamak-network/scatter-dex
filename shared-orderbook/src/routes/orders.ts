@@ -12,6 +12,7 @@ export function createOrderRoutes(
   broadcaster: OrderBroadcaster,
   writeLimiter: RequestHandler,
   readLimiter: RequestHandler,
+  relayerWriteLimiter?: RequestHandler,
 ): Router {
   const router = Router();
 
@@ -19,7 +20,9 @@ export function createOrderRoutes(
    * POST /api/orders — Post an order summary (listing)
    * Requires relayer authentication.
    */
-  router.post("/", writeLimiter, relayerAuth, (req, res) => {
+  const postMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) postMiddleware.push(relayerWriteLimiter);
+  router.post("/", ...postMiddleware, (req, res) => {
     try {
       const { relayerAddress, relayerUrl } = req as AuthenticatedRequest;
 
@@ -117,7 +120,9 @@ export function createOrderRoutes(
    * DELETE /api/orders/:id — Cancel an order
    * Requires relayer authentication. Only the posting relayer can cancel.
    */
-  router.delete("/:id", writeLimiter, relayerAuth, (req, res) => {
+  const deleteMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) deleteMiddleware.push(relayerWriteLimiter);
+  router.delete("/:id", ...deleteMiddleware, (req, res) => {
     try {
       const { relayerAddress } = req as AuthenticatedRequest;
       const { id } = req.params;

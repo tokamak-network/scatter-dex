@@ -19,6 +19,7 @@ import {
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
+import { recordSettlement } from "./metrics.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -370,6 +371,7 @@ export class PrivateSubmitter {
       console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const settleStart = Date.now();
       const { txHash } = await sendAndWait(
         () => this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
@@ -379,6 +381,8 @@ export class PrivateSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - settleStart);
       console.log(`Private settlement tx: ${txHash}`);
 
       // Record claims roots so this relayer only pays gas for its own claims.
@@ -522,6 +526,7 @@ export class PrivateSubmitter {
       }
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const scatterStart = Date.now();
       const { txHash } = await sendAndWait(
         () => this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
@@ -531,6 +536,8 @@ export class PrivateSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - scatterStart);
       console.log(`ScatterDirect tx: ${txHash}`);
 
       // Record claims root so this relayer only pays gas for its own claims.

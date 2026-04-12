@@ -22,6 +22,7 @@ import {
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -35,7 +36,14 @@ const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
 let _db: PrivateOrderDB | null = null;
 
-function pubKeyId(ax: string, ay: string): string {
+// BabyJub field elements are at most 254 bits (~77 decimal digits).
+// Reject oversized strings before BigInt parsing to prevent CPU DoS.
+const MAX_PUBKEY_LEN = 80;
+
+export function pubKeyId(ax: string, ay: string): string {
+  if (ax.length > MAX_PUBKEY_LEN || ay.length > MAX_PUBKEY_LEN) {
+    throw new RangeError("pubKey value too large");
+  }
   return `${BigInt(ax).toString()}:${BigInt(ay).toString()}`;
 }
 
@@ -62,6 +70,7 @@ export function createAuthorizeOrderRoutes(
   db?: PrivateOrderDB,
   sharedClient?: SharedOrderbookClient | null,
   orderIdMap?: Map<string, string>,
+  authWriteLimiter?: RequestHandler,
 ): Router {
   _sharedClient = sharedClient ?? null;
   _orderIdMap = orderIdMap ?? null;
@@ -94,6 +103,7 @@ export function createAuthorizeOrderRoutes(
 
   // POST /api/authorize-orders — submit a Half-proof order
   if (writeLimiter) router.post("/", writeLimiter);
+  if (authWriteLimiter) router.post("/", authWriteLimiter);
   router.post("/", (async (req: Request, res: Response) => {
     try {
       const body = req.body as Record<string, unknown>;
@@ -167,6 +177,8 @@ export function createAuthorizeOrderRoutes(
       };
       authorizeOrders.set(nullifier, stored);
       _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
+      // [R-8] Record order submission for throughput metrics
+      recordOrderSubmitted();
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +

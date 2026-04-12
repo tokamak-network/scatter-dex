@@ -2,6 +2,7 @@ import { Router, RequestHandler } from "express";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { PrivateOrderbook } from "../core/orderbook.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
+import { getMetrics } from "../core/metrics.js";
 
 /**
  * Relayer stats & audit trail API.
@@ -28,6 +29,7 @@ export function createRelayerStatsRoutes(
         ...stats,
         pendingOrders: orderbook.pendingOrderCount,
         settledVolume: volume,
+        metrics: getMetrics(),
       });
     } catch (err) {
       console.error("[relayer-stats] Failed to load stats:", err instanceof Error ? err.message : err);
