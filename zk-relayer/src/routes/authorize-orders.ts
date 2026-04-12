@@ -159,6 +159,8 @@ export function createAuthorizeOrderRoutes(
       };
       authorizeOrders.set(nullifier, stored);
       _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
+      // [R-8] Record order submission for throughput metrics
+      import("../core/metrics.js").then(({ recordOrderSubmitted }) => recordOrderSubmitted());
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +

@@ -11,6 +11,22 @@ interface HealthData {
   checks: Record<string, "ok" | "error">;
 }
 
+interface RuntimeMetrics {
+  gas: {
+    avgCostEth: number | null;
+    lastCostEth: number | null;
+    totalSpentEth: number;
+  };
+  settlement: {
+    avgDurationMs: number | null;
+    totalCount: number;
+    perMinute: number;
+  };
+  orders: {
+    submittedPerMinute: number;
+  };
+}
+
 interface StatsData {
   address: string;
   totalOrders: number;
@@ -21,6 +37,7 @@ interface StatsData {
   settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>;
   totalTradeOffers: number;
   settledTradeOffers: number;
+  metrics?: RuntimeMetrics;
 }
 
 interface RelayerStatus {
@@ -127,6 +144,8 @@ export default function OpsMonitorPage() {
   const totalOrders = statuses.reduce((sum, s) => sum + (s.stats?.totalOrders ?? 0), 0);
   const totalSettled = statuses.reduce((sum, s) => sum + (s.stats?.settledOrders ?? 0), 0);
   const totalPending = statuses.reduce((sum, s) => sum + (s.stats?.pendingOrders ?? 0), 0);
+  const totalGasSpent = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.gas.totalSpentEth ?? 0), 0);
+  const avgOrdersPerMin = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.orders.submittedPerMinute ?? 0), 0);
 
   return (
     <div>
@@ -163,7 +182,7 @@ export default function OpsMonitorPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
         <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
           <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Instances</div>
           <div className="text-2xl font-bold text-on-surface">{onlineRelayers.length}</div>
@@ -186,6 +205,20 @@ export default function OpsMonitorPage() {
           <div className="text-2xl font-bold text-primary">
             {totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"}
           </div>
+        </div>
+        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
+          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Gas Spent</div>
+          <div className="text-2xl font-bold text-amber-500">
+            {totalGasSpent > 0 ? `${totalGasSpent.toFixed(4)}` : "-"}
+          </div>
+          <div className="text-[10px] text-on-surface-variant/40">ETH total</div>
+        </div>
+        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
+          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Throughput</div>
+          <div className="text-2xl font-bold text-on-surface">
+            {avgOrdersPerMin > 0 ? avgOrdersPerMin.toFixed(1) : "-"}
+          </div>
+          <div className="text-[10px] text-on-surface-variant/40">orders/min</div>
         </div>
       </div>
 
@@ -213,7 +246,9 @@ export default function OpsMonitorPage() {
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Settled</th>
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Pending</th>
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Cross-Relayer</th>
-                <th className="text-right px-5 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Settle</th>
+                <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Settle</th>
+                <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Gas</th>
+                <th className="text-right px-5 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Settle/min</th>
               </tr>
             </thead>
             <tbody>
@@ -298,10 +333,28 @@ export default function OpsMonitorPage() {
                     </td>
 
                     {/* Avg Settle */}
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-3 py-3 text-right">
                       <span className="text-xs font-mono text-on-surface-variant/70">
                         {s.stats?.avgSettleTimeMs != null && s.stats.avgSettleTimeMs > 0
                           ? `${(s.stats.avgSettleTimeMs / 1000).toFixed(1)}s`
+                          : "-"}
+                      </span>
+                    </td>
+
+                    {/* Avg Gas */}
+                    <td className="px-3 py-3 text-right">
+                      <span className="text-xs font-mono text-amber-500/80">
+                        {s.stats?.metrics?.gas.avgCostEth != null
+                          ? `${s.stats.metrics.gas.avgCostEth.toFixed(4)}`
+                          : "-"}
+                      </span>
+                    </td>
+
+                    {/* Settle/min */}
+                    <td className="px-5 py-3 text-right">
+                      <span className="text-xs font-mono text-on-surface-variant/70">
+                        {s.stats?.metrics?.settlement.perMinute != null && s.stats.metrics.settlement.perMinute > 0
+                          ? s.stats.metrics.settlement.perMinute.toFixed(1)
                           : "-"}
                       </span>
                     </td>

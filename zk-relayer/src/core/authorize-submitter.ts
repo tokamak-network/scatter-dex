@@ -173,6 +173,7 @@ export class AuthorizeSubmitter {
       console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const authSettleStart = Date.now();
       const { txHash } = await sendAndWait(
         () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
@@ -182,6 +183,9 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      const { recordSettlement } = await import("./metrics.js");
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });

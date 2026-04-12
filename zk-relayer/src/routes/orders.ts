@@ -56,6 +56,10 @@ export function createPrivateOrderRoutes(
       if (order.expiry <= now) { res.status(400).json({ error: "order expired" }); return; }
       if (orderbook.hasNonce(order.pubKeyAx, order.nonce)) { res.status(400).json({ error: "duplicate nonce" }); return; }
 
+      // [R-8] Record order submission for throughput metrics
+      const { recordOrderSubmitted } = await import("../core/metrics.js");
+      recordOrderSubmitted();
+
       // ScatterDirect: same-token redistribution
       const stored = orderbook.add(order);
       stored.status = "matched";
