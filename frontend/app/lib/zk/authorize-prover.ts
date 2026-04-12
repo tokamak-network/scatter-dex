@@ -35,6 +35,7 @@ import {
   formatProofForSolidity,
 } from "./commitment";
 import { signEdDSA, hashOrder } from "./eddsa";
+import { wipeBytes } from "./secure-wipe";
 import { TAG_COMMITMENT_V2 } from "./tags";
 import { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from "./constants";
 
@@ -263,7 +264,10 @@ export async function generateAuthorizeProof(
     relayerAddress: relayer,
   });
 
-  const sig: EdDSASignature = await signEdDSA(input.eddsaPrivateKey, orderHash);
+  const signingKey = new Uint8Array(input.eddsaPrivateKey);
+  const sig: EdDSASignature = await signEdDSA(signingKey, orderHash);
+  // Zero only the local copy; do not mutate the caller-owned key buffer.
+  wipeBytes(signingKey);
 
   // ── 6. Assemble circuit input ──
   // The field names must match `authorize.circom`'s signal declarations

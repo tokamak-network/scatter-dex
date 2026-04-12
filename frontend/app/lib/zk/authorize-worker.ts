@@ -22,10 +22,13 @@ const ctx = self as unknown as Worker;
 // module graph ahead of time. The module is cached by the JS engine, so
 // subsequent `onmessage` calls get it instantly.
 const proverPromise = import("./authorize-prover");
+const wipePromise = import("./secure-wipe");
 
 ctx.onmessage = async (event: MessageEvent) => {
+  let eddsaKey: Uint8Array | null = null;
   try {
     const input = deserializeInput(event.data);
+    eddsaKey = input.eddsaPrivateKey;
     const { generateAuthorizeProof } = await proverPromise;
     const result = await generateAuthorizeProof(input);
 
@@ -33,6 +36,15 @@ ctx.onmessage = async (event: MessageEvent) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.postMessage({ type: "error", message });
+  } finally {
+    // Defense-in-depth: zero key even if prover threw before its own wipe.
+    // Best-effort — never mask the original result/error path.
+    try {
+      const { wipeBytes, wipeArray } = await wipePromise;
+      wipeBytes(eddsaKey);
+      const rawKey = (event.data as Record<string, unknown>)?.eddsaPrivateKey;
+      if (Array.isArray(rawKey)) wipeArray(rawKey);
+    } catch { /* best-effort cleanup */ }
   }
 };
 
