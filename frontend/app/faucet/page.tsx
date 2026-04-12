@@ -8,6 +8,7 @@ import { getReadProvider } from "../lib/provider";
 import { getTokenList } from "../lib/tokens";
 import { ERC20_ABI } from "../lib/contracts";
 import { EXPECTED_CHAIN_ID } from "../lib/config";
+import { FAUCET_LABEL } from "../lib/faucet-constants";
 import { shortenAddress } from "../lib/utils";
 
 const LOCAL_CHAIN_ID = 31337;
@@ -145,7 +146,7 @@ export default function FaucetPage() {
           disabled={!isLocal || state.kind === "loading" || !targetValid}
           className="w-full mt-6 gradient-btn text-on-primary-fixed px-5 py-3 rounded-md font-semibold text-sm active:scale-95 duration-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {state.kind === "loading" ? "Sending…" : "Drip 10 ETH + 10,000 USDC"}
+          {state.kind === "loading" ? "Sending…" : FAUCET_LABEL}
         </button>
 
         {state.kind === "error" && (
@@ -154,7 +155,7 @@ export default function FaucetPage() {
         {state.kind === "success" && (
           <div className="mt-4 space-y-2">
             <div className="text-sm text-tertiary">
-              Sent 10 ETH + 10,000 USDC to {shortenAddress(target)}
+              Sent to {shortenAddress(target)}
             </div>
             <div className="text-xs font-mono text-on-surface-variant space-y-1">
               <div>ETH tx: {state.ethTxHash}</div>

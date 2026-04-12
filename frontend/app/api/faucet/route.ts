@@ -4,12 +4,12 @@ import { checkRateLimit, getClientIp } from "../../lib/rate-limit";
 import { EXPECTED_CHAIN_ID, RPC_URL } from "../../lib/config";
 import { getTokenList } from "../../lib/tokens";
 import { MOCK_TOKEN_ABI } from "../../lib/contracts";
+import { ETH_DRIP_WHOLE, USDC_DRIP_WHOLE } from "../../lib/faucet-constants";
 
 const LOCAL_CHAIN_ID = 31337;
 const RATE_LIMIT = { limit: 3, windowMs: 60 * 60_000 };
 
-const ETH_DRIP = ethers.parseEther("10");
-const USDC_DRIP_WHOLE = 10_000n;
+const ETH_DRIP = ethers.parseEther(String(ETH_DRIP_WHOLE));
 
 // Anvil account #0 — funded at genesis. Safe to hard-code: anvil ships this
 // key publicly and the faucet refuses to run off chain 31337.
