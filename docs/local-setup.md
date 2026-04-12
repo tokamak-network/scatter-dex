@@ -176,24 +176,32 @@ Run the end-to-end cross-relayer scenario:
 cd zk-relayer && npx tsx test/e2e-cross-relayer.ts
 ```
 
-**Frontend with two relayers:** `dev.sh` only writes `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002`. To surface both relayers in the UI, either point the frontend at the shared orderbook or manually add a second relayer entry in `.env.local`.
+**Frontend with two relayers:** `dev.sh` only writes `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002`. For a full 2-relayer local setup, append the following to `frontend/.env.local` and restart `npm run dev`:
+
+```
+NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
+ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
+```
+
+- `NEXT_PUBLIC_SHARED_ORDERBOOK_URL` lets the UI query the shared orderbook for cross-relayer order discovery.
+- `ALLOWED_RELAYER_ORIGINS` is the server-side allowlist consulted by `/api/relay` before forwarding claims to a non-default relayer. Keep `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002` as the default relayer.
 
 ## Market Orders (Fork Mode)
 
 `settleWithDex` requires a whitelisted DEX router. The default plain anvil chain has none deployed, so `DeployLocal` prints `1inch Router not deployed on this chain (skipped)` and market orders will not execute end-to-end.
 
-To exercise market orders locally, start anvil in **fork mode** against mainnet (or a chain where the 1inch Aggregation Router V6 and Uniswap V3 SwapRouter02 are deployed):
+To exercise market orders locally, start anvil in **fork mode** against mainnet (or a chain where the 1inch Aggregation Router V6 and Uniswap V3 SwapRouter02 are deployed), and connect with `dev.sh` in **integration mode** (not `--mock`):
 
 ```bash
-# Terminal 1
+# Terminal 1 — start your own forked anvil on 8545
 anvil --fork-url https://eth.llamarpc.com
 # or Alchemy / Infura / your own RPC
 
-# Terminal 2
+# Terminal 2 — integration mode reuses the running anvil
 IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
-# or for mock identity with fork:
-./scripts/dev.sh --mock   # only if you start anvil separately — dev.sh --mock also starts anvil
 ```
+
+> **Note:** `dev.sh --mock` always starts its own anvil (and exits if port 8545 is already in use via `check_port 8545`), so it cannot be combined with a pre-started forked anvil. Use integration mode with zk-X509 as above. If you need mock identity against a fork, run `anvil --fork-url` then deploy manually via `forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://localhost:8545 --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` and start the relayer/frontend by hand (see **Manual Setup** above).
 
 When fork mode is used, `DeployLocal` will whitelist:
 - 1inch Aggregation Router V6 — `0x111111125421cA6dc452d289314280a0f8842A65`
