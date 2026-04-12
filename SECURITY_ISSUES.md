@@ -298,7 +298,7 @@
 | R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | ✅ | PR #205 |
 | R-8 | 메트릭스 없음 | 인메모리 런타임 메트릭스 (가스비/처리량/정산시간) | ✅ | PR #214 |
 | R-9 | 운영 문서 없음 | operations-guide.md (설정/모니터링/Admin API/트러블슈팅) | 🔧 | `docs/R9-operations-guide` |
-| R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | ⬜ | — |
+| R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | 🔧 | `feat/R10-sanctions-list` |
 
 #### 🟡 MEDIUM (개선 권장)
 

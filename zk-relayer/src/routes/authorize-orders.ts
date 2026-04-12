@@ -23,6 +23,7 @@ import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
+import { isSanctionedById } from "../core/sanctions-list.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -158,8 +159,17 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 4c. Per-pubKey order limit — optimistic increment before any await ──
+      // Normalize pubKey once and reuse for sanctions + per-pubKey rate limit
+      // (both keyed on the same `{ax}:{ay}` bigint-normalized id).
       const pkId = pubKeyId(pubKeyAx, pubKeyAy);
+
+      // ── 4c. [R-10] Sanctions check — reject orders from blocked pubKeys ──
+      if (isSanctionedById(pkId)) {
+        res.status(403).json({ error: "Order rejected: pubKey is on sanctions list" });
+        return;
+      }
+
+      // ── 4d. Per-pubKey order limit — optimistic increment before any await ──
       if ((pendingCountByPubKey.get(pkId) ?? 0) >= MAX_ORDERS_PER_PUBKEY) {
         res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
