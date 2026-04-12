@@ -282,6 +282,113 @@ contract PrivateSettlementTest is Test {
         assertEq(claimed, 2 ether);
     }
 
+    // ─── claimWithProofBatch Tests ───────────────────────────────
+
+    function _makeClaimParams(
+        bytes32 claimsRoot,
+        bytes32 nullifier,
+        uint256 amount,
+        address token,
+        address recipient,
+        uint256 releaseTime
+    ) internal view returns (PrivateSettlement.ClaimParams memory) {
+        return PrivateSettlement.ClaimParams({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            claimsRoot: claimsRoot,
+            claimNullifier: nullifier,
+            amount: amount,
+            token: token,
+            recipient: recipient,
+            releaseTime: releaseTime
+        });
+    }
+
+    function test_claimWithProofBatch_basic() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_2, 3 ether, address(weth), recipient2, block.timestamp);
+
+        settlement.claimWithProofBatch(batch);
+
+        assertEq(recipient1.balance, 2 ether);
+        assertEq(recipient2.balance, 3 ether);
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_2));
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 5 ether);
+    }
+
+    function test_claimWithProofBatch_cross_group() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_TAKER, CLAIM_NULL_3, 4000e18, address(usdc), recipient2, block.timestamp);
+
+        settlement.claimWithProofBatch(batch);
+
+        assertEq(recipient1.balance, 2 ether);
+        assertEq(usdc.balanceOf(recipient2), 4000e18);
+    }
+
+    function test_claimWithProofBatch_empty_reverts() public {
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](0);
+        vm.expectRevert(PrivateSettlement.EmptyBatch.selector);
+        settlement.claimWithProofBatch(batch);
+    }
+
+    function test_claimWithProofBatch_too_large_reverts() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        uint256 oversize = settlement.MAX_CLAIM_BATCH_SIZE() + 1;
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](oversize);
+        for (uint256 i = 0; i < oversize; i++) {
+            batch[i] = _makeClaimParams(CLAIMS_ROOT_MAKER, bytes32(uint256(0xAA00 + i)), 1 wei, address(weth), recipient1, block.timestamp);
+        }
+
+        vm.expectRevert(PrivateSettlement.BatchTooLarge.selector);
+        settlement.claimWithProofBatch(batch);
+    }
+
+    function test_claimWithProofBatch_atomic_failure_reverts_all() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        // Second claim uses same nullifier → will revert on the second iteration
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 1 ether, address(weth), recipient2, block.timestamp);
+
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.claimWithProofBatch(batch);
+
+        // Neither claim applied
+        assertEq(recipient1.balance, 0);
+        assertEq(recipient2.balance, 0);
+        assertFalse(settlement.claimNullifiers(CLAIM_NULL_1));
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 0);
+    }
+
+    function test_claimWithProofBatch_paused_reverts() public {
+        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+        settlement.setPaused(true);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](1);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 1 ether, address(weth), recipient1, block.timestamp);
+
+        vm.expectRevert(PrivateSettlement.ContractPaused.selector);
+        settlement.claimWithProofBatch(batch);
+    }
+
     function test_receive_rejects_non_weth() public {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
