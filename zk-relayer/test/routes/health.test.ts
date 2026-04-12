@@ -3,7 +3,7 @@ import request from "supertest";
 import { createHealthRoutes } from "../../src/routes/health.js";
 import { mountRouter, makeSubmitterStub, makeDbStub } from "./helpers.js";
 
-describe("[R-13] GET /health", () => {
+describe("GET /health", () => {
   it("returns 200 healthy when RPC + DB both succeed", async () => {
     const app = mountRouter("/health", createHealthRoutes(makeSubmitterStub(), makeDbStub()));
     const res = await request(app).get("/health");

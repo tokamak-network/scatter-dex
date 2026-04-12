@@ -1,13 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import request from "supertest";
 import { createAdminRoutes } from "../../src/routes/admin.js";
-import {
-  getSanctionedPubKeys,
-  removeSanctionedPubKey,
-} from "../../src/core/sanctions-list.js";
+import { clearSanctionedPubKeys } from "../../src/core/sanctions-list.js";
 import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
 
-const ADMIN_KEY = process.env.ADMIN_API_KEY!;
+const ADMIN_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
 
 function buildApp(opts: {
   db?: ReturnType<typeof makeDbStub>;
@@ -25,16 +23,7 @@ function buildApp(opts: {
   return mountRouter("/api/admin", router);
 }
 
-function resetSanctions() {
-  for (const { pubKeyAx, pubKeyAy } of getSanctionedPubKeys()) {
-    removeSanctionedPubKey(pubKeyAx, pubKeyAy);
-  }
-}
-
-describe("[R-13] /api/admin — auth", () => {
-  beforeEach(resetSanctions);
-  afterEach(resetSanctions);
-
+describe("/api/admin — auth", () => {
   it("rejects request without x-admin-key with 401", async () => {
     const res = await request(buildApp()).get("/api/admin/status");
     expect(res.status).toBe(401);
@@ -64,7 +53,7 @@ describe("[R-13] /api/admin — auth", () => {
   });
 });
 
-describe("[R-13] /api/admin/status + /balance", () => {
+describe("/api/admin/status + /balance", () => {
   it("GET /status includes relayer config + paused state + authorizeOrders", async () => {
     const res = await request(buildApp({
       orderbook: makeOrderbookStub({ pendingOrderCount: 3 }),
@@ -89,7 +78,7 @@ describe("[R-13] /api/admin/status + /balance", () => {
   });
 });
 
-describe("[R-13] /api/admin/fee", () => {
+describe("/api/admin/fee", () => {
   it("rejects non-integer with 400", async () => {
     const res = await request(buildApp())
       .put("/api/admin/fee")
@@ -127,9 +116,8 @@ describe("[R-13] /api/admin/fee", () => {
   });
 });
 
-describe("[R-13] /api/admin/pause + /resume", () => {
+describe("/api/admin/pause + /resume", () => {
   it("pause → resume is a valid cycle; double-pause / double-resume return 409", async () => {
-    // Fresh db-backed pause state per test; createAdminRoutes restores from DB
     const app = buildApp();
     let res = await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
     expect(res.status).toBe(200);
@@ -146,7 +134,7 @@ describe("[R-13] /api/admin/pause + /resume", () => {
   });
 });
 
-describe("[R-13] /api/admin/drain", () => {
+describe("/api/admin/drain", () => {
   it("returns counts from both drain functions", async () => {
     const res = await request(buildApp({
       orderbook: makeOrderbookStub({ cancelAll: () => 4 }),
@@ -160,9 +148,8 @@ describe("[R-13] /api/admin/drain", () => {
   });
 });
 
-describe("[R-13] /api/admin/sanctions", () => {
-  beforeEach(resetSanctions);
-  afterEach(resetSanctions);
+describe("/api/admin/sanctions", () => {
+  afterEach(clearSanctionedPubKeys);
 
   it("GET returns empty list by default", async () => {
     const res = await request(buildApp())
@@ -181,7 +168,8 @@ describe("[R-13] /api/admin/sanctions", () => {
   });
 
   it("POST with malformed entry returns 400 with invalidIndices (no 500)", async () => {
-    const res = await request(buildApp())
+    const app = buildApp();
+    const res = await request(app)
       .post("/api/admin/sanctions")
       .set("x-admin-key", ADMIN_KEY)
       .send({ entries: [
@@ -190,8 +178,8 @@ describe("[R-13] /api/admin/sanctions", () => {
       ] });
     expect(res.status).toBe(400);
     expect(res.body.invalidIndices).toEqual([1]);
-    // Because validation is up-front, nothing should be added on failure.
-    const list = await request(buildApp())
+    // Up-front validation: a single malformed entry must leave the list untouched.
+    const list = await request(app)
       .get("/api/admin/sanctions")
       .set("x-admin-key", ADMIN_KEY);
     expect(list.body.count).toBe(0);
@@ -203,9 +191,9 @@ describe("[R-13] /api/admin/sanctions", () => {
       .post("/api/admin/sanctions")
       .set("x-admin-key", ADMIN_KEY)
       .send({ entries: [
-        { pubKeyAx: "007", pubKeyAy: "010" }, // normalized to "7:8"
+        { pubKeyAx: "007", pubKeyAy: "010" },
         { pubKeyAx: "1", pubKeyAy: "2" },
-        { pubKeyAx: "1", pubKeyAy: "2" },     // duplicate — should not count
+        { pubKeyAx: "1", pubKeyAy: "2" },
       ] });
     expect(addRes.status).toBe(200);
     expect(addRes.body.added).toBe(2);

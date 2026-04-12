@@ -10,21 +10,15 @@ import {
   getSanctionedPubKeys,
   getSanctionedCount,
   loadSanctionsFile,
+  clearSanctionedPubKeys,
 } from "../src/core/sanctions-list.js";
 
 const AX = "12345678901234567890";
 const AY = "98765432109876543210";
 
-// The module keeps an internal Set; wipe between tests by removing what we add.
-function resetList() {
-  for (const { pubKeyAx, pubKeyAy } of getSanctionedPubKeys()) {
-    removeSanctionedPubKey(pubKeyAx, pubKeyAy);
-  }
-}
-
 describe("[R-10] sanctions-list", () => {
-  beforeEach(resetList);
-  afterEach(resetList);
+  beforeEach(clearSanctionedPubKeys);
+  afterEach(clearSanctionedPubKeys);
 
   describe("normalization", () => {
     it("normalizes leading zeros — '007' and '7' collide", () => {

@@ -3,7 +3,7 @@ import request from "supertest";
 import { createInfoRoutes } from "../../src/routes/info.js";
 import { mountRouter, makeSubmitterStub, makeOrderbookStub } from "./helpers.js";
 
-describe("[R-13] /api/info", () => {
+describe("/api/info", () => {
   it("GET / returns relayer metadata", async () => {
     const app = mountRouter(
       "/api/info",

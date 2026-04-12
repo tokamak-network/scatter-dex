@@ -3,7 +3,7 @@ import request from "supertest";
 import { createRelayerStatsRoutes } from "../../src/routes/relayer-stats.js";
 import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
 
-describe("[R-13] /api/relayer", () => {
+describe("/api/relayer", () => {
   it("GET /stats returns aggregated stats + metrics", async () => {
     const db = makeDbStub({
       getRelayerStats: () => ({

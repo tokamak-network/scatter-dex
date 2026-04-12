@@ -47,6 +47,11 @@ export function removeSanctionedPubKey(ax: string, ay: string): boolean {
   return sanctionedPubKeys.delete(normalizeKey(ax, ay));
 }
 
+/** Clear the entire sanctions list. Intended for tests and admin resets. */
+export function clearSanctionedPubKeys(): void {
+  sanctionedPubKeys.clear();
+}
+
 /** Get all sanctioned pubKeys. */
 export function getSanctionedPubKeys(): Array<{ pubKeyAx: string; pubKeyAy: string }> {
   return [...sanctionedPubKeys].map((key) => {
