@@ -21,6 +21,7 @@ import {
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
 import { isSanctionedById } from "../core/sanctions-list.js";
 
@@ -59,14 +60,21 @@ function decPubKeyCount(ax: string, ay: string): void {
   else pendingCountByPubKey.set(id, count);
 }
 
+let _sharedClient: SharedOrderbookClient | null = null;
+let _orderIdMap: Map<string, string> | null = null;
+
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
   readLimiter?: RequestHandler,
   db?: PrivateOrderDB,
+  sharedClient?: SharedOrderbookClient | null,
+  orderIdMap?: Map<string, string>,
   authWriteLimiter?: RequestHandler,
 ): Router {
+  _sharedClient = sharedClient ?? null;
+  _orderIdMap = orderIdMap ?? null;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -190,7 +198,55 @@ export function createAuthorizeOrderRoutes(
         (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
-      // ── 5. Try to match ──
+      // ── 5a. Same-token scatter — no counterparty needed ──
+      const isSameToken = BigInt(order.publicSignals.sellToken) === BigInt(order.publicSignals.buyToken);
+      if (isSameToken) {
+        console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
+        stored.status = "matched";
+        try {
+          const txHash = await submitter.submitScatterDirectAuth(order, 0n);
+          stored.status = "settled";
+          stored.settleTxHash = txHash;
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "settled", txHash);
+          res.json({ status: "settled", txHash, nullifier });
+          return;
+        } catch (err) {
+          // Keep a tombstone entry (status=cancelled) to prevent resubmission
+          // of the same nullifier — the TX may have been broadcast but not confirmed.
+          stored.status = "cancelled";
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "cancelled");
+          console.error("[authorize-orders] scatterDirectAuth failed:", err);
+          res.status(500).json({
+            status: "scatter_failed",
+            error: "scatterDirectAuth submission failed — generate a new proof to retry",
+            nullifier,
+          });
+          return;
+        }
+      }
+
+      // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
+      if (_sharedClient) {
+        const ps = order.publicSignals;
+        const orderbookId = await _sharedClient.postOrder({
+          nonce: nullifier,
+          pubKeyAx: pubKeyAx!,
+          sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
+          buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
+          sellAmount: ps.sellAmount,
+          buyAmount: ps.buyAmount,
+          minFillAmount: ps.buyAmount,
+          maxFee: Number(ps.maxFee),
+          expiry: Number(ps.expiry),
+        });
+        if (orderbookId && _orderIdMap) {
+          _orderIdMap.set(nullifier, orderbookId);
+        }
+      }
+
+      // ── 6. Try to match ──
       const match = findMatch(stored);
       if (match) {
         console.log("[authorize-orders] Match found! Submitting settleAuth...");
@@ -210,6 +266,16 @@ export function createAuthorizeOrderRoutes(
           decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
           _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
           _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
+
+          // Cancel both sides from shared orderbook
+          if (_sharedClient && _orderIdMap) {
+            const makerNull = match.maker.order.publicSignals.nullifier;
+            const takerNull = match.taker.order.publicSignals.nullifier;
+            const makerOid = _orderIdMap.get(makerNull);
+            const takerOid = _orderIdMap.get(takerNull);
+            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
+            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
+          }
 
           res.json({
             status: "settled",
@@ -292,6 +358,9 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 
     const cPs = candidate.order.publicSignals;
 
+    // Skip same-token orders — they are handled by scatterDirectAuth, not matching
+    if (BigInt(cPs.sellToken) === BigInt(cPs.buyToken)) continue;
+
     // Convention: the existing order is maker, the incoming is taker.
     // isTokenCompatible is symmetric (A.sell==B.buy ∧ B.sell==A.buy),
     // so only one call is needed.
@@ -322,6 +391,10 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
+    if (_sharedClient && _orderIdMap) {
+      const oid = _orderIdMap.get(key);
+      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+    }
     toDelete.push(key);
   }
   for (const key of toDelete) {
@@ -365,6 +438,11 @@ export function purgeNonPendingAuthorizeOrders(): number {
       // Settled orders already had their counter decremented on settlement.
       if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
+      // Cancel from shared orderbook if still listed
+      if (_sharedClient && _orderIdMap) {
+        const oid = _orderIdMap.get(key);
+        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
       }
       authorizeOrders.delete(key);
       removed++;

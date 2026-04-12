@@ -17,65 +17,19 @@ export function createPrivateOrderRoutes(
 ): Router {
   const router = Router();
 
-  // [S-C1] POST /api/private-orders — DEPRECATED for P2P matching.
-  // Only ScatterDirect (same-token redistribution) is still allowed here
-  // because it requires witness data and has no authorize-path equivalent yet.
-  // All other orders must use POST /api/authorize-orders (half-proof path).
+  // [S-M14] POST /api/private-orders — FULLY DEPRECATED.
+  // All orders (including ScatterDirect) now use POST /api/authorize-orders.
+  // This endpoint returns 410 Gone with migration instructions.
   if (writeLimiter) router.post("/", writeLimiter);
-  router.post("/", async (req: Request, res: Response) => {
+  router.post("/", async (_req: Request, res: Response) => {
     try {
-      const order = parsePrivateOrder(req.body);
-
-      // Only allow same-token (ScatterDirect) orders
-      if (order.sellToken !== order.buyToken) {
-        res.status(410).json({
-          error: "P2P orders via this endpoint are deprecated for security reasons. Use POST /api/authorize-orders instead.",
-          migration: "Generate an authorize proof locally and submit to /api/authorize-orders. See docs/migration-half-proof.md.",
-          legacyFlowNote:
-            "Older repo docs/scripts may still reference POST /api/private-orders as part of a legacy flow. That flow is now disabled; update those callers to use POST /api/authorize-orders.",
-        });
-        return;
-      }
-
-      // Verify EdDSA signature
-      const claimLeafHashes = await Promise.all(order.claims.map((c) => computeClaimLeaf(c)));
-      const padded = [...claimLeafHashes];
-      while (padded.length < 16) padded.push(0n);
-      const { root: claimsRoot } = await buildMerkleTree(padded, 4);
-      const relayerAddr = BigInt(submitter.getAddress());
-      const msgHash = await poseidonHash([
-        order.sellToken, order.buyToken, order.sellAmount, order.buyAmount,
-        order.maxFee, order.expiry, order.nonce, claimsRoot, relayerAddr,
-      ]);
-      const valid = await verifyEdDSA(
-        msgHash, [order.pubKeyAx, order.pubKeyAy],
-        { S: order.sigS, R8x: order.sigR8x, R8y: order.sigR8y },
-      );
-      if (!valid) { res.status(400).json({ error: "invalid EdDSA signature" }); return; }
-
-      const now = BigInt(Math.floor(Date.now() / 1000));
-      if (order.expiry <= now) { res.status(400).json({ error: "order expired" }); return; }
-      if (orderbook.hasNonce(order.pubKeyAx, order.nonce)) { res.status(400).json({ error: "duplicate nonce" }); return; }
-
-      // [R-8] Record order submission for throughput metrics
-      recordOrderSubmitted();
-
-      // ScatterDirect: same-token redistribution
-      const stored = orderbook.add(order);
-      stored.status = "matched";
-      orderbook.persistStatus(order.pubKeyAx, order.nonce, "matched");
-      try {
-        const txHash = await submitter.submitScatterDirect(order);
-        stored.status = "settled";
-        stored.settleTxHash = txHash;
-        orderbook.persistStatus(order.pubKeyAx, order.nonce, "settled", txHash);
-        res.json({ status: "settled", txHash });
-      } catch (err: unknown) {
-        stored.status = "pending";
-        orderbook.persistStatus(order.pubKeyAx, order.nonce, "pending");
-        console.error("scatterDirect failed:", err instanceof Error ? err.message : "unknown");
-        res.status(500).json({ status: "scatter_failed", error: "scatterDirect failed" });
-      }
+      // [S-M14] All orders via this legacy endpoint are deprecated.
+      // ScatterDirect (same-token) now uses authorize proofs via /api/authorize-orders.
+      res.status(410).json({
+        error: "This endpoint is deprecated. Use POST /api/authorize-orders with an authorize proof.",
+        migration: "Generate an authorize.circom proof client-side and submit to /api/authorize-orders. " +
+          "For same-token scatter: set sellToken == buyToken in the proof.",
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       const safeErrors = ["invalid eddsa signature", "expired", "duplicate nonce", "missing"];

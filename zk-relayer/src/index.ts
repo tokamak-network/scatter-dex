@@ -211,7 +211,7 @@ async function main() {
   authSubmitter.setDB(db);
   app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
-    authWriteLimiter,
+    sharedClient, orderIdMap, authWriteLimiter,
   ));
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)

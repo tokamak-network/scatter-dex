@@ -668,4 +668,173 @@ contract SettleAuthTest is Test {
         vm.expectRevert();
         settlement.setBatchAuthorizeVerifier(address(batchVerifier));
     }
+
+    // ════════════════════════════════════════════════════════════
+    //  scatterDirectAuth — single-party, same-token via authorize proof
+    // ════════════════════════════════════════════════════════════
+
+    bytes32 constant SD_NULL       = bytes32(uint256(0xd1));
+    bytes32 constant SD_NONCE_NULL = bytes32(uint256(0xd2));
+    bytes32 constant SD_NEW_COMMIT = bytes32(uint256(0xd3));
+    bytes32 constant SD_CLAIMS_R   = bytes32(uint256(0xd4));
+    bytes32 constant SD_ORDER_HASH = bytes32(uint256(0xd5));
+
+    function _defaultScatterDirectAuth() internal view returns (PrivateSettlement.ScatterDirectAuthParams memory) {
+        return PrivateSettlement.ScatterDirectAuthParams({
+            proof: PrivateSettlement.AuthorizeProof({
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: bytes32(uint256(0xD0)),
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: SD_NULL,
+                nonceNullifier: SD_NONCE_NULL,
+                newCommitment: SD_NEW_COMMIT,
+                sellToken: address(usdc),
+                buyToken: address(usdc),       // same token
+                sellAmount: 10_000e18,
+                buyAmount: 9_000e18,
+                maxFee: 100,                   // 1%
+                expiry: uint64(block.timestamp + 1 hours),
+                claimsRoot: SD_CLAIMS_R,
+                totalLocked: uint128(9_900e18),
+                relayer: makerRelayer,
+                orderHash: SD_ORDER_HASH
+            }),
+            fee: 0
+        });
+    }
+
+    function test_scatterDirectAuth_happyPath_zeroFee() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+
+        vm.prank(makerRelayer);
+        settlement.scatterDirectAuth(p);
+
+        assertTrue(settlement.nullifiers(SD_NULL));
+        assertTrue(settlement.nonceNullifiers(SD_NONCE_NULL));
+        (uint128 locked,, address token) = settlement.claimsGroups(SD_CLAIMS_R);
+        assertEq(token, address(usdc));
+        assertEq(locked, uint128(9_900e18));
+    }
+
+    function test_scatterDirectAuth_happyPath_withFee() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.fee = uint96(100e18); // 1% of 10_000e18
+        // totalLocked + fee <= sellAmount: 9900 + 100 = 10000 ✓
+
+        uint256 poolBefore = usdc.balanceOf(address(pool));
+
+        vm.prank(makerRelayer);
+        settlement.scatterDirectAuth(p);
+
+        // Pool should have lost totalLocked + fee
+        assertEq(usdc.balanceOf(address(pool)), poolBefore - 9_900e18 - 100e18);
+    }
+
+    function test_scatterDirectAuth_revert_differentTokens() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.proof.buyToken = address(weth); // different from sellToken
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.SellBuyTokenMismatch.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_revert_wrongRelayer() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+
+        vm.prank(takerRelayer); // not proof.relayer
+        vm.expectRevert(PrivateSettlement.NotMakerOrTakerRelayer.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_revert_feeExceedsMax() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        // maxFee = 100 bps = 1%. sellAmount = 10_000e18
+        // max fee = 10_000e18 * 100 / 10000 = 100e18
+        p.fee = uint96(101e18); // above max
+        p.proof.totalLocked = uint128(9_000e18); // ensure cap passes
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.FeeExceedsMax.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_revert_claimsCapExceeded() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.proof.totalLocked = uint128(10_000e18);
+        p.fee = uint96(1); // totalLocked + fee > sellAmount
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ClaimsCapExceeded.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_revert_expired() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.proof.expiry = uint64(block.timestamp - 1);
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_revert_nullifierReplay() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        vm.prank(makerRelayer);
+        settlement.scatterDirectAuth(p);
+
+        // Second call — same nullifier
+        PrivateSettlement.ScatterDirectAuthParams memory p2 = _defaultScatterDirectAuth();
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.scatterDirectAuth(p2);
+    }
+
+    function test_scatterDirectAuth_revert_invalidProof() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        authVerifier.setShouldPass(false);
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        settlement.scatterDirectAuth(p);
+
+        authVerifier.setShouldPass(true);
+    }
+
+    function test_scatterDirectAuth_revert_paused() public {
+        settlement.setPaused(true);
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ContractPaused.selector);
+        settlement.scatterDirectAuth(p);
+
+        settlement.setPaused(false);
+    }
+
+    function test_scatterDirectAuth_revert_tokenNotWhitelisted() public {
+        SAToken bad = new SAToken("BAD", "BAD");
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.proof.sellToken = address(bad);
+        p.proof.buyToken = address(bad);
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.TokenNotWhitelisted.selector);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function test_scatterDirectAuth_zeroNewCommitment_skipsInsert() public {
+        PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
+        p.proof.newCommitment = bytes32(0); // fully spent
+
+        uint32 nextBefore = pool.nextIndex();
+
+        vm.prank(makerRelayer);
+        settlement.scatterDirectAuth(p);
+
+        // nextIndex should NOT have incremented (no commitment inserted)
+        assertEq(pool.nextIndex(), nextBefore);
+    }
 }
