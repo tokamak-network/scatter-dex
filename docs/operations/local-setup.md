@@ -4,7 +4,7 @@ zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-C
 
 ## Two ways to run the stack
 
-Both options bring up the same services in mock mode. Pick whichever fits your workflow:
+Both options run the stack in mock mode, but the service topology differs slightly between them (`make up` also starts the shared orderbook + deployer container; `dev.sh --mock` does not). Pick whichever fits your workflow:
 
 | | `./scripts/dev.sh --mock` | `make up` |
 |---|---|---|
@@ -33,13 +33,13 @@ Services started:
 ### Monitoring (dev.sh)
 
 ```bash
-# Per-service logs (written while dev.sh runs)
-tail -f .dev-logs/anvil.log
+# Per-service logs written while dev.sh runs
+# (anvil is launched with --silent and does not write a log file)
 tail -f .dev-logs/zk-relayer.log
 tail -f .dev-logs/frontend.log
 
 # Which ports are bound, and by which PID
-lsof -i :8545 -i :3000 -i :3002 -i :4000
+lsof -i :8545 -i :3000 -i :3002
 
 # Service health
 curl http://localhost:3002/api/info      # zk-relayer
@@ -54,8 +54,12 @@ cast block-number --rpc-url http://localhost:8545   # anvil
 Ctrl+C
 
 # If the terminal died without a clean exit, orphan processes can keep the
-# ports held. Identify and kill them:
-lsof -ti :8545 :3000 :3002 :4000 | xargs -r kill
+# ports held. Identify and kill them (portable across Linux/macOS — avoids
+# GNU-specific `xargs -r`):
+pids=$(lsof -ti :8545 -i :3000 -i :3002)
+if [ -n "$pids" ]; then
+  kill $pids
+fi
 
 # Optional — clear the log directory
 rm -rf .dev-logs
@@ -88,7 +92,8 @@ make up-integration IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x...   # 
 make ps                                  # container status
 make logs                                # follow all container logs
 docker compose logs -f frontend          # follow a single service
-docker compose logs -f zk-relayer-a
+docker compose logs -f zk-relayer        # relayer A in the default mock stack
+docker compose logs -f zk-relayer-b      # relayer B when using make up-multi
 docker compose logs --tail=200 anvil     # last 200 lines only
 docker stats                             # live CPU / memory per container
 
