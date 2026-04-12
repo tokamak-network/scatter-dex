@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
+import Link from "next/link";
 import { ethers } from "ethers";
 import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
@@ -682,7 +683,7 @@ export default function PrivateEscrowPage() {
                 <div className="text-xs p-3 rounded-md bg-error/5 text-error truncate">{txError}</div>
               )}
               {txState === "success" && (
-                <div className="text-xs p-3 rounded-md bg-tertiary/5 text-tertiary space-y-1">
+                <div className="text-xs p-3 rounded-md bg-tertiary/5 text-tertiary space-y-2">
                   <div>Deposit successful! Note saved to folder.</div>
                   {txHash && (
                     <div className="flex items-center gap-2 font-mono text-on-surface-variant/50">
@@ -696,6 +697,20 @@ export default function PrivateEscrowPage() {
                       </button>
                     </div>
                   )}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Link
+                      href="/trade/private-order"
+                      className="px-3 py-1.5 rounded-md bg-primary/20 text-primary text-[11px] font-semibold hover:bg-primary/30 transition-colors"
+                    >
+                      Create Order →
+                    </Link>
+                    <Link
+                      href="/trade/private-history"
+                      className="px-3 py-1.5 rounded-md bg-surface-bright text-on-surface text-[11px] font-medium hover:bg-surface-bright/80 transition-colors"
+                    >
+                      View History
+                    </Link>
+                  </div>
                 </div>
               )}
 

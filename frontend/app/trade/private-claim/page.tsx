@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { ethers } from "ethers";
 import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -688,12 +689,20 @@ export default function PrivateClaimPage() {
               ))}
             </div>
           )}
-          <button
-            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHashes([]); setBundleRelayerUrl(null); }}
-            className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
-          >
-            Claim Another
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+            <Link
+              href="/trade/private-history"
+              className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
+            >
+              View My Orders
+            </Link>
+            <button
+              onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHashes([]); setBundleRelayerUrl(null); }}
+              className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+            >
+              Claim Another
+            </button>
+          </div>
         </div>
       )}
     </div>

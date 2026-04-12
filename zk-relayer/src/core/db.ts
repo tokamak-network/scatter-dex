@@ -27,6 +27,8 @@ interface OrderRow {
   settle_tx: string | null;
   cross_relayer: number;
   submitted_at: number;
+  new_salt: string | null;
+  expected_change_commitment: string | null;
 }
 
 export interface TradeOfferRow {
@@ -117,11 +119,11 @@ export class PrivateOrderDB {
       INSERT OR REPLACE INTO private_orders
         (pub_key_ax, pub_key_ay, nonce, sell_token, buy_token, sell_amount, buy_amount,
          max_fee, expiry, sig_s, sig_r8x, sig_r8y, owner_secret, balance, salt, leaf_index,
-         status, settle_tx, submitted_at)
+         status, settle_tx, submitted_at, new_salt, expected_change_commitment)
       VALUES
         (@pubKeyAx, @pubKeyAy, @nonce, @sellToken, @buyToken, @sellAmount, @buyAmount,
          @maxFee, @expiry, @sigS, @sigR8x, @sigR8y, @ownerSecret, @balance, @salt, @leafIndex,
-         @status, @settleTx, @submittedAt)
+         @status, @settleTx, @submittedAt, @newSalt, @expectedChangeCommitment)
     `);
     this.insertClaim = this.db.prepare(`
       INSERT OR REPLACE INTO private_claims (pub_key_ax, nonce, idx, secret, recipient, token, amount, release_time)
@@ -290,6 +292,15 @@ export class PrivateOrderDB {
       this.db.exec(`ALTER TABLE private_orders ADD COLUMN settled_at INTEGER`);
     } catch { /* column already exists */ }
 
+    // Persist newSalt / expectedChangeCommitment so restart-recovered orders
+    // can still compute/validate the correct change commitment during settlement.
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN new_salt TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN expected_change_commitment TEXT`);
+    } catch { /* column already exists */ }
+
     // Migration: relayer_meta key-value store (uptime tracking, etc.)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS relayer_meta (
@@ -348,6 +359,8 @@ export class PrivateOrderDB {
         status,
         settleTx: settleTxHash ?? null,
         submittedAt,
+        newSalt: (order.newSalt ?? 0n).toString(),
+        expectedChangeCommitment: (order.expectedChangeCommitment ?? 0n).toString(),
       });
 
       this.deleteClaims.run({ pubKeyAx, nonce });
@@ -447,8 +460,8 @@ export class PrivateOrderDB {
       balance: BigInt(row.balance),
       salt: BigInt(row.salt),
       leafIndex: row.leaf_index,
-      newSalt: 0n,
-      expectedChangeCommitment: 0n,
+      newSalt: row.new_salt != null ? BigInt(row.new_salt) : 0n,
+      expectedChangeCommitment: row.expected_change_commitment != null ? BigInt(row.expected_change_commitment) : 0n,
       claims,
     };
 
