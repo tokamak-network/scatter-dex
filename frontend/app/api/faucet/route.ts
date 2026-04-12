@@ -16,15 +16,31 @@ const USDC_DRIP_WHOLE = 10_000n;
 const DEFAULT_FAUCET_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-let _wallet: ethers.Wallet | null = null;
-function getFaucetWallet(): ethers.Wallet {
+let _wallet: ethers.NonceManager | null = null;
+function getFaucetWallet(): ethers.NonceManager {
   if (_wallet) return _wallet;
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  _wallet = new ethers.Wallet(
+  const signer = new ethers.Wallet(
     process.env.FAUCET_PRIVATE_KEY || DEFAULT_FAUCET_KEY,
     provider,
   );
+  // Wrap in NonceManager so concurrent sends get monotonically increasing
+  // nonces. Without this, Promise.all below would let two populates read
+  // the same pending nonce and one tx would replace the other.
+  _wallet = new ethers.NonceManager(signer);
   return _wallet;
+}
+
+// Serialize populate+send across requests. NonceManager increments its
+// internal counter only after sendTransaction returns, so two concurrent
+// API requests could still race between populate and increment. A simple
+// promise chain keeps each drip's populate→send strictly sequential while
+// still letting the two txs inside one drip pipeline.
+let _queue: Promise<unknown> = Promise.resolve();
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const run = _queue.then(task, task);
+  _queue = run.catch(() => {});
+  return run;
 }
 
 function getUsdcAddress(): string | null {
@@ -75,10 +91,15 @@ export async function POST(req: NextRequest) {
     const decimals: number = await token.decimals();
     const usdcAmount = USDC_DRIP_WHOLE * 10n ** BigInt(decimals);
 
-    const [ethTx, usdcTx] = await Promise.all([
-      wallet.sendTransaction({ to: address, value: ETH_DRIP }),
-      token.mint(address, usdcAmount),
-    ]);
+    // Send both txs back-to-back on the same NonceManager, serialized
+    // across concurrent requests. Each send returns once the node has
+    // accepted the tx with its assigned nonce; the wait()s can safely
+    // run in parallel afterwards.
+    const { ethTx, usdcTx } = await enqueue(async () => {
+      const e = await wallet.sendTransaction({ to: address, value: ETH_DRIP });
+      const u = await token.mint(address, usdcAmount);
+      return { ethTx: e, usdcTx: u };
+    });
     await Promise.all([ethTx.wait(), usdcTx.wait()]);
 
     return NextResponse.json({
