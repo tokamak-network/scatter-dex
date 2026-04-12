@@ -52,7 +52,8 @@ export default function SettingsScreen() {
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
   const [walletLoading, setWalletLoading] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
-  const [importMnemonic, setImportMnemonic] = useState('');
+  const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  const [importSecret, setImportSecret] = useState('');
 
   // Load biometric setting on mount
   useEffect(() => {
@@ -188,18 +189,21 @@ export default function SettingsScreen() {
   }, [connectBuiltin]);
 
   const handleImportWallet = useCallback(() => {
-    setImportMnemonic('');
+    setImportSecret('');
+    setImportMode('mnemonic');
     setImportModalVisible(true);
   }, []);
 
   const handleImportConfirm = useCallback(async () => {
-    const mnemonic = importMnemonic.trim();
-    if (!mnemonic) return;
+    const secret = importSecret.trim();
+    if (!secret) return;
     setImportModalVisible(false);
-    setImportMnemonic('');
+    setImportSecret('');
     setWalletLoading(true);
     try {
-      const address = await KeySecurityService.importFromMnemonic(mnemonic);
+      const address = importMode === 'mnemonic'
+        ? await KeySecurityService.importFromMnemonic(secret)
+        : await KeySecurityService.importFromPrivateKey(secret);
       Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
       try {
         await connectBuiltin();
@@ -209,7 +213,30 @@ export default function SettingsScreen() {
     } finally {
       setWalletLoading(false);
     }
-  }, [importMnemonic, connectBuiltin]);
+  }, [importSecret, importMode, connectBuiltin]);
+
+  const handleDeleteWallet = useCallback(() => {
+    Alert.alert(
+      'Delete Wallet',
+      'This permanently removes your wallet from this device. Make sure you have saved your recovery phrase or private key — without it, funds cannot be recovered.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await disconnect();
+              await KeySecurityService.deleteWallet();
+              Alert.alert('Wallet Deleted', 'The wallet has been removed from this device.');
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to delete wallet');
+            }
+          },
+        },
+      ],
+    );
+  }, [disconnect]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -227,29 +254,47 @@ export default function SettingsScreen() {
         <View style={s.sectionGroup}>
           <Text style={s.sectionTitle}>Wallet</Text>
           {account ? (
-            <View style={s.toggleRow}>
-              <View style={s.toggleLeft}>
-                <View style={s.toggleIcon}>
-                  <Text style={s.toggleIconText}>👛</Text>
+            <View style={{ gap: 8 }}>
+              <View style={s.toggleRow}>
+                <View style={s.toggleLeft}>
+                  <View style={s.toggleIcon}>
+                    <Text style={s.toggleIconText}>👛</Text>
+                  </View>
+                  <View>
+                    <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
+                    <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                      {connectionMode === 'builtin' ? 'Built-in Wallet' : 'WalletConnect'}
+                    </Text>
+                  </View>
                 </View>
-                <View>
-                  <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
-                  <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
-                    {connectionMode === 'builtin' ? 'Built-in Wallet' : 'WalletConnect'}
-                  </Text>
-                </View>
+                <TouchableOpacity
+                  style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#FEF2F2', borderRadius: 8 }}
+                  onPress={() => {
+                    Alert.alert('Disconnect', 'Are you sure?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Disconnect', style: 'destructive', onPress: disconnect },
+                    ]);
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#EF4444' }}>Disconnect</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#FEF2F2', borderRadius: 8 }}
-                onPress={() => {
-                  Alert.alert('Disconnect', 'Are you sure?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Disconnect', style: 'destructive', onPress: disconnect },
-                  ]);
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#EF4444' }}>Disconnect</Text>
-              </TouchableOpacity>
+              {connectionMode === 'builtin' && (
+                <TouchableOpacity style={s.linkRow} onPress={handleDeleteWallet}>
+                  <View style={s.linkLeft}>
+                    <View style={[s.linkIcon, s.linkIconDanger]}>
+                      <Text style={s.linkIconText}>🗑</Text>
+                    </View>
+                    <View>
+                      <Text style={[s.linkLabel, { color: '#EF4444' }]}>Delete Wallet</Text>
+                      <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                        Permanently remove from this device
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={s.chevron}>›</Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
             <View style={{ gap: 8 }}>
@@ -375,29 +420,54 @@ export default function SettingsScreen() {
         <View style={s.modalOverlay}>
           <View style={s.modalContent}>
             <Text style={s.modalTitle}>Import Wallet</Text>
-            <Text style={s.modalSubtitle}>Enter your mnemonic seed phrase:</Text>
+            <View style={s.modeTabs}>
+              <TouchableOpacity
+                style={[s.modeTab, importMode === 'mnemonic' && s.modeTabActive]}
+                onPress={() => { setImportMode('mnemonic'); setImportSecret(''); }}
+              >
+                <Text style={[s.modeTabText, importMode === 'mnemonic' && s.modeTabTextActive]}>
+                  Recovery Phrase
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.modeTab, importMode === 'privateKey' && s.modeTabActive]}
+                onPress={() => { setImportMode('privateKey'); setImportSecret(''); }}
+              >
+                <Text style={[s.modeTabText, importMode === 'privateKey' && s.modeTabTextActive]}>
+                  Private Key
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={s.modalSubtitle}>
+              {importMode === 'mnemonic'
+                ? 'Enter your 12 or 24-word recovery phrase:'
+                : 'Enter your private key (with or without 0x prefix):'}
+            </Text>
             <TextInput
               style={s.modalInput}
-              placeholder="Enter mnemonic..."
+              placeholder={importMode === 'mnemonic' ? 'word1 word2 word3 ...' : '0x...'}
               placeholderTextColor="#9CA3AF"
-              value={importMnemonic}
-              onChangeText={setImportMnemonic}
-              multiline
-              numberOfLines={3}
+              value={importSecret}
+              onChangeText={setImportSecret}
+              multiline={importMode === 'mnemonic'}
+              numberOfLines={importMode === 'mnemonic' ? 3 : 1}
               autoFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry={importMode === 'privateKey'}
               textAlignVertical="top"
             />
             <View style={s.modalButtons}>
               <TouchableOpacity
                 style={s.modalBtnCancel}
-                onPress={() => { setImportModalVisible(false); setImportMnemonic(''); }}
+                onPress={() => { setImportModalVisible(false); setImportSecret(''); }}
               >
                 <Text style={s.modalBtnCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.modalBtnConfirm, !importMnemonic.trim() && { opacity: 0.4 }]}
+                style={[s.modalBtnConfirm, !importSecret.trim() && { opacity: 0.4 }]}
                 onPress={handleImportConfirm}
-                disabled={!importMnemonic.trim()}
+                disabled={!importSecret.trim()}
               >
                 <Text style={s.modalBtnConfirmText}>Import</Text>
               </TouchableOpacity>
@@ -462,4 +532,9 @@ const s = StyleSheet.create({
   modalBtnCancelText: { fontSize: 14, fontWeight: '700', color: '#6B7280' },
   modalBtnConfirm: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#2563EB' },
   modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  modeTabs: { flexDirection: 'row', backgroundColor: '#F3F4F6', padding: 4, borderRadius: 10 },
+  modeTab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  modeTabActive: { backgroundColor: '#FFFFFF' },
+  modeTabText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
+  modeTabTextActive: { color: '#2563EB' },
 });
