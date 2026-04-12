@@ -342,7 +342,7 @@
 | S-M5 | Contract | settleAuth zero-amount 방어 없음 | 🔧 PR #204 |
 | S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | 🔧 IN PROGRESS |
 | S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | 🔧 `fix/SM7-feevault-frontrun` |
-| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ⬜ |
+| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | 🔧 `fix/SM8-trade-offer-validation` |
 | S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ⬜ |
 | S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
