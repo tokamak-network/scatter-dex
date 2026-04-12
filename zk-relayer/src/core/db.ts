@@ -189,17 +189,17 @@ export class PrivateOrderDB {
 
     // [R-6] Authorize order prepared statements
     this.upsertAuthOrder = this.db.prepare(
-      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (@nullifier, @status, @submittedAt, @orderJson, @pubKeyAx, @pubKeyAy, @settleTx)",
     );
     this.updateAuthStatus = this.db.prepare(
-      "UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?",
+      "UPDATE authorize_orders SET status = @status, settle_tx = @settleTx WHERE nullifier = @nullifier",
     );
-    this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?");
+    this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = @nullifier");
     this.selectPendingAuth = this.db.prepare(
       "SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx FROM authorize_orders WHERE status = 'pending'",
     );
     this.purgeAuthNonPending = this.db.prepare(
-      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
+      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < @nowSeconds",
     );
 
     // [R-2] Pending TX tracking
@@ -442,6 +442,9 @@ export class PrivateOrderDB {
       pubKeyAy: BigInt(row.pub_key_ay),
       sigS: BigInt(row.sig_s),
       sigR8x: BigInt(row.sig_r8x),
+      // newSalt/expectedChangeCommitment are not persisted — only used during initial submission
+      newSalt: 0n,
+      expectedChangeCommitment: 0n,
       sigR8y: BigInt(row.sig_r8y),
       ownerSecret: BigInt(row.owner_secret),
       balance: BigInt(row.balance),
@@ -536,12 +539,12 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
-    const total = (this.statsTotalOrders.get() as { count: number }).count;
-    const settled = (this.statsSettledOrders.get() as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
-    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
-    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
-    const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
+    const total = (this.statsTotalOrders.get({}) as { count: number }).count;
+    const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");
@@ -561,7 +564,7 @@ export class PrivateOrderDB {
 
   /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
-    const rows = this.statsSettledVolume.all() as Array<{ sell_token: string; count: number; amounts: string }>;
+    const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
       const total = r.amounts.split(",").reduce((sum, a) => sum + BigInt(a), 0n);
       const tokenBig = BigInt(r.sell_token);
@@ -585,24 +588,24 @@ export class PrivateOrderDB {
   // ─── [R-6] Authorize order persistence ───
 
   saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
-    this.upsertAuthOrder.run(nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null);
+    this.upsertAuthOrder.run({ nullifier, status, submittedAt, orderJson, pubKeyAx: pubKeyAx ?? null, pubKeyAy: pubKeyAy ?? null, settleTx: settleTx ?? null });
   }
 
   updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
-    this.updateAuthStatus.run(status, settleTx ?? null, nullifier);
+    this.updateAuthStatus.run({ status, settleTx: settleTx ?? null, nullifier });
   }
 
   deleteAuthorizeOrder(nullifier: string): void {
-    this.deleteAuthOrder.run(nullifier);
+    this.deleteAuthOrder.run({ nullifier });
   }
 
   loadPendingAuthorizeOrders(): Array<{ nullifier: string; status: string; submittedAt: number; orderJson: string; pubKeyAx: string | null; pubKeyAy: string | null; settleTx: string | null }> {
-    return this.selectPendingAuth.all() as any[];
+    return this.selectPendingAuth.all({}) as any[];
   }
 
   purgeNonPendingAuthorizeOrdersDB(): number {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const result = this.purgeAuthNonPending.run(nowSeconds);
+    const result = this.purgeAuthNonPending.run({ nowSeconds });
     return result.changes;
   }
 

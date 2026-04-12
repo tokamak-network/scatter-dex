@@ -1,4 +1,5 @@
 import { Wallet } from "ethers";
+// @ts-expect-error — no @types/ws installed; runtime types are correct
 import WebSocket from "ws";
 import type { OrderSummary } from "../types/order.js";
 
@@ -147,7 +148,7 @@ export class SharedOrderbookClient {
         console.log("[shared-orderbook] WebSocket connected");
       };
 
-      this.ws.onmessage = (event) => {
+      this.ws.onmessage = (event: any) => {
         try {
           const data = JSON.parse(String(event.data));
           if (data.type === "order:new" && data.order) {
