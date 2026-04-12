@@ -40,6 +40,14 @@ const SETTLE_AUTH_ABI = [
   ) p) external`,
 ];
 
+// scatterDirectAuth ABI — single-party same-token scatter via authorize proof
+const SCATTER_DIRECT_AUTH_ABI = [
+  `function scatterDirectAuth(tuple(
+    ${AUTH_PROOF_TUPLE} proof,
+    uint96 fee
+  ) p) external`,
+];
+
 // cancelPrivate ABI — matches the CancelParams struct in PrivateSettlement.sol
 const CANCEL_PRIVATE_ABI = [
   `function cancelPrivate(tuple(
@@ -84,7 +92,7 @@ export class AuthorizeSubmitter {
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
-      [...SETTLE_AUTH_ABI, ...PRIVATE_CANCEL_EVENT_ABI],
+      [...SETTLE_AUTH_ABI, ...SCATTER_DIRECT_AUTH_ABI, ...PRIVATE_CANCEL_EVENT_ABI],
       this.wallet,
     );
   }
@@ -183,6 +191,44 @@ export class AuthorizeSubmitter {
       );
       this.db?.removePendingTx(txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
+      return txHash;
+    });
+  }
+
+  /**
+   * Submit a same-token scatter via scatterDirectAuth (single authorize proof).
+   * The user generates the proof client-side — no witness data needed.
+   */
+  async submitScatterDirectAuth(
+    order: AuthorizeOrderFile,
+    feeBps: bigint = 0n,
+  ): Promise<string> {
+    const ps = order.publicSignals;
+    const fee = this.computeFee(ps.sellAmount, ps.maxFee, feeBps);
+
+    const params = {
+      proof: this.buildAuthProofStruct(order),
+      fee,
+    };
+
+    return this.withTxLock(async () => {
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirectAuth", [params], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] scatterDirectAuth rejected: ${gasCheck.reason}`);
+        throw new Error(`ScatterDirectAuth rejected: ${gasCheck.reason}`);
+      }
+
+      const { txHash } = await sendAndWait(
+        () => this.settlement.scatterDirectAuth(params, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "scatterDirectAuth",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "scatterDirectAuth"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
+      console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
       return txHash;
     });
   }
