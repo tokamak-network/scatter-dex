@@ -37,10 +37,14 @@ ctx.onmessage = async (event: MessageEvent) => {
     const message = err instanceof Error ? err.message : String(err);
     ctx.postMessage({ type: "error", message });
   } finally {
-    // [S-M12] Defense-in-depth: zero key even if prover threw before its own wipe
-    const { wipeBytes, wipeArray } = await wipePromise;
-    wipeBytes(eddsaKey);
-    wipeArray(event.data.eddsaPrivateKey);
+    // Defense-in-depth: zero key even if prover threw before its own wipe.
+    // Best-effort — never mask the original result/error path.
+    try {
+      const { wipeBytes, wipeArray } = await wipePromise;
+      wipeBytes(eddsaKey);
+      const rawKey = (event.data as Record<string, unknown>)?.eddsaPrivateKey;
+      if (Array.isArray(rawKey)) wipeArray(rawKey);
+    } catch { /* best-effort cleanup */ }
   }
 };
 

@@ -264,9 +264,10 @@ export async function generateAuthorizeProof(
     relayerAddress: relayer,
   });
 
-  const sig: EdDSASignature = await signEdDSA(input.eddsaPrivateKey, orderHash);
-  // [S-M12] Zero private key after signing
-  wipeBytes(input.eddsaPrivateKey);
+  const signingKey = new Uint8Array(input.eddsaPrivateKey);
+  const sig: EdDSASignature = await signEdDSA(signingKey, orderHash);
+  // Zero only the local copy; do not mutate the caller-owned key buffer.
+  wipeBytes(signingKey);
 
   // ── 6. Assemble circuit input ──
   // The field names must match `authorize.circom`'s signal declarations

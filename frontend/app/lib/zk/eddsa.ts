@@ -181,9 +181,12 @@ export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: str
   const wrappingKey = await deriveWrappingKey(signature, account);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(serializeKeyPair(kp));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
-  // [S-M12] Zero plaintext after encryption
-  plaintext.fill(0);
+  let ciphertext: ArrayBuffer;
+  try {
+    ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
+  } finally {
+    plaintext.fill(0);
+  }
   return JSON.stringify({
     v: 1,
     iv: ethers.hexlify(iv),
@@ -204,8 +207,9 @@ export async function deserializeKeyPairEncrypted(stored: string, signature: str
     wrappingKey,
     ethers.getBytes(ct),
   );
-  const result = deserializeKeyPair(new TextDecoder().decode(plaintext));
-  // [S-M12] Zero decrypted plaintext (view over same ArrayBuffer)
-  new Uint8Array(plaintext).fill(0);
-  return result;
+  try {
+    return deserializeKeyPair(new TextDecoder().decode(plaintext));
+  } finally {
+    new Uint8Array(plaintext).fill(0);
+  }
 }
