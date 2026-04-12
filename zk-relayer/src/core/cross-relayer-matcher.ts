@@ -232,7 +232,7 @@ export class CrossRelayerMatchService {
       makerNonce = BigInt(offer.makerNonce);
     } catch {
       const reason = "invalid makerPubKeyAx or makerNonce format";
-      recordRejection(reason);
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
       return { status: "rejected", reason };
     }
     const makerStored = this.orderbook.getByPubKeyAndNonce(makerPubKeyAx, makerNonce);

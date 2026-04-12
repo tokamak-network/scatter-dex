@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PrivateMatcher } from "../src/core/matcher.js";
 import { PrivateOrderbook } from "../src/core/orderbook.js";
 import { RemoteOrderStore } from "../src/core/remote-orderbook.js";
@@ -187,5 +187,48 @@ describe("PrivateMatcher — cross-relayer matching", () => {
     expect(result).not.toBeNull();
     // Local match — not a CrossRelayerMatch
     expect(isCrossRelayerMatch(result!)).toBe(false);
+  });
+});
+
+// ─── [S-M8] handleTradeOffer validation tests ──────────────────
+
+describe("CrossRelayerMatchService — handleTradeOffer validation", () => {
+  it("rejects trade offer with invalid makerNonce format", async () => {
+    // Dynamically mock config to avoid RELAYER_PRIVATE_KEY requirement
+    vi.doMock("../src/config.js", () => ({
+      config: { relayerFee: 0 },
+    }));
+    const { CrossRelayerMatchService } = await import("../src/core/cross-relayer-matcher.js");
+
+    const orderbook = new PrivateOrderbook(1000);
+    const remoteStore = new RemoteOrderStore();
+    const matcher = new PrivateMatcher(orderbook, remoteStore);
+
+    const service = new CrossRelayerMatchService(
+      orderbook, remoteStore, matcher,
+      {} as any, // submitter (unused in this test path)
+      {} as any, // sharedClient (unused)
+      new Map(),
+    );
+
+    // Valid taker order but invalid makerNonce (not a decimal string)
+    const result = await service.handleTradeOffer({
+      makerNonce: "not-a-number",
+      makerPubKeyAx: "12345",
+      takerOrder: {
+        sellToken: TOKEN_A_HEX, buyToken: TOKEN_B_HEX,
+        sellAmount: "1000", buyAmount: "2000", maxFee: "30",
+        expiry: String(Math.floor(Date.now() / 1000) + 3600),
+        nonce: "1", pubKeyAx: "111", pubKeyAy: "222",
+        sigS: "0", sigR8x: "0", sigR8y: "0",
+        ownerSecret: "999", balance: "5000", salt: "888",
+        leafIndex: "0", newSalt: "777", expectedChangeCommitment: "666",
+        claims: [{ secret: "1", recipient: "2", token: TOKEN_A_HEX, amount: "100", releaseTime: "0" }],
+      },
+    }, "0xpeer");
+
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toContain("invalid makerPubKeyAx or makerNonce");
+    vi.doUnmock("../src/config.js");
   });
 });

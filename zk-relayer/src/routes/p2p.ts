@@ -119,6 +119,10 @@ export function createP2PRoutes(
 
       try {
         const offer = req.body as TradeOfferRequest;
+        if (!offer || typeof offer !== "object") {
+          res.status(400).json({ error: "request body must be a JSON object" });
+          return;
+        }
         if (!offer.makerNonce || !offer.makerPubKeyAx || !offer.takerOrder) {
           res.status(400).json({ error: "missing required fields: makerNonce, makerPubKeyAx, takerOrder" });
           return;
