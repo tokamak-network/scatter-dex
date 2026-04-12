@@ -21,6 +21,8 @@ import {
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -34,7 +36,14 @@ const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
 let _db: PrivateOrderDB | null = null;
 
-function pubKeyId(ax: string, ay: string): string {
+// BabyJub field elements are at most 254 bits (~77 decimal digits).
+// Reject oversized strings before BigInt parsing to prevent CPU DoS.
+const MAX_PUBKEY_LEN = 80;
+
+export function pubKeyId(ax: string, ay: string): string {
+  if (ax.length > MAX_PUBKEY_LEN || ay.length > MAX_PUBKEY_LEN) {
+    throw new RangeError("pubKey value too large");
+  }
   return `${BigInt(ax).toString()}:${BigInt(ay).toString()}`;
 }
 
@@ -50,13 +59,21 @@ function decPubKeyCount(ax: string, ay: string): void {
   else pendingCountByPubKey.set(id, count);
 }
 
+let _sharedClient: SharedOrderbookClient | null = null;
+let _orderIdMap: Map<string, string> | null = null;
+
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
   readLimiter?: RequestHandler,
   db?: PrivateOrderDB,
+  sharedClient?: SharedOrderbookClient | null,
+  orderIdMap?: Map<string, string>,
+  authWriteLimiter?: RequestHandler,
 ): Router {
+  _sharedClient = sharedClient ?? null;
+  _orderIdMap = orderIdMap ?? null;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -86,6 +103,7 @@ export function createAuthorizeOrderRoutes(
 
   // POST /api/authorize-orders — submit a Half-proof order
   if (writeLimiter) router.post("/", writeLimiter);
+  if (authWriteLimiter) router.post("/", authWriteLimiter);
   router.post("/", (async (req: Request, res: Response) => {
     try {
       const body = req.body as Record<string, unknown>;
@@ -159,6 +177,8 @@ export function createAuthorizeOrderRoutes(
       };
       authorizeOrders.set(nullifier, stored);
       _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
+      // [R-8] Record order submission for throughput metrics
+      recordOrderSubmitted();
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -182,7 +202,7 @@ export function createAuthorizeOrderRoutes(
           res.json({ status: "settled", txHash, nullifier });
           return;
         } catch (err) {
-          // Keep a tombstone entry (status=failed) to prevent resubmission
+          // Keep a tombstone entry (status=cancelled) to prevent resubmission
           // of the same nullifier — the TX may have been broadcast but not confirmed.
           stored.status = "cancelled";
           decPubKeyCount(pubKeyAx, pubKeyAy);
@@ -197,7 +217,26 @@ export function createAuthorizeOrderRoutes(
         }
       }
 
-      // ── 5b. Different tokens — try to match ──
+      // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
+      if (_sharedClient) {
+        const ps = order.publicSignals;
+        const orderbookId = await _sharedClient.postOrder({
+          nonce: nullifier,
+          pubKeyAx: pubKeyAx!,
+          sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
+          buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
+          sellAmount: ps.sellAmount,
+          buyAmount: ps.buyAmount,
+          minFillAmount: ps.buyAmount,
+          maxFee: Number(ps.maxFee),
+          expiry: Number(ps.expiry),
+        });
+        if (orderbookId && _orderIdMap) {
+          _orderIdMap.set(nullifier, orderbookId);
+        }
+      }
+
+      // ── 6. Try to match ──
       const match = findMatch(stored);
       if (match) {
         console.log("[authorize-orders] Match found! Submitting settleAuth...");
@@ -217,6 +256,16 @@ export function createAuthorizeOrderRoutes(
           decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
           _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
           _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
+
+          // Cancel both sides from shared orderbook
+          if (_sharedClient && _orderIdMap) {
+            const makerNull = match.maker.order.publicSignals.nullifier;
+            const takerNull = match.taker.order.publicSignals.nullifier;
+            const makerOid = _orderIdMap.get(makerNull);
+            const takerOid = _orderIdMap.get(takerNull);
+            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
+            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
+          }
 
           res.json({
             status: "settled",
@@ -332,6 +381,10 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
+    if (_sharedClient && _orderIdMap) {
+      const oid = _orderIdMap.get(key);
+      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+    }
     toDelete.push(key);
   }
   for (const key of toDelete) {
@@ -375,6 +428,11 @@ export function purgeNonPendingAuthorizeOrders(): number {
       // Settled orders already had their counter decremented on settlement.
       if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
+      // Cancel from shared orderbook if still listed
+      if (_sharedClient && _orderIdMap) {
+        const oid = _orderIdMap.get(key);
+        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
       }
       authorizeOrders.delete(key);
       removed++;

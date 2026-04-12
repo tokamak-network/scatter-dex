@@ -31,6 +31,7 @@ import {
   formatProofForSolidity,
 } from "./commitment";
 import { signEdDSA } from "./eddsa";
+import { wipeBytes } from "./secure-wipe";
 import { TAG_COMMITMENT_V2 } from "./tags";
 import { COMMIT_TREE_DEPTH } from "./constants";
 
@@ -149,7 +150,14 @@ export async function generateCancelProof(
   // Distinct from orderHash (Poseidon-9) so signatures are not cross-replayable.
   const relayer = BigInt(input.relayer);
   const cancelMsg = await poseidonHash([oldNonceNullifier, relayer]);
-  const sig = await signEdDSA(input.eddsaPrivateKey, cancelMsg);
+  const signingKey = Uint8Array.from(input.eddsaPrivateKey);
+  let sig;
+  try {
+    sig = await signEdDSA(signingKey, cancelMsg);
+  } finally {
+    // Zero only the local copy; do not mutate the caller-owned key buffer.
+    wipeBytes(signingKey);
+  }
 
   // ── 5. Assemble circuit input ──
   const circuitInput = {
