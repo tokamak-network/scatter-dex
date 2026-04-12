@@ -21,6 +21,7 @@ import {
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -160,7 +161,7 @@ export function createAuthorizeOrderRoutes(
       authorizeOrders.set(nullifier, stored);
       _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
       // [R-8] Record order submission for throughput metrics
-      import("../core/metrics.js").then(({ recordOrderSubmitted }) => recordOrderSubmitted());
+      recordOrderSubmitted();
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +

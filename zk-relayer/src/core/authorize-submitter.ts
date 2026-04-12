@@ -12,6 +12,7 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
+import { recordSettlement } from "./metrics.js";
 import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
@@ -184,7 +185,6 @@ export class AuthorizeSubmitter {
       );
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
-      const { recordSettlement } = await import("./metrics.js");
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;

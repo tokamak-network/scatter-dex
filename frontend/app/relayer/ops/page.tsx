@@ -56,6 +56,16 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
+function StatCard({ label, value, color = "text-on-surface", sub }: { label: string; value: string; color?: string; sub?: string }) {
+  return (
+    <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
+      <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      {sub && <div className="text-[10px] text-on-surface-variant/40">{sub}</div>}
+    </div>
+  );
+}
+
 function CheckBadge({ status }: { status: "ok" | "error" | undefined }) {
   if (status === "ok") {
     return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-green-500/10 text-green-600"><CheckCircle2 className="w-3 h-3" /> OK</span>;
@@ -183,43 +193,13 @@ export default function OpsMonitorPage() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Instances</div>
-          <div className="text-2xl font-bold text-on-surface">{onlineRelayers.length}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Healthy</div>
-          <div className="text-2xl font-bold text-green-500">{healthyCount}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Degraded</div>
-          <div className={`text-2xl font-bold ${degradedCount > 0 ? "text-red-400" : "text-on-surface-variant/30"}`}>{degradedCount}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Total Orders</div>
-          <div className="text-2xl font-bold text-on-surface">{totalOrders}</div>
-          <div className="text-[10px] text-on-surface-variant/40">{totalSettled} settled / {totalPending} pending</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Settlement Rate</div>
-          <div className="text-2xl font-bold text-primary">
-            {totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"}
-          </div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Gas Spent</div>
-          <div className="text-2xl font-bold text-amber-500">
-            {totalGasSpent > 0 ? `${totalGasSpent.toFixed(4)}` : "-"}
-          </div>
-          <div className="text-[10px] text-on-surface-variant/40">ETH total</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Throughput</div>
-          <div className="text-2xl font-bold text-on-surface">
-            {avgOrdersPerMin > 0 ? avgOrdersPerMin.toFixed(1) : "-"}
-          </div>
-          <div className="text-[10px] text-on-surface-variant/40">orders/min</div>
-        </div>
+        <StatCard label="Instances" value={String(onlineRelayers.length)} />
+        <StatCard label="Healthy" value={String(healthyCount)} color="text-green-500" />
+        <StatCard label="Degraded" value={String(degradedCount)} color={degradedCount > 0 ? "text-red-400" : "text-on-surface-variant/30"} />
+        <StatCard label="Total Orders" value={String(totalOrders)} sub={`${totalSettled} settled / ${totalPending} pending`} />
+        <StatCard label="Settlement Rate" value={totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"} color="text-primary" />
+        <StatCard label="Gas Spent" value={totalGasSpent > 0 ? totalGasSpent.toFixed(4) : "-"} color="text-amber-500" sub="ETH total" />
+        <StatCard label="Throughput" value={avgOrdersPerMin > 0 ? avgOrdersPerMin.toFixed(1) : "-"} sub="orders/min" />
       </div>
 
       {/* Relayer Table */}

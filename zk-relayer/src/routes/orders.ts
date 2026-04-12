@@ -4,6 +4,7 @@ import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { parsePrivateOrder, serializePrivateOrder, type PrivateOrderStatus } from "../types/order.js";
 import { poseidonHash, verifyEdDSA, computeClaimLeaf, buildMerkleTree } from "../core/zk-prover.js";
 import { config } from "../config.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 
 export function createPrivateOrderRoutes(
@@ -57,7 +58,6 @@ export function createPrivateOrderRoutes(
       if (orderbook.hasNonce(order.pubKeyAx, order.nonce)) { res.status(400).json({ error: "duplicate nonce" }); return; }
 
       // [R-8] Record order submission for throughput metrics
-      const { recordOrderSubmitted } = await import("../core/metrics.js");
       recordOrderSubmitted();
 
       // ScatterDirect: same-token redistribution

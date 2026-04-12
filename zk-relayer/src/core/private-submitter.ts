@@ -19,6 +19,7 @@ import {
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
+import { recordSettlement } from "./metrics.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -381,7 +382,6 @@ export class PrivateSubmitter {
       );
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
-      const { recordSettlement } = await import("./metrics.js");
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - settleStart);
       console.log(`Private settlement tx: ${txHash}`);
 
@@ -537,8 +537,7 @@ export class PrivateSubmitter {
       );
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
-      const { recordSettlement: recordScatter } = await import("./metrics.js");
-      recordScatter(parseFloat(gasCheck.gasCostEth), Date.now() - scatterStart);
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - scatterStart);
       console.log(`ScatterDirect tx: ${txHash}`);
 
       // Record claims root so this relayer only pays gas for its own claims.

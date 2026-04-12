@@ -65,9 +65,17 @@ class RingBuffer {
 
 class ThroughputCounter {
   private timestamps: number[] = [];
+  private recordCount = 0;
 
   record(): void {
     this.timestamps.push(Date.now());
+    // Trim stale entries every 100 records to prevent unbounded growth
+    if (++this.recordCount % 100 === 0) this.trim();
+  }
+
+  private trim(windowMs = 5 * 60_000): void {
+    const cutoff = Date.now() - windowMs;
+    this.timestamps = this.timestamps.filter((t) => t > cutoff);
   }
 
   /** Orders per minute over the given window (default 5 min). */
@@ -139,19 +147,28 @@ export interface RuntimeMetrics {
 }
 
 export function getMetrics(): RuntimeMetrics {
+  const gasAvg = gasCostEth.avg();
+  const gasMin = gasCostEth.min();
+  const gasMax = gasCostEth.max();
+  const gasLast = gasCostEth.latest();
+  const durAvg = settleDurationMs.avg();
+  const durMin = settleDurationMs.min();
+  const durMax = settleDurationMs.max();
+  const durLast = settleDurationMs.latest();
+
   return {
     gas: {
-      avgCostEth: gasCostEth.avg(),
-      minCostEth: gasCostEth.min(),
-      maxCostEth: gasCostEth.max(),
-      lastCostEth: gasCostEth.latest(),
+      avgCostEth: gasAvg,
+      minCostEth: gasMin,
+      maxCostEth: gasMax,
+      lastCostEth: gasLast,
       totalSpentEth: Math.round(totalGasEth * 1e6) / 1e6,
     },
     settlement: {
-      avgDurationMs: settleDurationMs.avg() !== null ? Math.round(settleDurationMs.avg()!) : null,
-      minDurationMs: settleDurationMs.min() !== null ? Math.round(settleDurationMs.min()!) : null,
-      maxDurationMs: settleDurationMs.max() !== null ? Math.round(settleDurationMs.max()!) : null,
-      lastDurationMs: settleDurationMs.latest() !== null ? Math.round(settleDurationMs.latest()!) : null,
+      avgDurationMs: durAvg !== null ? Math.round(durAvg) : null,
+      minDurationMs: durMin !== null ? Math.round(durMin) : null,
+      maxDurationMs: durMax !== null ? Math.round(durMax) : null,
+      lastDurationMs: durLast !== null ? Math.round(durLast) : null,
       totalCount: totalSettlements,
       perMinute: settleThroughput.perMinute(),
     },
