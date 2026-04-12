@@ -5,7 +5,7 @@
 > **프레임워크**: Expo + React Native
 > **관련 문서**:
 > - [../../frontend/](../../frontend/) — 현재 웹 프론트엔드
-> - [../architecture-v2.md](../architecture-v2.md) — 전체 아키텍처
+> - [../architecture-v2.md](../../architecture/architecture-v2.md) — 전체 아키텍처
 > - **tokamon** 앱 참고 (Expo/RN 구조 레퍼런스)
 
 ---

@@ -52,5 +52,5 @@ Without pubKeyBind, a user could provide a fake pubKey to the relayer. The relay
 ## References
 
 - `circuits/authorize.circom` lines 485-507
-- `docs/PAPER.md` § 8 (Compliance Model)
+- `docs/research/PAPER.md` § 8 (Compliance Model)
 - `docs/adr/001-no-self-trade-detection.md` (related privacy decision)

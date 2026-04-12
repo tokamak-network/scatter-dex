@@ -19,10 +19,10 @@ These three are **mutually dependent** and must be designed and rolled out toget
 ## Why this is happening
 
 ### Problem 1: Witness data exposure
-Today, relayers receive `ownerSecret`, `salt`, `balance`, `claimSecrets`, EdDSA private keys for every order they handle. This is documented in `docs/relayer-security.md` §Data Classification as critical-sensitivity data, and the entire current threat model (§1-§3) revolves around protecting it. The whole problem disappears if relayers never see the witness in the first place.
+Today, relayers receive `ownerSecret`, `salt`, `balance`, `claimSecrets`, EdDSA private keys for every order they handle. This is documented in `docs/operations/relayer-security.md` §Data Classification as critical-sensitivity data, and the entire current threat model (§1-§3) revolves around protecting it. The whole problem disappears if relayers never see the witness in the first place.
 
 ### Problem 2: HTTP Trade Offer is unauditable
-The current cross-relayer matching protocol (`docs/design-shared-orderbook.md` Phase 2) sends full orders with secrets between relayers over HTTPS. There's no on-chain commitment to a trade before settlement. A misbehaving relayer can simply ignore a Trade Offer with no consequences. This blocks the deployment of any meaningful slashing mechanism.
+The current cross-relayer matching protocol (`docs/architecture/shared-orderbook.md` Phase 2) sends full orders with secrets between relayers over HTTPS. There's no on-chain commitment to a trade before settlement. A misbehaving relayer can simply ignore a Trade Offer with no consequences. This blocks the deployment of any meaningful slashing mechanism.
 
 ### Problem 3: No bond slashing
 `RelayerRegistry.sol` line 11 explicitly notes:
@@ -35,7 +35,7 @@ The current bond is purely a registration deposit, not an economic security prim
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      USER (browser)                              │
-│   - Generates own ZK proof in browser (rapidsnark-wasm)         │
+│   - Generates own ZK proof in browser (snarkjs WASM)           │
 │   - Submits proof + fee to chosen relayer                       │
 │   - Goes offline                                                │
 │                                                                  │

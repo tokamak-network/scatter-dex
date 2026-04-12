@@ -5,9 +5,9 @@
 > **Related docs**:
 > - [../circuit-split/design.md](../circuit-split/design.md) — maker/taker proof split (architectural prerequisite)
 > - [../relayer-protocol/design.md](../relayer-protocol/design.md) — Waku v2 commit-reveal that produces dispute evidence
-> - [../design-shared-orderbook.md](../design-shared-orderbook.md) — current Trade Offer (legacy)
-> - [../relayer-security.md](../relayer-security.md) — operational threat model
-> - [../PAPER.md](../PAPER.md) §Compliance — dual-CA identity model that makes reputation enforceable
+> - [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current Trade Offer (legacy)
+> - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model
+> - [../PAPER.md](../../research/PAPER.md) §Compliance — dual-CA identity model that makes reputation enforceable
 > - [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer bond + identity gate (no changes required)
 > - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — settlement events used as ground truth
 
@@ -25,7 +25,7 @@ The naive fix is to add bond slashing, which requires complex contract logic: di
 zkScatter has two structural properties that make a **record-only reputation system more effective than economic slashing**:
 
 1. **Relayers earn from fees**, and fees only come from users. A relayer with a public misbehavior record loses users → loses fees → effectively self-slashes economically.
-2. **Relayers are not anonymous**. The dual-CA identity model (see [../PAPER.md](../PAPER.md) §Compliance) requires relayer-side **minimum-masked identity** — organization name, jurisdiction, license number are visible on-chain. A misbehaving relayer cannot escape by spinning up a new anonymous identity; rebuilding reputation under a new legal entity is expensive and slow.
+2. **Relayers are not anonymous**. The dual-CA identity model (see [../PAPER.md](../../research/PAPER.md) §Compliance) requires relayer-side **minimum-masked identity** — organization name, jurisdiction, license number are visible on-chain. A misbehaving relayer cannot escape by spinning up a new anonymous identity; rebuilding reputation under a new legal entity is expensive and slow.
 
 Combined:
 ```
@@ -532,8 +532,8 @@ The L-3 note in `RelayerRegistry.sol` is now answered by: **"slashing is unneces
 - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — settlement contract (one mapping added)
 - [../circuit-split/design.md](../circuit-split/design.md) — split proofs that produce commit-reveal evidence
 - [../relayer-protocol/design.md](../relayer-protocol/design.md) — Waku v2 protocol that produces signed commits/reveals
-- [../PAPER.md](../PAPER.md) §Compliance — dual-CA identity model
-- [../architecture-v2.md](../architecture-v2.md) — overall architecture entry point
+- [../PAPER.md](../../research/PAPER.md) §Compliance — dual-CA identity model
+- [../architecture-v2.md](../../architecture/architecture-v2.md) — overall architecture entry point
 
 ### External
 - **Lemon market** (Akerlof 1970) — economic theory of how unrated quality drives bad actors out of markets

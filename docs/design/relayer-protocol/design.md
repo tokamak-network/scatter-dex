@@ -3,10 +3,10 @@
 > **Status**: Design reference (pre-implementation)
 > **Scope**: Protocol specification for relayer-to-relayer communication in the federated zkScatter network. Replaces (or evolves) the current HTTP-based Trade Offer protocol with a Waku v2-based commit-reveal exchange.
 > **Related docs**:
-> - [../design-shared-orderbook.md](../design-shared-orderbook.md) — current Trade Offer protocol (HTTP-based, Phase 2/3.6, already implemented)
+> - [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current Trade Offer protocol (HTTP-based, Phase 2/3.6, already implemented)
 > - [../dispute-registry/design.md](../dispute-registry/design.md) — dispute resolution that depends on this protocol's commit-reveal messages
-> - [../relayer-security.md](../relayer-security.md) — operational threat model
-> - [../PAPER.md](../PAPER.md) — compliance and trust model
+> - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model
+> - [../PAPER.md](../../research/PAPER.md) — compliance and trust model
 > - [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
 > - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
 
@@ -16,15 +16,15 @@
 
 The current zkScatter relayer network already has:
 
-- **Shared Orderbook server** (`shared-orderbook/`) — a central bulletin board where relayers post public order summaries and discover cross-relayer matches. See [../design-shared-orderbook.md](../design-shared-orderbook.md) §Phase 1.
-- **HTTP Trade Offer protocol** — when a match is detected, the taker's relayer sends the **full order (with secrets)** to the maker's relayer over HTTPS. The maker's relayer re-verifies the EdDSA signature, generates the settlement proof, and submits on-chain. See [../design-shared-orderbook.md](../design-shared-orderbook.md) §Phase 2, §Phase 3.6.
+- **Shared Orderbook server** (`shared-orderbook/`) — a central bulletin board where relayers post public order summaries and discover cross-relayer matches. See [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) §Phase 1.
+- **HTTP Trade Offer protocol** — when a match is detected, the taker's relayer sends the **full order (with secrets)** to the maker's relayer over HTTPS. The maker's relayer re-verifies the EdDSA signature, generates the settlement proof, and submits on-chain. See [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) §Phase 2, §Phase 3.6.
 - **Trustless fee split** (Phase 3.6, implemented) — `makerRelayer` and `takerRelayer` are bound in the ZK proof via `orderHash`. Either relayer can submit, but neither can redirect the other's fee.
 
 ### 1.2 What is missing
 
 The current protocol has three structural problems that this document addresses:
 
-1. **Secrets cross the relayer boundary in plaintext.** The Trade Offer transmits the full order, including `ownerSecret`, `salt`, and `balance`, between relayers. Even with TLS, this creates a trust surface described in [../relayer-security.md](../relayer-security.md) §3 (Trade Offer interception) and §1 (malicious relayer operator).
+1. **Secrets cross the relayer boundary in plaintext.** The Trade Offer transmits the full order, including `ownerSecret`, `salt`, and `balance`, between relayers. Even with TLS, this creates a trust surface described in [../relayer-security.md](../../operations/relayer-security.md) §3 (Trade Offer interception) and §1 (malicious relayer operator).
 2. **No cryptographic commitment to a trade.** The taker's relayer can send a Trade Offer and the maker's relayer can simply ignore it without on-chain evidence. "Aborting" is indistinguishable from "never received it". See [../dispute-registry/design.md](../dispute-registry/design.md) §"What has NOT shifted yet".
 3. **Central shared orderbook is a single point of failure.** The current implementation acknowledges this (§"Phase 4: Decentralization (future)") and proposes libp2p as the replacement. This doc specifies Waku v2 as the concrete transport.
 
@@ -40,7 +40,7 @@ The current protocol has three structural problems that this document addresses:
 This document does **not** specify:
 - The actual circuit split (`maker_order.circom`, `taker_match.circom`) — that is a separate document
 - The dispute resolution contract and evidence validation — see [../dispute-registry/design.md](../dispute-registry/design.md)
-- User-facing UX flows — see [../zk-private-trading.md](../zk-private-trading.md)
+- User-facing UX flows — see [../zk-private-trading.md](../../guides/zk-private-trading.md)
 
 ### 1.4 Architectural prerequisites
 
@@ -53,7 +53,7 @@ Without these shifts, the commit-reveal messages in this document cannot carry t
 
 ## 2. Reference Model: Steam Trading Bot Ecosystem
 
-zkScatter's federated relayer network is modeled after the **Steam trading bot ecosystem** (DMarket, Skinport, CS.Money, CSGOFloat, Buff163). The Steam analogy is already used in [../design-shared-orderbook.md](../design-shared-orderbook.md) §"Reference: Steam Trading Bot Ecosystem". This document deepens that analogy to cover the cross-bot communication layer — the part Steam handles centrally through the Valve API but that zkScatter must do decentralized.
+zkScatter's federated relayer network is modeled after the **Steam trading bot ecosystem** (DMarket, Skinport, CS.Money, CSGOFloat, Buff163). The Steam analogy is already used in [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) §"Reference: Steam Trading Bot Ecosystem". This document deepens that analogy to cover the cross-bot communication layer — the part Steam handles centrally through the Valve API but that zkScatter must do decentralized.
 
 ### 2.1 What Steam does that we copy
 
@@ -107,7 +107,7 @@ The Steam bot model has structural weaknesses that a decentralized, non-custodia
 
 ### 2.3 The key insight
 
-From [../design-shared-orderbook.md](../design-shared-orderbook.md) lines 22-23:
+From [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) lines 22-23:
 
 > Steam bots don't share private inventory data with each other. They share **public listings** through a central market, and settlement happens via Steam's **Trade Offer protocol**.
 
@@ -822,7 +822,7 @@ When a breaking change is needed:
 
 ### 10.3 Interactions with existing threat model
 
-From [../relayer-security.md](../relayer-security.md):
+From [../relayer-security.md](../../operations/relayer-security.md):
 
 | relayer-security.md threat | This protocol's effect |
 |---|---|
@@ -961,10 +961,10 @@ Can a relayer operate as a "solo" node, receiving only its own users' orders and
 ## 15. References
 
 ### Internal
-- [../design-shared-orderbook.md](../design-shared-orderbook.md) — current HTTP Trade Offer protocol (the baseline this replaces)
+- [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current HTTP Trade Offer protocol (the baseline this replaces)
 - [../dispute-registry/design.md](../dispute-registry/design.md) — on-chain dispute resolver (depends on this protocol's commit-reveal)
-- [../relayer-security.md](../relayer-security.md) — operational threat model for individual relayers
-- [../PAPER.md](../PAPER.md) — overall zkScatter architecture and compliance model
+- [../relayer-security.md](../../operations/relayer-security.md) — operational threat model for individual relayers
+- [../PAPER.md](../../research/PAPER.md) — overall zkScatter architecture and compliance model
 - [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
 - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
 

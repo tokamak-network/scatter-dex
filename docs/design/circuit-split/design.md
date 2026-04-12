@@ -4,15 +4,15 @@
 >
 > **Scope**: Replace the monolithic `circuits/settle.circom` with the Half-proof primitive — each user proves their own side in the browser, the relayer matches two proofs without ever seeing witness data, and a single `settleAuth` transaction settles the trade.
 >
-> **Design decisions referenced from this document** (see [../architecture-v2.md](../architecture-v2.md) §"Design decisions"):
+> **Design decisions referenced from this document** (see [../architecture-v2.md](../../architecture/architecture-v2.md) §"Design decisions"):
 > - **D1**: Self-trade is intentionally **not** prevented at the protocol layer. No per-trader-stable value is ever exposed as a public output of `authorize.circom`. The earlier `pubKeyHash` public output and any "compare maker/taker pubkey" check have been removed.
 >
 > **Related docs**:
-> - [../architecture-v2.md](../architecture-v2.md) — entry point + design decisions
+> - [../architecture-v2.md](../../architecture/architecture-v2.md) — entry point + design decisions
 > - [../relayer-protocol/design.md](../relayer-protocol/design.md) — Waku-based relayer communication protocol that consumes the Half-proofs
 > - [../dispute-registry/design.md](../dispute-registry/design.md) — dispute registry that records misbehavior detected via commit-reveal of Half-proofs
-> - [../relayer-security.md](../relayer-security.md) — operational threat model — sections §1, §2, §3 become obsolete after Half-proof
-> - [../design-shared-orderbook.md](../design-shared-orderbook.md) — current HTTP Trade Offer (deprecated by Half-proof)
+> - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model — sections §1, §2, §3 become obsolete after Half-proof
+> - [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current HTTP Trade Offer (deprecated by Half-proof)
 > - [../../circuits/settle.circom](../../circuits/settle.circom) — legacy monolithic circuit (being replaced)
 > - [../../circuits/authorize.circom](../../circuits/authorize.circom) — Half-proof primitive (current implementation target)
 > - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target (`settleAuth` to be added)
@@ -23,7 +23,7 @@
 
 The existing `circuits/settle.circom` is a **single monolithic circuit** (~30K constraints) that simultaneously proves facts about both maker and taker. Because both parties' witness data (`ownerSecret`, `salt`, `balance`, EdDSA keys, claim preimages) is needed to generate the proof, **somebody** must collect all of it in one place. In the current implementation, that "somebody" is the relayer.
 
-This creates the root privacy problem documented in [../relayer-security.md](../relayer-security.md) §1-§3:
+This creates the root privacy problem documented in [../relayer-security.md](../../operations/relayer-security.md) §1-§3:
 
 > | Data | Sensitivity | Location | Lifetime |
 > | `ownerSecret` | **Critical** — proves commitment ownership | Memory + SQLite DB | Until settlement |
@@ -31,7 +31,7 @@ This creates the root privacy problem documented in [../relayer-security.md](../
 > | `balance` | **High** — reveals deposited amount | Memory + SQLite DB | Until settlement |
 > | `claims` (secrets, recipients) | **High** — defines payout structure | Memory + SQLite DB | Until all claims processed |
 
-Every zkScatter relayer must currently handle this sensitive data. The Trade Offer protocol ([../design-shared-orderbook.md](../design-shared-orderbook.md) Phase 2) even transmits it between relayers over HTTPS during cross-relayer matching. This is the single biggest source of trust that users place in relayer operators.
+Every zkScatter relayer must currently handle this sensitive data. The Trade Offer protocol ([../design-shared-orderbook.md](../../architecture/shared-orderbook.md) Phase 2) even transmits it between relayers over HTTPS during cross-relayer matching. This is the single biggest source of trust that users place in relayer operators.
 
 ### 1.2 The architectural goal
 
@@ -54,7 +54,7 @@ A single 30K-constraint proof requires all witness in one place. If maker and ta
 
 Two pre-existing architectural features make the split clean:
 
-- **Trustless fee binding** ([../design-shared-orderbook.md](../design-shared-orderbook.md) §Phase 3.6): `makerRelayer` and `takerRelayer` are already separately bound in the ZK proof and in users' EdDSA signatures. The contract already treats them as independent parties.
+- **Trustless fee binding** ([../design-shared-orderbook.md](../../architecture/shared-orderbook.md) §Phase 3.6): `makerRelayer` and `takerRelayer` are already separately bound in the ZK proof and in users' EdDSA signatures. The contract already treats them as independent parties.
 - **Cross-party constraints are few and simple**: most of `settle.circom`'s constraints are per-party (commitment membership, nullifiers, signature verification, claims validation). The cross-party checks (token compatibility, price compatibility, balance/claim caps) are a small fraction and can be moved to the contract as arithmetic on public signals.
 
 ## 2. Current State Analysis
@@ -120,7 +120,7 @@ Per line: one party's claim total vs. the other party's sell amount.
 
 The earlier design proposed comparing maker and taker public keys (or their Poseidon hashes) at the contract layer to reject same-party trades. **This check has been removed in the Half-proof realization** and is intentionally not present in `authorize.circom` or `settleAuth`.
 
-The full rationale lives in [../architecture-v2.md](../architecture-v2.md) §"Design decisions / D1". Summary:
+The full rationale lives in [../architecture-v2.md](../../architecture/architecture-v2.md) §"Design decisions / D1". Summary:
 
 1. A rational user has no reason to self-trade — static fees + gas costs make it pure self-loss
 2. A malicious user is economically penalised by the same fees and gas
@@ -1042,7 +1042,7 @@ The maker's proof includes `makerExpiry`. If the proof isn't consumed by `settle
 
 If the maker or taker prepays fees to a relayer, what happens on cancel/expiry?
 
-**Current model** (from [../design-shared-orderbook.md](../design-shared-orderbook.md)): fees are collected from the trade itself at settlement. No prepayment.
+**Current model** (from [../design-shared-orderbook.md](../../architecture/shared-orderbook.md)): fees are collected from the trade itself at settlement. No prepayment.
 
 **Split architecture**: same. Fees remain part of the settle proof's public signals. Cancellation = no settlement = no fee transfer.
 
@@ -1248,9 +1248,9 @@ Does the `IdentityGate` check happen at order submission, matching, or settlemen
 - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — current settlement (Phase 3.6 fee binding preserved)
 - [../relayer-protocol/design.md](../relayer-protocol/design.md) — Waku protocol that transports the split proofs
 - [../dispute-registry/design.md](../dispute-registry/design.md) — dispute registry that records misbehavior in the split-protocol commit-reveal layer
-- [../relayer-security.md](../relayer-security.md) — threat model (sections §1-§3 become obsolete after this split)
-- [../PAPER.md](../PAPER.md) — overall zkScatter architecture
-- [../gas-cost-analysis.md](../gas-cost-analysis.md) — gas baseline for comparison
+- [../relayer-security.md](../../operations/relayer-security.md) — threat model (sections §1-§3 become obsolete after this split)
+- [../PAPER.md](../../research/PAPER.md) — overall zkScatter architecture
+- [../gas-cost-analysis.md](../../operations/gas-cost-analysis.md) — gas baseline for comparison
 
 ### External
 - **rapidsnark-wasm**: fastest browser-capable Groth16 prover (https://github.com/iden3/rapidsnark)
