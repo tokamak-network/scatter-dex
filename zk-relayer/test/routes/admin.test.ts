@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import request from "supertest";
 import { createAdminRoutes } from "../../src/routes/admin.js";
 import { clearSanctionedPubKeys } from "../../src/core/sanctions-list.js";
+import { config, updateRelayerFee } from "../../src/config.js";
 import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
 
 const ADMIN_KEY = process.env.ADMIN_API_KEY;
@@ -79,6 +80,11 @@ describe("/api/admin/status + /balance", () => {
 });
 
 describe("/api/admin/fee", () => {
+  // PUT /fee mutates the module-level `config.relayerFee`. Snapshot it so
+  // a failure doesn't bleed into other tests sharing the same vitest worker.
+  const originalFee = config.relayerFee;
+  afterEach(() => { updateRelayerFee(originalFee); });
+
   it("rejects non-integer with 400", async () => {
     const res = await request(buildApp())
       .put("/api/admin/fee")

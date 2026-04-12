@@ -1,6 +1,13 @@
 // Populate required env vars before config.ts is imported anywhere
 // in the test graph. Consumed by vitest.config.ts as a setupFile.
-// Ensures tests run without a .env file (e.g. in CI).
+//
+// Load order matters: `.env` → then defaults. dotenv.config() does not
+// override already-set values, so calling it before `??=` makes `.env`
+// win and defaults fill only what's missing (CI case).
+import { config as loadDotenv } from "dotenv";
+
+loadDotenv();
+
 process.env.RPC_URL ??= "http://localhost:8545";
 process.env.RELAYER_PRIVATE_KEY ??= "0x" + "a".repeat(64);
 process.env.COMMITMENT_POOL_ADDRESS ??= "0x" + "1".repeat(40);
