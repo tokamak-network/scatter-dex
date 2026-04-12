@@ -343,7 +343,7 @@
 | S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ✅ PR #208 |
 | S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ✅ PR #209 |
 | S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ✅ PR #210 |
-| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | 🔧 PR #212 |
+| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ✅ PR #212 |
 | S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
 | S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ✅ PR #211 |
