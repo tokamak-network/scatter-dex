@@ -63,8 +63,8 @@ export function createAuthorizeOrderRoutes(
   sharedClient?: SharedOrderbookClient | null,
   orderIdMap?: Map<string, string>,
 ): Router {
-  if (sharedClient) _sharedClient = sharedClient;
-  if (orderIdMap) _orderIdMap = orderIdMap;
+  _sharedClient = sharedClient ?? null;
+  _orderIdMap = orderIdMap ?? null;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -182,8 +182,8 @@ export function createAuthorizeOrderRoutes(
         const orderbookId = await _sharedClient.postOrder({
           nonce: nullifier,
           pubKeyAx: pubKeyAx!,
-          sellToken: ps.sellToken.toLowerCase(),
-          buyToken: ps.buyToken.toLowerCase(),
+          sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
+          buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
           sellAmount: ps.sellAmount,
           buyAmount: ps.buyAmount,
           minFillAmount: ps.buyAmount,
@@ -222,8 +222,8 @@ export function createAuthorizeOrderRoutes(
             const takerNull = match.taker.order.publicSignals.nullifier;
             const makerOid = _orderIdMap.get(makerNull);
             const takerOid = _orderIdMap.get(takerNull);
-            if (makerOid) { _sharedClient.cancelOrder(makerOid); _orderIdMap.delete(makerNull); }
-            if (takerOid) { _sharedClient.cancelOrder(takerOid); _orderIdMap.delete(takerNull); }
+            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
+            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
           }
 
           res.json({
@@ -339,7 +339,7 @@ export function drainAuthorizeOrders(): number {
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
     if (_sharedClient && _orderIdMap) {
       const oid = _orderIdMap.get(key);
-      if (oid) { _sharedClient.cancelOrder(oid); _orderIdMap.delete(key); }
+      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
     }
     toDelete.push(key);
   }
@@ -388,7 +388,7 @@ export function purgeNonPendingAuthorizeOrders(): number {
       // Cancel from shared orderbook if still listed
       if (_sharedClient && _orderIdMap) {
         const oid = _orderIdMap.get(key);
-        if (oid) { _sharedClient.cancelOrder(oid); _orderIdMap.delete(key); }
+        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
       }
       authorizeOrders.delete(key);
       removed++;
