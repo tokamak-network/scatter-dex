@@ -17,7 +17,7 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, pubKeyId } from "./routes/authorize-orders.js";
 import { createHealthRoutes } from "./routes/health.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
@@ -129,7 +129,8 @@ async function main() {
   // Security: body size limit
   app.use(express.json({ limit: "10kb" }));
 
-  // Security: rate limiting
+  // Security: rate limiting — two layers to mitigate multi-IP bypass.
+  // Layer 1: IP-based global limiter (catches naive floods)
   const writeLimiter = rateLimit({
     windowMs: 60_000,
     max: 30,
@@ -140,6 +141,25 @@ async function main() {
     windowMs: 60_000,
     max: 120,
     message: { error: "too many requests" },
+  });
+
+  // Layer 2: pubKey-based limiter for authorize-orders POST.
+  // Even if the attacker rotates IPs, each ZK identity is limited to
+  // 10 writes/min. The key is extracted from the request body.
+  const authWriteLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    message: { error: "too many requests for this identity" },
+    keyGenerator: (req) => {
+      const body = req.body as Record<string, unknown>;
+      const ax = body.pubKeyAx as string | undefined;
+      const ay = body.pubKeyAy as string | undefined;
+      if (ax && ay) {
+        try { return `pubkey:${pubKeyId(ax, ay)}`; }
+        catch { /* fall through to IP */ }
+      }
+      return req.ip ?? "unknown";
+    },
   });
 
   app.use("/api/private-orders", createPrivateOrderRoutes(
@@ -157,6 +177,7 @@ async function main() {
   authSubmitter.setDB(db);
   app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
+    authWriteLimiter,
   ));
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
