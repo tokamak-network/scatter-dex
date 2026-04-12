@@ -27,6 +27,11 @@ export const ERC20_ABI = [
   "function decimals() external view returns (uint8)",
 ];
 
+export const MOCK_TOKEN_ABI = [
+  ...ERC20_ABI,
+  "function mint(address to, uint256 amount) external",
+];
+
 export const PRIVATE_SETTLEMENT_ABI = [
   "function nullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",

@@ -203,9 +203,9 @@ export async function deserializeKeyPairEncrypted(stored: string, signature: str
   if (v !== 1) throw new Error("Unsupported encrypted key format");
   const wrappingKey = await deriveWrappingKey(signature, account);
   const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ethers.getBytes(iv) },
+    { name: "AES-GCM", iv: ethers.getBytes(iv) as BufferSource },
     wrappingKey,
-    ethers.getBytes(ct),
+    ethers.getBytes(ct) as BufferSource,
   );
   try {
     return deserializeKeyPair(new TextDecoder().decode(plaintext));

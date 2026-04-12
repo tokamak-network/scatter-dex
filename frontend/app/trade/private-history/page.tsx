@@ -189,7 +189,7 @@ export default function PrivateHistoryPage() {
     try {
       const { loadClaimsFiles } = await import("../../lib/zk/note-storage");
       const files = await loadClaimsFiles();
-      const sorted = (files as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const sorted = (files as unknown as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const enriched = await fetchStatuses(sorted);
       setOrders(enriched);
     } catch (e) {
