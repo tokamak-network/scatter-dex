@@ -1,7 +1,7 @@
 /**
  * HTTP-level API route tests using supertest.
  *
- * Tests cover: status codes, error responses, rate limiting,
+ * Tests cover: status codes, error responses, rate-limit responses,
  * content types, and input validation for the main public endpoints.
  * Admin and auth-protected endpoints are tested with correct/missing keys.
  */
@@ -240,7 +240,7 @@ describe("Admin API", () => {
     expect(res.status).toBe(401);
   });
 
-  it("PUT /fee rejects missing bps", async () => {
+  it("PUT /fee rejects missing feeBps", async () => {
     const res = await request(app)
       .put("/api/admin/fee")
       .set("x-admin-key", ADMIN_KEY)
@@ -248,12 +248,13 @@ describe("Admin API", () => {
     expect(res.status).toBe(400);
   });
 
-  it("PUT /fee rejects bps > 10000", async () => {
+  it("PUT /fee rejects feeBps > 10000", async () => {
     const res = await request(app)
       .put("/api/admin/fee")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ bps: 10001 });
+      .send({ feeBps: 10001 });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/feeBps/);
   });
 
   it("POST /pause returns 200", async () => {
@@ -280,16 +281,25 @@ describe("Admin API", () => {
 describe("Body size limit", () => {
   let app: express.Express;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    const { createAdminRoutes } = await import("../src/routes/admin.js");
     app = express();
-    app.use(express.json({ limit: "1kb" }));
-    app.post("/test", (_req, res) => res.json({ ok: true }));
+    // Match production limit from src/index.ts (10kb)
+    app.use(express.json({ limit: "10kb" }));
+    app.use("/api/admin", createAdminRoutes({
+      submitter: mockSubmitter(),
+      db: mockDB(),
+      orderbook: new PrivateOrderbook(),
+      drainAuthorizeOrders: () => 0,
+      getAuthorizeOrderStats: () => ({ pending: 0, matched: 0, total: 0 }),
+    }));
   });
 
-  it("rejects oversized JSON body with 413", async () => {
-    const largeBody = { data: "x".repeat(2000) };
+  it("rejects oversized JSON body with 413 on a real POST route", async () => {
+    const largeBody = { data: "x".repeat(11 * 1024) };
     const res = await request(app)
-      .post("/test")
+      .post("/api/admin/pause")
+      .set("x-admin-key", ADMIN_KEY)
       .send(largeBody);
     expect(res.status).toBe(413);
   });
