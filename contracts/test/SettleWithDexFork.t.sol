@@ -98,7 +98,7 @@ contract SettleWithDexForkTest is Test {
         address sellToken,
         address buyToken,
         uint128 sellAmount,
-        uint96 totalLocked,
+        uint128 totalLocked,
         bytes32 nullifier,
         bytes32 nonceNull,
         bytes32 newCommit,
@@ -133,7 +133,7 @@ contract SettleWithDexForkTest is Test {
     function test_fork_uniswapV3_wethToUsdc() public {
         uint128 sellAmount = 1 ether;
         // Use a low minimum so the test doesn't break when ETH price fluctuates
-        uint96 totalLocked = 1e6; // 1 USDC — any valid swap will exceed this
+        uint128 totalLocked = 1e6; // 1 USDC — any valid swap will exceed this
 
         bytes32 nullifier = bytes32(uint256(0xe1));
         bytes32 nonceNull = bytes32(uint256(0xe2));
@@ -164,7 +164,7 @@ contract SettleWithDexForkTest is Test {
         assertTrue(settlement.nonceNullifiers(nonceNull));
 
         // Verify: claims group registered with at least totalLocked
-        (address token, uint96 locked,) = settlement.claimsGroups(bytes32(uint256(0xe4)));
+        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xe4)));
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 
@@ -184,7 +184,7 @@ contract SettleWithDexForkTest is Test {
     function test_fork_curve3pool_usdcToDai() public {
         uint128 sellAmount = 10_000e6; // 10,000 USDC
         // Use a low minimum so the test doesn't break if the pool is imbalanced
-        uint96 totalLocked = 1e18; // 1 DAI — any valid stablecoin swap will exceed this
+        uint128 totalLocked = 1e18; // 1 DAI — any valid stablecoin swap will exceed this
 
         bytes32 nullifier = bytes32(uint256(0xc1));
         bytes32 nonceNull = bytes32(uint256(0xc2));
@@ -215,7 +215,7 @@ contract SettleWithDexForkTest is Test {
         assertTrue(settlement.nullifiers(nullifier));
 
         // Verify: claims group registered
-        (address token, uint96 locked,) = settlement.claimsGroups(bytes32(uint256(0xc4)));
+        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xc4)));
         assertEq(token, DAI);
         assertEq(locked, totalLocked);
 
@@ -235,7 +235,7 @@ contract SettleWithDexForkTest is Test {
     function test_fork_uniswapV3_slippageRevert() public {
         uint128 sellAmount = 1 ether;
         // Set absurdly high totalLocked so swap output < requirement
-        uint96 totalLocked = type(uint96).max; // ~79 billion USDC
+        uint128 totalLocked = type(uint128).max; // extreme edge — tests overflow path
 
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
@@ -283,7 +283,7 @@ contract SettleWithDexForkTest is Test {
         uint128 sellAmount = 10 ether;
         // 1% fee = 0.1 ETH → swap 9.9 ETH, at ~$2200 → ~$21,780
         // totalLocked conservatively low
-        uint96 totalLocked = 10_000e6;
+        uint128 totalLocked = 10_000e6;
 
         bytes32 nullifier = bytes32(uint256(0xd1));
         bytes32 nonceNull = bytes32(uint256(0xd2));
@@ -313,7 +313,7 @@ contract SettleWithDexForkTest is Test {
         assertEq(wethFee, 0.1 ether, "Treasury should receive 1% WETH platform fee");
 
         // Claims group registered
-        (address token, uint96 locked,) = settlement.claimsGroups(bytes32(uint256(0xd4)));
+        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xd4)));
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 
@@ -329,7 +329,7 @@ contract SettleWithDexForkTest is Test {
 
     function test_fork_1inch_wethToUsdc() public {
         uint128 sellAmount = 1 ether;
-        uint96 totalLocked = 1e6; // 1 USDC — low min for fork robustness
+        uint128 totalLocked = 1e6; // 1 USDC — low min for fork robustness
 
         bytes32 nullifier = bytes32(uint256(0x1a));
         bytes32 nonceNull = bytes32(uint256(0x1b));

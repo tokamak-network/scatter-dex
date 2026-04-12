@@ -100,12 +100,12 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.nonceNullifiers(TAKER_NONCE_NULL));
 
         // Claims groups should be registered
-        (address token1, uint96 locked1, uint96 claimed1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (uint128 locked1, uint128 claimed1, address token1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(token1, address(weth));
         assertEq(locked1, 5 ether);
         assertEq(claimed1, 0);
 
-        (address token2, uint96 locked2,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
+        (uint128 locked2,, address token2) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
         assertEq(token2, address(usdc));
         assertEq(locked2, 10_000e18);
     }
@@ -176,7 +176,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, claimAmount);
     }
 
@@ -201,7 +201,7 @@ contract PrivateSettlementTest is Test {
         assertEq(recipient1.balance, 2 ether);
         assertEq(recipient2.balance, 3 ether);
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether); // all claimed
     }
 
@@ -278,7 +278,7 @@ contract PrivateSettlementTest is Test {
             2 ether, address(weth), recipient1, releaseTime
         );
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 2 ether);
     }
 
@@ -299,7 +299,7 @@ contract PrivateSettlementTest is Test {
         settlement.settlePrivate(p);
 
         // Verify claims groups created
-        (address token, uint96 locked, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(token, address(weth));
         assertEq(locked, 5 ether);
         assertEq(claimed, 0);
@@ -320,7 +320,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
-        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, claimAmount1);
 
         // 3. Claim #2 — remaining amount
@@ -335,7 +335,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_2));
 
         // All claims done — totalClaimed == totalLocked
-        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether, "all claims should be consumed");
 
         // 4. Verify double-claim is rejected
@@ -367,7 +367,7 @@ contract PrivateSettlementTest is Test {
         assertEq(usdc.balanceOf(recipient1), claimAmount, "taker recipient should receive USDC");
         assertEq(recipient1.balance, 0, "no ETH should be sent for non-WETH claim");
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
         assertEq(claimed, claimAmount);
     }
 
@@ -410,7 +410,7 @@ contract PrivateSettlementTest is Test {
         assertEq(recipient1.balance, 2 ether);
 
         // Taker's empty group should exist but have 0 locked
-        (address t2, uint96 locked2,) = settlement.claimsGroups(CLAIMS_ROOT_EMPTY);
+        (uint128 locked2,, address t2) = settlement.claimsGroups(CLAIMS_ROOT_EMPTY);
         assertEq(t2, address(usdc));
         assertEq(locked2, 0);
     }

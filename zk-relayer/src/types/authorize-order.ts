@@ -50,7 +50,7 @@ export interface AuthorizePublicSignals {
   maxFee: string;           // [9] uint16 (bps)
   expiry: string;           // [10] uint64 (unix seconds)
   claimsRoot: string;       // [11] bytes32
-  totalLocked: string;      // [12] uint96
+  totalLocked: string;      // [12] uint128 (circuit Num2Bits(128))
   relayer: string;          // [13] uint160 as uint256
   orderHash: string;        // [14] bytes32
 }
@@ -231,7 +231,7 @@ export function validateAuthorizeOrder(
   if (buyAmountBig >= (1n << 128n)) return "buyAmount exceeds uint128";
   if (maxFeeBig >= (1n << 16n)) return "maxFee exceeds uint16";
   if (expiryBig >= (1n << 64n)) return "expiry exceeds uint64";
-  if (totalLockedBig >= (1n << 96n)) return "totalLocked exceeds uint96";
+  if (totalLockedBig >= (1n << 128n)) return "totalLocked exceeds uint128";
 
   // Address-range checks
   const sellToken = BigInt(ps.sellToken);

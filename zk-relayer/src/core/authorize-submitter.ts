@@ -18,29 +18,23 @@ import type {
   AuthorizeMatch,
 } from "../types/authorize-order.js";
 
+// AuthorizeProof tuple — shared between maker and taker in settleAuth
+const AUTH_PROOF_TUPLE = `tuple(
+  uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
+  uint256 commitmentRoot,
+  bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
+  address sellToken, address buyToken,
+  uint128 sellAmount, uint128 buyAmount,
+  uint16 maxFee, uint64 expiry,
+  bytes32 claimsRoot, uint128 totalLocked,
+  address relayer, bytes32 orderHash
+)`;
+
 // settleAuth ABI — matches the SettleAuthParams struct in PrivateSettlement.sol
 const SETTLE_AUTH_ABI = [
   `function settleAuth(tuple(
-    tuple(
-      uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
-      uint256 commitmentRoot,
-      bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
-      address sellToken, address buyToken,
-      uint128 sellAmount, uint128 buyAmount,
-      uint16 maxFee, uint64 expiry,
-      bytes32 claimsRoot, uint96 totalLocked,
-      address relayer, bytes32 orderHash
-    ) maker,
-    tuple(
-      uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
-      uint256 commitmentRoot,
-      bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
-      address sellToken, address buyToken,
-      uint128 sellAmount, uint128 buyAmount,
-      uint16 maxFee, uint64 expiry,
-      bytes32 claimsRoot, uint96 totalLocked,
-      address relayer, bytes32 orderHash
-    ) taker,
+    ${AUTH_PROOF_TUPLE} maker,
+    ${AUTH_PROOF_TUPLE} taker,
     uint96 feeTokenMaker,
     uint96 feeTokenTaker
   ) p) external`,
