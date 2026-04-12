@@ -314,9 +314,6 @@ export default function PrivateHistoryPage() {
         o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
       setOrders((prev) => prev.map(updater));
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
-
-      // Stay in "done" state until user explicitly dismisses — previously auto-dismissed
-      // after 2s, which users could miss and then be confused about the cancel outcome.
     } catch (e: any) {
       console.error("Cancel failed:", e);
       setCancelError(e?.reason || e?.message || "Unknown error");
