@@ -514,17 +514,9 @@ export default function PrivateHistoryPage() {
                       <span className="break-all">{cancelError}</span>
                     </div>
                   ) : cancelStep === "done" ? (
-                    <div className="flex items-center justify-between gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 shrink-0" />
-                        <span>Order cancelled. Escrow rotated to new commitment.</span>
-                      </div>
-                      <button
-                        onClick={() => { setCancellingNonce(null); setCancelStep("idle"); }}
-                        className="shrink-0 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors"
-                      >
-                        Dismiss
-                      </button>
+                    <div className="flex items-center gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>Order cancelled. Escrow rotated to new commitment.</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-3 rounded-md">
@@ -532,7 +524,7 @@ export default function PrivateHistoryPage() {
                       {CANCEL_STEP_LABEL[cancelStep] ?? "Processing..."}
                     </div>
                   )}
-                  {cancelStep === "error" && (
+                  {(cancelStep === "done" || cancelStep === "error") && (
                     <button
                       onClick={() => { setCancellingNonce(null); setCancelStep("idle"); setCancelError(null); }}
                       className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"

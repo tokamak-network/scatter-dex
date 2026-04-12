@@ -200,6 +200,9 @@ export default function PrivateOrderPage() {
   const [changeSalt, setChangeSalt] = useState<bigint | null>(null);
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
   const [orderType, setOrderType] = useState<OrderType>("limit");
+  // Snapshot of the order type at submission so the success screen's copy
+  // and CTAs don't flip if the user toggles orderType after submitting.
+  const [submittedOrderType, setSubmittedOrderType] = useState<OrderType | null>(null);
   const [slippageBps, setSlippageBps] = useState("50"); // 0.5% default
   const [manualPrice, setManualPrice] = useState(""); // fallback when DEX prices fail
 
@@ -606,6 +609,7 @@ export default function PrivateOrderPage() {
         }
       }
 
+      setSubmittedOrderType("limit");
       setStep("submitted");
       setSellAmount("");
       setBuyAmount("");
@@ -734,6 +738,7 @@ export default function PrivateOrderPage() {
         } catch { /* */ }
       }
 
+      setSubmittedOrderType("market");
       setStep("submitted");
       setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
@@ -1337,10 +1342,10 @@ export default function PrivateOrderPage() {
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
             <Check className="w-12 h-12 text-emerald-400 mx-auto" />
             <p className="text-on-surface font-bold text-lg">
-              {orderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
+              {submittedOrderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
             </p>
             <p className="text-sm text-on-surface-variant/70">
-              {orderType === "market"
+              {submittedOrderType === "market"
                 ? "Your market order has been settled via DEX on-chain. Claim your tokens on the Private Claim page."
                 : "Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity."}
             </p>
@@ -1350,22 +1355,31 @@ export default function PrivateOrderPage() {
               </div>
             )}
             <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-              <Link
-                href="/trade/private-history"
-                className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
-              >
-                View My Orders
-              </Link>
-              {orderType === "market" && (
+              {submittedOrderType === "market" ? (
+                <>
+                  <Link
+                    href="/trade/private-claim"
+                    className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
+                  >
+                    Go to Claim
+                  </Link>
+                  <Link
+                    href="/trade/private-history"
+                    className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+                  >
+                    View My Orders
+                  </Link>
+                </>
+              ) : (
                 <Link
-                  href="/trade/private-claim"
-                  className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+                  href="/trade/private-history"
+                  className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
                 >
-                  Go to Claim
+                  View My Orders
                 </Link>
               )}
               <button
-                onClick={() => { setStep("create_order"); refreshNotes(); }}
+                onClick={() => { setStep("create_order"); setSubmittedOrderType(null); refreshNotes(); }}
                 className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
               >
                 Create Another Order
