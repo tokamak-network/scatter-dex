@@ -63,8 +63,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error DexOutputInsufficient(uint256 actual, uint256 required);
     error DexPlatformFeeTooHigh();
     error AddressSanctioned();
+    error EmptyBatch();
+    error BatchTooLarge();
 
     uint256 public constant MAX_DEX_PLATFORM_FEE_BPS = 500; // 5%
+
+    /// @notice Max number of claims per `claimWithProofBatch` call. Limits
+    ///         worst-case gas per tx (~300K × N) so a batch cannot exceed the
+    ///         block gas limit. Frontends should chunk larger sets.
+    uint256 public constant MAX_CLAIM_BATCH_SIZE = 20;
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateSettled(
@@ -1164,6 +1171,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Claim ───────────────────────────────────────────────────
 
+    /// @notice Calldata struct for a single claim within `claimWithProofBatch`.
+    struct ClaimParams {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        bytes32 claimsRoot;
+        bytes32 claimNullifier;
+        uint256 amount;
+        address token;
+        address recipient;
+        uint256 releaseTime;
+    }
+
     /// @notice Claim funds from a private settlement using ZK proof.
     ///         Proves membership in a claimsRoot without revealing which settle.
     function claimWithProof(
@@ -1178,6 +1198,47 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint256 releaseTime
     ) external nonReentrant {
         if (paused) revert ContractPaused();
+        _executeClaim(
+            proofA, proofB, proofC,
+            claimsRoot, claimNullifier,
+            amount, token, recipient, releaseTime
+        );
+    }
+
+    /// @notice Batch variant: execute multiple claims in one tx.
+    /// @dev    Each claim is independently verified (no circuit-level aggregation).
+    ///         Reverts atomically if any claim fails — callers must ensure every
+    ///         element is individually valid. Capped by `MAX_CLAIM_BATCH_SIZE`
+    ///         to stay within block gas limits; frontends should chunk larger sets.
+    function claimWithProofBatch(ClaimParams[] calldata claims) external nonReentrant {
+        if (paused) revert ContractPaused();
+        uint256 n = claims.length;
+        if (n == 0) revert EmptyBatch();
+        if (n > MAX_CLAIM_BATCH_SIZE) revert BatchTooLarge();
+
+        for (uint256 i = 0; i < n;) {
+            ClaimParams calldata c = claims[i];
+            _executeClaim(
+                c.proofA, c.proofB, c.proofC,
+                c.claimsRoot, c.claimNullifier,
+                c.amount, c.token, c.recipient, c.releaseTime
+            );
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Assumes `paused` already checked and reentrancy lock already held by the caller.
+    function _executeClaim(
+        uint[2] calldata proofA,
+        uint[2][2] calldata proofB,
+        uint[2] calldata proofC,
+        bytes32 claimsRoot,
+        bytes32 claimNullifier,
+        uint256 amount,
+        address token,
+        address recipient,
+        uint256 releaseTime
+    ) internal {
         if (recipient == address(0)) revert ZeroAddress();
         _requireNotSanctioned(recipient);
 
