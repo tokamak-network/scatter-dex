@@ -105,11 +105,18 @@ describe("DELETE /api/p2p/orders/:id", () => {
 });
 
 describe("POST /api/p2p/trade-offer", () => {
-  it("returns 404 when trade-offer handler is not registered", async () => {
+  it("returns 404 (route-not-found, auth never runs) when handler is unregistered", async () => {
+    // Send WITHOUT auth headers to prove the 404 is route-level, not a
+    // silent 401 bypass — the registered variant returns 401 below.
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn()));
-    const headers = await authHeaders("POST", "/api/p2p/trade-offer");
-    const res = await request(app).post("/api/p2p/trade-offer").set(headers).send({});
+    const res = await request(app).post("/api/p2p/trade-offer").send({});
     expect(res.status).toBe(404);
+  });
+
+  it("registered handler still enforces auth (401 without headers)", async () => {
+    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), vi.fn()));
+    const res = await request(app).post("/api/p2p/trade-offer").send({});
+    expect(res.status).toBe(401);
   });
 
   it("rejects missing makerNonce with 400", async () => {

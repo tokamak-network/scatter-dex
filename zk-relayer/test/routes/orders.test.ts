@@ -53,8 +53,14 @@ describe("GET /api/private-orders/:pubKeyAx", () => {
         return [];
       },
     });
-    await request(buildApp(orderbook)).get("/api/private-orders/1?limit=9999&offset=-5");
+    const app = buildApp(orderbook);
+    await request(app).get("/api/private-orders/1?limit=9999&offset=-5");
     expect(calls[0]).toEqual({ limit: 200, offset: 0 });
+    // `|| 50` zero-falsy quirk (same as relayer-stats): limit=0 → 50
+    await request(app).get("/api/private-orders/1?limit=0");
+    expect(calls[1].limit).toBe(50);
+    await request(app).get("/api/private-orders/1?limit=-1");
+    expect(calls[2].limit).toBe(1);
   });
 });
 
@@ -92,5 +98,6 @@ describe("DELETE /api/private-orders/:pubKeyAx/:nonce", () => {
       .delete("/api/private-orders/1/1")
       .set("x-cancel-signature", "{not-json");
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/signature/i);
   });
 });

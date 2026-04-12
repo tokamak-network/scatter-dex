@@ -1,15 +1,10 @@
-// Force TOKEN_LIST to a known single entry before importing vault.ts (which
-// parses it at module load). Override any value already set via `.env`.
-process.env.TOKEN_LIST = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:USDT:6";
-
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import request from "supertest";
-import { createVaultRoutes } from "../../src/routes/vault.js";
 import { mountRouter, makeSubmitterStub } from "./helpers.js";
 
-// Mock ethers.Contract so vault.ts's FEE_VAULT_ABI queries resolve without
-// a real provider. vault.ts uses the `ethers` namespace import, so the
-// namespace's `Contract` must be overridden alongside the top-level one.
+// Mock ethers.Contract before vault.ts is imported. Override both the
+// top-level export and the `ethers` namespace-scoped one since vault.ts
+// uses `import { ethers } from "ethers"` then `new ethers.Contract(...)`.
 vi.mock("ethers", async () => {
   const actual = await vi.importActual<typeof import("ethers")>("ethers");
   const MockContract = vi.fn().mockImplementation(() => ({
@@ -17,14 +12,22 @@ vi.mock("ethers", async () => {
     treasury: async () => "0x" + "7".repeat(40),
     balances: async () => 42n,
   }));
-  return {
-    ...actual,
-    Contract: MockContract,
-    ethers: { ...actual.ethers, Contract: MockContract },
-  };
+  return { ...actual, Contract: MockContract, ethers: { ...actual.ethers, Contract: MockContract } };
 });
 
 const ADMIN_KEY = process.env.ADMIN_API_KEY as string;
+
+// vault.ts parses TOKEN_LIST at module load, so control it via
+// resetModules + dynamic import. This keeps the test hermetic regardless
+// of any `.env` TOKEN_LIST value.
+const TOKEN_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+let createVaultRoutes: typeof import("../../src/routes/vault.js").createVaultRoutes;
+
+beforeAll(async () => {
+  vi.resetModules();
+  process.env.TOKEN_LIST = `${TOKEN_ADDR}:USDT:6`;
+  ({ createVaultRoutes } = await import("../../src/routes/vault.js"));
+});
 
 function buildApp(submitter = makeSubmitterStub()) {
   return mountRouter("/api/vault", createVaultRoutes(submitter));
@@ -37,12 +40,9 @@ describe("GET /api/vault", () => {
     expect(res.body.enabled).toBe(true);
     expect(res.body.platformFeeBps).toBe(100);
     expect(res.body.treasury).toMatch(/^0x7+$/);
-    // All entries should use the mocked `balances` return (42n → "42")
-    expect(res.body.balances.length).toBeGreaterThan(0);
-    for (const b of res.body.balances) {
-      expect(b.balance).toBe("42");
-      expect(typeof b.token).toBe("string");
-    }
+    expect(res.body.balances).toEqual([
+      { token: TOKEN_ADDR, symbol: "USDT", decimals: 6, balance: "42" },
+    ]);
   });
 });
 
