@@ -6,9 +6,8 @@
  *
  * Tracks:
  * - Settlement gas costs (ETH)
- * - Settlement durations (ms)
+ * - Settlement durations (ms, from TX submission to receipt)
  * - Order throughput (orders/min rolling window)
- * - Pending TX count
  */
 
 // ─── Ring buffer for recent samples ────────────────────────────
@@ -95,7 +94,7 @@ const SAMPLE_SIZE = 100; // keep last 100 settlements
 /** Gas cost in ETH (float) for each settlement TX. */
 const gasCostEth = new RingBuffer(SAMPLE_SIZE);
 
-/** Settlement duration in ms (from order match → TX mined). */
+/** Settlement duration in ms (from TX submission → receipt confirmed). */
 const settleDurationMs = new RingBuffer(SAMPLE_SIZE);
 
 /** Order submission throughput. */

@@ -155,7 +155,7 @@ export default function OpsMonitorPage() {
   const totalSettled = statuses.reduce((sum, s) => sum + (s.stats?.settledOrders ?? 0), 0);
   const totalPending = statuses.reduce((sum, s) => sum + (s.stats?.pendingOrders ?? 0), 0);
   const totalGasSpent = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.gas.totalSpentEth ?? 0), 0);
-  const avgOrdersPerMin = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.orders.submittedPerMinute ?? 0), 0);
+  const totalOrdersPerMin = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.orders.submittedPerMinute ?? 0), 0);
 
   return (
     <div>
@@ -199,7 +199,7 @@ export default function OpsMonitorPage() {
         <StatCard label="Total Orders" value={String(totalOrders)} sub={`${totalSettled} settled / ${totalPending} pending`} />
         <StatCard label="Settlement Rate" value={totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"} color="text-primary" />
         <StatCard label="Gas Spent" value={totalGasSpent > 0 ? totalGasSpent.toFixed(4) : "-"} color="text-amber-500" sub="ETH total" />
-        <StatCard label="Throughput" value={avgOrdersPerMin > 0 ? avgOrdersPerMin.toFixed(1) : "-"} sub="orders/min" />
+        <StatCard label="Throughput" value={totalOrdersPerMin > 0 ? totalOrdersPerMin.toFixed(1) : "-"} sub="orders/min" />
       </div>
 
       {/* Relayer Table */}
