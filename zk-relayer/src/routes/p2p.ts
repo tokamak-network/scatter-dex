@@ -119,8 +119,27 @@ export function createP2PRoutes(
 
       try {
         const offer = req.body as TradeOfferRequest;
+        if (!offer || typeof offer !== "object") {
+          res.status(400).json({ error: "request body must be a JSON object" });
+          return;
+        }
         if (!offer.makerNonce || !offer.makerPubKeyAx || !offer.takerOrder) {
           res.status(400).json({ error: "missing required fields: makerNonce, makerPubKeyAx, takerOrder" });
+          return;
+        }
+
+        // [S-M8] Validate field types and format before passing to handler.
+        // Without this, BigInt() conversion throws unguarded in handleTradeOffer.
+        if (typeof offer.makerNonce !== "string" || !/^\d+$/.test(offer.makerNonce)) {
+          res.status(400).json({ error: "makerNonce must be a decimal string" });
+          return;
+        }
+        if (typeof offer.makerPubKeyAx !== "string" || !/^\d+$/.test(offer.makerPubKeyAx)) {
+          res.status(400).json({ error: "makerPubKeyAx must be a decimal string" });
+          return;
+        }
+        if (typeof offer.takerOrder !== "object" || offer.takerOrder === null || Array.isArray(offer.takerOrder)) {
+          res.status(400).json({ error: "takerOrder must be an object" });
           return;
         }
 

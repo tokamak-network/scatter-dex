@@ -225,8 +225,16 @@ export class CrossRelayerMatchService {
     }
 
     // 2. Find the local maker order by (pubKeyAx, nonce) — unique composite key
-    const makerPubKeyAx = BigInt(offer.makerPubKeyAx);
-    const makerNonce = BigInt(offer.makerNonce);
+    let makerPubKeyAx: bigint;
+    let makerNonce: bigint;
+    try {
+      makerPubKeyAx = BigInt(offer.makerPubKeyAx);
+      makerNonce = BigInt(offer.makerNonce);
+    } catch {
+      const reason = "invalid makerPubKeyAx or makerNonce format";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
+    }
     const makerStored = this.orderbook.getByPubKeyAndNonce(makerPubKeyAx, makerNonce);
 
     if (!makerStored) {

@@ -297,6 +297,38 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 }
 
 /**
+ * [R-7] Drain all pending authorize orders — cancel them and return count.
+ * Called by admin API to clear the order queue before maintenance or shutdown.
+ */
+export function drainAuthorizeOrders(): number {
+  const toDelete: string[] = [];
+  for (const [key, stored] of authorizeOrders) {
+    if (stored.status !== "pending") continue;
+    stored.status = "cancelled";
+    if (stored.pubKeyAx && stored.pubKeyAy) {
+      decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+    }
+    _db?.updateAuthorizeOrderStatus(key, "cancelled");
+    toDelete.push(key);
+  }
+  for (const key of toDelete) {
+    authorizeOrders.delete(key);
+  }
+  return toDelete.length;
+}
+
+/** Get current authorize order counts by status. */
+export function getAuthorizeOrderStats(): { pending: number; matched: number; total: number } {
+  let pending = 0;
+  let matched = 0;
+  for (const [, stored] of authorizeOrders) {
+    if (stored.status === "pending") pending++;
+    else if (stored.status === "matched") matched++;
+  }
+  return { pending, matched, total: authorizeOrders.size };
+}
+
+/**
  * Purge non-pending and expired orders from the in-memory store.
  * Call periodically (e.g. from a setInterval in index.ts) to prevent
  * unbounded memory growth. Removes:

@@ -295,7 +295,7 @@
 
 | # | 이슈 | 내용 | 상태 | 브랜치 |
 |---|------|------|------|--------|
-| R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | 🔧 | PR #205 |
+| R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | ✅ | PR #205 |
 | R-8 | 메트릭스 없음 | Prometheus 미연동. 가스비/매칭률/proof 시간 미추적 | ⬜ | — |
 | R-9 | 운영 문서 없음 | 배포 가이드, 설정 레퍼런스, 트러블슈팅 가이드 없음 | ⬜ | — |
 | R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | ⬜ | — |
@@ -338,15 +338,15 @@
 | S-M1 | Circuit | settle.circom LessThan(252)→LessThan(5) 최적화 | ✅ PR #179 (H-5) |
 | S-M2 | Circuit | settle.circom expiry/timestamp range check 없음 | ✅ 이미 구현됨 (LessEqThan(252) + TIMESTAMP_TOLERANCE) |
 | S-M3 | Circuit | authorize.circom expiry 회로 내 미검증 (컨트랙트 의존) | ✅ 의도적 설계 — orderHash에 EdDSA 서명, 컨트랙트 settleAuth()에서 block.timestamp 검증 |
-| S-M4 | Circuit | cancel.circom balance range check 없음 | 🔧 `fix/SM4-cancel-balance-range-check` |
-| S-M5 | Contract | settleAuth zero-amount 방어 없음 | 🔧 PR #204 |
-| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | 🔧 IN PROGRESS |
+| S-M4 | Circuit | cancel.circom balance range check 없음 | ✅ PR #207 |
+| S-M5 | Contract | settleAuth zero-amount 방어 없음 | ✅ PR #204 |
+| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ✅ PR #208 |
 | S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ✅ PR #209 |
-| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ⬜ |
-| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | 🔧 IN PROGRESS |
+| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ✅ PR #210 |
+| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ✅ PR #212 |
 | S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
-| S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ⬜ |
+| S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ✅ PR #211 |
 | S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ✅ PR #206 |
 | S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ⬜ |
-| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | ⬜ |
+| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | 🔧 IN PROGRESS |
