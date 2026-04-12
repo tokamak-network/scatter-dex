@@ -14,6 +14,7 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { adminAuth } from "../middleware/admin-auth.js";
 import { config, updateRelayerFee } from "../config.js";
+import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { PrivateOrderbook } from "../core/orderbook.js";
@@ -151,6 +152,70 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       privateOrdersCancelled: privateRemoved,
       authorizeOrdersCancelled: authRemoved,
     });
+  });
+
+  // [R-10] GET /api/admin/sanctions — list sanctioned pubKeys
+  router.get("/sanctions", (_req: Request, res: Response) => {
+    res.json({ count: getSanctionedCount(), entries: getSanctionedPubKeys() });
+  });
+
+  // [R-10] POST /api/admin/sanctions — add pubKey(s) to sanctions list
+  router.post("/sanctions", ...wl, (req: Request, res: Response) => {
+    const entries = req.body?.entries as Array<{ pubKeyAx: string; pubKeyAy: string }> | undefined;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      res.status(400).json({ error: "body.entries must be a non-empty array of { pubKeyAx, pubKeyAy }" });
+      return;
+    }
+    // Validate all entries up-front (including BigInt parseability) so we
+    // never partially succeed: reject 400 with the offending index if any
+    // entry is malformed, rather than bubbling into a 500 via Express.
+    const invalid: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (typeof e?.pubKeyAx !== "string" || typeof e?.pubKeyAy !== "string") {
+        invalid.push(i);
+        continue;
+      }
+      try { BigInt(e.pubKeyAx); BigInt(e.pubKeyAy); } catch { invalid.push(i); }
+    }
+    if (invalid.length > 0) {
+      res.status(400).json({ error: "invalid pubKeyAx/pubKeyAy in body.entries", invalidIndices: invalid });
+      return;
+    }
+    let added = 0;
+    for (const e of entries) {
+      if (addSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) added++;
+    }
+    console.log(`[admin] Added ${added} sanctioned pubKeys`);
+    res.json({ added });
+  });
+
+  // [R-10] DELETE /api/admin/sanctions — remove pubKey(s) from sanctions list
+  router.delete("/sanctions", ...wl, (req: Request, res: Response) => {
+    const entries = req.body?.entries as Array<{ pubKeyAx: string; pubKeyAy: string }> | undefined;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      res.status(400).json({ error: "body.entries must be a non-empty array of { pubKeyAx, pubKeyAy }" });
+      return;
+    }
+    const invalid: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (typeof e?.pubKeyAx !== "string" || typeof e?.pubKeyAy !== "string") {
+        invalid.push(i);
+        continue;
+      }
+      try { BigInt(e.pubKeyAx); BigInt(e.pubKeyAy); } catch { invalid.push(i); }
+    }
+    if (invalid.length > 0) {
+      res.status(400).json({ error: "invalid pubKeyAx/pubKeyAy in body.entries", invalidIndices: invalid });
+      return;
+    }
+    let removed = 0;
+    for (const e of entries) {
+      if (removeSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) removed++;
+    }
+    console.log(`[admin] Removed ${removed} sanctioned pubKeys`);
+    res.json({ removed });
   });
 
   return router;

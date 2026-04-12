@@ -20,8 +20,10 @@ import type {
 } from "../types/authorize-order.js";
 
 // AuthorizeProof tuple — shared between maker and taker in settleAuth
+// Must match contracts/src/zk/PrivateSettlement.sol AuthorizeProof struct exactly.
 const AUTH_PROOF_TUPLE = `tuple(
   uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
+  bytes32 pubKeyBind,
   uint256 commitmentRoot,
   bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
   address sellToken, address buyToken,
@@ -38,6 +40,14 @@ const SETTLE_AUTH_ABI = [
     ${AUTH_PROOF_TUPLE} taker,
     uint96 feeTokenMaker,
     uint96 feeTokenTaker
+  ) p) external`,
+];
+
+// scatterDirectAuth ABI — single-party same-token scatter via authorize proof
+const SCATTER_DIRECT_AUTH_ABI = [
+  `function scatterDirectAuth(tuple(
+    ${AUTH_PROOF_TUPLE} proof,
+    uint96 fee
   ) p) external`,
 ];
 
@@ -85,7 +95,7 @@ export class AuthorizeSubmitter {
     this.wallet = new ethers.Wallet(config.relayerPrivateKey, this.provider);
     this.settlement = new ethers.Contract(
       config.privateSettlementAddress,
-      [...SETTLE_AUTH_ABI, ...PRIVATE_CANCEL_EVENT_ABI],
+      [...SETTLE_AUTH_ABI, ...SCATTER_DIRECT_AUTH_ABI, ...PRIVATE_CANCEL_EVENT_ABI],
       this.wallet,
     );
   }
@@ -192,6 +202,44 @@ export class AuthorizeSubmitter {
   }
 
   /**
+   * Submit a same-token scatter via scatterDirectAuth (single authorize proof).
+   * The user generates the proof client-side — no witness data needed.
+   */
+  async submitScatterDirectAuth(
+    order: AuthorizeOrderFile,
+    feeBps: bigint = 0n,
+  ): Promise<string> {
+    const ps = order.publicSignals;
+    const fee = this.computeFee(ps.sellAmount, ps.maxFee, feeBps);
+
+    const params = {
+      proof: this.buildAuthProofStruct(order),
+      fee,
+    };
+
+    return this.withTxLock(async () => {
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirectAuth", [params], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] scatterDirectAuth rejected: ${gasCheck.reason}`);
+        throw new Error(`ScatterDirectAuth rejected: ${gasCheck.reason}`);
+      }
+
+      const { txHash } = await sendAndWait(
+        () => this.settlement.scatterDirectAuth(params, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "scatterDirectAuth",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "scatterDirectAuth"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
+      console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
+      return txHash;
+    });
+  }
+
+  /**
    * Build the on-chain AuthorizeProof struct from an AuthorizeOrderFile.
    * Maps the named public signals into the Solidity struct layout.
    */
@@ -201,6 +249,7 @@ export class AuthorizeSubmitter {
       proofA: order.proof.a.map(BigInt),
       proofB: order.proof.b.map((pair) => pair.map(BigInt)),
       proofC: order.proof.c.map(BigInt),
+      pubKeyBind: toBytes32(ps.pubKeyBind),
       commitmentRoot: BigInt(ps.commitmentRoot),
       nullifier: toBytes32(ps.nullifier),
       nonceNullifier: toBytes32(ps.nonceNullifier),

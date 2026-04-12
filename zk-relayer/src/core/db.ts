@@ -447,6 +447,8 @@ export class PrivateOrderDB {
       balance: BigInt(row.balance),
       salt: BigInt(row.salt),
       leafIndex: row.leaf_index,
+      newSalt: 0n,
+      expectedChangeCommitment: 0n,
       claims,
     };
 
@@ -536,12 +538,12 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
-    const total = (this.statsTotalOrders.get() as { count: number }).count;
-    const settled = (this.statsSettledOrders.get() as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
-    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
-    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
-    const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
+    const total = (this.statsTotalOrders.get({}) as { count: number }).count;
+    const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");
@@ -561,7 +563,7 @@ export class PrivateOrderDB {
 
   /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
-    const rows = this.statsSettledVolume.all() as Array<{ sell_token: string; count: number; amounts: string }>;
+    const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
       const total = r.amounts.split(",").reduce((sum, a) => sum + BigInt(a), 0n);
       const tokenBig = BigInt(r.sell_token);
@@ -585,11 +587,11 @@ export class PrivateOrderDB {
   // ─── [R-6] Authorize order persistence ───
 
   saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
-    this.upsertAuthOrder.run(nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null);
+    this.upsertAuthOrder.run([nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null]);
   }
 
   updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
-    this.updateAuthStatus.run(status, settleTx ?? null, nullifier);
+    this.updateAuthStatus.run([status, settleTx ?? null, nullifier]);
   }
 
   deleteAuthorizeOrder(nullifier: string): void {
@@ -597,7 +599,7 @@ export class PrivateOrderDB {
   }
 
   loadPendingAuthorizeOrders(): Array<{ nullifier: string; status: string; submittedAt: number; orderJson: string; pubKeyAx: string | null; pubKeyAy: string | null; settleTx: string | null }> {
-    return this.selectPendingAuth.all() as any[];
+    return this.selectPendingAuth.all({}) as any[];
   }
 
   purgeNonPendingAuthorizeOrdersDB(): number {
