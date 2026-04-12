@@ -166,11 +166,25 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       res.status(400).json({ error: "body.entries must be a non-empty array of { pubKeyAx, pubKeyAy }" });
       return;
     }
+    // Validate all entries up-front (including BigInt parseability) so we
+    // never partially succeed: reject 400 with the offending index if any
+    // entry is malformed, rather than bubbling into a 500 via Express.
+    const invalid: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (typeof e?.pubKeyAx !== "string" || typeof e?.pubKeyAy !== "string") {
+        invalid.push(i);
+        continue;
+      }
+      try { BigInt(e.pubKeyAx); BigInt(e.pubKeyAy); } catch { invalid.push(i); }
+    }
+    if (invalid.length > 0) {
+      res.status(400).json({ error: "invalid pubKeyAx/pubKeyAy in body.entries", invalidIndices: invalid });
+      return;
+    }
     let added = 0;
     for (const e of entries) {
-      if (typeof e.pubKeyAx === "string" && typeof e.pubKeyAy === "string") {
-        if (addSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) added++;
-      }
+      if (addSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) added++;
     }
     console.log(`[admin] Added ${added} sanctioned pubKeys`);
     res.json({ added });
@@ -183,11 +197,22 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       res.status(400).json({ error: "body.entries must be a non-empty array of { pubKeyAx, pubKeyAy }" });
       return;
     }
+    const invalid: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (typeof e?.pubKeyAx !== "string" || typeof e?.pubKeyAy !== "string") {
+        invalid.push(i);
+        continue;
+      }
+      try { BigInt(e.pubKeyAx); BigInt(e.pubKeyAy); } catch { invalid.push(i); }
+    }
+    if (invalid.length > 0) {
+      res.status(400).json({ error: "invalid pubKeyAx/pubKeyAy in body.entries", invalidIndices: invalid });
+      return;
+    }
     let removed = 0;
     for (const e of entries) {
-      if (typeof e.pubKeyAx === "string" && typeof e.pubKeyAy === "string") {
-        if (removeSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) removed++;
-      }
+      if (removeSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) removed++;
     }
     console.log(`[admin] Removed ${removed} sanctioned pubKeys`);
     res.json({ removed });

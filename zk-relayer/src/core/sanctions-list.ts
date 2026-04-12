@@ -25,6 +25,15 @@ export function isSanctionedPubKey(ax: string, ay: string): boolean {
   return sanctionedPubKeys.has(normalizeKey(ax, ay));
 }
 
+/**
+ * Check membership using an already-normalized "{ax}:{ay}" id.
+ * Callers on the hot path should compute this id once (e.g. via `pubKeyId`)
+ * and reuse it to avoid redundant BigInt parsing.
+ */
+export function isSanctionedById(id: string): boolean {
+  return sanctionedPubKeys.has(id);
+}
+
 /** Add a pubKey to the sanctions list. Returns true if newly added. */
 export function addSanctionedPubKey(ax: string, ay: string): boolean {
   const key = normalizeKey(ax, ay);
@@ -79,14 +88,15 @@ export function loadSanctionsFile(filePath: string): number {
   for (const entry of entries) {
     if (typeof entry.pubKeyAx === "string" && typeof entry.pubKeyAy === "string") {
       try {
-        addSanctionedPubKey(entry.pubKeyAx, entry.pubKeyAy);
-        loaded++;
+        if (addSanctionedPubKey(entry.pubKeyAx, entry.pubKeyAy)) {
+          loaded++;
+        }
       } catch {
         console.warn(`[R-10] Skipping invalid entry: ${JSON.stringify(entry)}`);
       }
     }
   }
 
-  console.log(`[R-10] Loaded ${loaded} sanctioned pubKeys from ${filePath}`);
+  console.log(`[R-10] Loaded ${loaded} new sanctioned pubKeys from ${filePath}`);
   return loaded;
 }
