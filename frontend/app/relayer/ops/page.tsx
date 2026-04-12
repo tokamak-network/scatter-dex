@@ -11,6 +11,22 @@ interface HealthData {
   checks: Record<string, "ok" | "error">;
 }
 
+interface RuntimeMetrics {
+  gas: {
+    avgCostEth: number | null;
+    lastCostEth: number | null;
+    totalSpentEth: number;
+  };
+  settlement: {
+    avgDurationMs: number | null;
+    totalCount: number;
+    perMinute: number;
+  };
+  orders: {
+    submittedPerMinute: number;
+  };
+}
+
 interface StatsData {
   address: string;
   totalOrders: number;
@@ -21,6 +37,7 @@ interface StatsData {
   settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>;
   totalTradeOffers: number;
   settledTradeOffers: number;
+  metrics?: RuntimeMetrics;
 }
 
 interface RelayerStatus {
@@ -36,6 +53,16 @@ function StatusDot({ ok }: { ok: boolean }) {
     <Circle
       className={`w-2.5 h-2.5 fill-current ${ok ? "text-green-500" : "text-red-400"}`}
     />
+  );
+}
+
+function StatCard({ label, value, color = "text-on-surface", sub }: { label: string; value: string; color?: string; sub?: string }) {
+  return (
+    <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
+      <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      {sub && <div className="text-[10px] text-on-surface-variant/40">{sub}</div>}
+    </div>
   );
 }
 
@@ -127,6 +154,8 @@ export default function OpsMonitorPage() {
   const totalOrders = statuses.reduce((sum, s) => sum + (s.stats?.totalOrders ?? 0), 0);
   const totalSettled = statuses.reduce((sum, s) => sum + (s.stats?.settledOrders ?? 0), 0);
   const totalPending = statuses.reduce((sum, s) => sum + (s.stats?.pendingOrders ?? 0), 0);
+  const totalGasSpent = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.gas.totalSpentEth ?? 0), 0);
+  const totalOrdersPerMin = statuses.reduce((sum, s) => sum + (s.stats?.metrics?.orders.submittedPerMinute ?? 0), 0);
 
   return (
     <div>
@@ -163,30 +192,14 @@ export default function OpsMonitorPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Instances</div>
-          <div className="text-2xl font-bold text-on-surface">{onlineRelayers.length}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Healthy</div>
-          <div className="text-2xl font-bold text-green-500">{healthyCount}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Degraded</div>
-          <div className={`text-2xl font-bold ${degradedCount > 0 ? "text-red-400" : "text-on-surface-variant/30"}`}>{degradedCount}</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Total Orders</div>
-          <div className="text-2xl font-bold text-on-surface">{totalOrders}</div>
-          <div className="text-[10px] text-on-surface-variant/40">{totalSettled} settled / {totalPending} pending</div>
-        </div>
-        <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-4">
-          <div className="text-[11px] text-on-surface-variant/50 uppercase tracking-wider mb-1">Settlement Rate</div>
-          <div className="text-2xl font-bold text-primary">
-            {totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"}
-          </div>
-        </div>
+      <div className="grid grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+        <StatCard label="Instances" value={String(onlineRelayers.length)} />
+        <StatCard label="Healthy" value={String(healthyCount)} color="text-green-500" />
+        <StatCard label="Degraded" value={String(degradedCount)} color={degradedCount > 0 ? "text-red-400" : "text-on-surface-variant/30"} />
+        <StatCard label="Total Orders" value={String(totalOrders)} sub={`${totalSettled} settled / ${totalPending} pending`} />
+        <StatCard label="Settlement Rate" value={totalOrders > 0 ? `${((totalSettled / totalOrders) * 100).toFixed(1)}%` : "-"} color="text-primary" />
+        <StatCard label="Gas Spent" value={totalGasSpent > 0 ? totalGasSpent.toFixed(4) : "-"} color="text-amber-500" sub="ETH total" />
+        <StatCard label="Throughput" value={totalOrdersPerMin > 0 ? totalOrdersPerMin.toFixed(1) : "-"} sub="orders/min" />
       </div>
 
       {/* Relayer Table */}
@@ -213,7 +226,9 @@ export default function OpsMonitorPage() {
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Settled</th>
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Pending</th>
                 <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Cross-Relayer</th>
-                <th className="text-right px-5 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Settle</th>
+                <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Settle</th>
+                <th className="text-right px-3 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Avg Gas</th>
+                <th className="text-right px-5 py-3 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">Settle/min</th>
               </tr>
             </thead>
             <tbody>
@@ -298,10 +313,28 @@ export default function OpsMonitorPage() {
                     </td>
 
                     {/* Avg Settle */}
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-3 py-3 text-right">
                       <span className="text-xs font-mono text-on-surface-variant/70">
                         {s.stats?.avgSettleTimeMs != null && s.stats.avgSettleTimeMs > 0
                           ? `${(s.stats.avgSettleTimeMs / 1000).toFixed(1)}s`
+                          : "-"}
+                      </span>
+                    </td>
+
+                    {/* Avg Gas */}
+                    <td className="px-3 py-3 text-right">
+                      <span className="text-xs font-mono text-amber-500/80">
+                        {s.stats?.metrics?.gas.avgCostEth != null
+                          ? `${s.stats.metrics.gas.avgCostEth.toFixed(4)}`
+                          : "-"}
+                      </span>
+                    </td>
+
+                    {/* Settle/min */}
+                    <td className="px-5 py-3 text-right">
+                      <span className="text-xs font-mono text-on-surface-variant/70">
+                        {s.stats?.metrics?.settlement.perMinute != null && s.stats.metrics.settlement.perMinute > 0
+                          ? s.stats.metrics.settlement.perMinute.toFixed(1)
                           : "-"}
                       </span>
                     </td>

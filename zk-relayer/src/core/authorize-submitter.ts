@@ -12,6 +12,7 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
+import { recordSettlement } from "./metrics.js";
 import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
@@ -173,6 +174,7 @@ export class AuthorizeSubmitter {
       console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const authSettleStart = Date.now();
       const { txHash } = await sendAndWait(
         () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
@@ -182,6 +184,8 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });
