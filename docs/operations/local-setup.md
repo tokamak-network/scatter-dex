@@ -2,13 +2,26 @@
 
 zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA architecture). This guide covers how to run the full stack locally.
 
-## Quick Start (Mock Mode)
+## Two ways to run the stack
+
+Both options bring up the same services in mock mode. Pick whichever fits your workflow:
+
+| | `./scripts/dev.sh --mock` | `make up` |
+|---|---|---|
+| Runtime | Host processes (anvil / node / next) | Docker Compose containers |
+| Hot reload | Yes — edits re-run locally | No — rebuild image to pick up code changes |
+| Logs | `.dev-logs/*.log` + foreground stdout | `make logs` / `docker compose logs` |
+| Stop | `Ctrl+C` (trap cleanup kills PIDs) | `make down` (or `make clean` to drop volumes) |
+| Cross-relayer | Run `./scripts/start-cross-relayer-e2e.sh` in a 2nd terminal | `make up-multi` (relayer B + shared orderbook) |
+| Best for | Active development, debugging with native tools | Reproducible environment, throwaway trials |
+
+## Quick Start — dev.sh (host processes)
 
 ```bash
 ./scripts/dev.sh --mock
 ```
 
-This starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and Relayer CA), mock tokens, zk-relayer, and frontend in one terminal. Press `Ctrl+C` to stop all services.
+Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and Relayer CA), mock tokens, zk-relayer, and frontend in one terminal. Press `Ctrl+C` to stop all services.
 
 Services started:
 | Service | Port | Description |
@@ -16,6 +29,87 @@ Services started:
 | Anvil | 8545 | Local Ethereum node |
 | ZK Relayer | 3002 | ZK private orders + gasless claims |
 | Frontend | 3000 | Next.js web app |
+
+### Monitoring (dev.sh)
+
+```bash
+# Per-service logs (written while dev.sh runs)
+tail -f .dev-logs/anvil.log
+tail -f .dev-logs/zk-relayer.log
+tail -f .dev-logs/frontend.log
+
+# Which ports are bound, and by which PID
+lsof -i :8545 -i :3000 -i :3002 -i :4000
+
+# Service health
+curl http://localhost:3002/api/info      # zk-relayer
+curl http://localhost:3000 -I            # frontend (expect 200)
+cast block-number --rpc-url http://localhost:8545   # anvil
+```
+
+### Stopping & cleanup (dev.sh)
+
+```bash
+# Normal shutdown — trap handler kills every background PID
+Ctrl+C
+
+# If the terminal died without a clean exit, orphan processes can keep the
+# ports held. Identify and kill them:
+lsof -ti :8545 :3000 :3002 :4000 | xargs -r kill
+
+# Optional — clear the log directory
+rm -rf .dev-logs
+```
+
+`dev.sh` fails fast with `port X is already in use` when any of the above ports are occupied, so the port check above is the usual recovery path.
+
+## Quick Start — Makefile (Docker Compose)
+
+```bash
+make up              # mock mode (anvil + frontend + zk-relayer A + shared orderbook)
+make up-multi        # mock mode + second relayer on :3003 (cross-relayer matching)
+make up-integration IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x...   # real zk-X509
+```
+
+| Target | Purpose |
+|---|---|
+| `make up` | `docker compose --profile mock up -d` — frontend, relayer A, shared orderbook, anvil |
+| `make up-multi` | Adds relayer B under the `multi-relayer` profile |
+| `make up-integration` | Runs against pre-deployed zk-X509 registries (requires env vars) |
+| `make ps` | `docker compose ps` |
+| `make logs` | Follow all container logs |
+| `make down` | Stop containers (keeps volumes) |
+| `make clean` | Stop and **drop volumes** (anvil state, relayer DB) |
+| `make test` | `forge test` on the contracts package |
+
+### Monitoring (Docker)
+
+```bash
+make ps                                  # container status
+make logs                                # follow all container logs
+docker compose logs -f frontend          # follow a single service
+docker compose logs -f zk-relayer-a
+docker compose logs --tail=200 anvil     # last 200 lines only
+docker stats                             # live CPU / memory per container
+
+# Service health (same endpoints as dev.sh)
+curl http://localhost:3002/api/info
+curl http://localhost:4000/health
+cast block-number --rpc-url http://localhost:8545
+```
+
+### Stopping & cleanup (make / Docker)
+
+```bash
+make down            # stop containers, keep volumes (anvil state, relayer DB persist)
+make clean           # stop containers and drop volumes — full reset
+
+# If a container is stuck / orphaned, list and remove manually:
+docker compose ps
+docker compose --profile mock --profile multi-relayer rm -fsv
+```
+
+Because Docker owns the ports, you don't need the `lsof` cleanup that `dev.sh` sometimes requires.
 
 ## Manual Setup (step by step)
 
@@ -132,16 +226,18 @@ docker compose up -d
 When redeploying contracts (e.g., after code changes), reset the relayer database and notes:
 
 ```bash
-# 1. Stop all services (Ctrl+C if using dev.sh)
+# 1. Stop all services
+#    dev.sh mode  : Ctrl+C
+#    Docker mode  : make clean   (drops volumes — required to wipe relayer DB)
 
-# 2. Delete relayer database (old orders reference stale contracts)
+# 2. Delete relayer database (dev.sh mode only — Docker mode is cleared by `make clean`)
 rm -f zk-relayer/zk-relayer.db
 
 # 3. Clear notes folder (old commitment notes are invalid after redeploy)
 #    Delete zkscatter-note-*.json and zkscatter-claims-*.json from your notes folder
 
 # 4. Restart everything
-./scripts/dev.sh --mock
+./scripts/dev.sh --mock     # or: make up
 ```
 
 ## Cross-Relayer Setup (Shared Orderbook)
