@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
@@ -130,7 +131,7 @@ contract SettleWithDexTest is Test {
 
     function _defaultDexParams() internal view returns (PrivateSettlement.SettleDexParams memory) {
         return PrivateSettlement.SettleDexParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA,
                 proofB: proofB,
                 proofC: proofC,
@@ -269,7 +270,7 @@ contract SettleWithDexTest is Test {
         p.proof.expiry = uint64(block.timestamp - 1);
 
         vm.prank(user);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.settleWithDex(p);
     }
 
@@ -353,7 +354,7 @@ contract SettleWithDexTest is Test {
         // IMPORTANT: dexCalldata must encode amountIn = 9.9 ether (post-fee)
         // because the contract only approves swapAmount to the router.
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA, proofB: proofB, proofC: proofC,
                 pubKeyBind: PUB_KEY_BIND, commitmentRoot: pool.getLastRoot(),
                 nullifier: NULL_ESCROW, nonceNullifier: NULL_NONCE,

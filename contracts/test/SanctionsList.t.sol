@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
@@ -187,7 +188,7 @@ contract SanctionsListTest is Test {
         settlement.setDexRouterWhitelist(address(authVerifier), true);
 
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA, proofB: proofB, proofC: proofC,
                 pubKeyBind: bytes32(0), commitmentRoot: pool.getLastRoot(),
                 nullifier: bytes32(uint256(0x11)), nonceNullifier: bytes32(uint256(0x22)),

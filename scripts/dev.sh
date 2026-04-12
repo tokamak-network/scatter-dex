@@ -99,8 +99,22 @@ if [ "$MOCK_MODE" = true ]; then
   echo ""
   echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
   cd "$ROOT_DIR/contracts"
+  # `forge script` can exit non-zero even when the on-chain deployment
+  # succeeded — e.g. `Error: IO error: not a terminal` under captured
+  # stdout, or contract-size warnings when a contract exceeds EIP-170 on
+  # networks with that limit (anvil deploys fine regardless). Suppress
+  # `set -e` only for those known-benign cases; surface any other failure.
+  set +e
   DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+  DEPLOY_STATUS=$?
+  set -e
+  if [ "$DEPLOY_STATUS" -ne 0 ] \
+      && ! echo "$DEPLOY_OUTPUT" | grep -qE "Contract size|contract size|not a terminal|runtime size limit"; then
+    echo "  ERROR: forge script failed (exit $DEPLOY_STATUS):"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  fi
 
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
@@ -179,10 +193,20 @@ else
   echo "[2/4] Deploying contracts (real IdentityGate)..."
   cd "$ROOT_DIR/contracts"
 
+  # See MOCK branch: suppress `set -e` only for known-benign forge exits.
+  set +e
   DEPLOY_OUTPUT=$(IDENTITY_REGISTRY="$IDENTITY_REGISTRY" \
     RELAYER_IDENTITY_REGISTRY="$RELAYER_IDENTITY_REGISTRY" \
     forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+  DEPLOY_STATUS=$?
+  set -e
+  if [ "$DEPLOY_STATUS" -ne 0 ] \
+      && ! echo "$DEPLOY_OUTPUT" | grep -qE "Contract size|contract size|not a terminal|runtime size limit"; then
+    echo "  ERROR: forge script failed (exit $DEPLOY_STATUS):"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  fi
 
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')

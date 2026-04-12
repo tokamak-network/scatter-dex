@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
@@ -103,8 +104,8 @@ contract SettleWithDexForkTest is Test {
         bytes32 nonceNull,
         bytes32 newCommit,
         bytes32 claimsRoot
-    ) internal view returns (PrivateSettlement.AuthorizeProof memory) {
-        return PrivateSettlement.AuthorizeProof({
+    ) internal view returns (SettleVerifyLib.AuthorizeProof memory) {
+        return SettleVerifyLib.AuthorizeProof({
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,
