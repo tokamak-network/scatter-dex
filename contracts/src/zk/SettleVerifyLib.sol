@@ -21,6 +21,8 @@ library SettleVerifyLib {
     error NullifierAlreadySpent();
     error DeadlineExpired();
     error SellBuyTokenMismatch();
+    error TimestampOutOfRange();
+    error DuplicateClaimsRoot();
 
     error ClaimsGroupAlreadyExists();
 
@@ -188,11 +190,14 @@ library SettleVerifyLib {
     function validateDexProof(
         AuthorizeProof calldata proof,
         address sender,
-        uint256 deadline
+        uint256 deadline,
+        mapping(address => bool) storage whitelistedTokens
     ) external view {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (sender != proof.relayer) revert NotMakerOrTakerRelayer();
         if (proof.sellToken == proof.buyToken) revert TokenSidesMismatch();
+        if (!whitelistedTokens[proof.sellToken]) revert TokenNotWhitelisted();
+        if (!whitelistedTokens[proof.buyToken]) revert TokenNotWhitelisted();
         if (proof.sellAmount == 0) revert ZeroSellAmount();
         if (block.timestamp > proof.expiry) revert OrderExpired();
         if (proof.nullifier == proof.nonceNullifier) revert NullifierAlreadySpent();
@@ -204,10 +209,12 @@ library SettleVerifyLib {
     function validateScatterAuth(
         AuthorizeProof calldata ap,
         address sender,
-        uint96 fee
+        uint96 fee,
+        mapping(address => bool) storage whitelistedTokens
     ) external view {
         if (sender != ap.relayer) revert NotMakerOrTakerRelayer();
         if (ap.sellToken != ap.buyToken) revert SellBuyTokenMismatch();
+        if (!whitelistedTokens[ap.sellToken]) revert TokenNotWhitelisted();
         if (ap.sellAmount == 0) revert ZeroSellAmount();
         if (ap.buyAmount == 0) revert ZeroBuyAmount();
         if (uint256(fee) * FEE_BPS_DENOMINATOR > uint256(ap.sellAmount) * uint256(ap.maxFee)) {
@@ -217,6 +224,27 @@ library SettleVerifyLib {
             revert ClaimsCapExceeded();
         }
         if (block.timestamp > ap.expiry) revert OrderExpired();
+    }
+
+    /// @notice Bound the caller-provided `currentTimestamp` to a one-sided
+    ///         window around `block.timestamp`: future drift is forbidden,
+    ///         past drift is allowed up to `tolerance` seconds (for proof
+    ///         generation and tx-propagation latency).
+    function validateTimestampWindow(uint256 currentTimestamp, uint256 tolerance) external view {
+        if (currentTimestamp > block.timestamp) revert TimestampOutOfRange();
+        if (currentTimestamp + tolerance < block.timestamp) revert TimestampOutOfRange();
+    }
+
+    /// @notice Guard against two sides sharing the same `claimsRoot` when
+    ///         both have non-zero locked amounts (would otherwise collide in
+    ///         the claims-group registry). One-sided settles are permitted.
+    function requireDistinctClaimsRoots(
+        bytes32 rootA,
+        bytes32 rootB,
+        uint128 lockedA,
+        uint128 lockedB
+    ) external pure {
+        if (rootA == rootB && lockedA > 0 && lockedB > 0) revert DuplicateClaimsRoot();
     }
 
     /// @notice Insert a residual commitment into the pool iff non-zero.

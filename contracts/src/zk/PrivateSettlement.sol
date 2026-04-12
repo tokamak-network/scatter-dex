@@ -46,6 +46,21 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotActiveRelayer();
     error AuthorizeVerifierNotSet();
     error CancelVerifierNotSet();
+
+    // Errors that are actually reverted from SettleVerifyLib but re-declared
+    // here to preserve the contract's ABI surface — downstream Solidity code
+    // that references `PrivateSettlement.<Name>.selector` keeps working. The
+    // selector is computed from the name+arg-types, so the lib's revert and
+    // these declarations resolve to the same 4-byte identifier on the wire.
+    error ZeroSellAmount();
+    error ZeroBuyAmount();
+    error TokenSidesMismatch();
+    error PriceMismatch();
+    error ClaimsCapExceeded();
+    error FeeExceedsMax();
+    error OrderExpired();
+    error SellBuyTokenMismatch();
+    error ClaimsGroupAlreadyExists();
     // ─── settleWithDex errors ──
     error DexRouterNotWhitelisted();
     error DexCallReverted();
@@ -338,20 +353,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Verify the caller-provided root is known to the pool (avoids reading stale root)
         if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
 
-        // [M7] Verify the caller-provided timestamp is *not in the future* and
-        //      is within TIMESTAMP_TOLERANCE of block.timestamp.
-        //
-        //      The previous version allowed `currentTimestamp` to drift up to
-        //      TIMESTAMP_TOLERANCE (5 min) into the future, which meant the
-        //      circuit's `currentTimestamp <= expiry` check could pass for an
-        //      already-expired order whose expiry is up to 5 min in the past.
-        //      Tightening this to a one-sided window restores the safety margin
-        //      while still tolerating proof generation latency / minor clock
-        //      skew between the prover and the chain.
-        if (
-            p.currentTimestamp > block.timestamp ||
-            p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
-        ) revert TimestampOutOfRange();
+        // [M7] One-sided timestamp window: future drift forbidden (prevents
+        //      settling already-expired orders whose expiry is ≤ tolerance
+        //      in the past), past drift allowed up to TIMESTAMP_TOLERANCE.
+        SettleVerifyLib.validateTimestampWindow(p.currentTimestamp, TIMESTAMP_TOLERANCE);
 
         uint[18] memory pubSignals = SettleVerifyLib.packSettleSignals(p);
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
@@ -396,7 +401,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.makerRelayer);
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
-        if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
+        SettleVerifyLib.requireDistinctClaimsRoots(
+            p.claimsRootMaker, p.claimsRootTaker, p.totalLockedMaker, p.totalLockedTaker
+        );
         SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootMaker, p.tokenMaker, p.totalLockedMaker);
         SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootTaker, p.tokenTaker, p.totalLockedTaker);
 
@@ -552,16 +559,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.maker.buyToken, p.feeTokenMaker, p.taker.relayer);
         if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.taker.buyToken, p.feeTokenTaker, p.maker.relayer);
 
-        // 16. Register claims groups
-        //     The duplicate-claims-root guard is gated on both sides being
-        //     non-zero so a one-sided fully-claimed settle (where one side
-        //     keeps everything internally) can still settle without colliding.
-        if (
-            p.maker.claimsRoot == p.taker.claimsRoot &&
-            p.maker.totalLocked > 0 &&
-            p.taker.totalLocked > 0
-        ) revert DuplicateClaimsRoot();
-
+        // 16. Register claims groups. Duplicate-root guard is gated on both
+        //     sides being non-zero so one-sided fully-claimed settles still fit.
+        SettleVerifyLib.requireDistinctClaimsRoots(
+            p.maker.claimsRoot, p.taker.claimsRoot, p.maker.totalLocked, p.taker.totalLocked
+        );
         SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked);
         SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked);
 
@@ -698,13 +700,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
 
-        SettleVerifyLib.validateDexProof(proof, msg.sender, p.deadline);
+        SettleVerifyLib.validateDexProof(proof, msg.sender, p.deadline, whitelistedTokens);
 
-        // Token whitelist (storage — stays inline)
-        if (!whitelistedTokens[proof.sellToken]) revert TokenNotWhitelisted();
-        if (!whitelistedTokens[proof.buyToken]) revert TokenNotWhitelisted();
-
-        // 5. Nullifier double-spend (storage)
+        // Nullifier double-spend (storage)
         if (nullifiers[proof.nullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[proof.nonceNullifier]) revert NullifierAlreadySpent();
 
@@ -883,17 +881,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         _requireNotSanctioned(msg.sender);
 
-        // Relayer binding, same-token invariant, non-zero amounts,
-        // fee cap, claims+fee cap, expiry.
-        SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee);
+        // Relayer binding, same-token invariant, whitelist, non-zero
+        // amounts, fee cap, claims+fee cap, expiry.
+        SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee, whitelistedTokens);
 
         // Relayer registry (before expensive proof verification — saves ~200K gas on revert)
         if (address(relayerRegistry) != address(0)) {
             if (!relayerRegistry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
         }
-
-        // Token whitelist (storage — stays inline)
-        if (!whitelistedTokens[ap.sellToken]) revert TokenNotWhitelisted();
 
         // 8. Nullifier double-spend (escrow + nonce — 2 cold SLOADs)
         if (nullifiers[ap.nullifier]) revert NullifierAlreadySpent();
