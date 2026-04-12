@@ -28,7 +28,7 @@ curl http://localhost:3002/health
 | `healthy` | 200 | All checks pass |
 | `degraded` | 503 | RPC or DB unreachable |
 
-Use for K8s liveness/readiness probes. Docker Compose checks every 3s with 15 retries (45s startup window).
+Use `/health` for K8s liveness/readiness probes. Note: the bundled Docker Compose currently probes `/api/info` every 3s with 15 retries (45s startup window) for container orchestration; `/health` is recommended for external monitoring/alerting because it reports degraded state (RPC/DB failures) with HTTP 503.
 
 ### Relayer Stats
 
@@ -47,7 +47,10 @@ Returns:
   "crossRelayerSettled": 15,
   "avgSettleTimeMs": 12500,
   "uptimeSince": 1712880000000,
+  "totalTradeOffers": 40,
+  "settledTradeOffers": 15,
   "pendingOrders": 3,
+  "settledVolume": { "0xTokenAddr": "12345678900000000000" },
   "metrics": {
     "gas": {
       "avgCostEth": 0.0048,
@@ -58,6 +61,9 @@ Returns:
     },
     "settlement": {
       "avgDurationMs": 12500,
+      "minDurationMs": 8000,
+      "maxDurationMs": 22000,
+      "lastDurationMs": 11200,
       "totalCount": 130,
       "perMinute": 1.2
     },
@@ -69,6 +75,8 @@ Returns:
 }
 ```
 
+> Schema source: `zk-relayer/src/routes/relayer-stats.ts` (spreads `db.getRelayerStats()` + `getMetrics()`). `settledVolume` is keyed by token address with wei-denominated string amounts.
+
 ### Ops Dashboard
 
 Open `http://localhost:3000/relayer/ops` in a browser for real-time monitoring across all relayer instances. Auto-refreshes every 15 seconds.
@@ -79,7 +87,7 @@ Shows: instance health, settlement rate, gas spent, throughput, per-relayer brea
 
 ## Admin API
 
-All admin endpoints require the `x-admin-key` header. Generate a key:
+This section covers the 5 endpoints under `/api/admin/*` plus the admin-key-protected `/api/vault/claim` (see [Vault Claim](#claim-vault-fees-vault-route) subsection — same auth, different route prefix). All require the `x-admin-key` header. Generate a key:
 
 ```bash
 export ADMIN_KEY=$(openssl rand -hex 32)
@@ -96,7 +104,14 @@ curl -H "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/status
 
 ```bash
 curl -H "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/balance
-# {"address":"0x...","ethBalance":"1.5","chainId":1}
+# {"address":"0x...","ethBalance":"1500000000000000000","chainId":1}
+```
+
+`ethBalance` is a **wei**-denominated string (from `provider.getBalance().toString()`). Convert to ETH for display:
+
+```bash
+curl -sH "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/balance \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const b=BigInt(JSON.parse(s).ethBalance);console.log(Number(b)/1e18,"ETH")})'
 ```
 
 ### Change Fee
@@ -135,7 +150,9 @@ curl -X POST -H "x-admin-key: $ADMIN_KEY" \
 
 Cancels all pending orders immediately. Use before shutdown or emergency maintenance.
 
-### Claim Vault Fees
+### Claim Vault Fees (vault route)
+
+> Note: unlike the endpoints above, this lives under `/api/vault/*` rather than `/api/admin/*`, but uses the same `x-admin-key` auth.
 
 ```bash
 curl -X POST -H "x-admin-key: $ADMIN_KEY" \
@@ -152,22 +169,24 @@ curl -X POST -H "x-admin-key: $ADMIN_KEY" \
 
 | Variable | Description |
 |----------|-------------|
-| `RPC_URL` | Ethereum JSON-RPC endpoint |
 | `RELAYER_PRIVATE_KEY` | Wallet private key (or use `RELAYER_PRIVATE_KEY_FILE`) |
 | `COMMITMENT_POOL_ADDRESS` | CommitmentPool contract address |
 | `PRIVATE_SETTLEMENT_ADDRESS` | PrivateSettlement contract address |
 | `FEE_VAULT_ADDRESS` | FeeVault contract address |
 
+> `RPC_URL` has a default (`http://localhost:8545`) suitable for local Anvil, so it is technically optional. For any non-local deployment (testnet/production) it is effectively required — set it to your JSON-RPC provider endpoint.
+
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `RPC_URL` | `http://localhost:8545` | Ethereum JSON-RPC endpoint (override for testnet/prod) |
 | `PORT` | `3002` | API server port |
 | `RELAYER_FEE` | `30` | Fee in basis points (0.3%) |
 | `DB_PATH` | `./zk-relayer.db` | SQLite database path |
 | `MAX_GAS_PRICE_GWEI` | `100` | Gas price ceiling |
 | `ADMIN_API_KEY` | — | Admin API authentication (min 32 bytes) |
-| `CORS_ORIGINS` | `localhost:3000,...` | Comma-separated allowed origins |
+| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3002,http://localhost:3003` | Comma-separated allowed origins |
 | `RPC_URLS_FALLBACK` | — | Comma-separated fallback RPC endpoints |
 | `SHARED_ORDERBOOK_URL` | — | Cross-relayer matching (optional) |
 | `RELAYER_PUBLIC_URL` | — | This relayer's public URL for P2P |
@@ -211,7 +230,8 @@ docker compose stop zk-relayer
 
 # 6. Restart
 docker compose up -d zk-relayer
-# Relayer auto-resumes from paused state (call /resume if needed)
+# Pause state is persisted and restored on startup — the relayer
+# remains paused after restart. Call /api/admin/resume when ready.
 ```
 
 ### Gas Price Spike
@@ -317,10 +337,12 @@ sqlite3 zk-relayer.db ".backup /path/to/backup.db"
 
 ### Periodic Cleanup
 
-The relayer auto-purges:
-- Non-pending private orders (every 60s)
-- Expired authorize orders (every 60s)
-- Stale remote orderbook entries (every 60s)
+The relayer auto-purges (all every 60s):
+- Expired pending private orders from the in-memory orderbook
+- Expired remote orders mirrored from the shared orderbook
+- Non-pending/expired authorize orders
+
+Separately, on-chain commitments are re-indexed every 5 minutes to stay in sync.
 
 No manual cleanup needed for normal operation.
 
