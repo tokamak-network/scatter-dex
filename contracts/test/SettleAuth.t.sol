@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
@@ -99,8 +100,8 @@ contract SettleAuthTest is Test {
 
     /// @dev Build a default maker side: sells 10 WETH for >=20,000 USDC,
     ///      receives 20,000 USDC into the maker claims tree, no fee.
-    function _defaultMaker() internal view returns (PrivateSettlement.AuthorizeProof memory) {
-        return PrivateSettlement.AuthorizeProof({
+    function _defaultMaker() internal view returns (SettleVerifyLib.AuthorizeProof memory) {
+        return SettleVerifyLib.AuthorizeProof({
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,
@@ -124,8 +125,8 @@ contract SettleAuthTest is Test {
 
     /// @dev Build a default taker side that matches the default maker:
     ///      sells 20,000 USDC for >=10 WETH, receives 10 WETH, no fee.
-    function _defaultTaker() internal view returns (PrivateSettlement.AuthorizeProof memory) {
-        return PrivateSettlement.AuthorizeProof({
+    function _defaultTaker() internal view returns (SettleVerifyLib.AuthorizeProof memory) {
+        return SettleVerifyLib.AuthorizeProof({
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,
@@ -366,7 +367,7 @@ contract SettleAuthTest is Test {
         // takerProduct > makerProduct → PriceMismatch
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.PriceMismatch.selector);
+        vm.expectRevert(SettleVerifyLib.PriceMismatch.selector);
         settlement.settleAuth(p);
     }
 
@@ -681,7 +682,7 @@ contract SettleAuthTest is Test {
 
     function _defaultScatterDirectAuth() internal view returns (PrivateSettlement.ScatterDirectAuthParams memory) {
         return PrivateSettlement.ScatterDirectAuthParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA,
                 proofB: proofB,
                 proofC: proofC,

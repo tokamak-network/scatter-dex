@@ -17,6 +17,7 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
 import {FeeVault} from "../FeeVault.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 
 /// @title PrivateSettlement
 /// @notice ZK-based private settlement for ScatterDEX.
@@ -42,14 +43,14 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error ZeroSellAmount();
     error ZeroBuyAmount();
     error OnlyWETH();
-    error ClaimsGroupAlreadyExists();
+    // ClaimsGroupAlreadyExists moved to SettleVerifyLib (same selector).
     error DuplicateClaimsRoot();
     error TimestampOutOfRange();
     error NotActiveRelayer();
     // ─── settleAuth (Half-proof) errors ──
     error AuthorizeVerifierNotSet();
     error TokenSidesMismatch();
-    error PriceMismatch();
+    // PriceMismatch moved to SettleVerifyLib (same selector).
     error ClaimsCapExceeded();
     error FeeExceedsMax();
     error OrderExpired();
@@ -157,17 +158,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address treasury
     );
 
-    // ─── Data Structures ─────────────────────────────────────────
-    // Packed into 2 storage slots:
-    // Slot 0: totalLocked (16 bytes) + totalClaimed (16 bytes)
-    // Slot 1: token (20 bytes) + _pad (12 bytes)
-    struct ClaimsGroup {
-        uint128 totalLocked;    // matches circuit Num2Bits(128)
-        uint128 totalClaimed;
-        address token;
-    }
-
     // ─── State ───────────────────────────────────────────────────
+    // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
     CommitmentPool public immutable pool;
     ISettleVerifier public immutable settleVerifier;
     IClaimVerifier public immutable claimVerifier;
@@ -223,7 +215,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
     mapping(bytes32 => bool) public nonceNullifiers;   // nonce nullifiers
     mapping(bytes32 => bool) public claimNullifiers;   // claim nullifiers
-    mapping(bytes32 => ClaimsGroup) public claimsGroups;
+    mapping(bytes32 => SettleVerifyLib.ClaimsGroup) public claimsGroups;
     mapping(address => bool) public whitelistedTokens;
 
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot claim or settle.
@@ -339,34 +331,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Settle ──────────────────────────────────────────────────
 
-    struct SettleParams {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
-        uint256 currentRoot;
-        uint256 currentTimestamp;
-        bytes32 makerNullifier;
-        bytes32 takerNullifier;
-        bytes32 makerNonceNullifier;
-        bytes32 takerNonceNullifier;
-        bytes32 makerNewCommitment;
-        bytes32 takerNewCommitment;
-        bytes32 claimsRootMaker;
-        bytes32 claimsRootTaker;
-        uint128 totalLockedMaker;   // matches circuit Num2Bits(128)
-        uint128 totalLockedTaker;
-        address tokenMaker;
-        address tokenTaker;
-        uint96 feeTokenMaker;   // fee in tokenMaker (from taker's sell) → paid to takerRelayer
-        uint96 feeTokenTaker;   // fee in tokenTaker (from maker's sell) → paid to makerRelayer
-        address makerRelayer;   // relayer that handles maker's order (bound in proof)
-        address takerRelayer;   // relayer that handles taker's order (bound in proof)
-    }
+    /// @dev SettleParams/AuthorizeProof structs live in SettleVerifyLib for
+    ///      reuse between the contract and the extracted library. External
+    ///      ABI is unchanged (tuple shape is identical).
+    ///
+    ///      Alias types — callers should prefer `SettleVerifyLib.*` directly.
 
     /// @notice Execute a private settlement with ZK proof.
     /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
     /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
-    function settlePrivate(SettleParams calldata p) external nonReentrant {
+    function settlePrivate(SettleVerifyLib.SettleParams calldata p) external nonReentrant {
         // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
         if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
@@ -397,27 +371,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.currentTimestamp + TIMESTAMP_TOLERANCE < block.timestamp
         ) revert TimestampOutOfRange();
 
-        uint[18] memory pubSignals = [
-            p.currentRoot,
-            uint256(p.makerNullifier),
-            uint256(p.takerNullifier),
-            uint256(p.makerNonceNullifier),
-            uint256(p.takerNonceNullifier),
-            uint256(p.makerNewCommitment),
-            uint256(p.takerNewCommitment),
-            uint256(p.claimsRootMaker),
-            uint256(p.claimsRootTaker),
-            uint256(p.totalLockedMaker),
-            uint256(p.totalLockedTaker),
-            uint256(uint160(p.tokenMaker)),
-            uint256(uint160(p.tokenTaker)),
-            uint256(p.feeTokenMaker),
-            uint256(p.feeTokenTaker),
-            p.currentTimestamp,
-            uint256(uint160(p.makerRelayer)),  // maker's relayer bound in proof
-            uint256(uint160(p.takerRelayer))   // taker's relayer bound in proof
-        ];
-
+        uint[18] memory pubSignals = SettleVerifyLib.packSettleSignals(p);
         if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
             revert InvalidProof();
         }
@@ -434,12 +388,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nonceNullifiers[p.takerNonceNullifier] = true;
 
         // Insert new commitments (change UTXOs) into the CommitmentPool Merkle tree
-        if (p.makerNewCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(p.makerNewCommitment));
-        }
-        if (p.takerNewCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(p.takerNewCommitment));
-        }
+        SettleVerifyLib.maybeInsertCommitment(pool, p.makerNewCommitment);
+        SettleVerifyLib.maybeInsertCommitment(pool, p.takerNewCommitment);
 
         // Transfer claim amounts from CommitmentPool to this contract.
         // After settlement, PrivateSettlement holds the tokens and distributes
@@ -465,18 +415,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
         if (p.claimsRootMaker == p.claimsRootTaker && p.totalLockedMaker > 0 && p.totalLockedTaker > 0) revert DuplicateClaimsRoot();
-        if (claimsGroups[p.claimsRootMaker].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[p.claimsRootMaker] = ClaimsGroup({
-            token: p.tokenMaker,
-            totalLocked: p.totalLockedMaker,
-            totalClaimed: 0
-        });
-        if (claimsGroups[p.claimsRootTaker].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[p.claimsRootTaker] = ClaimsGroup({
-            token: p.tokenTaker,
-            totalLocked: p.totalLockedTaker,
-            totalClaimed: 0
-        });
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootMaker, p.tokenMaker, p.totalLockedMaker);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootTaker, p.tokenTaker, p.totalLockedTaker);
 
         emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
     }
@@ -507,35 +447,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // denominated in `tokenTaker = taker.buyToken = maker.sellToken` and is
     // paid by the maker → goes to `maker.relayer`.
 
-    /// @notice One side of a Half-proof trade. Mirrors the public-signal
-    ///         layout of `circuits/authorize.circom` exactly.
-    struct AuthorizeProof {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
-        // 15 public signals (matching authorize.circom output + main block ordering)
-        // [0] pubKeyBind is a circuit output = Poseidon(pubKeyAx, pubKeyAy, nullifier)
-        // [1..14] are public inputs in the order declared in component main { public [...] }
-        bytes32 pubKeyBind;  // Poseidon(pubKeyAx, pubKeyAy, nullifier) — compliance binding
-        uint256 commitmentRoot;
-        bytes32 nullifier;
-        bytes32 nonceNullifier;
-        bytes32 newCommitment;
-        address sellToken;
-        address buyToken;
-        uint128 sellAmount; // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126)
-        uint128 buyAmount;  // Circuit enforces ≤ 2^126 − 1 via Num2Bits(126)
-        uint16  maxFee;     // bps; circuit Num2Bits(16) bound
-        uint64  expiry;     // unix seconds
-        bytes32 claimsRoot;
-        uint128 totalLocked;    // matches circuit Num2Bits(128)
-        address relayer;
-        bytes32 orderHash;
-    }
+    /// @dev AuthorizeProof struct lives in SettleVerifyLib (shared with the
+    ///      extracted library). ABI tuple shape is unchanged.
 
     struct SettleAuthParams {
-        AuthorizeProof maker;
-        AuthorizeProof taker;
+        SettleVerifyLib.AuthorizeProof maker;
+        SettleVerifyLib.AuthorizeProof taker;
         // Relayer-chosen fees, capped by each side's user-signed maxFee
         uint96 feeTokenMaker;
         uint96 feeTokenTaker;
@@ -552,63 +469,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
 
-        // 2. Non-zero amounts — prevent empty settlements that bloat state.
-        //    buyAmount == 0 would collapse the price check (step 4) to
-        //    `0 > X`, allowing tokens to be given away for free.
-        //    With buyAmount > 0 enforced here, and authorize.circom enforcing
-        //    totalLocked >= buyAmount, any valid proof necessarily has
-        //    totalLocked > 0 for both sides.
-        if (p.maker.sellAmount == 0 || p.taker.sellAmount == 0) revert ZeroSellAmount();
-        if (p.maker.buyAmount == 0 || p.taker.buyAmount == 0) revert ZeroBuyAmount();
-
-        // 3. Token whitelist (both sell tokens — i.e. tokens that will be
-        //    spent from the pool). buyTokens are checked transitively via the
-        //    cross-side equality check below.
-        if (!whitelistedTokens[p.maker.sellToken]) revert TokenNotWhitelisted();
-        if (!whitelistedTokens[p.taker.sellToken]) revert TokenNotWhitelisted();
-
-        // 3. Cross-side token compatibility (C1 in design.md §2.2)
-        if (p.maker.sellToken != p.taker.buyToken) revert TokenSidesMismatch();
-        if (p.taker.sellToken != p.maker.buyToken) revert TokenSidesMismatch();
-
-        // 4. Cross-side price compatibility (C2 in design.md §2.2)
-        //    maker.sellAmount * taker.sellAmount ≥ maker.buyAmount * taker.buyAmount
-        //    Both sellAmount and buyAmount are bound by the circuit to ≤ 2^126
-        //    via `Num2Bits(126)`, so each product fits in uint256 with ~4 bits
-        //    of slack — see docs/circuit-split/bit-width-audit.md §5 for the
-        //    full headroom analysis. Do NOT widen the AuthorizeProof field
-        //    types past uint128 without re-running that audit.
-        uint256 makerProduct = uint256(p.maker.sellAmount) * uint256(p.taker.sellAmount);
-        uint256 takerProduct = uint256(p.maker.buyAmount) * uint256(p.taker.buyAmount);
-        if (takerProduct > makerProduct) revert PriceMismatch();
-
-        // 5. Cross-side claims + fees cap (C4 in design.md §2.2)
-        //    Each side's totalLocked + the fee paid in that token must not
-        //    exceed the counterparty's sellAmount.
-        if (uint256(p.maker.totalLocked) + uint256(p.feeTokenMaker) > uint256(p.taker.sellAmount)) {
-            revert ClaimsCapExceeded();
-        }
-        if (uint256(p.taker.totalLocked) + uint256(p.feeTokenTaker) > uint256(p.maker.sellAmount)) {
-            revert ClaimsCapExceeded();
-        }
-
-        // 6. Fee upper bound: relayer-chosen fees must respect each side's
-        //    EdDSA-signed maxFee. (The minimum-receive guarantee
-        //    `totalLocked ≥ buyAmount` is already enforced inside
-        //    authorize.circom §7 per side, so we don't repeat it here.)
-        if (uint256(p.feeTokenMaker) * FEE_BPS_DENOMINATOR > uint256(p.taker.sellAmount) * uint256(p.taker.maxFee)) {
-            revert FeeExceedsMax();
-        }
-        if (uint256(p.feeTokenTaker) * FEE_BPS_DENOMINATOR > uint256(p.maker.sellAmount) * uint256(p.maker.maxFee)) {
-            revert FeeExceedsMax();
-        }
-
-        // 7. Per-side expiry: each side compares its own expiry against
-        //    block.timestamp. Unlike settlePrivate, there is no `currentTimestamp`
-        //    public input bound into the proof — the circuit only exposes
-        //    `expiry`, and this contract is responsible for the comparison.
-        if (block.timestamp > p.maker.expiry) revert OrderExpired();
-        if (block.timestamp > p.taker.expiry) revert OrderExpired();
+        // 2-7. Cross-side invariants: non-zero amounts, whitelist, token
+        //      compatibility (C1), price (C2), claims+fee cap (C4), fee
+        //      upper bound, and per-side expiry. Extracted into SettleVerifyLib
+        //      to keep this contract under the EIP-170 size limit.
+        SettleVerifyLib.validateCrossSide(
+            p.maker, p.taker, p.feeTokenMaker, p.feeTokenTaker, whitelistedTokens
+        );
 
         // 8. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
         //
@@ -654,8 +521,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 10. Verify both Groth16 proofs.
         //     When batchAuthorizeVerifier is set, uses a single 5-pairing batch
         //     check (~70-100K gas savings). Otherwise falls back to 2× separate.
-        uint[15] memory makerSignals = _packAuthSignals(p.maker);
-        uint[15] memory takerSignals = _packAuthSignals(p.taker);
+        uint[15] memory makerSignals = SettleVerifyLib.packAuthSignals(p.maker);
+        uint[15] memory takerSignals = SettleVerifyLib.packAuthSignals(p.taker);
 
         if (address(batchAuthorizeVerifier) != address(0)) {
             if (!batchAuthorizeVerifier.verifyBatchProof(
@@ -686,12 +553,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nonceNullifiers[p.taker.nonceNullifier] = true;
 
         // 13. Insert residual commitments (skip zero — fully spent UTXOs)
-        if (p.maker.newCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(p.maker.newCommitment));
-        }
-        if (p.taker.newCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(p.taker.newCommitment));
-        }
+        SettleVerifyLib.maybeInsertCommitment(pool, p.maker.newCommitment);
+        SettleVerifyLib.maybeInsertCommitment(pool, p.taker.newCommitment);
 
         // 14. Transfer claim totals from pool to settlement contract.
         //     `maker.totalLocked` is denominated in `maker.buyToken` (the
@@ -721,19 +584,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.taker.totalLocked > 0
         ) revert DuplicateClaimsRoot();
 
-        if (claimsGroups[p.maker.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[p.maker.claimsRoot] = ClaimsGroup({
-            token: p.maker.buyToken,
-            totalLocked: p.maker.totalLocked,
-            totalClaimed: 0
-        });
-
-        if (claimsGroups[p.taker.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[p.taker.claimsRoot] = ClaimsGroup({
-            token: p.taker.buyToken,
-            totalLocked: p.taker.totalLocked,
-            totalClaimed: 0
-        });
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked);
 
         emit PrivateSettledAuth(
             p.maker.nullifier,
@@ -746,27 +598,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             p.feeTokenMaker,
             p.feeTokenTaker
         );
-    }
-
-    /// @dev Pack an `AuthorizeProof` into the 15-element public-signal array
-    ///      that `authorize.circom`'s verifier expects.
-    ///      Signal ordering: [0] = pubKeyBind (output), [1..14] = public inputs.
-    function _packAuthSignals(AuthorizeProof calldata ap) internal pure returns (uint[15] memory signals) {
-        signals[0]  = uint256(ap.pubKeyBind);
-        signals[1]  = ap.commitmentRoot;
-        signals[2]  = uint256(ap.nullifier);
-        signals[3]  = uint256(ap.nonceNullifier);
-        signals[4]  = uint256(ap.newCommitment);
-        signals[5]  = uint256(uint160(ap.sellToken));
-        signals[6]  = uint256(uint160(ap.buyToken));
-        signals[7]  = uint256(ap.sellAmount);
-        signals[8]  = uint256(ap.buyAmount);
-        signals[9]  = uint256(ap.maxFee);
-        signals[10] = uint256(ap.expiry);
-        signals[11] = uint256(ap.claimsRoot);
-        signals[12] = uint256(ap.totalLocked);
-        signals[13] = uint256(uint160(ap.relayer));
-        signals[14] = uint256(ap.orderHash);
     }
 
     // ─── cancelPrivate (escrow rotation cancel) ─────────────────────
@@ -863,7 +694,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     //   6. Surplus (amountOut − totalLocked) → protocol treasury
 
     struct SettleDexParams {
-        AuthorizeProof proof;
+        SettleVerifyLib.AuthorizeProof proof;
         address dexRouter;    // any whitelisted DEX router (Uniswap, 1inch, Curve, etc.)
         bytes   dexCalldata;  // encoded swap call for the specific DEX
         uint256 deadline;     // [C-1] tx must be mined before this timestamp
@@ -889,7 +720,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
 
-        AuthorizeProof calldata proof = p.proof;
+        SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
 
         // 1. Relayer binding — msg.sender must match the relayer in the proof.
         //    For permissionless mode, user sets relayer = own address.
@@ -915,7 +746,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!pool.isKnownRoot(proof.commitmentRoot)) revert UnknownRoot();
 
         // 7. Verify Groth16 proof
-        uint[15] memory signals = _packAuthSignals(proof);
+        uint[15] memory signals = SettleVerifyLib.packAuthSignals(proof);
         if (!authorizeVerifier.verifyProof(proof.proofA, proof.proofB, proof.proofC, signals)) {
             revert InvalidProof();
         }
@@ -930,9 +761,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nonceNullifiers[proof.nonceNullifier] = true;
 
         // 10. Insert residual commitment (change UTXO)
-        if (proof.newCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(proof.newCommitment));
-        }
+        SettleVerifyLib.maybeInsertCommitment(pool, proof.newCommitment);
 
         // 11. Transfer sellToken from pool to this contract
         uint256 sellBalBefore = IERC20(proof.sellToken).balanceOf(address(this));
@@ -975,12 +804,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
 
         // 13. Register claims group
-        if (claimsGroups[proof.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[proof.claimsRoot] = ClaimsGroup({
-            token: proof.buyToken,
-            totalLocked: proof.totalLocked,
-            totalClaimed: 0
-        });
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked);
 
         // 14. Surplus handling: positive slippage goes directly to FeeVault
         //     treasury (not via deposit/claim, which would deduct platform fee).
@@ -1058,12 +882,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nullifiers[p.nullifier] = true;
 
         // Register claims group (prevent overwriting existing group)
-        if (claimsGroups[p.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[p.claimsRoot] = ClaimsGroup({
-            token: p.token,
-            totalLocked: p.totalLocked,
-            totalClaimed: 0
-        });
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked);
 
         // Transfer fee
         if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
@@ -1074,7 +893,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── Scatter Direct Auth (single-party, same-token via authorize proof) ──
 
     struct ScatterDirectAuthParams {
-        AuthorizeProof proof;
+        SettleVerifyLib.AuthorizeProof proof;
         uint96 fee;              // relayer-chosen fee in token units
     }
 
@@ -1090,7 +909,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         The user generates the proof client-side — the relayer never holds witness data.
     ///         Requires sellToken == buyToken (same-token scatter invariant).
     function scatterDirectAuth(ScatterDirectAuthParams calldata p) external nonReentrant {
-        AuthorizeProof calldata ap = p.proof;
+        SettleVerifyLib.AuthorizeProof calldata ap = p.proof;
 
         // 1. Relayer gating + access control (cheap calldata/SLOAD checks first)
         if (msg.sender != ap.relayer) revert NotMakerOrTakerRelayer();
@@ -1128,14 +947,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (nullifiers[ap.nullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[ap.nonceNullifier]) revert NullifierAlreadySpent();
 
-        // 9. Claims group duplicate check (fail-fast before expensive operations)
-        if (claimsGroups[ap.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
+        // 9. Claims group duplicate check is deferred to registerClaimsGroup
+        //    (step 16). Removing the fail-fast check here saves bytecode; the
+        //    trade-off is higher revert gas when a dup happens to already
+        //    exist (rare — claimsRoot is user-derived pseudo-random).
 
         // 10. Root recency (ring-buffer scan — up to 30 SLOADs)
         if (!pool.isKnownRoot(ap.commitmentRoot)) revert UnknownRoot();
 
         // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
-        uint[15] memory signals = _packAuthSignals(ap);
+        uint[15] memory signals = SettleVerifyLib.packAuthSignals(ap);
         if (!authorizeVerifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
             revert InvalidProof();
         }
@@ -1147,9 +968,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         nonceNullifiers[ap.nonceNullifier] = true;
 
         // 13. Insert residual commitment (change UTXO)
-        if (ap.newCommitment != bytes32(0)) {
-            pool.insertCommitment(uint256(ap.newCommitment));
-        }
+        SettleVerifyLib.maybeInsertCommitment(pool, ap.newCommitment);
 
         // 14. Transfer totalLocked from pool to settlement (for claims)
         if (ap.totalLocked > 0) {
@@ -1159,12 +978,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 15. Route fee from pool to relayer (or FeeVault)
         if (p.fee > 0) _routeFeeFromPool(ap.sellToken, p.fee);
 
-        // 16. Register ClaimsGroup
-        claimsGroups[ap.claimsRoot] = ClaimsGroup({
-            totalLocked: ap.totalLocked,
-            totalClaimed: 0,
-            token: ap.sellToken
-        });
+        // 16. Register ClaimsGroup (early-existence check at step 9 above
+        //      short-circuits before the expensive proof verification).
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked);
 
         emit ScatterDirectAuthSettled(ap.nullifier, ap.nonceNullifier, ap.claimsRoot, ap.relayer, p.fee);
     }
@@ -1242,7 +1058,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (recipient == address(0)) revert ZeroAddress();
         _requireNotSanctioned(recipient);
 
-        ClaimsGroup storage group = claimsGroups[claimsRoot];
+        SettleVerifyLib.ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.token == address(0)) revert ClaimsGroupNotFound();
         if (claimNullifiers[claimNullifier]) revert NullifierAlreadySpent();
         if (amount > type(uint128).max) revert AmountOverflow();

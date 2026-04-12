@@ -99,8 +99,10 @@ if [ "$MOCK_MODE" = true ]; then
   echo ""
   echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
   cd "$ROOT_DIR/contracts"
+  # forge can exit non-zero on TTY/size warnings even when deployment succeeds.
+  # Don't let `set -e` kill us here — judge success from parsed addresses below.
   DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
-    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1 || true)
 
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
@@ -179,10 +181,11 @@ else
   echo "[2/4] Deploying contracts (real IdentityGate)..."
   cd "$ROOT_DIR/contracts"
 
+  # See MOCK branch: tolerate non-zero exit and judge from parsed addresses.
   DEPLOY_OUTPUT=$(IDENTITY_REGISTRY="$IDENTITY_REGISTRY" \
     RELAYER_IDENTITY_REGISTRY="$RELAYER_IDENTITY_REGISTRY" \
     forge script script/DeployLocal.s.sol:DeployLocal \
-    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+    --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1 || true)
 
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "RelayerRegistry:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "CommitmentPool:" | awk '{print $NF}')
