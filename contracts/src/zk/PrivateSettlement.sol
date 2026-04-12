@@ -53,6 +53,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error ClaimsCapExceeded();
     error FeeExceedsMax();
     error OrderExpired();
+    // ─── scatterDirectAuth (single-party, same-token via authorize proof) errors ──
+    error SellBuyTokenMismatch();
     // ─── cancelPrivate (escrow rotation cancel) errors ──
     error CancelVerifierNotSet();
     // ─── settleWithDex errors ──
@@ -1060,6 +1062,104 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
 
         emit ScatterDirect(p.nullifier, p.claimsRoot, msg.sender, p.fee);
+    }
+
+    // ─── Scatter Direct Auth (single-party, same-token via authorize proof) ──
+
+    struct ScatterDirectAuthParams {
+        AuthorizeProof proof;
+        uint96 fee;              // relayer-chosen fee in token units
+    }
+
+    event ScatterDirectAuthSettled(
+        bytes32 indexed nullifier,
+        bytes32 indexed nonceNullifier,
+        bytes32 claimsRoot,
+        address indexed relayer,
+        uint96 fee
+    );
+
+    /// @notice Single-party scatter using an authorize.circom proof (half-proof model).
+    ///         The user generates the proof client-side — the relayer never holds witness data.
+    ///         Requires sellToken == buyToken (same-token scatter invariant).
+    function scatterDirectAuth(ScatterDirectAuthParams calldata p) external nonReentrant {
+        AuthorizeProof calldata ap = p.proof;
+
+        // 1. Relayer gating + access control (cheap calldata/SLOAD checks first)
+        if (msg.sender != ap.relayer) revert NotMakerOrTakerRelayer();
+        if (paused) revert ContractPaused();
+        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        _requireNotSanctioned(msg.sender);
+
+        // 2. Relayer registry (before expensive proof verification — saves ~200K gas on revert)
+        if (address(relayerRegistry) != address(0)) {
+            if (!relayerRegistry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
+        }
+
+        // 3. Same-token enforcement — scatter invariant (calldata compare before SLOAD)
+        if (ap.sellToken != ap.buyToken) revert SellBuyTokenMismatch();
+
+        // 4. Non-zero amounts + token whitelist
+        if (ap.sellAmount == 0) revert ZeroSellAmount();
+        if (ap.buyAmount == 0) revert ZeroBuyAmount();
+        if (!whitelistedTokens[ap.sellToken]) revert TokenNotWhitelisted();
+
+        // 5. Fee validation: fee * 10000 <= sellAmount * maxFee
+        if (uint256(p.fee) * FEE_BPS_DENOMINATOR > uint256(ap.sellAmount) * uint256(ap.maxFee)) {
+            revert FeeExceedsMax();
+        }
+
+        // 6. Claims + fee cap: totalLocked + fee <= sellAmount
+        if (uint256(ap.totalLocked) + uint256(p.fee) > uint256(ap.sellAmount)) {
+            revert ClaimsCapExceeded();
+        }
+
+        // 7. Expiry
+        if (block.timestamp > ap.expiry) revert OrderExpired();
+
+        // 8. Nullifier double-spend (escrow + nonce — 2 cold SLOADs)
+        if (nullifiers[ap.nullifier]) revert NullifierAlreadySpent();
+        if (nonceNullifiers[ap.nonceNullifier]) revert NullifierAlreadySpent();
+
+        // 9. Claims group duplicate check (fail-fast before expensive operations)
+        if (claimsGroups[ap.claimsRoot].token != address(0)) revert ClaimsGroupAlreadyExists();
+
+        // 10. Root recency (ring-buffer scan — up to 30 SLOADs)
+        if (!pool.isKnownRoot(ap.commitmentRoot)) revert UnknownRoot();
+
+        // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
+        uint[15] memory signals = _packAuthSignals(ap);
+        if (!authorizeVerifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
+            revert InvalidProof();
+        }
+
+        // ── State mutations ──
+
+        // 12. Mark nullifiers
+        nullifiers[ap.nullifier] = true;
+        nonceNullifiers[ap.nonceNullifier] = true;
+
+        // 13. Insert residual commitment (change UTXO)
+        if (ap.newCommitment != bytes32(0)) {
+            pool.insertCommitment(uint256(ap.newCommitment));
+        }
+
+        // 14. Transfer totalLocked from pool to settlement (for claims)
+        if (ap.totalLocked > 0) {
+            pool.transferToSettlement(ap.sellToken, ap.totalLocked);
+        }
+
+        // 15. Route fee from pool to relayer (or FeeVault)
+        if (p.fee > 0) _routeFeeFromPool(ap.sellToken, p.fee);
+
+        // 16. Register ClaimsGroup
+        claimsGroups[ap.claimsRoot] = ClaimsGroup({
+            totalLocked: ap.totalLocked,
+            totalClaimed: 0,
+            token: ap.sellToken
+        });
+
+        emit ScatterDirectAuthSettled(ap.nullifier, ap.nonceNullifier, ap.claimsRoot, ap.relayer, p.fee);
     }
 
     // ─── Claim ───────────────────────────────────────────────────

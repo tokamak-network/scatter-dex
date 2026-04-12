@@ -447,6 +447,8 @@ export class PrivateOrderDB {
       balance: BigInt(row.balance),
       salt: BigInt(row.salt),
       leafIndex: row.leaf_index,
+      newSalt: 0n,
+      expectedChangeCommitment: 0n,
       claims,
     };
 
@@ -536,12 +538,12 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
-    const total = (this.statsTotalOrders.get() as { count: number }).count;
-    const settled = (this.statsSettledOrders.get() as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
-    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
-    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
-    const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
+    const total = (this.statsTotalOrders.get({}) as { count: number }).count;
+    const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");

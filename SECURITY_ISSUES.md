@@ -348,5 +348,5 @@
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
 | S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ✅ PR #211 |
 | S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ✅ PR #206 |
-| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ⬜ |
+| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | 🔧 PR #215 |
 | S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | 🔧 IN PROGRESS |

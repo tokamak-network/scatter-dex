@@ -188,7 +188,36 @@ export function createAuthorizeOrderRoutes(
         (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
-      // ── 5a. Publish to shared orderbook for cross-relayer visibility ──
+      // ── 5a. Same-token scatter — no counterparty needed ──
+      const isSameToken = BigInt(order.publicSignals.sellToken) === BigInt(order.publicSignals.buyToken);
+      if (isSameToken) {
+        console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
+        stored.status = "matched";
+        try {
+          const txHash = await submitter.submitScatterDirectAuth(order, 0n);
+          stored.status = "settled";
+          stored.settleTxHash = txHash;
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "settled", txHash);
+          res.json({ status: "settled", txHash, nullifier });
+          return;
+        } catch (err) {
+          // Keep a tombstone entry (status=cancelled) to prevent resubmission
+          // of the same nullifier — the TX may have been broadcast but not confirmed.
+          stored.status = "cancelled";
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "cancelled");
+          console.error("[authorize-orders] scatterDirectAuth failed:", err);
+          res.status(500).json({
+            status: "scatter_failed",
+            error: "scatterDirectAuth submission failed — generate a new proof to retry",
+            nullifier,
+          });
+          return;
+        }
+      }
+
+      // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
       if (_sharedClient) {
         const ps = order.publicSignals;
         const orderbookId = await _sharedClient.postOrder({
@@ -318,6 +347,9 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
     if (candidate.status !== "pending") continue;
 
     const cPs = candidate.order.publicSignals;
+
+    // Skip same-token orders — they are handled by scatterDirectAuth, not matching
+    if (BigInt(cPs.sellToken) === BigInt(cPs.buyToken)) continue;
 
     // Convention: the existing order is maker, the incoming is taker.
     // isTokenCompatible is symmetric (A.sell==B.buy ∧ B.sell==A.buy),
