@@ -16,9 +16,11 @@ export function mountRouter(basePath: string, router: Router): Express {
 
 type SubmitterStub = {
   getProvider: () => { getBlockNumber: () => Promise<number>; getBalance: () => Promise<bigint>; getNetwork: () => Promise<{ chainId: bigint }> };
-  getWallet: () => { address: string };
+  getWallet: () => { address: string; provider?: unknown };
   getAddress: () => string;
   getCommitmentMerkleProof: (i: number) => Promise<unknown>;
+  submitClaim: (params: unknown) => Promise<string>;
+  claimVaultFee: (vaultAddress: string, token: string) => Promise<string>;
 };
 
 export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): PrivateSubmitter {
@@ -27,12 +29,14 @@ export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): Priva
     getBalance: async () => 10n ** 18n,
     getNetwork: async () => ({ chainId: 31337n }),
   };
-  const wallet = { address: "0x" + "9".repeat(40) };
+  const wallet = { address: "0x" + "9".repeat(40), provider };
   const stub: SubmitterStub = {
     getProvider: () => provider,
     getWallet: () => wallet,
     getAddress: () => wallet.address,
     getCommitmentMerkleProof: async (i: number) => ({ leafIndex: i, siblings: [] }),
+    submitClaim: async () => "0x" + "f".repeat(64),
+    claimVaultFee: async () => "0x" + "e".repeat(64),
     ...overrides,
   };
   return stub as unknown as PrivateSubmitter;
@@ -48,6 +52,7 @@ type DbStub = {
   loadPendingAuthorizeOrders: () => unknown[];
   saveAuthorizeOrder: (...args: unknown[]) => void;
   updateAuthorizeOrderStatus: (...args: unknown[]) => void;
+  hasSettledClaimsRoot: (root: string) => boolean;
 };
 
 export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
@@ -65,6 +70,7 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
     loadPendingAuthorizeOrders: () => [],
     saveAuthorizeOrder: () => {},
     updateAuthorizeOrderStatus: () => {},
+    hasSettledClaimsRoot: () => false,
     ...overrides,
   };
   return stub as unknown as PrivateOrderDB;
@@ -74,6 +80,11 @@ type OrderbookStub = {
   getOrderCount: () => number;
   cancelAll: () => number;
   pendingOrderCount: number;
+  getOrdersByPubKey: (pubKeyAx: bigint) => unknown[];
+  getOrderByNonce: (pubKeyAx: bigint, nonce: bigint) => unknown | null;
+  getOrderHistory: (pubKeyAx: bigint, opts: unknown) => unknown[];
+  countOrders: (pubKeyAx: bigint, status?: string) => number;
+  cancel: (pubKeyAx: bigint, nonce: bigint) => boolean;
 };
 
 export function makeOrderbookStub(overrides: Partial<OrderbookStub> = {}): PrivateOrderbook {
@@ -81,6 +92,11 @@ export function makeOrderbookStub(overrides: Partial<OrderbookStub> = {}): Priva
     getOrderCount: () => 0,
     cancelAll: () => 0,
     pendingOrderCount: 0,
+    getOrdersByPubKey: () => [],
+    getOrderByNonce: () => null,
+    getOrderHistory: () => [],
+    countOrders: () => 0,
+    cancel: () => false,
     ...overrides,
   };
   return stub as unknown as PrivateOrderbook;
