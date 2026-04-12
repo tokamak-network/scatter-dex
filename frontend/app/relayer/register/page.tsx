@@ -21,7 +21,7 @@ const IDENTITY_REGISTRY_ABI = [
 type RegistrationStatus = "idle" | "checking" | "not-connected" | "not-verified" | "already-registered" | "ready" | "submitting" | "success" | "error";
 
 export default function RelayerRegisterPage() {
-  const { account, getSigner } = useWallet();
+  const { account, signer } = useWallet();
 
   const [status, setStatus] = useState<RegistrationStatus>("idle");
   const [isVerified, setIsVerified] = useState(false);
@@ -92,7 +92,6 @@ export default function RelayerRegisterPage() {
     setStatus("submitting");
     setErrorMsg("");
     try {
-      const signer = await getSigner();
       if (!signer) throw new Error("No signer available");
 
       const registryAddr = getRelayerRegistryAddress();

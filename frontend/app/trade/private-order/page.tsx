@@ -352,7 +352,7 @@ export default function PrivateOrderPage() {
   const feePercent = feeBps / 100;
 
   // Gas-inclusive minimum fee
-  const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId, readProvider);
+  const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId ?? undefined, readProvider);
   const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
   const [feeBreakdownOpen, setFeeBreakdownOpen] = useState(false);
 
@@ -632,7 +632,7 @@ export default function PrivateOrderPage() {
     setError(null);
 
     try {
-      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
+      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
         sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
         selectedNote, changeSalt, maxFee: 0n,
         relayerAddress: account, eddsaPrivateKey: kp.privateKey,
@@ -675,12 +675,12 @@ export default function PrivateOrderPage() {
 
       // Build settleWithDex params
       const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
-      const proofA = [BigInt(proofResult.proof.pi_a[0]), BigInt(proofResult.proof.pi_a[1])];
+      const proofA = [BigInt(proofResult.proof.a[0]), BigInt(proofResult.proof.a[1])];
       const proofB = [
-        [BigInt(proofResult.proof.pi_b[0][1]), BigInt(proofResult.proof.pi_b[0][0])],
-        [BigInt(proofResult.proof.pi_b[1][1]), BigInt(proofResult.proof.pi_b[1][0])],
+        [BigInt(proofResult.proof.b[0][0]), BigInt(proofResult.proof.b[0][1])],
+        [BigInt(proofResult.proof.b[1][0]), BigInt(proofResult.proof.b[1][1])],
       ];
-      const proofC = [BigInt(proofResult.proof.pi_c[0]), BigInt(proofResult.proof.pi_c[1])];
+      const proofC = [BigInt(proofResult.proof.c[0]), BigInt(proofResult.proof.c[1])];
 
       const tx = await settlement.settleWithDex({
         proof: {
@@ -1311,11 +1311,11 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || step === "signing" || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
-              {step === "signing" || keyLoading ? (
-                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {keyLoading ? "Unlocking Key..." : "Executing..."}</span>
+              {keyLoading ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Unlocking Key...</span>
               ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Trading Key" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
             </button>
             )}

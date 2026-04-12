@@ -188,7 +188,7 @@ export default function PrivateEscrowPage() {
     setNotes(loaded);
     try {
       const claims = await loadClaimsFiles();
-      setOrderFiles(claims as typeof orderFiles);
+      setOrderFiles(claims as unknown as typeof orderFiles);
     } catch { /* ignore */ }
   }, []);
 
