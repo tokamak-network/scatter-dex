@@ -19,8 +19,10 @@ import type {
 } from "../types/authorize-order.js";
 
 // AuthorizeProof tuple — shared between maker and taker in settleAuth
+// Must match contracts/src/zk/PrivateSettlement.sol AuthorizeProof struct exactly.
 const AUTH_PROOF_TUPLE = `tuple(
   uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
+  bytes32 pubKeyBind,
   uint256 commitmentRoot,
   bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
   address sellToken, address buyToken,
@@ -243,6 +245,7 @@ export class AuthorizeSubmitter {
       proofA: order.proof.a.map(BigInt),
       proofB: order.proof.b.map((pair) => pair.map(BigInt)),
       proofC: order.proof.c.map(BigInt),
+      pubKeyBind: toBytes32(ps.pubKeyBind),
       commitmentRoot: BigInt(ps.commitmentRoot),
       nullifier: toBytes32(ps.nullifier),
       nonceNullifier: toBytes32(ps.nonceNullifier),

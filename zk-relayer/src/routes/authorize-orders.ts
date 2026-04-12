@@ -182,9 +182,9 @@ export function createAuthorizeOrderRoutes(
           res.json({ status: "settled", txHash, nullifier });
           return;
         } catch (err) {
-          // Same-token orders cannot be retried (nullifier already stored).
-          // Clean up immediately to free the pubKey slot.
-          authorizeOrders.delete(nullifier);
+          // Keep a tombstone entry (status=failed) to prevent resubmission
+          // of the same nullifier — the TX may have been broadcast but not confirmed.
+          stored.status = "cancelled";
           decPubKeyCount(pubKeyAx, pubKeyAy);
           _db?.updateAuthorizeOrderStatus(nullifier, "cancelled");
           console.error("[authorize-orders] scatterDirectAuth failed:", err);

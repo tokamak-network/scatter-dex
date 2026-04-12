@@ -16,10 +16,9 @@ export function createPrivateOrderRoutes(
 ): Router {
   const router = Router();
 
-  // [S-C1] POST /api/private-orders — DEPRECATED for P2P matching.
-  // Only ScatterDirect (same-token redistribution) is still allowed here
-  // because it requires witness data and has no authorize-path equivalent yet.
-  // All other orders must use POST /api/authorize-orders (half-proof path).
+  // [S-M14] POST /api/private-orders — FULLY DEPRECATED.
+  // All orders (including ScatterDirect) now use POST /api/authorize-orders.
+  // This endpoint returns 410 Gone with migration instructions.
   if (writeLimiter) router.post("/", writeLimiter);
   router.post("/", async (_req: Request, res: Response) => {
     try {
