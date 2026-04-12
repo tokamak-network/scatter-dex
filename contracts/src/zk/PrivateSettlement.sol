@@ -40,23 +40,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error NotYetReleasable();
     error TokenMismatch();
     error AmountOverflow();
-    error ZeroSellAmount();
-    error ZeroBuyAmount();
     error OnlyWETH();
-    // ClaimsGroupAlreadyExists moved to SettleVerifyLib (same selector).
     error DuplicateClaimsRoot();
     error TimestampOutOfRange();
     error NotActiveRelayer();
-    // ─── settleAuth (Half-proof) errors ──
     error AuthorizeVerifierNotSet();
-    error TokenSidesMismatch();
-    // PriceMismatch moved to SettleVerifyLib (same selector).
-    error ClaimsCapExceeded();
-    error FeeExceedsMax();
-    error OrderExpired();
-    // ─── scatterDirectAuth (single-party, same-token via authorize proof) errors ──
-    error SellBuyTokenMismatch();
-    // ─── cancelPrivate (escrow rotation cancel) errors ──
     error CancelVerifierNotSet();
     // ─── settleWithDex errors ──
     error DexRouterNotWhitelisted();
@@ -331,12 +319,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Settle ──────────────────────────────────────────────────
 
-    /// @dev SettleParams/AuthorizeProof structs live in SettleVerifyLib for
-    ///      reuse between the contract and the extracted library. External
-    ///      ABI is unchanged (tuple shape is identical).
-    ///
-    ///      Alias types — callers should prefer `SettleVerifyLib.*` directly.
-
     /// @notice Execute a private settlement with ZK proof.
     /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
     /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
@@ -447,9 +429,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // denominated in `tokenTaker = taker.buyToken = maker.sellToken` and is
     // paid by the maker → goes to `maker.relayer`.
 
-    /// @dev AuthorizeProof struct lives in SettleVerifyLib (shared with the
-    ///      extracted library). ABI tuple shape is unchanged.
-
     struct SettleAuthParams {
         SettleVerifyLib.AuthorizeProof maker;
         SettleVerifyLib.AuthorizeProof taker;
@@ -469,10 +448,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
 
-        // 2-7. Cross-side invariants: non-zero amounts, whitelist, token
-        //      compatibility (C1), price (C2), claims+fee cap (C4), fee
-        //      upper bound, and per-side expiry. Extracted into SettleVerifyLib
-        //      to keep this contract under the EIP-170 size limit.
+        // Cross-side invariants: non-zero amounts, whitelist, token
+        // compatibility (C1), price (C2), claims+fee cap (C4), fee
+        // upper bound, and per-side expiry.
         SettleVerifyLib.validateCrossSide(
             p.maker, p.taker, p.feeTokenMaker, p.feeTokenTaker, whitelistedTokens
         );
@@ -720,8 +698,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
 
-        // 1-4. Calldata-only checks: deadline, relayer binding, token compat,
-        //      non-zero sellAmount, expiry, intra-tx nullifier diff.
         SettleVerifyLib.validateDexProof(proof, msg.sender, p.deadline);
 
         // Token whitelist (storage — stays inline)
@@ -907,8 +883,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         _requireNotSanctioned(msg.sender);
 
-        // 1-7. Relayer binding, same-token invariant, non-zero amounts,
-        //      fee cap, claims+fee cap, expiry (extracted into lib).
+        // Relayer binding, same-token invariant, non-zero amounts,
+        // fee cap, claims+fee cap, expiry.
         SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee);
 
         // Relayer registry (before expensive proof verification — saves ~200K gas on revert)
@@ -923,12 +899,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (nullifiers[ap.nullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[ap.nonceNullifier]) revert NullifierAlreadySpent();
 
-        // 9. Claims group duplicate check is deferred to registerClaimsGroup
-        //    (step 16). Removing the fail-fast check here saves bytecode; the
-        //    trade-off is higher revert gas when a dup happens to already
-        //    exist (rare — claimsRoot is user-derived pseudo-random).
-
-        // 10. Root recency (ring-buffer scan — up to 30 SLOADs)
+        // Root recency (ring-buffer scan — up to 30 SLOADs)
         if (!pool.isKnownRoot(ap.commitmentRoot)) revert UnknownRoot();
 
         // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
@@ -954,8 +925,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 15. Route fee from pool to relayer (or FeeVault)
         if (p.fee > 0) _routeFeeFromPool(ap.sellToken, p.fee);
 
-        // 16. Register ClaimsGroup (early-existence check at step 9 above
-        //      short-circuits before the expensive proof verification).
         SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked);
 
         emit ScatterDirectAuthSettled(ap.nullifier, ap.nonceNullifier, ap.claimsRoot, ap.relayer, p.fee);

@@ -270,7 +270,7 @@ contract SettleWithDexTest is Test {
         p.proof.expiry = uint64(block.timestamp - 1);
 
         vm.prank(user);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.settleWithDex(p);
     }
 

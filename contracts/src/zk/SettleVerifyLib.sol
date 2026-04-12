@@ -182,46 +182,6 @@ library SettleVerifyLib {
         if (block.timestamp > taker.expiry) revert OrderExpired();
     }
 
-    /// @notice Validate per-side caps for a single authorize trade
-    ///         (scatterDirectAuth / settleWithDex).
-    ///         Checks fee-vs-sellAmount bound, claims+fee <= sellAmount,
-    ///         and expiry. `sellAmount` non-zero must already be checked
-    ///         by the caller (the multiplications below tolerate 0 but
-    ///         the caller must still reject zero-sell orders for other
-    ///         reasons — transfer semantics, etc.).
-    function validateAuthCaps(
-        uint128 sellAmount,
-        uint16  maxFee,
-        uint64  expiry,
-        uint128 totalLocked,
-        uint96  fee
-    ) external view {
-        if (uint256(fee) * FEE_BPS_DENOMINATOR > uint256(sellAmount) * uint256(maxFee)) {
-            revert FeeExceedsMax();
-        }
-        if (uint256(totalLocked) + uint256(fee) > uint256(sellAmount)) {
-            revert ClaimsCapExceeded();
-        }
-        if (block.timestamp > expiry) revert OrderExpired();
-    }
-
-    /// @notice Pack claim public signals for claim.circom verifier.
-    function packClaimSignals(
-        bytes32 claimsRoot,
-        bytes32 claimNullifier,
-        uint256 amount,
-        address token,
-        address recipient,
-        uint256 releaseTime
-    ) external pure returns (uint[6] memory signals) {
-        signals[0] = uint256(claimsRoot);
-        signals[1] = uint256(claimNullifier);
-        signals[2] = amount;
-        signals[3] = uint256(uint160(token));
-        signals[4] = uint256(uint160(recipient));
-        signals[5] = releaseTime;
-    }
-
     /// @notice Calldata-only validation for settleWithDex (pre-state-mutation).
     ///         Does not include storage-dependent checks (whitelist, nullifier
     ///         double-spend, root recency) — those stay inline.
@@ -260,41 +220,27 @@ library SettleVerifyLib {
     }
 
     /// @notice Insert a residual commitment into the pool iff non-zero.
-    ///         Called after state mutations in settle/scatter functions to
-    ///         record the change UTXO.
-    function maybeInsertCommitment(CommitmentPool pool, bytes32 commitment) external {
+    /// @dev `internal` so call sites inline via JUMP instead of DELEGATECALL —
+    ///      body is trivial and the per-call dispatch overhead wasn't worth it.
+    function maybeInsertCommitment(CommitmentPool pool, bytes32 commitment) internal {
         if (commitment != bytes32(0)) {
             pool.insertCommitment(uint256(commitment));
         }
     }
 
     /// @notice Register a new claims group. Reverts if one already exists at `root`.
+    /// @dev `internal` — same reasoning as `maybeInsertCommitment`.
     function registerClaimsGroup(
         mapping(bytes32 => ClaimsGroup) storage claimsGroups,
         bytes32 root,
         address token,
         uint128 totalLocked
-    ) external {
+    ) internal {
         if (claimsGroups[root].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[root] = ClaimsGroup({
             totalLocked: totalLocked,
             totalClaimed: 0,
             token: token
         });
-    }
-
-    /// @notice Pack cancel public signals for cancel.circom verifier.
-    function packCancelSignals(
-        uint256 commitmentRoot,
-        bytes32 oldNullifier,
-        bytes32 oldNonceNullifier,
-        bytes32 newCommitment,
-        address sender
-    ) external pure returns (uint[5] memory signals) {
-        signals[0] = commitmentRoot;
-        signals[1] = uint256(oldNullifier);
-        signals[2] = uint256(oldNonceNullifier);
-        signals[3] = uint256(newCommitment);
-        signals[4] = uint256(uint160(sender));
     }
 }

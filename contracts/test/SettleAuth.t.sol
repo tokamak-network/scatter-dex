@@ -251,7 +251,7 @@ contract SettleAuthTest is Test {
         p.maker.buyAmount = 0;
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
+        vm.expectRevert(SettleVerifyLib.ZeroBuyAmount.selector);
         settlement.settleAuth(p);
     }
 
@@ -260,7 +260,7 @@ contract SettleAuthTest is Test {
         p.taker.buyAmount = 0;
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
+        vm.expectRevert(SettleVerifyLib.ZeroBuyAmount.selector);
         settlement.settleAuth(p);
     }
 
@@ -337,7 +337,7 @@ contract SettleAuthTest is Test {
         p.taker.buyToken = address(0xBADB);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.TokenSidesMismatch.selector);
+        vm.expectRevert(SettleVerifyLib.TokenSidesMismatch.selector);
         settlement.settleAuth(p);
     }
 
@@ -379,7 +379,7 @@ contract SettleAuthTest is Test {
         usdc.mint(address(pool), 1_000e18);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ClaimsCapExceeded.selector);
+        vm.expectRevert(SettleVerifyLib.ClaimsCapExceeded.selector);
         settlement.settleAuth(p);
     }
 
@@ -390,7 +390,7 @@ contract SettleAuthTest is Test {
         weth.transfer(address(pool), 1 ether);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ClaimsCapExceeded.selector);
+        vm.expectRevert(SettleVerifyLib.ClaimsCapExceeded.selector);
         settlement.settleAuth(p);
     }
 
@@ -409,7 +409,7 @@ contract SettleAuthTest is Test {
         // Fee bound: 0.2 * 10000 = 2000 > 10 * 100 = 1000 → FeeExceedsMax ✓
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.FeeExceedsMax.selector);
+        vm.expectRevert(SettleVerifyLib.FeeExceedsMax.selector);
         settlement.settleAuth(p);
     }
 
@@ -424,7 +424,7 @@ contract SettleAuthTest is Test {
         // Fee bound: 300 * 10000 = 3_000_000 > 20_000 * 100 = 2_000_000 → FeeExceedsMax ✓
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.FeeExceedsMax.selector);
+        vm.expectRevert(SettleVerifyLib.FeeExceedsMax.selector);
         settlement.settleAuth(p);
     }
 
@@ -437,7 +437,7 @@ contract SettleAuthTest is Test {
         p.maker.expiry = uint64(block.timestamp - 1);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.settleAuth(p);
     }
 
@@ -446,7 +446,7 @@ contract SettleAuthTest is Test {
         p.taker.expiry = uint64(block.timestamp - 1);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.settleAuth(p);
     }
 
@@ -738,7 +738,7 @@ contract SettleAuthTest is Test {
         p.proof.buyToken = address(weth); // different from sellToken
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.SellBuyTokenMismatch.selector);
+        vm.expectRevert(SettleVerifyLib.SellBuyTokenMismatch.selector);
         settlement.scatterDirectAuth(p);
     }
 
@@ -758,7 +758,7 @@ contract SettleAuthTest is Test {
         p.proof.totalLocked = uint128(9_000e18); // ensure cap passes
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.FeeExceedsMax.selector);
+        vm.expectRevert(SettleVerifyLib.FeeExceedsMax.selector);
         settlement.scatterDirectAuth(p);
     }
 
@@ -768,7 +768,7 @@ contract SettleAuthTest is Test {
         p.fee = uint96(1); // totalLocked + fee > sellAmount
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ClaimsCapExceeded.selector);
+        vm.expectRevert(SettleVerifyLib.ClaimsCapExceeded.selector);
         settlement.scatterDirectAuth(p);
     }
 
@@ -777,7 +777,7 @@ contract SettleAuthTest is Test {
         p.proof.expiry = uint64(block.timestamp - 1);
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.scatterDirectAuth(p);
     }
 

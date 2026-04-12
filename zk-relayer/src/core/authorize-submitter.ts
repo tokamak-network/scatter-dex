@@ -20,7 +20,7 @@ import type {
 } from "../types/authorize-order.js";
 
 // AuthorizeProof tuple — shared between maker and taker in settleAuth
-// Must match contracts/src/zk/PrivateSettlement.sol AuthorizeProof struct exactly.
+// Must match contracts/src/zk/SettleVerifyLib.sol AuthorizeProof struct exactly.
 const AUTH_PROOF_TUPLE = `tuple(
   uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
   bytes32 pubKeyBind,
