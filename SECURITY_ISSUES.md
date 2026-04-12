@@ -297,8 +297,8 @@
 |---|------|------|------|--------|
 | R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | ✅ | PR #205 |
 | R-8 | 메트릭스 없음 | 인메모리 런타임 메트릭스 (가스비/처리량/정산시간) | ✅ | PR #214 |
-| R-9 | 운영 문서 없음 | operations-guide.md (설정/모니터링/Admin API/트러블슈팅) | 🔧 | `docs/R9-operations-guide` |
-| R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | 🔧 | `feat/R10-sanctions-list` |
+| R-9 | 운영 문서 없음 | operations-guide.md (설정/모니터링/Admin API/트러블슈팅) | ✅ | PR #216 |
+| R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | ✅ | PR #217 |
 
 #### 🟡 MEDIUM (개선 권장)
 
@@ -306,7 +306,7 @@
 |---|------|------|------|
 | R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ⬜ |
 | R-12 | AMM/DEX 라우팅 | 미매칭 주문을 DEX로 자동 라우팅 | N/A — 지정가 주문 설계상 해당 없음 |
-| R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | 🔧 IN PROGRESS |
+| R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | ✅ | PR #218, #222, #224 (Tier-1+Tier-2 전체) |
 | R-14 | 부하 테스트 | 동시 주문/정산 부하 테스트 없음 | ⬜ |
 
 ### 🔴 2차 보안 감사 (2026-04-11 전체 스택 5개 영역 병렬 감사)
@@ -348,5 +348,5 @@
 | S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
 | S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ✅ PR #211 |
 | S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ✅ PR #206 |
-| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | 🔧 PR #215 |
-| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | 🔧 IN PROGRESS |
+| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ✅ PR #215 |
+| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | ✅ PR #213 |

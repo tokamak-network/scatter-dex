@@ -144,6 +144,73 @@ rm -f zk-relayer/zk-relayer.db
 ./scripts/dev.sh --mock
 ```
 
+## Cross-Relayer Setup (Shared Orderbook)
+
+Single-relayer `dev.sh` does **not** start the shared orderbook or a second relayer. To exercise cross-relayer matching (S-M15), run the cross-relayer script in a separate terminal after `dev.sh --mock` is up:
+
+```bash
+# Terminal 1
+./scripts/dev.sh --mock
+
+# Terminal 2 (after deployment completes)
+./scripts/start-cross-relayer-e2e.sh
+```
+
+| Service | Port | Notes |
+|---|---|---|
+| Shared Orderbook | 4000 | `shared-orderbook/` |
+| Relayer A | 3002 | restarted with `SHARED_ORDERBOOK_URL` |
+| Relayer B | 3003 | Anvil Account #2 key, separate DB (`zk-relayer-b.db`) |
+
+Status checks:
+
+```bash
+curl http://localhost:3002/api/info
+curl http://localhost:3003/api/info
+curl http://localhost:4000/health
+```
+
+Run the end-to-end cross-relayer scenario:
+
+```bash
+cd zk-relayer && npx tsx test/e2e-cross-relayer.ts
+```
+
+**Frontend with two relayers:** `dev.sh` only writes `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002`. To surface both relayers in the UI, either point the frontend at the shared orderbook or manually add a second relayer entry in `.env.local`.
+
+## Market Orders (Fork Mode)
+
+`settleWithDex` requires a whitelisted DEX router. The default plain anvil chain has none deployed, so `DeployLocal` prints `1inch Router not deployed on this chain (skipped)` and market orders will not execute end-to-end.
+
+To exercise market orders locally, start anvil in **fork mode** against mainnet (or a chain where the 1inch Aggregation Router V6 and Uniswap V3 SwapRouter02 are deployed):
+
+```bash
+# Terminal 1
+anvil --fork-url https://eth.llamarpc.com
+# or Alchemy / Infura / your own RPC
+
+# Terminal 2
+IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
+# or for mock identity with fork:
+./scripts/dev.sh --mock   # only if you start anvil separately — dev.sh --mock also starts anvil
+```
+
+When fork mode is used, `DeployLocal` will whitelist:
+- 1inch Aggregation Router V6 — `0x111111125421cA6dc452d289314280a0f8842A65`
+- Uniswap V3 SwapRouter02 — `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`
+
+**1inch Swap API key:** the frontend route `/api/swap` requires `ONEINCH_API_KEY` in `frontend/.env.local`. Without it the UI falls back to Uniswap quoting.
+
+## E2E Test Runbook
+
+| Scenario | Command | Prereqs |
+|---|---|---|
+| Full limit-order flow (single relayer) | open `http://localhost:3000`, deposit → order → claim | `dev.sh --mock` |
+| Cross-relayer matching | `cd zk-relayer && npx tsx test/e2e-cross-relayer.ts` | `dev.sh --mock` + `start-cross-relayer-e2e.sh` |
+| Market order (settleWithDex) Foundry fork | `cd contracts && forge test --match-contract SettleWithDex --fork-url <MAINNET_RPC>` | mainnet RPC URL |
+| Relayer HTTP route tests | `cd zk-relayer && npm test` | none (hermetic) |
+| Contract tests | `cd contracts && forge test` | none |
+
 ## Troubleshooting
 
 | Problem | Solution |
