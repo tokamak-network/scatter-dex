@@ -1,7 +1,7 @@
 /**
- * [R-13] HTTP-level API route tests using supertest.
+ * HTTP-level API route tests using supertest.
  *
- * Tests cover: status codes, error responses, rate limiting headers,
+ * Tests cover: status codes, error responses, rate limiting,
  * content types, and input validation for the main public endpoints.
  * Admin and auth-protected endpoints are tested with correct/missing keys.
  */
@@ -12,6 +12,8 @@ import request from "supertest";
 import rateLimit from "express-rate-limit";
 
 // ─── Mock config before importing routes ────────────────────────
+// Note: vi.mock is hoisted above all variable declarations, so we
+// cannot reference module-level constants inside the factory.
 vi.mock("../src/config.js", () => ({
   config: {
     rpcUrl: "http://localhost:8545",
@@ -45,6 +47,8 @@ vi.mock("../src/core/metrics.js", () => ({
     p2pOrderReceived: 0,
   })),
 }));
+
+const ADMIN_KEY = "a]".repeat(16) + "b]".repeat(16);
 
 import { createOrderbookRoutes } from "../src/routes/orderbook.js";
 import { createInfoRoutes } from "../src/routes/info.js";
@@ -237,37 +241,35 @@ describe("Admin API", () => {
   });
 
   it("PUT /fee rejects missing bps", async () => {
-    const key = "a]".repeat(16) + "b]".repeat(16);
     const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", key)
+      .set("x-admin-key", ADMIN_KEY)
       .send({});
     expect(res.status).toBe(400);
   });
 
   it("PUT /fee rejects bps > 10000", async () => {
-    const key = "a]".repeat(16) + "b]".repeat(16);
     const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", key)
+      .set("x-admin-key", ADMIN_KEY)
       .send({ bps: 10001 });
     expect(res.status).toBe(400);
   });
 
   it("POST /pause returns 200", async () => {
-    const key = "a]".repeat(16) + "b]".repeat(16);
     const res = await request(app)
       .post("/api/admin/pause")
-      .set("x-admin-key", key);
+      .set("x-admin-key", ADMIN_KEY);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("status", "paused");
   });
 
-  it("POST /resume returns 200", async () => {
-    const key = "a]".repeat(16) + "b]".repeat(16);
+  it("POST /resume returns 200 after pause", async () => {
+    // Ensure paused state first so resume is a meaningful transition
+    await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
     const res = await request(app)
       .post("/api/admin/resume")
-      .set("x-admin-key", key);
+      .set("x-admin-key", ADMIN_KEY);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("status", "resumed");
   });
