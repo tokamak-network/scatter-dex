@@ -22,6 +22,7 @@ const ctx = self as unknown as Worker;
 // module graph ahead of time. The module is cached by the JS engine, so
 // subsequent `onmessage` calls get it instantly.
 const proverPromise = import("./authorize-prover");
+const wipePromise = import("./secure-wipe");
 
 ctx.onmessage = async (event: MessageEvent) => {
   let eddsaKey: Uint8Array | null = null;
@@ -36,11 +37,10 @@ ctx.onmessage = async (event: MessageEvent) => {
     const message = err instanceof Error ? err.message : String(err);
     ctx.postMessage({ type: "error", message });
   } finally {
-    // [S-M12] Zero sensitive key material after proof generation
-    eddsaKey?.fill(0);
-    // Zero the raw serialized key array in the incoming message
-    const rawKey = event.data.eddsaPrivateKey;
-    if (Array.isArray(rawKey)) rawKey.fill(0);
+    // [S-M12] Defense-in-depth: zero key even if prover threw before its own wipe
+    const { wipeBytes, wipeArray } = await wipePromise;
+    wipeBytes(eddsaKey);
+    wipeArray(event.data.eddsaPrivateKey);
   }
 };
 

@@ -21,6 +21,7 @@
  */
 
 import type { AuthorizeProofInput, AuthorizeProofResult } from "./authorize-prover";
+import { wipeArray } from "./secure-wipe";
 
 let worker: Worker | null = null;
 let workerFailed = false;
@@ -142,9 +143,8 @@ async function doGenerate(
     w.addEventListener("error", onError);
     const serialized = serializeInput(input);
     w.postMessage(serialized);
-    // [S-M12] Zero the serialized private key after posting to worker
-    const rawKey = serialized.eddsaPrivateKey;
-    if (Array.isArray(rawKey)) (rawKey as number[]).fill(0);
+    // [S-M12] Zero serialized private key after posting
+    wipeArray(serialized.eddsaPrivateKey as number[]);
   });
 }
 
