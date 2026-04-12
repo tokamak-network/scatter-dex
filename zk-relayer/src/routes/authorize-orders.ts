@@ -21,6 +21,7 @@ import {
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -50,13 +51,20 @@ function decPubKeyCount(ax: string, ay: string): void {
   else pendingCountByPubKey.set(id, count);
 }
 
+let _sharedClient: SharedOrderbookClient | null = null;
+let _orderIdMap: Map<string, string> | null = null;
+
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
   readLimiter?: RequestHandler,
   db?: PrivateOrderDB,
+  sharedClient?: SharedOrderbookClient | null,
+  orderIdMap?: Map<string, string>,
 ): Router {
+  if (sharedClient) _sharedClient = sharedClient;
+  if (orderIdMap) _orderIdMap = orderIdMap;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -168,7 +176,26 @@ export function createAuthorizeOrderRoutes(
         (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
-      // ── 5. Try to match ──
+      // ── 5a. Publish to shared orderbook for cross-relayer visibility ──
+      if (_sharedClient) {
+        const ps = order.publicSignals;
+        const orderbookId = await _sharedClient.postOrder({
+          nonce: nullifier,
+          pubKeyAx: pubKeyAx!,
+          sellToken: ps.sellToken.toLowerCase(),
+          buyToken: ps.buyToken.toLowerCase(),
+          sellAmount: ps.sellAmount,
+          buyAmount: ps.buyAmount,
+          minFillAmount: ps.buyAmount,
+          maxFee: Number(ps.maxFee),
+          expiry: Number(ps.expiry),
+        });
+        if (orderbookId && _orderIdMap) {
+          _orderIdMap.set(nullifier, orderbookId);
+        }
+      }
+
+      // ── 6. Try to match ──
       const match = findMatch(stored);
       if (match) {
         console.log("[authorize-orders] Match found! Submitting settleAuth...");
@@ -188,6 +215,16 @@ export function createAuthorizeOrderRoutes(
           decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
           _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
           _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
+
+          // Cancel both sides from shared orderbook
+          if (_sharedClient && _orderIdMap) {
+            const makerNull = match.maker.order.publicSignals.nullifier;
+            const takerNull = match.taker.order.publicSignals.nullifier;
+            const makerOid = _orderIdMap.get(makerNull);
+            const takerOid = _orderIdMap.get(takerNull);
+            if (makerOid) { _sharedClient.cancelOrder(makerOid); _orderIdMap.delete(makerNull); }
+            if (takerOid) { _sharedClient.cancelOrder(takerOid); _orderIdMap.delete(takerNull); }
+          }
 
           res.json({
             status: "settled",
@@ -300,6 +337,10 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
+    if (_sharedClient && _orderIdMap) {
+      const oid = _orderIdMap.get(key);
+      if (oid) { _sharedClient.cancelOrder(oid); _orderIdMap.delete(key); }
+    }
     toDelete.push(key);
   }
   for (const key of toDelete) {
@@ -343,6 +384,11 @@ export function purgeNonPendingAuthorizeOrders(): number {
       // Settled orders already had their counter decremented on settlement.
       if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
+      // Cancel from shared orderbook if still listed
+      if (_sharedClient && _orderIdMap) {
+        const oid = _orderIdMap.get(key);
+        if (oid) { _sharedClient.cancelOrder(oid); _orderIdMap.delete(key); }
       }
       authorizeOrders.delete(key);
       removed++;
