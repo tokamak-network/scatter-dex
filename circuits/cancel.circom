@@ -166,6 +166,13 @@ template Cancel(commitTreeDepth) {
     newCommitment === newCommitHash.out;
 
     // ════════════════════════════════════════
+    //  4b. RANGE CHECK
+    //      balance must fit in 128 bits (matches authorize.circom / settle.circom).
+    // ════════════════════════════════════════
+    component rcBalance = Num2Bits(128);
+    rcBalance.in <== balance;
+
+    // ════════════════════════════════════════
     //  5. EdDSA SIGNATURE VERIFICATION
     //     The cancel message is Poseidon(oldNonceNullifier, submitter).
     //     This proves:

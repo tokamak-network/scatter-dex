@@ -81,12 +81,9 @@ export class PrivateOrderDB {
   private statsSettledVolume: ReturnType<Database.Database["prepare"]>;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
-  // [R-6] Authorize order statements
-  private upsertAuthOrder: ReturnType<Database.Database["prepare"]>;
-  private updateAuthStatus: ReturnType<Database.Database["prepare"]>;
-  private deleteAuthOrder: ReturnType<Database.Database["prepare"]>;
-  private selectPendingAuth: ReturnType<Database.Database["prepare"]>;
-  private purgeAuthNonPending: ReturnType<Database.Database["prepare"]>;
+  private insertPendingTx: ReturnType<Database.Database["prepare"]>;
+  private deletePendingTx: ReturnType<Database.Database["prepare"]>;
+  private selectPendingTxs: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -182,21 +179,11 @@ export class PrivateOrderDB {
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
     );
     this.selectMeta = this.db.prepare("SELECT value FROM relayer_meta WHERE key = @key");
-
-    // [R-6] Authorize order prepared statements
-    this.upsertAuthOrder = this.db.prepare(
-      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    this.insertPendingTx = this.db.prepare(
+      "INSERT OR IGNORE INTO pending_txs (tx_hash, label, created_at) VALUES (@txHash, @label, @createdAt)",
     );
-    this.updateAuthStatus = this.db.prepare(
-      "UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?",
-    );
-    this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?");
-    this.selectPendingAuth = this.db.prepare(
-      "SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx FROM authorize_orders WHERE status = 'pending'",
-    );
-    this.purgeAuthNonPending = this.db.prepare(
-      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
-    );
+    this.deletePendingTx = this.db.prepare("DELETE FROM pending_txs WHERE tx_hash = @txHash");
+    this.selectPendingTxs = this.db.prepare("SELECT * FROM pending_txs ORDER BY created_at ASC");
   }
 
   private migrate(): void {
@@ -287,18 +274,13 @@ export class PrivateOrderDB {
       );
     `);
 
-    // [R-6] Authorize orders persistence — survive relayer restarts
+    // Migration: R-2 pending TX tracking for receipt recovery on restart
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS authorize_orders (
-        nullifier     TEXT PRIMARY KEY,
-        status        TEXT NOT NULL DEFAULT 'pending',
-        submitted_at  INTEGER NOT NULL,
-        settle_tx     TEXT,
-        pub_key_ax    TEXT,
-        pub_key_ay    TEXT,
-        order_json    TEXT NOT NULL
+      CREATE TABLE IF NOT EXISTS pending_txs (
+        tx_hash    TEXT PRIMARY KEY,
+        label      TEXT NOT NULL,
+        created_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_ao_status ON authorize_orders(status);
     `);
   }
 
@@ -562,27 +544,18 @@ export class PrivateOrderDB {
     return row?.value ?? null;
   }
 
-  // ─── [R-6] Authorize order persistence ───
+  // ─── Pending TX tracking (R-2) ───
 
-  saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
-    this.upsertAuthOrder.run(nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null);
+  savePendingTx(txHash: string, label: string): void {
+    this.insertPendingTx.run({ txHash: txHash.toLowerCase(), label, createdAt: Date.now() });
   }
 
-  updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
-    this.updateAuthStatus.run(status, settleTx ?? null, nullifier);
+  removePendingTx(txHash: string): void {
+    this.deletePendingTx.run({ txHash: txHash.toLowerCase() });
   }
 
-  deleteAuthorizeOrder(nullifier: string): void {
-    this.deleteAuthOrder.run(nullifier);
-  }
-
-  loadPendingAuthorizeOrders(): Array<{ nullifier: string; status: string; submittedAt: number; orderJson: string; pubKeyAx: string | null; pubKeyAy: string | null; settleTx: string | null }> {
-    return this.selectPendingAuth.all() as any[];
-  }
-
-  purgeNonPendingAuthorizeOrdersDB(): number {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    return this.purgeAuthNonPending.run(nowSeconds).changes;
+  getPendingTxs(): Array<{ tx_hash: string; label: string; created_at: number }> {
+    return this.selectPendingTxs.all({}) as Array<{ tx_hash: string; label: string; created_at: number }>;
   }
 
   close(): void {

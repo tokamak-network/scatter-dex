@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
 /// @notice On-chain registry for ScatterDEX relayers.
@@ -12,7 +13,7 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
 ///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
 ///      registries, off-chain indexing via events is recommended instead.
-contract RelayerRegistry is Ownable2Step {
+contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     struct Relayer {
         string url;
         uint256 fee; // basis points
@@ -76,7 +77,7 @@ contract RelayerRegistry is Ownable2Step {
 
     // ─── Registration ────────────────────────────────────────────
 
-    function register(string calldata url, uint256 fee) external payable {
+    function register(string calldata url, uint256 fee) external payable nonReentrant {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (msg.value < minBond) revert InsufficientBond();
         if (fee > MAX_FEE) revert FeeTooHigh();
@@ -134,7 +135,7 @@ contract RelayerRegistry is Ownable2Step {
         emit ExitRequested(msg.sender, block.timestamp + EXIT_COOLDOWN);
     }
 
-    function executeExit() external {
+    function executeExit() external nonReentrant {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
         if (r.exitRequestedAt == 0) revert ExitNotRequested();

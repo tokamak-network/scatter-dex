@@ -116,7 +116,7 @@ contract SettleAuthTest is Test {
             maxFee: 100, // 1%
             expiry: uint64(block.timestamp + 1 hours),
             claimsRoot: M_CLAIMS_R,
-            totalLocked: uint96(20_000e18),
+            totalLocked: uint128(20_000e18),
             relayer: makerRelayer,
             orderHash: M_ORDER_HASH
         });
@@ -141,7 +141,7 @@ contract SettleAuthTest is Test {
             maxFee: 100, // 1%
             expiry: uint64(block.timestamp + 1 hours),
             claimsRoot: T_CLAIMS_R,
-            totalLocked: uint96(10 ether),
+            totalLocked: uint128(10 ether),
             relayer: takerRelayer,
             orderHash: T_ORDER_HASH
         });
@@ -173,14 +173,14 @@ contract SettleAuthTest is Test {
         assertTrue(settlement.nonceNullifiers(T_NONCE_NULL));
 
         // Maker claims group: token = USDC (maker.buyToken), locked = 20k USDC
-        (address mt, uint96 ml,) = settlement.claimsGroups(M_CLAIMS_R);
+        (uint128 ml,, address mt) = settlement.claimsGroups(M_CLAIMS_R);
         assertEq(mt, address(usdc));
-        assertEq(ml, uint96(20_000e18));
+        assertEq(ml, uint128(20_000e18));
 
         // Taker claims group: token = WETH (taker.buyToken), locked = 10 WETH
-        (address tt, uint96 tl,) = settlement.claimsGroups(T_CLAIMS_R);
+        (uint128 tl,, address tt) = settlement.claimsGroups(T_CLAIMS_R);
         assertEq(tt, address(weth));
-        assertEq(tl, uint96(10 ether));
+        assertEq(tl, uint128(10 ether));
     }
 
     function test_settleAuth_happyPath_takerRelayerSubmits() public {
@@ -198,8 +198,8 @@ contract SettleAuthTest is Test {
         // maker.sellAmount * maxFee / 10000 = 10 ether * 100 / 10000 = 0.1 ether
         p.feeTokenTaker = uint96(0.1 ether); // exactly at the cap (maker pays)
         // We must also reduce totalLocked so totalLocked + fee <= sellAmount holds.
-        p.maker.totalLocked = uint96(20_000e18 - 200e18);
-        p.taker.totalLocked = uint96(10 ether - 0.1 ether);
+        p.maker.totalLocked = uint128(20_000e18 - 200e18);
+        p.taker.totalLocked = uint128(10 ether - 0.1 ether);
         // And then the per-side minimum-receive guarantee
         // (totalLocked >= buyAmount) is enforced inside authorize.circom,
         // so we relax buyAmount in the test inputs to keep things consistent.
@@ -238,6 +238,28 @@ contract SettleAuthTest is Test {
         );
 
         vm.prank(makerRelayer);
+        settlement.settleAuth(p);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  Zero-amount guards (S-M5)
+    // ────────────────────────────────────────────────────────────
+
+    function test_settleAuth_zeroBuyAmountMaker_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.maker.buyAmount = 0;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_zeroBuyAmountTaker_reverts() public {
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.taker.buyAmount = 0;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(PrivateSettlement.ZeroBuyAmount.selector);
         settlement.settleAuth(p);
     }
 
@@ -319,21 +341,19 @@ contract SettleAuthTest is Test {
     }
 
     function test_settleAuth_priceMismatch_reverts() public {
-        // The price check is "defense in depth" — see settle.circom §5 [M2]
-        // for the proof that it is strictly implied by the receive guarantee
-        // and the claims+fees cap when both pass. To trigger PriceMismatch
-        // *in isolation* in the contract, the test must arrange inputs where
-        // the cap (which the contract checks at step 5) trivially passes
-        // (totalLocked = 0) but the price product still fails at step 4.
+        // To trigger PriceMismatch in isolation, the test must arrange
+        // inputs where the cap (step 5) trivially passes but the price
+        // product still fails at step 4. We set totalLocked to 1 on
+        // both sides so the cap check passes trivially.
         //
-        // Note: a real authorize.circom proof would never carry totalLocked=0
-        // alongside a non-zero buyAmount because the in-circuit §7 check
-        // `totalLocked ≥ buyAmount` would reject it. The mock verifier
-        // accepts any signal, which is what lets us isolate the contract-level
-        // check here.
+        // Note: a real authorize.circom proof would never carry
+        // totalLocked=1 alongside a large buyAmount because the
+        // in-circuit check `totalLocked >= buyAmount` would reject it.
+        // The MockVerifier accepts any signal, which is what lets us
+        // isolate the contract-level price check here.
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
-        p.maker.totalLocked = 0;
-        p.taker.totalLocked = 0;
+        p.maker.totalLocked = 1;
+        p.taker.totalLocked = 1;
 
         // Maker: 10 sell, 18 buy (price = 1.8 buy/sell)
         // Taker: 17 sell, 10 buy (price = 1.7 sell/buy → maker doesn't get enough)
@@ -353,7 +373,7 @@ contract SettleAuthTest is Test {
     function test_settleAuth_claimsCapExceeded_makerSide_reverts() public {
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
         // Set maker.totalLocked higher than taker.sellAmount
-        p.maker.totalLocked = uint96(21_000e18);
+        p.maker.totalLocked = uint128(21_000e18);
         // Mint extra tokens so the test isn't blocked by InsufficientPoolBalance later
         usdc.mint(address(pool), 1_000e18);
 
@@ -365,7 +385,7 @@ contract SettleAuthTest is Test {
     function test_settleAuth_claimsCapExceeded_takerSide_reverts() public {
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
         // Set taker.totalLocked higher than maker.sellAmount
-        p.taker.totalLocked = uint96(11 ether);
+        p.taker.totalLocked = uint128(11 ether);
         weth.transfer(address(pool), 1 ether);
 
         vm.prank(makerRelayer);
@@ -382,7 +402,7 @@ contract SettleAuthTest is Test {
         // Pick 0.2 ether (above the maxFee bound). The cap check requires
         // taker.totalLocked + feeTokenTaker ≤ maker.sellAmount = 10 ether,
         // so set taker.totalLocked low enough to leave room.
-        p.taker.totalLocked = uint96(1 ether);
+        p.taker.totalLocked = uint128(1 ether);
         p.feeTokenTaker = uint96(0.2 ether);
         // Cap check: 1 + 0.2 = 1.2 ≤ 10 ether ✓
         // Fee bound: 0.2 * 10000 = 2000 > 10 * 100 = 1000 → FeeExceedsMax ✓
@@ -397,7 +417,7 @@ contract SettleAuthTest is Test {
         // taker.maxFee = 100 bps, taker.sellAmount = 20_000e18
         // max allowed feeTokenMaker = 20_000e18 * 100 / 10000 = 200e18
         // Pick 300e18 (above the maxFee bound) and leave cap room.
-        p.maker.totalLocked = uint96(1_000e18);
+        p.maker.totalLocked = uint128(1_000e18);
         p.feeTokenMaker = uint96(300e18);
         // Cap check: 1000 + 300 = 1300 ≤ 20_000e18 ✓
         // Fee bound: 300 * 10000 = 3_000_000 > 20_000 * 100 = 2_000_000 → FeeExceedsMax ✓

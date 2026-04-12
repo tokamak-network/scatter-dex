@@ -70,18 +70,18 @@ const POOL_ABI = [
 ];
 
 const SETTLEMENT_ABI = [
-  "function settleWithDex(tuple(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint96 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata) params) external",
+  "function settleWithDex(tuple(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata, uint256 deadline) params) external",
   "function nullifiers(bytes32) view returns (bool)",
   "function nonceNullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",
-  "function claimsGroups(bytes32) view returns (address token, uint96 totalLocked, uint96 totalClaimed)",
+  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token)",
   "function setDexRouterWhitelist(address,bool) external",
   "function setDexPlatformFee(uint256) external",
   "function dexPlatformFeeBps() view returns (uint256)",
   "function feeVault() view returns (address)",
   "function weth() view returns (address)",
   "function owner() view returns (address)",
-  "event SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address sellToken, address buyToken, uint128 sellAmount, uint256 amountOut, uint96 totalLocked, address indexed submitter)",
+  "event SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address sellToken, address buyToken, uint128 sellAmount, uint256 amountOut, uint128 totalLocked, address indexed submitter)",
   "event DexPlatformFeeCollected(bytes32 indexed nullifier, address indexed token, uint256 amount, address treasury)",
 ];
 
@@ -364,6 +364,7 @@ async function main() {
       },
       dexRouter: mockDexAddress,
       dexCalldata,
+      deadline: expiry,
     });
     console.log("  staticCall succeeded");
   } catch (e: any) {
@@ -397,6 +398,7 @@ async function main() {
     },
     dexRouter: mockDexAddress,
     dexCalldata,
+    deadline: expiry,
   }, { gasLimit: 5_000_000 });
   console.log(`  TX sent: ${settleTx.hash}`);
   const settleReceipt = await settleTx.wait();
