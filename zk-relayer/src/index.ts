@@ -20,6 +20,7 @@ import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId } from "./routes/authorize-orders.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
+import { loadSanctionsFile } from "./core/sanctions-list.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -35,6 +36,11 @@ async function main() {
       updateRelayerFee(parsedFee);
       console.log(`[admin] Restored fee from DB: ${parsedFee} bps`);
     }
+  }
+
+  // [R-10] Load sanctions pubKey blocklist (optional)
+  if (config.sanctionsPubKeyList) {
+    loadSanctionsFile(config.sanctionsPubKeyList);
   }
 
   const orderbook = new PrivateOrderbook(MAX_ORDERBOOK_SIZE);

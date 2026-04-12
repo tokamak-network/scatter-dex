@@ -50,6 +50,9 @@ export const config = {
   relayerPublicUrl: process.env.RELAYER_PUBLIC_URL || null,
   relayerName: process.env.RELAYER_NAME || undefined,
 
+  // [R-10] Sanctions pubKey blocklist file (optional JSON array of {pubKeyAx, pubKeyAy})
+  sanctionsPubKeyList: process.env.SANCTIONS_PUBKEY_LIST || null,
+
   // [R-1] Gas guard: max gas price in gwei (default 100)
   maxGasPriceGwei: (() => {
     const parsed = parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10);
