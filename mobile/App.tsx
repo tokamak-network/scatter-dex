@@ -11,11 +11,14 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import TabNavigator from './src/navigation/TabNavigator';
 import { WalletProvider } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
+import { NetworkService } from './src/services/NetworkService';
 
 export default function App() {
   const [zkReady, setZkReady] = useState(false);
 
   useEffect(() => {
+    // Restore saved network + wait for ZK engine
+    NetworkService.restoreSavedNetwork().catch(() => {});
     ZKBridgeService.waitReady().then(() => {
       setZkReady(true);
     });

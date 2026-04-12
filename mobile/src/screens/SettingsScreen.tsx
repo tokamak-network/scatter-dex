@@ -24,9 +24,7 @@ interface ToggleItem {
 }
 
 const securityItems: ToggleItem[] = [
-  { id: 'biometrics', label: 'Face ID / Touch ID Authentication', icon: '🔐', defaultValue: true },
-  { id: 'signing', label: 'Transaction Signing Gate', icon: '🛡', defaultValue: true },
-  { id: 'lock', label: 'App Lock on Background', icon: '🕐', defaultValue: false },
+  { id: 'biometrics', label: 'Biometric Security (Face ID / Fingerprint)', icon: '🔐', defaultValue: true },
 ];
 
 interface ManagementItem {

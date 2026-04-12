@@ -107,12 +107,25 @@ export const NetworkService = {
     return id || 'thanos-sepolia'; // default
   },
 
-  /** 네트워크 선택 */
+  /** 네트워크 선택 — ConfigService + ProviderService에 즉시 반영 */
   async selectNetwork(id: string): Promise<void> {
     await AsyncStorage.setItem(SELECTED_KEY, id);
+    const network = (await this.getAllNetworks()).find((n) => n.id === id);
+    if (network) {
+      const { ConfigService } = await import('./ConfigService');
+      const { ProviderService } = await import('./ProviderService');
+      ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+      ProviderService.reset(); // readProvider를 새 RPC로 재생성
+    }
   },
 
-  /** 현재 선택된 네트워크 설정 가져오기 */
+  /** 앱 시작 시 저장된 네트워크 복원 */
+  async restoreSavedNetwork(): Promise<void> {
+    const network = await this.getSelectedNetwork();
+    const { ConfigService } = await import('./ConfigService');
+    ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+  },
+
   async getSelectedNetwork(): Promise<NetworkConfig> {
     const id = await this.getSelectedNetworkId();
     const all = await this.getAllNetworks();
