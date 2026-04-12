@@ -713,8 +713,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error DeadlineExpired();
 
     function settleWithDex(SettleDexParams calldata p) external nonReentrant {
-        // [C-1] Deadline: reject stale transactions that miners held in mempool
-        if (block.timestamp > p.deadline) revert DeadlineExpired();
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
@@ -722,23 +720,15 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
 
-        // 1. Relayer binding — msg.sender must match the relayer in the proof.
-        //    For permissionless mode, user sets relayer = own address.
-        if (msg.sender != proof.relayer) revert NotMakerOrTakerRelayer();
+        // 1-4. Calldata-only checks: deadline, relayer binding, token compat,
+        //      non-zero sellAmount, expiry, intra-tx nullifier diff.
+        SettleVerifyLib.validateDexProof(proof, msg.sender, p.deadline);
 
-        // 2. Token whitelist + same-token guard
+        // Token whitelist (storage — stays inline)
         if (!whitelistedTokens[proof.sellToken]) revert TokenNotWhitelisted();
         if (!whitelistedTokens[proof.buyToken]) revert TokenNotWhitelisted();
-        if (proof.sellToken == proof.buyToken) revert TokenSidesMismatch();
 
-        // 3. Non-zero sell amount
-        if (proof.sellAmount == 0) revert ZeroSellAmount();
-
-        // 4. Expiry
-        if (block.timestamp > proof.expiry) revert OrderExpired();
-
-        // 5. Nullifier double-spend (escrow + nonce)
-        if (proof.nullifier == proof.nonceNullifier) revert NullifierAlreadySpent();
+        // 5. Nullifier double-spend (storage)
         if (nullifiers[proof.nullifier]) revert NullifierAlreadySpent();
         if (nonceNullifiers[proof.nonceNullifier]) revert NullifierAlreadySpent();
 
@@ -911,37 +901,23 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     function scatterDirectAuth(ScatterDirectAuthParams calldata p) external nonReentrant {
         SettleVerifyLib.AuthorizeProof calldata ap = p.proof;
 
-        // 1. Relayer gating + access control (cheap calldata/SLOAD checks first)
-        if (msg.sender != ap.relayer) revert NotMakerOrTakerRelayer();
+        // Order-of-checks preserved from before: cheap calldata compare gates
+        // state reads, and relayer registry is checked before proof verify.
         if (paused) revert ContractPaused();
         if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
         _requireNotSanctioned(msg.sender);
 
-        // 2. Relayer registry (before expensive proof verification — saves ~200K gas on revert)
+        // 1-7. Relayer binding, same-token invariant, non-zero amounts,
+        //      fee cap, claims+fee cap, expiry (extracted into lib).
+        SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee);
+
+        // Relayer registry (before expensive proof verification — saves ~200K gas on revert)
         if (address(relayerRegistry) != address(0)) {
             if (!relayerRegistry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
         }
 
-        // 3. Same-token enforcement — scatter invariant (calldata compare before SLOAD)
-        if (ap.sellToken != ap.buyToken) revert SellBuyTokenMismatch();
-
-        // 4. Non-zero amounts + token whitelist
-        if (ap.sellAmount == 0) revert ZeroSellAmount();
-        if (ap.buyAmount == 0) revert ZeroBuyAmount();
+        // Token whitelist (storage — stays inline)
         if (!whitelistedTokens[ap.sellToken]) revert TokenNotWhitelisted();
-
-        // 5. Fee validation: fee * 10000 <= sellAmount * maxFee
-        if (uint256(p.fee) * FEE_BPS_DENOMINATOR > uint256(ap.sellAmount) * uint256(ap.maxFee)) {
-            revert FeeExceedsMax();
-        }
-
-        // 6. Claims + fee cap: totalLocked + fee <= sellAmount
-        if (uint256(ap.totalLocked) + uint256(p.fee) > uint256(ap.sellAmount)) {
-            revert ClaimsCapExceeded();
-        }
-
-        // 7. Expiry
-        if (block.timestamp > ap.expiry) revert OrderExpired();
 
         // 8. Nullifier double-spend (escrow + nonce — 2 cold SLOADs)
         if (nullifiers[ap.nullifier]) revert NullifierAlreadySpent();

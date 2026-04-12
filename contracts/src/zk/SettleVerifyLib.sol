@@ -17,6 +17,10 @@ library SettleVerifyLib {
     error ZeroSellAmount();
     error ZeroBuyAmount();
     error TokenNotWhitelisted();
+    error NotMakerOrTakerRelayer();
+    error NullifierAlreadySpent();
+    error DeadlineExpired();
+    error SellBuyTokenMismatch();
 
     error ClaimsGroupAlreadyExists();
 
@@ -216,6 +220,43 @@ library SettleVerifyLib {
         signals[3] = uint256(uint160(token));
         signals[4] = uint256(uint160(recipient));
         signals[5] = releaseTime;
+    }
+
+    /// @notice Calldata-only validation for settleWithDex (pre-state-mutation).
+    ///         Does not include storage-dependent checks (whitelist, nullifier
+    ///         double-spend, root recency) — those stay inline.
+    function validateDexProof(
+        AuthorizeProof calldata proof,
+        address sender,
+        uint256 deadline
+    ) external view {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (sender != proof.relayer) revert NotMakerOrTakerRelayer();
+        if (proof.sellToken == proof.buyToken) revert TokenSidesMismatch();
+        if (proof.sellAmount == 0) revert ZeroSellAmount();
+        if (block.timestamp > proof.expiry) revert OrderExpired();
+        if (proof.nullifier == proof.nonceNullifier) revert NullifierAlreadySpent();
+    }
+
+    /// @notice Calldata-only validation for scatterDirectAuth (pre-state-mutation).
+    ///         Handles relayer binding, same-token invariant, non-zero amounts,
+    ///         fee cap, claims+fee cap, and expiry.
+    function validateScatterAuth(
+        AuthorizeProof calldata ap,
+        address sender,
+        uint96 fee
+    ) external view {
+        if (sender != ap.relayer) revert NotMakerOrTakerRelayer();
+        if (ap.sellToken != ap.buyToken) revert SellBuyTokenMismatch();
+        if (ap.sellAmount == 0) revert ZeroSellAmount();
+        if (ap.buyAmount == 0) revert ZeroBuyAmount();
+        if (uint256(fee) * FEE_BPS_DENOMINATOR > uint256(ap.sellAmount) * uint256(ap.maxFee)) {
+            revert FeeExceedsMax();
+        }
+        if (uint256(ap.totalLocked) + uint256(fee) > uint256(ap.sellAmount)) {
+            revert ClaimsCapExceeded();
+        }
+        if (block.timestamp > ap.expiry) revert OrderExpired();
     }
 
     /// @notice Insert a residual commitment into the pool iff non-zero.
