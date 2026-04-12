@@ -44,7 +44,9 @@ export function createRelayerRoutes(
    * POST /api/relayers/heartbeat — Heartbeat (keep-alive)
    * Requires relayer authentication.
    */
-  router.post("/heartbeat", writeLimiter, relayerAuth, (req, res) => {
+  const heartbeatMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) heartbeatMiddleware.push(relayerWriteLimiter);
+  router.post("/heartbeat", ...heartbeatMiddleware, (req, res) => {
     const { relayerAddress } = req as AuthenticatedRequest;
     const ok = orderbook.heartbeat(relayerAddress);
     if (!ok) {

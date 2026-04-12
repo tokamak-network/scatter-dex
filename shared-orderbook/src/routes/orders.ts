@@ -120,7 +120,9 @@ export function createOrderRoutes(
    * DELETE /api/orders/:id — Cancel an order
    * Requires relayer authentication. Only the posting relayer can cancel.
    */
-  router.delete("/:id", writeLimiter, relayerAuth, (req, res) => {
+  const deleteMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) deleteMiddleware.push(relayerWriteLimiter);
+  router.delete("/:id", ...deleteMiddleware, (req, res) => {
     try {
       const { relayerAddress } = req as AuthenticatedRequest;
       const { id } = req.params;

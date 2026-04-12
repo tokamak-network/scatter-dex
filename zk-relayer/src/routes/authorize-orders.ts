@@ -34,7 +34,14 @@ const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
 let _db: PrivateOrderDB | null = null;
 
+// BabyJub field elements are at most 254 bits (~77 decimal digits).
+// Reject oversized strings before BigInt parsing to prevent CPU DoS.
+const MAX_PUBKEY_LEN = 80;
+
 export function pubKeyId(ax: string, ay: string): string {
+  if (ax.length > MAX_PUBKEY_LEN || ay.length > MAX_PUBKEY_LEN) {
+    throw new RangeError("pubKey value too large");
+  }
   return `${BigInt(ax).toString()}:${BigInt(ay).toString()}`;
 }
 
