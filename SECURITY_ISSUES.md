@@ -113,7 +113,7 @@
 
 ## 2026-04-11 세션에서 발견 및 수정된 이슈
 
-### settleWithDex 관련 (25건 — docs/settleWithDex-audit-log.md 참조)
+### settleWithDex 관련 (25건)
 
 #### ✅ C-4. feeVault 미설정 + dexPlatformFeeBps > 0 → revert
 - **커밋**: ab4f847
@@ -189,7 +189,7 @@
 ### M-5. 양측 fee 적용 — 문서화
 - **내용**: actualFee가 maker/taker 양쪽 sellAmount 각각에 적용됨. 사용자가 인지해야 함.
 - **수정**: NatSpec + PAPER.md에 명시.
-- **파일**: `ScatterSettlement.sol`, `docs/PAPER.md`
+- **파일**: `ScatterSettlement.sol`, `docs/research/PAPER.md`
 - **상태**: ✅ DONE (PR #20)
 
 ### L-1. releaseDelay = 0 허용 — 최소 지연 도입

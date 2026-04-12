@@ -2,7 +2,7 @@
 
 A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via ZK relayers; settlements use **ZK Private Settlement** — Groth16 proofs with commitment pools hide trader identities and claim structure on-chain, while zk-X509 identity gating ensures regulatory compliance.
 
-> Privacy + Compliance — see [docs/PAPER.md](docs/PAPER.md) for the full research paper.
+> Privacy + Compliance — see [docs/research/PAPER.md](docs/research/PAPER.md) for the full research paper.
 
 ## Architecture
 
@@ -48,7 +48,7 @@ docs/            Research paper, design docs
 
 ### Full Local Dev (with zk-X509)
 
-zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA: User CA + Relayer CA). For the full setup with both systems on a shared anvil, see **[docs/local-setup.md](docs/local-setup.md)**.
+zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA: User CA + Relayer CA). For the full setup with both systems on a shared anvil, see **[docs/operations/local-setup.md](docs/operations/local-setup.md)**.
 
 ```bash
 # After zk-X509 is deployed on anvil:
