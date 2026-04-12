@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -16,7 +16,45 @@ type ClaimMode = "relayer" | "wallet";
 
 const CLAIM_WITH_PROOF_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
+  "function claimWithProofBatch((uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime)[] claims) external",
 ];
+
+// Mirrors PrivateSettlement.MAX_CLAIM_BATCH_SIZE.
+const MAX_BATCH_SIZE = 20;
+
+// Groth16 proof → Solidity tuple (G2 points use [imag, real] row order).
+function toSolidityProofTuple(p: { a: string[]; b: string[][]; c: string[] }) {
+  return {
+    a: p.a.map(BigInt),
+    b: p.b.map((row: string[]) => [BigInt(row[1]), BigInt(row[0])]),
+    c: p.c.map(BigInt),
+  };
+}
+
+type BuiltProof = {
+  proofResult: { proof: { a: string[]; b: string[][]; c: string[] } };
+  claimsRootHex: string;
+  nullifierHex: string;
+  amount: bigint;
+  tokenAddr: string;
+  recipientAddr: string;
+  releaseTime: bigint;
+};
+
+function toClaimParams(p: BuiltProof) {
+  const t = toSolidityProofTuple(p.proofResult.proof);
+  return {
+    proofA: t.a,
+    proofB: t.b,
+    proofC: t.c,
+    claimsRoot: p.claimsRootHex,
+    claimNullifier: p.nullifierHex,
+    amount: p.amount,
+    token: p.tokenAddr,
+    recipient: p.recipientAddr,
+    releaseTime: p.releaseTime,
+  };
+}
 
 interface ClaimData {
   secret: string;
@@ -44,7 +82,8 @@ export default function PrivateClaimPage() {
   const [claimMode, setClaimMode] = useState<ClaimMode>("relayer");
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [txHash, setTxHash] = useState<string | null>(null);
+  const [txHashes, setTxHashes] = useState<string[]>([]);
+  const [batchProgress, setBatchProgress] = useState<{ chunk: number; totalChunks: number; claims: number } | null>(null);
 
   const claimedMap = useClaimStatuses(allClaims, { includeTxHash: true });
 
@@ -181,7 +220,7 @@ export default function PrivateClaimPage() {
     if (!claimData) return;
     setStatus("generating");
     setError(null);
-    setTxHash(null);
+    setTxHashes([]);
     try {
       const p = await buildProof(claimData);
       setStatus("submitting");
@@ -207,7 +246,7 @@ export default function PrivateClaimPage() {
         throw new Error(errMsg);
       }
       const result = await res.json();
-      setTxHash(result.txHash || "");
+      setTxHashes([result.txHash || ""]);
       setStatus("success");
     } catch (e: unknown) {
       setError(friendlyError(e));
@@ -215,30 +254,23 @@ export default function PrivateClaimPage() {
     }
   }, [claimData, bundleRelayerUrl]);
 
-  // Mode 2: Direct claim via wallet (user pays gas)
   const handleClaimViaWallet = useCallback(async () => {
     if (!claimData || !signer) return;
     setStatus("generating");
     setError(null);
-    setTxHash(null);
+    setTxHashes([]);
     try {
       const p = await buildProof(claimData);
       setStatus("submitting");
       const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
-      // proofB: swap elements per row for Solidity G2 point representation [imaginary, real]
+      const c = toClaimParams(p);
       const tx = await settlement.claimWithProof(
-        p.proofResult.proof.a.map(BigInt),
-        p.proofResult.proof.b.map((row: string[]) => [BigInt(row[1]), BigInt(row[0])]),
-        p.proofResult.proof.c.map(BigInt),
-        p.claimsRootHex,
-        p.nullifierHex,
-        p.amount,
-        p.tokenAddr,
-        p.recipientAddr,
-        p.releaseTime,
+        c.proofA, c.proofB, c.proofC,
+        c.claimsRoot, c.claimNullifier,
+        c.amount, c.token, c.recipient, c.releaseTime,
       );
       const receipt = await tx.wait();
-      setTxHash(receipt.hash ?? receipt.transactionHash ?? "");
+      setTxHashes([receipt.hash ?? receipt.transactionHash ?? ""]);
       setStatus("success");
     } catch (e: any) {
       console.error("Wallet claim failed:", e);
@@ -246,6 +278,57 @@ export default function PrivateClaimPage() {
       setStatus("error");
     }
   }, [claimData, signer]);
+
+  const eligibleIndices = useMemo(() => {
+    const now = Math.floor(Date.now() / 1000);
+    return allClaims
+      .map((c, i) => ({ c, i }))
+      .filter(({ c, i }) => !claimedMap[i]?.claimed && now >= Number(c.releaseTime));
+  }, [allClaims, claimedMap]);
+
+  const handleClaimBatchViaWallet = useCallback(async () => {
+    if (!signer || eligibleIndices.length === 0) return;
+    setStatus("generating");
+    setError(null);
+    setTxHashes([]);
+    setBatchProgress(null);
+
+    try {
+      // Proof gen is CPU-heavy and runs on the main thread — keep sequential
+      // so the progress UI can repaint between proofs.
+      const built: Awaited<ReturnType<typeof buildProof>>[] = [];
+      for (const { c } of eligibleIndices) {
+        built.push(await buildProof(c));
+      }
+
+      setStatus("submitting");
+
+      const chunks: typeof built[] = [];
+      for (let i = 0; i < built.length; i += MAX_BATCH_SIZE) {
+        chunks.push(built.slice(i, i + MAX_BATCH_SIZE));
+      }
+
+      const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
+      const hashes: string[] = [];
+
+      for (let ci = 0; ci < chunks.length; ci++) {
+        setBatchProgress({ chunk: ci + 1, totalChunks: chunks.length, claims: chunks[ci].length });
+        const params = chunks[ci].map(toClaimParams);
+        const tx = await settlement.claimWithProofBatch(params);
+        const receipt = await tx.wait();
+        hashes.push(receipt.hash ?? receipt.transactionHash ?? "");
+        setTxHashes([...hashes]);
+      }
+
+      setStatus("success");
+      setBatchProgress(null);
+    } catch (e: unknown) {
+      console.error("Batch claim failed:", e);
+      setError(friendlyError(e));
+      setStatus("error");
+      setBatchProgress(null);
+    }
+  }, [signer, eligibleIndices]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -440,6 +523,23 @@ export default function PrivateClaimPage() {
             <div className="text-xs p-3 rounded-md bg-error/5 text-error">{error}</div>
           )}
 
+          {allClaims.length > 1 && eligibleIndices.length >= 2 && (
+            <button
+              onClick={handleClaimBatchViaWallet}
+              disabled={!signer}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 font-bold text-sm transition-colors disabled:opacity-50"
+            >
+              <Wallet className="w-4 h-4" />
+              {signer
+                ? `Claim All ${eligibleIndices.length} via Wallet${
+                    Math.ceil(eligibleIndices.length / MAX_BATCH_SIZE) > 1
+                      ? ` (${Math.ceil(eligibleIndices.length / MAX_BATCH_SIZE)} txs)`
+                      : ""
+                  }`
+                : "Connect Wallet to Batch Claim"}
+            </button>
+          )}
+
           {claimData && !claimedMap[selectedClaimIdx]?.claimed && (
             <div className="space-y-4">
               {/* Mode selector */}
@@ -511,10 +611,23 @@ export default function PrivateClaimPage() {
       {status === "submitting" && (
         <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
           <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
-          <p className="text-on-surface font-medium">Submitting claim on-chain...</p>
-          <p className="text-xs text-on-surface-variant">
-            {claimMode === "relayer" ? "Relayer is submitting the claim on-chain (gasless)." : "Confirm the transaction in MetaMask."}
+          <p className="text-on-surface font-medium">
+            {batchProgress
+              ? `Submitting batch ${batchProgress.chunk}/${batchProgress.totalChunks} (${batchProgress.claims} claims)...`
+              : "Submitting claim on-chain..."}
           </p>
+          <p className="text-xs text-on-surface-variant">
+            {batchProgress
+              ? "Confirm each transaction in MetaMask."
+              : claimMode === "relayer" ? "Relayer is submitting the claim on-chain (gasless)." : "Confirm the transaction in MetaMask."}
+          </p>
+          {batchProgress && txHashes.length > 0 && (
+            <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
+              {txHashes.map((h, i) => (
+                <div key={i} className="break-all">#{i + 1}: {h}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -526,13 +639,20 @@ export default function PrivateClaimPage() {
           <p className="text-sm text-on-surface-variant/70">
             Funds have been transferred to the recipient address.
           </p>
-          {txHash && (
+          {txHashes.length === 1 && txHashes[0] && (
             <div className="text-xs font-mono text-primary bg-primary/5 rounded-md p-3 break-all">
-              tx: {txHash}
+              tx: {txHashes[0]}
+            </div>
+          )}
+          {txHashes.length > 1 && (
+            <div className="text-xs font-mono text-primary bg-primary/5 rounded-md p-3 space-y-1 text-left">
+              {txHashes.map((h, i) => (
+                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
+              ))}
             </div>
           )}
           <button
-            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHash(null); setBundleRelayerUrl(null); }}
+            onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHashes([]); setBundleRelayerUrl(null); }}
             className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
           >
             Claim Another
