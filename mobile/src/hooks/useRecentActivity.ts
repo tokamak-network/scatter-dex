@@ -87,18 +87,23 @@ export function useRecentActivity() {
       // capping if the imbalance shows up in real usage.
       const items: ActivityItem[] = [];
 
-      const collect = <T>(
-        res: PromiseSettledResult<readonly T[]>,
+      const collect = (
+        res: PromiseSettledResult<readonly ethers.Log[]>,
         type: ActivityType,
-        details: (log: T) => string,
+        details: (log: ethers.Log) => string,
       ): void => {
-        if (res.status !== 'fulfilled') return;
+        if (res.status === 'rejected') {
+          // Don't swallow — partial RPC failures (one event source dies
+          // while others succeed) should leave a trail in the JS console
+          // so a missing-rows debug session has somewhere to start.
+          console.warn(`useRecentActivity: failed to fetch ${type}:`, res.reason);
+          return;
+        }
         for (const log of res.value.slice(-MAX_ITEMS)) {
-          const l = log as unknown as { transactionHash: string; blockNumber: number };
           items.push({
             type,
-            txHash: l.transactionHash,
-            blockNumber: l.blockNumber,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
             timestamp: null,
             details: details(log),
           });
@@ -112,13 +117,13 @@ export function useRecentActivity() {
       // this PR stays scoped to indexing.
       collect(settleAuthRes, 'settle', () => 'Order settled');
       collect(settleDexRes, 'settle_dex', (log) => {
-        const parsed = settlement.interface.parseLog({ topics: (log as any).topics, data: (log as any).data });
+        const parsed = settlement.interface.parseLog(log);
         const out = parsed?.args?.amountOut ? ethers.formatEther(parsed.args.amountOut) : '?';
         return `Market swap (${out})`;
       });
       collect(settleScatterRes, 'settle_scatter', () => 'Same-token scatter settled');
       collect(claimRes, 'claim', (log) => {
-        const parsed = settlement.interface.parseLog({ topics: (log as any).topics, data: (log as any).data });
+        const parsed = settlement.interface.parseLog(log);
         const amt = parsed?.args?.amount ? ethers.formatEther(parsed.args.amount) : '?';
         return `Claimed ${amt}`;
       });
