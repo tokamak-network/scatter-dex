@@ -36,6 +36,12 @@ export interface ClaimProgress {
   totalChunks?: number;
   proofDone?: number;
   claimsInChunk?: number;
+  // On a mid-batch error, carries the tx hashes of chunks that already
+  // committed on-chain so the UI can (a) tell the user partial success
+  // happened, (b) surface the tx hashes for on-chain verification, and
+  // (c) remove the corresponding entries from the local pending list.
+  partialTxHashes?: string[];
+  partialCommittedCount?: number;
 }
 
 export interface ClaimData {
@@ -202,6 +208,10 @@ export const ClaimService = {
     readProvider: ethers.JsonRpcProvider,
     onProgress: (progress: ClaimProgress) => void,
   ): Promise<string[] | null> {
+    // Hoisted so the catch below can report partial success if a later chunk
+    // fails after earlier chunks have already committed on-chain.
+    const txHashes: string[] = [];
+    let committedCount = 0;
     try {
       if (claims.length === 0) throw new Error('No claims to submit.');
 
@@ -215,7 +225,6 @@ export const ClaimService = {
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
       const totalChunks = Math.ceil(eligible.length / MAX_CLAIM_BATCH_SIZE);
-      const txHashes: string[] = [];
 
       for (let ci = 0; ci < totalChunks; ci++) {
         const chunk = eligible.slice(ci * MAX_CLAIM_BATCH_SIZE, (ci + 1) * MAX_CLAIM_BATCH_SIZE);
@@ -254,14 +263,23 @@ export const ClaimService = {
         const tx = await settlement.claimWithProofBatch(params);
         await tx.wait();
         txHashes.push(tx.hash);
+        committedCount += chunk.length;
       }
 
       onProgress({ step: 'success', txHash: txHashes[txHashes.length - 1] });
       return txHashes;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Batch claim failed';
-      onProgress({ step: 'error', error: message });
-      return null;
+      onProgress({
+        step: 'error',
+        error: message,
+        partialTxHashes: txHashes.length > 0 ? txHashes : undefined,
+        partialCommittedCount: committedCount > 0 ? committedCount : undefined,
+      });
+      // Preserve partial success — the tx hashes that did land are the user's
+      // only record that those chunks committed. Return them so the caller
+      // can still clean up the already-claimed entries from local storage.
+      return txHashes.length > 0 ? txHashes : null;
     }
   },
 

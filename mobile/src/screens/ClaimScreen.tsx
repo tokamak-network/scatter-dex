@@ -195,6 +195,7 @@ export default function ClaimScreen() {
     setProgress(0);
     setCurrentStep('idle');
 
+    let partialCommitted = 0;
     const onProgress = (p: ClaimProgress) => {
       setCurrentStep(p.step);
       setProgress(STEP_PROGRESS[p.step] || 0);
@@ -207,10 +208,14 @@ export default function ClaimScreen() {
             : `Chunk ${p.chunk}/${p.totalChunks}: proof ${done}/${total}`,
         );
       }
+      if (p.partialCommittedCount !== undefined) {
+        partialCommitted = p.partialCommittedCount;
+      }
     };
 
     try {
       let ok = false;
+      let submittedCount = claimDataList.length;
       if (submitMode === 'relayer') {
         const res = await ClaimService.executeViaRelayer(
           claimDataList[0],
@@ -224,16 +229,27 @@ export default function ClaimScreen() {
         ok = !!res;
       } else {
         const res = await ClaimService.executeBatch(signer!, claimDataList, readProvider, onProgress);
-        ok = !!res;
+        // Partial batch success: res is a non-empty string[] even when the
+        // catch fired, so we still clean up the locally-committed entries.
+        ok = !!res && res.length > 0;
+        submittedCount = partialCommitted || (res?.length ?? 0);
       }
 
       setClaiming(false);
-      if (ok) {
+      if (ok && submittedCount > 0) {
         setProgress(100);
         setBatchStatus(null);
-        Alert.alert('Claim Successful', claimDataList.length > 1 ? `${claimDataList.length} claims submitted.` : 'Tx confirmed.');
+        const allDone = submittedCount === claimDataList.length;
+        Alert.alert(
+          allDone ? 'Claim Successful' : 'Partial Claim Success',
+          allDone
+            ? (claimDataList.length > 1 ? `${claimDataList.length} claims submitted.` : 'Tx confirmed.')
+            : `${submittedCount}/${claimDataList.length} claims committed before an error stopped the batch. Remaining ${claimDataList.length - submittedCount} are still pending.`,
+        );
         if (claimTab === 'notes' && sourceIndices.length > 0) {
-          const toRemove = new Set(sourceIndices);
+          // Only drop the entries that actually committed. Sorted ASC, so the
+          // first `submittedCount` sourceIndices are the ones that landed.
+          const toRemove = new Set(sourceIndices.slice(0, submittedCount));
           const updated = pendingClaims.filter((_, i) => !toRemove.has(i));
           setPendingClaims(updated);
           setSelectedIndices(new Set());
