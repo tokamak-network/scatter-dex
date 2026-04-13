@@ -27,6 +27,15 @@ Contracts (anvil :8545)
 
 ## 1. Quick Start
 
+> **최초 1회 — ZK 회로 아티팩트 빌드 필요**
+> `dev.sh`와 `make up`은 회로를 빌드하지 않습니다. 레포에는 `authorize.*` / `cancel.*` 만 커밋되어 있고, 나머지 4종(`deposit`, `withdraw`, `settle`, `claim`)은 아래 명령으로 직접 생성해야 프라이빗 트레이딩 플로우가 동작합니다:
+>
+> ```bash
+> cd circuits && npm install && npm run build
+> ```
+>
+> 빌드하지 않으면 브라우저 콘솔에 `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` 가 발생합니다 (Next.js 404 HTML이 WASM 로더로 들어간 경우). 자세한 설명은 [docs/operations/local-setup.md](../operations/local-setup.md#prerequisite-build-zk-circuit-artifacts) 참고.
+
 ```bash
 ./scripts/dev.sh --mock
 ```
@@ -264,7 +273,7 @@ Claim:    Browser → zk-relayer API (proof) → claimWithProof (relayer pays ga
 
 ```bash
 cd circuits
-bash scripts/build.sh
+npm run build
 ```
 
 이 스크립트는:

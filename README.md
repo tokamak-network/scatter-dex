@@ -45,6 +45,19 @@ docs/            Research paper, design docs
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, anvil, cast)
 - Node.js >= 18
+- [circom](https://docs.circom.io/getting-started/installation/) 2.x (for building ZK circuit artifacts — see below)
+
+### Build ZK circuit artifacts (first-time setup)
+
+Neither `dev.sh` nor `make up` builds the circuits. Only `authorize.*` and `cancel.*` are committed to `frontend/public/zk/`; the other four (`deposit`, `withdraw`, `settle`, `claim`) must be generated locally before the private-trade flows will work:
+
+```bash
+cd circuits
+npm install        # first time only
+npm run build      # runs scripts/build.sh — compiles circom, runs Groth16 setup, copies .wasm + _final.zkey into frontend/public/zk/
+```
+
+If you skip this, the browser will fail with `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` (Next.js 404 HTML being fed to the WASM loader). See [docs/operations/local-setup.md](docs/operations/local-setup.md#prerequisite-build-zk-circuit-artifacts) for details.
 
 ### Full Local Dev (with zk-X509)
 
