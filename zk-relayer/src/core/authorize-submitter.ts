@@ -196,6 +196,15 @@ export class AuthorizeSubmitter {
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
+      // Same fix as scatterDirectAuth: record both maker and taker
+      // claimsRoots so the gasless `/api/private-claim/...` route
+      // accepts claims against this relayer's settlement. Reuses the
+      // already-formatted bytes32 strings from `params` (built above
+      // via buildAuthProofStruct) — avoids redundant BigInt parsing.
+      // Best-effort: a DB write failure here must not reject the
+      // promise after the on-chain tx already succeeded.
+      this.persistSettledClaimsRoot(params.maker.claimsRoot, "settleAuth maker", txHash);
+      this.persistSettledClaimsRoot(params.taker.claimsRoot, "settleAuth taker", txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });
@@ -234,6 +243,15 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // Record the claimsRoot so the gasless `/api/private-claim/...`
+      // route knows this relayer settled this batch and is willing to
+      // pay gas to submit individual claims. Without this, every claim
+      // against a scatterDirectAuth-settled batch hits the "claims root
+      // not settled by this relayer" 403 even though the on-chain
+      // settle succeeded. Reuses the already-formatted bytes32 from
+      // `params.proof` and tolerates DB-write failures so a transient
+      // I/O error doesn't reject after a successful tx.
+      this.persistSettledClaimsRoot(params.proof.claimsRoot, "scatterDirectAuth", txHash);
       console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
       return txHash;
     });
@@ -280,6 +298,22 @@ export class AuthorizeSubmitter {
     const maxFee = BigInt(sideMaxFee);
     const effectiveBps = relayerFeeBps < maxFee ? relayerFeeBps : maxFee;
     return (sell * effectiveBps) / FEE_BPS_DENOMINATOR;
+  }
+
+  /**
+   * Persist a settled claimsRoot best-effort: log and swallow on
+   * failure so a transient DB error after a successful on-chain
+   * settle never rejects the submitter promise.
+   */
+  private persistSettledClaimsRoot(claimsRoot: string, label: string, txHash: string): void {
+    try {
+      this.db?.saveSettledClaimsRoot(claimsRoot);
+    } catch (err) {
+      console.warn(
+        `[authorize-submitter] ${label} settled on-chain (tx ${txHash}) but failed to persist claimsRoot ${claimsRoot}:`,
+        err,
+      );
+    }
   }
 
   /** Serialize concurrent settleAuth + claim txs to prevent nonce collision. */
