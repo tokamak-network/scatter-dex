@@ -1,9 +1,9 @@
 /**
  * HistoryScreen — converted from web design prototype Activity.tsx
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -12,6 +12,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
+import { CancelService, CancelProgress } from '../services/CancelService';
 import { formatAmount, formatDate, shortAddr } from '../lib/format';
 
 type Tab = 'active' | 'spent' | 'pending';
@@ -91,6 +92,8 @@ export default function HistoryScreen() {
 
   const [allNotes, setAllNotes] = useState<StoredNote[]>([]);
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatus>>(new Map());
+  const [pendingOrders, setPendingOrders] = useState<OrderStatus[]>([]);
+  const [cancellingNoteId, setCancellingNoteId] = useState<string | null>(null);
 
   // Load notes and order statuses
   useEffect(() => {
@@ -112,9 +115,11 @@ export default function HistoryScreen() {
               if (!cancelled) {
                 const statusMap = new Map<string, OrderStatus>();
                 for (const s of statuses) {
-                  statusMap.set(s.orderId, s);
+                  const key = s.orderId ?? s.nonce ?? '';
+                  if (key) statusMap.set(key, s);
                 }
                 setOrderStatuses(statusMap);
+                setPendingOrders(statuses.filter((s) => s.status === 'pending'));
               }
             }
           } catch {
@@ -130,6 +135,74 @@ export default function HistoryScreen() {
     load();
     return () => { cancelled = true; };
   }, [account, signer]);
+
+  const handleCancel = useCallback(async (noteId: string) => {
+    if (!signer || !account) {
+      Alert.alert('Wallet not connected', 'Connect your wallet to cancel an order.');
+      return;
+    }
+    const note = allNotes.find((n) => n.id === noteId);
+    if (!note) {
+      Alert.alert('Note not found', 'The escrow note for this order is no longer in local storage.');
+      return;
+    }
+
+    // Match a pending relayer order against this note by pubKeyAx + sellToken.
+    // The relayer keeps nonce per order; without it we cannot burn the right
+    // nonce-nullifier. If multiple pending orders match, the user must disambiguate
+    // (rare today — noted as a follow-up).
+    const candidates = pendingOrders.filter(
+      (o) => o.pubKeyAx === note.pubKeyAx
+        && (o.sellToken ? BigInt(o.sellToken) === BigInt(note.token) : true)
+        && !!o.nonce,
+    );
+    if (candidates.length === 0) {
+      Alert.alert('No pending order', 'No matching pending order was found on the relayer for this note.');
+      return;
+    }
+    if (candidates.length > 1) {
+      Alert.alert(
+        'Multiple pending orders',
+        'This escrow has more than one pending order. Cancel from the relayer ops dashboard (mobile picker coming soon).',
+      );
+      return;
+    }
+    const target = candidates[0];
+    const nonce = target.nonce!;
+
+    Alert.alert(
+      'Cancel Order',
+      `Cancel the pending order (nonce ${nonce.slice(0, 10)}…)? This rotates the escrow to a fresh commitment and burns the nonce nullifier so the order can never settle.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel Order',
+          style: 'destructive',
+          onPress: async () => {
+            setCancellingNoteId(noteId);
+            setError(null);
+            const onProgress = (p: CancelProgress) => {
+              if (p.step === 'error') setError(p.error || 'Cancel failed');
+            };
+            try {
+              const txHash = await CancelService.execute(signer, account, { note, nonce }, onProgress);
+              if (txHash) {
+                Alert.alert('Order Cancelled', `Tx: ${txHash.slice(0, 10)}…`);
+                // Pull fresh notes from storage — CancelService rotated them.
+                const fresh = await NoteStorageService.getAllNotes();
+                setAllNotes(fresh);
+                setPendingOrders((prev) => prev.filter((o) => o.nonce !== nonce));
+              }
+            } catch (err: any) {
+              setError(err?.message || 'Cancel failed');
+            } finally {
+              setCancellingNoteId(null);
+            }
+          },
+        },
+      ],
+    );
+  }, [signer, account, allNotes, pendingOrders]);
 
   // Convert notes to activity items
   const activities = useMemo(() => {
@@ -224,40 +297,59 @@ export default function HistoryScreen() {
               No {tab} transactions found.
             </Text>
           ) : (
-            filteredActivities.map((item) => (
-              <View key={item.id} style={s.actRow}>
-                <View style={s.actLeft}>
-                  <View style={s.actIcon}>
-                    <View style={[s.actDot, { backgroundColor: TYPE_COLORS[item.type] || '#3B82F6' }]} />
+            filteredActivities.map((item) => {
+              const isPending = item.statusType === 'waiting' || item.statusType === 'matching';
+              const isCancelling = cancellingNoteId === item.id;
+              return (
+                <View key={item.id} style={{ gap: 8 }}>
+                  <View style={s.actRow}>
+                    <View style={s.actLeft}>
+                      <View style={s.actIcon}>
+                        <View style={[s.actDot, { backgroundColor: TYPE_COLORS[item.type] || '#3B82F6' }]} />
+                      </View>
+                      <View>
+                        <Text style={s.actType}>{item.type}</Text>
+                        <Text style={s.actDesc}>{item.desc}</Text>
+                      </View>
+                    </View>
+                    <View style={s.actRight}>
+                      <Text style={s.actTime}>{item.time}</Text>
+                      <View style={[
+                        s.statusBadge,
+                        item.statusType === 'matching' && s.statusMatching,
+                        item.statusType === 'verified' && s.statusVerified,
+                        item.statusType === 'confirmed' && s.statusConfirmed,
+                        item.statusType === 'waiting' && s.statusWaiting,
+                      ]}>
+                        <Text style={s.statusIcon}>{STATUS_ICONS[item.statusType]}</Text>
+                        <Text style={[
+                          s.statusText,
+                          item.statusType === 'matching' && s.statusMatchingText,
+                          item.statusType === 'verified' && s.statusVerifiedText,
+                          item.statusType === 'confirmed' && s.statusConfirmedText,
+                          item.statusType === 'waiting' && s.statusWaitingText,
+                        ]}>
+                          {item.status}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                  <View>
-                    <Text style={s.actType}>{item.type}</Text>
-                    <Text style={s.actDesc}>{item.desc}</Text>
-                  </View>
+                  {isPending && (
+                    <TouchableOpacity
+                      style={[s.cancelBtn, isCancelling && { opacity: 0.5 }]}
+                      onPress={() => handleCancel(item.id)}
+                      disabled={isCancelling}
+                    >
+                      {isCancelling ? (
+                        <ActivityIndicator color="#EF4444" size="small" />
+                      ) : (
+                        <Text style={s.cancelBtnText}>Cancel Order</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <View style={s.actRight}>
-                  <Text style={s.actTime}>{item.time}</Text>
-                  <View style={[
-                    s.statusBadge,
-                    item.statusType === 'matching' && s.statusMatching,
-                    item.statusType === 'verified' && s.statusVerified,
-                    item.statusType === 'confirmed' && s.statusConfirmed,
-                    item.statusType === 'waiting' && s.statusWaiting,
-                  ]}>
-                    <Text style={s.statusIcon}>{STATUS_ICONS[item.statusType]}</Text>
-                    <Text style={[
-                      s.statusText,
-                      item.statusType === 'matching' && s.statusMatchingText,
-                      item.statusType === 'verified' && s.statusVerifiedText,
-                      item.statusType === 'confirmed' && s.statusConfirmedText,
-                      item.statusType === 'waiting' && s.statusWaitingText,
-                    ]}>
-                      {item.status}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 
@@ -320,4 +412,7 @@ const s = StyleSheet.create({
   statusConfirmedText: { color: '#2563EB' },
   statusWaiting: { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
   statusWaitingText: { color: '#EA580C' },
+
+  cancelBtn: { marginLeft: 64, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FEE2E2', backgroundColor: '#FEF2F2', alignSelf: 'flex-start' },
+  cancelBtnText: { fontSize: 12, fontWeight: '700', color: '#EF4444' },
 });

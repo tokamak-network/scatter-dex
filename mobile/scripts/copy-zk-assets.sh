@@ -11,7 +11,7 @@ MOBILE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CIRCUITS_BUILD="$MOBILE_DIR/../circuits/build"
 ASSETS_ZK="$MOBILE_DIR/assets/zk"
 
-REQUIRED_CIRCUITS=(deposit claim authorize)
+REQUIRED_CIRCUITS=(deposit claim authorize cancel)
 
 echo "=== Copying ZK circuit assets for mobile ==="
 
