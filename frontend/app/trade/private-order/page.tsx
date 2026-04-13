@@ -522,15 +522,22 @@ export default function PrivateOrderPage() {
     }
   }, [changeAmount]);
 
-  // Fill against gross buyAmount so `sum(claims) === buyAmount` holds in
-  // BigInt terms — the authorize circuit's minimum-receive check is an
-  // integer comparison and a fee-sized rounding gap would fail it.
+  // Target in BigInt wei: gross `buyAmount` for cross-token trades
+  // (authorize 8b requires `sum(claims) >= buyAmount`), but the scatter
+  // cap `sellAmount - fee` in same-token mode — pressing Rest there
+  // must not push the distribute total past what `validateScatterAuth`
+  // will accept. Capped at parsedBuy so a user who typed a smaller
+  // buyAmount than the scatter max still gets their exact target.
   const fillRest = (id: number) => {
     if (buyTokenDecimals == null || !buyAmount) return;
     try {
       const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      const target =
+        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < parsedBuy
+          ? scatterMaxDistributeWei
+          : parsedBuy;
       const othersBig = sumClaimWei(id);
-      const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
+      const restBig = target > othersBig ? target - othersBig : 0n;
       updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
     } catch {
       /* buyAmount still being typed; no-op */
