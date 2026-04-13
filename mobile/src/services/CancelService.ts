@@ -97,8 +97,12 @@ export const CancelService = {
         throw new Error('Note commitment is no longer in the on-chain tree. It may already be spent or rotated.');
       }
 
-      const { root: commitmentRoot, layers } = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
-      const { pathElements, pathIndices } = getMerkleProofFromTree(layers, note.leafIndex);
+      const tree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+      const commitmentRoot = tree.root;
+      // Pass the tree (not just layers) so the proof extractor can substitute
+      // zeroHashes for siblings in the zero region — sparse trees no longer
+      // carry full-width layers.
+      const { pathElements, pathIndices } = getMerkleProofFromTree(tree, note.leafIndex);
 
       const oldNullifier = await ZKBridgeService.computeNullifier(
         TAG_ESCROW_NULL.toString(),

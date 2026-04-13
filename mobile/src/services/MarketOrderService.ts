@@ -179,9 +179,13 @@ export const MarketOrderService = {
       }
 
       const COMMIT_TREE_DEPTH = 20;
-      const { root: commitmentRoot, layers } = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+      const tree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+      const commitmentRoot = tree.root;
       const { getMerkleProofFromTree } = await import('../lib/merkleTree');
-      const { pathElements, pathIndices } = getMerkleProofFromTree(layers, note.leafIndex);
+      // Pass the full tree (not just layers) so the proof extractor can
+      // substitute zeroHashes[d] when a sibling falls in the zero region
+      // — sparse trees no longer carry full-width layers.
+      const { pathElements, pathIndices } = getMerkleProofFromTree(tree, note.leafIndex);
 
       const circuitInputs: Record<string, string | string[]> = {
         commitmentRoot,
