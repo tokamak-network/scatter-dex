@@ -15,6 +15,7 @@ import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import AddressBookModal from '../components/AddressBookModal';
+import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
 
 interface ToggleItem {
@@ -38,6 +39,7 @@ interface ManagementItem {
 const managementItems: ManagementItem[] = [
   { id: 'addressbook', label: 'Address Book', icon: '📒' },
   { id: 'eddsa', label: 'EdDSA Key Management', icon: '🔑' },
+  { id: 'backuprestore', label: 'Backup & Restore', icon: '☁' },
   { id: 'backup', label: 'Seed Phrase Backup', icon: '⚠', badge: 'Critical' },
 ];
 
@@ -55,6 +57,7 @@ export default function SettingsScreen() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [addressBookVisible, setAddressBookVisible] = useState(false);
+  const [backupVisible, setBackupVisible] = useState(false);
   const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [importSecret, setImportSecret] = useState('');
 
@@ -122,6 +125,10 @@ export default function SettingsScreen() {
   const handleManagementPress = useCallback(async (id: string) => {
     if (id === 'addressbook') {
       setAddressBookVisible(true);
+      return;
+    }
+    if (id === 'backuprestore') {
+      setBackupVisible(true);
       return;
     }
     if (id === 'backup') {
@@ -494,6 +501,11 @@ export default function SettingsScreen() {
         visible={addressBookVisible}
         mode="manage"
         onClose={() => setAddressBookVisible(false)}
+      />
+
+      <BackupModal
+        visible={backupVisible}
+        onClose={() => setBackupVisible(false)}
       />
     </SafeAreaView>
   );
