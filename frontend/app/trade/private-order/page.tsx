@@ -345,37 +345,45 @@ export default function PrivateOrderPage() {
     setClaims(claims.map((c) => c.id === id ? { ...c, [field]: value } : c));
   };
 
-  const claimTotal = useMemo(() => {
-    return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-  }, [claims]);
+  const buyTokenDecimals = buyToken?.decimals;
+  const buyTokenSymbol = buyToken?.symbol;
 
   // Sum claim amounts as BigInt wei, tolerating rows the user is still
-  // typing into. Shared between the shortfall check (which gates submit)
-  // and fillRest (which auto-fills one row). Keeping both in BigInt land
-  // is what lets the UI match the circuit's integer equality — floats
-  // silently drop the fee-sized tail.
+  // typing into. Shared between the shortfall check (gates submit), the
+  // display total (was a parseFloat sum before), and fillRest (auto-fills
+  // one row). Keeping all three in BigInt land is what lets the UI match
+  // the circuit's integer equality — floats silently drop the fee-sized
+  // tail.
   const sumClaimWei = useCallback((excludeId?: number): bigint => {
-    if (!buyToken) return 0n;
+    if (buyTokenDecimals == null) return 0n;
     return claims.reduce((acc, c) => {
       if (c.id === excludeId || !c.amount) return acc;
-      try { return acc + ethers.parseUnits(c.amount, buyToken.decimals); }
+      try { return acc + ethers.parseUnits(c.amount, buyTokenDecimals); }
       catch { return acc; }
     }, 0n);
-  }, [claims, buyToken?.decimals]);
+  }, [claims, buyTokenDecimals]);
+
+  // Display-only aggregate derived from the same BigInt sum so the
+  // summary line cannot disagree with the shortfall gate (e.g. showing
+  // "1.0000" while validation sees 0.9996 wei).
+  const claimTotalWei = useMemo(() => sumClaimWei(), [sumClaimWei]);
+  const claimTotalDisplay = useMemo(() => {
+    if (buyTokenDecimals == null) return "0";
+    return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
+  }, [claimTotalWei, buyTokenDecimals]);
 
   // BigInt check that matches the authorize circuit constraint
   // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
   const claimShortfall = useMemo((): bigint | null => {
-    if (!buyToken || !buyAmount) return null;
+    if (buyTokenDecimals == null || !buyAmount) return null;
     try {
-      const need = ethers.parseUnits(buyAmount, buyToken.decimals);
+      const need = ethers.parseUnits(buyAmount, buyTokenDecimals);
       if (need === 0n) return null;
-      const have = sumClaimWei();
-      return have >= need ? 0n : need - have;
+      return claimTotalWei >= need ? 0n : need - claimTotalWei;
     } catch {
       return null;
     }
-  }, [sumClaimWei, buyAmount, buyToken?.decimals]);
+  }, [claimTotalWei, buyAmount, buyTokenDecimals]);
 
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
@@ -450,12 +458,12 @@ export default function PrivateOrderPage() {
   // BigInt terms — the authorize circuit's minimum-receive check is an
   // integer comparison and a fee-sized rounding gap would fail it.
   const fillRest = (id: number) => {
-    if (!buyToken || !buyAmount) return;
+    if (buyTokenDecimals == null || !buyAmount) return;
     try {
-      const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
+      const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
       const othersBig = sumClaimWei(id);
       const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
-      updateClaim(id, "amount", ethers.formatUnits(restBig, buyToken.decimals));
+      updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
     } catch {
       /* buyAmount still being typed; no-op */
     }
@@ -1252,7 +1260,7 @@ export default function PrivateOrderPage() {
               {buyToken && (
                 <div className="mt-2 space-y-1">
                   <div className="text-xs text-on-surface-variant flex justify-between">
-                    <span>Claims total: {claimTotal.toFixed(4)} {buyToken.symbol}</span>
+                    <span>Claims total: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}</span>
                     <span>Recipients receive (after fee): {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (
