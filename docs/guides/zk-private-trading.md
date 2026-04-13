@@ -273,7 +273,7 @@ Claim:    Browser → zk-relayer API (proof) → claimWithProof (relayer pays ga
 
 ```bash
 cd circuits
-bash scripts/build.sh
+npm run build
 ```
 
 이 스크립트는:

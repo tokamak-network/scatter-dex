@@ -50,6 +50,20 @@ function getUsdcAddress(): string | null {
   return usdc?.address ?? null;
 }
 
+// ERC20 decimals is immutable per contract. Cache it per address so
+// repeated faucet calls don't pay an RPC round-trip for a constant.
+const _decimalsCache = new Map<string, number>();
+async function getDecimals(
+  token: ethers.Contract,
+  address: string,
+): Promise<number> {
+  const hit = _decimalsCache.get(address);
+  if (hit !== undefined) return hit;
+  const d = Number(await token.decimals());
+  _decimalsCache.set(address, d);
+  return d;
+}
+
 export async function POST(req: NextRequest) {
   if (EXPECTED_CHAIN_ID !== LOCAL_CHAIN_ID) {
     return NextResponse.json({ error: "Faucet is only available on localhost." }, { status: 403 });
@@ -88,7 +102,7 @@ export async function POST(req: NextRequest) {
     const wallet = getFaucetWallet();
     const token = new ethers.Contract(usdcAddress, MOCK_TOKEN_ABI, wallet);
 
-    const decimals = Number(await token.decimals());
+    const decimals = await getDecimals(token, usdcAddress);
     const usdcAmount = USDC_DRIP_WHOLE * 10n ** BigInt(decimals);
 
     // Send both txs back-to-back on the same NonceManager, serialized
