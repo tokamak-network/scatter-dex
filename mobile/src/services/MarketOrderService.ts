@@ -16,6 +16,7 @@ import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { TokenService } from './TokenService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -68,12 +69,19 @@ export const MarketOrderService = {
     if (!poolAddr) throw new Error('CommitmentPool address not configured');
 
     const { note, buyToken, dexRouter, uniswapFeeTier, expiryHours, claimRecipient } = input;
-    const sellAmount = ethers.parseUnits(input.sellAmount, 18);
-    const buyAmount = ethers.parseUnits(input.buyAmount, 18);
+    // Resolve decimals per token — using a hardcoded 18 silently miscomputes
+    // amounts for tokens like USDC (6 decimals) by a factor of 10^12.
+    const readProvider = ProviderService.getReadProvider();
+    const [sellDecimals, buyDecimals] = await Promise.all([
+      TokenService.getDecimals(readProvider, note.token),
+      TokenService.getDecimals(readProvider, buyToken),
+    ]);
+    const sellAmount = ethers.parseUnits(input.sellAmount, sellDecimals);
+    const buyAmount = ethers.parseUnits(input.buyAmount, buyDecimals);
 
     // Validate sell amount doesn't exceed note balance
     if (sellAmount > BigInt(note.amount)) {
-      throw new Error(`Sell amount exceeds note balance (${ethers.formatEther(note.amount)}).`);
+      throw new Error(`Sell amount exceeds note balance (${ethers.formatUnits(note.amount, sellDecimals)} ${note.tokenSymbol}).`);
     }
     const nonceBytes = new Uint8Array(8);
     crypto.getRandomValues(nonceBytes);
@@ -150,7 +158,6 @@ export const MarketOrderService = {
       const nonceNullifier = await ZKBridgeService.computeNullifier('1', note.secret, nonce.toString());
 
       // Commitment Merkle proof — fetch all commitments and build tree
-      const readProvider = ProviderService.getReadProvider();
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
       const fromBlock = await ProviderService.getEarliestBlock();
 

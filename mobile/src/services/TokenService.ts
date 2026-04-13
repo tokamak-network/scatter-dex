@@ -7,6 +7,7 @@
  */
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
+import { ProviderService } from './ProviderService';
 import { ERC20_ABI } from '../lib/contracts';
 
 export interface TokenInfo {
@@ -17,6 +18,16 @@ export interface TokenInfo {
 }
 
 let cachedTokenList: TokenInfo[] | null = null;
+// address (lowercased) -> decimals. Populated lazily by getDecimals() via the
+// on-chain ERC-20 `decimals()` call. Entries never mutate — ERC-20 decimals
+// are a constant per contract — but a network switch can redeploy the same
+// address with different decimals (typical on testnets), so we subscribe to
+// ProviderService resets and wipe the cache there.
+const decimalsCache = new Map<string, number>();
+ProviderService.subscribeReset(() => {
+  decimalsCache.clear();
+  cachedTokenList = null;
+});
 
 function buildDefaultTokens(): TokenInfo[] {
   const wethAddr = ConfigService.getWethAddress();
@@ -71,7 +82,46 @@ export const TokenService = {
     return results;
   },
 
+  /**
+   * Resolve ERC-20 decimals for a token address, with an in-memory cache.
+   * Hits the known-token list first, then falls back to an on-chain
+   * `decimals()` call. Callers should use this instead of assuming 18 —
+   * tokens like USDC (6) would otherwise be off by 10^12 in every amount.
+   */
+  async getDecimals(
+    provider: ethers.JsonRpcProvider,
+    address: string,
+  ): Promise<number> {
+    const key = address.toLowerCase();
+    const cached = decimalsCache.get(key);
+    if (cached !== undefined) return cached;
+
+    for (const t of this.getTokenList()) {
+      if (t.address.toLowerCase() === key) {
+        decimalsCache.set(key, t.decimals);
+        return t.decimals;
+      }
+    }
+
+    const erc20 = new ethers.Contract(address, ERC20_ABI, provider);
+    let raw: bigint | number;
+    try {
+      raw = await erc20.decimals();
+    } catch (err: any) {
+      // Wrap the opaque ethers CALL_EXCEPTION so the UI can tell the user
+      // which token is unreachable instead of surfacing raw RPC noise.
+      throw new Error(`Failed to read decimals for token ${address}: ${err?.shortMessage || err?.message || 'RPC call reverted'}`);
+    }
+    const decimals = Number(raw);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+      throw new Error(`Token ${address} returned invalid decimals: ${raw}`);
+    }
+    decimalsCache.set(key, decimals);
+    return decimals;
+  },
+
   resetCache() {
     cachedTokenList = null;
+    decimalsCache.clear();
   },
 };

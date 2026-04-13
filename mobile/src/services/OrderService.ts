@@ -18,6 +18,8 @@ import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
 import { ConfigService } from './ConfigService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
+import { ProviderService } from './ProviderService';
+import { TokenService } from './TokenService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree } from '../lib/merkleTree';
@@ -64,8 +66,15 @@ export const OrderService = {
   ): Promise<string | null> {
     try {
       const { note, buyToken, maxFeeBps, expiryHours, claims } = input;
-      const sellAmount = ethers.parseUnits(input.sellAmount, 18);
-      const buyAmount = ethers.parseUnits(input.buyAmount, 18);
+      // Resolve sell/buy decimals dynamically — hardcoding 18 silently
+      // misbuilds amounts for tokens like USDC (6).
+      const readProvider = ProviderService.getReadProvider();
+      const [sellDecimals, buyDecimals] = await Promise.all([
+        TokenService.getDecimals(readProvider, note.token),
+        TokenService.getDecimals(readProvider, buyToken),
+      ]);
+      const sellAmount = ethers.parseUnits(input.sellAmount, sellDecimals);
+      const buyAmount = ethers.parseUnits(input.buyAmount, buyDecimals);
 
       // Use cryptographically random nonce to prevent collisions
       const nonceBytes = new Uint8Array(8);
@@ -87,7 +96,7 @@ export const OrderService = {
         secret: generateRandomField(),
         recipient: BigInt(c.recipient).toString(),
         token: BigInt(buyToken).toString(),
-        amount: ethers.parseUnits(c.amount, 18).toString(),
+        amount: ethers.parseUnits(c.amount, buyDecimals).toString(),
         releaseTime: BigInt(Math.floor(Date.now() / 1000) + c.releaseDelaySec).toString(),
       }));
 
