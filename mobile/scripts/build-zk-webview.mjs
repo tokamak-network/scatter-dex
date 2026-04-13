@@ -38,9 +38,19 @@ const snarkjs = readFileSync(resolve(root, 'node_modules/snarkjs/build/snarkjs.m
 console.log('[3/3] Generating zk-webview.html...');
 
 const messageHandler = `
-window.addEventListener('message', async function(event) {
+// react-native-webview delivers postMessage to \`window\` on iOS but to
+// \`document\` on Android. Without registering both, the bridge silently
+// no-ops on Android and every command times out. The handler is shared.
+async function _zkOnMessage(event) {
   var data;
-  try { data = JSON.parse(event.data); } catch(e) { return; }
+  try { data = JSON.parse(event.data); } catch(e) {
+    // Most non-JSON messages are unrelated noise (devtools, MessagePort
+    // postMessage, etc.) so we drop them — but warn whenever \`console\`
+    // is available (including production) so a genuinely malformed bridge
+    // command doesn't disappear without trace.
+    if (typeof console !== 'undefined') console.warn('zk-bridge: dropping non-JSON message', event && event.data);
+    return;
+  }
   var requestId = data.requestId;
   var cmd = data.cmd;
 
@@ -176,7 +186,10 @@ window.addEventListener('message', async function(event) {
   } catch (err) {
     replyError(err);
   }
-});
+}
+
+window.addEventListener('message', _zkOnMessage);
+document.addEventListener('message', _zkOnMessage);
 
 // 초기화 완료 알림
 var engineStatus = typeof window._zkEngine !== 'undefined'
