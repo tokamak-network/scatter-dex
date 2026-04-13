@@ -483,13 +483,28 @@ export default function PrivateOrderPage() {
     } catch { return null; }
   }, [isScatterMode, scatterMaxDistributeWei, buyAmount, buyTokenDecimals]);
 
-  // Recompute buyAmount from sell * price (fee is deducted at settlement, not here)
+  // Recompute buyAmount.
+  //   - Cross-token: sell * price.
+  //   - Scatter mode: clamp to `sellAmount - fee` so the scatter-excess
+  //     gate (which compares the buyAmount field against the cap) doesn't
+  //     fire just because the price=1 path produced sellAmount × 1 wei.
   const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
+    if (isScatterMode && sellTokenDecimals != null) {
+      try {
+        const sellWei = ethers.parseUnits(sell, sellTokenDecimals);
+        const feeWei = (sellWei * BigInt(effectiveFeeBps)) / 10000n;
+        const capWei = sellWei > feeWei ? sellWei - feeWei : 0n;
+        setBuyAmount(ethers.formatUnits(capWei, sellTokenDecimals));
+      } catch {
+        /* sellAmount mid-typing — leave buyAmount alone */
+      }
+      return;
+    }
     const grossBuy = parseFloat(sell) * parseFloat(p);
     if (isNaN(grossBuy)) return;
     const dec = Math.min(buyToken?.decimals ?? 18, 18);
     setBuyAmount(grossBuy.toFixed(dec));
-  }, [buyToken]);
+  }, [buyToken, isScatterMode, sellTokenDecimals, effectiveFeeBps]);
 
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
@@ -522,15 +537,22 @@ export default function PrivateOrderPage() {
     }
   }, [changeAmount]);
 
-  // Fill against gross buyAmount so `sum(claims) === buyAmount` holds in
-  // BigInt terms — the authorize circuit's minimum-receive check is an
-  // integer comparison and a fee-sized rounding gap would fail it.
+  // Target in BigInt wei: gross `buyAmount` for cross-token trades
+  // (authorize 8b requires `sum(claims) >= buyAmount`), but the scatter
+  // cap `sellAmount - fee` in same-token mode — pressing Rest there
+  // must not push the distribute total past what `validateScatterAuth`
+  // will accept. Capped at parsedBuy so a user who typed a smaller
+  // buyAmount than the scatter max still gets their exact target.
   const fillRest = (id: number) => {
     if (buyTokenDecimals == null || !buyAmount) return;
     try {
       const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      const target =
+        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < parsedBuy
+          ? scatterMaxDistributeWei
+          : parsedBuy;
       const othersBig = sumClaimWei(id);
-      const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
+      const restBig = target > othersBig ? target - othersBig : 0n;
       updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
     } catch {
       /* buyAmount still being typed; no-op */
