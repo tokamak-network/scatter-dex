@@ -25,6 +25,14 @@
 
 ## Quick Start (Local Development)
 
+> **First-time setup:** build the ZK circuit artifacts before `docker compose up`. The images copy `frontend/public/zk/*.wasm` + `*.zkey` in at build time, but only `authorize.*` / `cancel.*` are checked in. Generate the remaining four (`deposit`, `withdraw`, `settle`, `claim`) once:
+>
+> ```bash
+> cd circuits && npm install && npm run build
+> ```
+>
+> Details and symptom matching in [local-setup.md](./local-setup.md#prerequisite-build-zk-circuit-artifacts).
+
 ### Single Relayer (default)
 
 ```bash
