@@ -88,7 +88,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 
   // Fee withheld by the relayer, denominated in the sell token.
-  //   - scatter: exact (residual after buyAmount + change)
+  //   - scatter: exact (sellAmount − buyAmount)
   //   - cross-token: upper bound (circuit constraint: fee*10000 ≤ sellAmount*maxFee)
   // Skipped in compact mode since the row doesn't render it.
   const feeAmountDisplay = compact ? null : (() => {

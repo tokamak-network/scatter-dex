@@ -22,17 +22,25 @@ export function useClaimStatuses(
   options?: { includeTxHash?: boolean }
 ): Record<number, ClaimStatusInfo> {
   const [statuses, setStatuses] = useState<Record<number, ClaimStatusInfo>>({});
+  // `keyRef` caches the key whose result is currently in `statuses`.
+  // `inflightKeyRef` tracks a query that's started but not yet committed
+  // — gates against thundering-herd concurrent fetches when a parent
+  // re-render passes a new `claims` reference for the same logical
+  // data while a fetch is in flight.
   const keyRef = useRef("");
+  const inflightKeyRef = useRef("");
 
+  const includeTxHash = options?.includeTxHash;
   useEffect(() => {
     if (claims.length === 0) return;
-    // Stable key to avoid re-running for the same claim set. The key is
-    // committed AFTER the async query resolves and `setStatuses` lands —
-    // not before — so a cancelled first run (React 18 strict-mode double
-    // invoke, rapid parent re-render) can't poison the cache and starve
-    // the second run that sees `key === keyRef.current` and bails early.
-    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (options?.includeTxHash ? ":tx" : "");
+    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (includeTxHash ? ":tx" : "");
+    // Skip if (a) we already have this result cached, or (b) an
+    // identical query is already in flight. The cached check is
+    // committed after `setStatuses` lands; the in-flight check
+    // prevents duplicate concurrent fan-outs.
     if (key === keyRef.current) return;
+    if (key === inflightKeyRef.current) return;
+    inflightKeyRef.current = key;
 
     let cancelled = false;
     (async () => {
@@ -95,12 +103,14 @@ export function useClaimStatuses(
         keyRef.current = key;
       } catch (e) {
         console.warn("Failed to check claim statuses:", e);
+      } finally {
+        // Clear in-flight only if this run is still the latest — a
+        // newer effect may have already taken over the slot.
+        if (inflightKeyRef.current === key) inflightKeyRef.current = "";
       }
     })();
     return () => { cancelled = true; };
-  // options.includeTxHash is checked via keyRef to avoid re-renders from unstable object refs
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claims]);
+  }, [claims, includeTxHash]);
 
   return statuses;
 }
