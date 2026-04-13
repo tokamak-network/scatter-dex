@@ -13,6 +13,8 @@ const navLinks = [
   { href: "/trade", label: "Secret Trade" },
   { href: "/relayer", label: "Relayer" },
   { href: "/faq", label: "FAQ" },
+  // Local dev only — the route itself refuses non-31337 chains.
+  ...(EXPECTED_CHAIN_ID === 31337 ? [{ href: "/faucet", label: "Faucet" }] : []),
 ];
 
 function shortenRpc(url: string) {
