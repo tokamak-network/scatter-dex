@@ -76,6 +76,24 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   })();
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 
+  // Exact fee amount (scatter only). In scatter the stored `buyAmount` is
+  // already post-fee, so `sellAmount − buyAmount` is the fee withheld. For
+  // cross-token, the actual fee depends on each side's relayer choice (≤
+  // maxFee) and isn't recoverable from the stored order alone — fall back
+  // to the maxFee upper bound.
+  const feeAmountDisplay = (() => {
+    try {
+      if (isSameToken) {
+        const fee = BigInt(trade.order.sellAmount) - BigInt(trade.order.buyAmount);
+        return `${parseFloat(ethers.formatUnits(fee, sell.decimals)).toFixed(4)} ${sell.symbol}`;
+      }
+      // Cross-token: show maxFee-bounded estimate on the buy side.
+      const feeBpsBig = BigInt(trade.order.maxFee);
+      const fee = (BigInt(trade.order.buyAmount) * feeBpsBig) / 10_000n;
+      return `≤ ${parseFloat(ethers.formatUnits(fee, buy.decimals)).toFixed(4)} ${buy.symbol}`;
+    } catch { return null; }
+  })();
+
   const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
 
   if (compact) {
@@ -139,6 +157,9 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Fee</div>
           <div className="text-sm font-mono mt-1">{(trade.order.maxFee / 100).toFixed(2)}%</div>
+          {feeAmountDisplay && (
+            <div className="text-[10px] font-mono text-on-surface-variant/60 mt-0.5">{feeAmountDisplay}</div>
+          )}
         </div>
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Expiry</div>
