@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "ScatterDEX",
+    "slug": "scatter-dex-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": "scatterdex",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.scatterdex.mobile",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Authenticate to access your private keys"
+      }
+    },
+    "android": {
+      "package": "io.scatterdex.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "extra": {
+      "WALLETCONNECT_PROJECT_ID": "e80e4057f616c11d61a9f918da19b0ea",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}
