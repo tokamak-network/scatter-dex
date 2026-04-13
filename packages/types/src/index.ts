@@ -7,14 +7,16 @@
 
 /**
  * Public order summary posted by relayers to the shared orderbook.
- * Contains NO secrets (ownerSecret, salt, balance, EdDSA private key, claims).
+ * Contains NO owner-identifying fields: no EdDSA public key coordinate,
+ * no user-visible nonce. Cross-relayer matching uses the opaque `id`
+ * (see OFFER_HANDLE_RE) which the maker's relayer resolves internally.
  */
 export interface OrderSummary {
-  id: string;            // "{relayerAddress}-{nonce}" unique composite key
+  /** Opaque offer handle (matches {@link OFFER_HANDLE_RE}). Also used
+   *  as the target in `TradeOfferRequest.offerHandle`. */
+  id: string;
   relayer: string;       // relayer Ethereum address (lowercase)
   relayerUrl: string;    // relayer REST endpoint
-  nonce: string;         // order nonce (unique per relayer)
-  pubKeyAx: string;      // EdDSA public key Ax (for Trade Offer maker identification)
   sellToken: string;     // token address (0x-prefixed hex, lowercase)
   buyToken: string;      // token address (0x-prefixed hex, lowercase)
   sellAmount: string;    // wei string
@@ -48,8 +50,10 @@ export interface ServerMatchResult {
 // ─── Trade Offer types (cross-relayer settlement) ───
 
 export interface TradeOfferRequest {
-  makerNonce: string;
-  makerPubKeyAx: string;
+  /** Opaque handle identifying the maker's order on the shared orderbook.
+   *  The maker's relayer resolves this internally to its (pubKeyAx, nonce)
+   *  entry — those values never cross the network. */
+  offerHandle: string;
   takerOrder: Record<string, unknown>;
 }
 
@@ -78,6 +82,10 @@ export function pairKey(tokenA: string, tokenB: string): string {
 }
 
 export const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Offer handle: opaque 32-byte hex identifier used on the shared
+ *  orderbook. Unlinkable to the user's EdDSA public key. */
+export const OFFER_HANDLE_RE = /^0x[0-9a-fA-F]{64}$/;
 
 /** Validate a "tokenA-tokenB" pair string (both must be valid 0x addresses) */
 export function isValidPair(pair: string): [string, string] | null {

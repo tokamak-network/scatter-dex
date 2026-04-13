@@ -8,6 +8,7 @@ import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
+import { AddressPicker } from "../../components/AddressPicker";
 import {
   deriveEdDSAKey,
   signEdDSA,
@@ -344,9 +345,45 @@ export default function PrivateOrderPage() {
     setClaims(claims.map((c) => c.id === id ? { ...c, [field]: value } : c));
   };
 
-  const claimTotal = useMemo(() => {
-    return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-  }, [claims]);
+  const buyTokenDecimals = buyToken?.decimals;
+  const buyTokenSymbol = buyToken?.symbol;
+
+  // Sum claim amounts as BigInt wei, tolerating rows the user is still
+  // typing into. Shared between the shortfall check (gates submit), the
+  // display total (was a parseFloat sum before), and fillRest (auto-fills
+  // one row). Keeping all three in BigInt land is what lets the UI match
+  // the circuit's integer equality — floats silently drop the fee-sized
+  // tail.
+  const sumClaimWei = useCallback((excludeId?: number): bigint => {
+    if (buyTokenDecimals == null) return 0n;
+    return claims.reduce((acc, c) => {
+      if (c.id === excludeId || !c.amount) return acc;
+      try { return acc + ethers.parseUnits(c.amount, buyTokenDecimals); }
+      catch { return acc; }
+    }, 0n);
+  }, [claims, buyTokenDecimals]);
+
+  // Display-only aggregate derived from the same BigInt sum so the
+  // summary line cannot disagree with the shortfall gate (e.g. showing
+  // "1.0000" while validation sees 0.9996 wei).
+  const claimTotalWei = useMemo(() => sumClaimWei(), [sumClaimWei]);
+  const claimTotalDisplay = useMemo(() => {
+    if (buyTokenDecimals == null) return "0";
+    return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
+  }, [claimTotalWei, buyTokenDecimals]);
+
+  // BigInt check that matches the authorize circuit constraint
+  // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
+  const claimShortfall = useMemo((): bigint | null => {
+    if (buyTokenDecimals == null || !buyAmount) return null;
+    try {
+      const need = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      if (need === 0n) return null;
+      return claimTotalWei >= need ? 0n : need - claimTotalWei;
+    } catch {
+      return null;
+    }
+  }, [claimTotalWei, buyAmount, buyTokenDecimals]);
 
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
@@ -417,11 +454,19 @@ export default function PrivateOrderPage() {
     }
   }, [changeAmount]);
 
+  // Fill against gross buyAmount so `sum(claims) === buyAmount` holds in
+  // BigInt terms — the authorize circuit's minimum-receive check is an
+  // integer comparison and a fee-sized rounding gap would fail it.
   const fillRest = (id: number) => {
-    const othersTotal = claims.reduce((sum, c) => c.id === id ? sum : sum + (parseFloat(c.amount) || 0), 0);
-    const rest = Math.max(0, netBuyAmount - othersTotal);
-    const floored = Math.floor(rest * 10000) / 10000;
-    updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
+    if (buyTokenDecimals == null || !buyAmount) return;
+    try {
+      const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      const othersBig = sumClaimWei(id);
+      const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
+      updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
+    } catch {
+      /* buyAmount still being typed; no-op */
+    }
   };
 
   // List available EdDSA keys in folder
@@ -1154,12 +1199,17 @@ export default function PrivateOrderPage() {
                     </div>
                     <div className="grid grid-cols-12 gap-2">
                       <div className="col-span-5">
-                        <input
-                          type="text" value={c.address}
-                          onChange={(e) => updateClaim(c.id, "address", e.target.value)}
-                          placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
-                          className="w-full bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text" value={c.address}
+                            onChange={(e) => updateClaim(c.id, "address", e.target.value)}
+                            placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
+                            className="flex-1 min-w-0 bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
+                          />
+                          {c.mode !== "stealth" && (
+                            <AddressPicker onPick={(addr) => updateClaim(c.id, "address", addr)} />
+                          )}
+                        </div>
                       </div>
                       <div className="col-span-3">
                         <div className="flex gap-1">
@@ -1210,12 +1260,22 @@ export default function PrivateOrderPage() {
               {buyToken && (
                 <div className="mt-2 space-y-1">
                   <div className="text-xs text-on-surface-variant flex justify-between">
-                    <span>Claims total: {claimTotal.toFixed(4)} {buyToken.symbol}</span>
-                    <span>Net amount: {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
+                    <span>Claims total: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}</span>
+                    <span>Recipients receive (after fee): {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
-                  {netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001 && (
+                  {claimShortfall !== null && claimShortfall > 0n && (
                     <div className="text-xs text-error font-bold">
-                      Claims ({claimTotal.toFixed(4)}) exceed net amount ({netBuyAmount.toFixed(4)} {buyToken.symbol})
+                      Claims must total at least {buyAmount} {buyToken.symbol} (buyAmount). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                    </div>
+                  )}
+                  {claimShortfall === null && buyAmount !== "" && (
+                    <div className="text-xs text-error font-bold">
+                      buyAmount &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
+                    </div>
+                  )}
+                  {parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
+                    <div className="text-[11px] text-on-surface-variant/60">
+                      For a match, the counterparty must sell ≥ {buyAmount} + fee ≈ {(parseFloat(buyAmount) * (1 + effectiveFeeBps / 10000)).toFixed(4)} {buyToken.symbol}.
                     </div>
                   )}
                 </div>
@@ -1301,7 +1361,7 @@ export default function PrivateOrderPage() {
             {orderType === "limit" ? (
             <button
               onClick={!keyPair ? handleDeriveKey : handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001) || keyLoading}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {keyLoading ? (
@@ -1311,7 +1371,7 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
               {keyLoading ? (

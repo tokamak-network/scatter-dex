@@ -2,6 +2,20 @@
 
 zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA architecture). This guide covers how to run the full stack locally.
 
+## Prerequisite: build ZK circuit artifacts
+
+Neither `dev.sh` nor `make up` builds the circuits — they only start services. The frontend loads six `.wasm` / `_final.zkey` pairs from `frontend/public/zk/` at proof time (deposit, withdraw, settle, claim, authorize, cancel), but **only `authorize.*` and `cancel.*` are committed to the repo**. The other four must be generated locally before the private-order flows will work:
+
+```bash
+cd circuits
+npm install         # first time only
+npm run build       # runs scripts/build.sh
+```
+
+`build.sh` compiles each `.circom`, runs Powers-of-Tau setup, exports Groth16 verifier keys, and copies the resulting `.wasm` + `_final.zkey` into `frontend/public/zk/`. First run is slow (PTAU generation); subsequent runs reuse `circuits/build/pot*_final.ptau`.
+
+**Symptom if skipped:** the browser console shows `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` — that's the Next.js 404 HTML page being fed to `WebAssembly.compile` because e.g. `/zk/deposit.wasm` doesn't exist. Run the build above and reload.
+
 ## Two ways to run the stack
 
 Both options run the stack in mock mode, but the service topology differs slightly between them (`make up` also starts the shared orderbook + deployer container; `dev.sh --mock` does not). Pick whichever fits your workflow:

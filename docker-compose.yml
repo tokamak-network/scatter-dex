@@ -33,7 +33,9 @@ services:
 
   # ── Shared Orderbook Server ─────────────────────────────────
   shared-orderbook:
-    build: ./shared-orderbook
+    build:
+      context: .
+      dockerfile: shared-orderbook/Dockerfile
     ports:
       - "4000:4000"
     environment:
@@ -49,7 +51,9 @@ services:
 
   # ── ZK Relayer A (primary) ──────────────────────────────────
   zk-relayer:
-    build: ./zk-relayer
+    build:
+      context: .
+      dockerfile: zk-relayer/Dockerfile
     depends_on:
       shared-orderbook:
         condition: service_healthy
@@ -82,7 +86,9 @@ services:
 
   # ── ZK Relayer B (cross-relayer matching) ───────────────────
   zk-relayer-b:
-    build: ./zk-relayer
+    build:
+      context: .
+      dockerfile: zk-relayer/Dockerfile
     profiles: ["multi-relayer"]
     depends_on:
       shared-orderbook:
