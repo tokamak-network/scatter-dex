@@ -52,12 +52,7 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
   }
 }
 
-/**
- * Format a wei-scale BigInt as a decimal string trimmed to `maxFracDigits`
- * fractional digits, without routing through a JS number. Avoids the
- * IEEE-754 precision loss that `parseFloat(formatUnits(...)).toFixed(n)`
- * introduces for large token amounts.
- */
+/** Format a wei BigInt to `maxFracDigits` decimals without an IEEE-754 round-trip. */
 function formatTokenBigInt(amount: bigint, decimals: number, maxFracDigits: number): string {
   const full = ethers.formatUnits(amount, decimals);
   const dot = full.indexOf(".");
@@ -92,26 +87,27 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   })();
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 
-  // Exact fee amount (scatter only). In scatter the stored `buyAmount` is
-  // already post-fee, and the residual `sellAmount − buyAmount − change`
-  // is what the relayer withheld. For cross-token, the fee bound the
-  // circuit enforces is `fee * 10000 ≤ sellAmount * maxFee` on the sell
-  // side (see SettleVerifyLib), so the upper bound must be denominated
-  // in the sell token, not the buy token.
-  const feeAmountDisplay = (() => {
+  // Fee withheld by the relayer, denominated in the sell token.
+  //   - scatter: exact (residual after buyAmount + change)
+  //   - cross-token: upper bound (circuit constraint: fee*10000 ≤ sellAmount*maxFee)
+  // Skipped in compact mode since the row doesn't render it.
+  const feeAmountDisplay = compact ? null : (() => {
     try {
+      const sellAmt = BigInt(trade.order.sellAmount);
       if (isSameToken) {
         const changeAmount = trade.change ? BigInt(trade.change.amount) : 0n;
-        let fee = BigInt(trade.order.sellAmount) - BigInt(trade.order.buyAmount) - changeAmount;
-        if (fee < 0n) fee = 0n;  // malformed/legacy data guard
+        const fee = sellAmt - BigInt(trade.order.buyAmount) - changeAmount;
+        // Invariant violation (circuit enforces sell ≥ buy + change + fee).
+        // Hide rather than display a misleading "0" that could mask a bug.
+        if (fee < 0n) return null;
         return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
       }
-      // Cross-token: maxFee is applied to `sellAmount` and the fee is
-      // denominated in the sell token — show the upper bound there.
-      const feeBpsBig = BigInt(trade.order.maxFee);
-      const fee = (BigInt(trade.order.sellAmount) * feeBpsBig) / 10_000n;
+      const fee = (sellAmt * BigInt(trade.order.maxFee)) / 10_000n;
       return `≤ ${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
-    } catch { return null; }
+    } catch (e) {
+      console.warn("TradeDetail: fee amount computation failed", e);
+      return null;
+    }
   })();
 
   const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
