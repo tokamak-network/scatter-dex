@@ -117,9 +117,11 @@ export const RelayerApiService = {
 
   /**
    * Fetch active relayers from the on-chain registry and probe each /api/info.
-   * Returns entries annotated with `online` so callers can filter. The returned
-   * address is what the authorize circuit hashes — using the wrong address
-   * produces an invalid signature.
+   * Returns every successfully-loaded registry entry annotated with
+   * `online=true|false` based on whether the URL responded within 3s.
+   * Callers should filter on `online` to pick a working relayer — the
+   * returned address is what the authorize circuit hashes, so using the
+   * wrong address produces an invalid signature.
    */
   async discoverRelayers(): Promise<RelayerInfo[]> {
     const registryAddr = ConfigService.getRelayerRegistryAddress();
