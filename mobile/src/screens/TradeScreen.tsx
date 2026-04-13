@@ -56,7 +56,6 @@ export default function TradeScreen() {
   // Claim builder (limit mode only). Default delay matches the web
   // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
   // row doesn't ship an immediate-release claim by accident.
-  const [nextClaimId, setNextClaimId] = useState(2);
   const [claimRows, setClaimRows] = useState<ClaimRow[]>([
     { id: 1, address: '', amount: '', delay: '1', delayUnit: 'hr' },
   ]);
@@ -115,13 +114,14 @@ export default function TradeScreen() {
     setClaimRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
   const addClaim = useCallback(() => {
+    // Derive the id from the current rows atomically so two rapid taps can't
+    // both close over the same stale state and append duplicate ids.
     setClaimRows((prev) => {
       if (prev.length >= MAX_CLAIM_ROWS) return prev;
-      const next = [...prev, { id: nextClaimId, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
-      return next;
+      const nextId = prev.length > 0 ? Math.max(...prev.map((r) => r.id)) + 1 : 1;
+      return [...prev, { id: nextId, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
     });
-    setNextClaimId((n) => n + 1);
-  }, [nextClaimId]);
+  }, []);
   const removeClaim = useCallback((id: number) => {
     setClaimRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
   }, []);

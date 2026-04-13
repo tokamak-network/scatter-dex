@@ -70,7 +70,13 @@ export const CancelService = {
       onProgress({ step: 'building_tree' });
       const readProvider = ProviderService.getReadProvider();
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      const fromBlock = await ProviderService.getEarliestBlock();
+      // Scan the pool's **full** commitment history — not
+      // `ProviderService.getEarliestBlock()`, which is cached to the user's
+      // first-deposit block. If the pool had commitments before that block,
+      // the reconstructed leaf array would be short and `note.leafIndex`
+      // would index into the wrong slot (failing the membership check or,
+      // worse, rotating the wrong note).
+      const fromBlock = ConfigService.getDeployBlock() || 0;
       const insertEvents = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
       const allLeaves = insertEvents.map((e) => {
         const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });

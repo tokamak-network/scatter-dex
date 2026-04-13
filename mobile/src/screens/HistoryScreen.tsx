@@ -215,6 +215,26 @@ export default function HistoryScreen() {
       });
   }, [allNotes, orderStatuses]);
 
+  // Notes for which a *cancellable* relayer order exists. `waiting`
+  // statusType alone is not enough — it also fires for `cancelled`/`expired`
+  // orders, so the UI would otherwise offer cancellation for dead orders.
+  // We gate on the presence of a pending order matching the note by
+  // pubKeyAx + sellToken (same match the cancel handler uses).
+  const cancellableNoteIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const note of allNotes) {
+      const hasPending = pendingOrders.some(
+        (o) =>
+          o.pubKeyAx === note.pubKeyAx
+          && !!o.sellToken
+          && BigInt(o.sellToken) === BigInt(note.token)
+          && !!o.nonce,
+      );
+      if (hasPending) ids.add(note.id);
+    }
+    return ids;
+  }, [allNotes, pendingOrders]);
+
   // Filter by tab and search
   const filteredActivities = useMemo(() => {
     let filtered = activities;
@@ -299,7 +319,10 @@ export default function HistoryScreen() {
             </Text>
           ) : (
             filteredActivities.map((item) => {
-              const isPending = item.statusType === 'waiting' || item.statusType === 'matching';
+              // Show Cancel only when a pending order actually exists for this
+              // note on the relayer — cancelled/expired/settled orders keep
+              // their historical statusType but are not cancellable.
+              const isCancellable = cancellableNoteIds.has(item.id);
               const isCancelling = cancellingNoteId === item.id;
               return (
                 <View key={item.id} style={{ gap: 8 }}>
@@ -335,7 +358,7 @@ export default function HistoryScreen() {
                       </View>
                     </View>
                   </View>
-                  {isPending && (
+                  {isCancellable && (
                     <TouchableOpacity
                       style={[s.cancelBtn, isCancelling && { opacity: 0.5 }]}
                       onPress={() => handleCancel(item.id)}
