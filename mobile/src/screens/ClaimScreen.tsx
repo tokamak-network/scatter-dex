@@ -7,23 +7,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../styles/theme';
 import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
+import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
 import { formatAmount } from '../lib/format';
-
-interface PendingClaim {
-  secret: string;
-  recipient: string;
-  token: string;
-  amount: string;
-  releaseTime: string;
-  leafIndex: number;
-  allLeaves: string[];
-  txHash: string;
-}
 
 export default function ClaimScreen() {
   const navigation = useNavigation<any>();
@@ -70,17 +59,16 @@ export default function ClaimScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  // Load pending claims from AsyncStorage
+  // Load pending claims. PendingClaimsStorage pulls each secret from
+  // SecureStore and the rest from AsyncStorage; legacy blobs written before
+  // the SecureStore split are migrated transparently on first call.
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       setLoadingClaims(true);
       try {
-        const raw = await AsyncStorage.getItem('scatterdex_pending_claims');
-        if (!cancelled && raw) {
-          const claims: PendingClaim[] = JSON.parse(raw);
-          setPendingClaims(claims);
-        }
+        const claims = await PendingClaimsStorage.list();
+        if (!cancelled) setPendingClaims(claims);
       } catch {
         if (!cancelled) setPendingClaims([]);
       } finally {
@@ -261,11 +249,14 @@ export default function ClaimScreen() {
         if (claimTab === 'notes' && sourceIndices.length > 0) {
           // Only drop the entries that actually committed. Sorted ASC, so the
           // first `submittedCount` sourceIndices are the ones that landed.
-          const toRemove = new Set(sourceIndices.slice(0, submittedCount));
-          const updated = pendingClaims.filter((_, i) => !toRemove.has(i));
+          const committedIdxSet = new Set(sourceIndices.slice(0, submittedCount));
+          const removedIds = sourceIndices
+            .slice(0, submittedCount)
+            .map((i) => pendingClaims[i].id);
+          const updated = pendingClaims.filter((_, i) => !committedIdxSet.has(i));
           setPendingClaims(updated);
           setSelectedIndices(new Set());
-          await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
+          await PendingClaimsStorage.removeByIds(removedIds);
         }
       } else {
         // onProgress already set the error; make sure the UI reflects it.
