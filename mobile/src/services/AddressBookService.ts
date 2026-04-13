@@ -9,8 +9,10 @@
  * the entries are not sensitive (labels + 0x addresses, no secrets), so
  * AsyncStorage is the right home — single JSON blob keyed by
  * `scatterdex_wallet_book_v1`. Mutations are serialized through a
- * promise chain so concurrent add/update/remove calls can't race on
- * read-modify-write.
+ * promise chain so concurrent in-process callers can't race on
+ * read-modify-write. Note this is in-process only: a backgrounded app
+ * killed mid-write can still lose an entry on the next launch's first
+ * write — acceptable for a single-device address book.
  */
 // Self-import the polyfill so AddressBookService is safe to import from
 // non-App entry points (tests, headless tasks). The package is idempotent
@@ -43,11 +45,17 @@ interface WalletBookFile {
 
 function newId(): string {
   // Stable identifier the user references in the UI — avoid Math.random().
-  // 8 bytes = 64 bits → ~2.7e-14 collision probability at 1000 entries.
   const bytes = new Uint8Array(8);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Single source of truth for address normalization — keep in sync with
+// `readBook`'s map. If we ever want checksummed storage instead, this is
+// the only line to change.
+function normalizeAddress(addr: string): string {
+  return addr.toLowerCase();
 }
 
 function isValidEntry(e: unknown): e is WalletEntry {
@@ -87,9 +95,9 @@ async function readBook(): Promise<WalletEntry[]> {
   if (!book.entries.every(isValidEntry)) {
     throw new WalletBookCorruptError('wallet book contains invalid entries');
   }
-  // Normalize addresses to lowercase on read so callers and the dedup
-  // check in `add` don't have to think about casing.
-  return book.entries.map((e) => ({ ...e, address: e.address.toLowerCase() }));
+  // Normalize addresses on read so callers and the dedup check in `add`
+  // don't have to think about casing.
+  return book.entries.map((e) => ({ ...e, address: normalizeAddress(e.address) }));
 }
 
 async function writeBook(entries: WalletEntry[]): Promise<void> {
@@ -104,7 +112,9 @@ async function writeBook(entries: WalletEntry[]): Promise<void> {
 // against stale entries.
 let _mutationQueue: Promise<unknown> = Promise.resolve();
 function withLock<T>(task: () => Promise<T>): Promise<T> {
-  const run = _mutationQueue.then(task, task);
+  // `.catch(() => {})` first so a failed task can't wedge the queue;
+  // then the next task always sees a settled chain.
+  const run = _mutationQueue.catch(() => {}).then(task);
   _mutationQueue = run.catch(() => {});
   return run;
 }
@@ -119,7 +129,7 @@ export const AddressBookService = {
     if (!ethers.isAddress(input.address)) throw new Error('Invalid address');
     const label = input.label.trim();
     if (!label) throw new Error('Label is required');
-    const address = input.address.toLowerCase();
+    const address = normalizeAddress(input.address);
 
     return withLock(async () => {
       const entries = await readBook();

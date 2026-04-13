@@ -21,21 +21,19 @@ import {
 } from '../services/AddressBookService';
 import { shortAddr } from '../lib/format';
 
-type Mode = 'manage' | 'pick';
+// Discriminated union — `onPick` is required exactly when `mode === 'pick'`.
+// Without this, a misconfigured callsite can silently no-op when the user
+// taps an entry in pick mode.
+type Props =
+  & { visible: boolean; onClose: () => void }
+  & ({ mode: 'manage' } | { mode: 'pick'; onPick: (address: string) => void });
 
-interface Props {
-  visible: boolean;
-  mode: Mode;
-  onClose: () => void;
-  onPick?: (address: string) => void;
-}
-
-export default function AddressBookModal({ visible, mode, onClose, onPick }: Props) {
+export default function AddressBookModal(props: Props) {
+  const { visible, mode, onClose } = props;
   const [entries, setEntries] = useState<WalletEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Add/edit form state. `editingId === null` ⇒ adding new; else editing.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLabel, setFormLabel] = useState('');
   const [formAddress, setFormAddress] = useState('');
@@ -64,13 +62,22 @@ export default function AddressBookModal({ visible, mode, onClose, onPick }: Pro
     if (visible) reload();
   }, [visible, reload]);
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setEditingId(null);
     setFormLabel('');
     setFormAddress('');
     setFormMemo('');
     setShowForm(false);
-  };
+  }, []);
+
+  // Reset form state when the modal is closed by ✕ or the request-close
+  // path so reopening doesn't show a stale half-filled form (or, worse,
+  // an "edit" view of an entry that was deleted in the meantime).
+  const handleClose = useCallback(() => {
+    resetForm();
+    setError(null);
+    onClose();
+  }, [resetForm, onClose]);
 
   const startEdit = (entry: WalletEntry) => {
     setEditingId(entry.id);
@@ -152,14 +159,14 @@ export default function AddressBookModal({ visible, mode, onClose, onPick }: Pro
   })();
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={s.overlay}>
         <View style={s.sheet}>
           <View style={s.header}>
             <Text style={s.title}>
               {mode === 'pick' ? 'Pick recipient' : 'Address Book'}
             </Text>
-            <TouchableOpacity onPress={onClose}><Text style={s.close}>✕</Text></TouchableOpacity>
+            <TouchableOpacity onPress={handleClose}><Text style={s.close}>✕</Text></TouchableOpacity>
           </View>
 
           {error && (
@@ -187,9 +194,9 @@ export default function AddressBookModal({ visible, mode, onClose, onPick }: Pro
                     <TouchableOpacity
                       style={s.rowMain}
                       onPress={() => {
-                        if (mode === 'pick') {
-                          onPick?.(entry.address);
-                          onClose();
+                        if (props.mode === 'pick') {
+                          props.onPick(entry.address);
+                          handleClose();
                         } else {
                           startEdit(entry);
                         }
