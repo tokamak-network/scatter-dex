@@ -14,6 +14,7 @@ import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
 import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../services/MarketOrderService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
+import { TokenService } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
 import { formatAmount } from '../lib/format';
 
@@ -187,11 +188,21 @@ export default function TradeScreen() {
           return;
         }
 
+        // Resolve decimals per token — hardcoding 18 silently miscomputes
+        // for tokens like USDC (6). `selectedNote.token` is the sell side.
+        const [sellDecimals, buyDecimals] = await Promise.all([
+          TokenService.getDecimals(readProvider, selectedNote.token),
+          TokenService.getDecimals(readProvider, buyToken),
+        ]);
+
         const priceClean = price.replace(/,/g, '');
-        const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceBn = ethers.parseUnits(priceClean, 18);
-        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
-        const buyAmountTotal = ethers.formatUnits(buyAmountBn, 18);
+        const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+        // Price is buyToken-per-sellToken, so its native precision is
+        // `buyDecimals`. Dividing by 10^sellDecimals cancels the sell-side
+        // units and leaves buyAmountBn in buyDecimals precision.
+        const priceBn = ethers.parseUnits(priceClean, buyDecimals);
+        const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
+        const buyAmountTotal = ethers.formatUnits(buyAmountBn, buyDecimals);
 
         // Validate + normalize claim rows. Empty address defaults to self,
         // mirroring frontend/app/trade/private-order/page.tsx:118.
@@ -210,11 +221,26 @@ export default function TradeScreen() {
             releaseDelaySec: delayToSeconds(r.delay, r.delayUnit),
           };
         });
-        // Guard against over-distribution — circuit's totalLocked check will
-        // reject it server-side, but catching here gives a clearer message.
-        if (claimsOverflow) {
+        // BigInt over-distribution check — the inline banner uses float for
+        // responsive feedback (`claimsOverflow` below), but the submit path
+        // compares in token base units so a sub-dust rounding error can't
+        // sneak through the float epsilon.
+        let claimSumBn = 0n;
+        parsedClaims.forEach((c, idx) => {
+          try {
+            claimSumBn += ethers.parseUnits(c.amount, buyDecimals);
+          } catch (err: any) {
+            // Common case: user typed more decimal places than `buyDecimals`
+            // supports (e.g. "1.1234567" against USDC/6). Surface the row
+            // number so they know which to edit.
+            throw new Error(
+              `Claim #${idx + 1}: amount "${c.amount}" has too many decimal places for a ${buyDecimals}-decimal token.`,
+            );
+          }
+        });
+        if (claimSumBn > buyAmountBn) {
           throw new Error(
-            `Claim total (${claimTotal}) exceeds buy amount (${buyAmountHuman}). Reduce or remove a row.`,
+            `Claim total (${ethers.formatUnits(claimSumBn, buyDecimals)}) exceeds buy amount (${buyAmountTotal}). Reduce or remove a row.`,
           );
         }
 
@@ -244,12 +270,17 @@ export default function TradeScreen() {
           return;
         }
 
+        const [sellDecimals, buyDecimals] = await Promise.all([
+          TokenService.getDecimals(readProvider, selectedNote.token),
+          TokenService.getDecimals(readProvider, buyToken),
+        ]);
+
         const priceClean = price.replace(/,/g, '');
-        const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceBn = ethers.parseUnits(priceClean, 18);
-        const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
+        const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+        const priceBn = ethers.parseUnits(priceClean, buyDecimals);
+        const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
         const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
-        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, 18);
+        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, buyDecimals);
 
         const input: MarketOrderInput = {
           note: selectedNote,
@@ -275,7 +306,7 @@ export default function TradeScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [account, signer, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
+  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
