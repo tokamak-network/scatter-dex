@@ -16,6 +16,7 @@ import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../se
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { TokenService } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
+import AddressBookModal from '../components/AddressBookModal';
 import { formatAmount } from '../lib/format';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
@@ -79,6 +80,9 @@ export default function TradeScreen() {
   const [claimRows, setClaimRows] = useState<ClaimRow[]>([
     { id: 1, address: '', amount: '', delay: '1', delayUnit: 'hr' },
   ]);
+  // Address-book picker target: which claim row the next picked address
+  // should land in. `null` = picker closed.
+  const [pickerForRow, setPickerForRow] = useState<number | null>(null);
 
   // Load active notes
   useEffect(() => {
@@ -144,6 +148,9 @@ export default function TradeScreen() {
   }, []);
   const removeClaim = useCallback((id: number) => {
     setClaimRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
+    // Close the address picker if it was targeting the removed row, so a
+    // subsequent pick doesn't fire updateClaim() against a missing id.
+    setPickerForRow((cur) => (cur === id ? null : cur));
   }, []);
   const fillRest = useCallback((id: number) => {
     if (claimRemainder <= 0) return;
@@ -450,15 +457,23 @@ export default function TradeScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
-                <TextInput
-                  style={s.claimInput}
-                  placeholder={`Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`}
-                  placeholderTextColor="#9CA3AF"
-                  value={row.address}
-                  onChangeText={(v) => updateClaim(row.id, { address: v })}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
+                <View style={s.claimRowInputs}>
+                  <TextInput
+                    style={[s.claimInput, { flex: 1 }]}
+                    placeholder={`Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`}
+                    placeholderTextColor="#9CA3AF"
+                    value={row.address}
+                    onChangeText={(v) => updateClaim(row.id, { address: v })}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={s.claimPickBtn}
+                    onPress={() => setPickerForRow(row.id)}
+                  >
+                    <Text style={s.claimPickText}>📒</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={s.claimRowInputs}>
                   <TextInput
                     style={[s.claimInput, { flex: 1 }]}
@@ -578,6 +593,15 @@ export default function TradeScreen() {
 
         <View style={{ height: 96 }} />
       </ScrollView>
+
+      <AddressBookModal
+        visible={pickerForRow !== null}
+        mode="pick"
+        onClose={() => setPickerForRow(null)}
+        onPick={(addr) => {
+          if (pickerForRow !== null) updateClaim(pickerForRow, { address: addr });
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -646,6 +670,8 @@ const s = StyleSheet.create({
   claimRowInputs: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   claimInput: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', fontSize: 13, color: '#111827' },
   claimRestBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
+  claimPickBtn: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
+  claimPickText: { fontSize: 16 },
   claimRestText: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
   delayUnitRow: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' },
   delayUnitBtn: { paddingHorizontal: 10, paddingVertical: 8 },
