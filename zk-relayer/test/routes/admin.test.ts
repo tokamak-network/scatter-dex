@@ -1,0 +1,226 @@
+import { describe, it, expect, afterEach } from "vitest";
+import request from "supertest";
+import { createAdminRoutes } from "../../src/routes/admin.js";
+import { clearSanctionedPubKeys } from "../../src/core/sanctions-list.js";
+import { config, updateRelayerFee } from "../../src/config.js";
+import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
+
+const ADMIN_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
+
+function buildApp(opts: {
+  db?: ReturnType<typeof makeDbStub>;
+  orderbook?: ReturnType<typeof makeOrderbookStub>;
+  drainAuthorizeOrders?: () => number;
+  getAuthorizeOrderStats?: () => { pending: number; matched: number; total: number };
+} = {}) {
+  const router = createAdminRoutes({
+    submitter: makeSubmitterStub(),
+    db: opts.db ?? makeDbStub(),
+    orderbook: opts.orderbook ?? makeOrderbookStub(),
+    drainAuthorizeOrders: opts.drainAuthorizeOrders ?? (() => 0),
+    getAuthorizeOrderStats: opts.getAuthorizeOrderStats ?? (() => ({ pending: 0, matched: 0, total: 0 })),
+  });
+  return mountRouter("/api/admin", router);
+}
+
+describe("/api/admin — auth", () => {
+  it("rejects request without x-admin-key with 401", async () => {
+    const res = await request(buildApp()).get("/api/admin/status");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/admin/i);
+  });
+
+  it("rejects wrong key length with 401 (timing-safe guard)", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/status")
+      .set("x-admin-key", "short");
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects matching length but wrong value with 401", async () => {
+    const wrong = "x".repeat(ADMIN_KEY.length);
+    const res = await request(buildApp())
+      .get("/api/admin/status")
+      .set("x-admin-key", wrong);
+    expect(res.status).toBe(401);
+  });
+
+  it("accepts correct key and returns 200", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/status")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("/api/admin/status + /balance", () => {
+  it("GET /status includes relayer config + paused state + authorizeOrders", async () => {
+    const res = await request(buildApp({
+      orderbook: makeOrderbookStub({ pendingOrderCount: 3 }),
+      getAuthorizeOrderStats: () => ({ pending: 5, matched: 2, total: 7 }),
+    }))
+      .get("/api/admin/status")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.paused).toBe(false);
+    expect(res.body.authorizeOrders).toEqual({ pending: 5, matched: 2, total: 7 });
+    expect(res.body.privateOrders.pending).toBe(3);
+    expect(res.body.feeBps).toBeTypeOf("number");
+  });
+
+  it("GET /balance returns wallet + chainId", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/balance")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.address).toMatch(/^0x/);
+    expect(res.body.chainId).toBe(31337);
+  });
+});
+
+describe("/api/admin/fee", () => {
+  // PUT /fee mutates the module-level `config.relayerFee`. Snapshot it so
+  // a failure doesn't bleed into other tests sharing the same vitest worker.
+  const originalFee = config.relayerFee;
+  afterEach(() => { updateRelayerFee(originalFee); });
+
+  it("rejects non-integer with 400", async () => {
+    const res = await request(buildApp())
+      .put("/api/admin/fee")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ feeBps: 12.5 });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects out-of-range (>10000) with 400", async () => {
+    const res = await request(buildApp())
+      .put("/api/admin/fee")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ feeBps: 10001 });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects negative with 400", async () => {
+    const res = await request(buildApp())
+      .put("/api/admin/fee")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ feeBps: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts valid feeBps and persists via db.setMeta", async () => {
+    const setMetaCalls: Array<[string, string]> = [];
+    const db = makeDbStub({ setMeta: (k: string, v: string) => { setMetaCalls.push([k, v]); } });
+    const res = await request(buildApp({ db }))
+      .put("/api/admin/fee")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ feeBps: 55 });
+    expect(res.status).toBe(200);
+    expect(res.body.newFeeBps).toBe(55);
+    expect(setMetaCalls).toContainEqual(["relayerFee", "55"]);
+  });
+});
+
+describe("/api/admin/pause + /resume", () => {
+  it("pause → resume is a valid cycle; double-pause / double-resume return 409", async () => {
+    const app = buildApp();
+    let res = await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("paused");
+
+    res = await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(409);
+
+    res = await request(app).post("/api/admin/resume").set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+
+    res = await request(app).post("/api/admin/resume").set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe("/api/admin/drain", () => {
+  it("returns counts from both drain functions", async () => {
+    const res = await request(buildApp({
+      orderbook: makeOrderbookStub({ cancelAll: () => 4 }),
+      drainAuthorizeOrders: () => 7,
+    }))
+      .post("/api/admin/drain")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.privateOrdersCancelled).toBe(4);
+    expect(res.body.authorizeOrdersCancelled).toBe(7);
+  });
+});
+
+describe("/api/admin/sanctions", () => {
+  afterEach(clearSanctionedPubKeys);
+
+  it("GET returns empty list by default", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ count: 0, entries: [] });
+  });
+
+  it("POST with empty body.entries returns 400", async () => {
+    const res = await request(buildApp())
+      .post("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ entries: [] });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST with malformed entry returns 400 with invalidIndices (no 500)", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ entries: [
+        { pubKeyAx: "1", pubKeyAy: "2" },
+        { pubKeyAx: "not-a-bigint", pubKeyAy: "2" },
+      ] });
+    expect(res.status).toBe(400);
+    expect(res.body.invalidIndices).toEqual([1]);
+    // Up-front validation: a single malformed entry must leave the list untouched.
+    const list = await request(app)
+      .get("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(list.body.count).toBe(0);
+  });
+
+  it("POST valid entries, then GET returns them, then DELETE removes them", async () => {
+    const app = buildApp();
+    const addRes = await request(app)
+      .post("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ entries: [
+        { pubKeyAx: "007", pubKeyAy: "010" },
+        { pubKeyAx: "1", pubKeyAy: "2" },
+        { pubKeyAx: "1", pubKeyAy: "2" },
+      ] });
+    expect(addRes.status).toBe(200);
+    expect(addRes.body.added).toBe(2);
+
+    const list = await request(app).get("/api/admin/sanctions").set("x-admin-key", ADMIN_KEY);
+    expect(list.body.count).toBe(2);
+
+    const delRes = await request(app)
+      .delete("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ entries: [{ pubKeyAx: "1", pubKeyAy: "2" }] });
+    expect(delRes.status).toBe(200);
+    expect(delRes.body.removed).toBe(1);
+  });
+
+  it("DELETE with malformed entry returns 400 (no 500)", async () => {
+    const res = await request(buildApp())
+      .delete("/api/admin/sanctions")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ entries: [{ pubKeyAx: "xyz", pubKeyAy: "1" }] });
+    expect(res.status).toBe(400);
+    expect(res.body.invalidIndices).toEqual([0]);
+  });
+});

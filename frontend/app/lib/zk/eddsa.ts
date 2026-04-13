@@ -181,7 +181,12 @@ export async function serializeKeyPairEncrypted(kp: EdDSAKeyPair, signature: str
   const wrappingKey = await deriveWrappingKey(signature, account);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(serializeKeyPair(kp));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
+  let ciphertext: ArrayBuffer;
+  try {
+    ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, plaintext);
+  } finally {
+    plaintext.fill(0);
+  }
   return JSON.stringify({
     v: 1,
     iv: ethers.hexlify(iv),
@@ -198,9 +203,13 @@ export async function deserializeKeyPairEncrypted(stored: string, signature: str
   if (v !== 1) throw new Error("Unsupported encrypted key format");
   const wrappingKey = await deriveWrappingKey(signature, account);
   const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ethers.getBytes(iv) },
+    { name: "AES-GCM", iv: ethers.getBytes(iv) as BufferSource },
     wrappingKey,
-    ethers.getBytes(ct),
+    ethers.getBytes(ct) as BufferSource,
   );
-  return deserializeKeyPair(new TextDecoder().decode(plaintext));
+  try {
+    return deserializeKeyPair(new TextDecoder().decode(plaintext));
+  } finally {
+    new Uint8Array(plaintext).fill(0);
+  }
 }

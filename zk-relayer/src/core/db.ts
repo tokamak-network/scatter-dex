@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
 import type { StoredPrivateOrder, PrivateOrder, PrivateOrderStatus } from "../types/order.js";
 import type { ClaimLeafData } from "./zk-prover.js";
@@ -26,6 +27,8 @@ interface OrderRow {
   settle_tx: string | null;
   cross_relayer: number;
   submitted_at: number;
+  new_salt: string | null;
+  expected_change_commitment: string | null;
 }
 
 export interface TradeOfferRow {
@@ -80,22 +83,47 @@ export class PrivateOrderDB {
   private statsSettledVolume: ReturnType<Database.Database["prepare"]>;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
+  // [R-6] Authorize order statements
+  private upsertAuthOrder: ReturnType<Database.Database["prepare"]>;
+  private updateAuthStatus: ReturnType<Database.Database["prepare"]>;
+  private deleteAuthOrder: ReturnType<Database.Database["prepare"]>;
+  private selectPendingAuth: ReturnType<Database.Database["prepare"]>;
+  private purgeAuthNonPending: ReturnType<Database.Database["prepare"]>;
+  // [R-2] Pending TX tracking
+  private insertPendingTx: ReturnType<Database.Database["prepare"]>;
+  private deletePendingTx: ReturnType<Database.Database["prepare"]>;
+  private selectPendingTxs: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
+    // [L-8] For production with sensitive data, consider replacing better-sqlite3
+    // with @journeyapps/sqlcipher or migrating to PostgreSQL with TDE.
+    // Current threat model: DB file permissions (M-10) protect against
+    // unauthorized reads; encryption-at-rest adds defense-in-depth.
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+
     this.migrate();
+
+    // [M-10] Restrict DB file permissions to owner-only (600).
+    // Runs AFTER migrate() so WAL/SHM files (created by first write) are also covered.
+    try {
+      fs.chmodSync(dbPath, 0o600);
+      if (fs.existsSync(`${dbPath}-wal`)) fs.chmodSync(`${dbPath}-wal`, 0o600);
+      if (fs.existsSync(`${dbPath}-shm`)) fs.chmodSync(`${dbPath}-shm`, 0o600);
+    } catch (e) {
+      console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
+    }
 
     this.insertOrder = this.db.prepare(`
       INSERT OR REPLACE INTO private_orders
         (pub_key_ax, pub_key_ay, nonce, sell_token, buy_token, sell_amount, buy_amount,
          max_fee, expiry, sig_s, sig_r8x, sig_r8y, owner_secret, balance, salt, leaf_index,
-         status, settle_tx, submitted_at)
+         status, settle_tx, submitted_at, new_salt, expected_change_commitment)
       VALUES
         (@pubKeyAx, @pubKeyAy, @nonce, @sellToken, @buyToken, @sellAmount, @buyAmount,
          @maxFee, @expiry, @sigS, @sigR8x, @sigR8y, @ownerSecret, @balance, @salt, @leafIndex,
-         @status, @settleTx, @submittedAt)
+         @status, @settleTx, @submittedAt, @newSalt, @expectedChangeCommitment)
     `);
     this.insertClaim = this.db.prepare(`
       INSERT OR REPLACE INTO private_claims (pub_key_ax, nonce, idx, secret, recipient, token, amount, release_time)
@@ -160,6 +188,28 @@ export class PrivateOrderDB {
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
     );
     this.selectMeta = this.db.prepare("SELECT value FROM relayer_meta WHERE key = @key");
+
+    // [R-6] Authorize order prepared statements
+    this.upsertAuthOrder = this.db.prepare(
+      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    this.updateAuthStatus = this.db.prepare(
+      "UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?",
+    );
+    this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?");
+    this.selectPendingAuth = this.db.prepare(
+      "SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx FROM authorize_orders WHERE status = 'pending'",
+    );
+    this.purgeAuthNonPending = this.db.prepare(
+      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
+    );
+
+    // [R-2] Pending TX tracking
+    this.insertPendingTx = this.db.prepare(
+      "INSERT OR IGNORE INTO pending_txs (tx_hash, label, created_at) VALUES (@txHash, @label, @createdAt)",
+    );
+    this.deletePendingTx = this.db.prepare("DELETE FROM pending_txs WHERE tx_hash = @txHash");
+    this.selectPendingTxs = this.db.prepare("SELECT * FROM pending_txs ORDER BY created_at ASC");
   }
 
   private migrate(): void {
@@ -242,11 +292,43 @@ export class PrivateOrderDB {
       this.db.exec(`ALTER TABLE private_orders ADD COLUMN settled_at INTEGER`);
     } catch { /* column already exists */ }
 
+    // Persist newSalt / expectedChangeCommitment so restart-recovered orders
+    // can still compute/validate the correct change commitment during settlement.
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN new_salt TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE private_orders ADD COLUMN expected_change_commitment TEXT`);
+    } catch { /* column already exists */ }
+
     // Migration: relayer_meta key-value store (uptime tracking, etc.)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS relayer_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+    `);
+
+    // [R-6] Authorize orders persistence — survive relayer restarts
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS authorize_orders (
+        nullifier     TEXT PRIMARY KEY,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        submitted_at  INTEGER NOT NULL,
+        settle_tx     TEXT,
+        pub_key_ax    TEXT,
+        pub_key_ay    TEXT,
+        order_json    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ao_status ON authorize_orders(status);
+    `);
+
+    // [R-2] Pending TX tracking for receipt recovery on restart
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_txs (
+        tx_hash    TEXT PRIMARY KEY,
+        label      TEXT NOT NULL,
+        created_at INTEGER NOT NULL
       );
     `);
   }
@@ -277,6 +359,8 @@ export class PrivateOrderDB {
         status,
         settleTx: settleTxHash ?? null,
         submittedAt,
+        newSalt: (order.newSalt ?? 0n).toString(),
+        expectedChangeCommitment: (order.expectedChangeCommitment ?? 0n).toString(),
       });
 
       this.deleteClaims.run({ pubKeyAx, nonce });
@@ -306,6 +390,34 @@ export class PrivateOrderDB {
       crossRelayer: crossRelayer ? 1 : 0,
       settledAt: status === "settled" ? Date.now() : null,
     });
+  }
+
+  /**
+   * [M-11] Atomic compare-and-swap: update status only if current status matches.
+   * Returns true if the update succeeded (row was in expectedStatus).
+   * Returns false if another instance already changed the status (race lost).
+   */
+  compareAndSwapStatus(
+    pubKeyAx: bigint, nonce: bigint,
+    expectedStatus: PrivateOrderStatus, newStatus: PrivateOrderStatus,
+    settleTxHash?: string, crossRelayer?: boolean,
+  ): boolean {
+    const result = this.db.prepare(`
+      UPDATE private_orders SET status = @newStatus,
+        settle_tx = COALESCE(@settleTx, settle_tx),
+        cross_relayer = COALESCE(@crossRelayer, cross_relayer),
+        settled_at = CASE WHEN @newStatus = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
+      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce AND status = @expectedStatus
+    `).run({
+      pubKeyAx: pubKeyAx.toString(),
+      nonce: nonce.toString(),
+      expectedStatus,
+      newStatus,
+      settleTx: settleTxHash ?? null,
+      crossRelayer: crossRelayer ? 1 : 0,
+      settledAt: newStatus === "settled" ? Date.now() : null,
+    });
+    return result.changes > 0;
   }
 
   hasOrder(pubKeyAx: bigint, nonce: bigint): boolean {
@@ -348,6 +460,8 @@ export class PrivateOrderDB {
       balance: BigInt(row.balance),
       salt: BigInt(row.salt),
       leafIndex: row.leaf_index,
+      newSalt: row.new_salt != null ? BigInt(row.new_salt) : 0n,
+      expectedChangeCommitment: row.expected_change_commitment != null ? BigInt(row.expected_change_commitment) : 0n,
       claims,
     };
 
@@ -437,12 +551,12 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
-    const total = (this.statsTotalOrders.get() as { count: number }).count;
-    const settled = (this.statsSettledOrders.get() as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get() as { count: number }).count;
-    const tradeTotal = (this.statsTotalTradeOffers.get() as { count: number }).count;
-    const tradeSettled = (this.statsSettledTradeOffers.get() as { count: number }).count;
-    const avgRow = this.statsAvgSettleTime.get() as { avg_ms: number | null };
+    const total = (this.statsTotalOrders.get({}) as { count: number }).count;
+    const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
+    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
+    const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
+    const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");
@@ -462,7 +576,7 @@ export class PrivateOrderDB {
 
   /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
-    const rows = this.statsSettledVolume.all() as Array<{ sell_token: string; count: number; amounts: string }>;
+    const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
       const total = r.amounts.split(",").reduce((sum, a) => sum + BigInt(a), 0n);
       const tokenBig = BigInt(r.sell_token);
@@ -481,6 +595,44 @@ export class PrivateOrderDB {
   getMeta(key: string): string | null {
     const row = this.selectMeta.get({ key }) as { value: string } | undefined;
     return row?.value ?? null;
+  }
+
+  // ─── [R-6] Authorize order persistence ───
+
+  saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
+    this.upsertAuthOrder.run([nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null]);
+  }
+
+  updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
+    this.updateAuthStatus.run([status, settleTx ?? null, nullifier]);
+  }
+
+  deleteAuthorizeOrder(nullifier: string): void {
+    this.deleteAuthOrder.run(nullifier);
+  }
+
+  loadPendingAuthorizeOrders(): Array<{ nullifier: string; status: string; submittedAt: number; orderJson: string; pubKeyAx: string | null; pubKeyAy: string | null; settleTx: string | null }> {
+    return this.selectPendingAuth.all({}) as any[];
+  }
+
+  purgeNonPendingAuthorizeOrdersDB(): number {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const result = this.purgeAuthNonPending.run(nowSeconds);
+    return result.changes;
+  }
+
+  // ─── Pending TX tracking (R-2) ───
+
+  savePendingTx(txHash: string, label: string): void {
+    this.insertPendingTx.run({ txHash: txHash.toLowerCase(), label, createdAt: Date.now() });
+  }
+
+  removePendingTx(txHash: string): void {
+    this.deletePendingTx.run({ txHash: txHash.toLowerCase() });
+  }
+
+  getPendingTxs(): Array<{ tx_hash: string; label: string; created_at: number }> {
+    return this.selectPendingTxs.all({}) as Array<{ tx_hash: string; label: string; created_at: number }>;
   }
 
   close(): void {

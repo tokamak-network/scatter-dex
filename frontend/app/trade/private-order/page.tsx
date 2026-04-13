@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
 import { ethers } from "ethers";
 import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, BookOpen } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -40,21 +41,11 @@ import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 import { useMainnetPrice } from "../../lib/useDexPrices";
+import { friendlyError } from "../../lib/error-messages";
 
 // EdDSA key is AES-GCM encrypted and stored in the notes folder (File System API).
 // This protects against extension/physical access. Does NOT protect against XSS.
 const MAX_CLAIMS = 10;
-
-// Uniswap V3 SwapRouter02 addresses per chain
-const UNISWAP_V3_ROUTERS: Record<number, string> = {
-  1: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",      // Ethereum mainnet
-  11155111: "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E", // Sepolia
-};
-
-// Pre-parsed ABI for Uniswap V3 exactInputSingle (avoid re-instantiation per submit)
-const UNISWAP_ROUTER_IFACE = new ethers.Interface([
-  "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
-]);
 
 type OrderType = "limit" | "market";
 type Step = "setup_key" | "create_order" | "signing" | "submitted" | "error";
@@ -209,7 +200,11 @@ export default function PrivateOrderPage() {
   const [changeSalt, setChangeSalt] = useState<bigint | null>(null);
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
   const [orderType, setOrderType] = useState<OrderType>("limit");
+  // Snapshot of the order type at submission so the success screen's copy
+  // and CTAs don't flip if the user toggles orderType after submitting.
+  const [submittedOrderType, setSubmittedOrderType] = useState<OrderType | null>(null);
   const [slippageBps, setSlippageBps] = useState("50"); // 0.5% default
+  const [manualPrice, setManualPrice] = useState(""); // fallback when DEX prices fail
 
   // Claims
   const nextClaimId = useRef(1);
@@ -228,8 +223,20 @@ export default function PrivateOrderPage() {
   );
   const { marketPrice, marketPriceSource } = useMemo(() => {
     const rec = dexPrices.find((p) => p.recommended && p.netPrice !== null);
-    return { marketPrice: rec?.netPrice ?? null, marketPriceSource: rec?.source ?? null };
-  }, [dexPrices]);
+    if (rec?.netPrice) return { marketPrice: rec.netPrice, marketPriceSource: rec.source ?? "DEX" };
+    // Fallback: manual price input
+    const manual = parseFloat(manualPrice);
+    if (!isNaN(manual) && manual > 0) return { marketPrice: manual, marketPriceSource: "manual" };
+    return { marketPrice: null, marketPriceSource: null };
+  }, [dexPrices, manualPrice]);
+
+  // [#23] Reset price/amount when switching between Limit and Market.
+  // MUST be declared BEFORE auto-compute so React runs it first on tab switch.
+  useEffect(() => {
+    setBuyAmount("");
+    setPrice("");
+    setManualPrice("");
+  }, [orderType]);
 
   // Auto-compute buyAmount in market mode (BigInt floor to avoid rounding up)
   useEffect(() => {
@@ -237,7 +244,6 @@ export default function PrivateOrderPage() {
     const sell = parseFloat(sellAmount);
     if (isNaN(sell) || sell <= 0) return;
     const slip = parseInt(slippageBps) || 50;
-    // Compute in integer token units to guarantee floor (never round up)
     const grossWei = ethers.parseUnits(
       (sell * marketPrice).toFixed(Math.min(buyToken.decimals, 18)),
       buyToken.decimals,
@@ -285,10 +291,11 @@ export default function PrivateOrderPage() {
     [availableNotes, selectedCommitment],
   );
 
-  // Reset note selection when sell token changes or notes list changes
+  // Reset note selection + manual price when sell/buy token changes
   useEffect(() => {
     setSelectedCommitment(null);
-  }, [sellTokenIdx]);
+    setManualPrice("");
+  }, [sellTokenIdx, buyTokenIdx]);
 
   // Clear selection if selected note no longer exists in available list
   useEffect(() => {
@@ -345,7 +352,7 @@ export default function PrivateOrderPage() {
   const feePercent = feeBps / 100;
 
   // Gas-inclusive minimum fee
-  const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId, readProvider);
+  const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId ?? undefined, readProvider);
   const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
   const [feeBreakdownOpen, setFeeBreakdownOpen] = useState(false);
 
@@ -455,7 +462,7 @@ export default function PrivateOrderPage() {
         setStep("create_order");
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Key derivation failed");
+      setError(friendlyError(e));
     } finally {
       setKeyLoading(false);
     }
@@ -602,6 +609,7 @@ export default function PrivateOrderPage() {
         }
       }
 
+      setSubmittedOrderType("limit");
       setStep("submitted");
       setSellAmount("");
       setBuyAmount("");
@@ -609,7 +617,7 @@ export default function PrivateOrderPage() {
       setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Order submission failed");
+      setError(friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
@@ -624,7 +632,7 @@ export default function PrivateOrderPage() {
     setError(null);
 
     try {
-      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
+      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
         sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
         selectedNote, changeSalt, maxFee: 0n,
         relayerAddress: account, eddsaPrivateKey: kp.privateKey,
@@ -634,43 +642,45 @@ export default function PrivateOrderPage() {
       // Call settleWithDex on-chain
       const ps = proofResult.publicSignals;
       const settlementAddr = getPrivateSettlementAddress();
-      const { PRIVATE_SETTLEMENT_ABI: abi } = await import("../../lib/contracts");
-      const settlement = new ethers.Contract(settlementAddr, abi, signer);
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
-      // Resolve DEX router address for current chain
+      // Read on-chain platform fee and compute post-fee swap amount.
+      const settlementRead = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
+      const platformFeeBps = Number(await settlementRead.dexPlatformFeeBps?.() ?? 0n);
+      const swapAmountIn = platformFeeBps > 0
+        ? parsedSell - (parsedSell * BigInt(platformFeeBps) / 10000n)
+        : parsedSell;
+
+      // Get best swap route via DEX aggregator (1inch → Uniswap fallback)
+      const { getBestSwapRoute } = await import("../../lib/dex-aggregator");
       const currentChainId = chainId ?? 1;
-      const routerAddr = UNISWAP_V3_ROUTERS[currentChainId];
-      if (!routerAddr) throw new Error(`Uniswap V3 router not configured for chain ${currentChainId}. Market orders are only available on supported chains.`);
-
-      // Encode DEX calldata — use Uniswap V3 with the best fee tier
-      // TODO: support 1inch/Curve route selection in UI
-      // Select Uniswap V3 fee tier from the recommended DEX price.
-      // Only standard Uniswap V3 tiers (500/3000/10000) are valid; default to 3000.
+      // Select fee tier from recommended DEX price
       const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
-      const VALID_FEE_TIERS = [100, 500, 3000, 10000] as const;
-      const feeStr = bestDexPrice?.fee ?? "";
-      const feeParsed = Math.round(parseFloat(feeStr) * 10000);
-      const feeTier = VALID_FEE_TIERS.includes(feeParsed as typeof VALID_FEE_TIERS[number]) ? feeParsed : 3000;
+      const feeParsed = Math.round(parseFloat(bestDexPrice?.fee ?? "0") * 10000);
+      const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : 3000;
 
-      const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
-        tokenIn: sellToken.address,
-        tokenOut: buyToken.address,
-        fee: feeTier,
+      const swapRoute = await getBestSwapRoute({
+        chainId: currentChainId,
+        sellToken: sellToken.address,
+        buyToken: buyToken.address,
+        sellAmount: swapAmountIn,
+        minReceive: parsedBuy,
         recipient: settlementAddr,
-        deadline: Math.floor(Date.now() / 1000) + 1800,
-        amountIn: parsedSell,
-        amountOutMinimum: parsedBuy,
-        sqrtPriceLimitX96: 0n,
-      }]);
+        slippageBps: parseInt(slippageBps) || 50,
+        feeTier,
+      });
+      if (process.env.NODE_ENV === "development") {
+        console.log(`DEX route: ${swapRoute.source} (estimated: ${ethers.formatUnits(swapRoute.estimatedOutput, buyToken.decimals)} ${buyToken.symbol})`);
+      }
 
       // Build settleWithDex params
       const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
-      const proofA = [BigInt(proofResult.proof.pi_a[0]), BigInt(proofResult.proof.pi_a[1])];
+      const proofA = [BigInt(proofResult.proof.a[0]), BigInt(proofResult.proof.a[1])];
       const proofB = [
-        [BigInt(proofResult.proof.pi_b[0][1]), BigInt(proofResult.proof.pi_b[0][0])],
-        [BigInt(proofResult.proof.pi_b[1][1]), BigInt(proofResult.proof.pi_b[1][0])],
+        [BigInt(proofResult.proof.b[0][0]), BigInt(proofResult.proof.b[0][1])],
+        [BigInt(proofResult.proof.b[1][0]), BigInt(proofResult.proof.b[1][1])],
       ];
-      const proofC = [BigInt(proofResult.proof.pi_c[0]), BigInt(proofResult.proof.pi_c[1])];
+      const proofC = [BigInt(proofResult.proof.c[0]), BigInt(proofResult.proof.c[1])];
 
       const tx = await settlement.settleWithDex({
         proof: {
@@ -691,8 +701,9 @@ export default function PrivateOrderPage() {
           relayer: account,
           orderHash: ps[14],
         },
-        dexRouter: routerAddr,
-        dexCalldata,
+        dexRouter: swapRoute.dexRouter,
+        dexCalldata: swapRoute.dexCalldata,
+        deadline: expiryTimestamp, // use proof's expiry (derived from chain time + 24h)
       });
       await tx.wait();
 
@@ -727,11 +738,12 @@ export default function PrivateOrderPage() {
         } catch { /* */ }
       }
 
+      setSubmittedOrderType("market");
       setStep("submitted");
       setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Market order failed");
+      setError(friendlyError(e));
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, changeAmount, dexPrices, zkRelayers, selectedRelayerIdx]);
@@ -741,7 +753,7 @@ export default function PrivateOrderPage() {
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
         <Shield className="w-12 h-12 mb-4 opacity-40" />
         <p className="text-lg font-medium mb-4">Connect wallet to create private orders</p>
-        <button onClick={connect} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
+        <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
           Connect Wallet
         </button>
       </div>
@@ -948,8 +960,8 @@ export default function PrivateOrderPage() {
                 />
                 {orderType === "market" && marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
                   <div className="text-xs text-on-surface-variant mt-1">
-                    DEX rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
-                    <span className="text-tertiary ml-1">({marketPriceSource})</span>
+                    {marketPriceSource === "manual" ? "Manual" : "DEX"} rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
+                    <span className={`ml-1 ${marketPriceSource === "manual" ? "text-warning" : "text-tertiary"}`}>({marketPriceSource})</span>
                   </div>
                 )}
                 {orderType === "limit" && sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
@@ -1031,8 +1043,22 @@ export default function PrivateOrderPage() {
                     <span className="text-tertiary ml-1">(no relay fee)</span>
                   </div>
                 )}
-                {!marketPrice && (
+                {!marketPrice && dexPrices.some(p => p.loading) && (
                   <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
+                )}
+                {!dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
+                  <div className="space-y-1 mt-1">
+                    <div className="text-xs text-error" id="manual-price-label">DEX price unavailable. Enter price manually:</div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text" inputMode="decimal" value={manualPrice}
+                        onChange={(e) => setManualPrice(e.target.value)}
+                        placeholder={`1 ${sellToken?.symbol} = ? ${buyToken?.symbol}`}
+                        aria-labelledby="manual-price-label"
+                        className="flex-1 bg-white/10 border border-outline-variant/30 rounded-md p-2 text-xs font-mono focus:ring-1 focus:ring-tertiary text-on-surface"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
               )}
@@ -1232,7 +1258,7 @@ export default function PrivateOrderPage() {
                 Direct DEX Settlement
               </div>
               <p className="text-xs text-on-surface-variant/70">
-                Your order will be settled directly via Uniswap on-chain. No relayer needed — you submit the transaction yourself. Gas fees apply.
+                Your order will be routed through the best available DEX (1inch aggregator or Uniswap V3) for optimal pricing. No relayer needed — you submit the transaction yourself.
               </p>
             </div>
             )}
@@ -1274,21 +1300,23 @@ export default function PrivateOrderPage() {
 
             {orderType === "limit" ? (
             <button
-              onClick={handleSubmit}
-              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001)}
+              onClick={!keyPair ? handleDeriveKey : handleSubmit}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001) || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
-              {!selectedNote ? "Select a Commitment Note" : "Submit Limit Order"}
+              {keyLoading ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Unlocking Key...</span>
+              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Trading Key" : "Submit Limit Order"}
             </button>
             ) : (
             <button
-              onClick={handleMarketSubmit}
-              disabled={!keyPair || !sellAmount || !buyAmount || !selectedNote || !marketPrice || step === "signing" || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
-              {step === "signing" ? (
-                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Executing...</span>
-              ) : !selectedNote ? "Select a Commitment Note" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
+              {keyLoading ? (
+                <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Unlocking Key...</span>
+              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Trading Key" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
             </button>
             )}
 
@@ -1314,10 +1342,10 @@ export default function PrivateOrderPage() {
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
             <Check className="w-12 h-12 text-emerald-400 mx-auto" />
             <p className="text-on-surface font-bold text-lg">
-              {orderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
+              {submittedOrderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
             </p>
             <p className="text-sm text-on-surface-variant/70">
-              {orderType === "market"
+              {submittedOrderType === "market"
                 ? "Your market order has been settled via DEX on-chain. Claim your tokens on the Private Claim page."
                 : "Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity."}
             </p>
@@ -1326,12 +1354,37 @@ export default function PrivateOrderPage() {
                 <span className="text-primary font-semibold">Shared Orderbook:</span> Your order summary is also published to the shared orderbook, enabling cross-relayer matching with other relayers for better liquidity.
               </div>
             )}
-            <button
-              onClick={() => { setStep("create_order"); refreshNotes(); }}
-              className="px-6 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
-            >
-              Create Another Order
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              {submittedOrderType === "market" ? (
+                <>
+                  <Link
+                    href="/trade/private-claim"
+                    className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
+                  >
+                    Go to Claim
+                  </Link>
+                  <Link
+                    href="/trade/private-history"
+                    className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+                  >
+                    View My Orders
+                  </Link>
+                </>
+              ) : (
+                <Link
+                  href="/trade/private-history"
+                  className="px-5 py-2.5 rounded-md bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90 transition-colors"
+                >
+                  View My Orders
+                </Link>
+              )}
+              <button
+                onClick={() => { setStep("create_order"); setSubmittedOrderType(null); refreshNotes(); }}
+                className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
+              >
+                Create Another Order
+              </button>
+            </div>
           </div>
         )}
       </div>

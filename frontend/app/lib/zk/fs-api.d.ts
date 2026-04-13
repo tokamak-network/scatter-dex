@@ -1,9 +1,16 @@
+interface FileSystemPermissionDescriptor {
+  mode?: "read" | "readwrite";
+}
+
 interface FileSystemDirectoryHandle {
   kind: "directory";
   name: string;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle>;
+  removeEntry(name: string): Promise<void>;
   values(): AsyncIterableIterator<FileSystemHandle>;
   entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+  queryPermission(descriptor?: FileSystemPermissionDescriptor): Promise<PermissionState>;
+  requestPermission(descriptor?: FileSystemPermissionDescriptor): Promise<PermissionState>;
 }
 
 interface FileSystemFileHandle {

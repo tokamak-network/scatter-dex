@@ -26,14 +26,18 @@ async function main() {
   const app = express();
 
   // CORS
+  const corsWildcard = config.corsOrigins.includes("*");
+  if (corsWildcard) {
+    console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
+  }
   app.use(cors({
-    origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins,
+    origin: corsWildcard ? "*" : config.corsOrigins,
   }));
 
   // Body size limit
   app.use(express.json({ limit: "10kb" }));
 
-  // Rate limiters
+  // Rate limiters — two layers to mitigate multi-IP bypass.
   const writeLimiter = rateLimit({
     windowMs: 60_000,
     max: config.writeRateLimit,
@@ -46,9 +50,22 @@ async function main() {
     message: { error: "too many requests" },
   });
 
+  // Layer 2: relayer-identity-based limiter for write endpoints.
+  // Even if the attacker rotates IPs, each authenticated relayer is
+  // limited independently. Stricter than the IP limiter.
+  const relayerWriteLimiter = rateLimit({
+    windowMs: 60_000,
+    max: Math.max(1, Math.floor(config.writeRateLimit / 2)),
+    message: { error: "too many requests for this relayer" },
+    keyGenerator: (req) => {
+      const addr = (req as Record<string, unknown>).relayerAddress as string | undefined;
+      return addr ? `relayer:${addr}` : (req.ip ?? "unknown");
+    },
+  });
+
   // Routes
-  app.use("/api/orders", createOrderRoutes(orderbook, db, broadcaster, writeLimiter, readLimiter));
-  app.use("/api/relayers", createRelayerRoutes(orderbook, broadcaster, writeLimiter, readLimiter));
+  app.use("/api/orders", createOrderRoutes(orderbook, db, broadcaster, writeLimiter, readLimiter, relayerWriteLimiter));
+  app.use("/api/relayers", createRelayerRoutes(orderbook, broadcaster, writeLimiter, readLimiter, relayerWriteLimiter));
   app.use("/api/stats", createStatsRoutes(orderbook, readLimiter));
   app.use("/api/peers", createPeerRoutes(orderbook, readLimiter));
 

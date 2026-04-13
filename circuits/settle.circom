@@ -384,6 +384,23 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     component rcTakerMaxFee = Num2Bits(16);
     rcTakerMaxFee.in <== takerMaxFee;
 
+    // [H-5] claimCount range checks: must be 0..maxClaimsPerSide.
+    // Without this, a field-arithmetic overflow could bypass the
+    // LessThan(252) gate in the claim-used loops below.
+    component rcMakerClaimCount = Num2Bits(5);
+    rcMakerClaimCount.in <== makerClaimCount;
+    component makerClaimCountBound = LessEqThan(5);
+    makerClaimCountBound.in[0] <== makerClaimCount;
+    makerClaimCountBound.in[1] <== maxClaimsPerSide;
+    makerClaimCountBound.out === 1;
+
+    component rcTakerClaimCount = Num2Bits(5);
+    rcTakerClaimCount.in <== takerClaimCount;
+    component takerClaimCountBound = LessEqThan(5);
+    takerClaimCountBound.in[0] <== takerClaimCount;
+    takerClaimCountBound.in[1] <== maxClaimsPerSide;
+    takerClaimCountBound.out === 1;
+
     signal makerProduct;
     makerProduct <== makerSellAmount * takerSellAmount;
     signal takerProduct;
@@ -552,9 +569,12 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // [Security fix 2026-04-10] Without the token check, a malicious relayer
     // could construct claim leaves denominated in a worthless token while
     // the public tokenMaker signal indicates a valuable token.
+    // [H-5] Now that makerClaimCount is range-checked to 0..16,
+    // LessThan(5) is sufficient (was LessThan(252), saving ~247
+    // constraints per slot × 16 slots ≈ ~3,950 constraints).
     component makerClaimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        makerClaimUsed[i] = LessThan(252);
+        makerClaimUsed[i] = LessThan(5);
         makerClaimUsed[i].in[0] <== i;
         makerClaimUsed[i].in[1] <== makerClaimCount;
         (1 - makerClaimUsed[i].out) * makerClaimAmounts[i] === 0;
@@ -601,9 +621,10 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
         rcTakerClaimAmount[i].in <== takerClaimAmounts[i];
     }
 
+    // [H-5] Same optimization as maker side.
     component takerClaimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        takerClaimUsed[i] = LessThan(252);
+        takerClaimUsed[i] = LessThan(5);
         takerClaimUsed[i].in[0] <== i;
         takerClaimUsed[i].in[1] <== takerClaimCount;
         (1 - takerClaimUsed[i].out) * takerClaimAmounts[i] === 0;

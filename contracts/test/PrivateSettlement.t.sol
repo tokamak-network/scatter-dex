@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
@@ -90,7 +91,7 @@ contract PrivateSettlementTest is Test {
     // ─── settlePrivate Tests ─────────────────────────────────────
 
     function test_settlePrivate_basic() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // Nullifiers should be marked
@@ -100,18 +101,18 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.nonceNullifiers(TAKER_NONCE_NULL));
 
         // Claims groups should be registered
-        (address token1, uint96 locked1, uint96 claimed1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (uint128 locked1, uint128 claimed1, address token1) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(token1, address(weth));
         assertEq(locked1, 5 ether);
         assertEq(claimed1, 0);
 
-        (address token2, uint96 locked2,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
+        (uint128 locked2,, address token2) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
         assertEq(token2, address(usdc));
         assertEq(locked2, 10_000e18);
     }
 
     function test_settlePrivate_emits_event() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
 
         vm.expectEmit(true, true, false, true);
         emit PrivateSettlement.PrivateSettled(MAKER_NULL, TAKER_NULL, CLAIMS_ROOT_MAKER, CLAIMS_ROOT_TAKER, address(this), 0, 0);
@@ -120,7 +121,7 @@ contract PrivateSettlementTest is Test {
     }
 
     function test_settlePrivate_double_nullifier_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
@@ -129,7 +130,7 @@ contract PrivateSettlementTest is Test {
 
     function test_settlePrivate_invalid_proof_reverts() public {
         settleVerifier.setShouldPass(false);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
 
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
         settlement.settlePrivate(p);
@@ -137,14 +138,14 @@ contract PrivateSettlementTest is Test {
 
     function test_settlePrivate_paused_reverts() public {
         settlement.setPaused(true);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
 
         vm.expectRevert(PrivateSettlement.ContractPaused.selector);
         settlement.settlePrivate(p);
     }
 
     function test_settlePrivate_unwhitelisted_token_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         p.tokenMaker = address(0xDEAD);
 
         vm.expectRevert(PrivateSettlement.TokenNotWhitelisted.selector);
@@ -155,7 +156,7 @@ contract PrivateSettlementTest is Test {
 
     function test_claimWithProof_basic() public {
         // First settle to create a claims group
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         uint256 claimAmount = 2 ether;
@@ -176,12 +177,12 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, claimAmount);
     }
 
     function test_claimWithProof_multiple_claims() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // Claim 1
@@ -201,12 +202,12 @@ contract PrivateSettlementTest is Test {
         assertEq(recipient1.balance, 2 ether);
         assertEq(recipient2.balance, 3 ether);
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether); // all claimed
     }
 
     function test_claimWithProof_exceeds_locked_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         vm.expectRevert(PrivateSettlement.ExceedsTotalLocked.selector);
@@ -219,7 +220,7 @@ contract PrivateSettlementTest is Test {
     }
 
     function test_claimWithProof_double_claim_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         settlement.claimWithProof(
@@ -237,7 +238,7 @@ contract PrivateSettlementTest is Test {
     }
 
     function test_claimWithProof_not_yet_releasable_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         vm.expectRevert(PrivateSettlement.NotYetReleasable.selector);
@@ -250,7 +251,7 @@ contract PrivateSettlementTest is Test {
     }
 
     function test_claimWithProof_invalid_proof_reverts() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         claimVerifier.setShouldPass(false);
@@ -264,7 +265,7 @@ contract PrivateSettlementTest is Test {
     }
 
     function test_claimWithProof_far_future_still_succeeds() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         uint256 releaseTime = block.timestamp; // capture before warp
@@ -278,8 +279,115 @@ contract PrivateSettlementTest is Test {
             2 ether, address(weth), recipient1, releaseTime
         );
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 2 ether);
+    }
+
+    // ─── claimWithProofBatch Tests ───────────────────────────────
+
+    function _makeClaimParams(
+        bytes32 claimsRoot,
+        bytes32 nullifier,
+        uint256 amount,
+        address token,
+        address recipient,
+        uint256 releaseTime
+    ) internal view returns (PrivateSettlement.ClaimParams memory) {
+        return PrivateSettlement.ClaimParams({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            claimsRoot: claimsRoot,
+            claimNullifier: nullifier,
+            amount: amount,
+            token: token,
+            recipient: recipient,
+            releaseTime: releaseTime
+        });
+    }
+
+    function test_claimWithProofBatch_basic() public {
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_2, 3 ether, address(weth), recipient2, block.timestamp);
+
+        settlement.claimWithProofBatch(batch);
+
+        assertEq(recipient1.balance, 2 ether);
+        assertEq(recipient2.balance, 3 ether);
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
+        assertTrue(settlement.claimNullifiers(CLAIM_NULL_2));
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 5 ether);
+    }
+
+    function test_claimWithProofBatch_cross_group() public {
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_TAKER, CLAIM_NULL_3, 4000e18, address(usdc), recipient2, block.timestamp);
+
+        settlement.claimWithProofBatch(batch);
+
+        assertEq(recipient1.balance, 2 ether);
+        assertEq(usdc.balanceOf(recipient2), 4000e18);
+    }
+
+    function test_claimWithProofBatch_empty_reverts() public {
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](0);
+        vm.expectRevert(PrivateSettlement.EmptyBatch.selector);
+        settlement.claimWithProofBatch(batch);
+    }
+
+    function test_claimWithProofBatch_too_large_reverts() public {
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        uint256 oversize = settlement.MAX_CLAIM_BATCH_SIZE() + 1;
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](oversize);
+        for (uint256 i = 0; i < oversize; i++) {
+            batch[i] = _makeClaimParams(CLAIMS_ROOT_MAKER, bytes32(uint256(0xAA00 + i)), 1 wei, address(weth), recipient1, block.timestamp);
+        }
+
+        vm.expectRevert(PrivateSettlement.BatchTooLarge.selector);
+        settlement.claimWithProofBatch(batch);
+    }
+
+    function test_claimWithProofBatch_atomic_failure_reverts_all() public {
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](2);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 2 ether, address(weth), recipient1, block.timestamp);
+        // Second claim uses same nullifier → will revert on the second iteration
+        batch[1] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 1 ether, address(weth), recipient2, block.timestamp);
+
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.claimWithProofBatch(batch);
+
+        // Neither claim applied
+        assertEq(recipient1.balance, 0);
+        assertEq(recipient2.balance, 0);
+        assertFalse(settlement.claimNullifiers(CLAIM_NULL_1));
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        assertEq(claimed, 0);
+    }
+
+    function test_claimWithProofBatch_paused_reverts() public {
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
+        settlement.settlePrivate(p);
+        settlement.setPaused(true);
+
+        PrivateSettlement.ClaimParams[] memory batch = new PrivateSettlement.ClaimParams[](1);
+        batch[0] = _makeClaimParams(CLAIMS_ROOT_MAKER, CLAIM_NULL_1, 1 ether, address(weth), recipient1, block.timestamp);
+
+        vm.expectRevert(PrivateSettlement.ContractPaused.selector);
+        settlement.claimWithProofBatch(batch);
     }
 
     function test_receive_rejects_non_weth() public {
@@ -295,11 +403,11 @@ contract PrivateSettlementTest is Test {
         // Full flow: deposit → settle → claim (WETH auto-unwrap) → verify change commitment
 
         // 1. Settle creates claims groups and inserts change commitments
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // Verify claims groups created
-        (address token, uint96 locked, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(token, address(weth));
         assertEq(locked, 5 ether);
         assertEq(claimed, 0);
@@ -320,7 +428,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_1));
 
         // Claims group updated
-        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, claimAmount1);
 
         // 3. Claim #2 — remaining amount
@@ -335,7 +443,7 @@ contract PrivateSettlementTest is Test {
         assertTrue(settlement.claimNullifiers(CLAIM_NULL_2));
 
         // All claims done — totalClaimed == totalLocked
-        (,, claimed) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
+        (, claimed,) = settlement.claimsGroups(CLAIMS_ROOT_MAKER);
         assertEq(claimed, 5 ether, "all claims should be consumed");
 
         // 4. Verify double-claim is rejected
@@ -353,7 +461,7 @@ contract PrivateSettlementTest is Test {
 
     function test_e2e_taker_claim_usdc() public {
         // Verify taker-side claim works with non-WETH token (no auto-unwrap)
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // Taker claims USDC (should receive as ERC20, not ETH)
@@ -367,13 +475,13 @@ contract PrivateSettlementTest is Test {
         assertEq(usdc.balanceOf(recipient1), claimAmount, "taker recipient should receive USDC");
         assertEq(recipient1.balance, 0, "no ETH should be sent for non-WETH claim");
 
-        (,, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
+        (, uint128 claimed,) = settlement.claimsGroups(CLAIMS_ROOT_TAKER);
         assertEq(claimed, claimAmount);
     }
 
     function test_e2e_overclaim_reverts() public {
         // Claim with new nullifier but exceeding totalLocked should revert
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // Claim full maker amount (5 ether)
@@ -394,7 +502,7 @@ contract PrivateSettlementTest is Test {
 
     function test_e2e_settle_with_empty_taker() public {
         // Settlement where taker has 0 locked (one-sided claims)
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         p.totalLockedTaker = 0;
         p.claimsRootTaker = CLAIMS_ROOT_EMPTY;
         p.tokenTaker = address(usdc);
@@ -410,30 +518,30 @@ contract PrivateSettlementTest is Test {
         assertEq(recipient1.balance, 2 ether);
 
         // Taker's empty group should exist but have 0 locked
-        (address t2, uint96 locked2,) = settlement.claimsGroups(CLAIMS_ROOT_EMPTY);
+        (uint128 locked2,, address t2) = settlement.claimsGroups(CLAIMS_ROOT_EMPTY);
         assertEq(t2, address(usdc));
         assertEq(locked2, 0);
     }
 
     function test_e2e_duplicate_claims_root_reverts() public {
         // Same claimsRoot for maker and taker (both non-zero locked) → should revert
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         p.claimsRootTaker = p.claimsRootMaker; // force duplicate
         vm.expectRevert(PrivateSettlement.DuplicateClaimsRoot.selector);
         settlement.settlePrivate(p);
     }
 
     function test_e2e_claimsGroup_overwrite_blocked() public {
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         settlement.settlePrivate(p);
 
         // New nullifiers but same claimsRootMaker → should revert
-        PrivateSettlement.SettleParams memory p2 = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p2 = _defaultSettleParams();
         p2.makerNullifier = bytes32(uint256(0xee));
         p2.takerNullifier = bytes32(uint256(0xff));
         p2.makerNonceNullifier = bytes32(uint256(0xee1));
         p2.takerNonceNullifier = bytes32(uint256(0xff1));
-        vm.expectRevert(PrivateSettlement.ClaimsGroupAlreadyExists.selector);
+        vm.expectRevert(SettleVerifyLib.ClaimsGroupAlreadyExists.selector);
         settlement.settlePrivate(p2);
     }
 
@@ -442,7 +550,7 @@ contract PrivateSettlementTest is Test {
     function test_settlePrivate_rejects_future_timestamp() public {
         // Move chain time forward so the helper picks a known block.timestamp.
         vm.warp(1_000_000);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         // Even one second into the future is rejected post-M7.
         p.currentTimestamp = block.timestamp + 1;
         vm.expectRevert(PrivateSettlement.TimestampOutOfRange.selector);
@@ -451,7 +559,7 @@ contract PrivateSettlementTest is Test {
 
     function test_settlePrivate_accepts_recent_past_timestamp() public {
         vm.warp(1_000_000);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         // Within the 60-second window — still accepted (proof gen latency).
         p.currentTimestamp = block.timestamp - 30;
         settlement.settlePrivate(p);
@@ -459,7 +567,7 @@ contract PrivateSettlementTest is Test {
 
     function test_settlePrivate_accepts_boundary_past_timestamp() public {
         vm.warp(1_000_000);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         // Exactly at the boundary — `currentTimestamp + 60 == block.timestamp`
         // → not rejected.
         p.currentTimestamp = block.timestamp - 60;
@@ -468,7 +576,7 @@ contract PrivateSettlementTest is Test {
 
     function test_settlePrivate_rejects_too_old_timestamp() public {
         vm.warp(1_000_000);
-        PrivateSettlement.SettleParams memory p = _defaultSettleParams();
+        SettleVerifyLib.SettleParams memory p = _defaultSettleParams();
         // Beyond the 60-second window — rejected.
         p.currentTimestamp = block.timestamp - 61;
         vm.expectRevert(PrivateSettlement.TimestampOutOfRange.selector);
@@ -477,8 +585,8 @@ contract PrivateSettlementTest is Test {
 
     // ─── Helpers ─────────────────────────────────────────────────
 
-    function _defaultSettleParams() internal view returns (PrivateSettlement.SettleParams memory) {
-        return PrivateSettlement.SettleParams({
+    function _defaultSettleParams() internal view returns (SettleVerifyLib.SettleParams memory) {
+        return SettleVerifyLib.SettleParams({
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,
@@ -595,7 +703,7 @@ contract FeeVaultTest is Test {
     // ─── Relayer Gating ─────────────────────────────────────────
 
     function test_settlePrivate_only_active_relayer() public {
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
 
         // Non-relayer (not in proof) should be rejected
         vm.prank(nonRelayer);
@@ -623,7 +731,7 @@ contract FeeVaultTest is Test {
         settlement.setRelayerRegistry(address(0));
 
         // Still restricted to maker/taker relayer bound in proof
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         vm.prank(relayer); // relayer = makerRelayer = takerRelayer in _params
         settlement.settlePrivate(p);
     }
@@ -640,7 +748,7 @@ contract FeeVaultTest is Test {
 
     function test_settlePrivate_correct_relayer_passes_proof() public {
         settleVerifier.setEnforceRelayer(true, relayer, relayer);
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
 
         vm.prank(relayer);
         settlement.settlePrivate(p);
@@ -653,7 +761,7 @@ contract FeeVaultTest is Test {
         _registerRelayer2();
 
         // Different nullifiers to avoid collision with other tests
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.makerNullifier = bytes32(uint256(0x2aa));
         p.takerNullifier = bytes32(uint256(0x2bb));
         p.makerNonceNullifier = bytes32(uint256(0x2cc));
@@ -673,7 +781,7 @@ contract FeeVaultTest is Test {
         // Cross-relayer: maker=relayer, taker=RELAYER_2
         _registerRelayer2();
 
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.makerNullifier = bytes32(uint256(0x3aa));
         p.takerNullifier = bytes32(uint256(0x3bb));
         p.makerNonceNullifier = bytes32(uint256(0x3cc));
@@ -703,7 +811,7 @@ contract FeeVaultTest is Test {
     // ─── FeeVault ───────────────────────────────────────────────
 
     function test_fees_go_to_vault() public {
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenMaker = uint96(0.1 ether); // 0.1 WETH fee
 
         vm.prank(relayer);
@@ -716,7 +824,7 @@ contract FeeVaultTest is Test {
 
     function test_fees_both_tokens_same_relayer() public {
         // Local match: same relayer for both sides → all fees go to that relayer
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH → takerRelayer (= relayer)
         p.feeTokenTaker = uint96(100e18);       // fee in USDC → makerRelayer (= relayer)
 
@@ -730,7 +838,7 @@ contract FeeVaultTest is Test {
 
     function test_relayer_claims_from_vault() public {
         // Settle with fee
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenMaker = uint96(1 ether);
 
         vm.prank(relayer);
@@ -750,7 +858,7 @@ contract FeeVaultTest is Test {
     }
 
     function test_relayer_claims_usdc_from_vault() public {
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenTaker = uint96(200e18); // USDC fee
 
         vm.prank(relayer);
@@ -791,7 +899,7 @@ contract FeeVaultTest is Test {
         // Disable vault
         settlement.setFeeVault(address(0));
 
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenMaker = uint96(0.1 ether);
 
         uint256 relayerBalBefore = weth.balanceOf(relayer);
@@ -807,11 +915,13 @@ contract FeeVaultTest is Test {
     // ─── Platform Fee Admin ─────────────────────────────────────
 
     function test_vault_platform_fee_update() public {
-        vault.setPlatformFee(1000); // 10%
+        vault.scheduleFeeChange(1000); // 10%
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 1000);
 
         // Settle with fee
-        PrivateSettlement.SettleParams memory p = _params();
+        SettleVerifyLib.SettleParams memory p = _params();
         p.feeTokenMaker = uint96(1 ether);
         vm.prank(relayer);
         settlement.settlePrivate(p);
@@ -825,13 +935,13 @@ contract FeeVaultTest is Test {
 
     function test_vault_max_platform_fee() public {
         vm.expectRevert(FeeVault.FeeTooHigh.selector);
-        vault.setPlatformFee(5001); // > 50%
+        vault.scheduleFeeChange(5001); // > 50%
     }
 
     // ─── Helpers ─────────────────────────────────────────────────
 
-    function _params() internal view returns (PrivateSettlement.SettleParams memory) {
-        return PrivateSettlement.SettleParams({
+    function _params() internal view returns (SettleVerifyLib.SettleParams memory) {
+        return SettleVerifyLib.SettleParams({
             proofA: proofA,
             proofB: proofB,
             proofC: proofC,

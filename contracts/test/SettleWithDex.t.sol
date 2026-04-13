@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
@@ -130,7 +131,7 @@ contract SettleWithDexTest is Test {
 
     function _defaultDexParams() internal view returns (PrivateSettlement.SettleDexParams memory) {
         return PrivateSettlement.SettleDexParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA,
                 proofB: proofB,
                 proofC: proofC,
@@ -151,7 +152,8 @@ contract SettleWithDexTest is Test {
                 orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: _encodeDexCalldata()
+            dexCalldata: _encodeDexCalldata(),
+            deadline: block.timestamp + 1800
         });
     }
 
@@ -168,7 +170,7 @@ contract SettleWithDexTest is Test {
         assertTrue(settlement.nonceNullifiers(NULL_NONCE));
 
         // Claims group registered
-        (address token, uint96 locked, uint96 claimed) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
         assertEq(claimed, 0);
@@ -268,7 +270,7 @@ contract SettleWithDexTest is Test {
         p.proof.expiry = uint64(block.timestamp - 1);
 
         vm.prank(user);
-        vm.expectRevert(PrivateSettlement.OrderExpired.selector);
+        vm.expectRevert(SettleVerifyLib.OrderExpired.selector);
         settlement.settleWithDex(p);
     }
 
@@ -278,6 +280,15 @@ contract SettleWithDexTest is Test {
         address stranger = address(0xDEAD);
         vm.prank(stranger);
         vm.expectRevert(PrivateSettlement.NotMakerOrTakerRelayer.selector);
+        settlement.settleWithDex(p);
+    }
+
+    function test_settleWithDex_deadlineExpired_reverts() public {
+        PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
+        p.deadline = block.timestamp - 1; // already expired
+
+        vm.prank(user);
+        vm.expectRevert(PrivateSettlement.DeadlineExpired.selector);
         settlement.settleWithDex(p);
     }
 
@@ -343,7 +354,7 @@ contract SettleWithDexTest is Test {
         // IMPORTANT: dexCalldata must encode amountIn = 9.9 ether (post-fee)
         // because the contract only approves swapAmount to the router.
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
-            proof: PrivateSettlement.AuthorizeProof({
+            proof: SettleVerifyLib.AuthorizeProof({
                 proofA: proofA, proofB: proofB, proofC: proofC,
                 pubKeyBind: PUB_KEY_BIND, commitmentRoot: pool.getLastRoot(),
                 nullifier: NULL_ESCROW, nonceNullifier: NULL_NONCE,
@@ -355,7 +366,8 @@ contract SettleWithDexTest is Test {
                 relayer: user, orderHash: ORDER_HASH
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement)))
+            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -366,7 +378,7 @@ contract SettleWithDexTest is Test {
         assertEq(feeInTreasury, 0.1 ether, "Treasury should receive 1% WETH platform fee");
 
         // Claims group should still be registered
-        (address token, uint96 locked,) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked,, address token) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
     }

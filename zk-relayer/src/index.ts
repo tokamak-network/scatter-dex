@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { config } from "./config.js";
+import { config, updateRelayerFee } from "./config.js";
 import { PrivateOrderbook } from "./core/orderbook.js";
 import { PrivateMatcher } from "./core/matcher.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
@@ -17,13 +17,32 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId } from "./routes/authorize-orders.js";
+import { createHealthRoutes } from "./routes/health.js";
+import { createAdminRoutes, isPaused } from "./routes/admin.js";
+import { loadSanctionsFile } from "./core/sanctions-list.js";
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
 async function main() {
   const db = new PrivateOrderDB();
   db.setMeta("started_at", Date.now().toString());
+
+  // [R-7] Restore runtime fee from DB (if previously changed via admin API)
+  const savedFee = db.getMeta("relayerFee");
+  if (savedFee !== null) {
+    const parsedFee = parseInt(savedFee, 10);
+    if (Number.isFinite(parsedFee) && parsedFee >= 0 && parsedFee <= 10_000) {
+      updateRelayerFee(parsedFee);
+      console.log(`[admin] Restored fee from DB: ${parsedFee} bps`);
+    }
+  }
+
+  // [R-10] Load sanctions pubKey blocklist (optional)
+  if (config.sanctionsPubKeyList) {
+    loadSanctionsFile(config.sanctionsPubKeyList);
+  }
+
   const orderbook = new PrivateOrderbook(MAX_ORDERBOOK_SIZE);
   orderbook.setDB(db);
   const restored = orderbook.loadFromDB();
@@ -33,6 +52,30 @@ async function main() {
 
   const submitter = new PrivateSubmitter();
   submitter.setDB(db);
+
+  // R-2: Recover pending TXs from previous run (receipt check only, no resend)
+  const pendingTxs = db.getPendingTxs();
+  if (pendingTxs.length > 0) {
+    console.log(`[tx-recovery] Found ${pendingTxs.length} pending TX(s) from previous run`);
+    const provider = submitter.getProvider();
+    await Promise.all(pendingTxs.map(async (ptx) => {
+      try {
+        const receipt = await provider.getTransactionReceipt(ptx.tx_hash);
+        if (receipt) {
+          const status = receipt.status === 1 ? "confirmed" : "reverted";
+          console.log(`[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... → ${status}`);
+          db.removePendingTx(ptx.tx_hash);
+        } else {
+          const ageMin = Math.round((Date.now() - ptx.created_at) / 60_000);
+          console.warn(
+            `[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... still pending (${ageMin}min old). Check manually.`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[tx-recovery] Failed to check ${ptx.tx_hash.slice(0, 18)}...:`, err);
+      }
+    }));
+  }
 
   // Index existing commitments on startup
   console.log("Indexing on-chain commitments...");
@@ -86,15 +129,26 @@ async function main() {
   const app = express();
 
   // Security: CORS whitelist
-  const allowedOrigins = (process.env.CORS_ORIGINS?.split(",") || ["http://localhost:3000", "http://localhost:3002"])
-    .map(s => s.trim())
-    .filter(Boolean);
-  app.use(cors({ origin: allowedOrigins }));
+  const allowedOrigins = (
+    process.env.CORS_ORIGINS?.trim()
+      ? process.env.CORS_ORIGINS.split(",")
+      : [
+          "http://localhost:3000",
+          "http://localhost:3002",
+          "http://localhost:3003",
+        ]
+  ).map(s => s.trim()).filter(Boolean);
+  const corsWildcard = allowedOrigins.includes("*");
+  if (corsWildcard) {
+    console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
+  }
+  app.use(cors({ origin: corsWildcard ? "*" : allowedOrigins }));
 
   // Security: body size limit
   app.use(express.json({ limit: "10kb" }));
 
-  // Security: rate limiting
+  // Security: rate limiting — two layers to mitigate multi-IP bypass.
+  // Layer 1: IP-based global limiter (catches naive floods)
   const writeLimiter = rateLimit({
     windowMs: 60_000,
     max: 30,
@@ -107,9 +161,44 @@ async function main() {
     message: { error: "too many requests" },
   });
 
-  app.use("/api/private-orders", createPrivateOrderRoutes(
-    orderbook, matcher, submitter, writeLimiter, readLimiter,
-    sharedClient, crossRelayerService, orderIdMap,
+  // Layer 2: pubKey-based limiter for authorize-orders POST.
+  // Even if the attacker rotates IPs, each ZK identity is limited to
+  // 10 writes/min. The key is extracted from the request body.
+  const authWriteLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    message: { error: "too many requests for this identity" },
+    keyGenerator: (req) => {
+      const body = req.body as Record<string, unknown>;
+      const ax = body.pubKeyAx as string | undefined;
+      const ay = body.pubKeyAy as string | undefined;
+      if (ax && ay) {
+        try { return `pubkey:${pubKeyId(ax, ay)}`; }
+        catch { /* fall through to IP */ }
+      }
+      return req.ip ?? "unknown";
+    },
+  });
+
+  // [R-7] Admin API — fee, pause/resume, drain, balance
+  app.use("/api/admin", createAdminRoutes({
+    submitter, db, orderbook,
+    drainAuthorizeOrders, getAuthorizeOrderStats,
+    writeLimiter,
+  }));
+
+  // [R-7] Pause guard — reject new order submissions (POST only) when paused
+  const pauseGuard: express.RequestHandler = (req, res, next) => {
+    if (isPaused() && req.method === "POST") {
+      res.status(503).json({ error: "Relayer is paused — not accepting new orders" });
+      return;
+    }
+    next();
+  };
+
+  app.use("/api/private-orders", pauseGuard, createPrivateOrderRoutes(
+    orderbook, submitter, writeLimiter, readLimiter,
+    sharedClient, orderIdMap,
   ));
   app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
   app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
@@ -119,9 +208,14 @@ async function main() {
 
   // Half-proof (trustless) order routes — settleAuth path
   const authSubmitter = new AuthorizeSubmitter();
-  app.use("/api/authorize-orders", createAuthorizeOrderRoutes(
-    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter,
+  authSubmitter.setDB(db);
+  app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
+    authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
+    sharedClient, orderIdMap, authWriteLimiter,
   ));
+
+  // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
+  app.use("/health", createHealthRoutes(submitter, db));
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(

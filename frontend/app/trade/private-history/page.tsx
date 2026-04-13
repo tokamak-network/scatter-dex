@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
@@ -115,12 +115,6 @@ export default function PrivateHistoryPage() {
   const [cancellingNonce, setCancellingNonce] = useState<string | null>(null);
   const [cancelStep, setCancelStep] = useState<"idle" | "loading-note" | "fetching-tree" | "proving" | "tx" | "saving" | "done" | "error">("idle");
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Cleanup cancel timer on unmount
-  useEffect(() => {
-    return () => { if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current); };
-  }, []);
 
   // Claim statuses for selected order
   const selectedClaims = useMemo(
@@ -195,7 +189,7 @@ export default function PrivateHistoryPage() {
     try {
       const { loadClaimsFiles } = await import("../../lib/zk/note-storage");
       const files = await loadClaimsFiles();
-      const sorted = (files as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const sorted = (files as unknown as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const enriched = await fetchStatuses(sorted);
       setOrders(enriched);
     } catch (e) {
@@ -320,11 +314,6 @@ export default function PrivateHistoryPage() {
         o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
       setOrders((prev) => prev.map(updater));
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
-
-      cancelTimerRef.current = setTimeout(() => {
-        setCancellingNonce(null);
-        setCancelStep("idle");
-      }, 2000);
     } catch (e: any) {
       console.error("Cancel failed:", e);
       setCancelError(e?.reason || e?.message || "Unknown error");
@@ -337,7 +326,7 @@ export default function PrivateHistoryPage() {
       <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
         <ClipboardList className="w-12 h-12 mb-4 opacity-40" />
         <p className="text-lg font-medium mb-4">Connect wallet to view private order history</p>
-        <button onClick={connect} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
+        <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
           Connect Wallet
         </button>
       </div>
@@ -526,8 +515,8 @@ export default function PrivateHistoryPage() {
                     </div>
                   ) : cancelStep === "done" ? (
                     <div className="flex items-center gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Order cancelled. Escrow rotated to new commitment.
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>Order cancelled. Escrow rotated to new commitment.</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-3 rounded-md">
@@ -535,7 +524,7 @@ export default function PrivateHistoryPage() {
                       {CANCEL_STEP_LABEL[cancelStep] ?? "Processing..."}
                     </div>
                   )}
-                  {cancelStep === "error" && (
+                  {(cancelStep === "done" || cancelStep === "error") && (
                     <button
                       onClick={() => { setCancellingNonce(null); setCancelStep("idle"); setCancelError(null); }}
                       className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"

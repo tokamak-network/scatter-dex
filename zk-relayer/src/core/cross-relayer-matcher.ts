@@ -96,9 +96,20 @@ export class CrossRelayerMatchService {
 
       this.lockingOrders.add(orderKey);
       try {
-        // Mark as matched first (prevents double-matching), restore on failure
+        // [M-11] Atomic CAS: set status pending→matched in one DB operation.
+        // If another instance already changed the status, CAS returns false.
+        if (this.db) {
+          const won = this.db.compareAndSwapStatus(
+            local.order.pubKeyAx, local.order.nonce, "pending", "matched",
+          );
+          if (!won) {
+            console.log(`[cross-relayer] Order ${orderKey} lost CAS race, skipping`);
+            continue;
+          }
+        } else {
+          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
+        }
         local.status = "matched";
-        this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "matched");
 
         const result = await this.sendTradeOffer(local, summary);
         if (result.status === "settled" && result.txHash) {
@@ -126,7 +137,11 @@ export class CrossRelayerMatchService {
         // Always release lock and restore pending if not settled
         if (local.status === "matched") {
           local.status = "pending";
-          this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          if (this.db) {
+            this.db.compareAndSwapStatus(local.order.pubKeyAx, local.order.nonce, "matched", "pending");
+          } else {
+            this.orderbook.persistStatus(local.order.pubKeyAx, local.order.nonce, "pending");
+          }
         }
         this.lockingOrders.delete(orderKey);
       }
@@ -210,8 +225,16 @@ export class CrossRelayerMatchService {
     }
 
     // 2. Find the local maker order by (pubKeyAx, nonce) — unique composite key
-    const makerPubKeyAx = BigInt(offer.makerPubKeyAx);
-    const makerNonce = BigInt(offer.makerNonce);
+    let makerPubKeyAx: bigint;
+    let makerNonce: bigint;
+    try {
+      makerPubKeyAx = BigInt(offer.makerPubKeyAx);
+      makerNonce = BigInt(offer.makerNonce);
+    } catch {
+      const reason = "invalid makerPubKeyAx or makerNonce format";
+      recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+      return { status: "rejected", reason };
+    }
     const makerStored = this.orderbook.getByPubKeyAndNonce(makerPubKeyAx, makerNonce);
 
     if (!makerStored) {
@@ -225,6 +248,17 @@ export class CrossRelayerMatchService {
       const reason = "maker order is being matched";
       recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
       return { status: "rejected", reason };
+    }
+
+    // [M-11] Atomic CAS: attempt pending→matched transition.
+    // If another instance already matched, CAS fails and we reject.
+    if (this.db) {
+      const won = this.db.compareAndSwapStatus(makerPubKeyAx, makerNonce, "pending", "matched");
+      if (!won) {
+        const reason = "maker order already matched (CAS failed)";
+        recordRejection(reason, takerOrder.pubKeyAx.toString(), takerOrder.nonce.toString());
+        return { status: "rejected", reason };
+      }
     }
 
     // 3. Verify taker EdDSA signature (re-verify — don't trust remote relayer)
@@ -351,8 +385,22 @@ export class CrossRelayerMatchService {
 
 }
 
-/** Serialize a PrivateOrder for network transfer (bigint → string) */
+/**
+ * Serialize a PrivateOrder for network transfer (bigint → string).
+ *
+ * [S-H6] SECURITY WARNING: This function sends ownerSecret, balance, salt
+ * in plaintext to the remote relayer. This is the legacy settle path.
+ * For the authorize (half-proof) path, cross-relayer matching should use
+ * only proof + public signals. This function is kept for backward
+ * compatibility but should be migrated to authorize-based cross-relayer
+ * matching in a future release.
+ *
+ * @deprecated Use authorize-based cross-relayer matching instead.
+ */
 function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrder): Record<string, unknown> {
+  console.warn(
+    `[S-H6] serializeOrderForTransfer: legacy path invoked for order pubKeyAx=${order.pubKeyAx.toString()} nonce=${order.nonce.toString()}. Secret fields are redacted. Migrate to authorize-based cross-relayer matching.`,
+  );
   return {
     sellToken: order.sellToken.toString(),
     buyToken: order.buyToken.toString(),
@@ -366,14 +414,15 @@ function serializeOrderForTransfer(order: import("../types/order.js").PrivateOrd
     sigS: order.sigS.toString(),
     sigR8x: order.sigR8x.toString(),
     sigR8y: order.sigR8y.toString(),
-    ownerSecret: order.ownerSecret.toString(),
-    balance: order.balance.toString(),
-    salt: order.salt.toString(),
+    // [S-H6] Secret fields redacted — no longer transmitted to remote relayers
+    ownerSecret: "REDACTED",
+    balance: "REDACTED",
+    salt: "REDACTED",
     leafIndex: order.leafIndex,
     newSalt: order.newSalt.toString(),
     expectedChangeCommitment: order.expectedChangeCommitment.toString(),
     claims: order.claims.map(c => ({
-      secret: c.secret.toString(),
+      secret: "REDACTED",
       recipient: c.recipient.toString(),
       token: c.token.toString(),
       amount: c.amount.toString(),

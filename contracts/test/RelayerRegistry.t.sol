@@ -280,4 +280,48 @@ contract RelayerRegistryTest is Test {
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
         registry.transferOwnership(address(0));
     }
+
+    // ─── Reentrancy ─────────────────────────────────────────────
+
+    function test_executeExit_reentrancy_reverts() public {
+        ReentrantRelayer attacker = new ReentrantRelayer(registry, identityRegistry);
+        vm.deal(address(attacker), 10 ether);
+
+        attacker.registerAndRequestExit();
+        vm.warp(block.timestamp + 7 days);
+
+        vm.expectRevert(RelayerRegistry.BondTransferFailed.selector);
+        attacker.attack();
+    }
+}
+
+/// @dev Malicious contract that attempts to re-register during executeExit callback.
+contract ReentrantRelayer {
+    RelayerRegistry public registry;
+    MockIdentityRegistry public identityRegistry;
+    bool private attacking;
+
+    constructor(RelayerRegistry _registry, MockIdentityRegistry _identityRegistry) {
+        registry = _registry;
+        identityRegistry = _identityRegistry;
+        identityRegistry.setVerified(address(this), true);
+    }
+
+    function registerAndRequestExit() external {
+        registry.register{value: 1 ether}("http://attacker.com", 10);
+        registry.requestExit();
+    }
+
+    function attack() external {
+        attacking = true;
+        registry.executeExit();
+    }
+
+    receive() external payable {
+        if (attacking) {
+            attacking = false;
+            // Re-register to exploit the freed active slot — blocked by nonReentrant
+            registry.register{value: msg.value}("http://attacker.com", 10);
+        }
+    }
 }

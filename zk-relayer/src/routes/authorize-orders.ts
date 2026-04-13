@@ -20,24 +20,91 @@ import {
   type AuthorizeMatch,
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
+import type { PrivateOrderDB } from "../core/db.js";
+import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import { recordOrderSubmitted } from "../core/metrics.js";
+import { isSanctionedById } from "../core/sanctions-list.js";
 
 /**
- * In-memory store for authorize orders. Keyed by nullifier (unique per
- * commitment spend). A production deployment would persist to SQLite.
+ * [R-6] In-memory cache backed by SQLite. On startup, pending orders
+ * are reloaded from DB so they survive relayer restarts.
  */
 const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+/** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
+const pendingCountByPubKey = new Map<string, number>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
+const MAX_ORDERS_PER_PUBKEY = 50;
+const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
+let _db: PrivateOrderDB | null = null;
+
+// BabyJub field elements are at most 254 bits (~77 decimal digits).
+// Reject oversized strings before BigInt parsing to prevent CPU DoS.
+const MAX_PUBKEY_LEN = 80;
+
+export function pubKeyId(ax: string, ay: string): string {
+  if (ax.length > MAX_PUBKEY_LEN || ay.length > MAX_PUBKEY_LEN) {
+    throw new RangeError("pubKey value too large");
+  }
+  return `${BigInt(ax).toString()}:${BigInt(ay).toString()}`;
+}
+
+function incPubKeyCount(ax: string, ay: string): void {
+  const id = pubKeyId(ax, ay);
+  pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
+}
+
+function decPubKeyCount(ax: string, ay: string): void {
+  const id = pubKeyId(ax, ay);
+  const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
+  if (count <= 0) pendingCountByPubKey.delete(id);
+  else pendingCountByPubKey.set(id, count);
+}
+
+let _sharedClient: SharedOrderbookClient | null = null;
+let _orderIdMap: Map<string, string> | null = null;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
   writeLimiter?: RequestHandler,
   relayerAddress?: string,
   readLimiter?: RequestHandler,
+  db?: PrivateOrderDB,
+  sharedClient?: SharedOrderbookClient | null,
+  orderIdMap?: Map<string, string>,
+  authWriteLimiter?: RequestHandler,
 ): Router {
+  _sharedClient = sharedClient ?? null;
+  _orderIdMap = orderIdMap ?? null;
+  // [R-6] Persist authorize orders to SQLite
+  if (db) {
+    _db = db;
+    const rows = db.loadPendingAuthorizeOrders();
+    let restored = 0;
+    for (const row of rows) {
+      try {
+        authorizeOrders.set(row.nullifier, {
+          order: JSON.parse(row.orderJson),
+          status: row.status as StoredAuthorizeOrder["status"],
+          submittedAt: row.submittedAt,
+          pubKeyAx: row.pubKeyAx,
+          pubKeyAy: row.pubKeyAy,
+          settleTxHash: row.settleTx ?? undefined,
+        });
+        restored++;
+      } catch (err) {
+        console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
+        db.deleteAuthorizeOrder(row.nullifier);
+      }
+    }
+    if (restored > 0) {
+      console.log(`[R-6] Restored ${restored} pending authorize orders from DB`);
+    }
+  }
   const router = Router();
 
   // POST /api/authorize-orders — submit a Half-proof order
   if (writeLimiter) router.post("/", writeLimiter);
+  if (authWriteLimiter) router.post("/", authWriteLimiter);
   router.post("/", (async (req: Request, res: Response) => {
     try {
       const body = req.body as Record<string, unknown>;
@@ -71,6 +138,13 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
+      // ── 4a. Max expiry duration — prevent long-lived spam orders ──
+      const expiry = Number(order.publicSignals.expiry);
+      if (expiry - nowSeconds > MAX_EXPIRY_DURATION_SECS) {
+        res.status(400).json({ error: `Expiry too far in future (max ${MAX_EXPIRY_DURATION_SECS}s)` });
+        return;
+      }
+
       // ── 4b. Verify pubKey via pubKeyBind (compliance — mandatory) ──
       const pubKeyAx = body.pubKeyAx as string | undefined;
       const pubKeyAy = body.pubKeyAy as string | undefined;
@@ -85,15 +159,36 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
+      // Normalize pubKey once and reuse for sanctions + per-pubKey rate limit
+      // (both keyed on the same `{ax}:{ay}` bigint-normalized id).
+      const pkId = pubKeyId(pubKeyAx, pubKeyAy);
+
+      // ── 4c. [R-10] Sanctions check — reject orders from blocked pubKeys ──
+      if (isSanctionedById(pkId)) {
+        res.status(403).json({ error: "Order rejected: pubKey is on sanctions list" });
+        return;
+      }
+
+      // ── 4d. Per-pubKey order limit — optimistic increment before any await ──
+      if ((pendingCountByPubKey.get(pkId) ?? 0) >= MAX_ORDERS_PER_PUBKEY) {
+        res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
+        return;
+      }
+      // Increment immediately to prevent race conditions across concurrent requests
+      incPubKeyCount(pubKeyAx, pubKeyAy);
+
       // ── 5. Store the order ──
       const stored: StoredAuthorizeOrder = {
         order,
         status: "pending",
         submittedAt: nowSeconds,
-        pubKeyAx: pubKeyAx ?? null,
-        pubKeyAy: pubKeyAy ?? null,
+        pubKeyAx,
+        pubKeyAy,
       };
       authorizeOrders.set(nullifier, stored);
+      _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
+      // [R-8] Record order submission for throughput metrics
+      recordOrderSubmitted();
 
       console.log(
         `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
@@ -103,7 +198,55 @@ export function createAuthorizeOrderRoutes(
         (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
       );
 
-      // ── 5. Try to match ──
+      // ── 5a. Same-token scatter — no counterparty needed ──
+      const isSameToken = BigInt(order.publicSignals.sellToken) === BigInt(order.publicSignals.buyToken);
+      if (isSameToken) {
+        console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
+        stored.status = "matched";
+        try {
+          const txHash = await submitter.submitScatterDirectAuth(order, 0n);
+          stored.status = "settled";
+          stored.settleTxHash = txHash;
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "settled", txHash);
+          res.json({ status: "settled", txHash, nullifier });
+          return;
+        } catch (err) {
+          // Keep a tombstone entry (status=cancelled) to prevent resubmission
+          // of the same nullifier — the TX may have been broadcast but not confirmed.
+          stored.status = "cancelled";
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          _db?.updateAuthorizeOrderStatus(nullifier, "cancelled");
+          console.error("[authorize-orders] scatterDirectAuth failed:", err);
+          res.status(500).json({
+            status: "scatter_failed",
+            error: "scatterDirectAuth submission failed — generate a new proof to retry",
+            nullifier,
+          });
+          return;
+        }
+      }
+
+      // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
+      if (_sharedClient) {
+        const ps = order.publicSignals;
+        const orderbookId = await _sharedClient.postOrder({
+          nonce: nullifier,
+          pubKeyAx: pubKeyAx!,
+          sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
+          buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
+          sellAmount: ps.sellAmount,
+          buyAmount: ps.buyAmount,
+          minFillAmount: ps.buyAmount,
+          maxFee: Number(ps.maxFee),
+          expiry: Number(ps.expiry),
+        });
+        if (orderbookId && _orderIdMap) {
+          _orderIdMap.set(nullifier, orderbookId);
+        }
+      }
+
+      // ── 6. Try to match ──
       const match = findMatch(stored);
       if (match) {
         console.log("[authorize-orders] Match found! Submitting settleAuth...");
@@ -115,11 +258,24 @@ export function createAuthorizeOrderRoutes(
           // Submit on-chain (fee = 0 for now; configurable in follow-up)
           const txHash = await submitter.submitAuthSettle(match, 0n);
 
-          // Mark both as settled
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
+          decPubKeyCount(match.maker.pubKeyAx!, match.maker.pubKeyAy!);
           match.taker.status = "settled";
           match.taker.settleTxHash = txHash;
+          decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
+          _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
+          _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
+
+          // Cancel both sides from shared orderbook
+          if (_sharedClient && _orderIdMap) {
+            const makerNull = match.maker.order.publicSignals.nullifier;
+            const takerNull = match.taker.order.publicSignals.nullifier;
+            const makerOid = _orderIdMap.get(makerNull);
+            const takerOid = _orderIdMap.get(takerNull);
+            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
+            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
+          }
 
           res.json({
             status: "settled",
@@ -202,6 +358,9 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 
     const cPs = candidate.order.publicSignals;
 
+    // Skip same-token orders — they are handled by scatterDirectAuth, not matching
+    if (BigInt(cPs.sellToken) === BigInt(cPs.buyToken)) continue;
+
     // Convention: the existing order is maker, the incoming is taker.
     // isTokenCompatible is symmetric (A.sell==B.buy ∧ B.sell==A.buy),
     // so only one call is needed.
@@ -220,6 +379,42 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 }
 
 /**
+ * [R-7] Drain all pending authorize orders — cancel them and return count.
+ * Called by admin API to clear the order queue before maintenance or shutdown.
+ */
+export function drainAuthorizeOrders(): number {
+  const toDelete: string[] = [];
+  for (const [key, stored] of authorizeOrders) {
+    if (stored.status !== "pending") continue;
+    stored.status = "cancelled";
+    if (stored.pubKeyAx && stored.pubKeyAy) {
+      decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+    }
+    _db?.updateAuthorizeOrderStatus(key, "cancelled");
+    if (_sharedClient && _orderIdMap) {
+      const oid = _orderIdMap.get(key);
+      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+    }
+    toDelete.push(key);
+  }
+  for (const key of toDelete) {
+    authorizeOrders.delete(key);
+  }
+  return toDelete.length;
+}
+
+/** Get current authorize order counts by status. */
+export function getAuthorizeOrderStats(): { pending: number; matched: number; total: number } {
+  let pending = 0;
+  let matched = 0;
+  for (const [, stored] of authorizeOrders) {
+    if (stored.status === "pending") pending++;
+    else if (stored.status === "matched") matched++;
+  }
+  return { pending, matched, total: authorizeOrders.size };
+}
+
+/**
  * Purge non-pending and expired orders from the in-memory store.
  * Call periodically (e.g. from a setInterval in index.ts) to prevent
  * unbounded memory growth. Removes:
@@ -231,11 +426,29 @@ export function purgeNonPendingAuthorizeOrders(): number {
   const nowSeconds = Math.floor(Date.now() / 1000);
   let removed = 0;
   for (const [key, stored] of authorizeOrders) {
+    const isPending = stored.status === "pending";
     const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
-    if (stored.status !== "pending" || expired) {
+
+    // Skip "matched" orders — they're being settled on-chain right now
+    if (stored.status === "matched") continue;
+
+    // Purge: terminal states (settled/cancelled) or expired pending orders
+    if (stored.status === "settled" || stored.status === "cancelled" || (isPending && expired)) {
+      // Only decrement counter for expired pending orders.
+      // Settled orders already had their counter decremented on settlement.
+      if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
+        decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
+      // Cancel from shared orderbook if still listed
+      if (_sharedClient && _orderIdMap) {
+        const oid = _orderIdMap.get(key);
+        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+      }
       authorizeOrders.delete(key);
       removed++;
     }
   }
+  // [R-6] Also purge from DB
+  _db?.purgeNonPendingAuthorizeOrdersDB();
   return removed;
 }

@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getClientIp } from "../../lib/rate-limit";
+
+// 60 requests per minute per IP (price polling)
+const RATE_LIMIT = { limit: 60, windowMs: 60_000 };
 
 /** Server-side proxy for Upbit API to avoid CORS restrictions in browser. */
 export async function GET(req: NextRequest) {
+  const ip = getClientIp(req.headers);
+  const rl = checkRateLimit(`upbit:${ip}`, RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
   const markets = req.nextUrl.searchParams.get("markets");
   if (!markets) {
     return NextResponse.json({ error: "markets param required" }, { status: 400 });

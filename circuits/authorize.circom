@@ -258,6 +258,17 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     component rcMaxFee = Num2Bits(16);
     rcMaxFee.in <== maxFee;
 
+    // [H-5] claimCount range check: must be 0..maxClaimsPerSide.
+    // Without this, a field-arithmetic overflow could bypass the
+    // LessThan(5) gate in the claim-used loop below.
+    // Num2Bits(5) constrains to 0..31; LessEqThan(5) tightens to 0..16.
+    component rcClaimCount = Num2Bits(5);
+    rcClaimCount.in <== claimCount;
+    component claimCountBound = LessEqThan(5);
+    claimCountBound.in[0] <== claimCount;
+    claimCountBound.in[1] <== maxClaimsPerSide;
+    claimCountBound.out === 1;
+
     component rcClaimAmount[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
         rcClaimAmount[i] = Num2Bits(128);
@@ -481,6 +492,12 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //
     //     Without pubKeyBind, a user could give a fake pubKey to the relayer
     //     and there would be no way to detect it.
+    //
+    //     PRIVACY NOTE [M-8]: pubKeyBind is per-trade unique (different
+    //     nullifier each time), so observers without the user's pubKey cannot link trades.
+    //     However, a relayer who knows the user's pubKey CAN recompute
+    //     pubKeyBind and link all trades by that user. This is intentional
+    //     for compliance. See docs/adr/002-pubkeybind-privacy-tradeoff.md.
     // ════════════════════════════════════════
     component pubKeyBindHasher = Poseidon(3);
     pubKeyBindHasher.inputs[0] <== pubKeyAx;

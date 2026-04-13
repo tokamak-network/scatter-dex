@@ -18,14 +18,16 @@ import {
 } from "./zk-prover.js";
 import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
+import { sendAndWait } from "./tx-retry.js";
+import { recordSettlement } from "./metrics.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
-  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint96 totalLockedMaker, uint96 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker, address makerRelayer, address takerRelayer) p) external",
-  "function scatterDirect(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, bytes32 nullifier, bytes32 newCommitment, address token, uint256 withdrawAmount, bytes32 claimsRoot, uint96 totalLocked, uint96 fee) p) external",
+  "function settlePrivate(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, uint256 currentTimestamp, bytes32 makerNullifier, bytes32 takerNullifier, bytes32 makerNonceNullifier, bytes32 takerNonceNullifier, bytes32 makerNewCommitment, bytes32 takerNewCommitment, bytes32 claimsRootMaker, bytes32 claimsRootTaker, uint128 totalLockedMaker, uint128 totalLockedTaker, address tokenMaker, address tokenTaker, uint96 feeTokenMaker, uint96 feeTokenTaker, address makerRelayer, address takerRelayer) p) external",
+  "function scatterDirect(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 currentRoot, bytes32 nullifier, bytes32 newCommitment, address token, uint256 withdrawAmount, bytes32 claimsRoot, uint128 totalLocked, uint96 fee) p) external",
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimNullifiers(bytes32) view returns (bool)",
 ];
@@ -74,6 +76,10 @@ export class PrivateSubmitter {
 
   getWallet(): ethers.Wallet {
     return this.wallet;
+  }
+
+  getProvider(): ethers.JsonRpcProvider {
+    return this.provider;
   }
 
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
@@ -327,7 +333,9 @@ export class PrivateSubmitter {
 
     // Submit on-chain (mutex prevents nonce race with concurrent claims/settles)
     return this.withTxLock(async () => {
-      const tx = await this.settlement.settlePrivate({
+      // [R-1] Gas estimation + profitability check
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const settleParams = {
         proofA,
         proofB,
         proofC,
@@ -349,11 +357,32 @@ export class PrivateSubmitter {
         feeTokenTaker,
         makerRelayer: makerRelayerAddr,
         takerRelayer: takerRelayerAddr,
-      });
+      };
 
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-1] Gas estimation + gas price cap only.
+      // feeTokenMaker/feeTokenTaker are token-denominated amounts (not native-gas wei),
+      // so profitability comparison against ETH gas cost is skipped until a token→native
+      // price oracle is available. Pass 0n to bypass profitability check.
+      const gasCheck = await estimateAndGuard(this.settlement, "settlePrivate", [settleParams], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] settlePrivate rejected: ${gasCheck.reason}`);
+        throw new Error(`Settlement rejected: ${gasCheck.reason}`);
+      }
+      console.log(`[gas-guard] settlePrivate: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const settleStart = Date.now();
+      const { txHash } = await sendAndWait(
+        () => this.settlement.settlePrivate(settleParams, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "settlePrivate",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "settlePrivate"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - settleStart);
       console.log(`Private settlement tx: ${txHash}`);
 
       // Record claims roots so this relayer only pays gas for its own claims.
@@ -472,7 +501,7 @@ export class PrivateSubmitter {
     const crHex = "0x" + claimsRoot.toString(16).padStart(64, "0");
 
     return this.withTxLock(async () => {
-      const tx = await this.settlement.scatterDirect({
+      const scatterParams = {
         proofA,
         proofB,
         proofC,
@@ -484,11 +513,31 @@ export class PrivateSubmitter {
         claimsRoot: crHex,
         totalLocked,
         fee,
-      });
+      };
 
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("ScatterDirect transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      // [R-1] Gas estimation + gas price cap only.
+      // `fee` is denominated in the withdrawn ERC20 token, not native gas wei.
+      // Skip profitability comparison until token→native conversion is available.
+      const { estimateAndGuard } = await import("./gas-guard.js");
+      const gasCheck = await estimateAndGuard(this.settlement, "scatterDirect", [scatterParams], 0n);
+      if (!gasCheck.profitable) {
+        console.warn(`[gas-guard] scatterDirect rejected: ${gasCheck.reason}`);
+        throw new Error(`ScatterDirect rejected: ${gasCheck.reason}`);
+      }
+
+      // [R-2] Safe TX send with retry + timeout + receipt recovery
+      const scatterStart = Date.now();
+      const { txHash } = await sendAndWait(
+        () => this.settlement.scatterDirect(scatterParams, { gasLimit: gasCheck.estimatedGas }),
+        this.provider,
+        {
+          label: "scatterDirect",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "scatterDirect"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
+      // [R-8] Record settlement metrics
+      recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - scatterStart);
       console.log(`ScatterDirect tx: ${txHash}`);
 
       // Record claims root so this relayer only pays gas for its own claims.
@@ -565,21 +614,25 @@ export class PrivateSubmitter {
     if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
 
     return this.withTxLock(async () => {
-      const tx = await this.settlement.claimWithProof(
-        params.proofA,
-        params.proofB,
-        params.proofC,
-        params.claimsRoot,
-        params.claimNullifier,
-        params.amount,
-        params.token,
-        params.recipient,
-        params.releaseTime,
+      const { txHash } = await sendAndWait(
+        () => this.settlement.claimWithProof(
+          params.proofA,
+          params.proofB,
+          params.proofC,
+          params.claimsRoot,
+          params.claimNullifier,
+          params.amount,
+          params.token,
+          params.recipient,
+          params.releaseTime,
+        ),
+        this.provider,
+        {
+          label: "claimWithProof",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimWithProof"); },
+        },
       );
-
-      const receipt = await tx.wait();
-      if (!receipt) throw new Error("Claim transaction failed: no receipt");
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      this.db?.removePendingTx(txHash);
       console.log(`Gasless claim tx: ${txHash}`);
       return txHash;
     });
@@ -597,9 +650,15 @@ export class PrivateSubmitter {
     if (balance === 0n) throw new Error("No fees to claim for this token");
 
     return this.withTxLock(async () => {
-      const tx = await vault.claim(token);
-      const receipt = await tx.wait();
-      const txHash = receipt.hash ?? receipt.transactionHash;
+      const { txHash } = await sendAndWait(
+        () => vault.claim(token),
+        this.provider,
+        {
+          label: "claimVaultFee",
+          onTxHash: (hash) => { this.db?.savePendingTx(hash, "claimVaultFee"); },
+        },
+      );
+      this.db?.removePendingTx(txHash);
       console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
       return txHash;
     });

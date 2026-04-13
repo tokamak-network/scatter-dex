@@ -19,7 +19,7 @@ pragma solidity ^0.8.28;
 ///   [8]  maxFee           uint16  — maximum fee in basis points the user authorises
 ///   [9]  expiry           uint64  — unix seconds; settleAuth must verify against block.timestamp
 ///   [10] claimsRoot       bytes32 — Merkle root of this user's claims tree
-///   [11] totalLocked      uint96  — sum of this user's claim amounts (must equal sum in-circuit)
+///   [11] totalLocked      uint128 — sum of this user's claim amounts (must equal sum in-circuit; circuit Num2Bits(128))
 ///   [12] relayer          uint160 packed into uint256 — relayer bound in proof
 ///   [13] orderHash        bytes32 — Poseidon hash over the EdDSA-signed order parameters
 ///
