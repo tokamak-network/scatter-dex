@@ -16,7 +16,7 @@ import { formatBalance, shortAddr } from '../lib/format';
 import { colors } from '../styles/theme';
 
 const ACT_ICONS: Record<ActivityType, string> = {
-  deposit: '↓', settle: '⇄', claim: '💰', cancel: '✕',
+  deposit: '↓', settle: '⇄', settle_dex: '⇆', settle_scatter: '⤳', claim: '💰', cancel: '✕',
 };
 
 export default function HomeScreen() {
