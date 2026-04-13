@@ -196,13 +196,19 @@ export const OrderService = {
       // proof and the settled funds become unrecoverable. Persist BEFORE we
       // mark the escrow note as spent so a write failure bubbles up instead
       // of leaving an orphaned spent-state with no way to claim.
+      //
+      // `claimsData.recipient` / `claimsData.token` are decimal field-element
+      // strings (for the Poseidon hash), but ClaimService.execute passes the
+      // persisted values straight into `claimWithProof(..., token, recipient,
+      // ...)` which expect Solidity `address` — so persist the original
+      // 0x-prefixed hex forms instead of the decimal strings.
       await PendingClaimsStorage.append(
-        claimsData.map((c, idx) => ({
-          secret: c.secret,
+        claims.map((c, idx) => ({
+          secret: claimsData[idx].secret,
           recipient: c.recipient,
-          token: c.token,
-          amount: c.amount,
-          releaseTime: c.releaseTime,
+          token: buyToken,
+          amount: claimsData[idx].amount,
+          releaseTime: claimsData[idx].releaseTime,
           leafIndex: idx,
           allLeaves: claimLeafHashes,
           txHash: response.orderId || '',

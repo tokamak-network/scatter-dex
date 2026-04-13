@@ -267,7 +267,12 @@ export const MarketOrderService = {
       //   [14] orderHash
       // Source every field that is part of the verified proof from ps[] so the
       // on-chain verifier cannot reject us for an input/proof value drift.
+      // Address-typed fields (sellToken/buyToken/relayer) arrive as decimal
+      // field-element strings — the ABI encoder needs them as 0x-prefixed
+      // checksummed addresses, so normalize via ethers.getAddress.
       const ps = proofResult.publicSignals;
+      const toAddressHex = (fieldElement: string): string =>
+        ethers.getAddress(ethers.toBeHex(BigInt(fieldElement), 20));
       const tx = await settlement.settleWithDex({
         proof: {
           proofA: proof.a,
@@ -278,15 +283,15 @@ export const MarketOrderService = {
           nullifier: ps[2],
           nonceNullifier: ps[3],
           newCommitment: ps[4],
-          sellToken: ps[5],
-          buyToken: ps[6],
+          sellToken: toAddressHex(ps[5]),
+          buyToken: toAddressHex(ps[6]),
           sellAmount: ps[7],
           buyAmount: ps[8],
           maxFee: ps[9],
           expiry: ps[10],
           claimsRoot: ps[11],
           totalLocked: ps[12],
-          relayer: ps[13],
+          relayer: toAddressHex(ps[13]),
           orderHash: ps[14],
         },
         dexRouter,
