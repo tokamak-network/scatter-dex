@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
-import { BookUser, FolderOpen, Plus, Trash2, Copy, Check, X } from "lucide-react";
+import { BookUser, Plus, Trash2, Copy, Check, X } from "lucide-react";
 import { useWallet } from "../lib/wallet";
 import { useNotesFolder } from "../lib/zk/useNotesFolder";
+import { FolderGate } from "../components/FolderGate";
 import { shortenAddress } from "../lib/utils";
 import {
   addWallet,
@@ -16,7 +17,7 @@ import {
 
 export default function WalletsPage() {
   const { account } = useWallet();
-  const { folderReady, folderName, restoring, handleSelectFolder, fsAvailable } = useNotesFolder();
+  const { folderReady, folderName } = useNotesFolder();
 
   const [entries, setEntries] = useState<WalletEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,7 +69,7 @@ export default function WalletsPage() {
     }
   }
 
-  async function handleAddConnected() {
+  function handleAddConnected() {
     if (!account) return;
     setNewLabel((l) => l || "My wallet");
     setNewAddress(account);
@@ -92,12 +93,20 @@ export default function WalletsPage() {
     await refresh();
   }
 
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
+
   async function copyAddress(addr: string) {
     try {
       await navigator.clipboard.writeText(addr);
       setCopied(addr);
-      setTimeout(() => setCopied((c) => (c === addr ? null : c)), 1200);
-    } catch { /* ignore */ }
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(null), 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Clipboard copy failed");
+    }
   }
 
   return (
@@ -111,29 +120,7 @@ export default function WalletsPage() {
         </p>
       </div>
 
-      {!fsAvailable && (
-        <div className="rounded-xl border border-error/30 bg-error/10 p-4 text-sm text-error mb-6">
-          This browser does not support the File System Access API. Use Chrome or Edge.
-        </div>
-      )}
-
-      {fsAvailable && !folderReady && (
-        <div className="rounded-2xl border border-outline-variant/10 bg-surface-container p-8 text-center space-y-4">
-          <FolderOpen className="w-12 h-12 text-primary mx-auto" />
-          <p className="text-sm text-on-surface-variant">
-            Select your notes folder to load or create your address book.
-          </p>
-          <button
-            onClick={handleSelectFolder}
-            disabled={restoring}
-            className="gradient-btn text-on-primary-fixed px-6 py-3 rounded-md font-bold text-sm disabled:opacity-50"
-          >
-            {restoring ? "Restoring…" : "Select Folder"}
-          </button>
-        </div>
-      )}
-
-      {folderReady && (
+      <FolderGate>
         <>
           <div className="text-xs font-mono text-on-surface-variant mb-6">
             Folder: {folderName ?? "—"}
@@ -278,7 +265,7 @@ export default function WalletsPage() {
             })}
           </div>
         </>
-      )}
+      </FolderGate>
     </div>
   );
 }

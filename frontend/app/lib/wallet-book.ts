@@ -14,7 +14,7 @@ import {
   saveFileToFolder,
 } from "./zk/note-storage";
 
-export const WALLET_BOOK_FILENAME = "zkscatter-wallets.json";
+const WALLET_BOOK_FILENAME = "zkscatter-wallets.json";
 
 export interface WalletEntry {
   id: string;
@@ -94,12 +94,15 @@ export async function updateWallet(
   id: string,
   patch: Partial<Pick<WalletEntry, "label" | "memo">>,
 ): Promise<void> {
+  if (patch.label !== undefined && !patch.label.trim()) {
+    throw new Error("Label is required");
+  }
   const entries = await loadWalletBook();
   const next = entries.map((e) =>
     e.id === id
       ? {
           ...e,
-          label: patch.label !== undefined ? patch.label.trim() || e.label : e.label,
+          label: patch.label !== undefined ? patch.label.trim() : e.label,
           memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
         }
       : e,
