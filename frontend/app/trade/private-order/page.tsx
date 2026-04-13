@@ -78,6 +78,10 @@ interface BuildOrderParams {
   relayerAddress: string;
   eddsaPrivateKey: Uint8Array;
   zkRelayerUrl?: string;
+  /** Called with a human-readable status before each long-running step
+   *  so the UI can show what the user is waiting on instead of a single
+   *  opaque "Signing order with EdDSA..." line. */
+  onProgress?: (message: string) => void;
 }
 
 // Truncate a decimal string to `maxDecimals` digits after the dot without
@@ -93,8 +97,10 @@ function truncateDecimals(s: string, maxDecimals: number): string {
 }
 
 async function buildOrderProof(params: BuildOrderParams) {
-  const { sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, changeSalt, maxFee, relayerAddress, eddsaPrivateKey, zkRelayerUrl } = params;
+  const { sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, changeSalt, maxFee, relayerAddress, eddsaPrivateKey, zkRelayerUrl, onProgress } = params;
+  const report = (msg: string) => onProgress?.(msg);
 
+  report("Preparing order data...");
   const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
   const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
   const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
@@ -139,6 +145,7 @@ async function buildOrderProof(params: BuildOrderParams) {
   const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
 
   // Compute claimsRoot
+  report("Hashing claims and building claims tree...");
   const claimLeafHashes = await Promise.all(
     claimData.map((c) => poseidonHash([BigInt(c.secret), BigInt(c.recipient), BigInt(c.token), BigInt(c.amount), BigInt(c.releaseTime)]))
   );
@@ -147,6 +154,7 @@ async function buildOrderProof(params: BuildOrderParams) {
   const { root: claimsRoot } = await buildMerkleTree(padded, 4);
 
   // Fetch Merkle proof (relayer fast path, then on-chain fallback)
+  report("Fetching commitment Merkle proof...");
   let merkleProof: { root: bigint; pathElements: bigint[]; pathIndices: number[] };
   try {
     if (!zkRelayerUrl) throw new Error("no relayer");
@@ -155,6 +163,7 @@ async function buildOrderProof(params: BuildOrderParams) {
     const mpData = await mpRes.json();
     merkleProof = { root: BigInt(mpData.root), pathElements: mpData.pathElements.map((e: string) => BigInt(e)), pathIndices: mpData.pathIndices };
   } catch {
+    report("Fetching commitment Merkle proof from chain (slower)...");
     const provider = getReadProvider();
     const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
     const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
@@ -168,6 +177,7 @@ async function buildOrderProof(params: BuildOrderParams) {
   }
 
   // Generate authorize proof in Web Worker
+  report("Generating ZK proof (this is the slow step, ~10–30s)...");
   const { generateAuthorizeProofInWorker } = await import("../../lib/zk/authorize-worker-client");
   const proofResult = await generateAuthorizeProofInWorker({
     note: selectedNote.note, leafIndex: selectedNote.leafIndex, merkleProof,
@@ -193,6 +203,10 @@ export default function PrivateOrderPage() {
   const [selectedRelayerIdx, setSelectedRelayerIdx] = useState(0);
 
   const [step, setStep] = useState<Step>("setup_key");
+  // Stepped status shown next to the spinner during proof generation —
+  // populated by buildOrderProof's onProgress callback so the user sees
+  // which sub-step they're waiting on (~30s wait is otherwise opaque).
+  const [signingProgress, setSigningProgress] = useState<string>("");
   const [keyPair, setKeyPair] = useState<EdDSAKeyPair | null>(null);
   const [keyLoading, setKeyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -589,6 +603,7 @@ export default function PrivateOrderPage() {
     if (!kp) { setError("Unlock or generate a trading key first"); return; }
 
     setStep("signing");
+    setSigningProgress("Preparing order data...");
     setError(null);
 
     try {
@@ -598,6 +613,7 @@ export default function PrivateOrderPage() {
       const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
         sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
         selectedNote, changeSalt, maxFee: BigInt(effectiveFeeBps || 30),
+        onProgress: setSigningProgress,
         relayerAddress: selectedZkRelayer.address, eddsaPrivateKey: kp.privateKey,
         zkRelayerUrl: selectedZkRelayer.url,
       });
@@ -624,6 +640,7 @@ export default function PrivateOrderPage() {
         relayer: ps[13],
         orderHash: ps[14],
       };
+      setSigningProgress("Submitting to ZK relayer...");
       const res = await fetch(`${relayerUrl}/api/authorize-orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -723,6 +740,7 @@ export default function PrivateOrderPage() {
       }
 
       setSubmittedOrderType("limit");
+      setSigningProgress("");
       setStep("submitted");
       setSellAmount("");
       setBuyAmount("");
@@ -731,6 +749,7 @@ export default function PrivateOrderPage() {
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(friendlyError(e));
+      setSigningProgress("");
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
@@ -742,6 +761,7 @@ export default function PrivateOrderPage() {
     if (!kp) { setError("Unlock or generate a trading key first"); return; }
 
     setStep("signing");
+    setSigningProgress("Preparing market order...");
     setError(null);
 
     try {
@@ -750,8 +770,10 @@ export default function PrivateOrderPage() {
         selectedNote, changeSalt, maxFee: 0n,
         relayerAddress: account, eddsaPrivateKey: kp.privateKey,
         zkRelayerUrl: zkRelayers[selectedRelayerIdx]?.url,
+        onProgress: setSigningProgress,
       });
 
+      setSigningProgress("Submitting market settle on-chain...");
       // Call settleWithDex on-chain
       const ps = proofResult.publicSignals;
       const settlementAddr = getPrivateSettlementAddress();
@@ -852,11 +874,13 @@ export default function PrivateOrderPage() {
       }
 
       setSubmittedOrderType("market");
+      setSigningProgress("");
       setStep("submitted");
       setSellAmount(""); setBuyAmount(""); setPrice(""); setSelectedCommitment(null);
       setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(friendlyError(e));
+      setSigningProgress("");
       setStep("error");
     }
   }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, changeAmount, dexPrices, zkRelayers, selectedRelayerIdx]);
@@ -1481,7 +1505,12 @@ export default function PrivateOrderPage() {
         {step === "signing" && (
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto mb-4" />
-            <p className="text-on-surface font-medium">Signing order with EdDSA...</p>
+            <p className="text-on-surface font-medium">
+              {signingProgress || "Generating ZK proof..."}
+            </p>
+            <p className="text-xs text-on-surface-variant/60 mt-2">
+              The ZK proof step takes ~10–30s — claim hashing + EdDSA + Groth16 witness + proof. Window stays responsive.
+            </p>
           </div>
         )}
 
