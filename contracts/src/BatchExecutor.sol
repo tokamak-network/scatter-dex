@@ -36,7 +36,17 @@ contract BatchExecutor {
     error NotAuthorizedCaller();
     error UnsupportedCallType(bytes1 callType);
     error UnsupportedExecType(bytes1 execType);
+    error UnsupportedModeFields(bytes32 mode);
     error ExecutionFailed(uint256 index, bytes returnData);
+
+    // Mask over bytes 2..31 of the ERC-7579 mode — the reserved bytes,
+    // modeSelector, and modePayload. This minimal executor accepts only
+    // (batch, default) with no selector/payload, so anything non-zero
+    // past the first two bytes implies extended semantics we don't
+    // honor. Rejecting explicitly prevents clients from silently
+    // invoking an unimplemented ERC-7821 / 7579 extension.
+    bytes32 internal constant MODE_TAIL_MASK =
+        0x0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
 
     /// @notice ERC-7579 execute entrypoint.
     /// @param  mode              Packed call/exec type (see above).
@@ -48,6 +58,7 @@ contract BatchExecutor {
         bytes1 execType = mode[1];
         if (callType != CALLTYPE_BATCH)   revert UnsupportedCallType(callType);
         if (execType != EXECTYPE_DEFAULT) revert UnsupportedExecType(execType);
+        if ((mode & MODE_TAIL_MASK) != bytes32(0)) revert UnsupportedModeFields(mode);
 
         // Memory decode keeps the contract small. Typical batches are 2-3
         // calls so the allocation cost is trivial vs. the gas a delegated

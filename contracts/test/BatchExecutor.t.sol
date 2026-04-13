@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
@@ -63,6 +63,26 @@ contract BatchExecutorTest is Test {
         vm.prank(address(executor));
         vm.expectRevert(abi.encodeWithSelector(BatchExecutor.UnsupportedExecType.selector, bytes1(0x01)));
         executor.execute(BATCH_TRY_MODE, empty);
+    }
+
+    function test_rejects_nonzero_mode_tail() public {
+        // Batch/default callType+execType but with a non-zero modeSelector
+        // (bytes 6..9). Should be rejected — this minimal executor doesn't
+        // honor ERC-7821 / ERC-7579 selector extensions.
+        bytes32 modeWithSelector = bytes32((uint256(1) << 248) | (uint256(0xdeadbeef) << 176));
+        bytes memory empty = abi.encode(new BatchExecutor.Execution[](0));
+        vm.prank(address(executor));
+        vm.expectRevert(abi.encodeWithSelector(BatchExecutor.UnsupportedModeFields.selector, modeWithSelector));
+        executor.execute(modeWithSelector, empty);
+    }
+
+    function test_rejects_nonzero_reserved_bytes() public {
+        // Reserved bytes (2..5) must be zero per ERC-7579.
+        bytes32 modeWithReserved = bytes32((uint256(1) << 248) | (uint256(0xff) << 232));
+        bytes memory empty = abi.encode(new BatchExecutor.Execution[](0));
+        vm.prank(address(executor));
+        vm.expectRevert(abi.encodeWithSelector(BatchExecutor.UnsupportedModeFields.selector, modeWithReserved));
+        executor.execute(modeWithReserved, empty);
     }
 
     function test_empty_batch_is_noop() public {
