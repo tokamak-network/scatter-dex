@@ -84,7 +84,15 @@ async function buildOrderProof(params: BuildOrderParams) {
   const { sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, changeSalt, maxFee, relayerAddress, eddsaPrivateKey, zkRelayerUrl } = params;
 
   const parsedSell = ethers.parseUnits(sellAmount, sellToken.decimals);
-  const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
+  const parsedBuyGross = ethers.parseUnits(buyAmount, buyToken.decimals);
+  // The signed `buyAmount` (what the circuit guards via
+  // `totalLocked >= buyAmount`) is the NET amount the recipients
+  // actually receive — gross minus the maker's max fee. Claim amounts
+  // sum to this net value, so the circuit's minimum-receive guarantee
+  // matches what the UI promises the user. See README of PR that
+  // introduced this convention.
+  const feeTokenMaker = (parsedBuyGross * maxFee) / 10000n; // BigInt floor
+  const parsedBuy = parsedBuyGross - feeTokenMaker;
   const expiryTimestamp = BigInt(Math.floor(Date.now() / 1000) + Number(expiry) * 3600);
   const nonce = BigInt(Date.now());
 
@@ -372,19 +380,6 @@ export default function PrivateOrderPage() {
     return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
   }, [claimTotalWei, buyTokenDecimals]);
 
-  // BigInt check that matches the authorize circuit constraint
-  // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
-  const claimShortfall = useMemo((): bigint | null => {
-    if (buyTokenDecimals == null || !buyAmount) return null;
-    try {
-      const need = ethers.parseUnits(buyAmount, buyTokenDecimals);
-      if (need === 0n) return null;
-      return claimTotalWei >= need ? 0n : need - claimTotalWei;
-    } catch {
-      return null;
-    }
-  }, [claimTotalWei, buyAmount, buyTokenDecimals]);
-
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
 
@@ -414,6 +409,33 @@ export default function PrivateOrderPage() {
 
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
+
+  // Target in BigInt wei: the NET amount recipients actually receive
+  // (gross buyAmount − maker's max fee). Claim amounts sum to this
+  // value; that same net value is what `buildOrderProof` passes to
+  // the authorize circuit as `buyAmount`. Keeping all three (fillRest
+  // target, submit gate, signed circuit input) in lockstep is what
+  // prevents the "UI says 1.0000, circuit sees 0.9970" mismatch.
+  const netBuyAmountWei = useMemo((): bigint | null => {
+    if (buyTokenDecimals == null || !buyAmount) return null;
+    try {
+      const gross = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      if (gross === 0n) return 0n;
+      const fee = (gross * BigInt(effectiveFeeBps)) / 10000n;
+      return gross - fee;
+    } catch {
+      return null;
+    }
+  }, [buyAmount, buyTokenDecimals, effectiveFeeBps]);
+
+  // BigInt check that matches the authorize circuit constraint
+  // `sum(claim amounts) >= buyAmount` with the net convention
+  // (signed buyAmount in the circuit == netBuyAmountWei).
+  const claimShortfall = useMemo((): bigint | null => {
+    if (netBuyAmountWei === null) return null;
+    if (netBuyAmountWei === 0n) return 0n;
+    return claimTotalWei >= netBuyAmountWei ? 0n : netBuyAmountWei - claimTotalWei;
+  }, [claimTotalWei, netBuyAmountWei]);
 
   // Recompute buyAmount from sell * price (fee is deducted at settlement, not here)
   const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
@@ -454,19 +476,14 @@ export default function PrivateOrderPage() {
     }
   }, [changeAmount]);
 
-  // Fill against gross buyAmount so `sum(claims) === buyAmount` holds in
-  // BigInt terms — the authorize circuit's minimum-receive check is an
-  // integer comparison and a fee-sized rounding gap would fail it.
+  // Fill against NET (buyAmount − fee). The circuit's signed buyAmount
+  // equals this net value, so a full-row Rest click produces claims
+  // that sum to exactly what the circuit enforces.
   const fillRest = (id: number) => {
-    if (buyTokenDecimals == null || !buyAmount) return;
-    try {
-      const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
-      const othersBig = sumClaimWei(id);
-      const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
-      updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
-    } catch {
-      /* buyAmount still being typed; no-op */
-    }
+    if (buyTokenDecimals == null || netBuyAmountWei === null) return;
+    const othersBig = sumClaimWei(id);
+    const restBig = netBuyAmountWei > othersBig ? netBuyAmountWei - othersBig : 0n;
+    updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
   };
 
   // List available EdDSA keys in folder
@@ -1263,19 +1280,14 @@ export default function PrivateOrderPage() {
                     <span>Claims total: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}</span>
                     <span>Recipients receive (after fee): {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
-                  {claimShortfall !== null && claimShortfall > 0n && (
+                  {claimShortfall !== null && claimShortfall > 0n && netBuyAmountWei !== null && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} (buyAmount). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total {ethers.formatUnits(netBuyAmountWei, buyToken.decimals)} {buyToken.symbol} (buyAmount − fee). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (
                     <div className="text-xs text-error font-bold">
                       buyAmount &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
-                    </div>
-                  )}
-                  {parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
-                    <div className="text-[11px] text-on-surface-variant/60">
-                      For a match, the counterparty must sell ≥ {buyAmount} + fee ≈ {(parseFloat(buyAmount) * (1 + effectiveFeeBps / 10000)).toFixed(4)} {buyToken.symbol}.
                     </div>
                   )}
                 </div>
