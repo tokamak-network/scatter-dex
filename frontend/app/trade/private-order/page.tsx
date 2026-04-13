@@ -1117,12 +1117,16 @@ export default function PrivateOrderPage() {
                 <input
                   type="text"
                   inputMode="decimal"
-                  // Scatter: Buy Amount is the transaction total (=Sell, 1:1);
-                  // recipients split `buyAmount − fee`. The state var `buyAmount`
-                  // is already the post-fee distributable (what the circuit signs),
-                  // so surface `sellAmount` in the input to show the gross value.
+                  // Scatter: display the gross transaction total (`sellAmount`) in this
+                  // read-only input to show the 1:1 amount before fees. The state var
+                  // `buyAmount` is already the post-fee distributable that recipients
+                  // split (i.e. `buyAmount = sellAmount − fee`), and that is what the
+                  // circuit signs.
                   value={isScatterMode ? sellAmount : buyAmount}
-                  onChange={(e) => setBuyAmount(e.target.value)}
+                  // Guard the setter with the readOnly condition so a stray programmatic
+                  // change event (autofill, form reset) can't desync `buyAmount` from
+                  // the `sellAmount` it's mirroring while the field is read-only.
+                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => setBuyAmount(e.target.value)}
                   readOnly={orderType === "market" || isScatterMode}
                   className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 ${
                     orderType === "market" || isScatterMode ? "opacity-70" : ""
@@ -1415,12 +1419,12 @@ export default function PrivateOrderPage() {
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (!isScatterMode || scatterExcessWei === 0n) && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} (recipients receive). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "recipients receive" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (
                     <div className="text-xs text-error font-bold">
-                      Buy Amount &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
+                      Buy Amount &quot;{isScatterMode ? sellAmount : buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
                     </div>
                   )}
                   {isScatterMode && scatterExcessWei !== null && scatterExcessWei > 0n && scatterMaxDistributeWei !== null && (
