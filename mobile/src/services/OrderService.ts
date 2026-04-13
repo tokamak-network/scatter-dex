@@ -17,6 +17,7 @@ import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
 import { ConfigService } from './ConfigService';
+import { PendingClaimsStorage } from './PendingClaimsStorage';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree } from '../lib/merkleTree';
@@ -50,8 +51,8 @@ export interface OrderInput {
   maxFeeBps: number;         // max fee in basis points
   expiryHours: number;       // expiry in hours from now
   claims: ClaimInput[];      // claims 분배
-  relayerUrl?: string;       // 릴레이어 URL (옵션)
-  relayerAddress?: string;   // 릴레이어 주소 (옵션)
+  relayerUrl: string;        // 릴레이어 URL (필수 — 서명 정합성)
+  relayerAddress: string;    // 릴레이어 주소 (필수 — circuit에서 해싱됨)
 }
 
 export const OrderService = {
@@ -107,10 +108,16 @@ export const OrderService = {
       // ─── Step 3: Order hash + EdDSA 서명 ──────────────
       onProgress({ step: 'signing_order' });
 
-      // Use provided relayer address or '0' if relayer fills it server-side
-      const relayerAddress = input.relayerAddress
-        ? BigInt(input.relayerAddress).toString()
-        : '0';
+      // Relayer address is baked into the authorize circuit hash. A mismatch
+      // between what we sign here and what the settling relayer uses will
+      // make the EdDSA check fail on-chain, so require it up front.
+      if (!input.relayerAddress || !ethers.isAddress(input.relayerAddress)) {
+        throw new Error('relayerAddress is required and must be a valid address');
+      }
+      // Checksum-normalize so two callers that differ only in casing produce
+      // the same orderHash (and the same `scatterdex_pending_claims` entry).
+      const relayerChecksummed = ethers.getAddress(input.relayerAddress);
+      const relayerAddress = BigInt(relayerChecksummed).toString();
 
       const orderHashInputs = [
         BigInt(note.token).toString(),     // sellToken
@@ -182,8 +189,31 @@ export const OrderService = {
         throw new Error(response.reason || 'Order rejected by relayer');
       }
 
-      // ─── Step 6: Change 노트 저장 + 원본 노트 상태 변경 ─
+      // ─── Step 6: Persist claim secrets + change note + mark spent ─
       onProgress({ step: 'saving_change' });
+
+      // Without the claim secrets, the user cannot later produce the claim
+      // proof and the settled funds become unrecoverable. Persist BEFORE we
+      // mark the escrow note as spent so a write failure bubbles up instead
+      // of leaving an orphaned spent-state with no way to claim.
+      //
+      // `claimsData.recipient` / `claimsData.token` are decimal field-element
+      // strings (for the Poseidon hash), but ClaimService.execute passes the
+      // persisted values straight into `claimWithProof(..., token, recipient,
+      // ...)` which expect Solidity `address` — so persist the original
+      // 0x-prefixed hex forms instead of the decimal strings.
+      await PendingClaimsStorage.append(
+        claims.map((c, idx) => ({
+          secret: claimsData[idx].secret,
+          recipient: c.recipient,
+          token: buyToken,
+          amount: claimsData[idx].amount,
+          releaseTime: claimsData[idx].releaseTime,
+          leafIndex: idx,
+          allLeaves: claimLeafHashes,
+          txHash: response.orderId || '',
+        })),
+      );
 
       // Mark original note as spent (in trading)
       await NoteStorageService.updateNoteStatus(note.id, 'spent');
@@ -216,5 +246,6 @@ export const OrderService = {
     }
   },
 };
+
 
 

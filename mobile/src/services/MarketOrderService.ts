@@ -249,7 +249,30 @@ export const MarketOrderService = {
         'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint96 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata) p) external',
       ], signer);
 
+      // publicSignals layout (see circuits/authorize.circom:506-529):
+      //   [0]  pubKeyBind     (circuit output)
+      //   [1]  commitmentRoot
+      //   [2]  nullifier
+      //   [3]  nonceNullifier
+      //   [4]  newCommitment
+      //   [5]  sellToken
+      //   [6]  buyToken
+      //   [7]  sellAmount
+      //   [8]  buyAmount
+      //   [9]  maxFee
+      //   [10] expiry
+      //   [11] claimsRoot
+      //   [12] totalLocked
+      //   [13] relayer
+      //   [14] orderHash
+      // Source every field that is part of the verified proof from ps[] so the
+      // on-chain verifier cannot reject us for an input/proof value drift.
+      // Address-typed fields (sellToken/buyToken/relayer) arrive as decimal
+      // field-element strings — the ABI encoder needs them as 0x-prefixed
+      // checksummed addresses, so normalize via ethers.getAddress.
       const ps = proofResult.publicSignals;
+      const toAddressHex = (fieldElement: string): string =>
+        ethers.getAddress(ethers.toBeHex(BigInt(fieldElement), 20));
       const tx = await settlement.settleWithDex({
         proof: {
           proofA: proof.a,
@@ -260,15 +283,15 @@ export const MarketOrderService = {
           nullifier: ps[2],
           nonceNullifier: ps[3],
           newCommitment: ps[4],
-          sellToken: note.token,
-          buyToken,
-          sellAmount,
-          buyAmount,
-          maxFee: 0,
-          expiry,
+          sellToken: toAddressHex(ps[5]),
+          buyToken: toAddressHex(ps[6]),
+          sellAmount: ps[7],
+          buyAmount: ps[8],
+          maxFee: ps[9],
+          expiry: ps[10],
           claimsRoot: ps[11],
-          totalLocked: buyAmount,
-          relayer: account,
+          totalLocked: ps[12],
+          relayer: toAddressHex(ps[13]),
           orderHash: ps[14],
         },
         dexRouter,
@@ -300,8 +323,11 @@ export const MarketOrderService = {
         });
       }
 
-      // Save claim data so user can later call claimWithProof
-      const claimBundle = {
+      // Persist claim data so the user can later produce the claim proof.
+      // Route through PendingClaimsStorage so a future SecureStore migration
+      // for the `secret` field touches a single module (#233 follow-up).
+      const { PendingClaimsStorage } = await import('./PendingClaimsStorage');
+      await PendingClaimsStorage.append([{
         secret: claimSecret,
         recipient: claimRecipient,
         token: buyToken,
@@ -310,13 +336,7 @@ export const MarketOrderService = {
         leafIndex: 0,
         allLeaves: claimLeaves,
         txHash: tx.hash,
-      };
-      // Store claim in AsyncStorage for retrieval in ClaimScreen
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      const existingClaims = await AsyncStorage.getItem('scatterdex_pending_claims');
-      const claims = existingClaims ? JSON.parse(existingClaims) : [];
-      claims.push(claimBundle);
-      await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(claims));
+      }]);
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;
