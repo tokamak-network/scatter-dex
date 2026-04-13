@@ -33,6 +33,12 @@ export default function AddressBookModal(props: Props) {
   const [entries, setEntries] = useState<WalletEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracked separately from `error` so the Reset CTA is gated on the
+  // actual error type (caught from `WalletBookCorruptError` in `reload`)
+  // rather than substring-matching the message — phrasing changes
+  // wouldn't silently break or, worse, make Reset show on unrelated
+  // failures.
+  const [isCorrupt, setIsCorrupt] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLabel, setFormLabel] = useState('');
@@ -43,16 +49,18 @@ export default function AddressBookModal(props: Props) {
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setIsCorrupt(false);
     try {
       const list = await AddressBookService.list();
       setEntries(list);
     } catch (err: any) {
       // Corruption is recoverable — surface the option but don't auto-wipe.
-      setError(
-        err instanceof WalletBookCorruptError
-          ? `Address book is corrupted (${err.message}). Tap Reset to wipe and start over.`
-          : err?.message || 'Failed to load address book',
-      );
+      if (err instanceof WalletBookCorruptError) {
+        setIsCorrupt(true);
+        setError(`Address book is corrupted (${err.message}). Tap Reset to wipe and start over.`);
+      } else {
+        setError(err?.message || 'Failed to load address book');
+      }
     } finally {
       setLoading(false);
     }
@@ -76,6 +84,7 @@ export default function AddressBookModal(props: Props) {
   const handleClose = useCallback(() => {
     resetForm();
     setError(null);
+    setIsCorrupt(false);
     onClose();
   }, [resetForm, onClose]);
 
@@ -172,7 +181,7 @@ export default function AddressBookModal(props: Props) {
           {error && (
             <View style={s.errorBox}>
               <Text style={s.errorText}>{error}</Text>
-              {error.includes('corrupted') && (
+              {isCorrupt && (
                 <TouchableOpacity onPress={handleResetCorruption}>
                   <Text style={s.resetLink}>Reset address book</Text>
                 </TouchableOpacity>

@@ -45,9 +45,11 @@ interface WalletBookFile {
 
 function newId(): string {
   // Stable identifier the user references in the UI — avoid Math.random().
+  // The polyfill self-imported above patches `crypto.getRandomValues` onto
+  // the global, so using it directly (matching the rest of the mobile
+  // codebase, e.g. OrderService) keeps the type clean.
   const bytes = new Uint8Array(8);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).crypto.getRandomValues(bytes);
+  crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -175,8 +177,12 @@ export const AddressBookService = {
   },
 
   /** Recover from corruption by wiping. The user will lose labels but not
-   *  any sensitive data — addresses are recoverable from on-chain history. */
+   *  any sensitive data — addresses are recoverable from on-chain history.
+   *  Goes through `withLock` so a concurrent `add`/`update`/`remove` queued
+   *  before the reset can't re-create entries on top of the wiped store. */
   async wipe(): Promise<void> {
-    await AsyncStorage.removeItem(STORAGE_KEY);
+    return withLock(async () => {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    });
   },
 };
