@@ -82,6 +82,7 @@ function deserializeInput(raw: Record<string, unknown>): import("./authorize-pro
       amount: BigInt(c.amount as string),
       releaseTime: BigInt(c.releaseTime as string),
     })),
+    newSalt: raw.newSalt !== undefined ? BigInt(raw.newSalt as string) : undefined,
   };
 }
 
