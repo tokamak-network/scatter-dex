@@ -3,7 +3,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -12,7 +12,10 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
+import { StealthIdentityService } from '../services/StealthIdentityService';
+import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
+import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
   const navigation = useNavigation<any>();
@@ -23,6 +26,7 @@ export default function ClaimScreen() {
   // Claim JSON tab
   const [jsonInput, setJsonInput] = useState('');
   const [parsedJsonClaim, setParsedJsonClaim] = useState<ClaimData | null>(null);
+  const [parsedJsonEphemeralPubKey, setParsedJsonEphemeralPubKey] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Claimable Notes tab
@@ -83,9 +87,9 @@ export default function ClaimScreen() {
   const handleParseJson = useCallback(() => {
     setJsonError(null);
     setParsedJsonClaim(null);
+    setParsedJsonEphemeralPubKey(null);
     try {
       const parsed = JSON.parse(jsonInput);
-      // Validate required fields
       if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.allLeaves) {
         throw new Error('Missing required fields: secret, recipient, token, amount, allLeaves');
       }
@@ -99,10 +103,76 @@ export default function ClaimScreen() {
         allLeaves: parsed.allLeaves,
       };
       setParsedJsonClaim(claimData);
+      if (typeof parsed.ephemeralPubKey === 'string' && /^0x[0-9a-fA-F]{66}$/.test(parsed.ephemeralPubKey)) {
+        setParsedJsonEphemeralPubKey(parsed.ephemeralPubKey);
+      }
     } catch (err: any) {
       setJsonError(err?.message || 'Invalid JSON');
     }
   }, [jsonInput]);
+
+  const handleRevealStealthKey = useCallback(async (ephemeralPubKey: string, stealthAddress: string) => {
+    const identity = await StealthIdentityService.load();
+    if (!identity) {
+      Alert.alert(
+        'No Stealth Identity',
+        'Generate a stealth identity first in Settings → Stealth Identity. Without your spending and viewing keys this claim\'s stealth private key cannot be derived.',
+      );
+      return;
+    }
+    let privKey: string;
+    try {
+      privKey = deriveStealthPrivateKey(identity.spendingKey, identity.viewingKey, ephemeralPubKey);
+    } catch (err: any) {
+      Alert.alert('Derivation failed', err?.message || 'Could not derive stealth private key');
+      return;
+    }
+    // Guard against malformed/tampered claim JSON: if the derived key doesn't
+    // control `stealthAddress`, the user isn't the intended recipient (or the
+    // claim's `recipient` was rewritten). Sharing would be misleading at best
+    // and fund-losing at worst.
+    let derivedAddress: string;
+    try {
+      derivedAddress = new ethers.Wallet(privKey).address;
+    } catch (err: any) {
+      Alert.alert('Derivation failed', err?.message || 'Invalid derived key');
+      return;
+    }
+    if (ethers.getAddress(derivedAddress) !== ethers.getAddress(stealthAddress)) {
+      Alert.alert(
+        'Stealth address mismatch',
+        `The derived private key controls ${derivedAddress}, but this claim targets ${stealthAddress}. Either this meta-address didn't issue the claim, or the claim JSON was tampered. Refusing to reveal.`,
+      );
+      return;
+    }
+    Alert.alert(
+      'Stealth Private Key',
+      `Controls stealth address ${stealthAddress}.\n\nImport this into any secp256k1 wallet to move the claimed funds out. Anyone with this key can drain that address — share with care.\n\n${privKey}`,
+      [
+        { text: 'Close', style: 'cancel' },
+        {
+          text: 'Share',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Share stealth private key?',
+              'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Continue to Share',
+                  style: 'destructive',
+                  onPress: () => Share.share({
+                    message: `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthAddress}\nprivateKey: ${privKey}`,
+                  }).catch(() => {}),
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  }, []);
 
   const toPendingClaimData = (pc: PendingClaim): ClaimData => ({
     secret: pc.secret,
@@ -335,19 +405,29 @@ export default function ClaimScreen() {
                 </TouchableOpacity>
                 {jsonError && <Text style={s.errorText}>{jsonError}</Text>}
                 {parsedJsonClaim && (
-                  <View style={s.itemRow}>
-                    <View style={s.itemLeft}>
-                      <View style={s.itemIcon}>
-                        <Text style={s.itemIconText}>🛡</Text>
+                  <View style={{ gap: 6 }}>
+                    <View style={s.itemRow}>
+                      <View style={s.itemLeft}>
+                        <View style={s.itemIcon}>
+                          <Text style={s.itemIconText}>🛡</Text>
+                        </View>
+                        <View>
+                          <Text style={s.itemAsset}>Parsed Claim{parsedJsonEphemeralPubKey ? ' • Stealth' : ''}</Text>
+                          <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
+                        </View>
                       </View>
-                      <View>
-                        <Text style={s.itemAsset}>Parsed Claim</Text>
-                        <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
+                      <View style={s.statusBadge}>
+                        <Text style={s.statusText}>Ready to Claim</Text>
                       </View>
                     </View>
-                    <View style={s.statusBadge}>
-                      <Text style={s.statusText}>Ready to Claim</Text>
-                    </View>
+                    {parsedJsonEphemeralPubKey && (
+                      <TouchableOpacity
+                        style={s.revealBtn}
+                        onPress={() => handleRevealStealthKey(parsedJsonEphemeralPubKey, parsedJsonClaim.recipient)}
+                      >
+                        <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </View>
@@ -372,27 +452,36 @@ export default function ClaimScreen() {
                       </TouchableOpacity>
                     </View>
                     {pendingClaims.map((item, index) => (
-                    <TouchableOpacity
-                      key={`${item.txHash}-${index}`}
-                      style={[
-                        s.itemRow,
-                        selectedIndices.has(index) && { borderColor: '#2563EB', borderWidth: 2 },
-                      ]}
-                      onPress={() => togglePendingSelection(index)}
-                    >
-                      <View style={s.itemLeft}>
-                        <View style={s.itemIcon}>
-                          <Text style={s.itemIconText}>🛡</Text>
+                    <View key={`${item.txHash}-${index}`} style={{ gap: 6 }}>
+                      <TouchableOpacity
+                        style={[
+                          s.itemRow,
+                          selectedIndices.has(index) && { borderColor: '#2563EB', borderWidth: 2 },
+                        ]}
+                        onPress={() => togglePendingSelection(index)}
+                      >
+                        <View style={s.itemLeft}>
+                          <View style={s.itemIcon}>
+                            <Text style={s.itemIconText}>🛡</Text>
+                          </View>
+                          <View>
+                            <Text style={s.itemAsset}>Claim #{index + 1}{item.ephemeralPubKey ? ' • Stealth' : ''}</Text>
+                            <Text style={s.itemAmount}>{formatAmount(item.amount)} tokens</Text>
+                          </View>
                         </View>
-                        <View>
-                          <Text style={s.itemAsset}>Claim #{index + 1}</Text>
-                          <Text style={s.itemAmount}>{formatAmount(item.amount)} tokens</Text>
+                        <View style={s.statusBadge}>
+                          <Text style={s.statusText}>Ready to Claim</Text>
                         </View>
-                      </View>
-                      <View style={s.statusBadge}>
-                        <Text style={s.statusText}>Ready to Claim</Text>
-                      </View>
-                    </TouchableOpacity>
+                      </TouchableOpacity>
+                      {item.ephemeralPubKey && (
+                        <TouchableOpacity
+                          style={s.revealBtn}
+                          onPress={() => handleRevealStealthKey(item.ephemeralPubKey!, item.recipient)}
+                        >
+                          <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                     ))}
                   </>
                 )}
@@ -509,6 +598,8 @@ const s = StyleSheet.create({
   jsonInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 13, color: '#111827', minHeight: 120, fontFamily: 'monospace' },
   parseBtn: { backgroundColor: '#EFF6FF', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   parseBtnText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
+  revealBtn: { backgroundColor: '#FEF3C7', paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' },
+  revealBtnText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
   errorText: { fontSize: 12, color: '#EF4444', fontWeight: '600' },
 
   /* Bottom Panel */
