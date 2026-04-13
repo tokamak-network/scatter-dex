@@ -46,7 +46,7 @@ import {
 import { friendlyError } from "../../lib/error-messages";
 
 
-type TxState = "idle" | "approving" | "depositing" | "success" | "error";
+type TxState = "idle" | "deriving_key" | "approving" | "depositing" | "success" | "error";
 
 export default function PrivateEscrowPage() {
   const { account, signer, connect } = useWallet();
@@ -64,11 +64,25 @@ export default function PrivateEscrowPage() {
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  // EdDSA trading key cached for the session. First deposit either
-  // unlocks the stored key (1 signMessage popup) or derives+saves a
-  // new one (1 signMessage popup + folder write); subsequent deposits
-  // in the same session reuse this state and skip the popup entirely.
-  const [keyPair, setKeyPair] = useState<EdDSAKeyPair | null>(null);
+  // EdDSA trading key cached for the session, scoped by account. First
+  // deposit either unlocks the stored key (1 signMessage popup) or
+  // derives+saves a new one (1 signMessage popup + folder write);
+  // subsequent deposits in the same session reuse this state and skip
+  // the popup entirely. Keeping the account alongside the key prevents
+  // a wallet switch mid-session from silently binding new deposits to
+  // the previous account's pubkey.
+  const [cachedKey, setCachedKey] = useState<{ account: string; keyPair: EdDSAKeyPair } | null>(null);
+  const keyPair = cachedKey && account && cachedKey.account.toLowerCase() === account.toLowerCase()
+    ? cachedKey.keyPair
+    : null;
+  useEffect(() => {
+    // Drop stale cache when the connected account changes (covers wallet
+    // switches and disconnects). The in-memory keyPair would otherwise
+    // still satisfy the "is cached" check inside handleDeposit.
+    if (cachedKey && account && cachedKey.account.toLowerCase() !== account.toLowerCase()) {
+      setCachedKey(null);
+    }
+  }, [account, cachedKey]);
 
   const poolAddress = process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS || "";
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
@@ -247,6 +261,11 @@ export default function PrivateEscrowPage() {
       // folder-backed pattern.
       let kp = keyPair;
       if (!kp) {
+        // Mark the handler busy before the first await — the button's
+        // `disabled={isBusy}` check (which now includes "deriving_key")
+        // prevents a double-click from launching a second signMessage
+        // prompt while this one is awaiting the wallet.
+        setTxState("deriving_key");
         const saved = await loadEdDSAKeyFromFolder(account);
         if (saved && isEncryptedKeyPair(saved)) {
           const signature = await signer.signMessage(DERIVE_MESSAGE);
@@ -263,7 +282,9 @@ export default function PrivateEscrowPage() {
             console.warn("[private-escrow] failed to persist EdDSA key to folder:", e);
           }
         }
-        setKeyPair(kp);
+        // Cache with the owning account so a wallet switch invalidates
+        // the cached key instead of reusing it for the new account.
+        setCachedKey({ account, keyPair: kp });
       }
 
       // For native ETH: commitment uses the WETH address (same underlying token)
@@ -362,7 +383,7 @@ export default function PrivateEscrowPage() {
     await refreshNotes();
   }, [refreshNotes]);
 
-  const isBusy = txState === "approving" || txState === "depositing";
+  const isBusy = txState === "deriving_key" || txState === "approving" || txState === "depositing";
 
   if (!account) {
     return (
@@ -705,6 +726,11 @@ export default function PrivateEscrowPage() {
                 />
               </div>
 
+              {txState === "deriving_key" && (
+                <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Unlocking trading key...
+                </div>
+              )}
               {txState === "approving" && (
                 <div className="flex items-center gap-2 text-xs text-on-surface-variant">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Approving token...
