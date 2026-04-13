@@ -1,0 +1,37 @@
+# Excluded from all Docker build contexts (root context used by
+# shared-orderbook/Dockerfile and zk-relayer/Dockerfile).
+
+# VCS / editor
+.git
+.gitignore
+.DS_Store
+
+# Dependencies — each image reinstalls via `npm ci`
+**/node_modules
+**/.next
+**/dist
+**/coverage
+
+# Runtime state
+.dev-logs
+**/*.log
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Contracts build artifacts (rebuilt in CI when needed)
+contracts/out
+contracts/cache
+contracts/broadcast
+
+# Circuits — not needed in TS service images
+circuits/build
+circuits/node_modules
+
+# Docs / examples — not shipped into images
+docs
+scripts
+README.md
+SECURITY_ISSUES.md
+TESTNET_GTM.md
+DEV.md
