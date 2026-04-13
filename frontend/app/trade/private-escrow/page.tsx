@@ -64,7 +64,7 @@ export default function PrivateEscrowPage() {
   const [orderFiles, setOrderFiles] = useState<Array<{ order?: { leafIndex: number; sellAmount: string; buyAmount: string; sellToken: string; buyToken: string; maxFee: number }; claims: Array<{ secret?: string; recipient: string; token?: string; amount: string; releaseTime: string; leafIndex?: number }>; createdAt: string }>>([]);
   const [folderReady, setFolderReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<TradeData | null>(null);
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
@@ -496,39 +496,69 @@ export default function PrivateEscrowPage() {
     if (!hiddenStorageKey) { setHiddenNotes(new Set()); return; }
     try {
       const raw = window.localStorage.getItem(hiddenStorageKey);
-      setHiddenNotes(raw ? new Set(JSON.parse(raw) as string[]) : new Set());
+      // Guard against malformed payloads (manual edits, schema drift,
+      // legacy non-array values) — fall back to an empty set rather
+      // than throwing during render.
+      const parsed = raw ? JSON.parse(raw) : [];
+      setHiddenNotes(Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === "string")) : new Set());
     } catch {
       setHiddenNotes(new Set());
     }
   }, [hiddenStorageKey]);
 
-  const persistHidden = useCallback((next: Set<string>) => {
-    setHiddenNotes(next);
-    if (!hiddenStorageKey) return;
-    try {
-      window.localStorage.setItem(hiddenStorageKey, JSON.stringify(Array.from(next)));
-    } catch { /* quota / private mode — keep state in memory */ }
+  // Functional-update wrapper: derives `next` from the latest state
+  // inside the setter so rapid hide/unhide clicks can't drop updates
+  // via stale closures, and only persists the actually-applied value.
+  const persistHidden = useCallback((update: (prev: Set<string>) => Set<string>) => {
+    setHiddenNotes((prev) => {
+      const next = update(prev);
+      if (hiddenStorageKey) {
+        try {
+          window.localStorage.setItem(hiddenStorageKey, JSON.stringify(Array.from(next)));
+        } catch { /* quota / private mode — keep state in memory */ }
+      }
+      return next;
+    });
   }, [hiddenStorageKey]);
 
   const handleHideNote = useCallback((n: StoredNote) => {
-    const next = new Set(hiddenNotes);
-    next.add(n.commitment);
-    persistHidden(next);
-  }, [hiddenNotes, persistHidden]);
+    persistHidden((prev) => {
+      const next = new Set(prev);
+      next.add(n.commitment);
+      return next;
+    });
+  }, [persistHidden]);
 
   const handleUnhideNote = useCallback((n: StoredNote) => {
-    const next = new Set(hiddenNotes);
-    next.delete(n.commitment);
-    persistHidden(next);
-  }, [hiddenNotes, persistHidden]);
+    persistHidden((prev) => {
+      const next = new Set(prev);
+      next.delete(n.commitment);
+      return next;
+    });
+  }, [persistHidden]);
 
   // Manual refresh: re-read the notes folder + re-run on-chain status
   // checks. Useful after a claim or settle that happened in another tab
   // — without this the page only re-indexes when notes/orderFiles
   // change, which doesn't fire on simple navigation back.
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const handleManualRefresh = useCallback(async () => {
-    await refreshNotes();
-  }, [refreshNotes]);
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshNotes();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshNotes, isRefreshing]);
+
+  // Count hidden commitments that actually exist in the current
+  // folder, so the "Show hidden (N)" toggle reflects only what the
+  // user can see — not stale entries from past sessions / wallets.
+  const hiddenInFolderCount = useMemo(
+    () => notes.reduce((acc, n) => acc + (hiddenNotes.has(n.commitment) ? 1 : 0), 0),
+    [notes, hiddenNotes],
+  );
 
   const isBusy = txState === "deriving_key" || txState === "approving" || txState === "depositing";
 
@@ -621,23 +651,27 @@ export default function PrivateEscrowPage() {
                     <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
                   </span>
                 )}
-                {hiddenNotes.size > 0 && (
+                {hiddenInFolderCount > 0 && (
                   <button
                     type="button"
                     onClick={() => setShowHidden((v) => !v)}
                     className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors"
                   >
-                    {showHidden ? `Hide hidden (${hiddenNotes.size})` : `Show hidden (${hiddenNotes.size})`}
+                    {showHidden ? `Hide hidden (${hiddenInFolderCount})` : `Show hidden (${hiddenInFolderCount})`}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={handleManualRefresh}
-                  className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors"
-                  title="Re-read notes folder and re-check on-chain status"
-                >
-                  Refresh
-                </button>
+                {folderReady && (
+                  <button
+                    type="button"
+                    onClick={handleManualRefresh}
+                    disabled={isRefreshing}
+                    className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Re-read notes folder and re-check on-chain status"
+                  >
+                    {isRefreshing && <Loader2 className="w-3 h-3 animate-spin" />}
+                    Refresh
+                  </button>
+                )}
               </div>
             </div>
 
@@ -664,7 +698,7 @@ export default function PrivateEscrowPage() {
                 {notes
                   .filter((n) => n.leafIndex >= 0)
                   .filter((n) => showHidden || !hiddenNotes.has(n.commitment))
-                  .map((n, i) => {
+                  .map((n) => {
                   // Find pending change notes linked to this note (same ownerSecret, leafIndex === -1)
                   const changeNotes = notes.filter((c) =>
                     c.leafIndex === -1 &&
@@ -685,8 +719,8 @@ export default function PrivateEscrowPage() {
                   return (
                   <div key={n.commitment}>
                     <div
-                      onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedIdx === i ? "bg-surface-bright/10" : ""} ${isSpent && !hasChange ? "opacity-50" : ""}`}
+                      onClick={() => setExpandedKey(expandedKey === n.commitment ? null : n.commitment)}
+                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedKey === n.commitment ? "bg-surface-bright/10" : ""} ${isSpent && !hasChange ? "opacity-50" : ""}`}
                     >
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSpent ? "bg-on-surface-variant/10" : "bg-primary/10"}`}>
@@ -727,7 +761,7 @@ export default function PrivateEscrowPage() {
                         </button>
                       </div>
                     </div>
-                    {expandedIdx === i && (
+                    {expandedKey === n.commitment && (
                       <div className="px-6 py-4 bg-surface-container/50 border-t border-outline-variant/5 space-y-4">
                         {/* Note details */}
                         <div className="bg-surface-container rounded-lg px-4 py-3">
@@ -830,6 +864,10 @@ export default function PrivateEscrowPage() {
                 {/* Change notes from settled trades — shown as independent escrow entries */}
                 {notes.filter((cn) => {
                   if (cn.leafIndex !== -1) return false;
+                  // Hide change entries when the user hid them (toggle
+                  // controlled by `showHidden`) — keeps the change list
+                  // consistent with the parent note list above.
+                  if (!showHidden && hiddenNotes.has(cn.commitment)) return false;
                   // Show as independent entry only when parent note is spent
                   return notes.some((parent) =>
                     parent.leafIndex >= 0 &&
