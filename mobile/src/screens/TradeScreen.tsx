@@ -254,33 +254,32 @@ export default function TradeScreen() {
           </View>
         </View>
 
-        {/* Price: required for limit orders, used as expected price (for slippage) in market orders */}
         <View style={s.limitSection}>
           <Text style={s.inputLabel}>
             {tradeType === 'limit' ? 'Limit Price' : 'Expected Price (for slippage)'}
           </Text>
-            <View style={s.limitRow}>
-              <TextInput
-                style={s.limitInput}
-                value={price}
-                onChangeText={setPrice}
-                keyboardType="decimal-pad"
-              />
-              <Text style={s.limitUnit}>USDC</Text>
-              <View style={s.limitDivider} />
-              <TouchableOpacity style={s.pmBtn} onPress={() => {
-                const p = parseFloat(price.replace(/,/g, ''));
-                if (!isNaN(p)) setPrice((p - 1).toFixed(2));
-              }}>
-                <Text style={s.pmText}>−</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.pmBtn} onPress={() => {
-                const p = parseFloat(price.replace(/,/g, ''));
-                if (!isNaN(p)) setPrice((p + 1).toFixed(2));
-              }}>
-                <Text style={s.pmText}>+</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={s.limitRow}>
+            <TextInput
+              style={s.limitInput}
+              value={price}
+              onChangeText={setPrice}
+              keyboardType="decimal-pad"
+            />
+            <Text style={s.limitUnit}>USDC</Text>
+            <View style={s.limitDivider} />
+            <TouchableOpacity style={s.pmBtn} onPress={() => {
+              const p = parseFloat(price.replace(/,/g, ''));
+              if (!isNaN(p)) setPrice((p - 1).toFixed(2));
+            }}>
+              <Text style={s.pmText}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.pmBtn} onPress={() => {
+              const p = parseFloat(price.replace(/,/g, ''));
+              if (!isNaN(p)) setPrice((p + 1).toFixed(2));
+            }}>
+              <Text style={s.pmText}>+</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Error display */}

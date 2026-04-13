@@ -5,6 +5,8 @@
  * 선택된 네트워크는 AsyncStorage에 저장되어 앱 재시작 시 유지.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ConfigService } from './ConfigService';
+import { ProviderService } from './ProviderService';
 
 const NETWORKS_KEY = 'scatterdex_custom_networks';
 const SELECTED_KEY = 'scatterdex_selected_network';
@@ -107,23 +109,17 @@ export const NetworkService = {
     return id || 'thanos-sepolia'; // default
   },
 
-  /** 네트워크 선택 — ConfigService + ProviderService에 즉시 반영 */
   async selectNetwork(id: string): Promise<void> {
     await AsyncStorage.setItem(SELECTED_KEY, id);
-    const network = (await this.getAllNetworks()).find((n) => n.id === id);
-    if (network) {
-      const { ConfigService } = await import('./ConfigService');
-      const { ProviderService } = await import('./ProviderService');
-      ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
-      ProviderService.reset(); // readProvider를 새 RPC로 재생성
-    }
+    const network = await this.getSelectedNetwork();
+    ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+    ProviderService.reset();
   },
 
-  /** 앱 시작 시 저장된 네트워크 복원 */
   async restoreSavedNetwork(): Promise<void> {
     const network = await this.getSelectedNetwork();
-    const { ConfigService } = await import('./ConfigService');
     ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+    ProviderService.reset();
   },
 
   async getSelectedNetwork(): Promise<NetworkConfig> {

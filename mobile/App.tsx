@@ -17,7 +17,6 @@ export default function App() {
   const [zkReady, setZkReady] = useState(false);
 
   useEffect(() => {
-    // Restore saved network + wait for ZK engine
     NetworkService.restoreSavedNetwork().catch(() => {});
     ZKBridgeService.waitReady().then(() => {
       setZkReady(true);

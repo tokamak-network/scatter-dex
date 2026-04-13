@@ -159,7 +159,7 @@ export default function SettingsScreen() {
     try {
       await NetworkService.selectNetwork(networkId);
       setSelectedNetworkId(networkId);
-      Alert.alert('Network Changed', 'Please restart the app for changes to take effect.');
+      Alert.alert('Network Changed', `Switched to ${networkId}.`);
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to switch network');
     }
@@ -286,7 +286,7 @@ export default function SettingsScreen() {
                       <Text style={s.linkIconText}>🗑</Text>
                     </View>
                     <View>
-                      <Text style={[s.linkLabel, { color: '#EF4444' }]}>Delete Wallet</Text>
+                      <Text style={[s.linkLabel, { color: colors.danger }]}>Delete Wallet</Text>
                       <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
                         Permanently remove from this device
                       </Text>
