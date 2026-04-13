@@ -257,6 +257,20 @@ export async function saveFileToFolder(filename: string, content: string): Promi
   await writable.close();
 }
 
+/** Read an arbitrary file from the notes folder. Returns null if the
+ *  file doesn't exist or the folder isn't selected. Throws on other errors. */
+export async function loadFileFromFolder(filename: string): Promise<string | null> {
+  if (!dirHandle) return null;
+  try {
+    const fh = await dirHandle.getFileHandle(filename);
+    const file = await fh.getFile();
+    return await file.text();
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "NotFoundError") return null;
+    throw e;
+  }
+}
+
 /** List all EdDSA key files in the folder. Returns array of {account suffix, filename}. */
 export async function listEdDSAKeysInFolder(): Promise<{ accountSuffix: string; filename: string }[]> {
   if (!dirHandle) return [];
