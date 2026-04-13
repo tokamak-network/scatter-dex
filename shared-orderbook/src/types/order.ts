@@ -28,6 +28,11 @@ export interface MatchNotification {
 import type { OrderSummary } from "@scatter-dex/types";
 import { ETH_ADDRESS_RE } from "@scatter-dex/types";
 
+// Opaque offer handle: 0x-prefixed 32-byte hex (64 hex chars). Generated
+// by the maker's relayer per order; the shared orderbook never sees the
+// user's pubKeyAx or order nonce.
+const OFFER_HANDLE_RE = /^0x[0-9a-fA-F]{64}$/;
+
 export function parseOrderSummary(
   raw: Record<string, unknown>,
   relayer: string,
@@ -40,9 +45,11 @@ export function parseOrderSummary(
   const minFillAmount = String(raw.minFillAmount ?? "0");
   const maxFee = Number(raw.maxFee);
   const expiry = Number(raw.expiry);
-  const nonce = String(raw.nonce ?? "");
-  const pubKeyAx = String(raw.pubKeyAx ?? "");
-  if (!pubKeyAx) throw new Error("missing pubKeyAx");
+  const offerHandle = String(raw.id ?? raw.offerHandle ?? "");
+
+  if (!OFFER_HANDLE_RE.test(offerHandle)) {
+    throw new Error("invalid offer handle (expect 0x-prefixed 32-byte hex)");
+  }
 
   if (!ETH_ADDRESS_RE.test(sellToken)) throw new Error("invalid sellToken address");
   if (!ETH_ADDRESS_RE.test(buyToken)) throw new Error("invalid buyToken address");
@@ -54,19 +61,14 @@ export function parseOrderSummary(
 
   if (!Number.isFinite(maxFee) || maxFee < 0) throw new Error("maxFee must be >= 0");
   if (!Number.isFinite(expiry) || expiry <= 0) throw new Error("invalid expiry");
-  if (!nonce) throw new Error("missing nonce");
 
   const now = Math.floor(Date.now() / 1000);
   if (expiry <= now) throw new Error("order already expired");
 
-  const id = `${relayer.toLowerCase()}-${nonce}`;
-
   return {
-    id,
+    id: offerHandle,
     relayer: relayer.toLowerCase(),
     relayerUrl,
-    nonce,
-    pubKeyAx,
     sellToken: sellToken.toLowerCase(),
     buyToken: buyToken.toLowerCase(),
     sellAmount,

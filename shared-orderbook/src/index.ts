@@ -58,7 +58,7 @@ async function main() {
     max: Math.max(1, Math.floor(config.writeRateLimit / 2)),
     message: { error: "too many requests for this relayer" },
     keyGenerator: (req) => {
-      const addr = (req as Record<string, unknown>).relayerAddress as string | undefined;
+      const addr = (req as unknown as Record<string, unknown>).relayerAddress as string | undefined;
       return addr ? `relayer:${addr}` : (req.ip ?? "unknown");
     },
   });

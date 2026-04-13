@@ -33,7 +33,6 @@ export class OrderbookDB {
         id TEXT PRIMARY KEY,
         relayer TEXT NOT NULL,
         relayer_url TEXT NOT NULL,
-        nonce TEXT NOT NULL,
         sell_token TEXT NOT NULL,
         buy_token TEXT NOT NULL,
         sell_amount TEXT NOT NULL,
@@ -65,9 +64,9 @@ export class OrderbookDB {
 
   private prepareStatements(): void {
     this.stmtInsertOrder = this.db.prepare(`
-      INSERT INTO orders (id, relayer, relayer_url, nonce, sell_token, buy_token,
+      INSERT INTO orders (id, relayer, relayer_url, sell_token, buy_token,
         sell_amount, buy_amount, min_fill_amount, max_fee, expiry, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
     `);
 
     this.stmtGetOrder = this.db.prepare(`SELECT * FROM orders WHERE id = ?`);
@@ -112,12 +111,12 @@ export class OrderbookDB {
     this.stmtGetMatchJoin = this.db.prepare(`
       SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
              mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
-             mk.nonce as mk_nonce, mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
+             mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
              mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
              mk.min_fill_amount as mk_min_fill_amount, mk.max_fee as mk_max_fee,
              mk.expiry as mk_expiry, mk.created_at as mk_created_at,
              tk.id as tk_id, tk.relayer as tk_relayer, tk.relayer_url as tk_relayer_url,
-             tk.nonce as tk_nonce, tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
+             tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
              tk.sell_amount as tk_sell_amount, tk.buy_amount as tk_buy_amount,
              tk.min_fill_amount as tk_min_fill_amount, tk.max_fee as tk_max_fee,
              tk.expiry as tk_expiry, tk.created_at as tk_created_at
@@ -130,12 +129,12 @@ export class OrderbookDB {
     this.stmtListMatchesJoin = this.db.prepare(`
       SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
              mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
-             mk.nonce as mk_nonce, mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
+             mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
              mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
              mk.min_fill_amount as mk_min_fill_amount, mk.max_fee as mk_max_fee,
              mk.expiry as mk_expiry, mk.created_at as mk_created_at,
              tk.id as tk_id, tk.relayer as tk_relayer, tk.relayer_url as tk_relayer_url,
-             tk.nonce as tk_nonce, tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
+             tk.sell_token as tk_sell_token, tk.buy_token as tk_buy_token,
              tk.sell_amount as tk_sell_amount, tk.buy_amount as tk_buy_amount,
              tk.min_fill_amount as tk_min_fill_amount, tk.max_fee as tk_max_fee,
              tk.expiry as tk_expiry, tk.created_at as tk_created_at
@@ -148,7 +147,7 @@ export class OrderbookDB {
 
   insertOrder(o: OrderSummary): void {
     this.stmtInsertOrder.run(
-      o.id, o.relayer, o.relayerUrl, o.nonce,
+      o.id, o.relayer, o.relayerUrl,
       o.sellToken, o.buyToken,
       o.sellAmount, o.buyAmount, o.minFillAmount,
       o.maxFee, o.expiry, o.createdAt,
@@ -233,7 +232,6 @@ export class OrderbookDB {
         id: row.mk_id as string,
         relayer: row.mk_relayer as string,
         relayerUrl: row.mk_relayer_url as string,
-        nonce: row.mk_nonce as string,
         sellToken: row.mk_sell_token as string,
         buyToken: row.mk_buy_token as string,
         sellAmount: row.mk_sell_amount as string,
@@ -247,7 +245,6 @@ export class OrderbookDB {
         id: row.tk_id as string,
         relayer: row.tk_relayer as string,
         relayerUrl: row.tk_relayer_url as string,
-        nonce: row.tk_nonce as string,
         sellToken: row.tk_sell_token as string,
         buyToken: row.tk_buy_token as string,
         sellAmount: row.tk_sell_amount as string,
@@ -292,7 +289,6 @@ export class OrderbookDB {
         id: row.id as string,
         relayer: row.relayer as string,
         relayerUrl: row.relayer_url as string,
-        nonce: row.nonce as string,
         sellToken: row.sell_token as string,
         buyToken: row.buy_token as string,
         sellAmount: row.sell_amount as string,
