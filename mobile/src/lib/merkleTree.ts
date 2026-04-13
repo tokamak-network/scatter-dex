@@ -24,9 +24,12 @@ import { ZKBridgeService } from '../services/ZKBridgeService';
 
 /**
  * `ZEROS[d]` = hash of an all-zero subtree of height `d` (with `ZEROS[0] = '0'`).
- * Sourced from `IncrementalMerkleTree.sol._zeros()` — same values used by the
- * web frontend (`frontend/app/lib/zk/incremental-tree.ts`). Any change here
- * is a consensus break.
+ * Indices 0..19 match `IncrementalMerkleTree.sol._zeros(d)` exactly. Index 20
+ * is the all-zero root for the depth-20 commitment tree — the contract
+ * computes it implicitly in its constructor (`_zeros()` reverts above 19),
+ * and we precompute it here so a depth-20 build doesn't need an extra bridge
+ * round-trip. Mirrors `frontend/app/lib/zk/incremental-tree.ts`. Any change
+ * here is a consensus break.
  */
 const ZEROS: readonly string[] = [
   '0',
@@ -91,16 +94,30 @@ export async function buildPoseidonMerkleTree(
       current = layers[d + 1];
       continue;
     }
-    // Parallelize hashes within a level. Previously sequential await burned
-    // ~N round-trip latency per level; Promise.all fires them together, so
-    // the per-level cost is one bridge RTT regardless of level width.
-    const pairPromises: Promise<string>[] = [];
+    // Pipeline hashes within a level. Each pair is still its own bridge
+    // postMessage — the bridge has no batch-hash command yet — but the
+    // single `await` below lets them all be in-flight together rather than
+    // sequenced (~N → 1 effective wait at the JS layer).
+    //
+    // Cap the in-flight count so we don't queue thousands of requests
+    // against the bridge's per-request 10s timeout. With ~64 in flight at
+    // once, even a depth-20 tree with ~500k pairs at level 0 stays inside
+    // the timeout window per chunk.
+    const pairs: Array<[string, string]> = [];
     for (let i = 0; i < current.length; i += 2) {
       const left = current[i];
       const right = i + 1 < current.length ? current[i + 1] : ZEROS[d];
-      pairPromises.push(ZKBridgeService.poseidonHash([left, right]));
+      pairs.push([left, right]);
     }
-    const next = await Promise.all(pairPromises);
+    const next: string[] = new Array(pairs.length);
+    const CONCURRENCY = 64;
+    for (let off = 0; off < pairs.length; off += CONCURRENCY) {
+      const chunk = pairs.slice(off, off + CONCURRENCY);
+      const hashed = await Promise.all(
+        chunk.map((p) => ZKBridgeService.poseidonHash(p)),
+      );
+      for (let i = 0; i < hashed.length; i++) next[off + i] = hashed[i];
+    }
     layers.push(next);
     current = next;
   }
