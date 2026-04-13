@@ -386,7 +386,7 @@ export default function ClaimScreen() {
                 </TouchableOpacity>
                 {jsonError && <Text style={s.errorText}>{jsonError}</Text>}
                 {parsedJsonClaim && (
-                  <>
+                  <View style={{ gap: 6 }}>
                     <View style={s.itemRow}>
                       <View style={s.itemLeft}>
                         <View style={s.itemIcon}>
@@ -409,7 +409,7 @@ export default function ClaimScreen() {
                         <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
                       </TouchableOpacity>
                     )}
-                  </>
+                  </View>
                 )}
               </View>
             ) : (
@@ -433,7 +433,7 @@ export default function ClaimScreen() {
                       </TouchableOpacity>
                     </View>
                     {pendingClaims.map((item, index) => (
-                    <React.Fragment key={`${item.txHash}-${index}`}>
+                    <View key={`${item.txHash}-${index}`} style={{ gap: 6 }}>
                       <TouchableOpacity
                         style={[
                           s.itemRow,
@@ -462,7 +462,7 @@ export default function ClaimScreen() {
                           <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
                         </TouchableOpacity>
                       )}
-                    </React.Fragment>
+                    </View>
                     ))}
                   </>
                 )}
@@ -579,7 +579,7 @@ const s = StyleSheet.create({
   jsonInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 13, color: '#111827', minHeight: 120, fontFamily: 'monospace' },
   parseBtn: { backgroundColor: '#EFF6FF', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   parseBtnText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
-  revealBtn: { backgroundColor: '#FEF3C7', paddingVertical: 8, borderRadius: 8, alignItems: 'center', marginTop: 6, borderWidth: 1, borderColor: '#FDE68A' },
+  revealBtn: { backgroundColor: '#FEF3C7', paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' },
   revealBtnText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
   errorText: { fontSize: 12, color: '#EF4444', fontWeight: '600' },
 
