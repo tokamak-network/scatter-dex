@@ -16,6 +16,13 @@ import {
 
 const WALLET_BOOK_FILENAME = "zkscatter-wallets.json";
 
+export class WalletBookCorruptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WalletBookCorruptError";
+  }
+}
+
 export interface WalletEntry {
   id: string;
   label: string;
@@ -42,27 +49,60 @@ function isValidEntry(e: unknown): e is WalletEntry {
     typeof v.label === "string" &&
     typeof v.address === "string" &&
     ethers.isAddress(v.address) &&
-    typeof v.createdAt === "number"
+    v.address === (v.address as string).toLowerCase() &&
+    typeof v.createdAt === "number" &&
+    (v.memo === undefined || typeof v.memo === "string")
   );
 }
 
+/**
+ * Load the wallet book. Throws {@link WalletBookCorruptError} if the
+ * file exists but is not parseable or has an unsupported shape —
+ * callers must catch and prompt the user rather than letting the next
+ * write silently overwrite the corrupt file.
+ */
 export async function loadWalletBook(): Promise<WalletEntry[]> {
   if (!hasFolderSelected()) return [];
   const text = await loadFileFromFolder(WALLET_BOOK_FILENAME);
   if (!text) return [];
+
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(text) as WalletBookFile;
-    if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) return [];
-    return parsed.entries.filter(isValidEntry);
+    parsed = JSON.parse(text);
   } catch (e) {
-    console.warn("[wallet-book] parse failed:", e);
-    return [];
+    throw new WalletBookCorruptError(
+      `zkscatter-wallets.json is not valid JSON: ${e instanceof Error ? e.message : "parse error"}`,
+    );
   }
+
+  const book = parsed as WalletBookFile | null;
+  if (!book || typeof book !== "object" || book.version !== 1 || !Array.isArray(book.entries)) {
+    throw new WalletBookCorruptError(
+      "zkscatter-wallets.json has an unsupported shape (expected { version: 1, entries: [...] })",
+    );
+  }
+
+  if (!book.entries.every(isValidEntry)) {
+    throw new WalletBookCorruptError(
+      "zkscatter-wallets.json contains invalid entries",
+    );
+  }
+  return book.entries;
 }
 
 async function writeBook(entries: WalletEntry[]): Promise<void> {
   const payload: WalletBookFile = { version: 1, entries };
   await saveFileToFolder(WALLET_BOOK_FILENAME, JSON.stringify(payload, null, 2));
+}
+
+// Serialize every mutation through a single promise chain so concurrent
+// add/update/remove calls can't race on read-modify-write. Each task
+// runs load-modify-save end-to-end before the next begins.
+let _mutationQueue: Promise<unknown> = Promise.resolve();
+function withLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = _mutationQueue.then(task, task);
+  _mutationQueue = run.catch(() => {});
+  return run;
 }
 
 export async function addWallet(input: {
@@ -75,19 +115,21 @@ export async function addWallet(input: {
   if (!label) throw new Error("Label is required");
   const address = input.address.toLowerCase();
 
-  const entries = await loadWalletBook();
-  if (entries.some((e) => e.address === address)) {
-    throw new Error("Address already in book");
-  }
-  const entry: WalletEntry = {
-    id: newId(),
-    label,
-    address,
-    memo: input.memo?.trim() || undefined,
-    createdAt: Math.floor(Date.now() / 1000),
-  };
-  await writeBook([...entries, entry]);
-  return entry;
+  return withLock(async () => {
+    const entries = await loadWalletBook();
+    if (entries.some((e) => e.address === address)) {
+      throw new Error("Address already in book");
+    }
+    const entry: WalletEntry = {
+      id: newId(),
+      label,
+      address,
+      memo: input.memo?.trim() || undefined,
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    await writeBook([...entries, entry]);
+    return entry;
+  });
 }
 
 export async function updateWallet(
@@ -97,20 +139,24 @@ export async function updateWallet(
   if (patch.label !== undefined && !patch.label.trim()) {
     throw new Error("Label is required");
   }
-  const entries = await loadWalletBook();
-  const next = entries.map((e) =>
-    e.id === id
-      ? {
-          ...e,
-          label: patch.label !== undefined ? patch.label.trim() : e.label,
-          memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
-        }
-      : e,
-  );
-  await writeBook(next);
+  return withLock(async () => {
+    const entries = await loadWalletBook();
+    const next = entries.map((e) =>
+      e.id === id
+        ? {
+            ...e,
+            label: patch.label !== undefined ? patch.label.trim() : e.label,
+            memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
+          }
+        : e,
+    );
+    await writeBook(next);
+  });
 }
 
 export async function removeWallet(id: string): Promise<void> {
-  const entries = await loadWalletBook();
-  await writeBook(entries.filter((e) => e.id !== id));
+  return withLock(async () => {
+    const entries = await loadWalletBook();
+    await writeBook(entries.filter((e) => e.id !== id));
+  });
 }

@@ -36,6 +36,7 @@ export default function WalletsPage() {
   const refresh = useCallback(async () => {
     if (!folderReady) return;
     setLoading(true);
+    setError(null);
     try {
       setEntries(await loadWalletBook());
     } catch (e) {
@@ -75,9 +76,19 @@ export default function WalletsPage() {
     setNewAddress(account);
   }
 
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
   async function handleDelete(id: string) {
-    await removeWallet(id);
-    await refresh();
+    setError(null);
+    setPendingId(id);
+    try {
+      await removeWallet(id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete wallet");
+    } finally {
+      setPendingId(null);
+    }
   }
 
   function startEdit(e: WalletEntry) {
@@ -88,9 +99,17 @@ export default function WalletsPage() {
 
   async function saveEdit() {
     if (!editingId) return;
-    await updateWallet(editingId, { label: editLabel, memo: editMemo });
-    setEditingId(null);
-    await refresh();
+    setError(null);
+    setPendingId(editingId);
+    try {
+      await updateWallet(editingId, { label: editLabel, memo: editMemo });
+      setEditingId(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update wallet");
+    } finally {
+      setPendingId(null);
+    }
   }
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -133,25 +152,37 @@ export default function WalletsPage() {
               Add address
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                placeholder="Label (e.g. Cold wallet, Alice)"
-                className="bg-surface border border-outline-variant/20 rounded-md px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
-              />
-              <input
-                value={newAddress}
-                onChange={(e) => setNewAddress(e.target.value.trim())}
-                placeholder="0x…"
-                className="bg-surface border border-outline-variant/20 rounded-md px-4 py-3 font-mono text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
-              />
+              <label className="block">
+                <span className="sr-only">Label</span>
+                <input
+                  aria-label="Label"
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  placeholder="Label (e.g. Cold wallet, Alice)"
+                  className="w-full bg-surface border border-outline-variant/20 rounded-md px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
+                />
+              </label>
+              <label className="block">
+                <span className="sr-only">Address</span>
+                <input
+                  aria-label="Address"
+                  value={newAddress}
+                  onChange={(e) => setNewAddress(e.target.value.trim())}
+                  placeholder="0x…"
+                  className="w-full bg-surface border border-outline-variant/20 rounded-md px-4 py-3 font-mono text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
+                />
+              </label>
             </div>
-            <input
-              value={newMemo}
-              onChange={(e) => setNewMemo(e.target.value)}
-              placeholder="Memo (optional)"
-              className="w-full bg-surface border border-outline-variant/20 rounded-md px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
-            />
+            <label className="block">
+              <span className="sr-only">Memo</span>
+              <input
+                aria-label="Memo"
+                value={newMemo}
+                onChange={(e) => setNewMemo(e.target.value)}
+                placeholder="Memo (optional)"
+                className="w-full bg-surface border border-outline-variant/20 rounded-md px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary"
+              />
+            </label>
             <div className="flex items-center gap-3">
               <button
                 onClick={handleAdd}
@@ -182,6 +213,7 @@ export default function WalletsPage() {
             )}
             {entries.map((e) => {
               const isEditing = editingId === e.id;
+              const isPending = pendingId === e.id;
               return (
                 <div
                   key={e.id}
@@ -191,11 +223,13 @@ export default function WalletsPage() {
                     {isEditing ? (
                       <>
                         <input
+                          aria-label="Edit label"
                           value={editLabel}
                           onChange={(ev) => setEditLabel(ev.target.value)}
                           className="w-full bg-surface border border-outline-variant/20 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
                         />
                         <input
+                          aria-label="Edit memo"
                           value={editMemo}
                           onChange={(ev) => setEditMemo(ev.target.value)}
                           placeholder="Memo (optional)"
@@ -217,14 +251,16 @@ export default function WalletsPage() {
                       <>
                         <button
                           onClick={saveEdit}
-                          className="p-2 rounded-md hover:bg-surface text-tertiary"
+                          disabled={isPending}
+                          className="p-2 rounded-md hover:bg-surface text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Save"
                         >
                           <Check className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setEditingId(null)}
-                          className="p-2 rounded-md hover:bg-surface text-on-surface-variant"
+                          disabled={isPending}
+                          className="p-2 rounded-md hover:bg-surface text-on-surface-variant disabled:opacity-50"
                           title="Cancel"
                         >
                           <X className="w-4 h-4" />
@@ -245,14 +281,16 @@ export default function WalletsPage() {
                         </button>
                         <button
                           onClick={() => startEdit(e)}
-                          className="text-xs px-2 py-1 rounded-md text-on-surface-variant hover:bg-surface"
+                          disabled={isPending}
+                          className="text-xs px-2 py-1 rounded-md text-on-surface-variant hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Edit"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => handleDelete(e.id)}
-                          className="p-2 rounded-md hover:bg-error/10 text-error"
+                          disabled={isPending}
+                          className="p-2 rounded-md hover:bg-error/10 text-error disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Delete"
                         >
                           <Trash2 className="w-4 h-4" />
