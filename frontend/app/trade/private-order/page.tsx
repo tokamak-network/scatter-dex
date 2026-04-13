@@ -216,6 +216,15 @@ export default function PrivateOrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
+  // Scatter mode — sellToken == buyToken. There's no trade / matching; the
+  // relayer detects same-token at `/api/authorize-orders` and routes the
+  // proof to `scatterDirectAuth` for a direct distribution. The contract
+  // enforces `totalLocked + fee <= sellAmount` (SettleVerifyLib.
+  // validateScatterAuth), so the UI must prevent the user from asking to
+  // distribute more than (sellAmount − fee). "buyAmount" is reinterpreted
+  // as "amount distributed to recipients".
+  const isScatterMode = !!sellToken && !!buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
+
   // DEX prices for market order mode (only fetched when market tab is active)
   const dexPrices = useMainnetPrice(
     orderType === "market" ? sellToken?.symbol : undefined,
@@ -414,6 +423,32 @@ export default function PrivateOrderPage() {
 
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
+
+  // Scatter-mode cap: the contract's `validateScatterAuth` enforces
+  // `totalLocked + fee <= sellAmount`, so the distributed amount (which
+  // equals the signed `buyAmount` in scatter semantics) cannot exceed
+  // `sellAmount × (10000 − maxFee) / 10000`. Returned in wei; null when
+  // not in scatter mode or when sellAmount isn't yet parseable.
+  const sellTokenDecimals = sellToken?.decimals;
+  const scatterMaxDistributeWei = useMemo((): bigint | null => {
+    if (!isScatterMode || sellTokenDecimals == null || !sellAmount) return null;
+    try {
+      const sell = ethers.parseUnits(sellAmount, sellTokenDecimals);
+      const capBps = BigInt(10000 - effectiveFeeBps);
+      return (sell * capBps) / 10000n;
+    } catch { return null; }
+  }, [isScatterMode, sellAmount, sellTokenDecimals, effectiveFeeBps]);
+
+  // How much the user's typed distribute amount (buyAmount) exceeds the
+  // scatter cap. 0n when within the cap, positive wei when over, null
+  // when the inputs aren't parseable yet.
+  const scatterExcessWei = useMemo((): bigint | null => {
+    if (!isScatterMode || scatterMaxDistributeWei === null || buyTokenDecimals == null || !buyAmount) return null;
+    try {
+      const buy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      return buy > scatterMaxDistributeWei ? buy - scatterMaxDistributeWei : 0n;
+    } catch { return null; }
+  }, [isScatterMode, scatterMaxDistributeWei, buyAmount, buyTokenDecimals]);
 
   // Recompute buyAmount from sell * price (fee is deducted at settlement, not here)
   const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
@@ -990,7 +1025,11 @@ export default function PrivateOrderPage() {
               </div>
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">
-                  {orderType === "market" ? "Min Receive (after slippage)" : "Buy Amount"}
+                  {isScatterMode
+                    ? "Distribute Amount"
+                    : orderType === "market"
+                    ? "Min Receive (after slippage)"
+                    : "Buy Amount"}
                 </label>
                 <input
                   type="text"
@@ -1259,21 +1298,37 @@ export default function PrivateOrderPage() {
 
               {buyToken && (
                 <div className="mt-2 space-y-1">
+                  {isScatterMode && (
+                    <div className="text-[11px] text-primary/80 bg-primary/5 border border-primary/20 rounded-md px-2 py-1">
+                      Scatter mode — {sellToken?.symbol} → {sellToken?.symbol} is a direct distribution (no counterparty, no matching). The relayer settles via <code>scatterDirectAuth</code>; your {sellToken?.symbol} commitment pays the fee.
+                    </div>
+                  )}
                   <div className="text-xs text-on-surface-variant flex justify-between">
-                    <span>Claims total: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}</span>
-                    <span>Recipients receive (after fee): {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
+                    <span>
+                      {isScatterMode ? "Distribute total" : "Claims total"}: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}
+                    </span>
+                    <span>
+                      {isScatterMode
+                        ? `Max distributable: ${scatterMaxDistributeWei !== null ? parseFloat(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals)).toFixed(4) : "—"} ${buyToken.symbol}`
+                        : `Recipients receive (after fee): ${netBuyAmount.toFixed(4)} ${buyToken.symbol}`}
+                    </span>
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} (buyAmount). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "distribute amount" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (
                     <div className="text-xs text-error font-bold">
-                      buyAmount &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
+                      {isScatterMode ? "Distribute" : "buyAmount"} &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
                     </div>
                   )}
-                  {parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
+                  {isScatterMode && scatterExcessWei !== null && scatterExcessWei > 0n && scatterMaxDistributeWei !== null && (
+                    <div className="text-xs text-error font-bold">
+                      Distribute amount exceeds sellAmount − fee. Max: {parseFloat(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals)).toFixed(4)} {buyToken.symbol}. Over by {ethers.formatUnits(scatterExcessWei, buyToken.decimals)} {buyToken.symbol}.
+                    </div>
+                  )}
+                  {!isScatterMode && parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
                     <div className="text-[11px] text-on-surface-variant/60">
                       For a match, the counterparty must sell ≥ {buyAmount} + fee ≈ {(parseFloat(buyAmount) * (1 + effectiveFeeBps / 10000)).toFixed(4)} {buyToken.symbol}.
                     </div>
@@ -1361,7 +1416,7 @@ export default function PrivateOrderPage() {
             {orderType === "limit" ? (
             <button
               onClick={!keyPair ? handleDeriveKey : handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || keyLoading}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n)) || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {keyLoading ? (
@@ -1371,7 +1426,7 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n))}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
               {keyLoading ? (
