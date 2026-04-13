@@ -249,6 +249,24 @@ export const MarketOrderService = {
         'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint96 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata) p) external',
       ], signer);
 
+      // publicSignals layout (see circuits/authorize.circom:506-529):
+      //   [0]  pubKeyBind     (circuit output)
+      //   [1]  commitmentRoot
+      //   [2]  nullifier
+      //   [3]  nonceNullifier
+      //   [4]  newCommitment
+      //   [5]  sellToken
+      //   [6]  buyToken
+      //   [7]  sellAmount
+      //   [8]  buyAmount
+      //   [9]  maxFee
+      //   [10] expiry
+      //   [11] claimsRoot
+      //   [12] totalLocked
+      //   [13] relayer
+      //   [14] orderHash
+      // Source every field that is part of the verified proof from ps[] so the
+      // on-chain verifier cannot reject us for an input/proof value drift.
       const ps = proofResult.publicSignals;
       const tx = await settlement.settleWithDex({
         proof: {
@@ -260,15 +278,15 @@ export const MarketOrderService = {
           nullifier: ps[2],
           nonceNullifier: ps[3],
           newCommitment: ps[4],
-          sellToken: note.token,
-          buyToken,
-          sellAmount,
-          buyAmount,
-          maxFee: 0,
-          expiry,
+          sellToken: ps[5],
+          buyToken: ps[6],
+          sellAmount: ps[7],
+          buyAmount: ps[8],
+          maxFee: ps[9],
+          expiry: ps[10],
           claimsRoot: ps[11],
-          totalLocked: buyAmount,
-          relayer: account,
+          totalLocked: ps[12],
+          relayer: ps[13],
           orderHash: ps[14],
         },
         dexRouter,

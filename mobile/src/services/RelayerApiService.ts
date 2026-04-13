@@ -4,13 +4,17 @@
  * 웹 프론트엔드의 relayerApi.ts를 모바일에 맞게 포팅.
  * fetch API는 React Native에서 동일하게 사용 가능.
  */
+import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
+import { ProviderService } from './ProviderService';
+import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
 
 export interface RelayerInfo {
   address: string;
   url: string;
   fee: number;      // basis points
   active: boolean;
+  online?: boolean; // set by discoverRelayers() after probing /api/info
 }
 
 export interface PrivateOrderRequest {
@@ -93,6 +97,59 @@ export const RelayerApiService = {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch orderbook: ${res.status}`);
     return res.json();
+  },
+
+  /**
+   * Fetch active relayers from the on-chain registry and probe each /api/info.
+   * Returns only entries whose URL responded (online=true) so callers can pick a
+   * working relayer. The returned address is what the authorize circuit hashes
+   * — using the wrong address produces an invalid signature.
+   */
+  async discoverRelayers(): Promise<RelayerInfo[]> {
+    const registryAddr = ConfigService.getRelayerRegistryAddress();
+    if (!registryAddr) return [];
+    const registry = new ethers.Contract(
+      registryAddr,
+      RELAYER_REGISTRY_ABI,
+      ProviderService.getReadProvider(),
+    );
+    let activeAddrs: string[];
+    try {
+      activeAddrs = await registry.getActiveRelayers();
+    } catch (err) {
+      console.warn('RelayerRegistry.getActiveRelayers failed:', err);
+      return [];
+    }
+    const onChain = await Promise.all(
+      activeAddrs.map(async (addr: string) => {
+        try {
+          const r = await registry.relayers(addr);
+          return {
+            address: addr,
+            url: r.url as string,
+            fee: Number(r.fee),
+            active: r.active as boolean,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const probed = await Promise.all(
+      onChain.filter((r): r is NonNullable<typeof r> => !!r).map(async (r) => {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 3000);
+        try {
+          const res = await fetch(`${r.url}/api/info`, { signal: controller.signal });
+          return { ...r, online: res.ok };
+        } catch {
+          return { ...r, online: false };
+        } finally {
+          clearTimeout(t);
+        }
+      }),
+    );
+    return probed;
   },
 
   async healthCheck(relayerUrl?: string): Promise<boolean> {
