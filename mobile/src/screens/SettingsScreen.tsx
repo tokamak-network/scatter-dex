@@ -15,6 +15,8 @@ import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import AddressBookModal from '../components/AddressBookModal';
+import { StealthIdentityService } from '../services/StealthIdentityService';
+import { Share } from 'react-native';
 import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
 
@@ -39,6 +41,7 @@ interface ManagementItem {
 const managementItems: ManagementItem[] = [
   { id: 'addressbook', label: 'Address Book', icon: '📒' },
   { id: 'eddsa', label: 'EdDSA Key Management', icon: '🔑' },
+  { id: 'stealth', label: 'Stealth Identity', icon: '💎' },
   { id: 'backuprestore', label: 'Backup & Restore', icon: '☁' },
   { id: 'backup', label: 'Seed Phrase Backup', icon: '⚠', badge: 'Critical' },
 ];
@@ -122,9 +125,113 @@ export default function SettingsScreen() {
     }
   }, [toggles]);
 
+  const handleStealthManagement = useCallback(async () => {
+    const existing = await StealthIdentityService.load();
+
+    if (!existing) {
+      Alert.alert(
+        'Generate Stealth Identity?',
+        'Creates a new spending+viewing key pair (stored in this device\'s secure keystore) and a publishable meta-address. Share the meta-address with senders so they can issue one-time stealth claims to you.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Generate',
+            onPress: async () => {
+              try {
+                const created = await StealthIdentityService.generate();
+                Alert.alert('Stealth Meta-Address', created.metaAddress);
+              } catch (err: any) {
+                Alert.alert('Error', err?.message || 'Failed to generate identity');
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Stealth Meta-Address',
+      `${existing.metaAddress}\n\nShare this with senders so they can issue stealth claims to you. Your spending and viewing keys stay on this device.`,
+      [
+        { text: 'Close', style: 'cancel' },
+        { text: 'Share', onPress: () => Share.share({ message: existing.metaAddress }).catch(() => {}) },
+        {
+          text: 'Reveal Keys',
+          onPress: () => {
+            Alert.alert(
+              'Spending + Viewing Keys',
+              `These derive every stealth-address private key your meta-address has ever (or will ever) receive. Back them up before regenerating, or funds at existing stealth addresses become unspendable from this device.\n\nSpending key:\n${existing.spendingKey}\n\nViewing key:\n${existing.viewingKey}`,
+              [
+                { text: 'Close', style: 'cancel' },
+                {
+                  text: 'Share',
+                  style: 'destructive',
+                  onPress: () => {
+                    // Hard confirmation before exposing keys to the OS
+                    // share sheet — any installed share target (Mail,
+                    // Slack, screenshot tools) can capture them.
+                    Alert.alert(
+                      'Share stealth keys?',
+                      'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Continue to Share',
+                          style: 'destructive',
+                          onPress: () => Share.share({
+                            message: `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${existing.spendingKey}\nviewing: ${existing.viewingKey}`,
+                          }).catch(() => {}),
+                        },
+                      ],
+                    );
+                  },
+                },
+              ],
+            );
+          },
+        },
+        {
+          text: 'Regenerate',
+          style: 'destructive',
+          onPress: () => {
+            // Honest copy: regenerating *does* lock funds at every existing
+            // stealth address derived from the old keys. The previous draft
+            // claimed pending claims kept working — that was wrong; the
+            // claim tx still lands at the old stealth address, but with no
+            // private key on this device the funds can never be spent.
+            Alert.alert(
+              'Regenerate identity?',
+              'This permanently replaces your spending and viewing keys. Any funds at stealth addresses derived from the OLD keys become unspendable from this device unless you backed those keys up first via Reveal Keys.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Regenerate anyway',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      const fresh = await StealthIdentityService.regenerate();
+                      Alert.alert('New Meta-Address', fresh.metaAddress);
+                    } catch (err: any) {
+                      Alert.alert('Error', err?.message || 'Failed to regenerate');
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  }, []);
+
   const handleManagementPress = useCallback(async (id: string) => {
     if (id === 'addressbook') {
       setAddressBookVisible(true);
+      return;
+    }
+    if (id === 'stealth') {
+      await handleStealthManagement();
       return;
     }
     if (id === 'backuprestore') {

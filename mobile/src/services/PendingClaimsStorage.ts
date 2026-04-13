@@ -42,6 +42,9 @@ export interface PendingClaim {
   leafIndex: number;       // position in the 16-leaf claims tree
   allLeaves: string[];     // all 16 claim leaf hashes (decimal strings)
   txHash: string;          // settle / order tx hash (best-effort for display)
+  /** Set when `recipient` is a stealth address — required to derive the
+   *  recipient's private key. Absent on standard (non-stealth) claims. */
+  ephemeralPubKey?: string; // 0x-prefixed compressed secp256k1 hex
 }
 
 // Input shape for callers that shouldn't have to generate ids. Matches the
@@ -140,6 +143,7 @@ async function migrateLegacy(): Promise<void> {
       leafIndex: Number(e.leafIndex ?? 0),
       allLeaves: Array.isArray(e.allLeaves) ? e.allLeaves.map(String) : [],
       txHash: String(e.txHash ?? ''),
+      ...(typeof e.ephemeralPubKey === 'string' ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
     };
     await Promise.all([
       AsyncStorage.setItem(metaKey(id), JSON.stringify(meta)),
@@ -221,6 +225,7 @@ export const PendingClaimsStorage = {
         leafIndex: e.leafIndex,
         allLeaves: e.allLeaves,
         txHash: e.txHash,
+        ...(e.ephemeralPubKey ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
       };
       // Write secret first — on partial failure we'd rather have an orphaned
       // secret (no meta = invisible to list()) than a stranded meta entry
