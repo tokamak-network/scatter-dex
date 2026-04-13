@@ -12,17 +12,15 @@
  * Authorize proof는 릴레이어가 생성 — 프론트엔드는 주문 데이터만 제출
  */
 import { ethers } from 'ethers';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ZKBridgeService } from './ZKBridgeService';
 import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
 import { ConfigService } from './ConfigService';
+import { PendingClaimsStorage } from './PendingClaimsStorage';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree } from '../lib/merkleTree';
-
-const PENDING_CLAIMS_KEY = 'scatterdex_pending_claims';
 
 export type OrderStep =
   | 'idle'
@@ -116,7 +114,10 @@ export const OrderService = {
       if (!input.relayerAddress || !ethers.isAddress(input.relayerAddress)) {
         throw new Error('relayerAddress is required and must be a valid address');
       }
-      const relayerAddress = BigInt(input.relayerAddress).toString();
+      // Checksum-normalize so two callers that differ only in casing produce
+      // the same orderHash (and the same `scatterdex_pending_claims` entry).
+      const relayerChecksummed = ethers.getAddress(input.relayerAddress);
+      const relayerAddress = BigInt(relayerChecksummed).toString();
 
       const orderHashInputs = [
         BigInt(note.token).toString(),     // sellToken
@@ -192,9 +193,21 @@ export const OrderService = {
       onProgress({ step: 'saving_change' });
 
       // Without the claim secrets, the user cannot later produce the claim
-      // proof and the settled funds become unrecoverable. Persist them
-      // alongside everything the ClaimScreen needs to build the Merkle proof.
-      await persistPendingClaims(claimsData, claimLeafHashes, response.orderId);
+      // proof and the settled funds become unrecoverable. Persist BEFORE we
+      // mark the escrow note as spent so a write failure bubbles up instead
+      // of leaving an orphaned spent-state with no way to claim.
+      await PendingClaimsStorage.append(
+        claimsData.map((c, idx) => ({
+          secret: c.secret,
+          recipient: c.recipient,
+          token: c.token,
+          amount: c.amount,
+          releaseTime: c.releaseTime,
+          leafIndex: idx,
+          allLeaves: claimLeafHashes,
+          txHash: response.orderId || '',
+        })),
+      );
 
       // Mark original note as spent (in trading)
       await NoteStorageService.updateNoteStatus(note.id, 'spent');
@@ -228,41 +241,5 @@ export const OrderService = {
   },
 };
 
-type ClaimLeafData = {
-  secret: string;
-  recipient: string;
-  token: string;
-  amount: string;
-  releaseTime: string;
-};
-
-async function persistPendingClaims(
-  claims: ClaimLeafData[],
-  paddedLeafHashes: string[],
-  orderId: string | undefined,
-): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(PENDING_CLAIMS_KEY);
-    const existing: unknown[] = raw ? JSON.parse(raw) : [];
-    const next = [
-      ...existing,
-      ...claims.map((c, idx) => ({
-        secret: c.secret,
-        recipient: c.recipient,
-        token: c.token,
-        amount: c.amount,
-        releaseTime: c.releaseTime,
-        leafIndex: idx,
-        allLeaves: paddedLeafHashes,
-        txHash: orderId || '',
-      })),
-    ];
-    await AsyncStorage.setItem(PENDING_CLAIMS_KEY, JSON.stringify(next));
-  } catch (err) {
-    // Persistence is best-effort; surface via console so debugging is possible
-    // but don't throw — the order already succeeded on the relayer side.
-    console.error('Failed to persist pending claims:', err);
-  }
-}
 
 

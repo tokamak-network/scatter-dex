@@ -318,8 +318,11 @@ export const MarketOrderService = {
         });
       }
 
-      // Save claim data so user can later call claimWithProof
-      const claimBundle = {
+      // Persist claim data so the user can later produce the claim proof.
+      // Route through PendingClaimsStorage so a future SecureStore migration
+      // for the `secret` field touches a single module (#233 follow-up).
+      const { PendingClaimsStorage } = await import('./PendingClaimsStorage');
+      await PendingClaimsStorage.append([{
         secret: claimSecret,
         recipient: claimRecipient,
         token: buyToken,
@@ -328,13 +331,7 @@ export const MarketOrderService = {
         leafIndex: 0,
         allLeaves: claimLeaves,
         txHash: tx.hash,
-      };
-      // Store claim in AsyncStorage for retrieval in ClaimScreen
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      const existingClaims = await AsyncStorage.getItem('scatterdex_pending_claims');
-      const claims = existingClaims ? JSON.parse(existingClaims) : [];
-      claims.push(claimBundle);
-      await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(claims));
+      }]);
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;

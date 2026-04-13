@@ -35,13 +35,22 @@ export default function TradeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
+  // Only limit orders require a relayer. Skip the registry read + per-relayer
+  // /api/info probe when the user is in market mode, which is gas-paid and
+  // submitted directly on-chain.
   useEffect(() => {
+    if (tradeType !== 'limit') return;
     let cancelled = false;
     RelayerApiService.discoverRelayers()
-      .then((rs) => { if (!cancelled) setOnlineRelayers(rs.filter((r) => r.online)); })
+      .then((rs) => {
+        if (cancelled) return;
+        // Prefer the cheapest online relayer so "first" isn't registry-order.
+        const online = rs.filter((r) => r.online).sort((a, b) => a.fee - b.fee);
+        setOnlineRelayers(online);
+      })
       .catch(() => { /* leave empty; limit orders will surface a clear error */ });
     return () => { cancelled = true; };
-  }, []);
+  }, [tradeType]);
 
   // Load active notes
   useEffect(() => {
