@@ -500,6 +500,17 @@ export default function PrivateOrderPage() {
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
+  // Scatter mode pins buyAmount to the scatter cap (sellAmount − fee).
+  // Without this, recomputeBuyAmount above sets buyAmount = sellAmount × 1
+  // = sellAmount, which exceeds `validateScatterAuth`'s cap by one fee
+  // and surfaces a confusing "Over by 0.003" error even when the user's
+  // claim total is exactly at the cap.
+  useEffect(() => {
+    if (!isScatterMode || scatterMaxDistributeWei === null || buyTokenDecimals == null) return;
+    const next = ethers.formatUnits(scatterMaxDistributeWei, buyTokenDecimals);
+    if (next !== buyAmount) setBuyAmount(next);
+  }, [isScatterMode, scatterMaxDistributeWei, buyTokenDecimals, buyAmount]);
+
   // Net amount after fee — this is the distributable amount for claims
   const netBuyAmount = parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000) || 0;
 
