@@ -199,8 +199,9 @@ export const ClaimService = {
   /**
    * Batch wallet path — chunks into MAX_CLAIM_BATCH_SIZE groups, builds proofs
    * sequentially within each chunk (proof gen is single-threaded via WebView),
-   * and submits one settleWithBatch per chunk. Atomic per-chunk: a single bad
-   * claim reverts its whole chunk; earlier chunks already committed remain.
+   * and submits one `claimWithProofBatch` tx per chunk. Atomic per-chunk: a
+   * single bad claim reverts its whole chunk; earlier chunks already committed
+   * remain on-chain.
    */
   async executeBatch(
     signer: ethers.Signer,
@@ -216,7 +217,25 @@ export const ClaimService = {
       if (claims.length === 0) throw new Error('No claims to submit.');
 
       onProgress({ step: 'checking_status' });
-      const statuses = await Promise.all(claims.map((c) => this.checkClaimStatus(c, readProvider)));
+      // Fail fast on releaseTime before the expensive proof gen: the circuit
+      // enforces it and would have us burn CPU for nothing.
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      for (let i = 0; i < claims.length; i++) {
+        if (BigInt(claims[i].releaseTime) > now) {
+          throw new Error(`Claim #${i + 1} is not yet available (release time in the future). Wait or deselect it.`);
+        }
+      }
+      // Chunk the bridge-backed status checks — checkClaimStatus computes a
+      // nullifier via the WebView bridge, and launching N of them in parallel
+      // can drop messages or stall on lower-end devices. 8 is well under the
+      // practical ceiling and still finishes quickly for MAX_CLAIM_BATCH_SIZE.
+      const STATUS_CONCURRENCY = 8;
+      const statuses: { claimed: boolean; nullifier: string }[] = [];
+      for (let i = 0; i < claims.length; i += STATUS_CONCURRENCY) {
+        const batch = claims.slice(i, i + STATUS_CONCURRENCY);
+        const batchStatuses = await Promise.all(batch.map((c) => this.checkClaimStatus(c, readProvider)));
+        statuses.push(...batchStatuses);
+      }
       const eligible = claims.filter((_, i) => !statuses[i].claimed);
       if (eligible.length === 0) throw new Error('All selected claims have already been processed.');
 
@@ -231,14 +250,16 @@ export const ClaimService = {
         const built: BuiltClaim[] = [];
 
         for (let pi = 0; pi < chunk.length; pi++) {
+          built.push(await this.buildProof(chunk[pi]));
+          // Report completion after the proof lands so the bar advances
+          // 1..N rather than 0..N-1 while work is in flight.
           onProgress({
             step: 'generating_proof',
             chunk: ci + 1,
             totalChunks,
             claimsInChunk: chunk.length,
-            proofDone: pi,
+            proofDone: pi + 1,
           });
-          built.push(await this.buildProof(chunk[pi]));
         }
 
         onProgress({

@@ -136,10 +136,14 @@ export default function ClaimScreen() {
   }, []);
 
   const toggleSelectAll = useCallback(() => {
+    const len = pendingClaims.length;
     setSelectedIndices((prev) =>
-      prev.size === pendingClaims.length
+      prev.size === len
         ? new Set()
-        : new Set(pendingClaims.map((_, i) => i)),
+        // Build indices from `len` directly rather than closing over
+        // `pendingClaims`, so a list reorder without a length change doesn't
+        // stale-close over the wrong array.
+        : new Set(Array.from({ length: len }, (_, i) => i)),
     );
   }, [pendingClaims.length]);
 
@@ -210,6 +214,14 @@ export default function ClaimScreen() {
       }
       if (p.partialCommittedCount !== undefined) {
         partialCommitted = p.partialCommittedCount;
+      }
+      // Surface the service's error message immediately; without this the UI
+      // would only see a generic "Claim failed" fallback after the promise
+      // resolves, losing the underlying reason (release-time, nullifier
+      // already spent, relayer reject, etc.).
+      if (p.step === 'error') {
+        setClaimError(p.error || 'Claim failed');
+        setBatchStatus(null);
       }
     };
 

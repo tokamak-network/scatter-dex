@@ -193,7 +193,11 @@ export const RelayerApiService = {
       if (!res.ok) {
         throw new Error(data?.error || `Relayer rejected claim (${res.status})`);
       }
-      if (!data?.txHash) throw new Error('Relayer response missing txHash');
+      // Validate shape so a malformed 200 response can't fool the UI into
+      // "success". Expected: 0x-prefixed 32-byte hex (66 chars total).
+      if (typeof data?.txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data.txHash)) {
+        throw new Error('Relayer response missing or malformed txHash');
+      }
       return { txHash: data.txHash };
     } finally {
       clearTimeout(t);
