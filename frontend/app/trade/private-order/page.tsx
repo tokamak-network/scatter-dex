@@ -80,6 +80,18 @@ interface BuildOrderParams {
   zkRelayerUrl?: string;
 }
 
+// Truncate a decimal string to `maxDecimals` digits after the dot without
+// round-tripping through `Number`, so large wei-scale values (e.g. a 1e30
+// cap) display accurately instead of as `1e30.0000`. Caller is expected
+// to pass the canonical string from `ethers.formatUnits`.
+function truncateDecimals(s: string, maxDecimals: number): string {
+  const dot = s.indexOf(".");
+  if (dot < 0) return maxDecimals > 0 ? `${s}.${"0".repeat(maxDecimals)}` : s;
+  const currentDecimals = s.length - dot - 1;
+  if (currentDecimals <= maxDecimals) return s + "0".repeat(maxDecimals - currentDecimals);
+  return s.slice(0, dot + 1 + maxDecimals);
+}
+
 async function buildOrderProof(params: BuildOrderParams) {
   const { sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, changeSalt, maxFee, relayerAddress, eddsaPrivateKey, zkRelayerUrl } = params;
 
@@ -222,6 +234,22 @@ export default function PrivateOrderPage() {
   // is capped at `sellAmount − fee`. `buyAmount` is reinterpreted as
   // "amount distributed to recipients" in this mode.
   const isScatterMode = !!sellToken && !!buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
+
+  // `settleWithDex` (market path) rejects `sellToken == buyToken` in
+  // validateDexProof; without this, the Market tab would let the user
+  // click through in scatter mode and revert on-chain. Force the tab
+  // back to "limit" as soon as scatter mode engages.
+  useEffect(() => {
+    if (isScatterMode && orderType === "market") setOrderType("limit");
+  }, [isScatterMode, orderType]);
+
+  // Scatter mode has no price ratio — sell and buy are the same token.
+  // Pin `price` to "1" while scatter is active so the gas-estimate
+  // useEffect (which multiplies sell × price to size the tx) doesn't
+  // reuse a stale cross-token quote.
+  useEffect(() => {
+    if (isScatterMode && price !== "1") setPrice("1");
+  }, [isScatterMode, price]);
 
   // DEX prices for market order mode (only fetched when market tab is active)
   const dexPrices = useMainnetPrice(
@@ -432,8 +460,15 @@ export default function PrivateOrderPage() {
     if (!isScatterMode || sellTokenDecimals == null || !sellAmount) return null;
     try {
       const sell = ethers.parseUnits(sellAmount, sellTokenDecimals);
-      const capBps = BigInt(10000 - effectiveFeeBps);
-      return (sell * capBps) / 10000n;
+      // Match the contract's integer math:
+      //   validateScatterAuth checks `totalLocked + fee <= sellAmount`
+      //   where fee = floor(sell * feeBps / 10000).
+      // Compute the cap as `sell - fee` rather than
+      // `sell * (10000 - fee) / 10000`; the two differ by a 1-wei
+      // rounding that otherwise false-blocks distribute=sell at
+      // sub-10000-wei amounts.
+      const feeWei = (sell * BigInt(effectiveFeeBps)) / 10000n;
+      return sell > feeWei ? sell - feeWei : 0n;
     } catch { return null; }
   }, [isScatterMode, sellAmount, sellTokenDecimals, effectiveFeeBps]);
 
@@ -1307,7 +1342,7 @@ export default function PrivateOrderPage() {
                     </span>
                     <span>
                       {isScatterMode
-                        ? `Max distributable: ${scatterMaxDistributeWei !== null ? parseFloat(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals)).toFixed(4) : "—"} ${buyToken.symbol}`
+                        ? `Max distributable: ${scatterMaxDistributeWei !== null ? truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4) : "—"} ${buyToken.symbol}`
                         : `Recipients receive (after fee): ${netBuyAmount.toFixed(4)} ${buyToken.symbol}`}
                     </span>
                   </div>
@@ -1323,7 +1358,7 @@ export default function PrivateOrderPage() {
                   )}
                   {isScatterMode && scatterExcessWei !== null && scatterExcessWei > 0n && scatterMaxDistributeWei !== null && (
                     <div className="text-xs text-error font-bold">
-                      Distribute amount exceeds sellAmount − fee. Max: {parseFloat(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals)).toFixed(4)} {buyToken.symbol}. Over by {ethers.formatUnits(scatterExcessWei, buyToken.decimals)} {buyToken.symbol}.
+                      Distribute amount exceeds sellAmount − fee. Max: {truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4)} {buyToken.symbol}. Over by {ethers.formatUnits(scatterExcessWei, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {!isScatterMode && parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
