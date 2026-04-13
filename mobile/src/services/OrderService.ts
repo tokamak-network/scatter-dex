@@ -16,7 +16,6 @@ import { ZKBridgeService } from './ZKBridgeService';
 import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
-import { ConfigService } from './ConfigService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
 import { ProviderService } from './ProviderService';
 import { TokenService } from './TokenService';

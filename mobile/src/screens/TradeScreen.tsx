@@ -306,7 +306,7 @@ export default function TradeScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [account, signer, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
+  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>

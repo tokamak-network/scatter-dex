@@ -18,12 +18,14 @@ export interface TokenInfo {
 }
 
 let cachedTokenList: TokenInfo[] | null = null;
-// address (lowercased) -> decimals. Populated lazily by getDecimals() via the
-// on-chain ERC-20 `decimals()` call. Entries never mutate — ERC-20 decimals
-// are a constant per contract — but a network switch can redeploy the same
-// address with different decimals (typical on testnets), so we subscribe to
-// ProviderService resets and wipe the cache there.
-const decimalsCache = new Map<string, number>();
+// address (lowercased) -> in-flight or resolved decimals lookup. Storing a
+// Promise (not a number) dedupes concurrent callers — without this, two
+// `Promise.all([getDecimals(sell), getDecimals(buy)])` racing on the same
+// token would each fire a redundant on-chain `decimals()` RPC. ERC-20
+// decimals are a constant per contract, but a network switch can redeploy
+// the same address with different decimals (typical on testnets), so we
+// subscribe to ProviderService resets and wipe both caches there.
+const decimalsCache = new Map<string, Promise<number>>();
 ProviderService.subscribeReset(() => {
   decimalsCache.clear();
   cachedTokenList = null;
@@ -92,32 +94,42 @@ export const TokenService = {
     provider: ethers.JsonRpcProvider,
     address: string,
   ): Promise<number> {
+    if (!ethers.isAddress(address)) {
+      throw new Error(`Failed to read decimals for token ${address}: invalid address`);
+    }
     const key = address.toLowerCase();
     const cached = decimalsCache.get(key);
-    if (cached !== undefined) return cached;
+    if (cached) return cached;
 
-    for (const t of this.getTokenList()) {
-      if (t.address.toLowerCase() === key) {
-        decimalsCache.set(key, t.decimals);
-        return t.decimals;
+    // Cache the in-flight Promise so concurrent callers await the same
+    // resolution rather than each firing their own RPC.
+    const fetchPromise = (async (): Promise<number> => {
+      for (const t of this.getTokenList()) {
+        if (t.address.toLowerCase() === key) return t.decimals;
       }
-    }
 
-    const erc20 = new ethers.Contract(address, ERC20_ABI, provider);
-    let raw: bigint | number;
-    try {
-      raw = await erc20.decimals();
-    } catch (err: any) {
-      // Wrap the opaque ethers CALL_EXCEPTION so the UI can tell the user
-      // which token is unreachable instead of surfacing raw RPC noise.
-      throw new Error(`Failed to read decimals for token ${address}: ${err?.shortMessage || err?.message || 'RPC call reverted'}`);
-    }
-    const decimals = Number(raw);
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-      throw new Error(`Token ${address} returned invalid decimals: ${raw}`);
-    }
-    decimalsCache.set(key, decimals);
-    return decimals;
+      // Construct the contract inside the try so a malformed-but-isAddress
+      // edge (e.g. ENS-style input that slipped past) is wrapped uniformly.
+      try {
+        const erc20 = new ethers.Contract(address, ERC20_ABI, provider);
+        const raw: bigint | number = await erc20.decimals();
+        const decimals = Number(raw);
+        if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+          throw new Error(`Token ${address} returned invalid decimals: ${raw}`);
+        }
+        return decimals;
+      } catch (err: any) {
+        // Drop the cached failed-promise so a transient RPC blip doesn't
+        // permanently mark this token unresolvable.
+        decimalsCache.delete(key);
+        console.error('TokenService.getDecimals failed:', err);
+        const msg = err?.shortMessage || err?.reason || err?.info?.error?.message || err?.message || 'RPC call reverted';
+        throw new Error(`Failed to read decimals for token ${address}: ${msg}`);
+      }
+    })();
+
+    decimalsCache.set(key, fetchPromise);
+    return fetchPromise;
   },
 
   resetCache() {
