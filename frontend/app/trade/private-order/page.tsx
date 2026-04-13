@@ -8,6 +8,7 @@ import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
+import { AddressPicker } from "../../components/AddressPicker";
 import {
   deriveEdDSAKey,
   signEdDSA,
@@ -1154,12 +1155,17 @@ export default function PrivateOrderPage() {
                     </div>
                     <div className="grid grid-cols-12 gap-2">
                       <div className="col-span-5">
-                        <input
-                          type="text" value={c.address}
-                          onChange={(e) => updateClaim(c.id, "address", e.target.value)}
-                          placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
-                          className="w-full bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text" value={c.address}
+                            onChange={(e) => updateClaim(c.id, "address", e.target.value)}
+                            placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
+                            className="flex-1 min-w-0 bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
+                          />
+                          {c.mode !== "stealth" && (
+                            <AddressPicker onPick={(addr) => updateClaim(c.id, "address", addr)} />
+                          )}
+                        </div>
                       </div>
                       <div className="col-span-3">
                         <div className="flex gap-1">

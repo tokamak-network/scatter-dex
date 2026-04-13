@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/identity", label: "Identity Verification" },
   { href: "/trade", label: "Secret Trade" },
   { href: "/relayer", label: "Relayer" },
+  { href: "/wallets", label: "Address Book" },
   { href: "/faq", label: "FAQ" },
   // Local dev only — the route itself refuses non-31337 chains.
   ...(EXPECTED_CHAIN_ID === 31337 ? [{ href: "/faucet", label: "Faucet" }] : []),
