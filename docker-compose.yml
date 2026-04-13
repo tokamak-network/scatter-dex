@@ -3,7 +3,9 @@ services:
   anvil:
     image: ghcr.io/foundry-rs/foundry:stable
     profiles: ["mock"]
-    entrypoint: ["anvil", "--host", "0.0.0.0"]
+    # `--hardfork prague` enables EIP-7702 batch delegation (Pectra),
+    # which the frontend uses to collapse deposit popups into one tx.
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--hardfork", "prague"]
     ports:
       - "8545:8545"
     healthcheck:

@@ -87,8 +87,11 @@ if [ "$MOCK_MODE" = true ]; then
   check_port 3002 "zk-relayer"
   check_port 3000 "frontend"
 
-  echo "[1/4] Starting anvil..."
-  anvil --silent &
+  echo "[1/4] Starting anvil (hardfork=prague for EIP-7702)..."
+  # `--hardfork prague` enables Pectra-era features — notably EIP-7702
+  # batch delegation, which the frontend uses to collapse the deposit
+  # popup chain into one tx when the wallet supports it.
+  anvil --silent --hardfork prague &
   last_pid=$!
   PIDS+=("$last_pid")
   if ! wait_for "$RPC_URL" "anvil" 10; then

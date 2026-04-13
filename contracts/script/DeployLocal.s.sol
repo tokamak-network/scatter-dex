@@ -10,6 +10,7 @@ import {FeeVault} from "../src/FeeVault.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
+import {BatchExecutor} from "../src/BatchExecutor.sol";
 
 /// @dev Mock identity registry that verifies everyone (for local testing)
 contract MockIdentityRegistry is IIdentityRegistry {
@@ -120,6 +121,12 @@ contract DeployLocal is Script {
         }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
+        // Deploy the minimal EIP-7702 batch executor. The frontend
+        // authorizes EOAs to delegate to this address when available,
+        // collapsing deposit's wrap+approve+deposit popups into one tx.
+        BatchExecutor batchExecutor = new BatchExecutor();
+        console.log("BatchExecutor:", address(batchExecutor));
+
         vm.stopBroadcast();
 
         // Print summary
@@ -135,6 +142,7 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(address(vault))));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
+        console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(address(batchExecutor))));
     }
 
     function _deployCode(string memory what) internal returns (address addr) {
