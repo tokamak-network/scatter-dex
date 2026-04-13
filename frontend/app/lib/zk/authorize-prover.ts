@@ -114,6 +114,22 @@ export interface AuthorizeProofInput {
    * enforces this constraint per used claim (PR #127 gemini HIGH fix).
    */
   claims: ClaimEntry[];
+
+  /**
+   * Salt for the residual (change) commitment. The circuit hashes it into
+   * `newCommitment = Poseidon(TAG_V2, secret, sellToken, newBalance, newSalt,
+   * pubKeyAx, pubKeyAy)`, so the caller MUST pass the same salt it used to
+   * pre-compute `expectedChangeCommitment` for the note file; otherwise the
+   * on-chain commitment will differ from the stored one, leaving the change
+   * UTXO indexable only by its unknown salt and effectively unspendable.
+   *
+   * Omit when `sellAmount === note.amount` (fully-spent, no change) — the
+   * prover ignores the salt and forces `newCommitment = 0`. When change > 0
+   * and this field is not supplied, the prover will generate its own random
+   * salt as a fallback, but the caller should NOT rely on that (the salt
+   * is then not surfaced back and the change note file will be inconsistent).
+   */
+  newSalt?: bigint;
 }
 
 export interface AuthorizeProofResult {
@@ -206,9 +222,13 @@ export async function generateAuthorizeProof(
   // ── 3. Residual commitment (change UTXO) ──
   const newBalance = input.note.amount - input.sellAmount;
   let newCommitment = 0n;
-  let newSalt = 0n;
+  // Prefer the caller-supplied salt so the on-chain commitment matches the
+  // one the page pre-computed for the change note file. Fall back to a
+  // random salt if the caller didn't provide one (legacy callers) — but
+  // the resulting change UTXO won't round-trip through the stored note.
+  let newSalt = input.newSalt ?? 0n;
   if (newBalance > 0n) {
-    newSalt = randomFieldElement();
+    if (newSalt === 0n) newSalt = randomFieldElement();
     newCommitment = await poseidonHash([
       TAG_COMMITMENT_V2,
       input.note.ownerSecret,
@@ -218,6 +238,10 @@ export async function generateAuthorizeProof(
       input.note.pubKeyAx,
       input.note.pubKeyAy,
     ]);
+  } else {
+    // Circuit enforces `newCommitment === 0` when newBalance === 0, and
+    // `newSalt` is unconstrained in that branch, so pass 0 explicitly.
+    newSalt = 0n;
   }
 
   // ── 4. Claims tree ──

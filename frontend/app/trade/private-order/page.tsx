@@ -185,6 +185,13 @@ async function buildOrderProof(params: BuildOrderParams) {
     maxFee, expiry: expiryTimestamp, nonce, relayer: relayerAddress,
     eddsaPrivateKey,
     claims: claimData.map(c => ({ secret: BigInt(c.secret), recipient: c.recipient, token: c.token, amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime) })),
+    // Pass the change salt that produced `expectedChangeCommitment` above,
+    // so the prover's `newCommitment` signal — which gets inserted on-chain —
+    // hashes from the same salt. Previously the prover generated its own
+    // random salt internally and the two commitments never matched: the
+    // page indexer couldn't resolve the change leafIndex, and the change
+    // note file stored a salt that didn't correspond to any on-chain UTXO.
+    newSalt: newSalt > 0n ? newSalt : undefined,
   });
 
   return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
