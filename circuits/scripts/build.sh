@@ -14,13 +14,13 @@ CIRCUITS=(deposit withdraw settle claim authorize cancel)
 # runs under bash 3.2, which is what macOS ships as /bin/bash.
 verifier_name_for() {
   case "$1" in
-    deposit)   echo "DepositVerifier" ;;
-    withdraw)  echo "WithdrawVerifier" ;;
-    settle)    echo "SettleVerifier" ;;
-    claim)     echo "ClaimVerifier" ;;
-    authorize) echo "AuthorizeVerifier" ;;
-    cancel)    echo "CancelVerifier" ;;
-    *) echo "ERROR: no verifier mapping for circuit '$1'" >&2; return 1 ;;
+    deposit)   printf "DepositVerifier\n" ;;
+    withdraw)  printf "WithdrawVerifier\n" ;;
+    settle)    printf "SettleVerifier\n" ;;
+    claim)     printf "ClaimVerifier\n" ;;
+    authorize) printf "AuthorizeVerifier\n" ;;
+    cancel)    printf "CancelVerifier\n" ;;
+    *) printf "ERROR: no verifier mapping for circuit '%s'\n" "$1" >&2; return 1 ;;
   esac
 }
 
