@@ -1,11 +1,7 @@
 import type { PrivateOrderbook } from "./orderbook.js";
 import type { RemoteOrderStore } from "./remote-orderbook.js";
 import type { PrivateMatcher } from "./matcher.js";
-
-// Basis-point denominator for fee-aware matching. Mirrors
-// `FEE_BPS_DENOMINATOR` in SettleVerifyLib.sol and the `10000` factor
-// used inside settle.circom.
-const FEE_BPS_DENOM = 10000n;
+import { isSettleFeeCovered } from "./matcher.js";
 import type { PrivateSubmitter } from "./private-submitter.js";
 import type { SharedOrderbookClient } from "./shared-orderbook-client.js";
 import {
@@ -74,6 +70,7 @@ export class CrossRelayerMatchService {
 
     const remoteSellAmount = BigInt(summary.sellAmount);
     const remoteBuyAmount = BigInt(summary.buyAmount);
+    const remoteMaxFee = BigInt(summary.maxFee);
 
     for (const local of localCandidates) {
       if (local.status !== "pending") continue;
@@ -92,15 +89,10 @@ export class CrossRelayerMatchService {
         local.order.buyAmount * remoteBuyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility with worst-case fee. See PrivateMatcher.findMatch
-      // for derivation: settle 8c (totalLocked + feeToken <= counterpartySell)
-      // combined with 8b (totalLocked >= buyAmount) and the maxFee cap
-      // require side.sellAmount * (10000 - side.maxFee) >= cp.buyAmount * 10000.
-      // Checking without the fee term let 1:1 matches through that then
-      // reverted with ClaimsCapExceeded at submit time.
-      const remoteMaxFee = BigInt(summary.maxFee);
-      if (remoteSellAmount * (FEE_BPS_DENOM - remoteMaxFee) < local.order.buyAmount * FEE_BPS_DENOM) continue;
-      if (local.order.sellAmount * (FEE_BPS_DENOM - local.order.maxFee) < remoteBuyAmount * FEE_BPS_DENOM) continue;
+      // Amount compatibility with each side's signed maxFee as the
+      // worst-case fee bound (see PrivateMatcher.isSettleFeeCovered).
+      if (!isSettleFeeCovered(remoteSellAmount, remoteMaxFee, local.order.buyAmount)) continue;
+      if (!isSettleFeeCovered(local.order.sellAmount, local.order.maxFee, remoteBuyAmount)) continue;
 
       // Match found! Local is taker, remote is maker.
       console.log(`[cross-relayer] Reactive match: local ${orderKey} ↔ remote ${summary.id}`);
@@ -311,13 +303,12 @@ export class CrossRelayerMatchService {
     }
     // Fee-aware amount check — mirrors the settle-circuit 8c cap
     // (totalLocked + feeToken <= counterpartySell) combined with the
-    // signed maxFee upper bound, so we don't accept offers that would
-    // revert with ClaimsCapExceeded at settle.
+    // signed maxFee upper bound.
     if (
-      takerOrder.sellAmount * (FEE_BPS_DENOM - takerOrder.maxFee) < maker.buyAmount * FEE_BPS_DENOM ||
-      maker.sellAmount * (FEE_BPS_DENOM - maker.maxFee) < takerOrder.buyAmount * FEE_BPS_DENOM
+      !isSettleFeeCovered(takerOrder.sellAmount, takerOrder.maxFee, maker.buyAmount) ||
+      !isSettleFeeCovered(maker.sellAmount, maker.maxFee, takerOrder.buyAmount)
     ) {
-      return { status: "rejected", reason: "amount insufficient (fee-adjusted)" };
+      return { status: "rejected", reason: "amount insufficient" };
     }
 
     // 5. Check expiry
