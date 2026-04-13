@@ -15,6 +15,7 @@ import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsSto
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
+import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
   const navigation = useNavigation<any>();
@@ -124,6 +125,24 @@ export default function ClaimScreen() {
       privKey = deriveStealthPrivateKey(identity.spendingKey, identity.viewingKey, ephemeralPubKey);
     } catch (err: any) {
       Alert.alert('Derivation failed', err?.message || 'Could not derive stealth private key');
+      return;
+    }
+    // Guard against malformed/tampered claim JSON: if the derived key doesn't
+    // control `stealthAddress`, the user isn't the intended recipient (or the
+    // claim's `recipient` was rewritten). Sharing would be misleading at best
+    // and fund-losing at worst.
+    let derivedAddress: string;
+    try {
+      derivedAddress = new ethers.Wallet(privKey).address;
+    } catch (err: any) {
+      Alert.alert('Derivation failed', err?.message || 'Invalid derived key');
+      return;
+    }
+    if (ethers.getAddress(derivedAddress) !== ethers.getAddress(stealthAddress)) {
+      Alert.alert(
+        'Stealth address mismatch',
+        `The derived private key controls ${derivedAddress}, but this claim targets ${stealthAddress}. Either this meta-address didn't issue the claim, or the claim JSON was tampered. Refusing to reveal.`,
+      );
       return;
     }
     Alert.alert(
