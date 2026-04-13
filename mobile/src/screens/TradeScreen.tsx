@@ -17,6 +17,7 @@ import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { TokenService } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
 import AddressBookModal from '../components/AddressBookModal';
+import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
@@ -25,9 +26,11 @@ import { formatAmount } from '../lib/format';
 const MAX_CLAIM_ROWS = 10;
 
 type DelayUnit = 'min' | 'hr' | 'day';
+type ClaimMode = 'standard' | 'stealth';
 interface ClaimRow {
   id: number;
-  address: string;     // empty = self
+  mode: ClaimMode;     // 'standard' = address is a normal 0x; 'stealth' = a meta-address
+  address: string;     // empty = self when mode === 'standard'
   amount: string;      // human-readable decimal string
   delay: string;       // integer string
   delayUnit: DelayUnit;
@@ -78,7 +81,7 @@ export default function TradeScreen() {
   // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
   // row doesn't ship an immediate-release claim by accident.
   const [claimRows, setClaimRows] = useState<ClaimRow[]>([
-    { id: 1, address: '', amount: '', delay: '1', delayUnit: 'hr' },
+    { id: 1, mode: 'standard', address: '', amount: '', delay: '1', delayUnit: 'hr' },
   ]);
   // Address-book picker target: which claim row the next picked address
   // should land in. `null` = picker closed.
@@ -143,7 +146,7 @@ export default function TradeScreen() {
     setClaimRows((prev) => {
       if (prev.length >= MAX_CLAIM_ROWS) return prev;
       const nextId = prev.length > 0 ? Math.max(...prev.map((r) => r.id)) + 1 : 1;
-      return [...prev, { id: nextId, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
+      return [...prev, { id: nextId, mode: 'standard' as ClaimMode, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
     });
   }, []);
   const removeClaim = useCallback((id: number) => {
@@ -211,16 +214,33 @@ export default function TradeScreen() {
         const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
         const buyAmountTotal = ethers.formatUnits(buyAmountBn, buyDecimals);
 
-        // Validate + normalize claim rows. Empty address defaults to self,
-        // mirroring frontend/app/trade/private-order/page.tsx:118.
+        // Validate + normalize claim rows. Standard mode: empty address
+        // defaults to `account` (mirrors frontend/private-order). Stealth
+        // mode: parse the meta-address and derive a one-time stealth
+        // address per claim — also surface `ephemeralPubKey` so the
+        // recipient (and our local persistence path) can later reconstruct
+        // the stealth private key.
         const parsedClaims = claimRows.map((r, idx) => {
-          const recipient = r.address.trim() || account;
-          if (!ethers.isAddress(recipient)) {
-            throw new Error(`Claim #${idx + 1}: recipient "${r.address}" is not a valid address.`);
-          }
           const claimAmount = r.amount.trim();
           if (!claimAmount || !(parseFloat(claimAmount) > 0)) {
             throw new Error(`Claim #${idx + 1}: amount must be > 0.`);
+          }
+          if (r.mode === 'stealth') {
+            const meta = r.address.trim();
+            if (!isMetaAddress(meta)) {
+              throw new Error(`Claim #${idx + 1}: meta-address must start with "st:eth:0x" and carry 66 bytes of compressed pubkeys.`);
+            }
+            const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta);
+            return {
+              recipient: stealthAddress,
+              amount: claimAmount,
+              releaseDelaySec: delayToSeconds(r.delay, r.delayUnit),
+              ephemeralPubKey,
+            };
+          }
+          const recipient = r.address.trim() || account;
+          if (!ethers.isAddress(recipient)) {
+            throw new Error(`Claim #${idx + 1}: recipient "${r.address}" is not a valid address.`);
           }
           return {
             recipient,
@@ -457,22 +477,51 @@ export default function TradeScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
+                {/* Standard / Stealth mode toggle. Stealth mode generates a
+                    one-time recipient from a recipient-published meta-address;
+                    address-book picker is hidden in that mode (book stores
+                    plain addresses, not meta-addresses). */}
+                <View style={s.claimModeRow}>
+                  <TouchableOpacity
+                    style={[s.claimModeBtn, row.mode === 'standard' && s.claimModeBtnActive]}
+                    onPress={() => updateClaim(row.id, { mode: 'standard', address: '' })}
+                  >
+                    <Text style={[s.claimModeText, row.mode === 'standard' && s.claimModeTextActive]}>Standard</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.claimModeBtn, row.mode === 'stealth' && s.claimModeBtnActive]}
+                    onPress={() => updateClaim(row.id, { mode: 'stealth', address: '' })}
+                  >
+                    <Text style={[s.claimModeText, row.mode === 'stealth' && s.claimModeTextActive]}>Stealth</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={s.claimRowInputs}>
                   <TextInput
                     style={[s.claimInput, { flex: 1 }]}
-                    placeholder={`Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`}
+                    placeholder={
+                      row.mode === 'stealth'
+                        ? 'st:eth:0x… (recipient meta-address)'
+                        : `Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`
+                    }
                     placeholderTextColor="#9CA3AF"
                     value={row.address}
                     onChangeText={(v) => updateClaim(row.id, { address: v })}
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
-                  <TouchableOpacity
-                    style={s.claimPickBtn}
-                    onPress={() => setPickerForRow(row.id)}
-                  >
-                    <Text style={s.claimPickText}>📒</Text>
-                  </TouchableOpacity>
+                  {/* TODO(stealth-book): the address book stores plain
+                      0x addresses today. Expanding it to also hold
+                      `type: 'standard' | 'stealth'` entries (keyed by
+                      meta-address) would let stealth claims reuse the
+                      picker. Out of scope for this PR. */}
+                  {row.mode === 'standard' && (
+                    <TouchableOpacity
+                      style={s.claimPickBtn}
+                      onPress={() => setPickerForRow(row.id)}
+                    >
+                      <Text style={s.claimPickText}>📒</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={s.claimRowInputs}>
                   <TextInput
@@ -672,6 +721,11 @@ const s = StyleSheet.create({
   claimRestBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
   claimPickBtn: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
   claimPickText: { fontSize: 16 },
+  claimModeRow: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, padding: 4, gap: 4 },
+  claimModeBtn: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
+  claimModeBtnActive: { backgroundColor: '#EFF6FF' },
+  claimModeText: { fontSize: 12, fontWeight: '700', color: '#9CA3AF' },
+  claimModeTextActive: { color: '#2563EB' },
   claimRestText: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
   delayUnitRow: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' },
   delayUnitBtn: { paddingHorizontal: 10, paddingVertical: 8 },
