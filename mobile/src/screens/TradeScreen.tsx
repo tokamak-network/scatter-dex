@@ -493,13 +493,13 @@ export default function TradeScreen() {
                 <View style={s.claimModeRow}>
                   <TouchableOpacity
                     style={[s.claimModeBtn, row.mode === 'standard' && s.claimModeBtnActive]}
-                    onPress={() => updateClaim(row.id, { mode: 'standard', address: '' })}
+                    onPress={() => { if (row.mode !== 'standard') updateClaim(row.id, { mode: 'standard', address: '' }); }}
                   >
                     <Text style={[s.claimModeText, row.mode === 'standard' && s.claimModeTextActive]}>Standard</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[s.claimModeBtn, row.mode === 'stealth' && s.claimModeBtnActive]}
-                    onPress={() => updateClaim(row.id, { mode: 'stealth', address: '' })}
+                    onPress={() => { if (row.mode !== 'stealth') updateClaim(row.id, { mode: 'stealth', address: '' }); }}
                   >
                     <Text style={[s.claimModeText, row.mode === 'stealth' && s.claimModeTextActive]}>Stealth</Text>
                   </TouchableOpacity>

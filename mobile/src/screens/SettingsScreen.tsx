@@ -123,13 +123,7 @@ export default function SettingsScreen() {
   }, [toggles]);
 
   const handleStealthManagement = useCallback(async () => {
-    let existing;
-    try {
-      existing = await StealthIdentityService.load();
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to load stealth identity');
-      return;
-    }
+    const existing = await StealthIdentityService.load();
 
     if (!existing) {
       Alert.alert(

@@ -9,11 +9,15 @@
  * Stored as a single JSON blob — there's only ever one identity per
  * device today; a future multi-identity flow can extend the shape.
  */
-import 'react-native-get-random-values';
 import * as SecureStore from 'expo-secure-store';
 import { generateMetaAddress, MetaAddress } from '../lib/stealth';
 
 const STORAGE_KEY = 'scatterdex_stealth_identity_v1';
+
+const persist = (identity: MetaAddress) =>
+  SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(identity), {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
 
 export const StealthIdentityService = {
   async load(): Promise<MetaAddress | null> {
@@ -57,18 +61,14 @@ export const StealthIdentityService = {
       throw new Error('Stealth identity already exists. Use `regenerate` to replace.');
     }
     const identity = generateMetaAddress();
-    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(identity), {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
+    await persist(identity);
     return identity;
   },
 
   /** Force-replace the stored identity. Returns the new one. */
   async regenerate(): Promise<MetaAddress> {
     const identity = generateMetaAddress();
-    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(identity), {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
+    await persist(identity);
     return identity;
   },
 
