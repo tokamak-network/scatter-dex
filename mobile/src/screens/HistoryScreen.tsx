@@ -153,7 +153,8 @@ export default function HistoryScreen() {
     // (rare today — noted as a follow-up).
     const candidates = pendingOrders.filter(
       (o) => o.pubKeyAx === note.pubKeyAx
-        && (o.sellToken ? BigInt(o.sellToken) === BigInt(note.token) : true)
+        && !!o.sellToken
+        && BigInt(o.sellToken) === BigInt(note.token)
         && !!o.nonce,
     );
     if (candidates.length === 0) {

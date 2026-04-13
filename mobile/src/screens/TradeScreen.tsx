@@ -53,10 +53,12 @@ export default function TradeScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Claim builder (limit mode only)
+  // Claim builder (limit mode only). Default delay matches the web
+  // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
+  // row doesn't ship an immediate-release claim by accident.
   const [nextClaimId, setNextClaimId] = useState(2);
   const [claimRows, setClaimRows] = useState<ClaimRow[]>([
-    { id: 1, address: '', amount: '', delay: '0', delayUnit: 'min' },
+    { id: 1, address: '', amount: '', delay: '1', delayUnit: 'hr' },
   ]);
 
   // Load active notes
@@ -115,7 +117,7 @@ export default function TradeScreen() {
   const addClaim = useCallback(() => {
     setClaimRows((prev) => {
       if (prev.length >= MAX_CLAIM_ROWS) return prev;
-      const next = [...prev, { id: nextClaimId, address: '', amount: '', delay: '0', delayUnit: 'min' as DelayUnit }];
+      const next = [...prev, { id: nextClaimId, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
       return next;
     });
     setNextClaimId((n) => n + 1);

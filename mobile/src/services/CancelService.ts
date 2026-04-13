@@ -67,7 +67,6 @@ export const CancelService = {
       const { note } = input;
       const keyPair = await EdDSAKeyService.getOrDeriveKey(signer, account);
 
-      // ─── Merkle tree rebuild (same pattern as MarketOrderService) ──
       onProgress({ step: 'building_tree' });
       const readProvider = ProviderService.getReadProvider();
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
@@ -95,7 +94,6 @@ export const CancelService = {
       const { root: commitmentRoot, layers } = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
       const { pathElements, pathIndices } = getMerkleProofFromTree(layers, note.leafIndex);
 
-      // ─── Nullifiers + rotated commitment ──
       const oldNullifier = await ZKBridgeService.computeNullifier(
         TAG_ESCROW_NULL.toString(),
         note.secret,
@@ -109,10 +107,12 @@ export const CancelService = {
 
       // Roll until newCommitment != 0 and freshSalt != old salt, matching
       // cancel-prover.ts:132-146. Poseidon-0 is astronomically unlikely but
-      // would brick the balance if it happened on-chain.
+      // would brick the balance on-chain. Bounded so a broken ZK bridge
+      // (always returning '0') cannot hang the UI forever.
+      const MAX_SALT_ATTEMPTS = 8;
       let freshSalt = '0';
       let newCommitment = '0';
-      while (newCommitment === '0') {
+      for (let attempt = 0; attempt < MAX_SALT_ATTEMPTS && newCommitment === '0'; attempt++) {
         const cand = generateRandomField();
         if (cand === note.salt) continue;
         freshSalt = cand;
@@ -126,6 +126,9 @@ export const CancelService = {
           pubKeyAy: keyPair.pubKeyAy,
         });
       }
+      if (newCommitment === '0') {
+        throw new Error('Failed to compute a non-zero rotated commitment — ZK bridge may be unhealthy.');
+      }
 
       // Cancel message = Poseidon(oldNonceNullifier, submitter).
       // On-chain cancelPrivate binds submitter == msg.sender, so we sign with
@@ -136,7 +139,6 @@ export const CancelService = {
       const cancelMsg = await ZKBridgeService.poseidonHash([oldNonceNullifier, submitter]);
       const sig = await ZKBridgeService.signEdDSA(keyPair.privateKeyHex, cancelMsg);
 
-      // ─── Circuit input + proof gen ──
       onProgress({ step: 'generating_proof' });
       const circuitInputs: Record<string, string | string[]> = {
         commitmentRoot,
@@ -171,7 +173,6 @@ export const CancelService = {
       const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
       const proof = formatProofForSolidity(proofResult.proof);
 
-      // ─── On-chain submission ──
       onProgress({ step: 'submitting' });
       // publicSignals layout (circuits/cancel.circom:212-218):
       //   [0] commitmentRoot [1] oldNullifier [2] oldNonceNullifier
@@ -189,11 +190,9 @@ export const CancelService = {
       });
       const receipt = await tx.wait();
 
-      // ─── Rotate the stored note ──
       onProgress({ step: 'rotating_note' });
-      // Parse CommitmentInserted from the receipt logs to get the new leaf
-      // index — if the event isn't present (RPC lag, wrong filter), fall back
-      // to -1 and let a subsequent sync repair it.
+      // If the event isn't present (RPC lag, wrong filter), -1 lets a later
+      // sync repair the leafIndex rather than block the rotation.
       let newLeafIndex = -1;
       for (const log of receipt?.logs || []) {
         try {
