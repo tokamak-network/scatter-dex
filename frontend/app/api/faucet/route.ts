@@ -50,18 +50,20 @@ function getUsdcAddress(): string | null {
   return usdc?.address ?? null;
 }
 
-// ERC20 decimals is immutable per contract. Cache it per address so
-// repeated faucet calls don't pay an RPC round-trip for a constant.
-const _decimalsCache = new Map<string, number>();
-async function getDecimals(
+// ERC20 decimals is immutable per contract. Cache the in-flight Promise
+// (not the resolved value) so concurrent requests that miss the cache
+// all await the same RPC call instead of stampeding.
+const _decimalsCache = new Map<string, Promise<number>>();
+function getDecimals(
   token: ethers.Contract,
   address: string,
 ): Promise<number> {
-  const hit = _decimalsCache.get(address);
-  if (hit !== undefined) return hit;
-  const d = Number(await token.decimals());
-  _decimalsCache.set(address, d);
-  return d;
+  let p = _decimalsCache.get(address);
+  if (!p) {
+    p = token.decimals().then((d: bigint | number) => Number(d));
+    _decimalsCache.set(address, p);
+  }
+  return p;
 }
 
 export async function POST(req: NextRequest) {
