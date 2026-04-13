@@ -17,7 +17,10 @@ export function makePrivateOrder(overrides: Partial<PrivateOrder> = {}): Private
     buyToken: TOKEN_B,
     sellAmount: 10n * 10n ** 18n,
     buyAmount: 21000n * 10n ** 18n,
-    maxFee: 60n,
+    // maxFee: 0n keeps the existing 1:1 amount-ratio scenarios valid. Fee-
+    // aware matching (matcher rejects 1:1 when maxFee > 0, because settle.8c
+    // cannot hold) is exercised in dedicated fee-aware tests that override.
+    maxFee: 0n,
     expiry: BigInt(Math.floor(Date.now() / 1000) + 86400),
     nonce,
     pubKeyAx: 1000n + nonce, // unique per order

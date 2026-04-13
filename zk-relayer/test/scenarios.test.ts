@@ -27,7 +27,7 @@ function makeOrder(overrides: Partial<PrivateOrder> = {}): PrivateOrder {
     buyToken: overrides.buyToken ?? TOKEN_B,
     sellAmount: overrides.sellAmount ?? 1000n,
     buyAmount: overrides.buyAmount ?? 2000n,
-    maxFee: overrides.maxFee ?? 30n,
+    maxFee: overrides.maxFee ?? 0n,
     expiry: overrides.expiry ?? BigInt(Math.floor(Date.now() / 1000) + 3600),
     nonce: overrides.nonce ?? nextNonce(),
     pubKeyAx: overrides.pubKeyAx ?? 111n,
@@ -51,7 +51,7 @@ function makeRemote(overrides: Partial<OrderSummary> = {}): OrderSummary {
     sellAmount: overrides.sellAmount ?? "2000",
     buyAmount: overrides.buyAmount ?? "1000",
     minFillAmount: "0",
-    maxFee: overrides.maxFee ?? 30,
+    maxFee: overrides.maxFee ?? 0,
     expiry: overrides.expiry ?? Math.floor(Date.now() / 1000) + 3600,
     createdAt: Math.floor(Date.now() / 1000),
   };

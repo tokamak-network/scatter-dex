@@ -3,6 +3,11 @@ import { pairKey } from "../types/order.js";
 import type { PrivateOrderbook } from "./orderbook.js";
 import type { RemoteOrderStore } from "./remote-orderbook.js";
 
+// Basis-point denominator for fee-aware matching. Mirrors
+// `FEE_BPS_DENOMINATOR` in the settle-verify library and the
+// `10000` factor used inside settle.circom.
+const FEE_BPS_DENOM = 10000n;
+
 export class PrivateMatcher {
   private relayerAddress: string | null = null;
 
@@ -56,9 +61,16 @@ export class PrivateMatcher {
         order.buyAmount * candidate.order.buyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility
-      if (candidate.order.sellAmount < order.buyAmount) continue;
-      if (order.sellAmount < candidate.order.buyAmount) continue;
+      // Amount compatibility including worst-case fee. The settle circuit
+      // enforces
+      //   maker.totalLocked + feeTokenMaker <= taker.sellAmount
+      //   feeTokenMaker <= floor(taker.sellAmount * taker.maxFee / 10000)
+      // With totalLocked >= maker.buyAmount (authorize 8b), a trade can only
+      // close when taker.sellAmount * (10000 - taker.maxFee) >= maker.buyAmount * 10000.
+      // Checking the same inequality without fees (the old version) let
+      // 1:1 matches through that then failed at settle with ClaimsCapExceeded.
+      if (candidate.order.sellAmount * (FEE_BPS_DENOM - candidate.order.maxFee) < order.buyAmount * FEE_BPS_DENOM) continue;
+      if (order.sellAmount * (FEE_BPS_DENOM - order.maxFee) < candidate.order.buyAmount * FEE_BPS_DENOM) continue;
 
       return { maker: newOrder, taker: candidate };
     }
@@ -112,9 +124,13 @@ export class PrivateMatcher {
         order.buyAmount * remoteBuyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility
-      if (remoteSellAmount < order.buyAmount) continue;
-      if (order.sellAmount < remoteBuyAmount) continue;
+      // Amount compatibility with worst-case fee (same bound as the local
+      // matcher — see comment above). Remote orders are maker here and the
+      // new local order is taker, so each side's maxFee caps the fee on
+      // its own sellAmount.
+      const remoteMaxFee = BigInt(remote.maxFee);
+      if (remoteSellAmount * (FEE_BPS_DENOM - remoteMaxFee) < order.buyAmount * FEE_BPS_DENOM) continue;
+      if (order.sellAmount * (FEE_BPS_DENOM - order.maxFee) < remoteBuyAmount * FEE_BPS_DENOM) continue;
 
       // Cross-relayer match found!
       // New order is taker (arrived later), remote order is maker (was there first)
