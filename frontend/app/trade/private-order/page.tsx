@@ -349,6 +349,34 @@ export default function PrivateOrderPage() {
     return claims.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   }, [claims]);
 
+  // Sum claim amounts as BigInt wei, tolerating rows the user is still
+  // typing into. Shared between the shortfall check (which gates submit)
+  // and fillRest (which auto-fills one row). Keeping both in BigInt land
+  // is what lets the UI match the circuit's integer equality — floats
+  // silently drop the fee-sized tail.
+  const sumClaimWei = useCallback((excludeId?: number): bigint => {
+    if (!buyToken) return 0n;
+    return claims.reduce((acc, c) => {
+      if (c.id === excludeId || !c.amount) return acc;
+      try { return acc + ethers.parseUnits(c.amount, buyToken.decimals); }
+      catch { return acc; }
+    }, 0n);
+  }, [claims, buyToken?.decimals]);
+
+  // BigInt check that matches the authorize circuit constraint
+  // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
+  const claimShortfall = useMemo((): bigint | null => {
+    if (!buyToken || !buyAmount) return null;
+    try {
+      const need = ethers.parseUnits(buyAmount, buyToken.decimals);
+      if (need === 0n) return null;
+      const have = sumClaimWei();
+      return have >= need ? 0n : need - have;
+    } catch {
+      return null;
+    }
+  }, [sumClaimWei, buyAmount, buyToken?.decimals]);
+
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
 
@@ -418,11 +446,19 @@ export default function PrivateOrderPage() {
     }
   }, [changeAmount]);
 
+  // Fill against gross buyAmount so `sum(claims) === buyAmount` holds in
+  // BigInt terms — the authorize circuit's minimum-receive check is an
+  // integer comparison and a fee-sized rounding gap would fail it.
   const fillRest = (id: number) => {
-    const othersTotal = claims.reduce((sum, c) => c.id === id ? sum : sum + (parseFloat(c.amount) || 0), 0);
-    const rest = Math.max(0, netBuyAmount - othersTotal);
-    const floored = Math.floor(rest * 10000) / 10000;
-    updateClaim(id, "amount", floored > 0 ? floored.toString() : "0");
+    if (!buyToken || !buyAmount) return;
+    try {
+      const parsedBuy = ethers.parseUnits(buyAmount, buyToken.decimals);
+      const othersBig = sumClaimWei(id);
+      const restBig = parsedBuy > othersBig ? parsedBuy - othersBig : 0n;
+      updateClaim(id, "amount", ethers.formatUnits(restBig, buyToken.decimals));
+    } catch {
+      /* buyAmount still being typed; no-op */
+    }
   };
 
   // List available EdDSA keys in folder
@@ -1217,11 +1253,16 @@ export default function PrivateOrderPage() {
                 <div className="mt-2 space-y-1">
                   <div className="text-xs text-on-surface-variant flex justify-between">
                     <span>Claims total: {claimTotal.toFixed(4)} {buyToken.symbol}</span>
-                    <span>Net amount: {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
+                    <span>Recipients receive (after fee): {netBuyAmount.toFixed(4)} {buyToken.symbol}</span>
                   </div>
-                  {netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001 && (
+                  {claimShortfall !== null && claimShortfall > 0n && (
                     <div className="text-xs text-error font-bold">
-                      Claims ({claimTotal.toFixed(4)}) exceed net amount ({netBuyAmount.toFixed(4)} {buyToken.symbol})
+                      Claims must total at least {buyAmount} {buyToken.symbol} (buyAmount). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                    </div>
+                  )}
+                  {parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
+                    <div className="text-[11px] text-on-surface-variant/60">
+                      For a match, the counterparty must sell ≥ {buyAmount} + fee ≈ {(parseFloat(buyAmount) * (1 + effectiveFeeBps / 10000)).toFixed(4)} {buyToken.symbol}.
                     </div>
                   )}
                 </div>
@@ -1307,7 +1348,7 @@ export default function PrivateOrderPage() {
             {orderType === "limit" ? (
             <button
               onClick={!keyPair ? handleDeriveKey : handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimTotal > 0 && netBuyAmount > 0 && claimTotal > netBuyAmount + 0.0001) || keyLoading}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimShortfall !== null && claimShortfall > 0n) || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {keyLoading ? (
@@ -1317,7 +1358,7 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimTotal > 0 && parseFloat(buyAmount) > 0 && claimTotal > parseFloat(buyAmount) + 0.0001)}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimShortfall !== null && claimShortfall > 0n)}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
               {keyLoading ? (
