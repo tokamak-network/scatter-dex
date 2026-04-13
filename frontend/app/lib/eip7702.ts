@@ -3,7 +3,7 @@
  *
  * Usage pattern:
  *   1. Build the per-step `Execution[]` (wrap / approve / deposit).
- *   2. Call `sendBatchVia7702(signer, executorAddress, calls, { value })`.
+ *   2. Call `sendBatchVia7702(signer, executorAddress, calls, { totalValue })`.
  *   3. If the wallet / chain doesn't support 7702 the function throws
  *      `Eip7702Unsupported`; the caller should fall back to sending the
  *      steps as individual transactions.
@@ -51,25 +51,26 @@ function encodeExecuteCalldata(calls: Execution[]): string {
 }
 
 /**
- * Patterns from provider / wallet / node error messages that indicate
- * 7702 isn't understood. We conservatively match rather than parsing
- * error codes because different stacks surface this differently
- * (MetaMask's RPC error wraps node errors, ethers wraps MetaMask's, etc.)
+ * Patterns from provider / wallet / node error messages that specifically
+ * indicate 7702 isn't understood. We match only on 7702-specific phrases
+ * so that unrelated revert reasons (e.g. a bad calldata, a user reject)
+ * don't get misclassified as "unsupported" and trigger a silent fallback
+ * with another popup prompt.
  */
 function looksLikeUnsupported(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return [
     "authorizationlist",
     "authorization list",
-    "not supported",
     "unsupported transaction",
     "transaction type not supported",
     "invalid transaction type",
     "type 4",
     "eip-7702",
     "eip7702",
-    "method not found",
     "setcodetx",
+    "set_code_tx",
+    "0x04 ",  // raw tx-type mention
   ].some((needle) => msg.includes(needle));
 }
 
@@ -91,9 +92,24 @@ export async function sendBatchVia7702(
   { totalValue = 0n }: { totalValue?: bigint } = {},
 ): Promise<ethers.TransactionResponse> {
   if (!signer.provider) throw new Error("sendBatchVia7702: signer has no provider");
+
+  // Normalize + validate the executor address before we touch the wallet.
+  // A malformed env var would otherwise surface as an opaque "invalid
+  // address" error that `looksLikeUnsupported` wouldn't catch, blocking
+  // the sequential fallback. Treat bad input as "disabled".
+  if (!ethers.isAddress(executorAddress)) {
+    throw new Eip7702Unsupported(
+      new Error(`invalid executor address: ${executorAddress}`),
+    );
+  }
+  const executor = ethers.getAddress(executorAddress);
+
   const eoa = await signer.getAddress();
   const net = await signer.provider.getNetwork();
-  const chainId = Number(net.chainId);
+  // chainId stays as bigint. `Number(net.chainId)` would silently lose
+  // precision for chains > 2^53-1 and produce an invalid authorization
+  // signature; ethers' authorize/sendTransaction accept bigint directly.
+  const chainId = net.chainId;
 
   // The authorization nonce is the EOA's expected nonce at the moment
   // the authorization is processed. For a tx the EOA itself sends, the
@@ -110,14 +126,19 @@ export async function sendBatchVia7702(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const maybeAuthorize = (signer as any).authorize?.bind(signer);
 
-  const authRequest = { address: executorAddress, chainId, nonce: baseNonce + 1 };
+  const authRequest = { address: executor, chainId, nonce: baseNonce + 1 };
   let authorizationEntry: unknown;
   try {
     authorizationEntry = maybeAuthorize
       ? await maybeAuthorize(authRequest)
       : authRequest; // wallet will sign at send time
   } catch (err) {
-    throw new Eip7702Unsupported(err);
+    // Only classify as "unsupported" when the error pattern-matches a
+    // 7702 capability gap. User-rejected signs and other unrelated
+    // failures must propagate so the caller can surface them instead
+    // of silently falling back and prompting the user a second time.
+    if (looksLikeUnsupported(err)) throw new Eip7702Unsupported(err);
+    throw err;
   }
 
   const data = encodeExecuteCalldata(calls);
