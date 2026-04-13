@@ -110,14 +110,22 @@ async function buildOrderProof(params: BuildOrderParams) {
     throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
   }
 
-  // Change commitment
+  // Change commitment.
+  // When change > 0 the same salt must be used to (a) pre-compute the
+  // `expectedChangeCommitment` stored in the note file and (b) feed the
+  // prover's residual-commitment hash. If the salt state isn't set yet
+  // (e.g. the user clicked submit before the `changeSalt` effect fired),
+  // fail loudly rather than silently producing an unspendable UTXO.
   const change = selectedNote.note.amount - parsedSell;
-  const newSalt = change > 0n && changeSalt ? changeSalt : 0n;
+  if (change > 0n && !changeSalt) {
+    throw new Error("Change salt not ready — please retry in a moment.");
+  }
+  const newSalt = change > 0n ? (changeSalt as bigint) : 0n;
   let expectedChangeCommitment = 0n;
-  if (change > 0n && changeSalt) {
+  if (change > 0n) {
     expectedChangeCommitment = await computeCommitment({
       ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token,
-      amount: change, salt: changeSalt,
+      amount: change, salt: newSalt,
       pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy,
     });
   }
@@ -185,13 +193,12 @@ async function buildOrderProof(params: BuildOrderParams) {
     maxFee, expiry: expiryTimestamp, nonce, relayer: relayerAddress,
     eddsaPrivateKey,
     claims: claimData.map(c => ({ secret: BigInt(c.secret), recipient: c.recipient, token: c.token, amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime) })),
-    // Pass the change salt that produced `expectedChangeCommitment` above,
-    // so the prover's `newCommitment` signal — which gets inserted on-chain —
-    // hashes from the same salt. Previously the prover generated its own
-    // random salt internally and the two commitments never matched: the
-    // page indexer couldn't resolve the change leafIndex, and the change
-    // note file stored a salt that didn't correspond to any on-chain UTXO.
-    newSalt: newSalt > 0n ? newSalt : undefined,
+    // Pass the same salt used for `expectedChangeCommitment` so the
+    // prover's on-chain `newCommitment` hashes identically. Gate on
+    // `change > 0n` (not `newSalt > 0n`): `0n` is a valid field element
+    // that `randomFieldElement()` can produce, and truthiness-gating
+    // here would silently drop it and reintroduce the mismatch.
+    newSalt: change > 0n ? newSalt : undefined,
   });
 
   return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
