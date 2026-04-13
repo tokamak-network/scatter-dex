@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "tsc",
+    "prepare": "test -d dist || tsc",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

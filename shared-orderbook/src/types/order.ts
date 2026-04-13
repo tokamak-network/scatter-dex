@@ -26,12 +26,7 @@ export interface MatchNotification {
 }
 
 import type { OrderSummary } from "@scatter-dex/types";
-import { ETH_ADDRESS_RE } from "@scatter-dex/types";
-
-// Opaque offer handle: 0x-prefixed 32-byte hex (64 hex chars). Generated
-// by the maker's relayer per order; the shared orderbook never sees the
-// user's pubKeyAx or order nonce.
-const OFFER_HANDLE_RE = /^0x[0-9a-fA-F]{64}$/;
+import { ETH_ADDRESS_RE, OFFER_HANDLE_RE } from "@scatter-dex/types";
 
 export function parseOrderSummary(
   raw: Record<string, unknown>,
@@ -45,10 +40,10 @@ export function parseOrderSummary(
   const minFillAmount = String(raw.minFillAmount ?? "0");
   const maxFee = Number(raw.maxFee);
   const expiry = Number(raw.expiry);
-  const offerHandle = String(raw.id ?? raw.offerHandle ?? "");
+  const id = String(raw.id ?? "");
 
-  if (!OFFER_HANDLE_RE.test(offerHandle)) {
-    throw new Error("invalid offer handle (expect 0x-prefixed 32-byte hex)");
+  if (!OFFER_HANDLE_RE.test(id)) {
+    throw new Error("invalid order id (expect 0x-prefixed 32-byte hex offer handle)");
   }
 
   if (!ETH_ADDRESS_RE.test(sellToken)) throw new Error("invalid sellToken address");
@@ -66,7 +61,7 @@ export function parseOrderSummary(
   if (expiry <= now) throw new Error("order already expired");
 
   return {
-    id: offerHandle,
+    id,
     relayer: relayer.toLowerCase(),
     relayerUrl,
     sellToken: sellToken.toLowerCase(),
