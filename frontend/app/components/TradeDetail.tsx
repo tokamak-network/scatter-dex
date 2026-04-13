@@ -88,17 +88,18 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 
   // Fee withheld by the relayer, denominated in the sell token.
-  //   - scatter: exact (residual after buyAmount + change)
+  //   - scatter: exact (sellAmount − buyAmount)
   //   - cross-token: upper bound (circuit constraint: fee*10000 ≤ sellAmount*maxFee)
   // Skipped in compact mode since the row doesn't render it.
   const feeAmountDisplay = compact ? null : (() => {
     try {
       const sellAmt = BigInt(trade.order.sellAmount);
       if (isSameToken) {
-        const changeAmount = trade.change ? BigInt(trade.change.amount) : 0n;
-        const fee = sellAmt - BigInt(trade.order.buyAmount) - changeAmount;
-        // Invariant violation (circuit enforces sell ≥ buy + change + fee).
-        // Hide rather than display a misleading "0" that could mask a bug.
+        // Scatter: `buyAmount` is post-fee distributable, so the
+        // residual `sellAmount − buyAmount` is the fee. `change` is
+        // `note.amount − sellAmount` (refund of unspent balance) and
+        // is independent of the fee — do NOT subtract it here.
+        const fee = sellAmt - BigInt(trade.order.buyAmount);
         if (fee < 0n) return null;
         return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
       }

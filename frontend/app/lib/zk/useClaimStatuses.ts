@@ -22,18 +22,35 @@ export function useClaimStatuses(
   options?: { includeTxHash?: boolean }
 ): Record<number, ClaimStatusInfo> {
   const [statuses, setStatuses] = useState<Record<number, ClaimStatusInfo>>({});
+  // `keyRef` caches the key whose result is currently in `statuses`.
+  // `inflightKeyRef` tracks a query that's started but not yet committed
+  // — gates against thundering-herd concurrent fetches when a parent
+  // re-render passes a new `claims` reference for the same logical
+  // data while a fetch is in flight.
   const keyRef = useRef("");
+  const inflightKeyRef = useRef("");
 
+  const includeTxHash = options?.includeTxHash;
   useEffect(() => {
     if (claims.length === 0) return;
-    // Stable key to avoid re-running for same claims
-    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (options?.includeTxHash ? ":tx" : "");
+    const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (includeTxHash ? ":tx" : "");
+    // Skip if (a) we already have this result cached, or (b) an
+    // identical query is already in flight. The cached check is
+    // committed after `setStatuses` lands; the in-flight check
+    // prevents duplicate concurrent fan-outs.
     if (key === keyRef.current) return;
-    keyRef.current = key;
+    if (key === inflightKeyRef.current) return;
+    inflightKeyRef.current = key;
 
     let cancelled = false;
     (async () => {
       try {
+        // Yield once before any work so a synchronous cleanup (React 18
+        // strict-mode double invoke, rapid prop change) short-circuits
+        // before we burn Poseidon hashing + RPC reads on a doomed run.
+        await Promise.resolve();
+        if (cancelled) return;
+
         const provider = getReadProvider();
         const settlement = new ethers.Contract(
           getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
@@ -49,6 +66,7 @@ export function useClaimStatuses(
             return { i, nullHex: toBytes32Hex(nullifier) };
           })
         );
+        if (cancelled) return;
 
         // Check all nullifiers in parallel
         const checks = await Promise.all(
@@ -76,21 +94,23 @@ export function useClaimStatuses(
           }
         }
 
-        if (cancelled) { keyRef.current = ""; return; }
+        if (cancelled) return;
         const result: Record<number, ClaimStatusInfo> = {};
         for (const { i, claimed } of checks) {
           result[i] = { claimed, txHash: txMap[i] };
         }
         setStatuses(result);
+        keyRef.current = key;
       } catch (e) {
-        keyRef.current = ""; // allow retry on error
         console.warn("Failed to check claim statuses:", e);
+      } finally {
+        // Clear in-flight only if this run is still the latest — a
+        // newer effect may have already taken over the slot.
+        if (inflightKeyRef.current === key) inflightKeyRef.current = "";
       }
     })();
     return () => { cancelled = true; };
-  // options.includeTxHash is checked via keyRef to avoid re-renders from unstable object refs
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claims]);
+  }, [claims, includeTxHash]);
 
   return statuses;
 }
