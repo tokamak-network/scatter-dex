@@ -163,10 +163,12 @@ contract DeployLocal is Script {
         address settleVerifier = _deployCode("SettleVerifier.sol:Groth16Verifier");
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
         address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
+        address authorizeVerifier = _deployCode("AuthorizeVerifier.sol:Groth16Verifier");
         console.log("WithdrawVerifier:", withdrawVerifier);
         console.log("SettleVerifier:", settleVerifier);
         console.log("ClaimVerifier:", claimVerifier);
         console.log("DepositVerifier:", depositVerifier);
+        console.log("AuthorizeVerifier:", authorizeVerifier);
 
         pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
         console.log("CommitmentPool:", address(pool));
@@ -174,6 +176,13 @@ contract DeployLocal is Script {
         privateSettlement = new PrivateSettlement(
             address(pool), settleVerifier, claimVerifier, weth
         );
+        // settleAuth and scatterDirectAuth both require the authorize
+        // verifier to be wired before they accept proofs; the constructor
+        // doesn't take it (set after deploy via setAuthorizeVerifier).
+        // Without this call every same-token order reverts with
+        // AuthorizeVerifierNotSet (selector 0x7d234657).
+        privateSettlement.setAuthorizeVerifier(authorizeVerifier);
+        console.log("AuthorizeVerifier wired into PrivateSettlement");
         console.log("PrivateSettlement:", address(privateSettlement));
     }
 }
