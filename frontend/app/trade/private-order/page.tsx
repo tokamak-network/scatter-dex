@@ -341,9 +341,17 @@ export default function PrivateOrderPage() {
     [availableNotes, selectedCommitment],
   );
 
-  // Reset note selection + manual price when sell/buy token changes
+  // Reset note selection only when SELL token changes — commitments
+  // are scoped to their sell-side token, so swapping the buy token has
+  // no bearing on which note is valid. Bundling buyTokenIdx into the
+  // deps used to clear the user's selection every time they tweaked
+  // the buy dropdown.
   useEffect(() => {
     setSelectedCommitment(null);
+  }, [sellTokenIdx]);
+  // Manual price still resets on either side change — the price ratio
+  // is tied to the (sell, buy) pair.
+  useEffect(() => {
     setManualPrice("");
   }, [sellTokenIdx, buyTokenIdx]);
 
