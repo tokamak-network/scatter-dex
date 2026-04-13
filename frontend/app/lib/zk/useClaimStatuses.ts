@@ -26,10 +26,13 @@ export function useClaimStatuses(
 
   useEffect(() => {
     if (claims.length === 0) return;
-    // Stable key to avoid re-running for same claims
+    // Stable key to avoid re-running for the same claim set. The key is
+    // committed AFTER the async query resolves and `setStatuses` lands —
+    // not before — so a cancelled first run (React 18 strict-mode double
+    // invoke, rapid parent re-render) can't poison the cache and starve
+    // the second run that sees `key === keyRef.current` and bails early.
     const key = claims.map((c) => `${c.secret}:${c.leafIndex}`).join("|") + (options?.includeTxHash ? ":tx" : "");
     if (key === keyRef.current) return;
-    keyRef.current = key;
 
     let cancelled = false;
     (async () => {
@@ -76,14 +79,14 @@ export function useClaimStatuses(
           }
         }
 
-        if (cancelled) { keyRef.current = ""; return; }
+        if (cancelled) return;
         const result: Record<number, ClaimStatusInfo> = {};
         for (const { i, claimed } of checks) {
           result[i] = { claimed, txHash: txMap[i] };
         }
         setStatuses(result);
+        keyRef.current = key;
       } catch (e) {
-        keyRef.current = ""; // allow retry on error
         console.warn("Failed to check claim statuses:", e);
       }
     })();

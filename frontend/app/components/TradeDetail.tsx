@@ -95,10 +95,13 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
     try {
       const sellAmt = BigInt(trade.order.sellAmount);
       if (isSameToken) {
-        const changeAmount = trade.change ? BigInt(trade.change.amount) : 0n;
-        const fee = sellAmt - BigInt(trade.order.buyAmount) - changeAmount;
-        // Invariant violation (circuit enforces sell ≥ buy + change + fee).
-        // Hide rather than display a misleading "0" that could mask a bug.
+        // Scatter math: sellAmount is what came out of the trade (NOT
+        // the note balance), buyAmount is the post-fee distributable.
+        // Change is `note.amount − sellAmount` and is independent of
+        // the fee, so it must NOT be subtracted here. Reverts the
+        // formula introduced in PR #266 review which over-subtracted
+        // change and hid the fee row whenever a trade had remainder.
+        const fee = sellAmt - BigInt(trade.order.buyAmount);
         if (fee < 0n) return null;
         return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
       }
