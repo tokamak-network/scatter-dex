@@ -118,7 +118,7 @@ export const ClaimService = {
 
     const treeResult = await buildPoseidonMerkleTree(claimData.allLeaves, CLAIMS_TREE_DEPTH);
     const { pathElements, pathIndices } = getMerkleProofFromTree(
-      treeResult.layers,
+      treeResult,
       claimData.leafIndex,
     );
 
