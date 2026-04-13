@@ -51,10 +51,32 @@ export interface PrivateOrderResponse {
   reason?: string;
 }
 
+/**
+ * Shape returned by `GET /api/private-orders/:pubKeyAx`. Mirrors
+ * zk-relayer's `PrivateOrderResponse` (see zk-relayer/src/types/order.ts:257).
+ * bigint-backed numeric fields (sellToken/buyToken/amounts/maxFee/expiry/
+ * nonce/pubKeyA{x,y}) are returned as decimal strings; other fields keep
+ * their native API representations (`status` as an enum string,
+ * `settleTxHash` as an 0x tx hash, `crossRelayer` as a boolean,
+ * `submittedAt` as a number).
+ */
 export interface OrderStatus {
-  orderId: string;
+  sellToken?: string;
+  buyToken?: string;
+  sellAmount?: string;
+  buyAmount?: string;
+  maxFee?: string;
+  expiry?: string;
+  nonce?: string;
+  pubKeyAx?: string;
+  pubKeyAy?: string;
   status: 'pending' | 'matched' | 'settled' | 'cancelled' | 'expired';
+  submittedAt?: number;
   settleTxHash?: string;
+  crossRelayer?: boolean;
+  /** Deprecated alias. Present so existing callers that key by `orderId` do not
+   *  immediately break; prefer `nonce` for cancellation. */
+  orderId?: string;
 }
 
 export interface PrivateClaimRequest {
