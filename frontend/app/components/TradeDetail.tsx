@@ -52,6 +52,17 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
   }
 }
 
+/** Format a wei BigInt to `maxFracDigits` decimals without an IEEE-754 round-trip. */
+function formatTokenBigInt(amount: bigint, decimals: number, maxFracDigits: number): string {
+  const full = ethers.formatUnits(amount, decimals);
+  const dot = full.indexOf(".");
+  if (dot < 0) return maxFracDigits > 0 ? `${full}.${"0".repeat(maxFracDigits)}` : full;
+  const intPart = full.slice(0, dot);
+  const fracPart = full.slice(dot + 1);
+  if (fracPart.length >= maxFracDigits) return `${intPart}.${fracPart.slice(0, maxFracDigits)}`;
+  return `${intPart}.${fracPart.padEnd(maxFracDigits, "0")}`;
+}
+
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-500/15 text-amber-400 border-amber-500/20",
   matched: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -75,6 +86,29 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
     catch { return trade.order.sellToken.toLowerCase() === trade.order.buyToken.toLowerCase(); }
   })();
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
+
+  // Fee withheld by the relayer, denominated in the sell token.
+  //   - scatter: exact (residual after buyAmount + change)
+  //   - cross-token: upper bound (circuit constraint: fee*10000 ≤ sellAmount*maxFee)
+  // Skipped in compact mode since the row doesn't render it.
+  const feeAmountDisplay = compact ? null : (() => {
+    try {
+      const sellAmt = BigInt(trade.order.sellAmount);
+      if (isSameToken) {
+        const changeAmount = trade.change ? BigInt(trade.change.amount) : 0n;
+        const fee = sellAmt - BigInt(trade.order.buyAmount) - changeAmount;
+        // Invariant violation (circuit enforces sell ≥ buy + change + fee).
+        // Hide rather than display a misleading "0" that could mask a bug.
+        if (fee < 0n) return null;
+        return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
+      }
+      const fee = (sellAmt * BigInt(trade.order.maxFee)) / 10_000n;
+      return `≤ ${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
+    } catch (e) {
+      console.warn("TradeDetail: fee amount computation failed", e);
+      return null;
+    }
+  })();
 
   const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
 
@@ -139,6 +173,9 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Fee</div>
           <div className="text-sm font-mono mt-1">{(trade.order.maxFee / 100).toFixed(2)}%</div>
+          {feeAmountDisplay && (
+            <div className="text-[10px] font-mono text-on-surface-variant/60 mt-0.5">{feeAmountDisplay}</div>
+          )}
         </div>
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Expiry</div>
