@@ -12,11 +12,11 @@
  * Authorize proof는 릴레이어가 생성 — 프론트엔드는 주문 데이터만 제출
  */
 import { ethers } from 'ethers';
+import * as SecureStore from 'expo-secure-store';
 import { ZKBridgeService } from './ZKBridgeService';
 import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
-import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree } from '../lib/merkleTree';
@@ -45,8 +45,10 @@ export interface ClaimInput {
 export interface OrderInput {
   note: StoredNote;          // 사용할 노트
   sellAmount: string;        // human-readable sell amount
+  sellTokenDecimals?: number; // sell token decimals (default 18)
   buyToken: string;          // buy token address
   buyAmount: string;         // human-readable buy amount
+  buyTokenDecimals?: number; // buy token decimals (default 18)
   maxFeeBps: number;         // max fee in basis points
   expiryHours: number;       // expiry in hours from now
   claims: ClaimInput[];      // claims 분배
@@ -63,8 +65,10 @@ export const OrderService = {
   ): Promise<string | null> {
     try {
       const { note, buyToken, maxFeeBps, expiryHours, claims } = input;
-      const sellAmount = ethers.parseUnits(input.sellAmount, 18);
-      const buyAmount = ethers.parseUnits(input.buyAmount, 18);
+      const sellDec = input.sellTokenDecimals ?? 18;
+      const buyDec = input.buyTokenDecimals ?? 18;
+      const sellAmount = ethers.parseUnits(input.sellAmount, sellDec);
+      const buyAmount = ethers.parseUnits(input.buyAmount, buyDec);
 
       // Use cryptographically random nonce to prevent collisions
       const nonceBytes = new Uint8Array(8);
@@ -86,7 +90,7 @@ export const OrderService = {
         secret: generateRandomField(),
         recipient: BigInt(c.recipient).toString(),
         token: BigInt(buyToken).toString(),
-        amount: ethers.parseUnits(c.amount, 18).toString(),
+        amount: ethers.parseUnits(c.amount, buyDec).toString(),
         releaseTime: BigInt(Math.floor(Date.now() / 1000) + c.releaseDelaySec).toString(),
       }));
 
@@ -107,10 +111,29 @@ export const OrderService = {
       // ─── Step 3: Order hash + EdDSA 서명 ──────────────
       onProgress({ step: 'signing_order' });
 
-      // Use provided relayer address or '0' if relayer fills it server-side
-      const relayerAddress = input.relayerAddress
-        ? BigInt(input.relayerAddress).toString()
-        : '0';
+      // Resolve the relayer address that will be bound to this order.
+      // The circuit verifies the EdDSA signature over an order hash that
+      // includes the relayer address — using '0' when an actual relayer will
+      // settle the order causes EdDSA verification to fail on-chain.
+      // Fetch the relayer address from /api/info when a relayerUrl is given;
+      // fall back to the explicitly provided relayerAddress if present.
+      let relayerAddress: string;
+      if (input.relayerAddress) {
+        relayerAddress = BigInt(input.relayerAddress).toString();
+      } else if (input.relayerUrl) {
+        const info = await RelayerApiService.getRelayerInfo(input.relayerUrl);
+        if (!info?.address) {
+          throw new Error(
+            'Could not resolve relayer address from /api/info. ' +
+            'Provide relayerAddress explicitly or ensure the relayer is reachable.',
+          );
+        }
+        relayerAddress = BigInt(info.address).toString();
+      } else {
+        // No relayer — user is settling themselves (market order path uses
+        // their own address; limit orders without a relayer use 0).
+        relayerAddress = '0';
+      }
 
       const orderHashInputs = [
         BigInt(note.token).toString(),     // sellToken
@@ -209,6 +232,33 @@ export const OrderService = {
       }
 
       onProgress({ step: 'success', orderId: response.orderId });
+
+      // ─── Step 7: Persist claim secrets to SecureStore ──
+      // Without persisting the secrets the user cannot later produce claim
+      // proofs to recover settled funds.  Store each claim under a
+      // deterministic key so ClaimScreen can retrieve them.
+      const claimIndexKey = 'scatterdex_order_claims_index';
+      const existingIndexRaw = await SecureStore.getItemAsync(claimIndexKey);
+      let claimIds: string[] = [];
+      try {
+        claimIds = existingIndexRaw ? JSON.parse(existingIndexRaw) : [];
+      } catch {
+        claimIds = [];
+      }
+      for (let i = 0; i < claimsData.length; i++) {
+        const claimId = `scatterdex_order_claim_${response.orderId}_${i}`;
+        await SecureStore.setItemAsync(
+          claimId,
+          JSON.stringify({
+            ...claimsData[i],
+            orderId: response.orderId,
+            claimsRoot,
+          }),
+        );
+        if (!claimIds.includes(claimId)) claimIds.push(claimId);
+      }
+      await SecureStore.setItemAsync(claimIndexKey, JSON.stringify(claimIds));
+
       return response.orderId;
     } catch (err: any) {
       onProgress({ step: 'error', error: err?.message || 'Order failed' });

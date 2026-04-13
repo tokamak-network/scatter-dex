@@ -70,6 +70,12 @@ export default function HiddenWebView() {
         console.error('HiddenWebView: content process terminated — reloading');
         webViewRef.current?.reload();
       }}
+      // Only allow navigation to the packaged local HTML file.
+      // Any attempt to navigate elsewhere (e.g. via an injected redirect) is
+      // blocked so the hidden WebView cannot be hijacked to load remote content.
+      onShouldStartLoadWithRequest={(request) => {
+        return request.url === htmlUri;
+      }}
       injectedJavaScript={`
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -94,8 +100,9 @@ export default function HiddenWebView() {
       javaScriptEnabled
       allowFileAccess
       allowFileAccessFromFileURLs
-      allowUniversalAccessFromFileURLs
-      originWhitelist={['*']}
+      // Restrict to file:// origins only — the ZK WebView loads a local HTML
+      // asset and does not need access to any remote origin.
+      originWhitelist={['file://*']}
       style={{ height: 0, width: 0, opacity: 0, position: 'absolute' }}
     />
   );

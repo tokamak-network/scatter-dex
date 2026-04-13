@@ -16,13 +16,16 @@ class ZKBridgeServiceImpl {
   private webViewRef: React.RefObject<WebView | null> | null = null;
   private pending = new Map<string, PendingRequest>();
   private ready = false;
+  private initError: string | null = null;
   private readyPromise: Promise<void>;
   private readyResolve!: () => void;
+  private readyReject!: (reason: Error) => void;
   private requestCounter = 0;
 
   constructor() {
-    this.readyPromise = new Promise((resolve) => {
+    this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
+      this.readyReject = reject;
     });
   }
 
@@ -34,7 +37,26 @@ class ZKBridgeServiceImpl {
     return this.ready;
   }
 
+  getInitError(): string | null {
+    return this.initError;
+  }
+
+  /**
+   * Resolves when the ZK engine is ready.
+   * Also resolves (without throwing) when initialisation fails so that
+   * callers that merely want to unblock the UI can use this.
+   * Use `waitReadyOrThrow()` if you need to distinguish success from failure.
+   */
   waitReady(): Promise<void> {
+    return this.readyPromise.catch(() => {});
+  }
+
+  /**
+   * Resolves when the ZK engine is ready.
+   * Rejects with an Error when the engine fails to initialise so callers
+   * can display an error and prevent ZK operations from silently failing.
+   */
+  waitReadyOrThrow(): Promise<void> {
     return this.readyPromise;
   }
 
@@ -65,10 +87,14 @@ class ZKBridgeServiceImpl {
         this.ready = true;
         this.readyResolve();
       } else {
-        // ZK engine failed — still resolve to unblock app, but log error
-        console.error('ZK Engine initialization failed:', JSON.stringify(result));
+        // ZK engine failed — reject readyPromise so waitReadyOrThrow() callers
+        // know the engine is broken.  waitReady() swallows the rejection to
+        // keep backward-compatible behaviour for non-ZK screens.
+        const errMsg = `ZK Engine initialization failed: ${JSON.stringify(result)}`;
+        console.error(errMsg);
+        this.initError = errMsg;
         this.ready = false;
-        this.readyResolve(); // unblock UI so user can see other screens
+        this.readyReject(new Error(errMsg));
       }
       return;
     }

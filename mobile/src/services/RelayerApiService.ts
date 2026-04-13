@@ -109,4 +109,31 @@ export const RelayerApiService = {
       clearTimeout(timeoutId);
     }
   },
+
+  /**
+   * Fetch the relayer's Ethereum address and fee from /api/info.
+   * Returns null if the endpoint is unreachable or the response is malformed.
+   */
+  async getRelayerInfo(relayerUrl?: string): Promise<RelayerInfo | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(`${relayerUrl || this.getBaseUrl()}/api/info`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data?.address) return null;
+      return {
+        address: data.address as string,
+        url: relayerUrl || this.getBaseUrl(),
+        fee: Number(data.fee ?? 0),
+        active: true,
+      };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
 };

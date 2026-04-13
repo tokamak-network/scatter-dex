@@ -21,7 +21,7 @@ import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
-import { buildPoseidonMerkleTree } from '../lib/merkleTree';
+import { computeMerkleRootAndPath, buildPoseidonMerkleTree } from '../lib/merkleTree';
 
 export type MarketOrderStep =
   | 'idle'
@@ -40,14 +40,16 @@ export interface MarketOrderProgress {
 
 export interface MarketOrderInput {
   note: StoredNote;
-  sellAmount: string;      // human-readable
-  buyToken: string;        // address
-  buyAmount: string;       // min receive (slippage-adjusted)
-  slippageBps: number;     // applied by UI to compute buyAmount (min receive)
+  sellAmount: string;           // human-readable
+  sellTokenDecimals?: number;   // sell token decimals (default 18)
+  buyToken: string;             // address
+  buyAmount: string;            // min receive (slippage-adjusted)
+  buyTokenDecimals?: number;    // buy token decimals (default 18)
+  slippageBps: number;          // applied by UI to compute buyAmount (min receive)
   expiryHours: number;
-  claimRecipient: string;  // typically self
-  dexRouter: string;       // Uniswap V3 router address
-  uniswapFeeTier: number;  // 500, 3000, 10000
+  claimRecipient: string;       // typically self
+  dexRouter: string;            // Uniswap V3 router address
+  uniswapFeeTier: number;       // 500, 3000, 10000
 }
 
 const UNISWAP_ROUTER_ABI = [
@@ -68,8 +70,10 @@ export const MarketOrderService = {
     if (!poolAddr) throw new Error('CommitmentPool address not configured');
 
     const { note, buyToken, dexRouter, uniswapFeeTier, expiryHours, claimRecipient } = input;
-    const sellAmount = ethers.parseUnits(input.sellAmount, 18);
-    const buyAmount = ethers.parseUnits(input.buyAmount, 18);
+    const sellDec = input.sellTokenDecimals ?? 18;
+    const buyDec = input.buyTokenDecimals ?? 18;
+    const sellAmount = ethers.parseUnits(input.sellAmount, sellDec);
+    const buyAmount = ethers.parseUnits(input.buyAmount, buyDec);
 
     // Validate sell amount doesn't exceed note balance
     if (sellAmount > BigInt(note.amount)) {
@@ -179,9 +183,11 @@ export const MarketOrderService = {
       }
 
       const COMMIT_TREE_DEPTH = 20;
-      const { root: commitmentRoot, layers } = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
-      const { getMerkleProofFromTree } = await import('../lib/merkleTree');
-      const { pathElements, pathIndices } = getMerkleProofFromTree(layers, note.leafIndex);
+      const { root: commitmentRoot, pathElements, pathIndices } = await computeMerkleRootAndPath(
+        allLeaves,
+        note.leafIndex,
+        COMMIT_TREE_DEPTH,
+      );
 
       const circuitInputs: Record<string, string | string[]> = {
         commitmentRoot,
@@ -300,7 +306,8 @@ export const MarketOrderService = {
         });
       }
 
-      // Save claim data so user can later call claimWithProof
+      // Save claim data so user can later call claimWithProof.
+      // Claim secrets must be stored in SecureStore (encrypted), not AsyncStorage.
       const claimBundle = {
         secret: claimSecret,
         recipient: claimRecipient,
@@ -311,12 +318,21 @@ export const MarketOrderService = {
         allLeaves: claimLeaves,
         txHash: tx.hash,
       };
-      // Store claim in AsyncStorage for retrieval in ClaimScreen
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      const existingClaims = await AsyncStorage.getItem('scatterdex_pending_claims');
-      const claims = existingClaims ? JSON.parse(existingClaims) : [];
-      claims.push(claimBundle);
-      await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(claims));
+      const SecureStore = await import('expo-secure-store');
+      const claimsKey = 'scatterdex_pending_claims_index';
+      const indexRaw = await SecureStore.getItemAsync(claimsKey);
+      let claimIds: string[] = [];
+      try {
+        claimIds = indexRaw ? JSON.parse(indexRaw) : [];
+      } catch {
+        claimIds = [];
+      }
+      const claimId = `scatterdex_claim_${tx.hash}`;
+      await SecureStore.setItemAsync(claimId, JSON.stringify(claimBundle));
+      if (!claimIds.includes(claimId)) {
+        claimIds.push(claimId);
+        await SecureStore.setItemAsync(claimsKey, JSON.stringify(claimIds));
+      }
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;

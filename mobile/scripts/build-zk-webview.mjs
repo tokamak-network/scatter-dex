@@ -38,7 +38,10 @@ const snarkjs = readFileSync(resolve(root, 'node_modules/snarkjs/build/snarkjs.m
 console.log('[3/3] Generating zk-webview.html...');
 
 const messageHandler = `
-window.addEventListener('message', async function(event) {
+// react-native-webview delivers postMessage events to window on iOS and
+// to document on Android.  Register on both so the bridge works on both
+// platforms without needing to detect the platform at runtime.
+async function _zkHandleMessageAsync(event) {
   var data;
   try { data = JSON.parse(event.data); } catch(e) { return; }
   var requestId = data.requestId;
@@ -176,7 +179,26 @@ window.addEventListener('message', async function(event) {
   } catch (err) {
     replyError(err);
   }
-});
+}
+
+// Wrap in an async IIFE so await works inside the handler.
+function _zkHandleMessage(event) {
+  _zkHandleMessageAsync(event).catch(function(err) {
+    try {
+      var data = JSON.parse(event.data);
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        requestId: data.requestId || '__unknown__',
+        status: 'error',
+        error: err.message || String(err)
+      }));
+    } catch(e) { /* ignore */ }
+  });
+}
+
+// react-native-webview delivers postMessage to window on iOS and to
+// document on Android — register on both so the bridge is portable.
+window.addEventListener('message', _zkHandleMessage);
+document.addEventListener('message', _zkHandleMessage);
 
 // 초기화 완료 알림
 var engineStatus = typeof window._zkEngine !== 'undefined'

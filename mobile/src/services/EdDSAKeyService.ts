@@ -18,7 +18,7 @@ const DERIVE_MESSAGE =
 const EDDSA_KEY_PREFIX = 'scatterdex_eddsa_';
 
 export interface EdDSAKeyPair {
-  privateKeyHex: string;          // 0x-prefixed hex
+  privateKeyHex: string;          // unprefixed hex (no 0x prefix), as returned by the ZK bridge
   pubKeyAx: string;               // decimal string (for circuit inputs)
   pubKeyAy: string;               // decimal string
 }
@@ -57,7 +57,13 @@ export const EdDSAKeyService = {
     const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`;
     const stored = await SecureStore.getItemAsync(key);
     if (!stored) return null;
-    return JSON.parse(stored);
+    try {
+      return JSON.parse(stored);
+    } catch {
+      console.warn(`EdDSAKeyService: corrupted key data for ${account}, dropping`);
+      await SecureStore.deleteItemAsync(key);
+      return null;
+    }
   },
 
   /**

@@ -14,7 +14,21 @@ import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
 import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../services/MarketOrderService';
 import { ConfigService } from '../services/ConfigService';
+import { ProviderService } from '../services/ProviderService';
+import { ERC20_ABI } from '../lib/contracts';
 import { formatAmount } from '../lib/format';
+
+/** Fetch token decimals from an ERC-20 contract, defaulting to 18 on error. */
+async function fetchTokenDecimals(tokenAddress: string): Promise<number> {
+  try {
+    const provider = ProviderService.getReadProvider();
+    const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+    const dec: bigint = await contract.decimals();
+    return Number(dec);
+  } catch {
+    return 18;
+  }
+}
 
 export default function TradeScreen() {
   const navigation = useNavigation<any>();
@@ -32,6 +46,20 @@ export default function TradeScreen() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Decimals for the buy token — must not be hardcoded to 18 because tokens
+  // like USDC use 6 decimals (a 10¹²-factor error if we assume 18).
+  const [buyTokenDecimals, setBuyTokenDecimals] = useState<number>(18);
+
+  // Resolve buy-token decimals once on mount (and whenever the config changes).
+  useEffect(() => {
+    const buyToken = ConfigService.getWethAddress();
+    if (!buyToken) return;
+    let cancelled = false;
+    fetchTokenDecimals(buyToken).then((dec) => {
+      if (!cancelled) setBuyTokenDecimals(dec);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Load active notes
   useEffect(() => {
@@ -97,15 +125,18 @@ export default function TradeScreen() {
       if (tradeType === 'limit') {
         const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceBn = ethers.parseUnits(priceClean, 18);
+        // Scale price through a 10^18 intermediate to keep BigInt arithmetic.
+        // Result is in the buy-token's smallest unit.
+        const priceBn = ethers.parseUnits(priceClean, buyTokenDecimals);
         const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
-        const buyAmountHuman = ethers.formatUnits(buyAmountBn, 18);
+        const buyAmountHuman = ethers.formatUnits(buyAmountBn, buyTokenDecimals);
 
         const input: OrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
           buyAmount: buyAmountHuman,
+          buyTokenDecimals,
           maxFeeBps: 50,
           expiryHours: 24,
           claims: [{
@@ -131,16 +162,17 @@ export default function TradeScreen() {
 
         const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
-        const priceBn = ethers.parseUnits(priceClean, 18);
+        const priceBn = ethers.parseUnits(priceClean, buyTokenDecimals);
         const buyAmountBn = sellAmountBn * priceBn / ethers.parseUnits('1', 18);
         const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
-        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, 18);
+        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, buyTokenDecimals);
 
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
           buyAmount: buyAmountMinHuman,
+          buyTokenDecimals,
           slippageBps: 50,
           expiryHours: 1,
           claimRecipient: account,
@@ -160,7 +192,7 @@ export default function TradeScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [account, signer, selectedNote, amount, price, tradeType]);
+  }, [account, signer, selectedNote, amount, price, tradeType, buyTokenDecimals]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
