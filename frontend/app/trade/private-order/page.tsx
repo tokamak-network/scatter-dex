@@ -216,13 +216,11 @@ export default function PrivateOrderPage() {
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
-  // Scatter mode — sellToken == buyToken. There's no trade / matching; the
-  // relayer detects same-token at `/api/authorize-orders` and routes the
-  // proof to `scatterDirectAuth` for a direct distribution. The contract
+  // Same-token orders are direct distributions, not trades — the contract
   // enforces `totalLocked + fee <= sellAmount` (SettleVerifyLib.
-  // validateScatterAuth), so the UI must prevent the user from asking to
-  // distribute more than (sellAmount − fee). "buyAmount" is reinterpreted
-  // as "amount distributed to recipients".
+  // validateScatterAuth), so the signed `buyAmount` (= distributed total)
+  // is capped at `sellAmount − fee`. `buyAmount` is reinterpreted as
+  // "amount distributed to recipients" in this mode.
   const isScatterMode = !!sellToken && !!buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
 
   // DEX prices for market order mode (only fetched when market tab is active)
@@ -1313,7 +1311,7 @@ export default function PrivateOrderPage() {
                         : `Recipients receive (after fee): ${netBuyAmount.toFixed(4)} ${buyToken.symbol}`}
                     </span>
                   </div>
-                  {claimShortfall !== null && claimShortfall > 0n && (
+                  {claimShortfall !== null && claimShortfall > 0n && (!isScatterMode || scatterExcessWei === 0n) && (
                     <div className="text-xs text-error font-bold">
                       Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "distribute amount" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
