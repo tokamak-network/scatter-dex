@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 cd "$(dirname "$0")/.."
@@ -9,14 +9,20 @@ SNARKJS=./node_modules/.bin/snarkjs
 # Circuits to build: deposit, withdraw, settle, claim, authorize, cancel
 CIRCUITS=(deposit withdraw settle claim authorize cancel)
 
-# Map circuit name → Solidity verifier contract name
-declare -A VERIFIER_NAMES
-VERIFIER_NAMES[deposit]="DepositVerifier"
-VERIFIER_NAMES[withdraw]="WithdrawVerifier"
-VERIFIER_NAMES[settle]="SettleVerifier"
-VERIFIER_NAMES[claim]="ClaimVerifier"
-VERIFIER_NAMES[authorize]="AuthorizeVerifier"
-VERIFIER_NAMES[cancel]="CancelVerifier"
+# Map circuit name → Solidity verifier contract name.
+# Kept as a function (rather than an associative array) so the script
+# runs under bash 3.2, which is what macOS ships as /bin/bash.
+verifier_name_for() {
+  case "$1" in
+    deposit)   echo "DepositVerifier" ;;
+    withdraw)  echo "WithdrawVerifier" ;;
+    settle)    echo "SettleVerifier" ;;
+    claim)     echo "ClaimVerifier" ;;
+    authorize) echo "AuthorizeVerifier" ;;
+    cancel)    echo "CancelVerifier" ;;
+    *) echo "ERROR: no verifier mapping for circuit '$1'" >&2; return 1 ;;
+  esac
+}
 
 echo "=== ZK Circuit Build ==="
 echo ""
@@ -60,10 +66,12 @@ ensure_ptau() {
   echo "  Powers of Tau (2^$size) ready."
 }
 
-declare -A CIRCUIT_CONSTRAINTS
+# Parallel to CIRCUITS — CONSTRAINT_COUNTS[$i] holds the constraint count
+# for CIRCUITS[$i]. Kept as a positional array for bash 3.2 compatibility.
+CONSTRAINT_COUNTS=()
 
 for CIRCUIT in "${CIRCUITS[@]}"; do
-  VERIFIER_NAME="${VERIFIER_NAMES[$CIRCUIT]}"
+  VERIFIER_NAME=$(verifier_name_for "$CIRCUIT")
   echo ""
   echo "─── Building circuit: ${CIRCUIT} ───"
 
@@ -78,7 +86,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "  ERROR: failed to parse constraint count for ${CIRCUIT} (got: '$CONSTRAINTS')"
     exit 1
   fi
-  CIRCUIT_CONSTRAINTS[$CIRCUIT]=$CONSTRAINTS
+  CONSTRAINT_COUNTS+=("$CONSTRAINTS")
   PTAU_SIZE=$(required_ptau "$CONSTRAINTS")
   echo "  [2/5] Circuit has $CONSTRAINTS constraints → needs pot$PTAU_SIZE (2^$PTAU_SIZE = $((2**PTAU_SIZE)))"
 
@@ -117,9 +125,10 @@ echo "  Copied .wasm and .zkey to frontend/public/zk/"
 
 echo ""
 echo "=== Build complete ==="
-for CIRCUIT in "${CIRCUITS[@]}"; do
-  VERIFIER_NAME="${VERIFIER_NAMES[$CIRCUIT]}"
-  echo "  Circuit:       ${CIRCUIT}.circom (${CIRCUIT_CONSTRAINTS[$CIRCUIT]} constraints)"
+for i in "${!CIRCUITS[@]}"; do
+  CIRCUIT="${CIRCUITS[$i]}"
+  VERIFIER_NAME=$(verifier_name_for "$CIRCUIT")
+  echo "  Circuit:       ${CIRCUIT}.circom (${CONSTRAINT_COUNTS[$i]} constraints)"
   echo "  WASM:          $BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm"
   echo "  zkey:          $BUILD/${CIRCUIT}_final.zkey"
   echo "  Verifier:      contracts/src/zk/${VERIFIER_NAME}.sol"
