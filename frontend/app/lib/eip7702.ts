@@ -119,27 +119,18 @@ export async function sendBatchVia7702(
   // signers that don't auto-fill still work.
   const baseNonce = await signer.provider.getTransactionCount(eoa);
 
-  // ethers v6.16 Signers expose `authorize({ address, chainId, nonce })`
-  // which returns a signed Authorization. Fall back to requesting it
-  // directly on the signer if the method exists; otherwise rely on the
-  // wallet to sign the authorizationList entry when we send.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const maybeAuthorize = (signer as any).authorize?.bind(signer);
-
-  const authRequest = { address: executor, chainId, nonce: baseNonce + 1 };
-  let authorizationEntry: unknown;
-  try {
-    authorizationEntry = maybeAuthorize
-      ? await maybeAuthorize(authRequest)
-      : authRequest; // wallet will sign at send time
-  } catch (err) {
-    // Only classify as "unsupported" when the error pattern-matches a
-    // 7702 capability gap. User-rejected signs and other unrelated
-    // failures must propagate so the caller can surface them instead
-    // of silently falling back and prompting the user a second time.
-    if (looksLikeUnsupported(err)) throw new Eip7702Unsupported(err);
-    throw err;
-  }
+  // Always hand the wallet an unsigned `{ address, chainId, nonce }`.
+  //   - ethers v6's `JsonRpcSigner` (MetaMask / browser wallets) throws
+  //     `UNSUPPORTED_OPERATION` on `signer.authorize(...)` by design —
+  //     the EIP-7702 authorization has to be signed by the wallet
+  //     itself when the tx is submitted. Attempting a pre-sign from
+  //     the library side is what produced the
+  //     "authorization not implemented for this signer" runtime error.
+  //   - `BaseWallet` (local private-key signers) *does* support
+  //     pre-signing, but we never hit that path in the browser flow.
+  // MetaMask 12+ / Rabby / Ambire accept the unsigned entry on
+  // `authorizationList` and sign it as part of the SetCode tx.
+  const authorizationEntry = { address: executor, chainId, nonce: baseNonce + 1 };
 
   const data = encodeExecuteCalldata(calls);
 
