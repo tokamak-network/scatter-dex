@@ -28,8 +28,8 @@ export interface SendCallsCall {
 }
 
 export interface SendCallsParams {
-  /** Envelope version — EIP-5792 currently defines "1.0". */
-  version: string;
+  /** Envelope version — EIP-5792 currently defines "1.0" only. */
+  version: "1.0";
   from: string;
   /** Hex-encoded chainId (e.g. `"0x1"`). */
   chainId: string;
@@ -63,8 +63,8 @@ export interface CallsStatus {
  * chain. Callers should fall back to sending the steps sequentially.
  */
 export class Eip5792Unsupported extends Error {
-  constructor(readonly cause: unknown) {
-    super("Wallet does not support EIP-5792 atomic batch on this chain.");
+  constructor(cause: unknown) {
+    super("Wallet does not support EIP-5792 atomic batch on this chain.", { cause });
     this.name = "Eip5792Unsupported";
   }
 }
@@ -81,11 +81,12 @@ function providerSend<T = unknown>(
 }
 
 function isMethodNotFound(err: unknown): boolean {
+  // JSON-RPC spec reserves -32601 for "method not found"; any wallet
+  // that follows the spec surfaces that code even when the outer
+  // message varies. Check it first so we don't rely on wording.
+  const code = (err as { code?: unknown })?.code;
+  if (code === -32601) return true;
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  // Match the 1193/RPC-style errors MetaMask / WalletConnect surface
-  // when they don't know the method. Restricted to phrases that are
-  // specifically about method absence so we don't misclassify other
-  // failures (user-reject, bad params, etc.).
   return [
     "method not found",
     "method not supported",
@@ -118,8 +119,7 @@ export function supportsAtomicBatch(
   chainId: bigint | number,
 ): boolean {
   if (!caps) return false;
-  const key = "0x" + BigInt(chainId).toString(16);
-  return !!caps[key]?.atomicBatch?.supported;
+  return !!caps[ethers.toQuantity(chainId)]?.atomicBatch?.supported;
 }
 
 /**
@@ -135,7 +135,7 @@ export async function sendCalls(
   const rpcParams: SendCallsParams = {
     version: "1.0",
     from: params.from,
-    chainId: "0x" + BigInt(params.chainId).toString(16),
+    chainId: ethers.toQuantity(params.chainId),
     calls: params.calls,
     ...(params.capabilities ? { capabilities: params.capabilities } : {}),
   };
@@ -162,11 +162,18 @@ export async function waitForCallsReceipt(
 ): Promise<CallsStatus> {
   const start = Date.now();
   // Simple poll — wallets typically finalize within a couple of blocks
-  // on local anvil, 10-30s on public chains.
+  // on local anvil, 10-30s on public chains. Status codes per EIP-5792:
+  //   100  pending
+  //   200  confirmed
+  //   4xx  user-level failure (rejected, offline, etc.)
+  //   5xx  wallet-level failure
+  // Only 200 is a real success; 4xx/5xx must raise so callers don't
+  // mistake a failed batch for a confirmed one.
   for (;;) {
     const status = await providerSend<CallsStatus>(provider, "wallet_getCallsStatus", [id]);
-    // 200-level codes mean terminal (confirmed or failed at the call
-    // level). Anything below 200 is pending.
+    if (status.status >= 400) {
+      throw new Error(`wallet_getCallsStatus returned failure code ${status.status} (id=${id})`);
+    }
     if (status.status >= 200) return status;
     if (Date.now() - start > timeoutMs) {
       throw new Error(`wallet_getCallsStatus timed out after ${timeoutMs}ms (id=${id})`);

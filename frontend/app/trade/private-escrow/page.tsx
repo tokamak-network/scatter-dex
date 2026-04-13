@@ -57,7 +57,7 @@ import { friendlyError } from "../../lib/error-messages";
 type TxState = "idle" | "deriving_key" | "approving" | "depositing" | "success" | "error";
 
 export default function PrivateEscrowPage() {
-  const { account, signer, connect } = useWallet();
+  const { account, signer, chainId, connect } = useWallet();
   const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
@@ -91,6 +91,25 @@ export default function PrivateEscrowPage() {
       setCachedKey(null);
     }
   }, [account, cachedKey]);
+
+  // EIP-5792 capabilities are stable per (wallet, account, chain); caching
+  // at the page level keeps the deposit-click hot path free of the extra
+  // `wallet_getCapabilities` RPC.
+  const [canAtomicBatch, setCanAtomicBatch] = useState(false);
+  useEffect(() => {
+    setCanAtomicBatch(false);
+    if (!signer?.provider || !account || chainId == null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const caps = await fetchCapabilities(signer.provider as ethers.BrowserProvider, account);
+        if (!cancelled) setCanAtomicBatch(supportsAtomicBatch(caps, chainId));
+      } catch {
+        /* wallets that throw on the capability probe stay on sequential */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account, chainId, signer]);
 
   const poolAddress = process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS || "";
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
@@ -326,58 +345,55 @@ export default function PrivateEscrowPage() {
       const allowance: bigint = await erc20.allowance(account, poolAddress);
       const needsApprove = allowance < parsed;
 
-      // Try EIP-5792 atomic batch first — collapses wrap(+approve)+deposit
-      // into a single wallet confirmation when the connected wallet
-      // advertises `atomicBatch.supported` for this chain. MetaMask 12+,
-      // Coinbase Wallet, Rabby, Rainbow, Ambire, Safe all implement
-      // `wallet_sendCalls`; non-supporting wallets fall back to the
-      // legacy sequential path below. We intentionally don't use raw
-      // EIP-7702 here because MetaMask rejects dApp-initiated 7702 txs
-      // with "External EIP-7702 transactions are not supported" and
-      // routes batching through 5792 instead.
+      // Atomic batch via EIP-5792; falls back to sequential below.
       let receipt: ethers.TransactionReceipt | null = null;
       const provider = signer.provider;
 
-      if (provider) {
-        const net = await provider.getNetwork();
-        const caps = await fetchCapabilities(provider as ethers.BrowserProvider, account);
-        if (supportsAtomicBatch(caps, net.chainId)) {
-          const calls: SendCallsCall[] = [];
-          if (selectedToken.isNative) {
-            calls.push({
-              to: selectedToken.address,
-              value: "0x" + parsed.toString(16),
-              data: wethIface.encodeFunctionData("deposit", []),
-            });
-          }
-          if (needsApprove) {
-            calls.push({
-              to: selectedToken.address,
-              data: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
-            });
-          }
-          calls.push({ to: poolAddress, data: depositCallData });
+      if (provider && canAtomicBatch && chainId != null) {
+        const calls: SendCallsCall[] = [];
+        if (selectedToken.isNative) {
+          calls.push({
+            to: selectedToken.address,
+            value: ethers.toQuantity(parsed),
+            data: wethIface.encodeFunctionData("deposit", []),
+          });
+        }
+        if (needsApprove) {
+          calls.push({
+            to: selectedToken.address,
+            data: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
+          });
+        }
+        calls.push({ to: poolAddress, data: depositCallData });
 
-          try {
-            const result = await sendCalls(provider as ethers.BrowserProvider, {
-              from: account,
-              chainId: net.chainId,
-              calls,
-            });
-            const status = await waitForCallsReceipt(provider as ethers.BrowserProvider, result.id);
-            // Take the last receipt: for atomic batches it's the batch
-            // tx itself (same hash across entries) and the only one
-            // the UI needs to surface.
-            const last = status.receipts?.[status.receipts.length - 1];
-            if (last) {
-              receipt = await provider.getTransactionReceipt(last.transactionHash);
-            }
-          } catch (err) {
-            if (!(err instanceof Eip5792Unsupported)) throw err;
-            console.info(
-              "[private-escrow] wallet does not support EIP-5792 atomic batch, falling back to sequential txs",
-            );
+        try {
+          const result = await sendCalls(provider as ethers.BrowserProvider, {
+            from: account,
+            chainId,
+            calls,
+          });
+          const status = await waitForCallsReceipt(provider as ethers.BrowserProvider, result.id);
+          // For atomic batches all entries share a single transaction
+          // hash; the last receipt carries the full logs, which is
+          // what downstream (leafIndex parsing) needs. No extra
+          // `getTransactionReceipt` round-trip.
+          const last = status.receipts?.[status.receipts.length - 1];
+          if (last) {
+            receipt = {
+              hash: last.transactionHash,
+              blockNumber: Number(last.blockNumber),
+              logs: last.logs.map((l) => ({
+                address: l.address,
+                data: l.data,
+                topics: l.topics,
+              })),
+            } as unknown as ethers.TransactionReceipt;
           }
+        } catch (err) {
+          if (!(err instanceof Eip5792Unsupported)) throw err;
+          console.info(
+            "[private-escrow] wallet does not support EIP-5792 atomic batch, falling back to sequential txs",
+          );
         }
       }
 
@@ -453,7 +469,7 @@ export default function PrivateEscrowPage() {
       setTxState("error");
       setTxError(friendlyError(e));
     }
-  }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
+  }, [signer, account, chainId, canAtomicBatch, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
 
   // ─── Delete Note ───────────────────────────────────────────────
   const handleDeleteNote = useCallback(async (n: StoredNote) => {
