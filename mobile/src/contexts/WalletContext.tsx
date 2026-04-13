@@ -4,11 +4,12 @@
  * tokamon의 wallet.js 리스너 패턴을 React Context로 래핑.
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Alert, Linking, Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ethers } from 'ethers';
 import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
+import { ProviderService } from '../services/ProviderService';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 import { KeySecurityService } from '../services/KeySecurityService';
 
@@ -48,11 +49,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [qrUri, setQrUri] = useState<string | null>(null);
 
   const wcProviderRef = useRef<any>(null);
-  const readProvider = useRef(
-    new ethers.JsonRpcProvider(ConfigService.getRpcUrl()),
-  ).current;
 
-  const targetChainId = ConfigService.getChainId();
+  // Re-read from ProviderService/ConfigService whenever the provider singleton
+  // is reset (happens on network switch or restoreSavedNetwork). This keeps
+  // readProvider and targetChainId in sync without requiring an app restart.
+  const [providerVersion, setProviderVersion] = useState(0);
+  useEffect(
+    () => ProviderService.subscribeReset(() => setProviderVersion((v) => v + 1)),
+    [],
+  );
+  const readProvider = useMemo(
+    () => ProviderService.getReadProvider(),
+    [providerVersion],
+  );
+  const targetChainId = useMemo(
+    () => ConfigService.getChainId(),
+    [providerVersion],
+  );
 
   const setupFromWcProvider = useCallback(async (wcProvider: InstanceType<typeof EthereumProvider>) => {
     const ethersProvider = new ethers.BrowserProvider(wcProvider);

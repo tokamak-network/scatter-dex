@@ -24,6 +24,7 @@ export default function TradeScreen() {
   const [amount, setAmount] = useState('');
   const [price, setPrice] = useState('1850.25');
   const [orderTab, setOrderTab] = useState<'book' | 'recent'>('book');
+  const buyTokenSymbol = ConfigService.getBuyTokenSymbol();
 
   // Real data
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -210,7 +211,7 @@ export default function TradeScreen() {
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
               <View style={[s.tokenDot, { backgroundColor: '#22C55E' }]} />
-              <Text style={s.tokenName}>USDC</Text>
+              <Text style={s.tokenName}>{buyTokenSymbol}</Text>
             </View>
           </View>
         </View>
@@ -242,7 +243,7 @@ export default function TradeScreen() {
             </Text>
           </View>
           <View style={s.inputCol}>
-            <Text style={s.inputLabel}>Amount (USDC)</Text>
+            <Text style={s.inputLabel}>Amount ({buyTokenSymbol})</Text>
             <View style={s.inputWrap}>
               <TextInput
                 style={[s.input, s.inputReadonly]}
@@ -265,7 +266,7 @@ export default function TradeScreen() {
               onChangeText={setPrice}
               keyboardType="decimal-pad"
             />
-            <Text style={s.limitUnit}>USDC</Text>
+            <Text style={s.limitUnit}>{buyTokenSymbol}</Text>
             <View style={s.limitDivider} />
             <TouchableOpacity style={s.pmBtn} onPress={() => {
               const p = parseFloat(price.replace(/,/g, ''));

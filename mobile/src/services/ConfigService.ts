@@ -22,6 +22,7 @@ export const ConfigService = {
   getDeployBlock: () => Number(getEnv('DEPLOY_BLOCK') || '0'),
   getWalletConnectProjectId: () => getEnv('WALLETCONNECT_PROJECT_ID') || '',
   getUniswapRouterAddress: () => getEnv('UNISWAP_ROUTER_ADDRESS') || '',
+  getBuyTokenSymbol: () => getEnv('BUY_TOKEN_SYMBOL') || 'WETH',
 
   applyNetworkOverride(rpcUrl: string, chainId: number) {
     _rpcOverride = rpcUrl;
