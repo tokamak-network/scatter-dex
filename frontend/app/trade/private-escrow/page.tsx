@@ -43,6 +43,7 @@ import {
   deserializeKeyPairEncrypted,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
+import { sendBatchVia7702, Eip7702Unsupported, type Execution } from "../../lib/eip7702";
 import { friendlyError } from "../../lib/error-messages";
 
 
@@ -295,48 +296,100 @@ export default function PrivateEscrowPage() {
       // event parsing / note storage below.
       const commitment = await computeCommitment(note);
 
-      if (selectedToken.isNative) {
-        // ETH: wrap to WETH first, then approve + deposit
-        setTxState("approving");
-        const wethContract = new ethers.Contract(
-          selectedToken.address,
-          ["function deposit() external payable", ...ERC20_ABI],
-          signer
-        );
-        const wrapTx = await wethContract.deposit({ value: parsed });
-        await wrapTx.wait();
-
-        const allowance: bigint = await wethContract.allowance(account, poolAddress);
-        if (allowance < parsed) {
-          const approveTx = await wethContract.approve(poolAddress, ethers.MaxUint256);
-          await approveTx.wait();
-        }
-      } else {
-        // ERC20: just approve
-        setTxState("approving");
-        const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
-        const allowance: bigint = await erc20.allowance(account, poolAddress);
-        if (allowance < parsed) {
-          const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
-          await approveTx.wait();
-        }
-      }
-
-      // Deposit — generate the binding proof first, then submit on-chain.
-      // generateDepositProof derives the commitment from the note itself,
-      // so we cannot accidentally pair a stale commitment with the proof.
+      // Build the deposit proof up-front. It depends only on the note's
+      // own secrets (no on-chain state), so generating it now lets us
+      // bundle `deposit` into an EIP-7702 batch alongside wrap/approve.
+      // Falls back-to-back compatible: the legacy sequential path below
+      // reuses the same proof rather than regenerating it.
       setTxState("depositing");
       const depositProof = await generateDepositProof(note);
+
       const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, signer);
-      const tx = await pool.deposit(
+      const depositCallData = pool.interface.encodeFunctionData("deposit", [
         depositProof.proof.a,
         depositProof.proof.b,
         depositProof.proof.c,
         depositProof.commitment,
         commitTokenAddr,
         parsed,
-      );
-      const receipt = await tx.wait();
+      ]);
+
+      const wethIface = new ethers.Interface(["function deposit() external payable"]);
+      const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
+      const allowance: bigint = await erc20.allowance(account, poolAddress);
+      const needsApprove = allowance < parsed;
+
+      // Try EIP-7702 batched deposit first — collapses wrap(+approve)+deposit
+      // into a single tx / popup when the wallet and chain both support it.
+      // Any capability mismatch falls back to the legacy sequential path.
+      const executorAddress = process.env.NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS || "";
+      let receipt: ethers.TransactionReceipt | null = null;
+
+      if (executorAddress) {
+        const calls: Execution[] = [];
+        let totalValue = 0n;
+        if (selectedToken.isNative) {
+          calls.push({
+            target: selectedToken.address,
+            value: parsed,
+            callData: wethIface.encodeFunctionData("deposit", []),
+          });
+          totalValue = parsed;
+        }
+        if (needsApprove) {
+          calls.push({
+            target: selectedToken.address,
+            value: 0n,
+            callData: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
+          });
+        }
+        calls.push({ target: poolAddress, value: 0n, callData: depositCallData });
+
+        try {
+          const tx = await sendBatchVia7702(signer, executorAddress, calls, { totalValue });
+          receipt = await tx.wait();
+        } catch (err) {
+          if (!(err instanceof Eip7702Unsupported)) throw err;
+          console.info(
+            "[private-escrow] wallet/chain does not support EIP-7702 batch delegation, falling back to sequential txs",
+          );
+        }
+      }
+
+      if (!receipt) {
+        // Legacy sequential path — one MetaMask popup per step.
+        if (selectedToken.isNative) {
+          setTxState("approving");
+          const wethContract = new ethers.Contract(
+            selectedToken.address,
+            ["function deposit() external payable", ...ERC20_ABI],
+            signer,
+          );
+          const wrapTx = await wethContract.deposit({ value: parsed });
+          await wrapTx.wait();
+          if (needsApprove) {
+            const approveTx = await wethContract.approve(poolAddress, ethers.MaxUint256);
+            await approveTx.wait();
+          }
+        } else if (needsApprove) {
+          setTxState("approving");
+          const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
+          await approveTx.wait();
+        }
+
+        setTxState("depositing");
+        const tx = await pool.deposit(
+          depositProof.proof.a,
+          depositProof.proof.b,
+          depositProof.proof.c,
+          depositProof.commitment,
+          commitTokenAddr,
+          parsed,
+        );
+        receipt = await tx.wait();
+      }
+
+      if (!receipt) throw new Error("deposit receipt was null");
       setTxHash(receipt.hash);
 
       // Parse leafIndex from event
