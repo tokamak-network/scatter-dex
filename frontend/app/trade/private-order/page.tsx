@@ -1268,6 +1268,11 @@ export default function PrivateOrderPage() {
                       Claims must total at least {buyAmount} {buyToken.symbol} (buyAmount). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
+                  {claimShortfall === null && buyAmount !== "" && (
+                    <div className="text-xs text-error font-bold">
+                      buyAmount &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
+                    </div>
+                  )}
                   {parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (
                     <div className="text-[11px] text-on-surface-variant/60">
                       For a match, the counterparty must sell ≥ {buyAmount} + fee ≈ {(parseFloat(buyAmount) * (1 + effectiveFeeBps / 10000)).toFixed(4)} {buyToken.symbol}.
@@ -1356,7 +1361,7 @@ export default function PrivateOrderPage() {
             {orderType === "limit" ? (
             <button
               onClick={!keyPair ? handleDeriveKey : handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || (claimShortfall !== null && claimShortfall > 0n) || keyLoading}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || keyLoading}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {keyLoading ? (
@@ -1366,7 +1371,7 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || (claimShortfall !== null && claimShortfall > 0n)}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
               {keyLoading ? (
