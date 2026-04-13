@@ -7,6 +7,7 @@ import { ConfigService } from './ConfigService';
 
 let readProvider: ethers.JsonRpcProvider | null = null;
 let cachedSanctionsAddr: string | null = null;
+const resetListeners = new Set<() => void>();
 
 export const ProviderService = {
   getReadProvider(): ethers.JsonRpcProvider {
@@ -50,5 +51,16 @@ export const ProviderService = {
   reset() {
     readProvider = null;
     cachedSanctionsAddr = null;
+    resetListeners.forEach((fn) => {
+      try { fn(); } catch (err) {
+        console.warn('ProviderService reset listener failed:', err);
+      }
+    });
+  },
+
+  /** Subscribe to provider resets (e.g. network switch). Returns unsubscribe. */
+  subscribeReset(fn: () => void): () => void {
+    resetListeners.add(fn);
+    return () => { resetListeners.delete(fn); };
   },
 };

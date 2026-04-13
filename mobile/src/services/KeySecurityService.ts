@@ -81,6 +81,10 @@ export const KeySecurityService = {
       await SecureStore.setItemAsync(MNEMONIC_KEY, mnemonic, {
         keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
       });
+    } else {
+      // Importing from a raw private key — make sure a previous wallet's
+      // mnemonic cannot still be revealed via getMnemonic().
+      await SecureStore.deleteItemAsync(MNEMONIC_KEY);
     }
   },
 

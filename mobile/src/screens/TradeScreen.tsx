@@ -24,6 +24,7 @@ export default function TradeScreen() {
   const [amount, setAmount] = useState('');
   const [price, setPrice] = useState('1850.25');
   const [orderTab, setOrderTab] = useState<'book' | 'recent'>('book');
+  const buyTokenSymbol = ConfigService.getBuyTokenSymbol();
 
   // Real data
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -198,37 +199,20 @@ export default function TradeScreen() {
           </View>
         </View>
 
-        {/* Token Selector */}
+        {/* Token pair (token selection is driven by the note chosen below) */}
         <View style={s.tokenRow}>
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
               <View style={[s.tokenDot, { backgroundColor: '#3B82F6' }]} />
               <Text style={s.tokenName}>{selectedNote?.tokenSymbol || 'ETH'}</Text>
-              <Text style={s.tokenChevron}>▾</Text>
             </View>
           </View>
-          <TouchableOpacity style={s.swapBtn}>
-            <Text style={s.swapIcon}>⇄</Text>
-          </TouchableOpacity>
+          <Text style={s.swapIcon}>→</Text>
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
               <View style={[s.tokenDot, { backgroundColor: '#22C55E' }]} />
-              <Text style={s.tokenName}>USDC</Text>
-              <Text style={s.tokenChevron}>▾</Text>
+              <Text style={s.tokenName}>{buyTokenSymbol}</Text>
             </View>
-          </View>
-        </View>
-
-        {/* Price & Chart */}
-        <View style={s.priceSection}>
-          <View style={s.priceRow}>
-            <Text style={s.priceText}>ETH = ${price} USDC</Text>
-            <View style={s.changeBadge}>
-              <Text style={s.changeText}>+1.2%</Text>
-            </View>
-          </View>
-          <View style={s.chartPlaceholder}>
-            <Text style={s.chartText}>Chart</Text>
           </View>
         </View>
 
@@ -259,7 +243,7 @@ export default function TradeScreen() {
             </Text>
           </View>
           <View style={s.inputCol}>
-            <Text style={s.inputLabel}>Amount (USDC)</Text>
+            <Text style={s.inputLabel}>Amount ({buyTokenSymbol})</Text>
             <View style={s.inputWrap}>
               <TextInput
                 style={[s.input, s.inputReadonly]}
@@ -267,38 +251,37 @@ export default function TradeScreen() {
                 editable={false}
               />
             </View>
-            <Text style={s.inputHint}>Private Balance: 4,500 USDC</Text>
+            <Text style={s.inputHint}>Estimated from limit price</Text>
           </View>
         </View>
 
-        {/* Limit Price */}
-        {tradeType === 'limit' && (
-          <View style={s.limitSection}>
-            <Text style={s.inputLabel}>Limit Price</Text>
-            <View style={s.limitRow}>
-              <TextInput
-                style={s.limitInput}
-                value={price}
-                onChangeText={setPrice}
-                keyboardType="decimal-pad"
-              />
-              <Text style={s.limitUnit}>USDC</Text>
-              <View style={s.limitDivider} />
-              <TouchableOpacity style={s.pmBtn} onPress={() => {
-                const p = parseFloat(price.replace(/,/g, ''));
-                if (!isNaN(p)) setPrice((p - 1).toFixed(2));
-              }}>
-                <Text style={s.pmText}>−</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.pmBtn} onPress={() => {
-                const p = parseFloat(price.replace(/,/g, ''));
-                if (!isNaN(p)) setPrice((p + 1).toFixed(2));
-              }}>
-                <Text style={s.pmText}>+</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={s.limitSection}>
+          <Text style={s.inputLabel}>
+            {tradeType === 'limit' ? 'Limit Price' : 'Expected Price (for slippage)'}
+          </Text>
+          <View style={s.limitRow}>
+            <TextInput
+              style={s.limitInput}
+              value={price}
+              onChangeText={setPrice}
+              keyboardType="decimal-pad"
+            />
+            <Text style={s.limitUnit}>{buyTokenSymbol}</Text>
+            <View style={s.limitDivider} />
+            <TouchableOpacity style={s.pmBtn} onPress={() => {
+              const p = parseFloat(price.replace(/,/g, ''));
+              if (!isNaN(p)) setPrice(Math.max(0, p - 1).toFixed(2));
+            }}>
+              <Text style={s.pmText}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.pmBtn} onPress={() => {
+              const p = parseFloat(price.replace(/,/g, ''));
+              if (!isNaN(p)) setPrice(Math.max(0, p + 1).toFixed(2));
+            }}>
+              <Text style={s.pmText}>+</Text>
+            </TouchableOpacity>
           </View>
-        )}
+        </View>
 
         {/* Error display */}
         {error && (
@@ -400,18 +383,7 @@ const s = StyleSheet.create({
   tokenInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   tokenDot: { width: 24, height: 24, borderRadius: 12 },
   tokenName: { fontSize: 14, fontWeight: '700' },
-  tokenChevron: { fontSize: 14, color: '#9CA3AF' },
-  swapBtn: { padding: 8 },
   swapIcon: { fontSize: 20, color: '#9CA3AF' },
-
-  /* Price & Chart */
-  priceSection: { paddingHorizontal: 24, gap: 8 },
-  priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
-  priceText: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  changeBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  changeText: { fontSize: 12, fontWeight: '700', color: '#22C55E' },
-  chartPlaceholder: { height: 160, width: '100%', marginTop: 16, backgroundColor: '#F9FAFB', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  chartText: { fontSize: 14, color: '#9CA3AF', fontWeight: '500' },
 
   /* Inputs */
   inputsRow: { flexDirection: 'row', paddingHorizontal: 24, gap: 16 },

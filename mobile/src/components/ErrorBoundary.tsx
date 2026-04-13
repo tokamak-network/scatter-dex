@@ -7,6 +7,7 @@
 import React, { Component, ErrorInfo } from 'react';
 import { Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { colors } from '../styles/theme';
 
 interface Props {
   children: React.ReactNode;
@@ -61,7 +62,7 @@ export class ErrorBoundary extends Component<Props, State> {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0f1e',
+    backgroundColor: colors.bgSecondary,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
@@ -69,24 +70,24 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#ef4444',
+    color: colors.danger,
     marginBottom: 12,
   },
   message: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 24,
     fontFamily: 'monospace',
   },
   button: {
-    backgroundColor: '#6366f1',
+    backgroundColor: colors.primary,
     paddingVertical: 12,
     paddingHorizontal: 32,
     borderRadius: 8,
   },
   buttonText: {
-    color: '#fff',
+    color: colors.bg,
     fontSize: 16,
     fontWeight: '600',
   },

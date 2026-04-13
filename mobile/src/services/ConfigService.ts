@@ -1,6 +1,3 @@
-/**
- * ConfigService — 환경변수 및 네트워크 설정
- */
 import Constants from 'expo-constants';
 
 function getEnv(key: string): string {
@@ -10,9 +7,12 @@ function getEnv(key: string): string {
   return val;
 }
 
+let _rpcOverride: string | null = null;
+let _chainIdOverride: number | null = null;
+
 export const ConfigService = {
-  getRpcUrl: () => getEnv('RPC_URL') || 'https://rpc.thanos-sepolia.tokamak.network',
-  getChainId: () => Number(getEnv('CHAIN_ID') || '111551119090'),
+  getRpcUrl: () => _rpcOverride ?? (getEnv('RPC_URL') || 'https://rpc.thanos-sepolia.tokamak.network'),
+  getChainId: () => _chainIdOverride ?? Number(getEnv('CHAIN_ID') || '111551119090'),
   getCommitmentPoolAddress: () => getEnv('COMMITMENT_POOL_ADDRESS'),
   getPrivateSettlementAddress: () => getEnv('PRIVATE_SETTLEMENT_ADDRESS'),
   getRelayerRegistryAddress: () => getEnv('RELAYER_REGISTRY_ADDRESS'),
@@ -22,4 +22,10 @@ export const ConfigService = {
   getDeployBlock: () => Number(getEnv('DEPLOY_BLOCK') || '0'),
   getWalletConnectProjectId: () => getEnv('WALLETCONNECT_PROJECT_ID') || '',
   getUniswapRouterAddress: () => getEnv('UNISWAP_ROUTER_ADDRESS') || '',
+  getBuyTokenSymbol: () => getEnv('BUY_TOKEN_SYMBOL') || 'WETH',
+
+  applyNetworkOverride(rpcUrl: string, chainId: number) {
+    _rpcOverride = rpcUrl;
+    _chainIdOverride = chainId;
+  },
 };

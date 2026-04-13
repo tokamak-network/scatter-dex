@@ -5,6 +5,8 @@
  * 선택된 네트워크는 AsyncStorage에 저장되어 앱 재시작 시 유지.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ConfigService } from './ConfigService';
+import { ProviderService } from './ProviderService';
 
 const NETWORKS_KEY = 'scatterdex_custom_networks';
 const SELECTED_KEY = 'scatterdex_selected_network';
@@ -107,12 +109,19 @@ export const NetworkService = {
     return id || 'thanos-sepolia'; // default
   },
 
-  /** 네트워크 선택 */
   async selectNetwork(id: string): Promise<void> {
     await AsyncStorage.setItem(SELECTED_KEY, id);
+    const network = await this.getSelectedNetwork();
+    ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+    ProviderService.reset();
   },
 
-  /** 현재 선택된 네트워크 설정 가져오기 */
+  async restoreSavedNetwork(): Promise<void> {
+    const network = await this.getSelectedNetwork();
+    ConfigService.applyNetworkOverride(network.rpcUrl, network.chainId);
+    ProviderService.reset();
+  },
+
   async getSelectedNetwork(): Promise<NetworkConfig> {
     const id = await this.getSelectedNetworkId();
     const all = await this.getAllNetworks();
@@ -122,25 +131,28 @@ export const NetworkService = {
   /** RPC 연결 테스트 */
   async testConnection(rpcUrl: string): Promise<{ ok: boolean; chainId?: number; blockNumber?: number; error?: string }> {
     try {
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_chainId', params: [], id: 1 }),
-      });
-      const data = await res.json();
-      const chainId = parseInt(data.result, 16);
-
-      const blockRes = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 2 }),
-      });
-      const blockData = await blockRes.json();
-      const blockNumber = parseInt(blockData.result, 16);
-
+      const chainId = await rpcCall(rpcUrl, 'eth_chainId', 1);
+      const blockNumber = await rpcCall(rpcUrl, 'eth_blockNumber', 2);
       return { ok: true, chainId, blockNumber };
     } catch (err: unknown) {
       return { ok: false, error: err instanceof Error ? err.message : 'Connection failed' };
     }
   },
 };
+
+async function rpcCall(rpcUrl: string, method: string, id: number): Promise<number> {
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method, params: [], id }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} from RPC`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || `RPC error from ${method}`);
+  if (typeof data.result !== 'string' || !data.result.startsWith('0x')) {
+    throw new Error(`Invalid RPC result for ${method}`);
+  }
+  const n = parseInt(data.result, 16);
+  if (!Number.isFinite(n)) throw new Error(`Unparseable RPC result for ${method}`);
+  return n;
+}
