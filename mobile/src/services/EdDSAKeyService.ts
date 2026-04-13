@@ -18,7 +18,13 @@ const DERIVE_MESSAGE =
 const EDDSA_KEY_PREFIX = 'scatterdex_eddsa_';
 
 export interface EdDSAKeyPair {
-  privateKeyHex: string;          // 0x-prefixed hex
+  /**
+   * Raw hex string WITHOUT a `0x` prefix — that's what the WebView bridge
+   * (`derive_eddsa_key`) returns and what `sign_eddsa` accepts. The earlier
+   * "0x-prefixed" comment was wrong; aligning the contract here so callers
+   * stop hand-trimming or hand-prefixing it.
+   */
+  privateKeyHex: string;
   pubKeyAx: string;               // decimal string (for circuit inputs)
   pubKeyAy: string;               // decimal string
 }
@@ -51,13 +57,38 @@ export const EdDSAKeyService = {
   },
 
   /**
-   * 저장된 키가 있으면 로드, 없으면 null
+   * 저장된 키가 있으면 로드, 없으면 null. 저장된 JSON이 손상된 경우
+   * (앱 종료 도중 partial write, manual SecureStore wipe, schema drift 등)
+   * 해당 항목을 삭제하고 null을 반환 — `getOrDeriveKey`가 다시 유도하도록.
+   * 그냥 throw하면 매 trade마다 사용자에게 unrecoverable 에러를 보임.
+   *
+   * UX note: a corrupted entry will silently be removed here; the next
+   * `getOrDeriveKey` call therefore triggers a fresh `signMessage` prompt
+   * in the user's wallet. Callers that want to surface that beforehand
+   * (e.g. "Your signing key was reset, approve to re-derive") should
+   * check for `null` from this method first.
    */
   async loadKey(account: string): Promise<EdDSAKeyPair | null> {
     const key = `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`;
     const stored = await SecureStore.getItemAsync(key);
     if (!stored) return null;
-    return JSON.parse(stored);
+    try {
+      const parsed = JSON.parse(stored);
+      // Shape check — bridge returns three string fields. A blob missing
+      // any of them is corrupt and re-derivation is the right move.
+      if (
+        typeof parsed?.privateKeyHex === 'string'
+        && typeof parsed?.pubKeyAx === 'string'
+        && typeof parsed?.pubKeyAy === 'string'
+      ) {
+        return parsed as EdDSAKeyPair;
+      }
+      throw new Error('EdDSA key blob missing required fields');
+    } catch (err) {
+      console.warn('EdDSAKeyService.loadKey: dropping corrupted entry', err);
+      try { await SecureStore.deleteItemAsync(key); } catch { /* best-effort */ }
+      return null;
+    }
   },
 
   /**

@@ -12,12 +12,17 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+export type ZKReadyStatus =
+  | { status: 'ready' }
+  | { status: 'failed'; error: string };
+
 class ZKBridgeServiceImpl {
   private webViewRef: React.RefObject<WebView | null> | null = null;
   private pending = new Map<string, PendingRequest>();
   private ready = false;
-  private readyPromise: Promise<void>;
-  private readyResolve!: () => void;
+  private initError: string | null = null;
+  private readyPromise: Promise<ZKReadyStatus>;
+  private readyResolve!: (status: ZKReadyStatus) => void;
   private requestCounter = 0;
 
   constructor() {
@@ -34,8 +39,21 @@ class ZKBridgeServiceImpl {
     return this.ready;
   }
 
-  waitReady(): Promise<void> {
+  /**
+   * Resolves with `{status: 'ready'}` once the WebView reports successful
+   * snarkjs/circomlibjs init, or with `{status: 'failed', error}` when the
+   * init handshake reports failure. Callers (e.g. `App.tsx`) can branch on
+   * the status to gate the proving UI rather than silently rendering a
+   * broken-prover state — historically `waitReady` resolved void on both
+   * paths, leaving callers unable to distinguish.
+   */
+  waitReady(): Promise<ZKReadyStatus> {
     return this.readyPromise;
+  }
+
+  /** Last init failure reason, if any. Useful for diagnostics screens. */
+  getInitError(): string | null {
+    return this.initError;
   }
 
   /**
@@ -63,12 +81,17 @@ class ZKBridgeServiceImpl {
       console.log('ZKBridge __init__:', status, JSON.stringify(result));
       if (status === 'success') {
         this.ready = true;
-        this.readyResolve();
+        this.initError = null;
+        this.readyResolve({ status: 'ready' });
       } else {
-        // ZK engine failed — still resolve to unblock app, but log error
-        console.error('ZK Engine initialization failed:', JSON.stringify(result));
+        // Resolve with explicit failure so callers can render an error
+        // state instead of mistaking init failure for init success. The
+        // proving UI must NOT proceed when ready === false.
+        const errMsg = error || (typeof result === 'string' ? result : JSON.stringify(result)) || 'ZK engine init failed';
+        console.error('ZK Engine initialization failed:', errMsg);
         this.ready = false;
-        this.readyResolve(); // unblock UI so user can see other screens
+        this.initError = errMsg;
+        this.readyResolve({ status: 'failed', error: errMsg });
       }
       return;
     }

@@ -32,12 +32,28 @@ export default function HiddenWebView() {
 
   if (!htmlUri) return null;
 
+  // The packaged ZK engine HTML lives at a `file://` URI inside the app
+  // bundle. Both the origin whitelist and the navigation guard are pinned
+  // to that exact URI so a compromised script inside the WebView cannot
+  // navigate to a remote origin and then call back into the bridge.
+  const allowedUri = htmlUri;
+
   return (
     <WebView
       ref={webViewRef}
       source={{ uri: htmlUri }}
       onMessage={(event) => {
         ZKBridgeService.onMessage(event.nativeEvent.data);
+      }}
+      onShouldStartLoadWithRequest={(req) => {
+        // iOS fires this for the initial load too, so the equality check
+        // against `allowedUri` is what permits the bundled HTML to load at
+        // all. Android only fires for *subsequent* navigations, which is
+        // why the explicit `originWhitelist` below is the real lockdown
+        // there. Anything else (data:, http(s), other file://) is denied.
+        if (req.url === allowedUri) return true;
+        console.warn('HiddenWebView: blocked navigation to', req.url);
+        return false;
       }}
       onLoad={() => console.log('HiddenWebView: onLoad fired')}
       onLoadEnd={() => {
@@ -92,10 +108,21 @@ export default function HiddenWebView() {
         true;
       `}
       javaScriptEnabled
+      // `allowFileAccess` is needed to load the bundled `file://` URI at all.
+      // `allowFileAccessFromFileURLs` lets the page `fetch()` its sibling
+      // wasm/zkey assets (snarkjs needs this).
+      // `allowUniversalAccessFromFileURLs` is intentionally NOT set —
+      // it would let this file:// page read other file:// URIs in the
+      // sandbox (logs, SecureStore-adjacent files, etc.). The bundle is
+      // self-contained (snarkjs + circomlibjs are inlined per
+      // build-zk-webview.mjs) so cross-origin file access isn't required.
       allowFileAccess
       allowFileAccessFromFileURLs
-      allowUniversalAccessFromFileURLs
-      originWhitelist={['*']}
+      // The exact bundled URI plus a coarse `file://*` fallback for
+      // Android — RN-WebView's origin matching can normalize file URIs
+      // inconsistently across platforms; the navigation guard above is
+      // the precise check.
+      originWhitelist={[allowedUri, 'file://*']}
       style={{ height: 0, width: 0, opacity: 0, position: 'absolute' }}
     />
   );
