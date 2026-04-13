@@ -57,6 +57,22 @@ export interface OrderStatus {
   settleTxHash?: string;
 }
 
+export interface PrivateClaimRequest {
+  proofA: string[];
+  proofB: string[][];
+  proofC: string[];
+  claimsRoot: string;
+  claimNullifier: string;
+  amount: string;
+  token: string;
+  recipient: string;
+  releaseTime: string;
+}
+
+export interface PrivateClaimResponse {
+  txHash: string;
+}
+
 export const RelayerApiService = {
   getBaseUrl(): string {
     return ConfigService.getRelayerUrl();
@@ -137,7 +153,7 @@ export const RelayerApiService = {
         }
       }),
     );
-    const probed = await Promise.all(
+    return Promise.all(
       onChain.filter((r): r is NonNullable<typeof r> => !!r).map(async (r) => {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 3000);
@@ -151,7 +167,43 @@ export const RelayerApiService = {
         }
       }),
     );
-    return probed;
+  },
+
+  /**
+   * Gasless claim — relayer pays gas and typically deducts a fee from the
+   * claim amount (off-chain contract between user and relayer). The relayer
+   * is expected to call claimWithProof on-chain with the supplied fields.
+   */
+  async submitPrivateClaim(
+    claim: PrivateClaimRequest,
+    relayerUrl: string,
+  ): Promise<PrivateClaimResponse> {
+    const base = relayerUrl || this.getBaseUrl();
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const res = await fetch(`${base}/api/private-claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(claim),
+        signal: controller.signal,
+      });
+      let data: any;
+      try { data = await res.json(); } catch {
+        throw new Error(`Invalid JSON response from relayer (${res.status})`);
+      }
+      if (!res.ok) {
+        throw new Error(data?.error || `Relayer rejected claim (${res.status})`);
+      }
+      // Validate shape so a malformed 200 response can't fool the UI into
+      // "success". Expected: 0x-prefixed 32-byte hex (66 chars total).
+      if (typeof data?.txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data.txHash)) {
+        throw new Error('Relayer response missing or malformed txHash');
+      }
+      return { txHash: data.txHash };
+    } finally {
+      clearTimeout(t);
+    }
   },
 
   async healthCheck(relayerUrl?: string): Promise<boolean> {
