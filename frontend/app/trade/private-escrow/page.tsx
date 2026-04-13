@@ -43,7 +43,14 @@ import {
   deserializeKeyPairEncrypted,
   type EdDSAKeyPair,
 } from "../../lib/zk/eddsa";
-import { sendBatchVia7702, Eip7702Unsupported, type Execution } from "../../lib/eip7702";
+import {
+  fetchCapabilities,
+  supportsAtomicBatch,
+  sendCalls,
+  waitForCallsReceipt,
+  Eip5792Unsupported,
+  type SendCallsCall,
+} from "../../lib/eip5792";
 import { friendlyError } from "../../lib/error-messages";
 
 
@@ -319,40 +326,58 @@ export default function PrivateEscrowPage() {
       const allowance: bigint = await erc20.allowance(account, poolAddress);
       const needsApprove = allowance < parsed;
 
-      // Try EIP-7702 batched deposit first — collapses wrap(+approve)+deposit
-      // into a single tx / popup when the wallet and chain both support it.
-      // Any capability mismatch falls back to the legacy sequential path.
-      const executorAddress = process.env.NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS || "";
+      // Try EIP-5792 atomic batch first — collapses wrap(+approve)+deposit
+      // into a single wallet confirmation when the connected wallet
+      // advertises `atomicBatch.supported` for this chain. MetaMask 12+,
+      // Coinbase Wallet, Rabby, Rainbow, Ambire, Safe all implement
+      // `wallet_sendCalls`; non-supporting wallets fall back to the
+      // legacy sequential path below. We intentionally don't use raw
+      // EIP-7702 here because MetaMask rejects dApp-initiated 7702 txs
+      // with "External EIP-7702 transactions are not supported" and
+      // routes batching through 5792 instead.
       let receipt: ethers.TransactionReceipt | null = null;
+      const provider = signer.provider;
 
-      if (executorAddress) {
-        const calls: Execution[] = [];
-        let totalValue = 0n;
-        if (selectedToken.isNative) {
-          calls.push({
-            target: selectedToken.address,
-            value: parsed,
-            callData: wethIface.encodeFunctionData("deposit", []),
-          });
-          totalValue = parsed;
-        }
-        if (needsApprove) {
-          calls.push({
-            target: selectedToken.address,
-            value: 0n,
-            callData: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
-          });
-        }
-        calls.push({ target: poolAddress, value: 0n, callData: depositCallData });
+      if (provider) {
+        const net = await provider.getNetwork();
+        const caps = await fetchCapabilities(provider as ethers.BrowserProvider, account);
+        if (supportsAtomicBatch(caps, net.chainId)) {
+          const calls: SendCallsCall[] = [];
+          if (selectedToken.isNative) {
+            calls.push({
+              to: selectedToken.address,
+              value: "0x" + parsed.toString(16),
+              data: wethIface.encodeFunctionData("deposit", []),
+            });
+          }
+          if (needsApprove) {
+            calls.push({
+              to: selectedToken.address,
+              data: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
+            });
+          }
+          calls.push({ to: poolAddress, data: depositCallData });
 
-        try {
-          const tx = await sendBatchVia7702(signer, executorAddress, calls, { totalValue });
-          receipt = await tx.wait();
-        } catch (err) {
-          if (!(err instanceof Eip7702Unsupported)) throw err;
-          console.info(
-            "[private-escrow] wallet/chain does not support EIP-7702 batch delegation, falling back to sequential txs",
-          );
+          try {
+            const result = await sendCalls(provider as ethers.BrowserProvider, {
+              from: account,
+              chainId: net.chainId,
+              calls,
+            });
+            const status = await waitForCallsReceipt(provider as ethers.BrowserProvider, result.id);
+            // Take the last receipt: for atomic batches it's the batch
+            // tx itself (same hash across entries) and the only one
+            // the UI needs to surface.
+            const last = status.receipts?.[status.receipts.length - 1];
+            if (last) {
+              receipt = await provider.getTransactionReceipt(last.transactionHash);
+            }
+          } catch (err) {
+            if (!(err instanceof Eip5792Unsupported)) throw err;
+            console.info(
+              "[private-escrow] wallet does not support EIP-5792 atomic batch, falling back to sequential txs",
+            );
+          }
         }
       }
 
