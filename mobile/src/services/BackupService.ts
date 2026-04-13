@@ -1,0 +1,176 @@
+/**
+ * BackupService — single-file export / import of all locally-stored
+ * user state (notes, pending claims, address book).
+ *
+ * Mobile has no File System Access API like the web's notes-folder, so
+ * we collapse the same data into a single JSON blob the user can save
+ * via the Share sheet (Files app, AirDrop, email, …) and re-import by
+ * pasting back. EdDSA keys and the wallet itself are intentionally
+ * excluded — both are recoverable from the underlying wallet signature
+ * or recovery phrase, so doubling them in the backup increases the
+ * leak surface for no recovery benefit.
+ *
+ * Restore policy is *additive*: existing entries with the same id /
+ * commitment / address are kept, never overwritten. The same backup
+ * file can be safely re-imported on a phone that already has some
+ * entries without clobbering them.
+ */
+import { NoteStorageService, StoredNote } from './NoteStorageService';
+import { PendingClaimsStorage, PendingClaim, PendingClaimInput } from './PendingClaimsStorage';
+import { AddressBookService, WalletEntry } from './AddressBookService';
+
+export const BACKUP_VERSION = 1;
+
+export interface BackupBundle {
+  version: typeof BACKUP_VERSION;
+  exportedAt: number;       // unix seconds
+  notes: StoredNote[];
+  pendingClaims: PendingClaim[];
+  addressBook: WalletEntry[];
+}
+
+export interface RestoreSummary {
+  notes: { added: number; skipped: number };
+  pendingClaims: { added: number; skipped: number };
+  /** Address book counts split: `skipped` is for entries the service
+   *  rejected as duplicates (already in the book — expected and benign);
+   *  `invalid` is everything else (bad address / blank label / etc.) so
+   *  the UI can surface that something is actually wrong with the file. */
+  addressBook: { added: number; skipped: number; invalid: number };
+}
+
+export const BackupService = {
+  /**
+   * Snapshot every locally-stored row into a single JSON-serializable
+   * bundle. Caller is responsible for transport (Share sheet, clipboard,
+   * etc.).
+   */
+  async exportAll(): Promise<BackupBundle> {
+    const [notes, pendingClaims, addressBook] = await Promise.all([
+      NoteStorageService.getAllNotes(),
+      PendingClaimsStorage.list(),
+      AddressBookService.list().catch(() => [] as WalletEntry[]),
+    ]);
+    return {
+      version: BACKUP_VERSION,
+      exportedAt: Math.floor(Date.now() / 1000),
+      notes,
+      pendingClaims,
+      addressBook,
+    };
+  },
+
+  /** Convenience helper for the UI — prettifies and includes a header. */
+  serialize(bundle: BackupBundle): string {
+    return JSON.stringify(bundle, null, 2);
+  },
+
+  /**
+   * Parse an exported bundle. Throws on missing / wrong-version /
+   * unparseable input so the UI can surface a precise error rather than
+   * partially restoring garbage.
+   */
+  parse(json: string): BackupBundle {
+    let parsed: any;
+    try { parsed = JSON.parse(json); } catch (e) {
+      throw new Error(`Backup is not valid JSON: ${e instanceof Error ? e.message : 'parse error'}`);
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Backup is not an object');
+    }
+    if (parsed.version !== BACKUP_VERSION) {
+      const hint = typeof parsed.version === 'number' && parsed.version > BACKUP_VERSION
+        ? 'Update the app to import this newer backup.'
+        : `Expected version ${BACKUP_VERSION}.`;
+      throw new Error(`Backup version ${parsed.version} is not supported. ${hint}`);
+    }
+    if (!Array.isArray(parsed.notes) || !Array.isArray(parsed.pendingClaims) || !Array.isArray(parsed.addressBook)) {
+      throw new Error('Backup is missing one of: notes, pendingClaims, addressBook');
+    }
+    return parsed as BackupBundle;
+  },
+
+  /**
+   * Restore a bundle additively. Entries colliding with what's already
+   * stored are skipped — the user can re-import the same file safely.
+   * Returns per-category counts so the UI can report what changed.
+   */
+  async restore(bundle: BackupBundle): Promise<RestoreSummary> {
+    const summary: RestoreSummary = {
+      notes: { added: 0, skipped: 0 },
+      pendingClaims: { added: 0, skipped: 0 },
+      addressBook: { added: 0, skipped: 0, invalid: 0 },
+    };
+
+    // Notes — keyed by id (= commitment). Skip if a note with that id
+    // already exists.
+    const existingNotes = await NoteStorageService.getAllNotes();
+    const existingNoteIds = new Set(existingNotes.map((n) => n.id));
+    for (const note of bundle.notes) {
+      if (existingNoteIds.has(note.id)) {
+        summary.notes.skipped++;
+        continue;
+      }
+      try {
+        await NoteStorageService.saveNote(note);
+        summary.notes.added++;
+      } catch {
+        summary.notes.skipped++;
+      }
+    }
+
+    // Pending claims — no natural dedup key on the row itself (the secret
+    // is the unique value but we don't surface it as a key). Use the
+    // tuple (txHash, leafIndex) which is stable per-order. New `id`s
+    // are generated by `append`, so a re-import gets fresh ids and we
+    // dedup on content.
+    const existingClaims = await PendingClaimsStorage.list();
+    const existingClaimKey = new Set(
+      existingClaims.map((c) => `${c.txHash}#${c.leafIndex}#${c.amount}`),
+    );
+    const claimsToAdd: PendingClaimInput[] = [];
+    for (const c of bundle.pendingClaims) {
+      const key = `${c.txHash}#${c.leafIndex}#${c.amount}`;
+      if (existingClaimKey.has(key)) {
+        summary.pendingClaims.skipped++;
+        continue;
+      }
+      claimsToAdd.push({
+        secret: c.secret,
+        recipient: c.recipient,
+        token: c.token,
+        amount: c.amount,
+        releaseTime: c.releaseTime,
+        leafIndex: c.leafIndex,
+        allLeaves: c.allLeaves,
+        txHash: c.txHash,
+      });
+    }
+    if (claimsToAdd.length > 0) {
+      await PendingClaimsStorage.append(claimsToAdd);
+      summary.pendingClaims.added = claimsToAdd.length;
+    }
+
+    // Address book — keyed by lowercased address. The service itself
+    // throws on duplicate (benign — counts as `skipped`) and on bad
+    // input (counts as `invalid` so the UI can flag the file).
+    for (const entry of bundle.addressBook) {
+      try {
+        await AddressBookService.add({
+          label: entry.label,
+          address: entry.address,
+          memo: entry.memo,
+        });
+        summary.addressBook.added++;
+      } catch (err: any) {
+        if (err?.message === 'Address already in book') {
+          summary.addressBook.skipped++;
+        } else {
+          summary.addressBook.invalid++;
+        }
+      }
+    }
+
+    return summary;
+  },
+};
