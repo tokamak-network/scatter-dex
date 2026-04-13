@@ -52,6 +52,22 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
   }
 }
 
+/**
+ * Format a wei-scale BigInt as a decimal string trimmed to `maxFracDigits`
+ * fractional digits, without routing through a JS number. Avoids the
+ * IEEE-754 precision loss that `parseFloat(formatUnits(...)).toFixed(n)`
+ * introduces for large token amounts.
+ */
+function formatTokenBigInt(amount: bigint, decimals: number, maxFracDigits: number): string {
+  const full = ethers.formatUnits(amount, decimals);
+  const dot = full.indexOf(".");
+  if (dot < 0) return maxFracDigits > 0 ? `${full}.${"0".repeat(maxFracDigits)}` : full;
+  const intPart = full.slice(0, dot);
+  const fracPart = full.slice(dot + 1);
+  if (fracPart.length >= maxFracDigits) return `${intPart}.${fracPart.slice(0, maxFracDigits)}`;
+  return `${intPart}.${fracPart.padEnd(maxFracDigits, "0")}`;
+}
+
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-500/15 text-amber-400 border-amber-500/20",
   matched: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -77,20 +93,24 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 
   // Exact fee amount (scatter only). In scatter the stored `buyAmount` is
-  // already post-fee, so `sellAmount − buyAmount` is the fee withheld. For
-  // cross-token, the actual fee depends on each side's relayer choice (≤
-  // maxFee) and isn't recoverable from the stored order alone — fall back
-  // to the maxFee upper bound.
+  // already post-fee, and the residual `sellAmount − buyAmount − change`
+  // is what the relayer withheld. For cross-token, the fee bound the
+  // circuit enforces is `fee * 10000 ≤ sellAmount * maxFee` on the sell
+  // side (see SettleVerifyLib), so the upper bound must be denominated
+  // in the sell token, not the buy token.
   const feeAmountDisplay = (() => {
     try {
       if (isSameToken) {
-        const fee = BigInt(trade.order.sellAmount) - BigInt(trade.order.buyAmount);
-        return `${parseFloat(ethers.formatUnits(fee, sell.decimals)).toFixed(4)} ${sell.symbol}`;
+        const changeAmount = trade.change ? BigInt(trade.change.amount) : 0n;
+        let fee = BigInt(trade.order.sellAmount) - BigInt(trade.order.buyAmount) - changeAmount;
+        if (fee < 0n) fee = 0n;  // malformed/legacy data guard
+        return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
       }
-      // Cross-token: show maxFee-bounded estimate on the buy side.
+      // Cross-token: maxFee is applied to `sellAmount` and the fee is
+      // denominated in the sell token — show the upper bound there.
       const feeBpsBig = BigInt(trade.order.maxFee);
-      const fee = (BigInt(trade.order.buyAmount) * feeBpsBig) / 10_000n;
-      return `≤ ${parseFloat(ethers.formatUnits(fee, buy.decimals)).toFixed(4)} ${buy.symbol}`;
+      const fee = (BigInt(trade.order.sellAmount) * feeBpsBig) / 10_000n;
+      return `≤ ${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
     } catch { return null; }
   })();
 
