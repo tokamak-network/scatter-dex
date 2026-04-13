@@ -14,7 +14,9 @@
  * Storage layout:
  *   scatterdex_pending_claim_ids:          AsyncStorage — JSON `string[]`
  *   scatterdex_pending_claim_meta_<id>:    AsyncStorage — JSON `MetaRow`
- *   scatterdex_pending_claim_secret_<id>:  SecureStore  — raw decimal string
+ *   scatterdex_pending_claim_secret_<id>:  SecureStore  — raw secret string
+ *   scatterdex_pending_claims_migrated_v1: AsyncStorage — `'1'` once the
+ *     legacy blob has been split (idempotency marker — see `migrateLegacy`).
  *
  * First load also migrates the legacy `scatterdex_pending_claims` blob
  * (unencrypted array that held `secret` + meta together) into the split
@@ -28,10 +30,11 @@ const IDS_KEY = 'scatterdex_pending_claim_ids';
 const META_PREFIX = 'scatterdex_pending_claim_meta_';
 const SECRET_PREFIX = 'scatterdex_pending_claim_secret_';
 const LEGACY_KEY = 'scatterdex_pending_claims';
+const MIGRATION_MARKER = 'scatterdex_pending_claims_migrated_v1';
 
 export interface PendingClaim {
   id: string;              // stable, locally-generated
-  secret: string;          // decimal string — sensitive
+  secret: string;          // sensitive
   recipient: string;       // 0x-prefixed address
   token: string;           // 0x-prefixed address
   amount: string;          // wei string
@@ -82,24 +85,53 @@ async function readMeta(id: string): Promise<MetaRow | null> {
   }
 }
 
-async function migrateLegacyIfPresent(): Promise<void> {
+/**
+ * Crash-safe legacy migration.
+ *
+ * Two failure modes the previous version had:
+ *  - **Re-migration**: a crash between `writeIds(...)` and the legacy
+ *    `removeItem(...)` would, on next launch, run the migration again
+ *    against the still-present legacy blob and duplicate every entry.
+ *  - **Thundering herd**: concurrent callers (e.g. parallel `list()` +
+ *    `append()`) would each run the full migration in parallel.
+ *
+ * Fixes: a `MIGRATION_MARKER` written *before* deleting the legacy blob
+ * means a re-run sees the marker and immediately deletes the legacy
+ * blob without re-importing. A module-level `migrationPromise` cache
+ * dedupes concurrent callers onto a single migration attempt.
+ */
+let migrationPromise: Promise<void> | null = null;
+
+async function migrateLegacy(): Promise<void> {
+  // Already migrated in a prior session? Just sweep the legacy blob.
+  if ((await AsyncStorage.getItem(MIGRATION_MARKER)) === '1') {
+    if ((await AsyncStorage.getItem(LEGACY_KEY)) !== null) {
+      await AsyncStorage.removeItem(LEGACY_KEY);
+    }
+    return;
+  }
   const legacy = await AsyncStorage.getItem(LEGACY_KEY);
-  if (!legacy) return;
+  if (!legacy) {
+    // Nothing to migrate. Mark anyway so we never re-enter this path.
+    await AsyncStorage.setItem(MIGRATION_MARKER, '1');
+    return;
+  }
   let parsed: unknown;
   try { parsed = JSON.parse(legacy); } catch { parsed = null; }
   if (!Array.isArray(parsed)) {
-    // Corrupt legacy blob — clear it so we don't migrate on every call.
     await AsyncStorage.removeItem(LEGACY_KEY);
+    await AsyncStorage.setItem(MIGRATION_MARKER, '1');
     return;
   }
 
-  const ids: string[] = await readIds();
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== 'object') continue;
+  // Build the new entries in parallel (each is independent — no shared writes).
+  const newIds: string[] = [];
+  await Promise.all(parsed.map(async (entry) => {
+    if (!entry || typeof entry !== 'object') return;
     const e = entry as Partial<PendingClaimInput>;
-    if (typeof e.secret !== 'string') continue;
+    if (typeof e.secret !== 'string') return;
     const id = newId();
-    ids.push(id);
+    newIds.push(id);
     const meta: MetaRow = {
       recipient: String(e.recipient ?? ''),
       token: String(e.token ?? ''),
@@ -109,26 +141,63 @@ async function migrateLegacyIfPresent(): Promise<void> {
       allLeaves: Array.isArray(e.allLeaves) ? e.allLeaves.map(String) : [],
       txHash: String(e.txHash ?? ''),
     };
-    await AsyncStorage.setItem(metaKey(id), JSON.stringify(meta));
-    await SecureStore.setItemAsync(secretKey(id), e.secret, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    await Promise.all([
+      AsyncStorage.setItem(metaKey(id), JSON.stringify(meta)),
+      SecureStore.setItemAsync(secretKey(id), e.secret, {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      }),
+    ]);
+  }));
+
+  const existingIds = await readIds();
+  await writeIds([...existingIds, ...newIds]);
+  // Marker BEFORE removing the legacy blob so a crash here doesn't
+  // re-migrate next launch. Even if the marker write succeeds and the
+  // remove fails, the next entry into this function takes the
+  // already-migrated branch above.
+  await AsyncStorage.setItem(MIGRATION_MARKER, '1');
+  await AsyncStorage.removeItem(LEGACY_KEY);
+}
+
+function ensureMigrated(): Promise<void> {
+  if (!migrationPromise) {
+    migrationPromise = migrateLegacy().catch((err) => {
+      // Reset on failure so the next call retries; otherwise a transient
+      // SecureStore hiccup would permanently disable the migration path.
+      migrationPromise = null;
+      throw err;
     });
   }
-  await writeIds(ids);
-  await AsyncStorage.removeItem(LEGACY_KEY);
+  return migrationPromise;
 }
 
 export const PendingClaimsStorage = {
   async list(): Promise<PendingClaim[]> {
-    await migrateLegacyIfPresent();
+    await ensureMigrated();
     const ids = await readIds();
+    // Parallel reads — sequential awaits across N entries adds up on
+    // every ClaimScreen open.
+    const rows = await Promise.all(ids.map(async (id) => {
+      const [meta, secret] = await Promise.all([
+        readMeta(id),
+        SecureStore.getItemAsync(secretKey(id)),
+      ]);
+      if (!meta || secret === null) return { id, claim: null as PendingClaim | null };
+      return { id, claim: { id, secret, ...meta } };
+    }));
+
     const out: PendingClaim[] = [];
-    for (const id of ids) {
-      const meta = await readMeta(id);
-      if (!meta) continue; // stale index entry — skip, don't throw
-      const secret = await SecureStore.getItemAsync(secretKey(id));
-      if (secret === null) continue; // secret missing — can't produce a claim
-      out.push({ id, secret, ...meta });
+    const staleIds: string[] = [];
+    for (const r of rows) {
+      if (r.claim) out.push(r.claim);
+      else staleIds.push(r.id);
+    }
+    // Prune stale ids — without this, an interrupted append/remove can leave
+    // an id in the index forever and we'd re-pay the dual-store read on
+    // every load.
+    if (staleIds.length > 0) {
+      const fresh = ids.filter((id) => !staleIds.includes(id));
+      await writeIds(fresh);
     }
     return out;
   },
@@ -137,11 +206,13 @@ export const PendingClaimsStorage = {
    *  losing a claim secret is a permanent fund-loss. */
   async append(entries: PendingClaimInput[]): Promise<void> {
     if (entries.length === 0) return;
-    await migrateLegacyIfPresent();
-    const ids = await readIds();
-    for (const e of entries) {
+    await ensureMigrated();
+
+    // Build all entries in parallel; each pair (meta + secret) is independent.
+    const newIds: string[] = [];
+    await Promise.all(entries.map(async (e) => {
       const id = newId();
-      ids.push(id);
+      newIds.push(id);
       const meta: MetaRow = {
         recipient: e.recipient,
         token: e.token,
@@ -152,25 +223,35 @@ export const PendingClaimsStorage = {
         txHash: e.txHash,
       };
       // Write secret first — on partial failure we'd rather have an orphaned
-      // secret (harmless without the leaf/amount context) than a stranded
-      // meta entry whose secret can never be recovered.
+      // secret (no meta = invisible to list()) than a stranded meta entry
+      // whose secret can never be recovered.
       await SecureStore.setItemAsync(secretKey(id), e.secret, {
         keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
       });
       await AsyncStorage.setItem(metaKey(id), JSON.stringify(meta));
-    }
-    await writeIds(ids);
+    }));
+    // Index update is the last write so a crash mid-append leaves orphans
+    // (skipped by list()), never an indexed entry without payload.
+    const existing = await readIds();
+    await writeIds([...existing, ...newIds]);
   },
 
   /** Remove entries by id (e.g. after a successful claim). */
   async removeByIds(idsToRemove: string[]): Promise<void> {
     if (idsToRemove.length === 0) return;
+
+    // Crash-safety order: drop the secrets and meta FIRST, then update the
+    // index. Doing it the other way around would mean a crash between the
+    // two leaves the SecureStore secret intact alongside the meta key
+    // (whose name still encodes the id), which is exactly the
+    // recoverable-secret leak we're trying to avoid.
+    await Promise.all(idsToRemove.map(async (id) => {
+      try { await SecureStore.deleteItemAsync(secretKey(id)); } catch { /* missing is fine */ }
+      await AsyncStorage.removeItem(metaKey(id));
+    }));
+
     const set = new Set(idsToRemove);
     const remaining = (await readIds()).filter((id) => !set.has(id));
     await writeIds(remaining);
-    await Promise.all(idsToRemove.map(async (id) => {
-      await AsyncStorage.removeItem(metaKey(id));
-      try { await SecureStore.deleteItemAsync(secretKey(id)); } catch { /* missing is fine */ }
-    }));
   },
 };
