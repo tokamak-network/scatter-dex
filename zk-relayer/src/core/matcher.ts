@@ -8,16 +8,27 @@ import type { RemoteOrderStore } from "./remote-orderbook.js";
 export const FEE_BPS_DENOMINATOR = 10_000n;
 
 /**
- * Can a match between two signed orders survive settle? Derived from
- * settle.circom §8b+§8c and each side's `maxFee` cap:
- *   totalLocked >= counterpartyBuy               (8b)
- *   totalLocked + feeToken <= sellAmount         (8c)
+ * Conservative worst-case feasibility check: under each side's signed
+ * `maxFee` ceiling, will the trade still close at settle?
+ *
+ *   totalLocked >= counterpartyBuy               (settle 8b)
+ *   totalLocked + feeToken <= sellAmount         (settle 8c)
  *   feeToken   <= sellAmount * maxFee / 10000    (authorize cap)
- * Combining yields sellAmount * (10000 − maxFee) >= counterpartyBuy * 10000.
- * The check never divides — keeps it exact in BigInt.
+ *
+ * Combining yields `sellAmount * (10000 − maxFee) >= counterpartyBuy * 10000`.
+ * The relayer may charge less than `maxFee` at settle, so a failing
+ * check here only means the *worst case* fails — not that settlement
+ * is impossible. The matcher stays strict to avoid "matched but then
+ * reverts at settle" outcomes.
+ *
+ * `maxFee` is parsed as a uint16 upstream (up to 65535). Anything above
+ * `FEE_BPS_DENOMINATOR` is a nonsensical "fee > 100%" value; clamp so
+ * the subtraction can't go negative and the check degrades to
+ * "counterpartyBuy must be 0" — the mathematically correct reject.
  */
 export function isSettleFeeCovered(sellAmount: bigint, maxFee: bigint, counterpartyBuy: bigint): boolean {
-  return sellAmount * (FEE_BPS_DENOMINATOR - maxFee) >= counterpartyBuy * FEE_BPS_DENOMINATOR;
+  const capped = maxFee > FEE_BPS_DENOMINATOR ? FEE_BPS_DENOMINATOR : maxFee;
+  return sellAmount * (FEE_BPS_DENOMINATOR - capped) >= counterpartyBuy * FEE_BPS_DENOMINATOR;
 }
 
 export class PrivateMatcher {

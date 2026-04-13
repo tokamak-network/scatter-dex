@@ -243,5 +243,30 @@ describe("PrivateMatcher", () => {
       }));
       expect(matcher.findMatch(maker)).not.toBeNull();
     });
+
+    it("clamps out-of-range maxFee (uint16 but > 10000 bps) instead of flipping the check", () => {
+      // maxFee = 65535 passes parsePrivateOrder's uint16 bound but means
+      // "fee > 100%". Without clamping, (10000n − 65535n) would be
+      // negative and BigInt multiplication would silently flip the
+      // inequality. Clamp degrades the check to "counterpartyBuy must
+      // be 0" which is the mathematically correct reject.
+      const maker = book.add(makePrivateOrder({
+        pubKeyAx: 1n, pubKeyAy: 1n,
+        sellToken: TOKEN_A, buyToken: TOKEN_B,
+        sellAmount: 10n * 10n ** 18n,
+        buyAmount: 100n,
+        maxFee: 65535n,
+        nonce: 1n,
+      }));
+      book.add(makePrivateOrder({
+        pubKeyAx: 2n, pubKeyAy: 2n,
+        sellToken: TOKEN_B, buyToken: TOKEN_A,
+        sellAmount: 1000n,
+        buyAmount: 10n * 10n ** 18n,
+        maxFee: 65535n,
+        nonce: 2n,
+      }));
+      expect(matcher.findMatch(maker)).toBeNull();
+    });
   });
 });
