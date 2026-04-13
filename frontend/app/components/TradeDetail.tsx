@@ -95,12 +95,10 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
     try {
       const sellAmt = BigInt(trade.order.sellAmount);
       if (isSameToken) {
-        // Scatter math: sellAmount is what came out of the trade (NOT
-        // the note balance), buyAmount is the post-fee distributable.
-        // Change is `note.amount − sellAmount` and is independent of
-        // the fee, so it must NOT be subtracted here. Reverts the
-        // formula introduced in PR #266 review which over-subtracted
-        // change and hid the fee row whenever a trade had remainder.
+        // Scatter: `buyAmount` is post-fee distributable, so the
+        // residual `sellAmount − buyAmount` is the fee. `change` is
+        // `note.amount − sellAmount` (refund of unspent balance) and
+        // is independent of the fee — do NOT subtract it here.
         const fee = sellAmt - BigInt(trade.order.buyAmount);
         if (fee < 0n) return null;
         return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;

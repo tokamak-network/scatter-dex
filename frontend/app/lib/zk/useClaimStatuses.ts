@@ -37,6 +37,12 @@ export function useClaimStatuses(
     let cancelled = false;
     (async () => {
       try {
+        // Yield once before any work so a synchronous cleanup (React 18
+        // strict-mode double invoke, rapid prop change) short-circuits
+        // before we burn Poseidon hashing + RPC reads on a doomed run.
+        await Promise.resolve();
+        if (cancelled) return;
+
         const provider = getReadProvider();
         const settlement = new ethers.Contract(
           getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, provider
@@ -52,6 +58,7 @@ export function useClaimStatuses(
             return { i, nullHex: toBytes32Hex(nullifier) };
           })
         );
+        if (cancelled) return;
 
         // Check all nullifiers in parallel
         const checks = await Promise.all(
