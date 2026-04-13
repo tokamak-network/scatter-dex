@@ -74,7 +74,11 @@ export function parseMetaAddress(metaAddress: string): {
 }
 
 export function isMetaAddress(input: string): boolean {
-  return input.startsWith('st:eth:0x') && input.replace('st:eth:0x', '').length === 132;
+  // Length-only check would let `parseMetaAddress` and the downstream
+  // `hexToBytes` throw on a junk-but-right-length payload. The regex
+  // gates non-hex characters cheaply (no library import needed).
+  const prefix = 'st:eth:0x';
+  return input.startsWith(prefix) && /^[0-9a-fA-F]{132}$/.test(input.slice(prefix.length));
 }
 
 // ─── Stealth address generation (sender side) ────────────────

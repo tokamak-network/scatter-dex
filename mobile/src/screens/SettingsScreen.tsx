@@ -170,9 +170,25 @@ export default function SettingsScreen() {
                 {
                   text: 'Share',
                   style: 'destructive',
-                  onPress: () => Share.share({
-                    message: `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${existing.spendingKey}\nviewing: ${existing.viewingKey}`,
-                  }).catch(() => {}),
+                  onPress: () => {
+                    // Hard confirmation before exposing keys to the OS
+                    // share sheet — any installed share target (Mail,
+                    // Slack, screenshot tools) can capture them.
+                    Alert.alert(
+                      'Share stealth keys?',
+                      'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Continue to Share',
+                          style: 'destructive',
+                          onPress: () => Share.share({
+                            message: `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${existing.spendingKey}\nviewing: ${existing.viewingKey}`,
+                          }).catch(() => {}),
+                        },
+                      ],
+                    );
+                  },
                 },
               ],
             );

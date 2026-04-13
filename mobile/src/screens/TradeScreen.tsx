@@ -230,13 +230,22 @@ export default function TradeScreen() {
             if (!isMetaAddress(meta)) {
               throw new Error(`Claim #${idx + 1}: meta-address must start with "st:eth:0x" and carry 66 bytes of compressed pubkeys.`);
             }
-            const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta);
-            return {
-              recipient: stealthAddress,
-              amount: claimAmount,
-              releaseDelaySec: delayToSeconds(r.delay, r.delayUnit),
-              ephemeralPubKey,
-            };
+            // `generateStealthAddress` can still throw past the format
+            // check (e.g. the parsed pubkey is not on the secp256k1
+            // curve) — wrap so the user sees which row to fix instead
+            // of a bare crypto error.
+            try {
+              const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta);
+              return {
+                recipient: stealthAddress,
+                amount: claimAmount,
+                releaseDelaySec: delayToSeconds(r.delay, r.delayUnit),
+                ephemeralPubKey,
+              };
+            } catch (err: any) {
+              const reason = err?.message ? `: ${err.message}` : '.';
+              throw new Error(`Claim #${idx + 1}: invalid meta-address${reason}`);
+            }
           }
           const recipient = r.address.trim() || account;
           if (!ethers.isAddress(recipient)) {

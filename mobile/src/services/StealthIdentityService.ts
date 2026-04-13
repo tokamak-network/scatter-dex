@@ -29,9 +29,11 @@ export const StealthIdentityService = {
         return parsed as MetaAddress;
       }
       // Shape mismatch — drop and re-derive on next call (matches the
-      // pattern in EdDSAKeyService.loadKey).
+      // pattern in EdDSAKeyService.loadKey). Best-effort delete: a
+      // transient keystore failure shouldn't make `load` throw and block
+      // the caller from offering Generate.
       console.warn('StealthIdentityService.load: corrupted entry, dropping');
-      await SecureStore.deleteItemAsync(STORAGE_KEY);
+      try { await SecureStore.deleteItemAsync(STORAGE_KEY); } catch { /* best-effort */ }
       return null;
     } catch (err) {
       console.warn('StealthIdentityService.load: parse failed, dropping', err);
@@ -47,7 +49,10 @@ export const StealthIdentityService = {
    * stealth claim already issued against the previous meta-address.)
    */
   async generate(): Promise<MetaAddress> {
-    const existing = await SecureStore.getItemAsync(STORAGE_KEY);
+    // Use `load()` so a corrupted-but-present blob doesn't permanently
+    // block generation. `load()` drops the corrupted entry and returns
+    // null, letting us proceed.
+    const existing = await this.load();
     if (existing) {
       throw new Error('Stealth identity already exists. Use `regenerate` to replace.');
     }
