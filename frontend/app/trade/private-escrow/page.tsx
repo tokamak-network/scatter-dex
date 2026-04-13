@@ -861,7 +861,10 @@ export default function PrivateEscrowPage() {
                   );
                 })}
 
-                {/* Change notes from settled trades — shown as independent escrow entries */}
+                {/* Change notes from settled trades — shown as independent escrow entries.
+                    Once the parent escrow is spent AND all its claims are done, the change
+                    commitment is effectively a finalized balance for the user, so we drop
+                    the amber "Change" styling and surface it as a regular commitment entry. */}
                 {notes.filter((cn) => {
                   if (cn.leafIndex !== -1) return false;
                   // Hide change entries when the user hid them (toggle
@@ -875,26 +878,37 @@ export default function PrivateEscrowPage() {
                     parent.commitment !== cn.commitment &&
                     spentNotes.has(parent.commitment)
                   );
-                }).map((cn) => (
-                  <div key={cn.commitment} className="px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
-                        <Coins className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div>
-                        <div className="font-semibold text-on-surface">
-                          {cn.amount} {cn.tokenSymbol}
+                }).map((cn) => {
+                  const parent = notes.find((p) =>
+                    p.leafIndex >= 0 &&
+                    p.note.ownerSecret === cn.note.ownerSecret &&
+                    p.commitment !== cn.commitment &&
+                    spentNotes.has(p.commitment)
+                  );
+                  const finalized = !!parent && allClaimsDone[parent.leafIndex] === true;
+                  return (
+                    <div key={cn.commitment} className="px-6 py-4 flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${finalized ? "bg-primary/10" : "bg-amber-500/10"}`}>
+                          {finalized
+                            ? <Lock className="w-5 h-5 text-primary" />
+                            : <Coins className="w-5 h-5 text-amber-400" />}
                         </div>
-                        <div className="text-xs text-on-surface-variant/50">
-                          Change &middot; {new Date(cn.createdAt).toLocaleDateString()}
+                        <div>
+                          <div className="font-semibold text-on-surface">
+                            {cn.amount} {cn.tokenSymbol}
+                          </div>
+                          <div className="text-xs text-on-surface-variant/50">
+                            {finalized ? "Commitment" : "Change"} &middot; {new Date(cn.createdAt).toLocaleDateString()}
+                          </div>
                         </div>
                       </div>
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${finalized ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
+                        {finalized ? "Active" : "Change"}
+                      </span>
                     </div>
-                    <span className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 font-medium">
-                      Change
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

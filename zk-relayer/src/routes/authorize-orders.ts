@@ -22,6 +22,7 @@ import {
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import { config } from "../config.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
 import { isSanctionedById } from "../core/sanctions-list.js";
 
@@ -204,7 +205,11 @@ export function createAuthorizeOrderRoutes(
         console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
         stored.status = "matched";
         try {
-          const txHash = await submitter.submitScatterDirectAuth(order, 0n);
+          // Use the relayer's configured fee so the fee is actually routed
+          // to the FeeVault (capped by the user's signed maxFee inside
+          // `computeFee`). Previously hard-coded to 0n, which meant every
+          // scatter settled with fee=0 and no vault deposit.
+          const txHash = await submitter.submitScatterDirectAuth(order, BigInt(config.relayerFee));
           stored.status = "settled";
           stored.settleTxHash = txHash;
           decPubKeyCount(pubKeyAx, pubKeyAy);
@@ -255,8 +260,12 @@ export function createAuthorizeOrderRoutes(
           match.maker.status = "matched";
           match.taker.status = "matched";
 
-          // Submit on-chain (fee = 0 for now; configurable in follow-up)
-          const txHash = await submitter.submitAuthSettle(match, 0n);
+          // Use the relayer's configured fee — `computeFee` caps each
+          // side by the respective maker/taker maxFee, so the signed
+          // bound is always respected. Hard-coding 0n here silently
+          // skipped the fee deposit to FeeVault on every cross-token
+          // settlement.
+          const txHash = await submitter.submitAuthSettle(match, BigInt(config.relayerFee));
 
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;

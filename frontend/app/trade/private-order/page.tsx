@@ -1112,20 +1112,24 @@ export default function PrivateOrderPage() {
               </div>
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">
-                  {isScatterMode
-                    ? "Distribute Amount"
-                    : orderType === "market"
-                    ? "Min Receive (after slippage)"
-                    : "Buy Amount"}
+                  {orderType === "market" ? "Min Receive (after slippage)" : "Buy Amount"}
                 </label>
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={buyAmount}
-                  onChange={(e) => setBuyAmount(e.target.value)}
-                  readOnly={orderType === "market"}
+                  // Scatter: display the gross transaction total (`sellAmount`) in this
+                  // read-only input to show the 1:1 amount before fees. The state var
+                  // `buyAmount` is already the post-fee distributable that recipients
+                  // split (i.e. `buyAmount = sellAmount − fee`), and that is what the
+                  // circuit signs.
+                  value={isScatterMode ? sellAmount : buyAmount}
+                  // Guard the setter with the readOnly condition so a stray programmatic
+                  // change event (autofill, form reset) can't desync `buyAmount` from
+                  // the `sellAmount` it's mirroring while the field is read-only.
+                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => setBuyAmount(e.target.value)}
+                  readOnly={orderType === "market" || isScatterMode}
                   className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 ${
-                    orderType === "market" ? "opacity-70" : ""
+                    orderType === "market" || isScatterMode ? "opacity-70" : ""
                   }`}
                   placeholder="0.00"
                 />
@@ -1137,7 +1141,7 @@ export default function PrivateOrderPage() {
                 )}
                 {orderType === "limit" && sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
                   <div className="text-xs text-on-surface-variant mt-1">
-                    Price: {(parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
+                    Price: {isScatterMode ? "1.000000" : (parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
                   </div>
                 )}
               </div>
@@ -1253,7 +1257,11 @@ export default function PrivateOrderPage() {
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Buy amount</span>
-                  <span className="font-mono text-on-surface">{parseFloat(buyAmount).toFixed(4)} {buyToken?.symbol}</span>
+                  <span className="font-mono text-on-surface">
+                    {isScatterMode
+                      ? parseFloat(sellAmount).toFixed(4)
+                      : parseFloat(buyAmount).toFixed(4)} {buyToken?.symbol}
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -1262,14 +1270,23 @@ export default function PrivateOrderPage() {
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
                   <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
-                  <span className="font-mono">−{(parseFloat(buyAmount) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}</span>
+                  <span className="font-mono">
+                    −{(
+                      (isScatterMode ? parseFloat(sellAmount) : parseFloat(buyAmount))
+                      * effectiveFeeBps / 10000
+                    ).toFixed(4)} {buyToken?.symbol}
+                  </span>
                 </button>
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
-                  <span>You receive</span>
-                  <span className="font-mono">{(parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}</span>
+                  <span>{isScatterMode ? "Recipients receive" : "You receive"}</span>
+                  <span className="font-mono">
+                    {isScatterMode
+                      ? parseFloat(buyAmount).toFixed(4)
+                      : (parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}
+                  </span>
                 </div>
               </div>
             )}
@@ -1392,27 +1409,27 @@ export default function PrivateOrderPage() {
                   )}
                   <div className="text-xs text-on-surface-variant flex justify-between">
                     <span>
-                      {isScatterMode ? "Distribute total" : "Claims total"}: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}
+                      Claims total: {parseFloat(claimTotalDisplay).toFixed(4)} {buyToken.symbol}
                     </span>
                     <span>
-                      {isScatterMode
-                        ? `Max distributable: ${scatterMaxDistributeWei !== null ? truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4) : "—"} ${buyToken.symbol}`
-                        : `Recipients receive (after fee): ${netBuyAmount.toFixed(4)} ${buyToken.symbol}`}
+                      Recipients receive (after fee): {isScatterMode
+                        ? (scatterMaxDistributeWei !== null ? truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4) : "—")
+                        : netBuyAmount.toFixed(4)} {buyToken.symbol}
                     </span>
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (!isScatterMode || scatterExcessWei === 0n) && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "distribute amount" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "recipients receive" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (
                     <div className="text-xs text-error font-bold">
-                      {isScatterMode ? "Distribute" : "buyAmount"} &quot;{buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
+                      Buy Amount &quot;{isScatterMode ? sellAmount : buyAmount}&quot; isn&apos;t a valid {buyToken.symbol} value (max {buyToken.decimals} decimals).
                     </div>
                   )}
                   {isScatterMode && scatterExcessWei !== null && scatterExcessWei > 0n && scatterMaxDistributeWei !== null && (
                     <div className="text-xs text-error font-bold">
-                      Distribute amount exceeds sellAmount − fee. Max: {truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4)} {buyToken.symbol}. Over by {ethers.formatUnits(scatterExcessWei, buyToken.decimals)} {buyToken.symbol}.
+                      Recipients total exceeds Sell − fee. Max: {truncateDecimals(ethers.formatUnits(scatterMaxDistributeWei, buyToken.decimals), 4)} {buyToken.symbol}. Over by {ethers.formatUnits(scatterExcessWei, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {!isScatterMode && parseFloat(buyAmount) > 0 && effectiveFeeBps > 0 && (

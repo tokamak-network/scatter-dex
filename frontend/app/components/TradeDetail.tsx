@@ -65,6 +65,17 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const sell = resolveToken(trade.order.sellToken, tokens);
   const buy = resolveToken(trade.order.buyToken, tokens);
 
+  // Same-token (scatter) trades are value-preserving: `buyAmount` in the
+  // stored order is the post-fee distributable, so showing Sell → Buy as
+  // "1.0000 → 0.9970" reads like a price drop. For the header display,
+  // surface the gross amount on both sides and let the Fee + Recipients
+  // rows account for where the difference goes.
+  const isSameToken = (() => {
+    try { return BigInt(trade.order.sellToken) === BigInt(trade.order.buyToken); }
+    catch { return trade.order.sellToken.toLowerCase() === trade.order.buyToken.toLowerCase(); }
+  })();
+  const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
+
   const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
 
   if (compact) {
@@ -77,7 +88,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
           <span className="text-xs text-on-surface-variant/60">{sell.symbol}</span>
           <ArrowRight className="w-3.5 h-3.5 text-on-surface-variant/30" />
           <span className="font-mono text-sm font-semibold text-tertiary">
-            {parseFloat(ethers.formatUnits(trade.order.buyAmount, buy.decimals)).toFixed(2)}
+            {parseFloat(ethers.formatUnits(isSameToken ? trade.order.sellAmount : trade.order.buyAmount, buy.decimals)).toFixed(2)}
           </span>
           <span className="text-xs text-on-surface-variant/60">{buy.symbol}</span>
         </div>
@@ -108,7 +119,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <ArrowRight className="w-6 h-6 text-on-surface-variant/30" />
         <div className="text-center">
           <div className="text-2xl font-mono font-bold text-tertiary">
-            {parseFloat(ethers.formatUnits(trade.order.buyAmount, buy.decimals)).toFixed(4)}
+            {parseFloat(ethers.formatUnits(headerBuyAmount, buy.decimals)).toFixed(4)}
           </div>
           <div className="text-xs text-on-surface-variant/60 mt-0.5">{buy.symbol}</div>
         </div>
