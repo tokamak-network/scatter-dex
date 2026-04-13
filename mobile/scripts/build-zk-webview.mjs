@@ -45,8 +45,9 @@ async function _zkOnMessage(event) {
   var data;
   try { data = JSON.parse(event.data); } catch(e) {
     // Most non-JSON messages are unrelated noise (devtools, MessagePort
-    // postMessage, etc.) so we drop them silently — but log in dev so a
-    // genuinely malformed bridge command doesn't disappear without trace.
+    // postMessage, etc.) so we drop them — but warn whenever \`console\`
+    // is available (including production) so a genuinely malformed bridge
+    // command doesn't disappear without trace.
     if (typeof console !== 'undefined') console.warn('zk-bridge: dropping non-JSON message', event && event.data);
     return;
   }

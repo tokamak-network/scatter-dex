@@ -37,14 +37,16 @@ export default function App() {
 
   const handleRetry = useCallback(async () => {
     setZkBoot({ phase: 'loading' });
-    try {
-      const { reloadAsync } = require('expo-updates') as { reloadAsync: () => Promise<void> };
-      await reloadAsync();
-    } catch (err) {
-      // Dev builds don't have expo-updates wired — at least surface the
-      // attempt so the user knows the button did something.
-      console.warn('Retry: expo-updates unavailable', err);
-      setZkBoot({ phase: 'failed', error: 'Retry unavailable in this build. Quit and reopen the app.' });
+    // ZKBridgeService.reload() rejects any in-flight commands, resets the
+    // ready promise, and reloads the underlying WebView. The new
+    // waitReady() below tracks the fresh init handshake — no app restart
+    // needed and no dependency on expo-updates being installed.
+    ZKBridgeService.reload();
+    const status = await ZKBridgeService.waitReady();
+    if (status.status === 'ready') {
+      setZkBoot({ phase: 'ready' });
+    } else {
+      setZkBoot({ phase: 'failed', error: status.error });
     }
   }, []);
 

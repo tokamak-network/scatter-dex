@@ -33,9 +33,11 @@ export default function HiddenWebView() {
   if (!htmlUri) return null;
 
   // The packaged ZK engine HTML lives at a `file://` URI inside the app
-  // bundle. Both the origin whitelist and the navigation guard are pinned
-  // to that exact URI so a compromised script inside the WebView cannot
-  // navigate to a remote origin and then call back into the bridge.
+  // bundle. The navigation guard below is pinned to that exact URI so a
+  // compromised script can never navigate to a remote origin or another
+  // local file. The WebView's coarser `originWhitelist` (`file://*`)
+  // exists only because Android RN-WebView normalizes file-URI origins
+  // inconsistently — the exact-URI guard is the real lockdown.
   const allowedUri = htmlUri;
 
   return (

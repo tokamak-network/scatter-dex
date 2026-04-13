@@ -57,6 +57,27 @@ class ZKBridgeServiceImpl {
   }
 
   /**
+   * Reload the underlying WebView and reset the ready promise so the next
+   * `waitReady()` await tracks the new init handshake. Used by App.tsx's
+   * "Retry" button after the initial init fails — recovers without a full
+   * app restart and without depending on `expo-updates` being installed.
+   */
+  reload(): void {
+    this.ready = false;
+    this.initError = null;
+    // Reject any in-flight bridge commands so callers don't hang.
+    for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error('ZK engine restarting'));
+    }
+    this.pending.clear();
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolve = resolve;
+    });
+    this.webViewRef?.current?.reload();
+  }
+
+  /**
    * WebView에서 오는 메시지 처리.
    * HiddenWebView의 onMessage에서 호출됨.
    */
@@ -84,11 +105,13 @@ class ZKBridgeServiceImpl {
         this.initError = null;
         this.readyResolve({ status: 'ready' });
       } else {
-        // Resolve with explicit failure so callers can render an error
-        // state instead of mistaking init failure for init success. The
-        // proving UI must NOT proceed when ready === false.
+        // Log the raw payload first so debugging has the original shape,
+        // then resolve with an extracted user-friendly message. Resolving
+        // with explicit failure (vs the old void-resolve) lets callers
+        // render an error state instead of mistaking init failure for
+        // init success — the proving UI must NOT proceed when ready === false.
+        console.error('ZK engine init failed:', error || result);
         const errMsg = error || (typeof result === 'string' ? result : JSON.stringify(result)) || 'ZK engine init failed';
-        console.error('ZK Engine initialization failed:', errMsg);
         this.ready = false;
         this.initError = errMsg;
         this.readyResolve({ status: 'failed', error: errMsg });
