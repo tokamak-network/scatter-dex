@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     const wallet = getFaucetWallet();
     const token = new ethers.Contract(usdcAddress, MOCK_TOKEN_ABI, wallet);
 
-    const decimals: number = await token.decimals();
+    const decimals = Number(await token.decimals());
     const usdcAmount = USDC_DRIP_WHOLE * 10n ** BigInt(decimals);
 
     // Send both txs back-to-back on the same NonceManager, serialized
