@@ -36,7 +36,6 @@ import {
 } from "./commitment";
 import { signEdDSA, hashOrder } from "./eddsa";
 import { wipeBytes } from "./secure-wipe";
-import { TAG_COMMITMENT_V2 } from "./tags";
 import { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from "./constants";
 
 const WASM_PATH = "/zk/authorize.wasm";
@@ -220,31 +219,25 @@ export async function generateAuthorizeProof(
   );
 
   // ── 3. Residual commitment (change UTXO) ──
+  // Delegate to `computeCommitment` so both the page's pre-computed
+  // `expectedChangeCommitment` and the circuit's on-chain `newCommitment`
+  // derive from the same helper — drift here is exactly the bug this
+  // PR fixes. Use `??` so a caller-supplied `0n` (valid field element)
+  // is honored; only omitted inputs trigger the random fallback.
   const newBalance = input.note.amount - input.sellAmount;
   let newCommitment = 0n;
   let newSalt = 0n;
   if (newBalance > 0n) {
-    // Prefer the caller-supplied salt so the on-chain commitment matches
-    // the one the page pre-computed for the change note file. Fall back
-    // to a random salt only when the caller didn't pass any (legacy
-    // callers) — in that case the stored note won't round-trip.
-    // IMPORTANT: check `=== undefined` rather than truthiness — `0n` is a
-    // valid (if astronomically unlikely) field element that must be
-    // honored, otherwise we'd silently replace it and reintroduce the
-    // commitment-mismatch bug this change is fixing.
-    newSalt = input.newSalt !== undefined ? input.newSalt : randomFieldElement();
-    newCommitment = await poseidonHash([
-      TAG_COMMITMENT_V2,
-      input.note.ownerSecret,
-      input.note.token,
-      newBalance,
-      newSalt,
-      input.note.pubKeyAx,
-      input.note.pubKeyAy,
-    ]);
+    newSalt = input.newSalt ?? randomFieldElement();
+    newCommitment = await computeCommitment({
+      ownerSecret: input.note.ownerSecret,
+      token: input.note.token,
+      amount: newBalance,
+      salt: newSalt,
+      pubKeyAx: input.note.pubKeyAx,
+      pubKeyAy: input.note.pubKeyAy,
+    });
   }
-  // When newBalance === 0 the circuit forces `newCommitment === 0` and
-  // leaves `newSalt` unconstrained, so 0n is fine in that branch.
 
   // ── 4. Claims tree ──
   const claimLeaves: bigint[] = [];

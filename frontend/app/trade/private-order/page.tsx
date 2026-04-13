@@ -110,19 +110,16 @@ async function buildOrderProof(params: BuildOrderParams) {
     throw new Error(`Sell amount exceeds note balance (${selectedNote.amount} ${sellToken.symbol})`);
   }
 
-  // Change commitment.
-  // When change > 0 the same salt must be used to (a) pre-compute the
-  // `expectedChangeCommitment` stored in the note file and (b) feed the
-  // prover's residual-commitment hash. If the salt state isn't set yet
-  // (e.g. the user clicked submit before the `changeSalt` effect fired),
-  // fail loudly rather than silently producing an unspendable UTXO.
+  // Same salt must flow into (a) the pre-computed `expectedChangeCommitment`
+  // written to the note file and (b) the prover's residual-commitment
+  // hash. Submit button is disabled while `change > 0n && !changeSalt`
+  // so this throw is defense-in-depth.
   const change = selectedNote.note.amount - parsedSell;
-  if (change > 0n && !changeSalt) {
-    throw new Error("Change salt not ready — please retry in a moment.");
-  }
-  const newSalt = change > 0n ? (changeSalt as bigint) : 0n;
+  let newSalt = 0n;
   let expectedChangeCommitment = 0n;
   if (change > 0n) {
+    if (!changeSalt) throw new Error("Change salt not ready — please retry in a moment.");
+    newSalt = changeSalt;
     expectedChangeCommitment = await computeCommitment({
       ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token,
       amount: change, salt: newSalt,
@@ -193,11 +190,9 @@ async function buildOrderProof(params: BuildOrderParams) {
     maxFee, expiry: expiryTimestamp, nonce, relayer: relayerAddress,
     eddsaPrivateKey,
     claims: claimData.map(c => ({ secret: BigInt(c.secret), recipient: c.recipient, token: c.token, amount: BigInt(c.amount), releaseTime: BigInt(c.releaseTime) })),
-    // Pass the same salt used for `expectedChangeCommitment` so the
-    // prover's on-chain `newCommitment` hashes identically. Gate on
-    // `change > 0n` (not `newSalt > 0n`): `0n` is a valid field element
-    // that `randomFieldElement()` can produce, and truthiness-gating
-    // here would silently drop it and reintroduce the mismatch.
+    // Same salt as `expectedChangeCommitment`. Gate on `change > 0n`,
+    // not `newSalt > 0n` — `0n` is a valid (if astronomically unlikely)
+    // salt that truthiness-gating would silently drop.
     newSalt: change > 0n ? newSalt : undefined,
   });
 
@@ -1534,7 +1529,7 @@ export default function PrivateOrderPage() {
             {orderType === "limit" ? (
             <button
               onClick={!keyPair ? handleDeriveKey : handleSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n)) || keyLoading}
+              disabled={!sellAmount || !buyAmount || !selectedNote || zkRelayers.length === 0 || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n)) || keyLoading || (changeAmount > 0n && !changeSalt)}
               className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50"
             >
               {keyLoading ? (
@@ -1544,7 +1539,7 @@ export default function PrivateOrderPage() {
             ) : (
             <button
               onClick={!keyPair ? handleDeriveKey : handleMarketSubmit}
-              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n))}
+              disabled={!sellAmount || !buyAmount || !selectedNote || !marketPrice || keyLoading || claimShortfall === null || claimShortfall > 0n || (isScatterMode && (scatterExcessWei === null || scatterExcessWei > 0n)) || (changeAmount > 0n && !changeSalt)}
               className="w-full bg-tertiary text-on-tertiary py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-50 hover:bg-tertiary/90 transition-colors"
             >
               {keyLoading ? (
