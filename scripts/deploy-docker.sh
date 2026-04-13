@@ -45,8 +45,11 @@ WETH=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*WETH:" | awk '{print $NF}')
 USDC=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*USDC:" | awk '{print $NF}')
 IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*IdentityGate:" | awk '{print $NF}')
 FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*FeeVault:" | awk '{print $NF}')
+BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^[[:space:]]*BatchExecutor:" | awk '{print $NF}')
 
-# Validate all addresses were parsed
+# Validate all addresses were parsed (BatchExecutor is optional — an empty
+# env var disables the EIP-7702 batch path in the frontend and the
+# legacy sequential flow runs instead).
 for var_name in RELAYER_REGISTRY COMMITMENT_POOL PRIVATE_SETTLEMENT WETH USDC IDENTITY_GATE FEE_VAULT; do
   if [ -z "${!var_name}" ]; then
     echo "ERROR: Failed to parse $var_name from deploy output"
@@ -66,6 +69,7 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
+NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 

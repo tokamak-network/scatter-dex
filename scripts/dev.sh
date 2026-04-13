@@ -87,8 +87,11 @@ if [ "$MOCK_MODE" = true ]; then
   check_port 3002 "zk-relayer"
   check_port 3000 "frontend"
 
-  echo "[1/4] Starting anvil..."
-  anvil --silent &
+  echo "[1/4] Starting anvil (hardfork=prague for EIP-7702)..."
+  # `--hardfork prague` enables Pectra-era features — notably EIP-7702
+  # batch delegation, which the frontend uses to collapse the deposit
+  # popup chain into one tx when the wallet supports it.
+  anvil --silent --hardfork prague &
   last_pid=$!
   PIDS+=("$last_pid")
   if ! wait_for "$RPC_URL" "anvil" 10; then
@@ -123,6 +126,7 @@ if [ "$MOCK_MODE" = true ]; then
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
   FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "^  FeeVault:" | awk '{print $NF}')
+  BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
@@ -280,6 +284,7 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
+NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
 
