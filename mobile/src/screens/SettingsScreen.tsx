@@ -39,7 +39,7 @@ interface ManagementItem {
 const managementItems: ManagementItem[] = [
   { id: 'addressbook', label: 'Address Book', icon: '📒' },
   { id: 'eddsa', label: 'EdDSA Key Management', icon: '🔑' },
-  { id: 'backuprestore', label: 'Backup &amp; Restore', icon: '☁' },
+  { id: 'backuprestore', label: 'Backup & Restore', icon: '☁' },
   { id: 'backup', label: 'Seed Phrase Backup', icon: '⚠', badge: 'Critical' },
 ];
 

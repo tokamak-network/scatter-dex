@@ -3,8 +3,8 @@
  * user state.
  *
  * Two tabs:
- *   - Export: snapshots the current state and offers Copy / Share via
- *             the native Share sheet (Files app, AirDrop, etc.).
+ *   - Export: snapshots the current state and offers Share via the
+ *             native Share sheet (Files app, AirDrop, etc.).
  *   - Import: paste the bundle JSON; restore is additive, never
  *             overwrites existing rows.
  */
@@ -117,7 +117,7 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
       <View style={s.overlay}>
         <View style={s.sheet}>
           <View style={s.header}>
-            <Text style={s.title}>Backup &amp; Restore</Text>
+            <Text style={s.title}>Backup & Restore</Text>
             <TouchableOpacity onPress={handleClose}><Text style={s.close}>✕</Text></TouchableOpacity>
           </View>
 
