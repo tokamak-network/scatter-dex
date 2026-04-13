@@ -10,7 +10,8 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../styles/theme';
 import { useWallet } from '../contexts/WalletContext';
-import { ClaimService, ClaimData, ClaimProgress, ClaimStep } from '../services/ClaimService';
+import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
+import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { formatAmount } from '../lib/format';
 
 interface PendingClaim {
@@ -38,13 +39,18 @@ export default function ClaimScreen() {
   // Claimable Notes tab
   const [pendingClaims, setPendingClaims] = useState<PendingClaim[]>([]);
   const [loadingClaims, setLoadingClaims] = useState(false);
-  const [selectedClaimIndex, setSelectedClaimIndex] = useState<number | null>(null);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+
+  // Submission mode
+  const [submitMode, setSubmitMode] = useState<'wallet' | 'relayer'>('wallet');
+  const [relayers, setRelayers] = useState<RelayerInfo[]>([]);
 
   // Progress
   const [progress, setProgress] = useState(0);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<ClaimStep>('idle');
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
 
   const STEP_PROGRESS: Record<ClaimStep, number> = {
     idle: 0,
@@ -54,6 +60,15 @@ export default function ClaimScreen() {
     success: 100,
     error: 0,
   };
+
+  // Discover ZK relayers from registry — used by gasless mode.
+  useEffect(() => {
+    let cancelled = false;
+    RelayerApiService.discoverRelayers()
+      .then((rs) => { if (!cancelled) setRelayers(rs.filter((r) => r.online)); })
+      .catch(() => { /* leave empty; UI surfaces a clear error at submit */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // Load pending claims from AsyncStorage
   useEffect(() => {
@@ -101,66 +116,166 @@ export default function ClaimScreen() {
     }
   }, [jsonInput]);
 
-  // Execute claim
+  const toPendingClaimData = (pc: PendingClaim): ClaimData => ({
+    secret: pc.secret,
+    recipient: pc.recipient,
+    token: pc.token,
+    amount: pc.amount,
+    releaseTime: pc.releaseTime || '0',
+    leafIndex: pc.leafIndex,
+    allLeaves: pc.allLeaves,
+  });
+
+  const togglePendingSelection = useCallback((index: number) => {
+    setSelectedIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    const len = pendingClaims.length;
+    setSelectedIndices((prev) =>
+      prev.size === len
+        ? new Set()
+        // Build indices from `len` directly rather than closing over
+        // `pendingClaims`, so a list reorder without a length change doesn't
+        // stale-close over the wrong array.
+        : new Set(Array.from({ length: len }, (_, i) => i)),
+    );
+  }, [pendingClaims.length]);
+
   const handleClaim = useCallback(async () => {
-    if (!signer || !readProvider) {
+    if (submitMode === 'wallet' && !signer) {
       Alert.alert('Wallet not connected', 'Please connect your wallet to claim.');
       return;
     }
+    if (!readProvider) {
+      Alert.alert('Provider not ready', 'Please try again in a moment.');
+      return;
+    }
 
-    let claimData: ClaimData | null = null;
+    // Relayer mode requires an online ZK relayer. The gasless path targets one
+    // at a time (matches frontend/app/trade/private-claim handleClaimViaRelayer).
+    if (submitMode === 'relayer' && relayers.length === 0) {
+      Alert.alert(
+        'No Relayer Available',
+        'No online ZK relayer was found in the registry. Switch to "Claim to Wallet" or try again later.',
+      );
+      return;
+    }
 
+    // Build the claim set from whichever tab is active.
+    let claimDataList: ClaimData[] = [];
+    let sourceIndices: number[] = [];
     if (claimTab === 'json') {
-      claimData = parsedJsonClaim;
-      if (!claimData) {
+      if (!parsedJsonClaim) {
         Alert.alert('No claim data', 'Please paste and parse valid claim JSON first.');
         return;
       }
+      claimDataList = [parsedJsonClaim];
     } else {
-      if (selectedClaimIndex === null || !pendingClaims[selectedClaimIndex]) {
-        Alert.alert('No claim selected', 'Please select a claimable note.');
+      if (selectedIndices.size === 0) {
+        Alert.alert('No claim selected', 'Please select at least one claimable note.');
         return;
       }
-      const pc = pendingClaims[selectedClaimIndex];
-      claimData = {
-        secret: pc.secret,
-        recipient: pc.recipient,
-        token: pc.token,
-        amount: pc.amount,
-        releaseTime: pc.releaseTime || '0',
-        leafIndex: pc.leafIndex,
-        allLeaves: pc.allLeaves,
-      };
+      sourceIndices = Array.from(selectedIndices).sort((a, b) => a - b);
+      claimDataList = sourceIndices.map((i) => toPendingClaimData(pendingClaims[i]));
+    }
+
+    if (submitMode === 'relayer' && claimDataList.length > 1) {
+      Alert.alert(
+        'Gasless is single-claim only',
+        `The relayer path processes one claim per request. Select a single note, or switch to Claim to Wallet for up to ${MAX_CLAIM_BATCH_SIZE} per tx.`,
+      );
+      return;
     }
 
     setClaiming(true);
     setClaimError(null);
+    setBatchStatus(null);
     setProgress(0);
     setCurrentStep('idle');
 
-    const onProgress = async (p: ClaimProgress) => {
+    let partialCommitted = 0;
+    const onProgress = (p: ClaimProgress) => {
       setCurrentStep(p.step);
       setProgress(STEP_PROGRESS[p.step] || 0);
-      if (p.step === 'success') {
-        setClaiming(false);
-        setProgress(100);
-        Alert.alert('Claim Successful', `Tx: ${p.txHash || 'confirmed'}`);
-        // Remove claimed item from pending claims
-        if (claimTab === 'notes' && selectedClaimIndex !== null) {
-          const updated = pendingClaims.filter((_, i) => i !== selectedClaimIndex);
-          setPendingClaims(updated);
-          setSelectedClaimIndex(null);
-          await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
-        }
+      if (p.chunk !== undefined && p.totalChunks !== undefined) {
+        const done = p.proofDone ?? 0;
+        const total = p.claimsInChunk ?? 0;
+        setBatchStatus(
+          p.step === 'submitting'
+            ? `Chunk ${p.chunk}/${p.totalChunks}: submitting ${total} proofs`
+            : `Chunk ${p.chunk}/${p.totalChunks}: proof ${done}/${total}`,
+        );
       }
+      if (p.partialCommittedCount !== undefined) {
+        partialCommitted = p.partialCommittedCount;
+      }
+      // Surface the service's error message immediately; without this the UI
+      // would only see a generic "Claim failed" fallback after the promise
+      // resolves, losing the underlying reason (release-time, nullifier
+      // already spent, relayer reject, etc.).
       if (p.step === 'error') {
-        setClaiming(false);
         setClaimError(p.error || 'Claim failed');
+        setBatchStatus(null);
       }
     };
 
-    await ClaimService.execute(signer, claimData, readProvider, onProgress);
-  }, [signer, readProvider, claimTab, parsedJsonClaim, selectedClaimIndex, pendingClaims]);
+    try {
+      let ok = false;
+      let submittedCount = claimDataList.length;
+      if (submitMode === 'relayer') {
+        const res = await ClaimService.executeViaRelayer(
+          claimDataList[0],
+          relayers[0].url,
+          readProvider,
+          onProgress,
+        );
+        ok = !!res;
+      } else if (claimDataList.length === 1) {
+        const res = await ClaimService.execute(signer!, claimDataList[0], readProvider, onProgress);
+        ok = !!res;
+      } else {
+        const res = await ClaimService.executeBatch(signer!, claimDataList, readProvider, onProgress);
+        // Partial batch success: res is a non-empty string[] even when the
+        // catch fired, so we still clean up the locally-committed entries.
+        ok = !!res && res.length > 0;
+        submittedCount = partialCommitted || (res?.length ?? 0);
+      }
+
+      setClaiming(false);
+      if (ok && submittedCount > 0) {
+        setProgress(100);
+        setBatchStatus(null);
+        const allDone = submittedCount === claimDataList.length;
+        Alert.alert(
+          allDone ? 'Claim Successful' : 'Partial Claim Success',
+          allDone
+            ? (claimDataList.length > 1 ? `${claimDataList.length} claims submitted.` : 'Tx confirmed.')
+            : `${submittedCount}/${claimDataList.length} claims committed before an error stopped the batch. Remaining ${claimDataList.length - submittedCount} are still pending.`,
+        );
+        if (claimTab === 'notes' && sourceIndices.length > 0) {
+          // Only drop the entries that actually committed. Sorted ASC, so the
+          // first `submittedCount` sourceIndices are the ones that landed.
+          const toRemove = new Set(sourceIndices.slice(0, submittedCount));
+          const updated = pendingClaims.filter((_, i) => !toRemove.has(i));
+          setPendingClaims(updated);
+          setSelectedIndices(new Set());
+          await AsyncStorage.setItem('scatterdex_pending_claims', JSON.stringify(updated));
+        }
+      } else {
+        // onProgress already set the error; make sure the UI reflects it.
+        if (!claimError) setClaimError('Claim failed');
+      }
+    } catch (err: any) {
+      setClaiming(false);
+      setClaimError(err?.message || 'Claim failed');
+    }
+  }, [signer, readProvider, claimTab, parsedJsonClaim, selectedIndices, pendingClaims, submitMode, relayers, claimError]);
 
   const progressLabel = (() => {
     if (claimError) return claimError;
@@ -254,14 +369,25 @@ export default function ClaimScreen() {
                     No pending claims found. Trade to generate claimable notes.
                   </Text>
                 ) : (
-                  pendingClaims.map((item, index) => (
+                  <>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 13, color: '#6B7280' }}>
+                        {selectedIndices.size > 0 ? `${selectedIndices.size} selected` : 'Tap to select (multi)'}
+                      </Text>
+                      <TouchableOpacity onPress={toggleSelectAll}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#2563EB' }}>
+                          {selectedIndices.size === pendingClaims.length ? 'Deselect All' : 'Select All'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {pendingClaims.map((item, index) => (
                     <TouchableOpacity
                       key={`${item.txHash}-${index}`}
                       style={[
                         s.itemRow,
-                        selectedClaimIndex === index && { borderColor: '#2563EB', borderWidth: 2 },
+                        selectedIndices.has(index) && { borderColor: '#2563EB', borderWidth: 2 },
                       ]}
-                      onPress={() => setSelectedClaimIndex(index)}
+                      onPress={() => togglePendingSelection(index)}
                     >
                       <View style={s.itemLeft}>
                         <View style={s.itemIcon}>
@@ -276,7 +402,8 @@ export default function ClaimScreen() {
                         <Text style={s.statusText}>Ready to Claim</Text>
                       </View>
                     </TouchableOpacity>
-                  ))
+                    ))}
+                  </>
                 )}
               </View>
             )}
@@ -294,7 +421,33 @@ export default function ClaimScreen() {
           <View style={s.progressTrack}>
             <View style={[s.progressFill, { width: `${progress}%` as any }]} />
           </View>
-          <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
+          {batchStatus ? (
+            <Text style={s.proofHint}>{batchStatus}</Text>
+          ) : (
+            <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
+          )}
+
+          <View style={s.modeRow}>
+            <TouchableOpacity
+              style={[s.modeBtn, submitMode === 'wallet' && s.modeBtnActive]}
+              onPress={() => setSubmitMode('wallet')}
+              disabled={claiming}
+            >
+              <Text style={[s.modeBtnText, submitMode === 'wallet' && s.modeBtnTextActive]}>
+                Claim to Wallet
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.modeBtn, submitMode === 'relayer' && s.modeBtnActive]}
+              onPress={() => setSubmitMode('relayer')}
+              disabled={claiming}
+            >
+              <Text style={[s.modeBtnText, submitMode === 'relayer' && s.modeBtnTextActive]}>
+                Gasless (Relayer)
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             style={[s.claimBtn, claiming && { backgroundColor: '#9CA3AF' }]}
             activeOpacity={0.8}
@@ -304,7 +457,13 @@ export default function ClaimScreen() {
             {claiming ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={s.claimBtnText}>Claim to Wallet</Text>
+              <Text style={s.claimBtnText}>
+                {submitMode === 'relayer'
+                  ? 'Submit Gasless Claim'
+                  : selectedIndices.size > 1
+                    ? `Claim ${selectedIndices.size} to Wallet`
+                    : 'Claim to Wallet'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
@@ -369,6 +528,11 @@ const s = StyleSheet.create({
   progressTrack: { height: 8, backgroundColor: '#F3F4F6', borderRadius: 4, overflow: 'hidden' },
   progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 4, backgroundColor: '#22C55E' },
   proofHint: { fontSize: 12, fontWeight: '500', color: '#6B7280', textAlign: 'center' },
+  modeRow: { flexDirection: 'row', backgroundColor: '#F3F4F6', padding: 4, borderRadius: 10, marginVertical: 4 },
+  modeBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  modeBtnActive: { backgroundColor: '#FFFFFF' },
+  modeBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
+  modeBtnTextActive: { color: '#2563EB' },
   claimBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   claimBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 });

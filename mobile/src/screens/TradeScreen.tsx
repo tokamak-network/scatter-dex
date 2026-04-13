@@ -13,6 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
 import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../services/MarketOrderService';
+import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { ConfigService } from '../services/ConfigService';
 import { formatAmount } from '../lib/format';
 
@@ -52,6 +53,24 @@ export default function TradeScreen() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
+
+  // Only limit orders require a relayer. Skip the registry read + per-relayer
+  // /api/info probe when the user is in market mode, which is gas-paid and
+  // submitted directly on-chain.
+  useEffect(() => {
+    if (tradeType !== 'limit') return;
+    let cancelled = false;
+    RelayerApiService.discoverRelayers()
+      .then((rs) => {
+        if (cancelled) return;
+        // Prefer the cheapest online relayer so "first" isn't registry-order.
+        const online = rs.filter((r) => r.online).sort((a, b) => a.fee - b.fee);
+        setOnlineRelayers(online);
+      })
+      .catch(() => { /* leave empty; limit orders will surface a clear error */ });
+    return () => { cancelled = true; };
+  }, [tradeType]);
 
   // Claim builder (limit mode only). Default delay matches the web
   // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
@@ -158,6 +177,16 @@ export default function TradeScreen() {
 
     try {
       if (tradeType === 'limit') {
+        const selectedRelayer = onlineRelayers[0];
+        if (!selectedRelayer) {
+          setSubmitting(false);
+          Alert.alert(
+            'No Relayer Available',
+            'No online ZK relayer found in the registry. Limit orders require a relayer. Try again in a moment or switch to Market.',
+          );
+          return;
+        }
+
         const priceClean = price.replace(/,/g, '');
         const sellAmountBn = ethers.parseUnits(amount, 18);
         const priceBn = ethers.parseUnits(priceClean, 18);
@@ -197,6 +226,8 @@ export default function TradeScreen() {
           maxFeeBps: 50,
           expiryHours: 24,
           claims: parsedClaims,
+          relayerUrl: selectedRelayer.url,
+          relayerAddress: selectedRelayer.address,
         };
 
         await OrderService.execute(signer, account, input, (p: OrderProgress) => {
@@ -244,7 +275,7 @@ export default function TradeScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [account, signer, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman]);
+  }, [account, signer, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
