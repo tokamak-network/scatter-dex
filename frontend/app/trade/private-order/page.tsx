@@ -483,13 +483,28 @@ export default function PrivateOrderPage() {
     } catch { return null; }
   }, [isScatterMode, scatterMaxDistributeWei, buyAmount, buyTokenDecimals]);
 
-  // Recompute buyAmount from sell * price (fee is deducted at settlement, not here)
+  // Recompute buyAmount.
+  //   - Cross-token: sell * price.
+  //   - Scatter mode: clamp to `sellAmount - fee` so the scatter-excess
+  //     gate (which compares the buyAmount field against the cap) doesn't
+  //     fire just because the price=1 path produced sellAmount × 1 wei.
   const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
+    if (isScatterMode && sellTokenDecimals != null) {
+      try {
+        const sellWei = ethers.parseUnits(sell, sellTokenDecimals);
+        const feeWei = (sellWei * BigInt(effectiveFeeBps)) / 10000n;
+        const capWei = sellWei > feeWei ? sellWei - feeWei : 0n;
+        setBuyAmount(ethers.formatUnits(capWei, sellTokenDecimals));
+      } catch {
+        /* sellAmount mid-typing — leave buyAmount alone */
+      }
+      return;
+    }
     const grossBuy = parseFloat(sell) * parseFloat(p);
     if (isNaN(grossBuy)) return;
     const dec = Math.min(buyToken?.decimals ?? 18, 18);
     setBuyAmount(grossBuy.toFixed(dec));
-  }, [buyToken]);
+  }, [buyToken, isScatterMode, sellTokenDecimals, effectiveFeeBps]);
 
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
@@ -499,17 +514,6 @@ export default function PrivateOrderPage() {
   useEffect(() => {
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
-
-  // Scatter mode pins buyAmount to the scatter cap (sellAmount − fee).
-  // Without this, recomputeBuyAmount above sets buyAmount = sellAmount × 1
-  // = sellAmount, which exceeds `validateScatterAuth`'s cap by one fee
-  // and surfaces a confusing "Over by 0.003" error even when the user's
-  // claim total is exactly at the cap.
-  useEffect(() => {
-    if (!isScatterMode || scatterMaxDistributeWei === null || buyTokenDecimals == null) return;
-    const next = ethers.formatUnits(scatterMaxDistributeWei, buyTokenDecimals);
-    if (next !== buyAmount) setBuyAmount(next);
-  }, [isScatterMode, scatterMaxDistributeWei, buyTokenDecimals, buyAmount]);
 
   // Net amount after fee — this is the distributable amount for claims
   const netBuyAmount = parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000) || 0;
