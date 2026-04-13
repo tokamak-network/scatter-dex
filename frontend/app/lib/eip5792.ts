@@ -43,10 +43,17 @@ export interface SendCallsResult {
   id: string;
 }
 
-/** `wallet_getCallsStatus` response. */
+/** `wallet_getCallsStatus` response (EIP-5792 v1.0). */
 export interface CallsStatus {
-  /** 100 = pending, 200 = confirmed, 4xx / 5xx = failed. */
-  status: number;
+  /**
+   * Batch state per EIP-5792:
+   *   "pending"   — still in flight
+   *   "completed" — all included txs mined (individual `receipts[i].status`
+   *                 still has to be checked for on-chain revert)
+   * Wallets may add extra states in future revisions; we treat any
+   * non-"pending" value other than "completed" as an error.
+   */
+  status: "pending" | "completed";
   receipts?: Array<{
     logs: Array<{ address: string; data: string; topics: string[] }>;
     status: string;                 // "0x0" | "0x1"
@@ -58,13 +65,19 @@ export interface CallsStatus {
 }
 
 /**
- * Thrown when the wallet does not implement EIP-5792 at all, or when
- * its declared capabilities don't include atomic batch for the current
- * chain. Callers should fall back to sending the steps sequentially.
+ * Thrown only when the wallet does not implement the EIP-5792 RPC
+ * surface (method-not-found). Capability-level support — whether the
+ * wallet declares `atomicBatch` for a given chain — is surfaced via
+ * `supportsAtomicBatch()` returning `false`; callers gate on that
+ * boolean BEFORE calling `sendCalls`, so they should never see this
+ * error for the capability-absent case.
+ *
+ * In either case the caller should fall back to sending the steps
+ * sequentially.
  */
 export class Eip5792Unsupported extends Error {
   constructor(cause: unknown) {
-    super("Wallet does not support EIP-5792 atomic batch on this chain.", { cause });
+    super("Wallet does not implement EIP-5792 wallet_sendCalls.", { cause });
     this.name = "Eip5792Unsupported";
   }
 }
@@ -162,19 +175,19 @@ export async function waitForCallsReceipt(
 ): Promise<CallsStatus> {
   const start = Date.now();
   // Simple poll — wallets typically finalize within a couple of blocks
-  // on local anvil, 10-30s on public chains. Status codes per EIP-5792:
-  //   100  pending
-  //   200  confirmed
-  //   4xx  user-level failure (rejected, offline, etc.)
-  //   5xx  wallet-level failure
-  // Only 200 is a real success; 4xx/5xx must raise so callers don't
-  // mistake a failed batch for a confirmed one.
+  // on local anvil, 10-30s on public chains. Per EIP-5792 the batch
+  // state is a string: "pending" while in flight, "completed" once
+  // every included tx is mined. Individual per-tx success/revert is
+  // reported via `receipts[i].status` ("0x0"/"0x1") and is the
+  // caller's responsibility to check.
   for (;;) {
     const status = await providerSend<CallsStatus>(provider, "wallet_getCallsStatus", [id]);
-    if (status.status >= 400) {
-      throw new Error(`wallet_getCallsStatus returned failure code ${status.status} (id=${id})`);
+    if (status.status === "completed") return status;
+    if (status.status !== "pending") {
+      // Future-proofing: surface any state the spec adds later so
+      // callers don't silently treat it as success.
+      throw new Error(`wallet_getCallsStatus returned unexpected state "${status.status}" (id=${id})`);
     }
-    if (status.status >= 200) return status;
     if (Date.now() - start > timeoutMs) {
       throw new Error(`wallet_getCallsStatus timed out after ${timeoutMs}ms (id=${id})`);
     }

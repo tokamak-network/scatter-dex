@@ -373,22 +373,31 @@ export default function PrivateEscrowPage() {
             calls,
           });
           const status = await waitForCallsReceipt(provider as ethers.BrowserProvider, result.id);
-          // For atomic batches all entries share a single transaction
-          // hash; the last receipt carries the full logs, which is
-          // what downstream (leafIndex parsing) needs. No extra
-          // `getTransactionReceipt` round-trip.
+          // For atomic batches all entries share one transaction hash;
+          // the last receipt carries the full logs, which is what
+          // downstream leafIndex parsing needs. Reverted batches
+          // still come back as `status: "completed"` per 5792 — the
+          // per-tx `receipts[i].status` is `"0x0"` for revert — so
+          // we must check both presence and success before proceeding.
           const last = status.receipts?.[status.receipts.length - 1];
-          if (last) {
-            receipt = {
-              hash: last.transactionHash,
-              blockNumber: Number(last.blockNumber),
-              logs: last.logs.map((l) => ({
-                address: l.address,
-                data: l.data,
-                topics: l.topics,
-              })),
-            } as unknown as ethers.TransactionReceipt;
+          if (!last) {
+            // Batch was accepted by the wallet but the status payload
+            // has no receipts. Proceeding to the sequential path here
+            // would double-submit, so raise instead.
+            throw new Error("Atomic batch completed but wallet returned no receipts");
           }
+          if (last.status !== "0x1") {
+            throw new Error(`Atomic batch reverted on-chain (tx ${last.transactionHash})`);
+          }
+          receipt = {
+            hash: last.transactionHash,
+            blockNumber: Number(last.blockNumber),
+            logs: last.logs.map((l) => ({
+              address: l.address,
+              data: l.data,
+              topics: l.topics,
+            })),
+          } as unknown as ethers.TransactionReceipt;
         } catch (err) {
           if (!(err instanceof Eip5792Unsupported)) throw err;
           console.info(
