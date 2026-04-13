@@ -196,6 +196,11 @@ export class AuthorizeSubmitter {
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
+      // Same fix as scatterDirectAuth: record both maker and taker
+      // claimsRoots so the gasless `/api/claim/...` route accepts
+      // claims against this relayer's settlement.
+      this.db?.saveSettledClaimsRoot(toBytes32(makerPs.claimsRoot));
+      this.db?.saveSettledClaimsRoot(toBytes32(takerPs.claimsRoot));
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });
@@ -234,6 +239,12 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // Record the claimsRoot so the gasless `/api/claim/...` route knows
+      // this relayer settled this batch and is willing to pay gas to
+      // submit individual claims. Without this, every claim against a
+      // scatterDirectAuth-settled batch hits the "claims root not settled
+      // by this relayer" 403 even though the on-chain settle succeeded.
+      this.db?.saveSettledClaimsRoot(toBytes32(ps.claimsRoot));
       console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
       return txHash;
     });
