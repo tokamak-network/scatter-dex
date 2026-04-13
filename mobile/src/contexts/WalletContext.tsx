@@ -54,10 +54,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // is reset (happens on network switch or restoreSavedNetwork). This keeps
   // readProvider and targetChainId in sync without requiring an app restart.
   const [providerVersion, setProviderVersion] = useState(0);
-  useEffect(
-    () => ProviderService.subscribeReset(() => setProviderVersion((v) => v + 1)),
-    [],
-  );
+  useEffect(() => {
+    const unsubscribe = ProviderService.subscribeReset(() =>
+      setProviderVersion((v) => v + 1),
+    );
+    // Force a refresh right after subscribing so any reset that fired before
+    // this effect ran (e.g. App.tsx's restoreSavedNetwork) does not leave the
+    // initial memoized provider/config stale for the lifetime of the app.
+    setProviderVersion((v) => v + 1);
+    return unsubscribe;
+  }, []);
   const readProvider = useMemo(
     () => ProviderService.getReadProvider(),
     [providerVersion],
@@ -66,6 +72,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     () => ConfigService.getChainId(),
     [providerVersion],
   );
+
+  // A signer created against the old readProvider would keep signing against
+  // the old network after a switch. Force a disconnect so the user reconnects
+  // against the new provider — covers both built-in and WalletConnect modes.
+  const prevProviderVersionRef = useRef(providerVersion);
+  useEffect(() => {
+    if (prevProviderVersionRef.current === providerVersion) return;
+    prevProviderVersionRef.current = providerVersion;
+    setState((s) => (s.signer ? INITIAL_STATE : s));
+    if (wcProviderRef.current) {
+      try { wcProviderRef.current.disconnect(); } catch { /* ignore */ }
+      wcProviderRef.current = null;
+    }
+  }, [providerVersion]);
 
   const setupFromWcProvider = useCallback(async (wcProvider: InstanceType<typeof EthereumProvider>) => {
     const ethersProvider = new ethers.BrowserProvider(wcProvider);

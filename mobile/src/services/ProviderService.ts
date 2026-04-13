@@ -51,7 +51,11 @@ export const ProviderService = {
   reset() {
     readProvider = null;
     cachedSanctionsAddr = null;
-    resetListeners.forEach((fn) => fn());
+    resetListeners.forEach((fn) => {
+      try { fn(); } catch (err) {
+        console.warn('ProviderService reset listener failed:', err);
+      }
+    });
   },
 
   /** Subscribe to provider resets (e.g. network switch). Returns unsubscribe. */

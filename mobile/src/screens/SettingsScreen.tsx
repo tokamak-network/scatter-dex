@@ -225,18 +225,25 @@ export default function SettingsScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            const accountToWipe = account;
             try {
+              if (accountToWipe) {
+                // Delete EdDSA key before disconnect clears `account` from context.
+                await EdDSAKeyService.deleteKey(accountToWipe).catch(() => { /* not fatal */ });
+              }
               await disconnect();
               await KeySecurityService.deleteWallet();
               Alert.alert('Wallet Deleted', 'The wallet has been removed from this device.');
             } catch (err: any) {
-              Alert.alert('Error', err?.message || 'Failed to delete wallet');
+              console.error(err);
+              const msg = err?.shortMessage || err?.reason || err?.info?.error?.message || err?.message;
+              Alert.alert('Error', msg || 'Failed to delete wallet');
             }
           },
         },
       ],
     );
-  }, [disconnect]);
+  }, [disconnect, account]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
