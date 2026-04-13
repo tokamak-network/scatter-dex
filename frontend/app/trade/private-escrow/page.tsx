@@ -30,10 +30,19 @@ import {
   deleteNote,
   loadConfigFromFolder,
   saveConfigToFolder,
+  loadEdDSAKeyFromFolder,
+  saveEdDSAKeyToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { generateDepositProof } from "../../lib/zk/deposit-prover";
-import { deriveEdDSAKey } from "../../lib/zk/eddsa";
+import {
+  deriveEdDSAKey,
+  DERIVE_MESSAGE,
+  isEncryptedKeyPair,
+  serializeKeyPairEncrypted,
+  deserializeKeyPairEncrypted,
+  type EdDSAKeyPair,
+} from "../../lib/zk/eddsa";
 import { friendlyError } from "../../lib/error-messages";
 
 
@@ -54,6 +63,12 @@ export default function PrivateEscrowPage() {
   const [txState, setTxState] = useState<TxState>("idle");
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+
+  // EdDSA trading key cached for the session. First deposit either
+  // unlocks the stored key (1 signMessage popup) or derives+saves a
+  // new one (1 signMessage popup + folder write); subsequent deposits
+  // in the same session reuse this state and skip the popup entirely.
+  const [keyPair, setKeyPair] = useState<EdDSAKeyPair | null>(null);
 
   const poolAddress = process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS || "";
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
@@ -223,16 +238,37 @@ export default function PrivateEscrowPage() {
 
       // [issue #128] Derive the user's deterministic BabyJub signing
       // keypair before generating the note — the commitment preimage
-      // now binds the pubkey so every deposit must be paired with a
-      // well-known key the user can re-derive from the same MetaMask
-      // signature. The downstream setTxState("approving") inside the
-      // native/ERC20 branches covers the actual approval step; the
-      // MetaMask sign-message popup for EdDSA derivation runs first.
-      const { keyPair } = await deriveEdDSAKey(signer);
+      // binds the pubkey so every deposit must be paired with a known
+      // key the user can re-derive from the same MetaMask signature.
+      //
+      // Session caching: once unlocked (or freshly generated) the key
+      // is kept in React state, so only the first deposit of a session
+      // incurs the sign-message popup. Private-order uses the same
+      // folder-backed pattern.
+      let kp = keyPair;
+      if (!kp) {
+        const saved = await loadEdDSAKeyFromFolder(account);
+        if (saved && isEncryptedKeyPair(saved)) {
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          kp = await deserializeKeyPairEncrypted(saved, signature, account);
+        } else {
+          const { keyPair: derived, signature } = await deriveEdDSAKey(signer);
+          kp = derived;
+          try {
+            const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
+            await saveEdDSAKeyToFolder(encrypted, account);
+          } catch (e) {
+            // Non-fatal: the in-memory key still lets the current
+            // session proceed; next session will re-derive.
+            console.warn("[private-escrow] failed to persist EdDSA key to folder:", e);
+          }
+        }
+        setKeyPair(kp);
+      }
 
       // For native ETH: commitment uses the WETH address (same underlying token)
       const commitTokenAddr = selectedToken.address;
-      const note = generateNote(commitTokenAddr, parsed, keyPair.publicKey);
+      const note = generateNote(commitTokenAddr, parsed, kp.publicKey);
       // commitment is derived inside generateDepositProof so it cannot
       // drift from the note's preimage; we still compute it once here for
       // event parsing / note storage below.
@@ -318,7 +354,7 @@ export default function PrivateEscrowPage() {
       setTxState("error");
       setTxError(friendlyError(e));
     }
-  }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes]);
+  }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
 
   // ─── Delete Note ───────────────────────────────────────────────
   const handleDeleteNote = useCallback(async (n: StoredNote) => {
