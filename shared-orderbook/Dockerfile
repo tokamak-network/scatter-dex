@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 
 COPY packages/types/ /packages/types/
 WORKDIR /packages/types
-RUN npm install --include=dev && npm run build
+RUN npm ci --include=dev && npm run build
 
 WORKDIR /app
 COPY shared-orderbook/package*.json ./
