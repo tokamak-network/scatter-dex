@@ -22,6 +22,21 @@ contract MockIdentityRegistry is IIdentityRegistry {
 /// @notice Deploy everything for local E2E testing on anvil.
 /// @dev Usage: forge script script/DeployLocal.s.sol --rpc-url http://localhost:8545 --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 contract DeployLocal is Script {
+    // Stored across helper calls so run()'s local variable count stays
+    // below the EVM stack-depth limit when assembling the deploy summary.
+    address internal _authorizeVerifier;
+
+    struct Deployed {
+        address relayerRegistry;
+        address weth;
+        address usdc;
+        address pool;
+        address privateSettlement;
+        address gate;
+        address vault;
+        address batchExecutor;
+    }
+
     function run() external {
         uint256 deployerKey = vm.envOr("DEPLOYER_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
 
@@ -129,20 +144,42 @@ contract DeployLocal is Script {
 
         vm.stopBroadcast();
 
-        // Print summary
+        _printSummary(Deployed({
+            relayerRegistry: address(relayerRegistry),
+            weth: address(weth),
+            usdc: address(usdc),
+            pool: address(pool),
+            privateSettlement: address(privateSettlement),
+            gate: address(gate),
+            vault: address(vault),
+            batchExecutor: address(batchExecutor)
+        }));
+    }
+
+    function _printSummary(Deployed memory d) internal view {
+        address relayerRegistry = d.relayerRegistry;
+        address weth = d.weth;
+        address usdc = d.usdc;
+        address pool = d.pool;
+        address privateSettlement = d.privateSettlement;
+        address gate = d.gate;
+        address vault = d.vault;
+        address batchExecutor = d.batchExecutor;
+        address authorizeVerifier = _authorizeVerifier;
         console.log("");
         console.log("=== LOCAL DEPLOYMENT SUMMARY ===");
-        console.log(string.concat("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=", vm.toString(address(relayerRegistry))));
-        console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(address(weth))));
-        console.log(string.concat("NEXT_PUBLIC_TOKENS=", vm.toString(address(weth)), ":WETH:18,", vm.toString(address(usdc)), ":USDC:18"));
-        console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(address(pool))));
-        console.log(string.concat("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=", vm.toString(address(privateSettlement))));
-        console.log(string.concat("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=", vm.toString(address(gate))));
+        console.log(string.concat("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=", vm.toString(relayerRegistry)));
+        console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(weth)));
+        console.log(string.concat("NEXT_PUBLIC_TOKENS=", vm.toString(weth), ":WETH:18,", vm.toString(usdc), ":USDC:18"));
+        console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(pool)));
+        console.log(string.concat("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=", vm.toString(privateSettlement)));
+        console.log(string.concat("NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=", vm.toString(gate)));
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
-        console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(address(vault))));
+        console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
-        console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(address(batchExecutor))));
+        console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(authorizeVerifier)));
     }
 
     function _deployCode(string memory what) internal returns (address addr) {
@@ -164,6 +201,7 @@ contract DeployLocal is Script {
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
         address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
         address authorizeVerifier = _deployCode("AuthorizeVerifier.sol:Groth16Verifier");
+        _authorizeVerifier = authorizeVerifier;
         console.log("WithdrawVerifier:", withdrawVerifier);
         console.log("SettleVerifier:", settleVerifier);
         console.log("ClaimVerifier:", claimVerifier);
