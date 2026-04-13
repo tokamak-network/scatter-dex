@@ -156,15 +156,16 @@ export const AddressBookService = {
     }
     return withLock(async () => {
       const entries = await readBook();
-      const next = entries.map((e) =>
-        e.id === id
-          ? {
-              ...e,
-              label: patch.label !== undefined ? patch.label.trim() : e.label,
-              memo: patch.memo !== undefined ? (patch.memo.trim() || undefined) : e.memo,
-            }
-          : e,
-      );
+      const idx = entries.findIndex((e) => e.id === id);
+      // Throw on missing id — falling through would silently rewrite the
+      // same blob (wasted I/O) and the caller would think the patch landed.
+      if (idx === -1) throw new Error(`Entry not found: ${id}`);
+      const next = [...entries];
+      next[idx] = {
+        ...next[idx],
+        label: patch.label !== undefined ? patch.label.trim() : next[idx].label,
+        memo: patch.memo !== undefined ? (patch.memo.trim() || undefined) : next[idx].memo,
+      };
       await writeBook(next);
     });
   },

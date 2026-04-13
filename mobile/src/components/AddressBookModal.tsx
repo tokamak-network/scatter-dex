@@ -10,7 +10,7 @@
  * — entries are loaded once on open, and mutations re-load from the
  * `AddressBookService` so concurrent edits stay consistent.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Modal, View, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
@@ -161,11 +161,14 @@ export default function AddressBookModal(props: Props) {
     );
   };
 
-  const formValid = (() => {
+  // useMemo so the value is stable for any future hook that depends on it
+  // (the previous IIFE recomputed every render, which would also re-run
+  // any useEffect/useCallback referencing it).
+  const formValid = useMemo(() => {
     if (!formLabel.trim()) return false;
-    if (editingId) return true; // address is fixed
+    if (editingId) return true; // address is fixed when editing
     return ethers.isAddress(formAddress.trim());
-  })();
+  }, [formLabel, formAddress, editingId]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
