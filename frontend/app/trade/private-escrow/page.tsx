@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
+import { Lock, Loader2, AlertCircle, Download, ShieldCheck, FolderOpen, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
@@ -480,9 +480,53 @@ export default function PrivateEscrowPage() {
     }
   }, [signer, account, chainId, canAtomicBatch, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
 
-  // ─── Delete Note ───────────────────────────────────────────────
-  const handleDeleteNote = useCallback(async (n: StoredNote) => {
-    await deleteNote(n);
+  // ─── Hide Note (local-only) ────────────────────────────────────
+  // Deletion is intentionally not exposed: a note file is the ONLY
+  // record of the secrets needed to spend or claim a commitment, so
+  // a UX-driven trash button is too dangerous (one wrong click loses
+  // funds). Instead we maintain a per-account "hidden" set in
+  // localStorage that filters notes out of the visible list. The
+  // file on disk is untouched, so unhiding restores the entry and
+  // the user can recover funds at any time.
+  const hiddenStorageKey = account ? `escrow:hiddenNotes:${account.toLowerCase()}` : null;
+  const [hiddenNotes, setHiddenNotes] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(false);
+
+  useEffect(() => {
+    if (!hiddenStorageKey) { setHiddenNotes(new Set()); return; }
+    try {
+      const raw = window.localStorage.getItem(hiddenStorageKey);
+      setHiddenNotes(raw ? new Set(JSON.parse(raw) as string[]) : new Set());
+    } catch {
+      setHiddenNotes(new Set());
+    }
+  }, [hiddenStorageKey]);
+
+  const persistHidden = useCallback((next: Set<string>) => {
+    setHiddenNotes(next);
+    if (!hiddenStorageKey) return;
+    try {
+      window.localStorage.setItem(hiddenStorageKey, JSON.stringify(Array.from(next)));
+    } catch { /* quota / private mode — keep state in memory */ }
+  }, [hiddenStorageKey]);
+
+  const handleHideNote = useCallback((n: StoredNote) => {
+    const next = new Set(hiddenNotes);
+    next.add(n.commitment);
+    persistHidden(next);
+  }, [hiddenNotes, persistHidden]);
+
+  const handleUnhideNote = useCallback((n: StoredNote) => {
+    const next = new Set(hiddenNotes);
+    next.delete(n.commitment);
+    persistHidden(next);
+  }, [hiddenNotes, persistHidden]);
+
+  // Manual refresh: re-read the notes folder + re-run on-chain status
+  // checks. Useful after a claim or settle that happened in another tab
+  // — without this the page only re-indexes when notes/orderFiles
+  // change, which doesn't fire on simple navigation back.
+  const handleManualRefresh = useCallback(async () => {
     await refreshNotes();
   }, [refreshNotes]);
 
@@ -571,11 +615,30 @@ export default function PrivateEscrowPage() {
               <h3 className="font-headline font-bold text-on-surface">
                 Private Notes ({notes.length})
               </h3>
-              {folderReady && (
-                <span className="text-xs text-emerald-400 flex items-center gap-1">
-                  <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {folderReady && (
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
+                  </span>
+                )}
+                {hiddenNotes.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowHidden((v) => !v)}
+                    className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors"
+                  >
+                    {showHidden ? `Hide hidden (${hiddenNotes.size})` : `Show hidden (${hiddenNotes.size})`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors"
+                  title="Re-read notes folder and re-check on-chain status"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
 
             {syncError && (
@@ -598,7 +661,10 @@ export default function PrivateEscrowPage() {
               </div>
             ) : (
               <div className="divide-y divide-outline-variant/10">
-                {notes.filter((n) => n.leafIndex >= 0).map((n, i) => {
+                {notes
+                  .filter((n) => n.leafIndex >= 0)
+                  .filter((n) => showHidden || !hiddenNotes.has(n.commitment))
+                  .map((n, i) => {
                   // Find pending change notes linked to this note (same ownerSecret, leafIndex === -1)
                   const changeNotes = notes.filter((c) =>
                     c.leafIndex === -1 &&
@@ -646,11 +712,18 @@ export default function PrivateEscrowPage() {
                           {statusLabel}
                         </span>
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteNote(n); }}
-                          className="text-on-surface-variant/30 hover:text-error transition-colors p-1"
-                          title="Remove note file"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            hiddenNotes.has(n.commitment) ? handleUnhideNote(n) : handleHideNote(n);
+                          }}
+                          className="text-xs px-2 py-1 rounded text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-bright/40 transition-colors"
+                          title={
+                            hiddenNotes.has(n.commitment)
+                              ? "Unhide — show this commitment in the list again"
+                              : "Hide — remove from this list (note file stays on disk; funds are not affected)"
+                          }
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {hiddenNotes.has(n.commitment) ? "Unhide" : "Hide"}
                         </button>
                       </div>
                     </div>
