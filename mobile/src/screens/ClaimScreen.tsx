@@ -531,11 +531,13 @@ export default function ClaimScreen() {
         warning="Anyone with this key can drain the stealth address. Only import into a wallet flow you control."
         fieldLabel="Private key"
         secret={stealthPrivkeyReveal?.privKey ?? ''}
-        shareTitle="Share stealth private key?"
-        shareBody="The OS share sheet will expose the private key. Only send to a secure wallet import flow you control."
-        shareMessage={stealthPrivkeyReveal
-          ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
-          : ''}
+        share={{
+          title: 'Share stealth private key?',
+          body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
+          message: stealthPrivkeyReveal
+            ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
+            : '',
+        }}
       />
     </SafeAreaView>
   );

@@ -597,11 +597,13 @@ export default function SettingsScreen() {
         secret={stealthKeysReveal
           ? `Spending key:\n${stealthKeysReveal.spendingKey}\n\nViewing key:\n${stealthKeysReveal.viewingKey}`
           : ''}
-        shareTitle="Share stealth keys?"
-        shareBody="These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control."
-        shareMessage={stealthKeysReveal
-          ? `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
-          : ''}
+        share={{
+          title: 'Share stealth keys?',
+          body: 'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
+          message: stealthKeysReveal
+            ? `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
+            : '',
+        }}
       />
     </SafeAreaView>
   );

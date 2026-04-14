@@ -7,135 +7,89 @@
  * the alert opened — vulnerable to shoulder-surfing and screenshot
  * tooling the user hadn't consented to.
  *
- * Shape:
- *   - Value is masked by default (●●●●…). Tap "Reveal" to flip to
- *     plaintext; tap "Hide" to re-mask without closing the modal.
- *   - `Share` routes through `confirmShareSecret` so the existing
- *     two-step OS-share gate still applies.
- *   - `Close` resets the reveal flag so re-opening the modal starts
- *     masked again, even if the parent keeps the component mounted.
+ * Value is masked by default; tap Reveal to flip to plaintext. State
+ * resets whenever the modal closes so re-opening always starts masked.
+ * Share routes through `confirmShareSecret` so the existing two-step
+ * OS-share gate still applies.
  *
- * Copy-to-clipboard button is intentionally absent in v1 — would
- * require adding `expo-clipboard` as a dependency. Tracked as a
- * follow-up; users can still route through Share → "Copy" on both
- * platforms' system share sheets.
+ * Copy-to-clipboard is intentionally absent in v1 (would add
+ * `expo-clipboard`). Users can still Copy via the system Share sheet.
  */
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, layout, shadowSubtle } from '../styles/theme';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { colors } from '../styles/theme';
 import { confirmShareSecret } from '../lib/confirmShareSecret';
+import BaseModal from './BaseModal';
+
+export interface SecretRevealModalShare {
+  title: string;
+  body: string;
+  message: string;
+}
 
 export interface SecretRevealModalProps {
   visible: boolean;
   onClose: () => void;
   title: string;
-  /** Context text shown above the secret — e.g. "Controls stealth
-   *  address 0xabc…". */
   description?: string;
-  /** The sensitive value to show (unmasked on Reveal). */
-  secret: string;
-  /** Warning shown right above the value. */
   warning?: string;
-  /** Label rendered beside the reveal/hide toggle. */
   fieldLabel?: string;
-  /** Passed to `confirmShareSecret` when the user taps Share. */
-  shareTitle: string;
-  shareBody: string;
-  shareMessage: string;
+  secret: string;
+  share: SecretRevealModalShare;
 }
 
+// Arbitrary length — real secrets are 64+ hex chars but a fixed-width
+// mask reads better than letting it reflow based on secret length.
 const MASK = '•'.repeat(20);
 
 export default function SecretRevealModal(props: SecretRevealModalProps) {
-  const {
-    visible, onClose, title, description, secret, warning, fieldLabel,
-    shareTitle, shareBody, shareMessage,
-  } = props;
-
+  const { visible, onClose, title, description, warning, fieldLabel, secret, share } = props;
   const [revealed, setRevealed] = useState(false);
 
-  // Re-mask on every open so a quick re-open of the same modal doesn't
-  // silently show the secret the user just dismissed.
+  // Re-mask whenever the modal closes, so a quick re-open never shows
+  // the secret the user just dismissed without an explicit tap.
   useEffect(() => {
     if (!visible) setRevealed(false);
   }, [visible]);
 
   const handleShare = () => {
-    confirmShareSecret({ title: shareTitle, body: shareBody, shareMessage });
-  };
-
-  const handleClose = () => {
-    setRevealed(false);
-    onClose();
+    confirmShareSecret({ title: share.title, body: share.body, shareMessage: share.message });
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <View style={s.backdrop}>
-        <View style={s.sheet}>
-          <View style={s.header}>
-            <Text style={s.title}>{title}</Text>
-            <TouchableOpacity onPress={handleClose} hitSlop={8}>
-              <Text style={s.closeIcon}>✕</Text>
-            </TouchableOpacity>
-          </View>
+    <BaseModal visible={visible} onClose={onClose} title={title}>
+      {description && <Text style={s.description}>{description}</Text>}
+      {warning && <Text style={s.warning}>{warning}</Text>}
 
-          {description && <Text style={s.description}>{description}</Text>}
-          {warning && <Text style={s.warning}>{warning}</Text>}
-
-          <View style={s.fieldBlock}>
-            {fieldLabel && <Text style={s.fieldLabel}>{fieldLabel}</Text>}
-            <View style={s.valueRow}>
-              <Text
-                style={[s.value, !revealed && s.valueMasked]}
-                numberOfLines={revealed ? undefined : 1}
-                selectable={revealed}
-              >
-                {revealed ? secret : MASK}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={s.toggleBtn}
-              onPress={() => setRevealed((r) => !r)}
-            >
-              <Text style={s.toggleText}>{revealed ? 'Hide' : 'Reveal'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={s.actions}>
-            <TouchableOpacity style={[s.btn, s.btnSecondary]} onPress={handleClose}>
-              <Text style={s.btnSecondaryText}>Close</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.btn, s.btnDanger]} onPress={handleShare}>
-              <Text style={s.btnDangerText}>Share</Text>
-            </TouchableOpacity>
-          </View>
+      <View style={s.fieldBlock}>
+        {fieldLabel && <Text style={s.fieldLabel}>{fieldLabel}</Text>}
+        <View style={s.valueRow}>
+          <Text
+            style={[s.value, !revealed && s.valueMasked]}
+            numberOfLines={revealed ? undefined : 1}
+            selectable={revealed}
+          >
+            {revealed ? secret : MASK}
+          </Text>
         </View>
+        <TouchableOpacity style={s.toggleBtn} onPress={() => setRevealed((r) => !r)}>
+          <Text style={s.toggleText}>{revealed ? 'Hide' : 'Reveal'}</Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+
+      <View style={s.actions}>
+        <TouchableOpacity style={[s.btn, s.btnSecondary]} onPress={onClose}>
+          <Text style={s.btnSecondaryText}>Close</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.btn, s.btnDanger]} onPress={handleShare}>
+          <Text style={s.btnDangerText}>Share</Text>
+        </TouchableOpacity>
+      </View>
+    </BaseModal>
   );
 }
 
 const s = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(17, 24, 39, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: layout.screenHZ,
-  },
-  sheet: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: colors.card,
-    borderRadius: layout.card.radius,
-    padding: layout.card.padding,
-    gap: 16,
-    ...shadowSubtle,
-  },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text },
-  closeIcon: { fontSize: 18, color: colors.textMuted, paddingLeft: 12 },
   description: { fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
   warning: {
     fontSize: 12, fontWeight: '700', color: colors.danger, lineHeight: 17,
