@@ -2,43 +2,30 @@
  * MarketQuoteCard — preview of the best swap route before the user
  * submits a market order.
  *
- * Calls `getBestSwapRoute` with the current sell amount and displays
- * the aggregator that returned the quote (`1inch` via web proxy or
- * `uniswap` direct), the estimated output, and the minimum the user
- * will accept after slippage. Debounced so every keystroke doesn't
- * fire an RPC/HTTP call.
- *
- * Stays a pure display component for Phase B — Phase C refactors
+ * Phase B of the DEX aggregator port: display-only. Phase C refactors
  * MarketOrderService to accept the returned `{dexRouter, dexCalldata}`
- * directly so the quote the user sees is the one that executes.
+ * so the displayed route is the executed route.
  */
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { ethers } from 'ethers';
 import { colors, layout, shadowSubtle } from '../styles/theme';
-import { getBestSwapRoute, SwapRoute } from '../lib/dex-aggregator';
+import { getBestSwapRoute, SOURCE_LABELS, SwapRoute } from '../lib/dex-aggregator';
 import { ConfigService } from '../services/ConfigService';
 import { friendlyError } from '../lib/error-messages';
+import { formatBalance } from '../lib/format';
 
 interface Props {
-  /** Unit-scaled sell amount (already parsed to wei/smallest-unit). */
   sellAmount: bigint;
-  /** Minimum output the user will accept (post-slippage). */
   minReceive: bigint;
   sellToken: string;
   buyToken: string;
-  /** Human-readable buy-token symbol (for labelling the estimate). */
   buySymbol: string;
-  /** Decimals of the buy token so the estimated output can be formatted. */
   buyDecimals: number;
-  /** Address that will receive the swap output (settlement contract). */
   recipient: string;
 }
 
 const DEBOUNCE_MS = 500;
-const SOURCE_LABEL: Record<SwapRoute['source'], string> = {
-  '1inch': '1inch Pathfinder',
-  uniswap: 'Uniswap V3',
-};
 
 export default function MarketQuoteCard({
   sellAmount, minReceive, sellToken, buyToken, buySymbol, buyDecimals, recipient,
@@ -48,8 +35,6 @@ export default function MarketQuoteCard({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Skip until inputs are meaningful — prevents the first render from
-    // flashing an error before the user has typed anything.
     if (sellAmount <= 0n || !sellToken || !buyToken || !recipient) {
       setRoute(null);
       setError(null);
@@ -57,19 +42,25 @@ export default function MarketQuoteCard({
       return;
     }
 
+    // Two-layer cancel: the AbortController kills any in-flight fetch
+    // (stacked fetches on fast typing would otherwise race), and the
+    // `cancelled` flag keeps setState out of an unmounted/stale render.
+    const controller = new AbortController();
     let cancelled = false;
     setLoading(true);
     const chainId = ConfigService.getChainId();
+
     const timer = setTimeout(async () => {
       try {
         const r = await getBestSwapRoute({
           chainId, sellToken, buyToken, sellAmount, minReceive, recipient,
+          signal: controller.signal,
         });
         if (cancelled) return;
         setRoute(r);
         setError(null);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || controller.signal.aborted) return;
         setRoute(null);
         setError(friendlyError(err));
       } finally {
@@ -80,6 +71,7 @@ export default function MarketQuoteCard({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      controller.abort();
     };
   }, [sellAmount, minReceive, sellToken, buyToken, recipient]);
 
@@ -103,14 +95,14 @@ export default function MarketQuoteCard({
 
   if (!route) return null;
 
-  const estimated = formatUnits(route.estimatedOutput, buyDecimals);
-  const minHuman = formatUnits(minReceive, buyDecimals);
+  const estimated = formatBalance(ethers.formatUnits(route.estimatedOutput, buyDecimals));
+  const minHuman = formatBalance(ethers.formatUnits(minReceive, buyDecimals));
 
   return (
     <View style={s.card}>
       <View style={s.row}>
         <Text style={s.label}>Best route</Text>
-        <Text style={s.value}>{SOURCE_LABEL[route.source]}</Text>
+        <Text style={s.value}>{SOURCE_LABELS[route.source]}</Text>
       </View>
       <View style={s.row}>
         <Text style={s.label}>Estimated output</Text>
@@ -122,16 +114,6 @@ export default function MarketQuoteCard({
       </View>
     </View>
   );
-}
-
-// Localised so this component stays self-contained — a shared
-// `formatUnits` variant can fold it in later if more call sites appear.
-function formatUnits(value: bigint, decimals: number): string {
-  if (decimals <= 0) return value.toString();
-  const s = value.toString().padStart(decimals + 1, '0');
-  const whole = s.slice(0, -decimals);
-  const frac = s.slice(-decimals).replace(/0+$/, '');
-  return frac ? `${whole}.${frac.slice(0, 6)}` : whole;
 }
 
 const s = StyleSheet.create({

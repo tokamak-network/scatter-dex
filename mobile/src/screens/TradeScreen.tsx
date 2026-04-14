@@ -1,7 +1,7 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -22,6 +22,7 @@ import MarketQuoteCard from '../components/MarketQuoteCard';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
+import { computeMarketAmounts } from '../lib/market-amounts';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -132,7 +133,7 @@ export default function TradeScreen() {
   // `decimals()` function.
   const [sellDecimals, setSellDecimals] = useState<number>(18);
   const [buyDecimals, setBuyDecimals] = useState<number>(18);
-  const buyTokenAddress = ConfigService.getWethAddress() || '';
+  const buyTokenAddress = useMemo(() => ConfigService.getWethAddress() || '', []);
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
     let cancelled = false;
@@ -153,6 +154,22 @@ export default function TradeScreen() {
     if (!Number.isFinite(a) || !Number.isFinite(p) || a <= 0 || p <= 0) return 0;
     return a * p;
   })();
+
+  // Memoized so the BigInt props handed to MarketQuoteCard keep the
+  // same identity across renders — otherwise the child's debounced
+  // effect refires on every parent render.
+  const marketQuoteInput = useMemo(() => {
+    const a = parseFloat(amount);
+    const p = parseFloat(price.replace(/,/g, ''));
+    if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
+    try {
+      return computeMarketAmounts({ amount, price, sellDecimals, buyDecimals, slippageBps: 50 });
+    } catch {
+      // `parseUnits` throws on too-many-decimals during typing — fine
+      // to skip the preview until the user lands on a valid value.
+      return null;
+    }
+  }, [amount, price, sellDecimals, buyDecimals]);
 
   const claimTotal = claimRows.reduce((sum, r) => {
     const n = parseFloat(r.amount);
@@ -330,17 +347,15 @@ export default function TradeScreen() {
           return;
         }
 
-        const [sellDecimals, buyDecimals] = await Promise.all([
+        const [sellDec, buyDec] = await Promise.all([
           TokenService.getDecimals(readProvider, selectedNote.token),
           TokenService.getDecimals(readProvider, buyToken),
         ]);
 
-        const priceClean = price.replace(/,/g, '');
-        const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
-        const priceBn = ethers.parseUnits(priceClean, buyDecimals);
-        const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
-        const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
-        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, buyDecimals);
+        const { minReceive } = computeMarketAmounts({
+          amount, price, sellDecimals: sellDec, buyDecimals: buyDec, slippageBps: 50,
+        });
+        const buyAmountMinHuman = ethers.formatUnits(minReceive, buyDec);
 
         const input: MarketOrderInput = {
           note: selectedNote,
@@ -476,27 +491,17 @@ export default function TradeScreen() {
           </View>
         </View>
 
-        {/* Market-order route preview — only shown in market mode. */}
-        {tradeType === 'market' && account && selectedNote && (() => {
-          const a = parseFloat(amount);
-          const p = parseFloat(price.replace(/,/g, ''));
-          if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
-          const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
-          const priceBn = ethers.parseUnits(price.replace(/,/g, ''), buyDecimals);
-          const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
-          const minReceive = (buyAmountBn * 995n) / 1000n; // 0.5% slippage
-          return (
-            <MarketQuoteCard
-              sellAmount={sellAmountBn}
-              minReceive={minReceive}
-              sellToken={selectedNote.token}
-              buyToken={buyTokenAddress}
-              buySymbol={buyTokenSymbol}
-              buyDecimals={buyDecimals}
-              recipient={account}
-            />
-          );
-        })()}
+        {tradeType === 'market' && account && selectedNote && marketQuoteInput && (
+          <MarketQuoteCard
+            sellAmount={marketQuoteInput.sellAmountBn}
+            minReceive={marketQuoteInput.minReceive}
+            sellToken={selectedNote.token}
+            buyToken={buyTokenAddress}
+            buySymbol={buyTokenSymbol}
+            buyDecimals={buyDecimals}
+            recipient={account}
+          />
+        )}
 
         {/* Claim Builder (limit mode only) */}
         {tradeType === 'limit' && (

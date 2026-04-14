@@ -36,6 +36,13 @@ const UNISWAP_DEADLINE_SEC = 1800;
 
 export type SwapSource = '1inch' | 'uniswap';
 
+// Human labels colocated with the union — adding a new source is
+// a single-spot change.
+export const SOURCE_LABELS: Record<SwapSource, string> = {
+  '1inch': '1inch Pathfinder',
+  uniswap: 'Uniswap V3',
+};
+
 export interface SwapRoute {
   dexRouter: string;
   dexCalldata: string;
@@ -52,6 +59,9 @@ export interface SwapParams {
   recipient: string;          // settlement contract address
   slippageBps?: number;       // slippage tolerance in bps (default 50 = 0.5%)
   feeTier?: number;           // Uniswap V3 fee tier (default 3000 = 0.3%)
+  /** Aborts an in-flight 1inch fetch — e.g. when the preview UI
+   *  supersedes a stale quote. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -74,7 +84,7 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
 }
 
 async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapRoute | null> {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = DEFAULT_SLIPPAGE_BPS } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = DEFAULT_SLIPPAGE_BPS, signal } = params;
 
   const queryParams = new URLSearchParams({
     chainId: chainId.toString(),
@@ -85,8 +95,13 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
     slippage: (slippageBps / 100).toString(),
   });
 
+  // Chain the caller-provided abort signal with our own timeout so
+  // either a parent-driven cancel (stale preview) or a timeout aborts
+  // the underlying fetch.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const onParentAbort = () => controller.abort();
+  signal?.addEventListener('abort', onParentAbort);
 
   try {
     const res = await fetch(`${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`, {
@@ -117,6 +132,7 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
     };
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', onParentAbort);
   }
 }
 
