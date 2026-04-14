@@ -58,18 +58,6 @@ interface ClaimRow {
 
 export class PrivateOrderDB {
   private db: Database.Database;
-  private insertOrder: ReturnType<Database.Database["prepare"]>;
-  private insertClaim: ReturnType<Database.Database["prepare"]>;
-  private deleteClaims: ReturnType<Database.Database["prepare"]>;
-  private updateStatusStmt: ReturnType<Database.Database["prepare"]>;
-  private selectPending: ReturnType<Database.Database["prepare"]>;
-  private selectClaims: ReturnType<Database.Database["prepare"]>;
-  private selectExists: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKey: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKeyNonce: ReturnType<Database.Database["prepare"]>;
-  private countByPubKey: ReturnType<Database.Database["prepare"]>;
-  private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
   private insertClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
@@ -115,50 +103,12 @@ export class PrivateOrderDB {
       console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
     }
 
-    this.insertOrder = this.db.prepare(`
-      INSERT OR REPLACE INTO private_orders
-        (pub_key_ax, pub_key_ay, nonce, sell_token, buy_token, sell_amount, buy_amount,
-         max_fee, expiry, sig_s, sig_r8x, sig_r8y, owner_secret, balance, salt, leaf_index,
-         status, settle_tx, submitted_at, new_salt, expected_change_commitment)
-      VALUES
-        (@pubKeyAx, @pubKeyAy, @nonce, @sellToken, @buyToken, @sellAmount, @buyAmount,
-         @maxFee, @expiry, @sigS, @sigR8x, @sigR8y, @ownerSecret, @balance, @salt, @leafIndex,
-         @status, @settleTx, @submittedAt, @newSalt, @expectedChangeCommitment)
-    `);
-    this.insertClaim = this.db.prepare(`
-      INSERT OR REPLACE INTO private_claims (pub_key_ax, nonce, idx, secret, recipient, token, amount, release_time)
-      VALUES (@pubKeyAx, @nonce, @idx, @secret, @recipient, @token, @amount, @releaseTime)
-    `);
-    this.deleteClaims = this.db.prepare(`DELETE FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce`);
-    this.updateStatusStmt = this.db.prepare(`
-      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx), cross_relayer = COALESCE(@crossRelayer, cross_relayer),
-        settled_at = CASE WHEN @status = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
-      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce
-    `);
-    this.selectPending = this.db.prepare(`
-      SELECT * FROM private_orders WHERE status = 'pending' ORDER BY submitted_at ASC
-    `);
-    this.selectClaims = this.db.prepare(`
-      SELECT * FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce ORDER BY idx
-    `);
-    this.selectExists = this.db.prepare(`
-      SELECT 1 FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
-    `);
-    this.selectByPubKey = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
-    `);
-    this.selectByPubKeyStatus = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
-    `);
-    this.selectByPubKeyNonce = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
-    `);
-    this.countByPubKey = this.db.prepare(`
-      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx
-    `);
-    this.countByPubKeyStatus = this.db.prepare(`
-      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status
-    `);
+    // Private-flow CRUD prepared statements (insertOrder, insertClaim,
+    // deleteClaims, updateStatusStmt, selectPending, selectClaims,
+    // selectExists, selectByPubKey, selectByPubKeyStatus, selectByPubKeyNonce,
+    // countByPubKey, countByPubKeyStatus) were removed with the tracker #29
+    // cleanup. The on-disk `private_orders` / `private_claims` tables remain
+    // in the schema for backward-compat with existing operator DBs.
     this.insertClaimsRoot = this.db.prepare(`
       INSERT OR IGNORE INTO settled_claims_roots (claims_root, settled_at) VALUES (@claimsRoot, @settledAt)
     `);
