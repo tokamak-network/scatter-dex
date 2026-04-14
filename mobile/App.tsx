@@ -36,11 +36,25 @@ function AppShell() {
   const { isLocked } = useWallet();
   return (
     <>
-      <NavigationContainer>
-        <TabNavigator />
-      </NavigationContainer>
+      {/* Hide the navigator subtree from screen readers while locked —
+          otherwise VoiceOver / TalkBack can swipe past the overlay and
+          focus the tabs underneath, leaking the auth-gated UI. Pair
+          with `accessibilityViewIsModal` on the overlay so iOS treats
+          the lock as a proper modal. */}
+      <View
+        style={styles.navRoot}
+        importantForAccessibility={isLocked ? 'no-hide-descendants' : 'auto'}
+        accessibilityElementsHidden={isLocked}
+      >
+        <NavigationContainer>
+          <TabNavigator />
+        </NavigationContainer>
+      </View>
       {isLocked && (
-        <View style={StyleSheet.absoluteFill}>
+        <View
+          style={StyleSheet.absoluteFill}
+          accessibilityViewIsModal
+        >
           <LockedScreen />
         </View>
       )}
@@ -116,6 +130,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FFFFFF' },
+  navRoot: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   loadingText: { color: '#9CA3AF', marginTop: 16, fontSize: 14 },
   errorTitle: { color: '#EF4444', fontSize: 16, fontWeight: '700', marginBottom: 12, textAlign: 'center' },

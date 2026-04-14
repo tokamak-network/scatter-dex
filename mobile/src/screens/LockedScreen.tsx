@@ -21,7 +21,16 @@ export default function LockedScreen() {
   const { lockedAccount, unlock, disconnect, isConnecting, error } = useWallet();
 
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+    // `accessibilityViewIsModal` tells iOS screen readers this view is a
+    // blocking modal — focus stays inside until it's dismissed, preventing
+    // VoiceOver from reaching the tab navigator underneath the overlay.
+    // Android uses `importantForAccessibility="no-hide-descendants"` on
+    // the navigator in App.tsx for the same effect.
+    <SafeAreaView
+      style={s.safe}
+      edges={['top', 'bottom']}
+      accessibilityViewIsModal
+    >
       <View style={s.wrap}>
         <View
           style={s.icon}
