@@ -8,23 +8,26 @@ import type { RemoteOrderStore } from "./remote-orderbook.js";
 export const FEE_BPS_DENOMINATOR = 10_000n;
 
 /**
- * Worst-case feasibility check under the [2026-04-14 fee redesign] where
- * each side's signed `maxFee` caps the fee against their *own* buyAmount:
+ * Feasibility check under the [2026-04-14 fee redesign, v2]. Each side's
+ * relayer fee now comes out of their own receive, so:
  *
- *   totalLocked >= buyAmount                    (settle 8b)
+ *   totalLocked >= buyAmount − feeToken         (settle 8b, relaxed)
  *   totalLocked + feeToken <= counterpartySell  (settle 8c)
- *   feeToken   <= buyAmount * maxFee / 10000    (authorize cap)
+ *   ⇒ (buyAmount − feeToken) + feeToken ≤ counterpartySell
+ *   ⇒ buyAmount ≤ counterpartySell
  *
- * Combining yields `counterpartySell * 10000 >= buyAmount * (10000 + maxFee)`.
- * The fee can only ever be ≤ that cap, so a failing check here means the
- * trade is genuinely infeasible at settle; the matcher rejects to avoid
- * "matched but reverts at settle" outcomes.
+ * The fee drops out of the feasibility inequality entirely — matching
+ * reduces to a plain sufficient-counterparty-sell check. Fee is
+ * independently bounded by `feeToken ≤ buyAmount × maxFee / 10000` and
+ * applied at settle time without needing any extra headroom.
  *
- * `maxFee` is a uint16 upstream (≤ 65535); any nonsensical "fee > 100%"
- * value just makes the RHS grow and naturally rejects.
+ * `maxFee` is kept in the signature for backward compatibility but is
+ * no longer used in this inequality. Callers should still ensure
+ * `maxFee ≥ relayer.minFeeBps` separately (see PrivateMatcher).
  */
-export function isSettleFeeCovered(counterpartySell: bigint, maxFee: bigint, buyAmount: bigint): boolean {
-  return counterpartySell * FEE_BPS_DENOMINATOR >= buyAmount * (FEE_BPS_DENOMINATOR + maxFee);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function isSettleFeeCovered(counterpartySell: bigint, _maxFee: bigint, buyAmount: bigint): boolean {
+  return counterpartySell >= buyAmount;
 }
 
 export class PrivateMatcher {
