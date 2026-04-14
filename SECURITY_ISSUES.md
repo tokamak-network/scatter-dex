@@ -16,7 +16,7 @@
 | 15 | mobile | 네비게이션 (hamburger 메뉴) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 21 | infra | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | 최근 fee redesign / cross-relayer / claim guard 모두 main 반영됨, 좋은 타이밍 |
 | 27 | UX | Cancel "Commitment rotation" 친화적 설명 | ⚠️ | 한 줄 메시지 있음 ("Escrow rotated to new commitment", `private-history/page.tsx:727`); 더 친화적 설명 여지 |
-| 28 | UX | 가스비 추정 패널 가시성 강화 | ⚠️ | `GasEstimate` 패널 이미 존재 (`private-order/page.tsx:526`); 가시성 보강은 주관 영역 |
+| 28 | UX | 가스비 추정 패널 가시성 강화 | ⚠️ | `GasEstimate` 이미 계산됨 — `private-order/page.tsx:567` 의 `useState`, `<FeeBreakdown>` 으로 1508 line 에서 렌더. 가시성 보강은 주관 영역 |
 | 29 | tech-debt | Dead `private_orders` / full-proof 경로 정리 | ⬜ | 아래 #29 메모 참고 |
 | 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ⬜ | `OrderSummary` 와 P2P 라우트 검증 필드 불일치로 P2P fallback 시 authorize 매칭이 동작하지 않음. PR #308 Copilot finding |
 | 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ⬜ | 현재 cross-relayer 매칭 시 전체 Map 스캔. 10k cap 안에서는 무시 가능, 트래픽 늘면 우선순위 상향. PR #308 gemini finding |
@@ -90,18 +90,18 @@ S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_
 <details>
 <summary>10건 ✅ 처리</summary>
 
-| # | 이슈 | PR/커밋 |
-|---|------|---------|
-| C-4 | feeVault 미설정 + dexPlatformFeeBps > 0 → revert | (commit) |
-| C-5 | 프론트 DEX calldata에 fee 차감 전 sellAmount 인코딩 | (commit) |
-| C-6 | sellToken == buyToken 시 Panic(17) underflow | (commit) |
-| H-7 | settleWithDex 릴레이어 레지스트리 체크가 일반 사용자 차단 | (commit) |
-| H-8 | settleAuth/settlePrivate sanctions 체크 누락 | (commit) |
-| H-9 | WithdrawVerifier delta == gamma (phase-2 미실행) | (commit) |
-| M-12 | DexSwapFailed 가 두 실패 구분 불가 | (commit) |
-| M-13 | Uniswap router 주소 오류 (SwapRouter vs SwapRouter02) | (commit) |
-| M-14 | minReceive 부동소수점 반올림 | (commit) |
-| M-15 | setSanctionsList EOA 체크 없음 | (commit) |
+| # | 이슈 | 커밋 |
+|---|------|------|
+| C-4 | feeVault 미설정 + dexPlatformFeeBps > 0 → revert | `ab4f847` |
+| C-5 | 프론트 DEX calldata에 fee 차감 전 sellAmount 인코딩 | `ab4f847` |
+| C-6 | sellToken == buyToken 시 Panic(17) underflow | `75db603`, `d25a4f3` |
+| H-7 | settleWithDex 릴레이어 레지스트리 체크가 일반 사용자 차단 | `ab4f847` |
+| H-8 | settleAuth/settlePrivate sanctions 체크 누락 | `feeec6d` |
+| H-9 | WithdrawVerifier delta == gamma (phase-2 미실행) | `0b578c9` |
+| M-12 | DexSwapFailed 가 두 실패 구분 불가 | `3b40e73` |
+| M-13 | Uniswap router 주소 오류 (SwapRouter vs SwapRouter02) | `3b40e73` |
+| M-14 | minReceive 부동소수점 반올림 | `3b40e73` |
+| M-15 | setSanctionsList EOA 체크 없음 | `206dc51` |
 
 </details>
 
