@@ -58,6 +58,7 @@ const RELAYER_A_URL = process.env.RELAYER_A_URL ?? "http://localhost:3002";
 const RELAYER_B_URL = process.env.RELAYER_B_URL ?? "http://localhost:3003";
 const SHARED_OB_URL = process.env.SHARED_OB_URL ?? "http://localhost:4000";
 const SETTLE_TIMEOUT_MS = Number(process.env.E2E_SETTLE_TIMEOUT_MS ?? 60_000);
+const SETTLE_POLL_MS = 1500;
 
 const CLAIMS_TREE_DEPTH = 4;
 const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
@@ -184,17 +185,16 @@ async function deposit(
   const salt = randomFieldElement();
   const commitment = computeCommitmentV2(ownerSecret, BigInt(tokenAddr), amount, salt, pubKeyAx, pubKeyAy);
 
+  // `makeDepositProof` already returns Solidity-formatted {a,b,c}
+  // tuples (with the pi_b coordinate transpose applied). Don't go
+  // back into the raw snarkjs `pi_a/pi_b/pi_c` shape — that path is a
+  // crash because the returned object doesn't have a `.proof` member.
   const proof = await makeDepositProof({
     secret: ownerSecret, salt, token: tokenAddr, commitment, amount,
     pubKeyAx, pubKeyAy,
   });
 
-  const tx = await pool.deposit(
-    [proof.proof.pi_a[0], proof.proof.pi_a[1]],
-    [[proof.proof.pi_b[0][1], proof.proof.pi_b[0][0]], [proof.proof.pi_b[1][1], proof.proof.pi_b[1][0]]],
-    [proof.proof.pi_c[0], proof.proof.pi_c[1]],
-    commitment, tokenAddr, amount,
-  );
+  const tx = await pool.deposit(proof.a, proof.b, proof.c, commitment, tokenAddr, amount);
   const receipt = await tx.wait();
 
   // Find leafIndex from the CommitmentInserted event
@@ -279,15 +279,15 @@ async function buildAndSubmitOrder(
     claimsRoot, totalLocked, orderHash,
   });
 
-  // Submit to the user's relayer
+  // Submit to the user's relayer. `makeAuthorizeProof.formatted` already
+  // applies the pi_b coordinate transpose for the Solidity verifier; just
+  // rename proofA/B/C → a/b/c to match the AuthorizeOrderFile shape that
+  // POST /api/authorize-orders expects.
   const orderFile = {
     proof: {
-      a: [authResult.proof.pi_a[0], authResult.proof.pi_a[1]],
-      b: [
-        [authResult.proof.pi_b[0][1], authResult.proof.pi_b[0][0]],
-        [authResult.proof.pi_b[1][1], authResult.proof.pi_b[1][0]],
-      ],
-      c: [authResult.proof.pi_c[0], authResult.proof.pi_c[1]],
+      a: authResult.formatted.proofA,
+      b: authResult.formatted.proofB,
+      c: authResult.formatted.proofC,
     },
     publicSignals: {
       pubKeyBind: authResult.publicSignals[0],
@@ -337,18 +337,25 @@ async function waitForSettlement(
   const start = Date.now();
   const aHex = artifactsA.authNullifierHex;
   const bHex = artifactsB.authNullifierHex;
+  const aRoot = toHex(artifactsA.claimsRoot, 32);
+  const bRoot = toHex(artifactsB.claimsRoot, 32);
   while (Date.now() - start < SETTLE_TIMEOUT_MS) {
-    const [aSpent, bSpent] = await Promise.all([
+    // `nullifiers(...)` alone would also flip on a cancel — guard with
+    // `claimsGroups[root].totalLocked > 0` since registerClaimsGroup is
+    // only called by settleAuth/settlePrivate/settleWithDex, never by cancel.
+    const [aSpent, bSpent, aGroup, bGroup] = await Promise.all([
       settlement.nullifiers(aHex),
       settlement.nullifiers(bHex),
+      settlement.claimsGroups(aRoot),
+      settlement.claimsGroups(bRoot),
     ]);
-    if (aSpent && bSpent) {
+    if (aSpent && bSpent && BigInt(aGroup.totalLocked) > 0n && BigInt(bGroup.totalLocked) > 0n) {
       console.log(`  Both orders settled in ${((Date.now() - start) / 1000).toFixed(1)}s`);
       return;
     }
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
   }
-  throw new Error(`settleAuth timeout after ${SETTLE_TIMEOUT_MS}ms — neither/one nullifier still unspent`);
+  throw new Error(`settleAuth timeout after ${SETTLE_TIMEOUT_MS}ms — orders not settled (nullifier spent without claimsGroup registration would indicate a cancel race)`);
 }
 
 async function claimFor(
