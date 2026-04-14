@@ -187,14 +187,19 @@ export class AuthorizeCrossRelayerMatchService {
   ): Promise<AuthorizeTradeOfferResponse> {
     const { makerNullifier, takerOrder } = offer;
 
-    const makerStored = this.authorizeOrders.get(makerNullifier);
+    // The offer carries the nullifier in shared-OB's bytes32 hex form
+    // (see authorize-orders.ts:240 — offerHandle derivation). Locally the
+    // Map is keyed by the circom-native decimal string form of the same
+    // bigint. Normalise before lookup.
+    const mapKey = BigInt(makerNullifier).toString();
+    const makerStored = this.authorizeOrders.get(mapKey);
     if (!makerStored) {
       return { status: "rejected", reason: "maker order not found" };
     }
     if (makerStored.status !== "pending") {
       return { status: "rejected", reason: `maker order status is ${makerStored.status}` };
     }
-    if (this.lockingOrders.has(makerNullifier)) {
+    if (this.lockingOrders.has(mapKey)) {
       return { status: "rejected", reason: "maker order is being matched" };
     }
 
@@ -225,7 +230,7 @@ export class AuthorizeCrossRelayerMatchService {
       return { status: "rejected", reason: "taker maxFee below this relayer's minimum" };
     }
 
-    this.lockingOrders.add(makerNullifier);
+    this.lockingOrders.add(mapKey);
     try {
       makerStored.status = "matched";
 
@@ -241,18 +246,18 @@ export class AuthorizeCrossRelayerMatchService {
       makerStored.status = "settled";
       makerStored.settleTxHash = txHash;
       makerStored.crossRelayer = true;
-      this.db?.updateAuthorizeOrderStatus(makerNullifier, "settled", txHash);
-      this.onSettled?.(makerNullifier, txHash);
+      this.db?.updateAuthorizeOrderStatus(mapKey, "settled", txHash);
+      this.onSettled?.(mapKey, txHash);
 
       // Cancel maker's listing from shared OB.
-      const obId = this.orderIdMap.get(makerNullifier);
+      const obId = this.orderIdMap.get(mapKey);
       if (obId) {
         this.sharedClient.cancelOrder(obId).catch(() => {});
-        this.orderIdMap.delete(makerNullifier);
+        this.orderIdMap.delete(mapKey);
       }
 
       console.log(
-        `[authorize-cross] Settled: maker=${makerNullifier.slice(0, 18)}... ` +
+        `[authorize-cross] Settled: maker=${mapKey.slice(0, 18)}... ` +
         `taker=(from ${senderAddress}) tx=${txHash}`,
       );
       return { status: "settled", txHash };
@@ -264,7 +269,7 @@ export class AuthorizeCrossRelayerMatchService {
       console.warn(`[authorize-cross] settleAuth failed:`, reason);
       return { status: "error", reason };
     } finally {
-      this.lockingOrders.delete(makerNullifier);
+      this.lockingOrders.delete(mapKey);
     }
   }
 }
