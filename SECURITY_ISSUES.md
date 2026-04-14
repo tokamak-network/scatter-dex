@@ -246,7 +246,7 @@
 |---|------|------|--------|
 | 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
-| 29 | Dead `private_orders` / full-proof 경로 정리 | ⬜ | — |
+| 29 | Dead `private_orders` / full proof(relayer-side proof 생성) 경로 정리 | ⬜ | — |
 
 <details>
 <summary>#29 범위 메모 (2026-04-14)</summary>
@@ -261,7 +261,7 @@ S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_
   - `zk-relayer/src/routes/orders.ts` — `GET /api/private-orders/:pubKeyAx` (프런트에서 `private-history/page.tsx:323` 가 호출하지만 응답은 항상 빈 배열)
   - `zk-relayer/src/types/order.ts` — `PrivateOrder`, `StoredPrivateOrder`, `PrivateMatch`, `CrossRelayerMatch`, `parsePrivateOrder`, `serializePrivateOrder`, `pairKey`
   - `zk-relayer/src/core/db.ts` — `private_orders` 테이블 스키마 + prepared statements
-  - 테스트: `test/orderbook.test.ts`, `test/matcher.test.ts`, `test/cross-relayer-matcher.test.ts`, `test/scenarios.test.ts` (+ admin/api-routes 내 일부 assertion)
+  - 테스트: `test/orderbook.test.ts`, `test/matcher.test.ts`, `test/cross-relayer-matcher.test.ts`, `test/scenarios.test.ts`, `test/e2e-private-flow.ts` (+ admin/api-routes 내 일부 assertion)
 
 - **Frontend**
   - `frontend/app/trade/private-history/page.tsx:323` — `GET /api/private-orders/:pubKeyAx` 호출 지점. authorize 기반 히스토리로 교체 필요.
