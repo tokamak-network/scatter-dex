@@ -18,6 +18,7 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { TokenService } from './TokenService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
+import type { SwapRoute } from '../lib/dex-aggregator';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
@@ -44,16 +45,14 @@ export interface MarketOrderInput {
   sellAmount: string;      // human-readable
   buyToken: string;        // address
   buyAmount: string;       // min receive (slippage-adjusted)
-  slippageBps: number;     // applied by UI to compute buyAmount (min receive)
   expiryHours: number;
   claimRecipient: string;  // typically self
-  // Pre-computed DEX route from the aggregator. Caller is expected to
-  // invoke `getBestSwapRoute` immediately before this call so the
-  // executed route matches the one surfaced to the user by
-  // `MarketQuoteCard`. The previous local-only Uniswap-V3 encoding
-  // path lived here before DEX aggregator Phase C.
-  dexRouter: string;
-  dexCalldata: string;
+  // Pre-computed DEX route from the aggregator. Caller invokes
+  // `getBestSwapRoute` immediately before this call so the executed
+  // route matches what `MarketQuoteCard` showed the user. The
+  // previous local-only Uniswap-V3 encoding path lived here before
+  // DEX aggregator Phase C.
+  route: SwapRoute;
 }
 
 export const MarketOrderService = {
@@ -69,7 +68,8 @@ export const MarketOrderService = {
     const poolAddr = ConfigService.getCommitmentPoolAddress();
     if (!poolAddr) throw new Error('CommitmentPool address not configured');
 
-    const { note, buyToken, dexRouter, dexCalldata, expiryHours, claimRecipient } = input;
+    const { note, buyToken, route, expiryHours, claimRecipient } = input;
+    const { dexRouter, dexCalldata } = route;
     // Resolve decimals per token — using a hardcoded 18 silently miscomputes
     // amounts for tokens like USDC (6 decimals) by a factor of 10^12.
     const readProvider = ProviderService.getReadProvider();
@@ -242,7 +242,6 @@ export const MarketOrderService = {
       const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
       const proof = formatProofForSolidity(proofResult.proof);
 
-      // ─── Step 3: Submit with caller-provided DEX route ────
       onProgress({ step: 'submitting' });
 
       const settlement = new ethers.Contract(settlementAddr, [

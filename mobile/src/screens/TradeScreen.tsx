@@ -398,11 +398,9 @@ export default function TradeScreen() {
           sellAmount: amount,
           buyToken,
           buyAmount: buyAmountMinHuman,
-          slippageBps: DEFAULT_SLIPPAGE_BPS,
           expiryHours: 1,
           claimRecipient: account,
-          dexRouter: route.dexRouter,
-          dexCalldata: route.dexCalldata,
+          route,
         };
 
         await MarketOrderService.execute(signer, account, input, (p: MarketOrderProgress) => {
