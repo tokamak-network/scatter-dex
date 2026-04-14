@@ -257,6 +257,15 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     rcTotalLocked.in <== totalLocked;
     component rcMaxFee = Num2Bits(16);
     rcMaxFee.in <== maxFee;
+    // [Gemini PR #299 review] Without this cap, a maxFee > 10000 (>100%)
+    // would make `(10000 - maxFee)` wrap the field modulus inside the
+    // minimum-receive guarantee below, so `buyAmount × (10000 − maxFee)`
+    // could underflow to a small positive number and let totalLocked = 0
+    // pass the LessEqThan check.
+    component maxFeeUpper = LessEqThan(16);
+    maxFeeUpper.in[0] <== maxFee;
+    maxFeeUpper.in[1] <== 10000;
+    maxFeeUpper.out === 1;
 
     // [H-5] claimCount range check: must be 0..maxClaimsPerSide.
     // Without this, a field-arithmetic overflow could bypass the

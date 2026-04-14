@@ -435,13 +435,30 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     rcMakerFee.in <== makerFee;
     component rcTakerFee = Num2Bits(16);
     rcTakerFee.in <== takerFee;
+    component rcMakerMaxFee = Num2Bits(16);
+    rcMakerMaxFee.in <== makerMaxFee;
+    component rcTakerMaxFee = Num2Bits(16);
+    rcTakerMaxFee.in <== takerMaxFee;
+    // [Gemini PR #299 review] Cap maxFee at 10000 bps (100%). Without
+    // this, `makerBuyAmount × makerFee` could exceed the field modulus
+    // and the floor-division comparators below would silently flip,
+    // letting feeTokenMaker take the full taker.sellAmount while
+    // recipients still pass §8b.
+    component makerMaxFeeUpper = LessEqThan(16);
+    makerMaxFeeUpper.in[0] <== makerMaxFee;
+    makerMaxFeeUpper.in[1] <== 10000;
+    makerMaxFeeUpper.out === 1;
+    component takerMaxFeeUpper = LessEqThan(16);
+    takerMaxFeeUpper.in[0] <== takerMaxFee;
+    takerMaxFeeUpper.in[1] <== 10000;
+    takerMaxFeeUpper.out === 1;
 
-    component makerFeeCheck = LessEqThan(252);
+    component makerFeeCheck = LessEqThan(16);
     makerFeeCheck.in[0] <== makerFee;
     makerFeeCheck.in[1] <== makerMaxFee;
     makerFeeCheck.out === 1;
 
-    component takerFeeCheck = LessEqThan(252);
+    component takerFeeCheck = LessEqThan(16);
     takerFeeCheck.in[0] <== takerFee;
     takerFeeCheck.in[1] <== takerMaxFee;
     takerFeeCheck.out === 1;
