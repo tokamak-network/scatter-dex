@@ -55,6 +55,11 @@ interface OrderFile {
     /** "market" for settleWithDex orders, otherwise limit. Stored by
      *  private-order/page.tsx when a market trade saves its claim file. */
     type?: "market" | "limit";
+    /** Market-only: on-chain nullifier (0x-hex bytes32). Primary key for
+     *  matching to the SettledWithDex event; legacy bundles without this
+     *  field fall back to the (sellToken, buyToken, sellAmount,
+     *  totalLocked) tuple match. */
+    nullifier?: string;
     /** Market-only: quote snapshot + routing info. */
     slippageBps?: number;
     estimatedOutput?: string;
@@ -201,12 +206,13 @@ export default function PrivateHistoryPage() {
       const filter = settlement.filters.SettledWithDex(null, null, account);
       const events = await settlement.queryFilter(filter, fromBlock, "latest");
 
-      type EvRow = { sellToken: string; buyToken: string; sellAmount: bigint; amountOut: bigint; totalLocked: bigint; txHash: string; blockNumber: number };
+      type EvRow = { nullifier: string; sellToken: string; buyToken: string; sellAmount: bigint; amountOut: bigint; totalLocked: bigint; txHash: string; blockNumber: number };
       const rows: EvRow[] = [];
       for (const ev of events) {
         const log = ev as ethers.EventLog;
         if (!log.args) continue;
         rows.push({
+          nullifier: (log.args[0] as string).toLowerCase(),
           sellToken: (log.args[2] as string).toLowerCase(),
           buyToken: (log.args[3] as string).toLowerCase(),
           sellAmount: BigInt(log.args[4]),
@@ -230,21 +236,50 @@ export default function PrivateHistoryPage() {
         }),
       );
 
-      // Consume events by chronological order so two market orders with an
-      // identical (sellToken, buyToken, sellAmount, totalLocked) quadruple
-      // don't both alias onto the same (first) event. Pair earliest file
-      // with earliest event — `orderList` arrives sorted createdAt DESC,
+      // Preferred path: match by nullifier (bundles saved after this change
+      // carry it in `order.nullifier`). 1:1 guaranteed since nullifiers are
+      // globally unique per settle. Legacy bundles without a nullifier fall
+      // back to a chronological consume-on-match against the tuple
+      // (sellToken, buyToken, sellAmount, totalLocked) — earliest file ↔
+      // earliest event, `orderList` arrives sorted createdAt DESC so we
       // iterate it in reverse (ASC).
       rows.sort((a, b) => a.blockNumber - b.blockNumber);
       const available = [...rows];
+      const byNullifier = new Map(rows.map((r) => [r.nullifier, r]));
       const enrichedByFilename = new Map<string, { txHash: string; amountOut: bigint; ts?: number }>();
       for (let i = orderList.length - 1; i >= 0; i--) {
         const o = orderList[i];
         if (o.order?.type !== "market") continue;
+
+        // 1) exact nullifier match if the bundle carries one
+        if (o.order.nullifier) {
+          const key = o.order.nullifier.toLowerCase();
+          const match = byNullifier.get(key);
+          if (match) {
+            byNullifier.delete(key);
+            const idx = available.indexOf(match);
+            if (idx >= 0) available.splice(idx, 1);
+            enrichedByFilename.set(o.filename, {
+              txHash: match.txHash,
+              amountOut: match.amountOut,
+              ts: blockTs.get(match.blockNumber),
+            });
+            continue;
+          }
+        }
+
+        // 2) legacy tuple fallback. `totalLocked` on-chain is the sum of
+        //    claim amounts (enforced by the circuit as >= buyAmount), so
+        //    comparing against BigInt(buyAmount) would miss every bundle
+        //    whose recipients over-allocate the min-receive floor. Recover
+        //    the real totalLocked by summing the claims array.
         let sell: bigint, locked: bigint;
         try {
           sell = BigInt(o.order.sellAmount);
-          locked = BigInt(o.order.buyAmount);
+          locked = (o.claims ?? []).reduce<bigint>(
+            (sum, c) => sum + BigInt(c.amount ?? 0),
+            0n,
+          );
         } catch { continue; }
         const st = o.order.sellToken.toLowerCase();
         const bt = o.order.buyToken.toLowerCase();
