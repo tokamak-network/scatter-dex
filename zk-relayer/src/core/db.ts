@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
-import type { StoredPrivateOrder, PrivateOrder, PrivateOrderStatus } from "../types/order.js";
-import type { ClaimLeafData } from "./zk-prover.js";
+// Private-flow types removed with the tracker #29 cleanup. Authorize-flow
+// row shapes are inlined below.
 
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "zk-relayer.db");
 
@@ -58,18 +58,6 @@ interface ClaimRow {
 
 export class PrivateOrderDB {
   private db: Database.Database;
-  private insertOrder: ReturnType<Database.Database["prepare"]>;
-  private insertClaim: ReturnType<Database.Database["prepare"]>;
-  private deleteClaims: ReturnType<Database.Database["prepare"]>;
-  private updateStatusStmt: ReturnType<Database.Database["prepare"]>;
-  private selectPending: ReturnType<Database.Database["prepare"]>;
-  private selectClaims: ReturnType<Database.Database["prepare"]>;
-  private selectExists: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKey: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
-  private selectByPubKeyNonce: ReturnType<Database.Database["prepare"]>;
-  private countByPubKey: ReturnType<Database.Database["prepare"]>;
-  private countByPubKeyStatus: ReturnType<Database.Database["prepare"]>;
   private insertClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
@@ -115,50 +103,12 @@ export class PrivateOrderDB {
       console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
     }
 
-    this.insertOrder = this.db.prepare(`
-      INSERT OR REPLACE INTO private_orders
-        (pub_key_ax, pub_key_ay, nonce, sell_token, buy_token, sell_amount, buy_amount,
-         max_fee, expiry, sig_s, sig_r8x, sig_r8y, owner_secret, balance, salt, leaf_index,
-         status, settle_tx, submitted_at, new_salt, expected_change_commitment)
-      VALUES
-        (@pubKeyAx, @pubKeyAy, @nonce, @sellToken, @buyToken, @sellAmount, @buyAmount,
-         @maxFee, @expiry, @sigS, @sigR8x, @sigR8y, @ownerSecret, @balance, @salt, @leafIndex,
-         @status, @settleTx, @submittedAt, @newSalt, @expectedChangeCommitment)
-    `);
-    this.insertClaim = this.db.prepare(`
-      INSERT OR REPLACE INTO private_claims (pub_key_ax, nonce, idx, secret, recipient, token, amount, release_time)
-      VALUES (@pubKeyAx, @nonce, @idx, @secret, @recipient, @token, @amount, @releaseTime)
-    `);
-    this.deleteClaims = this.db.prepare(`DELETE FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce`);
-    this.updateStatusStmt = this.db.prepare(`
-      UPDATE private_orders SET status = @status, settle_tx = COALESCE(@settleTx, settle_tx), cross_relayer = COALESCE(@crossRelayer, cross_relayer),
-        settled_at = CASE WHEN @status = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
-      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce
-    `);
-    this.selectPending = this.db.prepare(`
-      SELECT * FROM private_orders WHERE status = 'pending' ORDER BY submitted_at ASC
-    `);
-    this.selectClaims = this.db.prepare(`
-      SELECT * FROM private_claims WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce ORDER BY idx
-    `);
-    this.selectExists = this.db.prepare(`
-      SELECT 1 FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
-    `);
-    this.selectByPubKey = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
-    `);
-    this.selectByPubKeyStatus = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status ORDER BY submitted_at DESC LIMIT @limit OFFSET @offset
-    `);
-    this.selectByPubKeyNonce = this.db.prepare(`
-      SELECT * FROM private_orders WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce LIMIT 1
-    `);
-    this.countByPubKey = this.db.prepare(`
-      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx
-    `);
-    this.countByPubKeyStatus = this.db.prepare(`
-      SELECT COUNT(*) as total FROM private_orders WHERE pub_key_ax = @pubKeyAx AND status = @status
-    `);
+    // Private-flow CRUD prepared statements (insertOrder, insertClaim,
+    // deleteClaims, updateStatusStmt, selectPending, selectClaims,
+    // selectExists, selectByPubKey, selectByPubKeyStatus, selectByPubKeyNonce,
+    // countByPubKey, countByPubKeyStatus) were removed with the tracker #29
+    // cleanup. The on-disk `private_orders` / `private_claims` tables remain
+    // in the schema for backward-compat with existing operator DBs.
     this.insertClaimsRoot = this.db.prepare(`
       INSERT OR IGNORE INTO settled_claims_roots (claims_root, settled_at) VALUES (@claimsRoot, @settledAt)
     `);
@@ -333,171 +283,6 @@ export class PrivateOrderDB {
     `);
   }
 
-  save(stored: StoredPrivateOrder): void {
-    const { order, status, submittedAt, settleTxHash } = stored;
-    const pubKeyAx = order.pubKeyAx.toString();
-    const nonce = order.nonce.toString();
-
-    const txn = this.db.transaction(() => {
-      this.insertOrder.run({
-        pubKeyAx,
-        pubKeyAy: order.pubKeyAy.toString(),
-        nonce,
-        sellToken: order.sellToken.toString(),
-        buyToken: order.buyToken.toString(),
-        sellAmount: order.sellAmount.toString(),
-        buyAmount: order.buyAmount.toString(),
-        maxFee: order.maxFee.toString(),
-        expiry: order.expiry.toString(),
-        sigS: order.sigS.toString(),
-        sigR8x: order.sigR8x.toString(),
-        sigR8y: order.sigR8y.toString(),
-        ownerSecret: order.ownerSecret.toString(),
-        balance: order.balance.toString(),
-        salt: order.salt.toString(),
-        leafIndex: order.leafIndex,
-        status,
-        settleTx: settleTxHash ?? null,
-        submittedAt,
-        newSalt: (order.newSalt ?? 0n).toString(),
-        expectedChangeCommitment: (order.expectedChangeCommitment ?? 0n).toString(),
-      });
-
-      this.deleteClaims.run({ pubKeyAx, nonce });
-      order.claims.forEach((c, idx) => {
-        this.insertClaim.run({
-          pubKeyAx,
-          nonce,
-          idx,
-          secret: c.secret.toString(),
-          recipient: c.recipient.toString(),
-          token: c.token.toString(),
-          amount: c.amount.toString(),
-          releaseTime: c.releaseTime.toString(),
-        });
-      });
-    });
-
-    txn();
-  }
-
-  updateStatus(pubKeyAx: bigint, nonce: bigint, status: PrivateOrderStatus, settleTxHash?: string, crossRelayer?: boolean): void {
-    this.updateStatusStmt.run({
-      pubKeyAx: pubKeyAx.toString(),
-      nonce: nonce.toString(),
-      status,
-      settleTx: settleTxHash ?? null,
-      crossRelayer: crossRelayer ? 1 : 0,
-      settledAt: status === "settled" ? Date.now() : null,
-    });
-  }
-
-  /**
-   * [M-11] Atomic compare-and-swap: update status only if current status matches.
-   * Returns true if the update succeeded (row was in expectedStatus).
-   * Returns false if another instance already changed the status (race lost).
-   */
-  compareAndSwapStatus(
-    pubKeyAx: bigint, nonce: bigint,
-    expectedStatus: PrivateOrderStatus, newStatus: PrivateOrderStatus,
-    settleTxHash?: string, crossRelayer?: boolean,
-  ): boolean {
-    const result = this.db.prepare(`
-      UPDATE private_orders SET status = @newStatus,
-        settle_tx = COALESCE(@settleTx, settle_tx),
-        cross_relayer = COALESCE(@crossRelayer, cross_relayer),
-        settled_at = CASE WHEN @newStatus = 'settled' AND settled_at IS NULL THEN @settledAt ELSE settled_at END
-      WHERE pub_key_ax = @pubKeyAx AND nonce = @nonce AND status = @expectedStatus
-    `).run({
-      pubKeyAx: pubKeyAx.toString(),
-      nonce: nonce.toString(),
-      expectedStatus,
-      newStatus,
-      settleTx: settleTxHash ?? null,
-      crossRelayer: crossRelayer ? 1 : 0,
-      settledAt: newStatus === "settled" ? Date.now() : null,
-    });
-    return result.changes > 0;
-  }
-
-  hasOrder(pubKeyAx: bigint, nonce: bigint): boolean {
-    return !!this.selectExists.get({ pubKeyAx: pubKeyAx.toString(), nonce: nonce.toString() });
-  }
-
-  loadPending(): StoredPrivateOrder[] {
-    const rows = this.selectPending.all({}) as OrderRow[];
-    return rows.map((row) => this.rowToStored(row));
-  }
-
-  private rowToStored(row: OrderRow): StoredPrivateOrder {
-    const claimRows = this.selectClaims.all({
-      pubKeyAx: row.pub_key_ax,
-      nonce: row.nonce,
-    }) as ClaimRow[];
-
-    const claims: ClaimLeafData[] = claimRows.map((c) => ({
-      secret: BigInt(c.secret),
-      recipient: BigInt(c.recipient),
-      token: BigInt(c.token),
-      amount: BigInt(c.amount),
-      releaseTime: BigInt(c.release_time),
-    }));
-
-    const order: PrivateOrder = {
-      sellToken: BigInt(row.sell_token),
-      buyToken: BigInt(row.buy_token),
-      sellAmount: BigInt(row.sell_amount),
-      buyAmount: BigInt(row.buy_amount),
-      maxFee: BigInt(row.max_fee),
-      expiry: BigInt(row.expiry),
-      nonce: BigInt(row.nonce),
-      pubKeyAx: BigInt(row.pub_key_ax),
-      pubKeyAy: BigInt(row.pub_key_ay),
-      sigS: BigInt(row.sig_s),
-      sigR8x: BigInt(row.sig_r8x),
-      sigR8y: BigInt(row.sig_r8y),
-      ownerSecret: BigInt(row.owner_secret),
-      balance: BigInt(row.balance),
-      salt: BigInt(row.salt),
-      leafIndex: row.leaf_index,
-      newSalt: row.new_salt != null ? BigInt(row.new_salt) : 0n,
-      expectedChangeCommitment: row.expected_change_commitment != null ? BigInt(row.expected_change_commitment) : 0n,
-      claims,
-    };
-
-    return {
-      order,
-      status: row.status as PrivateOrderStatus,
-      submittedAt: row.submitted_at,
-      settleTxHash: row.settle_tx ?? undefined,
-      crossRelayer: row.cross_relayer === 1 ? true : undefined,
-    };
-  }
-
-  getOrdersByPubKey(pubKeyAx: bigint, opts: { status?: PrivateOrderStatus; limit: number; offset: number }): StoredPrivateOrder[] {
-    const pk = pubKeyAx.toString();
-    const rows = opts.status
-      ? this.selectByPubKeyStatus.all({ pubKeyAx: pk, status: opts.status, limit: opts.limit, offset: opts.offset }) as OrderRow[]
-      : this.selectByPubKey.all({ pubKeyAx: pk, limit: opts.limit, offset: opts.offset }) as OrderRow[];
-    return rows.map((row) => this.rowToStored(row));
-  }
-
-  getOrderByPubKeyNonce(pubKeyAx: bigint, nonce: bigint): StoredPrivateOrder | null {
-    const row = this.selectByPubKeyNonce.get({
-      pubKeyAx: pubKeyAx.toString(),
-      nonce: nonce.toString(),
-    }) as OrderRow | undefined;
-    if (!row) return null;
-    return this.rowToStored(row);
-  }
-
-  countOrdersByPubKey(pubKeyAx: bigint, status?: PrivateOrderStatus): number {
-    const pk = pubKeyAx.toString();
-    const result = status
-      ? this.countByPubKeyStatus.get({ pubKeyAx: pk, status }) as { total: number }
-      : this.countByPubKey.get({ pubKeyAx: pk }) as { total: number };
-    return result.total;
-  }
 
   /** Record a claims root from a settlement this relayer processed. */
   saveSettledClaimsRoot(claimsRoot: string): void {

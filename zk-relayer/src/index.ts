@@ -2,19 +2,15 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { config, updateRelayerFee } from "./config.js";
-import { PrivateOrderbook } from "./core/orderbook.js";
-import { PrivateMatcher } from "./core/matcher.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
 import { PrivateOrderDB } from "./core/db.js";
 import { createPrivateOrderRoutes } from "./routes/orders.js";
-import { createOrderbookRoutes } from "./routes/orderbook.js";
 import { createInfoRoutes } from "./routes/info.js";
 import { createPrivateClaimRoutes } from "./routes/claim.js";
 import { createVaultRoutes } from "./routes/vault.js";
 import { createRelayerStatsRoutes } from "./routes/relayer-stats.js";
 import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
 import { RemoteOrderStore } from "./core/remote-orderbook.js";
-import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
@@ -42,13 +38,6 @@ async function main() {
   // [R-10] Load sanctions pubKey blocklist (optional)
   if (config.sanctionsPubKeyList) {
     loadSanctionsFile(config.sanctionsPubKeyList);
-  }
-
-  const orderbook = new PrivateOrderbook(MAX_ORDERBOOK_SIZE);
-  orderbook.setDB(db);
-  const restored = orderbook.loadFromDB();
-  if (restored > 0) {
-    console.log(`Restored ${restored} pending private orders from DB`);
   }
 
   const submitter = new PrivateSubmitter();
@@ -90,19 +79,10 @@ async function main() {
   // ─── Shared orderbook integration (optional) ───
   let sharedClient: SharedOrderbookClient | null = null;
   let remoteOrderbook: RemoteOrderStore | null = null;
-  let crossRelayerService: CrossRelayerMatchService | null = null;
   let authorizeCrossRelayerService: AuthorizeCrossRelayerMatchService | null = null;
-  const orderIdMap = new Map<string, string>();
 
-  // Create matcher (with remote orderbook if available)
   if (config.sharedOrderbookUrl && config.relayerPublicUrl) {
     remoteOrderbook = new RemoteOrderStore();
-  }
-  const matcher = new PrivateMatcher(orderbook, remoteOrderbook);
-  matcher.setRelayerAddress(submitter.getAddress());
-  matcher.setMinFeeBps(config.relayerFee);
-
-  if (config.sharedOrderbookUrl && config.relayerPublicUrl && remoteOrderbook) {
     sharedClient = new SharedOrderbookClient({
       serverUrl: config.sharedOrderbookUrl,
       relayerWallet: submitter.getWallet(),
@@ -110,23 +90,12 @@ async function main() {
       relayerName: config.relayerName,
     });
 
-    crossRelayerService = new CrossRelayerMatchService(
-      orderbook, remoteOrderbook, matcher, submitter, sharedClient, orderIdMap, db,
-    );
-
     authorizeCrossRelayerService = new AuthorizeCrossRelayerMatchService(
       authorizeOrders, sharedClient, authSubmitter, authSubmitter.getAddress(), db,
     );
 
     sharedClient.onOrder((summary) => {
       remoteOrderbook!.add(summary);
-      // Reactive matching on both paths:
-      //   (a) Private path — currently dead post-S-M14 but kept until the
-      //       cleanup PR lands (tracker #29).
-      //   (b) Authorize path — the live half-proof flow.
-      crossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
-        console.warn("[cross-relayer] Reactive match error:", err instanceof Error ? err.message : "unknown");
-      });
       authorizeCrossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
         console.warn("[authorize-cross] Reactive match error:", err instanceof Error ? err.message : "unknown");
       });
@@ -200,7 +169,7 @@ async function main() {
 
   // [R-7] Admin API — fee, pause/resume, drain, balance
   app.use("/api/admin", createAdminRoutes({
-    submitter, db, orderbook,
+    submitter, db,
     drainAuthorizeOrders, getAuthorizeOrderStats,
     writeLimiter,
   }));
@@ -214,15 +183,11 @@ async function main() {
     next();
   };
 
-  app.use("/api/private-orders", pauseGuard, createPrivateOrderRoutes(
-    orderbook, submitter, writeLimiter, readLimiter,
-    sharedClient, orderIdMap,
-  ));
-  app.use("/api/private-orderbook", readLimiter, createOrderbookRoutes(orderbook));
-  app.use("/api/info", readLimiter, createInfoRoutes(orderbook, submitter));
+  app.use("/api/private-orders", readLimiter, pauseGuard, createPrivateOrderRoutes(writeLimiter));
+  app.use("/api/info", readLimiter, createInfoRoutes(submitter));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
-  app.use("/api/relayer", createRelayerStatsRoutes(db, orderbook, submitter, readLimiter));
+  app.use("/api/relayer", createRelayerStatsRoutes(db, submitter, readLimiter));
 
   // Half-proof (trustless) order routes — settleAuth path.
   // `authSubmitter` was instantiated earlier so the cross-relayer service
@@ -243,29 +208,18 @@ async function main() {
       // like `nonce`/`pubKeyAx`/`pubKeyAy` that don't exist on the shared
       // `OrderSummary` shape used by the shared-OB WS stream (see routes/p2p.ts
       // :60-68). Authorize summaries will 400 before reaching this callback
-      // today — this fan-out is dead code for the authorize flow until the
-      // p2p/orders schema is aligned with OrderSummary. Keeping the hook so
-      // once that alignment lands, matching kicks in without further wiring.
+      // today — tracker #30. Keep the hook so the schema-alignment PR
+      // turns this back on without further wiring.
       authorizeCrossRelayerService?.onRemoteOrderArrived(order).catch((err) => {
         console.warn("[authorize-cross] P2P match error:", err instanceof Error ? err.message : "unknown");
       });
     },
     (orderId) => { remoteOrderbook?.remove(orderId); },
-    crossRelayerService
-      ? (offer, addr) => crossRelayerService!.handleTradeOffer(offer, addr)
-      : undefined,
+    undefined,  // Private-flow trade-offer handler retired (tracker #29 cleanup)
     authorizeCrossRelayerService
       ? (offer, addr) => authorizeCrossRelayerService!.handleTradeOffer(offer, addr)
       : undefined,
   ));
-
-  // Periodic expired order cleanup
-  const expireInterval = setInterval(() => {
-    const removed = orderbook.purgeExpired();
-    if (removed > 0) {
-      console.log(`Purged ${removed} expired private orders`);
-    }
-  }, 60_000);
 
   // Periodic commitment re-indexing (stay in sync with on-chain state)
   const reindexInterval = setInterval(async () => {
@@ -311,7 +265,6 @@ async function main() {
     if (isShuttingDown) return;
     isShuttingDown = true;
     console.log("Shutting down...");
-    clearInterval(expireInterval);
     clearInterval(reindexInterval);
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);

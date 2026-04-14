@@ -1,12 +1,17 @@
 import { Router, Request, Response } from "express";
-import type { PrivateOrderbook } from "../core/orderbook.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { config } from "../config.js";
+import { authorizeOrders } from "./authorize-orders.js";
 
-export function createInfoRoutes(
-  orderbook: PrivateOrderbook,
-  submitter: PrivateSubmitter,
-): Router {
+function countPending(): number {
+  let n = 0;
+  for (const o of authorizeOrders.values()) {
+    if (o.status === "pending") n++;
+  }
+  return n;
+}
+
+export function createInfoRoutes(submitter: PrivateSubmitter): Router {
   const router = Router();
 
   router.get("/", (_req: Request, res: Response) => {
@@ -15,7 +20,10 @@ export function createInfoRoutes(
       version: "0.1.0",
       address: submitter.getAddress(),
       fee: config.relayerFee,
-      orderCount: orderbook.getOrderCount(),
+      // Counts *pending* authorize orders only — `Map.size` would also
+      // include matched/settled rows that haven't been purged yet, which
+      // misrepresents the relayer's queue depth.
+      orderCount: countPending(),
       commitmentPool: config.commitmentPoolAddress,
       privateSettlement: config.privateSettlementAddress,
     });

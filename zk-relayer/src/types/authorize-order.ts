@@ -21,7 +21,17 @@
  *      (settleAuth), frontend/app/lib/zk/authorize-prover.ts
  */
 
-import { pairKey } from "./order.js";
+/**
+ * Sorted "lo-hi" hex address pair — stable key for the unordered
+ * (sellToken, buyToken) pair. Lives here (not in `./order.js`) because
+ * the only consumer is the authorize flow.
+ */
+export function pairKey(tokenA: bigint, tokenB: bigint): string {
+  const a = "0x" + tokenA.toString(16).padStart(40, "0");
+  const b = "0x" + tokenB.toString(16).padStart(40, "0");
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  return `${lo}-${hi}`;
+}
 
 // ─── Groth16 proof (Solidity-formatted) ─────────────────────────
 
@@ -248,4 +258,3 @@ export function validateAuthorizeOrder(
   return null;
 }
 
-export { pairKey };

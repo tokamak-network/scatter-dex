@@ -104,50 +104,10 @@ describe("DELETE /api/p2p/orders/:id", () => {
   });
 });
 
-describe("POST /api/p2p/trade-offer", () => {
-  it("returns 404 (route-not-found, auth never runs) when handler is unregistered", async () => {
-    // Send WITHOUT auth headers to prove the 404 is route-level, not a
-    // silent 401 bypass — the registered variant returns 401 below.
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn()));
+describe("POST /api/p2p/trade-offer (retired Private flow)", () => {
+  it("returns 404 — route deleted with tracker #29 cleanup", async () => {
+    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), undefined));
     const res = await request(app).post("/api/p2p/trade-offer").send({});
     expect(res.status).toBe(404);
-  });
-
-  it("registered handler still enforces auth (401 without headers)", async () => {
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), vi.fn()));
-    const res = await request(app).post("/api/p2p/trade-offer").send({});
-    expect(res.status).toBe(401);
-  });
-
-  it("rejects missing makerNonce with 400", async () => {
-    const onOffer = vi.fn();
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), onOffer));
-    const headers = await authHeaders("POST", "/api/p2p/trade-offer");
-    const res = await request(app).post("/api/p2p/trade-offer").set(headers).send({ makerPubKeyAx: "1" });
-    expect(res.status).toBe(400);
-  });
-
-  it("rejects non-decimal makerNonce with 400", async () => {
-    const onOffer = vi.fn();
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), onOffer));
-    const headers = await authHeaders("POST", "/api/p2p/trade-offer");
-    const res = await request(app)
-      .post("/api/p2p/trade-offer")
-      .set(headers)
-      .send({ makerNonce: "0xabc", makerPubKeyAx: "1", takerOrder: {} });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/makerNonce/);
-  });
-
-  it("invokes handler and returns its response", async () => {
-    const onOffer = vi.fn(async () => ({ status: "accepted" as const, txHash: "0xabc" }));
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), onOffer));
-    const headers = await authHeaders("POST", "/api/p2p/trade-offer");
-    const res = await request(app)
-      .post("/api/p2p/trade-offer")
-      .set(headers)
-      .send({ makerNonce: "42", makerPubKeyAx: "1", takerOrder: {} });
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ status: "accepted", txHash: "0xabc" });
   });
 });

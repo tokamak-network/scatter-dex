@@ -1,8 +1,8 @@
 import { Router, RequestHandler } from "express";
 import type { PrivateOrderDB } from "../core/db.js";
-import type { PrivateOrderbook } from "../core/orderbook.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { getMetrics } from "../core/metrics.js";
+import { authorizeOrders } from "./authorize-orders.js";
 
 /**
  * Relayer stats & audit trail API.
@@ -10,7 +10,6 @@ import { getMetrics } from "../core/metrics.js";
  */
 export function createRelayerStatsRoutes(
   db: PrivateOrderDB,
-  orderbook: PrivateOrderbook,
   submitter: PrivateSubmitter,
   readLimiter?: RequestHandler,
 ): Router {
@@ -24,10 +23,16 @@ export function createRelayerStatsRoutes(
     try {
       const stats = db.getRelayerStats();
       const volume = db.getSettledVolume();
+      // Pending count switched from the retired private_orders Map (always 0
+      // post-S-M14) to authorize_orders, the live half-proof flow.
+      let pendingOrders = 0;
+      for (const o of authorizeOrders.values()) {
+        if (o.status === "pending") pendingOrders++;
+      }
       res.json({
         address: submitter.getAddress(),
         ...stats,
-        pendingOrders: orderbook.pendingOrderCount,
+        pendingOrders,
         settledVolume: volume,
         metrics: getMetrics(),
       });
