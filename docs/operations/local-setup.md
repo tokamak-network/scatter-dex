@@ -305,24 +305,44 @@ ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 
 `settleWithDex` requires a whitelisted DEX router and real on-chain liquidity. Plain anvil has neither, so `dev.sh --mock` cannot exercise market orders. Use `dev-fork.sh` instead — it forks mainnet, deploys zkScatter against the forked state, and wires up real WETH/USDC so 1inch and Uniswap route through actual pools.
 
+> **Terminology** — the UI labels this flow **"DEX Trade"**, the contract function is `settleWithDex`, and the rest of these docs call it a **market order**. All three refer to the same thing.
+
 ```bash
 ./scripts/dev-fork.sh
-# Optional env:
-#   FORK_URL=https://eth.drpc.org          (default; llamarpc lacks historical state)
-#   FORK_BLOCK=24874771                     (pin block — recommended if the
-#                                            upstream RPC rotates shards)
-#   FORK_CHAIN_ID=1                         (preserve mainnet chainid so 1inch
-#                                            API paths match)
+# Optional env (values shown are the defaults — override as needed):
+#   FORK_URL=https://eth.llamarpc.com              (use https://eth.drpc.org
+#                                                   as a more stable alternate
+#                                                   when llamarpc's shard
+#                                                   rotation returns 404s for
+#                                                   Quoter / getLogs calls)
+#   FORK_BLOCK=                                    (unset = tip; pin to a
+#                                                   concrete block number to
+#                                                   avoid "block not found" /
+#                                                   state-drift reverts)
+#   FORK_CHAIN_ID=31338                            (keeps MetaMask happy; do
+#                                                   NOT override to 1, which
+#                                                   collides with MetaMask's
+#                                                   built-in Mainnet. The
+#                                                   frontend pins 1inch
+#                                                   routing to chainId=1 via
+#                                                   NEXT_PUBLIC_AGGREGATOR_
+#                                                   CHAIN_ID regardless.)
+#   NEXT_PUBLIC_DISABLE_AGGREGATOR=true            (Uniswap-only routing;
+#                                                   flip to false to exercise
+#                                                   the 1inch Pathfinder path
+#                                                   — works best with a
+#                                                   FORK_BLOCK near tip)
 ```
 
 What it does differently from `dev.sh --mock`:
 
 | | `dev.sh --mock` | `dev-fork.sh` |
 |---|---|---|
-| anvil | plain, chainid 31337 | `--fork-url`, chainid 1 |
-| Tokens | MockWETH / MockUSDC (18 dec) | Real mainnet WETH `0xC02a…` / USDC `0xA0b8…` (6 dec) |
+| anvil | plain, chainid 31337 | `--fork-url`, chainid 31338 |
+| Tokens | MockWETH / MockUSDC (18 dec) | Real mainnet WETH `0xC02a…` / USDC `0xA0b8…` (6 dec) + USDT + WTON |
 | DEX routers | none on chain → market orders disabled | 1inch V6 + Uniswap V3 SwapRouter02 whitelisted |
-| Prefund | mint Mock USDC to Alice/Bob | `anvil_setBalance` + impersonate Binance 14 → transfer real USDC |
+| Routing default | n/a | Uniswap V3 only (1inch disabled to avoid fork-state drift); flip `NEXT_PUBLIC_DISABLE_AGGREGATOR=false` to enable 1inch |
+| Prefund | mint Mock USDC to Alice/Bob | `anvil_setBalance` + impersonate Circle / Binance whales for real USDC + USDT |
 | Relayer indexing | `fromBlock=0` (fresh chain) | `INDEX_FROM_BLOCK=<post-deploy>` to skip pre-fork history (upstream RPCs reject >10k-block `eth_getLogs` ranges) |
 | Use case | Limit orders, private-order UI | Market orders (`settleWithDex`), aggregator integration |
 
@@ -338,13 +358,34 @@ Fork mode additionally sets `NEXT_PUBLIC_DISABLE_AGGREGATOR=true` by default bec
 
 **Integration mode with zk-X509:** `./scripts/dev.sh` (no `--mock`) still works for zk-X509 testing against an already-running anvil — see the Integration Mode section above. Fork mode and zk-X509 integration aren't combined today.
 
+### Fork Mode Troubleshooting
+
+Fork-mode failure modes fall into four buckets. Diagnose in this order:
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `anvil failed to start (waited 30s)` in step [1/4] | Upstream RPC returned `block not found` or `historical state … is not available`. llamarpc rotates shards mid-query so the "latest" it returned a second ago may be gone. | Retry once, or `FORK_URL=https://eth.drpc.org ./scripts/dev-fork.sh`; pin with `FORK_BLOCK=<n>` a few hundred blocks behind tip. |
+| `dev-fork.sh` exits at `[3/4] zk-relayer failed to start` with `ranges over 10000 blocks are not supported on freetier` | The relayer's commitment indexer started querying `eth_getLogs` from block 0 and the upstream RPC rejected the range. | `dev-fork.sh` already sets `INDEX_FROM_BLOCK=<post-deploy>`; if you're running the relayer by hand, export it to the deploy block. |
+| `DexCallReverted()` (0x39753cda) on `settleWithDex` | Fork state drifted from live mainnet — the DEX pool the router is calling has a different tick/reserve snapshot than when the calldata was built. Especially 1inch multi-hop through non-Uniswap pools. | 1) Pin `FORK_BLOCK` close to tip and re-run. 2) Stay on the Uniswap-only path (`NEXT_PUBLIC_DISABLE_AGGREGATOR=true`, the default). 3) For Uniswap, the frontend auto-probes fee tiers (100/500/3000/10000) and picks the deepest pool — a tier-specific failure means that pool has near-zero liquidity for this pair on the fork block. |
+| `InvalidProof()` (0x09bde339) on deposit | Circuit `.wasm` / `_final.zkey` in `frontend/public/zk/` don't match the `*Verifier.sol` bytecode deployed on-chain. Happens when the contracts tree is reset but circuits weren't rebuilt. | `cd circuits && npm run build` — regenerates every zkey + verifier .sol; then redeploy via `./scripts/dev-fork.sh`. |
+| `execution reverted` from Uniswap `exactInputSingle` even with matching fee tier | SwapRouter02's `exactInputSingle` struct dropped the `deadline` field (it's enforced via a separate multicall path); using the V1 ABI with V2 router shifts the struct layout. | The frontend's ABI is fixed — if you're testing directly, make sure your calldata uses the 7-field tuple `(tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96)`. |
+| Prefund warning: `USDC prefund failed — try FORK_BLOCK=<older block> or add whale` | The script impersonated a known whale (Circle, Binance 8/14) but that address no longer holds USDC at the current fork block. Non-fatal — services still start, but Alice has 0 USDC. | `FORK_BLOCK=<older> ./scripts/dev-fork.sh` (a day or two back is usually enough), or add a new whale to `USDC_WHALES=(...)` in the script. |
+| MetaMask: `This Chain ID is currently used by the Ethereum network` | You tried to add the fork as chain ID `1`, which MetaMask reserves for its built-in Mainnet. | `dev-fork.sh` uses chain ID `31338` by default for exactly this reason — don't override `FORK_CHAIN_ID=1`. The Add Fork Network header button uses 31338 automatically. |
+| `ONEINCH_API_KEY` present but 1inch path still not taken | Fork mode defaults `NEXT_PUBLIC_DISABLE_AGGREGATOR=true` to sidestep state-drift reverts (the env-var comment block and "1inch Swap API key" paragraph both mention this). | `NEXT_PUBLIC_DISABLE_AGGREGATOR=false ./scripts/dev-fork.sh` — also pin `FORK_BLOCK` near tip so 1inch's routing matches fork state. |
+
+**Frontend (non-fork-specific):** invisible text on mint-green buttons after editing `globals.css` is Tailwind v4's `@theme inline` block compiling into CSS custom properties at dev-server startup — HMR doesn't always pick up edits inside `@theme`. Kill the frontend, `rm -rf frontend/.next`, restart `npm run dev`, hard-reload the browser tab (⌘⇧R).
+
+When all else fails, `make clean` (Docker) or `rm -rf .dev-logs zk-relayer/zk-relayer.db frontend/.next` (host processes) wipes the moving parts; rerun the circuits build once and `./scripts/dev-fork.sh`.
+
 ## E2E Test Runbook
 
 | Scenario | Command | Prereqs |
 |---|---|---|
 | Full limit-order flow (single relayer) | open `http://localhost:3000`, deposit → order → claim | `dev.sh --mock` |
 | Cross-relayer matching | `cd zk-relayer && npx tsx test/e2e-cross-relayer.ts` | `dev.sh --mock` + `start-cross-relayer-e2e.sh` |
+| Market order (DEX Trade) browser flow | open `http://localhost:3000`, add fork network, deposit → DEX Trade → claim; verify `DexSurplusCollected` / `PlatformRevenueDeposited` events fired (`cast logs --address <feeVault> …`). `FeeVault.platformRevenue(buyToken)` is only non-zero when the swap yielded positive slippage, and `platformRevenue(sellToken)` only when `dexPlatformFeeBps > 0` — events are the reliable invariant. | `dev-fork.sh` |
 | Market order (settleWithDex) Foundry fork | `cd contracts && forge test --match-contract SettleWithDex --fork-url <MAINNET_RPC>` | mainnet RPC URL |
+| FeeVault platformRevenue unit tests | `cd contracts && forge test --match-contract FeeVaultPlatformRevenue` | none (hermetic) |
 | Relayer HTTP route tests | `cd zk-relayer && npm test` | none (hermetic) |
 | Contract tests | `cd contracts && forge test` | none |
 
