@@ -156,8 +156,9 @@ async function migrateLegacy(): Promise<void> {
       leafIndex: Number(e.leafIndex ?? 0),
       allLeaves: Array.isArray(e.allLeaves) ? e.allLeaves.map(String) : [],
       txHash: String(e.txHash ?? ''),
-      ...(typeof e.orderId === 'string' ? { orderId: e.orderId } : {}),
-      ...(typeof e.ephemeralPubKey === 'string' ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
+      ...(typeof e.orderId === 'string' && e.orderId ? { orderId: e.orderId } : {}),
+      ...(typeof e.ephemeralPubKey === 'string' && e.ephemeralPubKey
+        ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
     };
     await Promise.all([
       AsyncStorage.setItem(metaKey(id), JSON.stringify(meta)),

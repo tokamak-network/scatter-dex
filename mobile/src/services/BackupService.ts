@@ -178,8 +178,12 @@ export const BackupService = {
         leafIndex: c.leafIndex,
         allLeaves: c.allLeaves,
         txHash: c.txHash,
-        ...(c.orderId ? { orderId: c.orderId } : {}),
-        ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
+        // `bundle.pendingClaims` is parsed from external JSON — guard both
+        // the runtime type and truthiness so a malformed number/null/''
+        // never lands in storage.
+        ...(typeof c.orderId === 'string' && c.orderId ? { orderId: c.orderId } : {}),
+        ...(typeof c.ephemeralPubKey === 'string' && c.ephemeralPubKey
+          ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       });
     }
     if (claimsToAdd.length > 0) {
