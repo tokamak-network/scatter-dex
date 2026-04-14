@@ -364,6 +364,9 @@ function serializeForFile(note: StoredNote) {
   };
 }
 
+// Parsed JSON from disk — shape isn't compile-time guaranteed, so the
+// dynamic dot-access reads are intentional.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function deserializeFromFile(parsed: any): StoredNote {
   return {
     commitment: parsed.commitment,

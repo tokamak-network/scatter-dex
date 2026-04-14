@@ -77,7 +77,7 @@ export function useClaimStatuses(
         );
 
         // Optionally fetch tx hashes for claimed items in parallel
-        let txMap: Record<number, string> = {};
+        const txMap: Record<number, string> = {};
         if (options?.includeTxHash) {
           const fromBlock = getEarliestBlock();
           const claimedItems = checks.filter((c) => c.claimed);

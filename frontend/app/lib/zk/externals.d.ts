@@ -1,3 +1,6 @@
+// External JS-only libs without typings — `any` is intentional here
+// because the call sites narrow at use time.
+/* eslint-disable @typescript-eslint/no-explicit-any */
 declare module "circomlibjs" {
   export function buildPoseidon(): Promise<any>;
   export function buildEddsa(): Promise<any>;

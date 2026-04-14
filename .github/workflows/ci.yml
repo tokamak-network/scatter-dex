@@ -84,11 +84,9 @@ jobs:
       - run: npm ci
 
       - name: ESLint
-        # 28 pre-existing errors + 36 warnings from code that predates CI
-        # wiring. Warn-only for now so unrelated PRs aren't blocked; track
-        # a cleanup in a follow-up PR and flip to blocking.
+        # All errors fixed; warnings still tolerated (mostly unused-vars
+        # and exhaustive-deps that need case-by-case review).
         run: npm run lint
-        continue-on-error: true
 
       - name: Next.js build
         # Build validates types + compiles the full bundle, catching the

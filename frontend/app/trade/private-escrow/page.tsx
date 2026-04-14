@@ -151,7 +151,7 @@ export default function PrivateEscrowPage() {
           .map(async (o) => {
             const leafIdx = o.order!.leafIndex;
             const results = await Promise.all(
-              o.claims.map(async (c: any) => {
+              o.claims.map(async (c: { secret?: string | bigint; leafIndex?: number }) => {
                 if (c.secret == null || c.leafIndex == null) return true;
                 // [M4] Use the centralised computeClaimNullifier helper so the
                 //      tag definition cannot drift from circuits/zk-prover.

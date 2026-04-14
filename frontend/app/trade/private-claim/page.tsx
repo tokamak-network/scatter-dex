@@ -102,7 +102,10 @@ export default function PrivateClaimPage() {
 
   // Claims submitted via zk-relayer (no direct contract address needed)
 
-  // Validate a single claim entry — checks presence and BigInt parsability
+  // Validate a single claim entry — checks presence and BigInt parsability.
+  // Input is parsed JSON so the shape isn't compile-time guaranteed; the
+  // function narrows it to ClaimData via runtime checks before returning.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function validateSingleClaim(c: any): ClaimData {
     if (!c.secret || !c.recipient || !c.token || !c.amount || !c.releaseTime) {
       throw new Error("Missing required fields: secret, recipient, token, amount, releaseTime");
@@ -130,10 +133,11 @@ export default function PrivateClaimPage() {
   }
 
   // Parse claim JSON — supports single claim or bundled { claims: [...] }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function parseClaims(parsed: any): ClaimData[] {
     if (parsed.claims && Array.isArray(parsed.claims)) {
       if (parsed.claims.length === 0) throw new Error("No claims in bundle");
-      return parsed.claims.map((c: any, i: number) => {
+      return parsed.claims.map((c: unknown, i: number) => {
         try { return validateSingleClaim(c); }
         catch (e) { throw new Error(`Claim #${i + 1}: ${e instanceof Error ? e.message : "invalid"}`); }
       });
@@ -293,7 +297,7 @@ export default function PrivateClaimPage() {
       if (!hash) throw new Error("Tx receipt missing hash.");
       setTxHashes([hash]);
       setStatus("success");
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Wallet claim failed:", e);
       setError(friendlyError(e));
       setStatus("error");

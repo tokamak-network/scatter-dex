@@ -7,11 +7,11 @@ import { getReadProvider } from "./provider";
 const READ_PROVIDER = getReadProvider();
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   interface Window {
     ethereum?: ethers.Eip1193Provider & {
-      on?(event: string, handler: (...args: any[]) => void): void;
-      removeListener?(event: string, handler: (...args: any[]) => void): void;
+      on?(event: string, handler: (...args: unknown[]) => void): void;
+      removeListener?(event: string, handler: (...args: unknown[]) => void): void;
       isMetaMask?: boolean;
       isCoinbaseWallet?: boolean;
       isRabby?: boolean;
@@ -65,10 +65,15 @@ export function useWallet() {
  * Check specific flags BEFORE isMetaMask — many wallets set isMetaMask=true
  * for compatibility (Rabby, Coinbase, etc.).
  */
-function detectWalletName(provider: any): string {
-  if (provider.isRabby) return "Rabby";
-  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
-  if (provider.isMetaMask) return "MetaMask";
+type InjectedProvider = NonNullable<Window["ethereum"]>;
+
+function detectWalletName(provider: ethers.Eip1193Provider): string {
+  // The wallet vendor flags (isRabby / isMetaMask / isCoinbaseWallet) are
+  // declared on Window["ethereum"] above; narrow to that augmented shape.
+  const flags = provider as InjectedProvider;
+  if (flags.isRabby) return "Rabby";
+  if (flags.isCoinbaseWallet) return "Coinbase Wallet";
+  if (flags.isMetaMask) return "MetaMask";
   return "Browser Wallet";
 }
 
@@ -141,13 +146,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setupProvider();
     };
 
-    const anyEth = eth as any;
-    anyEth.on?.("accountsChanged", handleAccountsChanged);
-    anyEth.on?.("chainChanged", handleChainChanged);
+    const ethEmitter = eth as InjectedProvider;
+    ethEmitter.on?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
+    ethEmitter.on?.("chainChanged", handleChainChanged);
 
     return () => {
-      anyEth.removeListener?.("accountsChanged", handleAccountsChanged);
-      anyEth.removeListener?.("chainChanged", handleChainChanged);
+      ethEmitter.removeListener?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
+      ethEmitter.removeListener?.("chainChanged", handleChainChanged);
     };
   }, [setupProvider, activeEip1193]);
 
