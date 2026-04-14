@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ethers } from "ethers";
@@ -201,7 +201,27 @@ async function buildOrderProof(params: BuildOrderParams) {
   return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
 }
 
+// Next 16 requires useSearchParams callers to sit inside a Suspense
+// boundary. Wrap the whole page; the inner component depends on `?type=`
+// at render time. Fallback shows a placeholder so the route doesn't
+// flash empty during the suspend window on initial entry.
 export default function PrivateOrderPage() {
+  return (
+    <Suspense fallback={<PrivateOrderLoading />}>
+      <PrivateOrderPageInner />
+    </Suspense>
+  );
+}
+
+function PrivateOrderLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px] text-on-surface-variant/60">
+      <Loader2 className="w-6 h-6 animate-spin" />
+    </div>
+  );
+}
+
+function PrivateOrderPageInner() {
   const { account, signer, readProvider, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
   const tokens = getTokenList().filter((t) => !t.isNative);
