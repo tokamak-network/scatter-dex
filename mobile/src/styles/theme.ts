@@ -63,6 +63,13 @@ export const shadowSubtle = {
   elevation: 1,
 } as const;
 
+// Slightly stronger variant used by segmented tab indicators (active
+// tab pill). Same geometry as shadowSubtle, higher opacity.
+export const shadowTab = {
+  ...shadowSubtle,
+  shadowOpacity: 0.05,
+} as const;
+
 export const shared = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.bg },
   container: { flex: 1, backgroundColor: colors.bg },

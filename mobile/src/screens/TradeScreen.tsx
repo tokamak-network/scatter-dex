@@ -8,7 +8,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ethers } from 'ethers';
-import { colors, layout, shadowSubtle } from '../styles/theme';
+import { colors, layout, shadowTab } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
@@ -353,7 +353,6 @@ export default function TradeScreen() {
         onBack={() => navigation.goBack()}
       />
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
-        {/* Tabs */}
         <View style={s.tabsWrap}>
           <View style={s.tabsBg}>
             <TouchableOpacity
@@ -388,7 +387,6 @@ export default function TradeScreen() {
           </View>
         </View>
 
-        {/* Inputs */}
         <View style={s.inputsRow}>
           <View style={s.inputCol}>
             <Text style={s.inputLabel}>Amount ({selectedNote?.tokenSymbol || 'ETH'})</Text>
@@ -656,11 +654,10 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { gap: layout.sectionGap, paddingBottom: layout.contentBottom, paddingTop: layout.contentTop },
 
-  /* Tabs */
   tabsWrap: { paddingHorizontal: layout.screenHZ },
   tabsBg: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 12 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  tabActive: { backgroundColor: colors.card, ...shadowSubtle, shadowOpacity: 0.05 },
+  tabActive: { backgroundColor: colors.card, ...shadowTab },
   tabText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
   tabTextActive: { color: colors.primaryDark },
 
@@ -672,7 +669,6 @@ const s = StyleSheet.create({
   tokenName: { fontSize: 14, fontWeight: '700' },
   swapIcon: { fontSize: 20, color: colors.textMuted },
 
-  /* Inputs */
   inputsRow: { flexDirection: 'row', paddingHorizontal: layout.screenHZ, gap: 16 },
   inputCol: { flex: 1, gap: 8 },
   inputLabel: { fontSize: 12, fontWeight: '700', color: colors.gray500 },
@@ -692,8 +688,6 @@ const s = StyleSheet.create({
   pmBtn: { padding: 4 },
   pmText: { fontSize: 16, color: colors.primaryDark, fontWeight: '700' },
 
-  /* Action */
-  /* Claim builder */
   claimSection: { paddingHorizontal: layout.screenHZ, gap: 12 },
   claimHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   claimSubtotal: { fontSize: 12, fontWeight: '600', color: colors.gray500 },
@@ -721,7 +715,7 @@ const s = StyleSheet.create({
   addClaimText: { fontSize: 13, fontWeight: '700', color: colors.primaryDark },
   claimWarn: { fontSize: 12, fontWeight: '600', color: colors.danger, textAlign: 'center' },
 
-  actionWrap: { paddingHorizontal: layout.screenHZ, marginTop: 8 },
+  actionWrap: { paddingHorizontal: layout.screenHZ },
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
@@ -738,9 +732,9 @@ const s = StyleSheet.create({
   orderRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   orderTypeBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
   orderBuy: { backgroundColor: colors.primaryLight },
-  orderSell: { backgroundColor: '#FFF7ED' },
+  orderSell: { backgroundColor: colors.orangeLight },
   orderTypeText: { fontSize: 12, fontWeight: '500' },
   orderBuyText: { color: colors.primaryDark },
-  orderSellText: { color: '#EA580C' },
+  orderSellText: { color: colors.orange },
   orderPrice: { fontSize: 12, fontWeight: '700', color: colors.text },
 });
