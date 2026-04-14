@@ -38,6 +38,10 @@ export function useAbortOnUnmount(): AbortOnUnmountHandle {
   const makeController = useCallback(() => {
     controllerRef.current?.abort();
     const ctrl = new AbortController();
+    // If a handler kept running past unmount (await gap, interval
+    // firing late) and tries to start a new request, hand it a
+    // pre-aborted controller so downstream fetch bails out instantly.
+    if (!mountedRef.current) ctrl.abort();
     controllerRef.current = ctrl;
     return ctrl;
   }, []);
