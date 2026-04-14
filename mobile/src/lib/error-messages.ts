@@ -83,9 +83,15 @@ function extractMessage(error: unknown): string {
   const e = error as Record<string, unknown>;
   if (typeof e.shortMessage === 'string') return e.shortMessage;
   if (typeof e.reason === 'string') return e.reason;
-  if (e.info && typeof (e.info as Record<string, unknown>).error === 'object') {
-    const inner = (e.info as Record<string, unknown>).error as Record<string, unknown>;
-    if (typeof inner.message === 'string') return inner.message;
+  // `typeof null === 'object'`, so explicit non-null guards on both
+  // `info` and `info.error` — ethers v6 can leave the nested slot
+  // null, which would otherwise crash the `.message` read.
+  if (e.info && typeof e.info === 'object') {
+    const info = e.info as Record<string, unknown>;
+    if (info.error && typeof info.error === 'object') {
+      const inner = info.error as Record<string, unknown>;
+      if (typeof inner.message === 'string') return inner.message;
+    }
   }
   if (error instanceof Error) return error.message;
   const str = String(error);
