@@ -246,6 +246,32 @@
 |---|------|------|--------|
 | 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
+| 29 | Dead `private_orders` / full proof(relayer-side proof 생성) 경로 정리 | ⬜ | — |
+
+<details>
+<summary>#29 범위 메모 (2026-04-14)</summary>
+
+S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_orders` 경로로만 들어옴. `private_orders` 쓰기 엔드포인트(`POST /api/private-orders`)는 이미 410 Gone 반환하는 상태. 남아 있는 dead 코드:
+
+- **Relayer**
+  - `zk-relayer/src/core/orderbook.ts` — `PrivateOrderbook` 클래스 (이제 항상 빈 상태, `loadFromDB` 가 항상 0 반환)
+  - `zk-relayer/src/core/private-submitter.ts` — `submitPrivateSettle`, `submitScatterDirect` (PrivateOrder 기반)
+  - `zk-relayer/src/core/matcher.ts` — `PrivateMatcher` 클래스 + `isSettleFeeCovered` (authorize 쪽에선 별도의 `findMatch` 사용 — `routes/authorize-orders.ts:364`)
+  - `zk-relayer/src/core/cross-relayer-matcher.ts` — PrivateMatcher + PrivateOrderbook 기반. **현재 authorize 주문에 대한 크로스-릴레이어 매칭은 동작하지 않음** — 공유 오더북으로 broadcast 만 되고 실제 매칭 로직이 이 dead 경로만 훑기 때문.
+  - `zk-relayer/src/routes/orders.ts` — `GET /api/private-orders/:pubKeyAx` (프런트에서 `private-history/page.tsx:323` 가 호출하지만 응답은 항상 빈 배열)
+  - `zk-relayer/src/types/order.ts` — `PrivateOrder`, `StoredPrivateOrder`, `PrivateMatch`, `CrossRelayerMatch`, `parsePrivateOrder`, `serializePrivateOrder`, `pairKey`
+  - `zk-relayer/src/core/db.ts` — `private_orders` 테이블 스키마 + prepared statements
+  - 테스트: `test/orderbook.test.ts`, `test/matcher.test.ts`, `test/cross-relayer-matcher.test.ts`, `test/scenarios.test.ts`, `test/e2e-private-flow.ts` (+ admin/api-routes 내 일부 assertion)
+
+- **Frontend**
+  - `frontend/app/trade/private-history/page.tsx:323` — `GET /api/private-orders/:pubKeyAx` 호출 지점. authorize 기반 히스토리로 교체 필요.
+
+- **Contract (scope 밖 — 별도 감사 필요)**
+  - `PrivateSettlement.settlePrivate()` — on-chain 함수. 배포된 컨트랙트에서 제거하려면 재배포 필요. 테스트넷 배포 전에 같이 검토.
+
+주의: cross-relayer 매칭을 authorize 주문에 대해서도 동작하게 하려면 **이 dead 코드를 지우기 전에** `routes/authorize-orders.ts`의 `findMatch` 를 원격 오더북까지 훑도록 확장하거나, 별도의 `AuthorizeCrossRelayerMatchService` 를 추가해야 함. 단순 삭제만 하면 크로스-릴레이어 매칭 기능이 명시적으로 0 이 됨 (지금도 사실상 0 이지만 코드상으론 살아있음).
+
+</details>
 
 ### 🟡 UX 개선 (사용자 플로우 체크에서 발견)
 
