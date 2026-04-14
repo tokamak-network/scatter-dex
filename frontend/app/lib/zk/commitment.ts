@@ -19,6 +19,8 @@
 
 // We use circomlibjs for Poseidon in the browser.
 // Lazy-loaded to avoid blocking initial page load.
+// circomlibjs has no type definitions — `any` is intentional.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let poseidonInstance: any = null;
 
 async function getPoseidon() {

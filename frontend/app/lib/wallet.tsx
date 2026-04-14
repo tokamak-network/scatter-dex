@@ -7,11 +7,11 @@ import { getReadProvider } from "./provider";
 const READ_PROVIDER = getReadProvider();
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   interface Window {
     ethereum?: ethers.Eip1193Provider & {
-      on?(event: string, handler: (...args: any[]) => void): void;
-      removeListener?(event: string, handler: (...args: any[]) => void): void;
+      on?(event: string, handler: (...args: unknown[]) => void): void;
+      removeListener?(event: string, handler: (...args: unknown[]) => void): void;
       isMetaMask?: boolean;
       isCoinbaseWallet?: boolean;
       isRabby?: boolean;
@@ -65,10 +65,16 @@ export function useWallet() {
  * Check specific flags BEFORE isMetaMask — many wallets set isMetaMask=true
  * for compatibility (Rabby, Coinbase, etc.).
  */
-function detectWalletName(provider: any): string {
-  if (provider.isRabby) return "Rabby";
-  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
-  if (provider.isMetaMask) return "MetaMask";
+function detectWalletName(provider: ethers.Eip1193Provider): string {
+  // Wallet vendors set non-standard boolean flags (isRabby / isMetaMask /
+  // isCoinbaseWallet etc.) on the EIP-1193 provider. They aren't part of
+  // the spec'd type, so narrow via a structural cast at access time.
+  const flags = provider as ethers.Eip1193Provider & {
+    isRabby?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean;
+  };
+  if (flags.isRabby) return "Rabby";
+  if (flags.isCoinbaseWallet) return "Coinbase Wallet";
+  if (flags.isMetaMask) return "MetaMask";
   return "Browser Wallet";
 }
 
@@ -141,13 +147,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setupProvider();
     };
 
-    const anyEth = eth as any;
-    anyEth.on?.("accountsChanged", handleAccountsChanged);
-    anyEth.on?.("chainChanged", handleChainChanged);
+    // EIP-1193 emitter methods are typed as `unknown[] => void`; our
+    // handlers narrow per event so cast back to the structural shape.
+    const ethEmitter = eth as unknown as {
+      on?: (event: string, handler: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+    };
+    ethEmitter.on?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
+    ethEmitter.on?.("chainChanged", handleChainChanged);
 
     return () => {
-      anyEth.removeListener?.("accountsChanged", handleAccountsChanged);
-      anyEth.removeListener?.("chainChanged", handleChainChanged);
+      ethEmitter.removeListener?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
+      ethEmitter.removeListener?.("chainChanged", handleChainChanged);
     };
   }, [setupProvider, activeEip1193]);
 

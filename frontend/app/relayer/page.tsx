@@ -270,8 +270,8 @@ export default function RelayersPage() {
       await loadVaultBalances();
     } catch (e: unknown) {
       console.error("Vault claim failed:", e);
-      const err = e as any;
-      setClaimError(err.reason || (e instanceof Error ? e.message : "Claim failed"));
+      const reason = (e as { reason?: string })?.reason;
+      setClaimError(reason || (e instanceof Error ? e.message : "Claim failed"));
     } finally {
       setClaimingToken(null);
     }

@@ -477,9 +477,11 @@ export default function PrivateHistoryPage() {
         o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
       setOrders((prev) => prev.map(updater));
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Cancel failed:", e);
-      setCancelError(e?.reason || e?.message || "Unknown error");
+      const reason = (e as { reason?: string })?.reason;
+      const message = e instanceof Error ? e.message : null;
+      setCancelError(reason || message || "Unknown error");
       setCancelStep("error");
     }
   }, [keyPair, signer, account]);
