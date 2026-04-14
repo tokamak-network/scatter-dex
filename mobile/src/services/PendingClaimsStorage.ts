@@ -23,6 +23,10 @@
  * shape, then deletes it. Existing users keep their claims without a
  * manual re-import step.
  */
+// Self-import the polyfill so `crypto.getRandomValues` is live even
+// if this service loads before App.tsx wires it up (tests, headless
+// tasks). The package itself is idempotent.
+import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
@@ -57,10 +61,14 @@ function metaKey(id: string): string { return `${META_PREFIX}${id}`; }
 function secretKey(id: string): string { return `${SECRET_PREFIX}${id}`; }
 
 function newId(): string {
-  // Random enough to avoid collisions across the 1–100 claims a user will
-  // realistically accumulate. SecureStore keys must be alphanumeric + [._-]
-  // so we stay in [0-9a-z_].
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  // SecureStore keys must be alphanumeric + [._-]; hex stays in [0-9a-f].
+  // Use crypto.getRandomValues — Math.random is not collision-safe
+  // enough when a user batch-imports many claims in the same tick
+  // (same Date.now() millisecond + weak entropy = collision risk).
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${Date.now().toString(36)}_${hex}`;
 }
 
 async function readIds(): Promise<string[]> {
