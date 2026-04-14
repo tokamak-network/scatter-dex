@@ -2,6 +2,10 @@ import { Router } from "express";
 import { verifyMessage } from "ethers";
 import type { OrderSummary } from "../types/order.js";
 import type { TradeOfferRequest, TradeOfferResponse } from "../types/order.js";
+import type {
+  AuthorizeTradeOfferRequest,
+  AuthorizeTradeOfferResponse,
+} from "../core/authorize-cross-relayer-matcher.js";
 
 /**
  * P2P order exchange routes — enables direct relayer-to-relayer communication.
@@ -16,6 +20,7 @@ export function createP2PRoutes(
   onRemoteOrder: (order: OrderSummary) => void,
   onRemoteCancel: (orderId: string) => void,
   onTradeOffer?: (offer: TradeOfferRequest, relayerAddress: string) => Promise<TradeOfferResponse>,
+  onAuthorizeTradeOffer?: (offer: AuthorizeTradeOfferRequest, relayerAddress: string) => Promise<AuthorizeTradeOfferResponse>,
 ): Router {
   const router = Router();
 
@@ -148,6 +153,51 @@ export function createP2PRoutes(
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown error";
         res.status(500).json({ status: "rejected", reason: msg } satisfies TradeOfferResponse);
+      }
+    });
+  }
+
+  /**
+   * POST /api/p2p/authorize-trade-offer — Authorize-flow counterpart of the
+   * trade-offer endpoint. Receives a taker's pre-generated authorize proof,
+   * looks up the local maker by nullifier, and calls settleAuth on-chain.
+   */
+  if (onAuthorizeTradeOffer) {
+    router.post("/authorize-trade-offer", async (req, res) => {
+      if (!verifyRelayerAuth(req)) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
+      const relayerAddress = (req.headers["x-relayer-address"] as string).toLowerCase();
+
+      try {
+        const offer = req.body as AuthorizeTradeOfferRequest;
+        if (!offer || typeof offer !== "object") {
+          res.status(400).json({ error: "request body must be a JSON object" });
+          return;
+        }
+        if (!offer.makerNullifier || !offer.takerOrder) {
+          res.status(400).json({ error: "missing required fields: makerNullifier, takerOrder" });
+          return;
+        }
+        if (typeof offer.makerNullifier !== "string" || !/^0x[0-9a-f]{64}$/i.test(offer.makerNullifier)) {
+          res.status(400).json({ error: "makerNullifier must be a 0x-prefixed 32-byte hex string" });
+          return;
+        }
+        if (typeof offer.takerOrder !== "object" || offer.takerOrder === null || Array.isArray(offer.takerOrder)) {
+          res.status(400).json({ error: "takerOrder must be an object" });
+          return;
+        }
+
+        const result = await onAuthorizeTradeOffer(offer, relayerAddress);
+        res.json(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "unknown error";
+        // Reserve "rejected" for validated-but-declined offers; use "error"
+        // for the unexpected-exception path so the sending relayer can
+        // distinguish network/infra failures from business rejects.
+        res.status(500).json({ status: "error", reason: msg } satisfies AuthorizeTradeOfferResponse);
       }
     });
   }

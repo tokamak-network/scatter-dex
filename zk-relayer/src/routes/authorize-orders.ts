@@ -30,7 +30,7 @@ import { isSanctionedById } from "../core/sanctions-list.js";
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
  * are reloaded from DB so they survive relayer restarts.
  */
-const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+export const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 /** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
 const pendingCountByPubKey = new Map<string, number>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
@@ -54,7 +54,7 @@ function incPubKeyCount(ax: string, ay: string): void {
   pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
 }
 
-function decPubKeyCount(ax: string, ay: string): void {
+export function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
   const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
   if (count <= 0) pendingCountByPubKey.delete(id);

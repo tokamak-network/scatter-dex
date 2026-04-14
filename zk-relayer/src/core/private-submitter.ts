@@ -234,6 +234,10 @@ export class PrivateSubmitter {
     const tokenTaker = maker.sellToken; // what taker receives
 
     const relayerFeeBps = BigInt(config.relayerFee);
+    // Each side's effective bps is also passed to the circuit as `makerFee`
+    // / `takerFee` (line 293 below) — keep the intermediate values.
+    const makerFeeBps = relayerFeeBps < maker.maxFee ? relayerFeeBps : maker.maxFee;
+    const takerFeeBps = relayerFeeBps < taker.maxFee ? relayerFeeBps : taker.maxFee;
     const feeTokenMaker = computeSideFee(maker.buyAmount, maker.maxFee, relayerFeeBps);
     const feeTokenTaker = computeSideFee(taker.buyAmount, taker.maxFee, relayerFeeBps);
 
