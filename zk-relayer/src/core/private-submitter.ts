@@ -20,6 +20,7 @@ import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
+import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -232,15 +233,9 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Per-token fees (2026-04-14 fee-semantics redesign — circuits/settle.circom:464–527):
-    //   feeTokenMaker = floor(maker.buyAmount × makerFee / 10000)   ← paid by maker, in tokenMaker
-    //   feeTokenTaker = floor(taker.buyAmount × takerFee / 10000)   ← paid by taker, in tokenTaker
-    // Each side's effective fee is capped by that user's signed maxFee.
     const relayerFeeBps = BigInt(config.relayerFee);
-    const makerFeeBps = relayerFeeBps < maker.maxFee ? relayerFeeBps : maker.maxFee;
-    const takerFeeBps = relayerFeeBps < taker.maxFee ? relayerFeeBps : taker.maxFee;
-    const feeTokenMaker = (maker.buyAmount * makerFeeBps) / 10000n;
-    const feeTokenTaker = (taker.buyAmount * takerFeeBps) / 10000n;
+    const feeTokenMaker = computeSideFee(maker.buyAmount, maker.maxFee, relayerFeeBps);
+    const feeTokenTaker = computeSideFee(taker.buyAmount, taker.maxFee, relayerFeeBps);
 
     // Use latest block timestamp to stay within on-chain tolerance window
     const latestBlock = await this.provider.getBlock("latest");
@@ -461,7 +456,7 @@ export class PrivateSubmitter {
 
     const totalLocked = order.claims.reduce((sum, c) => sum + c.amount, 0n);
     const feeBps = BigInt(config.relayerFee);
-    const fee = (order.sellAmount * feeBps) / 10000n;
+    const fee = (order.sellAmount * feeBps) / FEE_BPS_DENOMINATOR;
     const withdrawAmount = totalLocked + fee;
 
     // Token address

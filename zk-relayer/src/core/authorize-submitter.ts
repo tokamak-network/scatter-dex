@@ -13,6 +13,7 @@ import { ethers } from "ethers";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
+import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
@@ -66,8 +67,6 @@ const CANCEL_PRIVATE_ABI = [
 const PRIVATE_CANCEL_EVENT_ABI = [
   `event PrivateCancel(bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer)`,
 ];
-
-const FEE_BPS_DENOMINATOR = 10_000n;
 
 /** Callback invoked when a PrivateCancel event is detected on-chain. */
 export type CancelEventCallback = (
@@ -159,12 +158,8 @@ export class AuthorizeSubmitter {
     const makerPs = match.maker.order.publicSignals;
     const takerPs = match.taker.order.publicSignals;
 
-    // Compute relayer-chosen fees (2026-04-14 fee-semantics redesign):
-    //   feeTokenMaker = floor(maker.buyAmount × maker.maxFee / 10000)  ← paid by maker
-    //   feeTokenTaker = floor(taker.buyAmount × taker.maxFee / 10000)  ← paid by taker
-    // The relayer may undercut each side's signed cap with its own `feeBps`.
-    const feeTokenMaker = this.computeFee(makerPs.buyAmount, makerPs.maxFee, feeBps);
-    const feeTokenTaker = this.computeFee(takerPs.buyAmount, takerPs.maxFee, feeBps);
+    const feeTokenMaker = computeSideFee(makerPs.buyAmount, makerPs.maxFee, feeBps);
+    const feeTokenTaker = computeSideFee(takerPs.buyAmount, takerPs.maxFee, feeBps);
 
     const params = {
       maker: this.buildAuthProofStruct(match.maker.order),
@@ -222,7 +217,13 @@ export class AuthorizeSubmitter {
     feeBps: bigint = 0n,
   ): Promise<string> {
     const ps = order.publicSignals;
-    const fee = this.computeFee(ps.sellAmount, ps.maxFee, feeBps);
+    // Scatter (same-token): on-chain cap is sellAmount × maxFee, not buyAmount
+    // × maxFee, so don't route through computeSideFee which targets the
+    // two-sided settle path.
+    const sellAmount = BigInt(ps.sellAmount);
+    const sideMaxFee = BigInt(ps.maxFee);
+    const effectiveBps = feeBps < sideMaxFee ? feeBps : sideMaxFee;
+    const fee = (sellAmount * effectiveBps) / FEE_BPS_DENOMINATOR;
 
     const params = {
       proof: this.buildAuthProofStruct(order),
@@ -288,20 +289,6 @@ export class AuthorizeSubmitter {
     };
   }
 
-  /**
-   * Compute the actual fee amount for one side.
-   * fee = floor(counterpartySellAmount * min(feeBps, sideMaxFee) / 10000)
-   */
-  private computeFee(
-    counterpartySellAmount: string,
-    sideMaxFee: string,
-    relayerFeeBps: bigint,
-  ): bigint {
-    const sell = BigInt(counterpartySellAmount);
-    const maxFee = BigInt(sideMaxFee);
-    const effectiveBps = relayerFeeBps < maxFee ? relayerFeeBps : maxFee;
-    return (sell * effectiveBps) / FEE_BPS_DENOMINATOR;
-  }
 
   /**
    * Persist a settled claimsRoot best-effort: log and swallow on
