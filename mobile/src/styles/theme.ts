@@ -40,18 +40,46 @@ export const colors = {
   textDimmer: '#D1D5DB',
 } as const;
 
+// Layout tokens — consumed by screens so horizontal/vertical rhythm stays
+// consistent across Home, Trade, Deposit, Claim, Settings, History. Change
+// these and every screen updates in lockstep.
+export const layout = {
+  screenHZ: 24,        // horizontal screen padding — matches the 24px grid
+  sectionGap: 24,      // vertical gap between cards/sections
+  contentTop: 8,       // top breathing room below the header
+  contentBottom: 96,   // bottom breathing room above the tab bar
+  headerPV: 16,        // header vertical padding (top == bottom)
+  card: { padding: 24, radius: 24, borderWidth: 1 },
+} as const;
+
 export const shared = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.bg },
   container: { flex: 1, backgroundColor: colors.bg },
   content: { paddingHorizontal: 20 },
 
+  // Baseline scroll container for screens that use ScreenHeader + a
+  // ScrollView list of cards. `paddingHorizontal: layout.screenHZ` means
+  // sections should NOT add their own horizontal padding.
+  scrollContent: {
+    paddingHorizontal: layout.screenHZ,
+    paddingTop: layout.contentTop,
+    paddingBottom: layout.contentBottom,
+    gap: layout.sectionGap,
+  },
+
   card: {
     backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 12,
-    borderWidth: 1,
+    borderRadius: layout.card.radius,
+    padding: layout.card.padding,
+    borderWidth: layout.card.borderWidth,
     borderColor: colors.border,
+    // Subtle shadow/elevation so cards lift off the bgSecondary surface
+    // consistently on both platforms.
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
   },
 
   title: { fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },

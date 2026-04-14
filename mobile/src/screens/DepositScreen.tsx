@@ -7,7 +7,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors } from '../styles/theme';
+import { colors, layout } from '../styles/theme';
+import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
@@ -130,14 +131,11 @@ export default function DepositScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.container}>
-        {/* Header */}
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-            <Text style={s.backIcon}>←</Text>
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>Private Deposit</Text>
-          <View style={{ width: 40 }} />
-        </View>
+        <ScreenHeader
+          title="Private Deposit"
+          variant="surface"
+          onBack={() => navigation.goBack()}
+        />
 
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
           {/* Step 1: Deposit Details */}
@@ -258,16 +256,27 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F9FAFB' },
   container: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, gap: 24, paddingTop: 8 },
-
-  /* Header */
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
-  backBtn: { padding: 8, marginLeft: -8 },
-  backIcon: { fontSize: 24, color: '#4B5563' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  scrollContent: {
+    paddingHorizontal: layout.screenHZ,
+    paddingTop: layout.contentTop,
+    paddingBottom: layout.contentBottom,
+    gap: layout.sectionGap,
+  },
 
   /* Card */
-  card: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1, gap: 24 },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: layout.card.radius,
+    padding: layout.card.padding,
+    borderWidth: layout.card.borderWidth,
+    borderColor: '#F3F4F6',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
+    gap: 24,
+  },
   cardDisabled: { opacity: 0.5 },
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
 
@@ -305,7 +314,7 @@ const s = StyleSheet.create({
   infoText: { flex: 1, fontSize: 12, fontWeight: '500', color: '#6B7280', lineHeight: 18 },
 
   /* Bottom Action */
-  bottomAction: { position: 'absolute', bottom: 96, left: 0, right: 0, paddingHorizontal: 24 },
+  bottomAction: { position: 'absolute', bottom: 96, left: 0, right: 0, paddingHorizontal: layout.screenHZ },
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
   actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
