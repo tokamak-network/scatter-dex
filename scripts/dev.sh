@@ -66,7 +66,10 @@ wait_for() {
 # Check if a port is already in use
 check_port() {
   local port="$1" name="$2"
-  if lsof -i :"$port" > /dev/null 2>&1; then
+  # Only fail on an actual LISTEN socket; ignore browser-side CLOSE_WAIT
+  # connections (e.g. MetaMask's lingering localhost:8545 socket) that
+  # aren't actually holding the port.
+  if lsof -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1; then
     echo "ERROR: port $port is already in use ($name). Kill the existing process first."
     exit 1
   fi
