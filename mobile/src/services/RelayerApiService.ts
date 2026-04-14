@@ -7,6 +7,7 @@
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { fetchWithTimeout } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
 
 export interface RelayerInfo {
@@ -177,15 +178,11 @@ export const RelayerApiService = {
     );
     return Promise.all(
       onChain.filter((r): r is NonNullable<typeof r> => !!r).map(async (r) => {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 3000);
         try {
-          const res = await fetch(`${r.url}/api/info`, { signal: controller.signal });
+          const res = await fetchWithTimeout(`${r.url}/api/info`, { timeoutMs: 3000 });
           return { ...r, online: res.ok };
         } catch {
           return { ...r, online: false };
-        } finally {
-          clearTimeout(t);
         }
       }),
     );
@@ -201,45 +198,33 @@ export const RelayerApiService = {
     relayerUrl: string,
   ): Promise<PrivateClaimResponse> {
     const base = relayerUrl || this.getBaseUrl();
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const res = await fetch(`${base}/api/private-claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(claim),
-        signal: controller.signal,
-      });
-      let data: any;
-      try { data = await res.json(); } catch {
-        throw new Error(`Invalid JSON response from relayer (${res.status})`);
-      }
-      if (!res.ok) {
-        throw new Error(data?.error || `Relayer rejected claim (${res.status})`);
-      }
-      // Validate shape so a malformed 200 response can't fool the UI into
-      // "success". Expected: 0x-prefixed 32-byte hex (66 chars total).
-      if (typeof data?.txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data.txHash)) {
-        throw new Error('Relayer response missing or malformed txHash');
-      }
-      return { txHash: data.txHash };
-    } finally {
-      clearTimeout(t);
+    const res = await fetchWithTimeout(`${base}/api/private-claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(claim),
+      timeoutMs: 30_000,
+    });
+    let data: any;
+    try { data = await res.json(); } catch {
+      throw new Error(`Invalid JSON response from relayer (${res.status})`);
     }
+    if (!res.ok) {
+      throw new Error(data?.error || `Relayer rejected claim (${res.status})`);
+    }
+    // Validate shape so a malformed 200 response can't fool the UI into
+    // "success". Expected: 0x-prefixed 32-byte hex (66 chars total).
+    if (typeof data?.txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(data.txHash)) {
+      throw new Error('Relayer response missing or malformed txHash');
+    }
+    return { txHash: data.txHash };
   },
 
   async healthCheck(relayerUrl?: string): Promise<boolean> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch(`${relayerUrl || this.getBaseUrl()}/health`, {
-        signal: controller.signal,
-      });
+      const res = await fetchWithTimeout(`${relayerUrl || this.getBaseUrl()}/health`, { timeoutMs: 5000 });
       return res.ok;
     } catch {
       return false;
-    } finally {
-      clearTimeout(timeoutId);
     }
   },
 };

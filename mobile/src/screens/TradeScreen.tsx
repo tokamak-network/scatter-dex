@@ -1,7 +1,7 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -63,6 +63,13 @@ export default function TradeScreen() {
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Cancels the in-flight submit-path getBestSwapRoute if the screen
+  // unmounts mid-submit. Without this the HTTP promise chain stays
+  // pinned (closing over signer/note/account) until 1inch responds.
+  const submitAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { submitAbortRef.current?.abort(); };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
@@ -418,6 +425,9 @@ export default function TradeScreen() {
         const platformFee = (sellAmountBn * dexPlatformFeeBps) / 10_000n;
         const swapAmount = sellAmountBn - platformFee;
 
+        submitAbortRef.current?.abort();
+        const routeAbort = new AbortController();
+        submitAbortRef.current = routeAbort;
         const route = await getBestSwapRoute({
           chainId: ConfigService.getChainId(),
           sellToken: selectedNote.token,
@@ -426,7 +436,9 @@ export default function TradeScreen() {
           minReceive,
           recipient: settlementAddr,
           slippageBps: DEFAULT_SLIPPAGE_BPS,
+          signal: routeAbort.signal,
         });
+        if (submitAbortRef.current === routeAbort) submitAbortRef.current = null;
 
         const input: MarketOrderInput = {
           note: selectedNote,

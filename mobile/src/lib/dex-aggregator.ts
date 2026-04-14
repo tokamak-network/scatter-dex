@@ -12,6 +12,7 @@
 
 import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
+import { fetchWithTimeout } from './http';
 
 // 1inch Aggregation Router V6 — same address on all EVM chains.
 const ONEINCH_ROUTER = '0x111111125421cA6dc452d289314280a0f8842A65';
@@ -95,45 +96,33 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
     slippage: (slippageBps / 100).toString(),
   });
 
-  // Chain the caller-provided abort signal with our own timeout so
-  // either a parent-driven cancel (stale preview) or a timeout aborts
-  // the underlying fetch.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  const onParentAbort = () => controller.abort();
-  signal?.addEventListener('abort', onParentAbort);
-
-  try {
-    const res = await fetch(`${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`, {
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'unknown' }));
-      throw new Error(`Swap API error ${res.status}: ${err.error}`);
-    }
-
-    const data = await res.json();
-
-    let estimated: bigint;
-    try {
-      estimated = BigInt(data.estimatedOutput);
-    } catch {
-      throw new Error(`Swap API returned invalid estimatedOutput: ${String(data.estimatedOutput)}`);
-    }
-    if (estimated < minReceive) {
-      throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
-    }
-
-    return {
-      dexRouter: String(data.dexRouter),
-      dexCalldata: String(data.dexCalldata),
-      source: '1inch',
-      estimatedOutput: estimated,
-    };
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', onParentAbort);
+  const res = await fetchWithTimeout(
+    `${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`,
+    { timeoutMs: FETCH_TIMEOUT_MS, parentSignal: signal },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'unknown' }));
+    throw new Error(`Swap API error ${res.status}: ${err.error}`);
   }
+
+  const data = await res.json();
+
+  let estimated: bigint;
+  try {
+    estimated = BigInt(data.estimatedOutput);
+  } catch {
+    throw new Error(`Swap API returned invalid estimatedOutput: ${String(data.estimatedOutput)}`);
+  }
+  if (estimated < minReceive) {
+    throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
+  }
+
+  return {
+    dexRouter: String(data.dexRouter),
+    dexCalldata: String(data.dexCalldata),
+    source: '1inch',
+    estimatedOutput: estimated,
+  };
 }
 
 function getUniswapRoute(params: SwapParams): SwapRoute {
