@@ -130,7 +130,23 @@ export function useRecentActivity() {
       collect(cancelRes, 'cancel', () => 'Order cancelled');
 
       items.sort((a, b) => b.blockNumber - a.blockNumber);
-      setActivities(items.slice(0, MAX_ITEMS));
+      const top = items.slice(0, MAX_ITEMS);
+
+      // Enrich with block timestamps so the UI can render "12m ago" /
+      // "Yesterday". Dedup by block number — multiple events in one block
+      // share a timestamp, so N events → ≤N getBlock calls. Failures are
+      // tolerated: we leave `timestamp: null` and let the UI fall back.
+      const uniqueBlocks = Array.from(new Set(top.map((it) => it.blockNumber)));
+      const blocks = await Promise.allSettled(
+        uniqueBlocks.map((n) => readProvider.getBlock(n)),
+      );
+      const tsByBlock = new Map<number, number>();
+      blocks.forEach((res, i) => {
+        if (res.status === 'fulfilled' && res.value) {
+          tsByBlock.set(uniqueBlocks[i], Number(res.value.timestamp));
+        }
+      });
+      setActivities(top.map((it) => ({ ...it, timestamp: tsByBlock.get(it.blockNumber) ?? null })));
     } finally {
       setLoading(false);
     }
