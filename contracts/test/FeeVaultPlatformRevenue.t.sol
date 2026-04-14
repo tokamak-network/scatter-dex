@@ -10,6 +10,27 @@ contract MockERC20 is ERC20 {
     function mint(address to, uint256 amount) external { _mint(to, amount); }
 }
 
+/// @dev Hooks `transfer` to re-enter FeeVault, used to prove the
+///      ReentrancyGuard on platformRevenue paths actually fires.
+contract ReentrantToken is ERC20 {
+    FeeVault public vault;
+    address public attacker;
+    bool public attacking;
+
+    constructor() ERC20("Reenter", "REE") {}
+    function setup(FeeVault _v, address _a) external { vault = _v; attacker = _a; }
+    function mint(address to, uint256 amount) external { _mint(to, amount); }
+    function arm() external { attacking = true; }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (attacking && msg.sender == address(vault)) {
+            attacking = false; // one-shot
+            vault.withdrawPlatformRevenue(address(this));
+        }
+        return super.transfer(to, amount);
+    }
+}
+
 /// @notice Exercises FeeVault.platformRevenue accounting introduced for
 ///         market-order platform fees and positive-slippage surplus in
 ///         PrivateSettlement.settleWithDex.
@@ -22,6 +43,10 @@ contract FeeVaultPlatformRevenueTest is Test {
     address depositor = address(0xDEAD);
     address outsider = address(0xFACE);
 
+    // Mirror of PrivateSettlement.{DEX_SURPLUS_SOURCE, DEX_PLATFORM_FEE_SOURCE}
+    // — those are `internal constant` and not visible here. Renaming either
+    // preimage in production without updating these will drop a revenue
+    // stream on the floor, so keep them in lock-step.
     bytes32 constant SOURCE_SURPLUS = keccak256("market-surplus");
     bytes32 constant SOURCE_PLATFORM_FEE = keccak256("market-platform-fee");
 
@@ -36,7 +61,10 @@ contract FeeVaultPlatformRevenueTest is Test {
     function test_depositPlatformRevenue_credits_bucket_and_emits() public {
         token.mint(address(vault), 100 ether);
 
-        vm.expectEmit(true, false, true, true);
+        // PlatformRevenueDeposited indexes `token` (topic1) and `source`
+        // (topic2); `amount` is data. Flag positions: (topic1, topic2,
+        // topic3, data).
+        vm.expectEmit(true, true, false, true);
         emit FeeVault.PlatformRevenueDeposited(address(token), 100 ether, SOURCE_SURPLUS);
 
         vm.prank(depositor);
@@ -203,6 +231,48 @@ contract FeeVaultPlatformRevenueTest is Test {
         vault.withdrawPlatformRevenue(address(token));
         assertEq(token.balanceOf(newTreasury), 10 ether);
         assertEq(token.balanceOf(treasury), 0);
+    }
+
+    // ─── multi-token isolation ──────────────────────────────────
+
+    function test_platformRevenue_buckets_are_token_scoped() public {
+        MockERC20 tokenB = new MockERC20();
+        token.mint(address(vault), 10 ether);
+        tokenB.mint(address(vault), 7 ether);
+
+        vm.startPrank(depositor);
+        vault.depositPlatformRevenue(address(token), 10 ether, SOURCE_SURPLUS);
+        vault.depositPlatformRevenue(address(tokenB), 7 ether, SOURCE_PLATFORM_FEE);
+        vm.stopPrank();
+
+        assertEq(vault.platformRevenue(address(token)), 10 ether);
+        assertEq(vault.platformRevenue(address(tokenB)), 7 ether);
+
+        // Withdrawing token A leaves token B untouched.
+        vm.prank(treasury);
+        vault.withdrawPlatformRevenue(address(token));
+        assertEq(vault.platformRevenue(address(token)), 0);
+        assertEq(vault.platformRevenue(address(tokenB)), 7 ether);
+        assertEq(token.balanceOf(treasury), 10 ether);
+        assertEq(tokenB.balanceOf(treasury), 0);
+    }
+
+    // ─── reentrancy ─────────────────────────────────────────────
+
+    function test_withdrawPlatformRevenue_rejects_reentry() public {
+        ReentrantToken rt = new ReentrantToken();
+        rt.setup(vault, address(this));
+        rt.mint(address(vault), 5 ether);
+
+        vm.prank(depositor);
+        vault.depositPlatformRevenue(address(rt), 5 ether, SOURCE_SURPLUS);
+
+        // Hook re-enters `withdrawPlatformRevenue` mid-transfer; the outer
+        // call reverts because OZ ReentrancyGuard flags the nested entry.
+        rt.arm();
+        vm.prank(treasury);
+        vm.expectRevert();
+        vault.withdrawPlatformRevenue(address(rt));
     }
 
     // ─── relayer claim path is not affected ─────────────────────

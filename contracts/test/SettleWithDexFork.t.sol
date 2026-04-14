@@ -324,9 +324,9 @@ contract SettleWithDexForkTest is Test {
         vm.prank(user);
         settlement.settleWithDex(params);
 
-        // Platform fee (1% of 10 ETH = 0.1 ETH) credited to
-        // FeeVault.platformRevenue[WETH], not sent to treasury directly.
-        assertEq(feeVault.platformRevenue(WETH), 0.1 ether, "FeeVault should hold 1% WETH platform fee");
+        // Platform fee credited to FeeVault.platformRevenue[WETH].
+        uint256 fee = feeVault.platformRevenue(WETH);
+        assertEq(fee, 0.1 ether, "FeeVault should hold 1% WETH platform fee");
         assertEq(IERC20(WETH).balanceOf(treasury), 0, "Treasury EOA must not hold WETH directly");
 
         // Claims group registered
@@ -337,10 +337,10 @@ contract SettleWithDexForkTest is Test {
         // Treasury can pull the fee via withdrawPlatformRevenue.
         vm.prank(treasury);
         feeVault.withdrawPlatformRevenue(WETH);
-        assertEq(IERC20(WETH).balanceOf(treasury), 0.1 ether);
+        assertEq(IERC20(WETH).balanceOf(treasury), fee);
 
         console2.log("Uniswap V3 + 1% platform fee: 10 WETH");
-        console2.log("  platform fee via FeeVault:", uint256(0.1 ether) / 1e18, "WETH");
+        console2.log("  platform fee via FeeVault:", fee / 1e18, "WETH");
         console2.log("  claims:", totalLocked / 1e6, "USDC");
     }
 
