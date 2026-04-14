@@ -123,9 +123,13 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
 function getUniswapRoute(params: SwapParams): SwapRoute {
   const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier = DEFAULT_FEE_TIER } = params;
 
-  const routerAddr = UNISWAP_ROUTERS[chainId];
+  // Hardcoded map covers mainnet + public Sepolia only. Thanos chains
+  // and local dev rely on the per-deploy `UNISWAP_ROUTER_ADDRESS` env
+  // plumbed through ConfigService — same lookup TradeScreen uses for
+  // approvals.
+  const routerAddr = UNISWAP_ROUTERS[chainId] || ConfigService.getUniswapRouterAddress();
   if (!routerAddr) {
-    throw new Error(`Uniswap V3 router not configured for chain ${chainId}`);
+    throw new Error(`Uniswap V3 router not configured for chain ${chainId}. Set UNISWAP_ROUTER_ADDRESS.`);
   }
 
   const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData('exactInputSingle', [{
@@ -151,12 +155,15 @@ export function get1inchRouterAddress(): string {
   return ONEINCH_ROUTER;
 }
 
-/** Supported DEX router addresses for a chain. */
+/** Supported DEX router addresses for a chain. 1inch is listed only
+ *  when `WEB_API_BASE_URL` is configured — without that proxy the
+ *  aggregator skips 1inch and the router isn't actually reachable. */
 export function getDexRouters(chainId: number): { name: string; address: string }[] {
-  const routers: { name: string; address: string }[] = [
-    { name: '1inch Aggregation Router V6', address: ONEINCH_ROUTER },
-  ];
-  const uniswap = UNISWAP_ROUTERS[chainId];
+  const routers: { name: string; address: string }[] = [];
+  if (ConfigService.getWebApiBaseUrl()) {
+    routers.push({ name: '1inch Aggregation Router V6', address: ONEINCH_ROUTER });
+  }
+  const uniswap = UNISWAP_ROUTERS[chainId] || ConfigService.getUniswapRouterAddress();
   if (uniswap) {
     routers.push({ name: 'Uniswap V3 SwapRouter02', address: uniswap });
   }
