@@ -16,10 +16,9 @@ import { ConfigService } from '../services/ConfigService';
 // 1inch Aggregation Router V6 — same address on all EVM chains.
 const ONEINCH_ROUTER = '0x111111125421cA6dc452d289314280a0f8842A65';
 
-// Uniswap V3 SwapRouter02 per chain.
 const UNISWAP_ROUTERS: Record<number, string> = {
-  1: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',      // mainnet
-  11155111: '0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E', // sepolia
+  1: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+  11155111: '0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E',
 };
 
 const UNISWAP_ROUTER_IFACE = new ethers.Interface([
@@ -30,10 +29,17 @@ const UNISWAP_ROUTER_IFACE = new ethers.Interface([
 // the server's error response has a chance to arrive.
 const FETCH_TIMEOUT_MS = 12_000;
 
+// Defaults shared with `frontend/app/lib/dex-aggregator.ts` — keep in sync.
+const DEFAULT_SLIPPAGE_BPS = 50;
+const DEFAULT_FEE_TIER = 3000;
+const UNISWAP_DEADLINE_SEC = 1800;
+
+export type SwapSource = '1inch' | 'uniswap';
+
 export interface SwapRoute {
   dexRouter: string;
   dexCalldata: string;
-  source: string;             // '1inch' | 'uniswap'
+  source: SwapSource;
   estimatedOutput: bigint;
 }
 
@@ -68,7 +74,7 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
 }
 
 async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapRoute | null> {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = 50 } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = DEFAULT_SLIPPAGE_BPS } = params;
 
   const queryParams = new URLSearchParams({
     chainId: chainId.toString(),
@@ -93,15 +99,20 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
 
     const data = await res.json();
 
-    const estimated = BigInt(data.estimatedOutput);
+    let estimated: bigint;
+    try {
+      estimated = BigInt(data.estimatedOutput);
+    } catch {
+      throw new Error(`Swap API returned invalid estimatedOutput: ${String(data.estimatedOutput)}`);
+    }
     if (estimated < minReceive) {
       throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
     }
 
     return {
-      dexRouter: data.dexRouter,
-      dexCalldata: data.dexCalldata,
-      source: data.source,
+      dexRouter: String(data.dexRouter),
+      dexCalldata: String(data.dexCalldata),
+      source: '1inch',
       estimatedOutput: estimated,
     };
   } finally {
@@ -110,7 +121,7 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
 }
 
 function getUniswapRoute(params: SwapParams): SwapRoute {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier = 3000 } = params;
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier = DEFAULT_FEE_TIER } = params;
 
   const routerAddr = UNISWAP_ROUTERS[chainId];
   if (!routerAddr) {
@@ -122,7 +133,7 @@ function getUniswapRoute(params: SwapParams): SwapRoute {
     tokenOut: buyToken,
     fee: feeTier,
     recipient,
-    deadline: Math.floor(Date.now() / 1000) + 1800,
+    deadline: Math.floor(Date.now() / 1000) + UNISWAP_DEADLINE_SEC,
     amountIn: sellAmount,
     amountOutMinimum: minReceive,
     sqrtPriceLimitX96: 0n,
@@ -136,7 +147,6 @@ function getUniswapRoute(params: SwapParams): SwapRoute {
   };
 }
 
-/** 1inch Aggregation Router V6 address (same on all chains). */
 export function get1inchRouterAddress(): string {
   return ONEINCH_ROUTER;
 }
