@@ -164,8 +164,13 @@ export class SharedOrderbookClient {
             const order = data.order as OrderSummary;
             // Skip own orders
             if (order.relayer.toLowerCase() !== this.wallet.address.toLowerCase()) {
+              // De-dup against the snapshot path: if syncOpenOrders already
+              // fired the callback for this id (common on reconnect), don't
+              // invoke it again. Downstream matcher guards would catch the
+              // redundancy but re-running the full scan is wasted work.
+              const isNew = !this.remoteOrders.has(order.id);
               this.remoteOrders.set(order.id, order);
-              this.onOrderCallback?.(order);
+              if (isNew) this.onOrderCallback?.(order);
             }
           } else if (data.type === "order:cancelled" && data.orderId) {
             this.remoteOrders.delete(data.orderId);
