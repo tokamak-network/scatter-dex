@@ -222,7 +222,14 @@ export const OrderService = {
           releaseTime: claimsData[idx].releaseTime,
           leafIndex: idx,
           allLeaves: claimLeafHashes,
-          txHash: response.orderId || '',
+          // Settle tx hash isn't known here — the relayer settles async.
+          // Keep the orderId in its own field so display/dedup can tell
+          // the two apart. Use `undefined` (not `''`) when the relayer
+          // didn't return an orderId, otherwise BackupService's dedup
+          // key collapses to `#leafIndex#amount` and collides across
+          // unrelated orders.
+          txHash: '',
+          ...(response.orderId ? { orderId: response.orderId } : {}),
           // Carry the ephemeral pubkey through to storage on stealth
           // claims — the recipient needs it to derive their private key.
           ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
