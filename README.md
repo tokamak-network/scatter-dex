@@ -47,17 +47,17 @@ docs/            Research paper, design docs
 - Node.js >= 18
 - [circom](https://docs.circom.io/getting-started/installation/) 2.x (for building ZK circuit artifacts — see below)
 
-### Build ZK circuit artifacts (first-time setup)
+### ZK circuit artifacts
 
-Neither `dev.sh` nor `make up` builds the circuits. Only `authorize.*` and `cancel.*` are committed to `frontend/public/zk/`; the other four (`deposit`, `withdraw`, `settle`, `claim`) must be generated locally before the private-trade flows will work:
+Generated zkeys, WASMs, and the six Groth16 `*Verifier.sol` files are not tracked in git — each phase-2 setup uses a fresh random beacon, so the only way to keep the on-chain Verifier consistent with the frontend's zkey is to build them together. Both `./scripts/dev.sh` and `./scripts/dev-fork.sh` run `npm run build` in `circuits/` before deploying contracts. First run is slow (Powers-of-Tau generation, several minutes); subsequent runs reuse `circuits/build/pot*_final.ptau`.
+
+First-time setup (one-off `npm install` for circom toolchain):
 
 ```bash
-cd circuits
-npm install        # first time only
-npm run build      # runs scripts/build.sh — compiles circom, runs Groth16 setup, copies .wasm + _final.zkey into frontend/public/zk/
+cd circuits && npm install
 ```
 
-If you skip this, the browser will fail with `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` (Next.js 404 HTML being fed to the WASM loader). See [docs/operations/local-setup.md](docs/operations/local-setup.md#prerequisite-build-zk-circuit-artifacts) for details.
+Set `SKIP_CIRCUIT_BUILD=1` on the deploy script when you know nothing changed since the last build. See [docs/operations/local-setup.md](docs/operations/local-setup.md#prerequisite-zk-circuit-artifacts) for the full rationale and troubleshooting.
 
 ### Full Local Dev (with zk-X509)
 

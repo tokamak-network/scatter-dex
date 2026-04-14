@@ -75,6 +75,30 @@ check_port() {
 # Create log directory
 mkdir -p "$LOG_DIR"
 
+# Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
+# setup emits different vkey constants, and the only way to guarantee
+# zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
+# regenerate them in one atomic build. The generated Verifier.sol files
+# are gitignored for this reason.
+#
+# Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
+# the last build (saves ~30s+ on the settle phase-2).
+ensure_circuits_built() {
+  if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
+    echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    return
+  fi
+  echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
+  # `if !` instead of post-hoc `$?` check so the failure is caught even
+  # under `set -e` (which would otherwise abort before the diagnostic runs).
+  if ! ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1; then
+    echo "  ERROR: circuit build failed. Tail of $LOG_DIR/circuit-build.log:"
+    tail -30 "$LOG_DIR/circuit-build.log" 2>/dev/null
+    exit 1
+  fi
+  echo "  Circuits built."
+}
+
 echo "=== ScatterDEX Local Dev Environment ==="
 echo ""
 
@@ -101,6 +125,7 @@ if [ "$MOCK_MODE" = true ]; then
 
   echo ""
   echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
+  ensure_circuits_built
   cd "$ROOT_DIR/contracts"
   # `forge script` can exit non-zero even when the on-chain deployment
   # succeeded — e.g. `Error: IO error: not a terminal` under captured
@@ -195,6 +220,7 @@ else
 
   echo ""
   echo "[2/4] Deploying contracts (real IdentityGate)..."
+  ensure_circuits_built
   cd "$ROOT_DIR/contracts"
 
   # See MOCK branch: suppress `set -e` only for known-benign forge exits.
