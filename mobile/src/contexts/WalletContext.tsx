@@ -22,6 +22,12 @@ interface WalletState {
   signer: ethers.Signer | null;
   isConnecting: boolean;
   error: string | null;
+  /** True after a background auto-lock: the active session was torn down
+   *  but the previously-connected address is stashed in `lockedAccount`
+   *  so the UI can greet the user on return and offer a one-tap unlock
+   *  that re-runs the biometric prompt. */
+  isLocked: boolean;
+  lockedAccount: string | null;
 }
 
 type ConnectionMode = 'none' | 'builtin' | 'walletconnect';
@@ -31,6 +37,9 @@ interface WalletContextValue extends WalletState {
   connect: () => Promise<void>;              // WalletConnect
   connectBuiltin: () => Promise<void>;       // 앱 내장 지갑
   disconnect: () => Promise<void>;
+  /** Unlocks a session that was cleared by `bg-lock`. Re-runs biometric
+   *  auth via `KeySecurityService.getSigner` and repopulates state. */
+  unlock: () => Promise<void>;
   readProvider: ethers.JsonRpcProvider;
 }
 
@@ -47,6 +56,8 @@ const INITIAL_STATE: WalletState = {
   signer: null,
   isConnecting: false,
   error: null,
+  isLocked: false,
+  lockedAccount: null,
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -102,12 +113,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const network = await ethersProvider.getNetwork();
 
     setState({
+      ...INITIAL_STATE,
       account,
       chainId: Number(network.chainId),
       provider: ethersProvider,
       signer,
-      isConnecting: false,
-      error: null,
     });
   }, []);
 
@@ -192,6 +202,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [targetChainId, setupFromWcProvider]);
 
+  // Shared by `connectBuiltin` and `unlock` — both need to re-run the
+  // biometric prompt and pin the resulting signer into state. Spreading
+  // `INITIAL_STATE` ensures every new field (e.g. `isLocked`) gets
+  // reset without each call site having to remember to clear it.
+  const hydrateBuiltinSession = useCallback(async () => {
+    const signer = await KeySecurityService.getSigner(readProvider);
+    if (!signer) throw new Error('Authentication failed');
+    const address = await signer.getAddress();
+    const network = await readProvider.getNetwork();
+    setState({
+      ...INITIAL_STATE,
+      account: address,
+      chainId: Number(network.chainId),
+      signer,
+    });
+    setConnectionMode('builtin');
+  }, [readProvider]);
+
   // ─── 앱 내장 지갑 연결 ──────────────────────────────
   const connectBuiltin = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
@@ -207,23 +235,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw new Error('NO_WALLET');
       }
 
-      const signer = await KeySecurityService.getSigner(readProvider);
-      if (!signer) {
-        throw new Error('Authentication failed');
-      }
-
-      const address = await signer.getAddress();
-      const network = await readProvider.getNetwork();
-
-      setState({
-        account: address,
-        chainId: Number(network.chainId),
-        provider: null, // 내장 지갑은 BrowserProvider 없음
-        signer,
-        isConnecting: false,
-        error: null,
-      });
-      setConnectionMode('builtin');
+      await hydrateBuiltinSession();
     } catch (err: any) {
       setState((s) => ({
         ...s,
@@ -235,7 +247,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw err; // 호출자가 처리
       }
     }
-  }, [readProvider]);
+  }, [hydrateBuiltinSession]);
 
   // Background-reauth: clear the cached signer if the app was backgrounded
   // for longer than `BG_LOCK_MS`. Only applies to the built-in wallet mode
@@ -279,12 +291,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           // `isBiometricEnabled` await, a fresh `active` handler will
           // re-evaluate the elapsed time — don't race it by locking now.
           if (AppState.currentState !== 'active') return;
-          // Full teardown — resetting to INITIAL_STATE plus
-          // `connectionMode = 'none'` ensures the UI treats the app as
-          // disconnected instead of "account present but signer null",
-          // which HomeScreen would otherwise render as connected while
-          // any transaction-needing action fails silently.
-          setState(INITIAL_STATE);
+          // Transition to locked state — clear the active-session bits
+          // (account / signer / provider / connectionMode) so screens
+          // keyed on `account !== null` treat the app as disconnected,
+          // but remember the address that was connected so the Locked
+          // screen can greet the user with "Welcome back, 0x…" and
+          // offer a one-tap unlock.
+          setState((s) => ({
+            ...INITIAL_STATE,
+            isLocked: true,
+            lockedAccount: s.account,
+          }));
           setConnectionMode('none');
         } catch (err) {
           // SecureStore can reject on device edge cases (Keychain
@@ -312,8 +329,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setConnectionMode('none');
   }, []);
 
+  // Unlock from the `isLocked` state — re-runs the biometric prompt and
+  // restores the session. Only the built-in wallet mode can be locked
+  // (WalletConnect sessions aren't tracked by us), so the unlock always
+  // goes through `hydrateBuiltinSession`. On failure we keep the locked
+  // state intact so the user can retry — clearing `isLocked` would drop
+  // them into the cold Connect flow and lose the welcome-back context.
+  const unlock = useCallback(async () => {
+    setState((s) => ({ ...s, isConnecting: true, error: null }));
+    try {
+      await hydrateBuiltinSession();
+    } catch (err: any) {
+      setState((s) => ({
+        ...s,
+        isConnecting: false,
+        error: err?.message || 'Unlock failed',
+      }));
+    }
+  }, [hydrateBuiltinSession]);
+
+  // Memoize the context value — otherwise every render of WalletProvider
+  // hands consumers a fresh object identity and re-renders every screen
+  // that reads from `useWallet()`, even when nothing they care about
+  // actually changed.
+  const ctxValue = useMemo<WalletContextValue>(
+    () => ({ ...state, connectionMode, connect, connectBuiltin, disconnect, unlock, readProvider }),
+    [state, connectionMode, connect, connectBuiltin, disconnect, unlock, readProvider],
+  );
+
   return (
-    <WalletContext.Provider value={{ ...state, connectionMode, connect, connectBuiltin, disconnect, readProvider }}>
+    <WalletContext.Provider value={ctxValue}>
       {children}
 
       <BaseModal

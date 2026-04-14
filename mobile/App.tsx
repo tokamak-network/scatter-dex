@@ -9,9 +9,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HiddenWebView from './src/components/HiddenWebView';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import TabNavigator from './src/navigation/TabNavigator';
-import { WalletProvider } from './src/contexts/WalletContext';
+import { WalletProvider, useWallet } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
 import { NetworkService } from './src/services/NetworkService';
+import LockedScreen from './src/screens/LockedScreen';
 
 // `phase: 'loading'` is the only sentinel App.tsx adds on top of the
 // service-level `ZKReadyStatus` — keeping the two types narrow rather than
@@ -20,6 +21,46 @@ type ZkBootState =
   | { phase: 'loading' }
   | { phase: 'ready' }
   | { phase: 'failed'; error: string };
+
+/**
+ * Shell between WalletProvider and the tab navigator. Lives here so it
+ * can call `useWallet()` — the root `App` component sits *above* the
+ * provider and can't.
+ *
+ * `LockedScreen` is rendered as an absolute overlay rather than swapped
+ * in for the navigator, so unlocking drops the user back exactly where
+ * they left off (same tab, same scroll position, same in-memory data)
+ * instead of resetting to the default tab.
+ */
+function AppShell() {
+  const { isLocked } = useWallet();
+  return (
+    <>
+      {/* Hide the navigator subtree from screen readers while locked —
+          otherwise VoiceOver / TalkBack can swipe past the overlay and
+          focus the tabs underneath, leaking the auth-gated UI. Pair
+          with `accessibilityViewIsModal` on the overlay so iOS treats
+          the lock as a proper modal. */}
+      <View
+        style={styles.navRoot}
+        importantForAccessibility={isLocked ? 'no-hide-descendants' : 'auto'}
+        accessibilityElementsHidden={isLocked}
+      >
+        <NavigationContainer>
+          <TabNavigator />
+        </NavigationContainer>
+      </View>
+      {isLocked && (
+        <View
+          style={StyleSheet.absoluteFill}
+          accessibilityViewIsModal
+        >
+          <LockedScreen />
+        </View>
+      )}
+    </>
+  );
+}
 
 export default function App() {
   const [zkBoot, setZkBoot] = useState<ZkBootState>({ phase: 'loading' });
@@ -58,9 +99,7 @@ export default function App() {
           <View style={styles.root}>
             <StatusBar style="dark" />
             {zkBoot.phase === 'ready' ? (
-              <NavigationContainer>
-                <TabNavigator />
-              </NavigationContainer>
+              <AppShell />
             ) : zkBoot.phase === 'failed' ? (
               <View style={styles.loading}>
                 <Text style={styles.errorTitle}>ZK Engine failed to initialize</Text>
@@ -91,6 +130,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FFFFFF' },
+  navRoot: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   loadingText: { color: '#9CA3AF', marginTop: 16, fontSize: 14 },
   errorTitle: { color: '#EF4444', fontSize: 16, fontWeight: '700', marginBottom: 12, textAlign: 'center' },
