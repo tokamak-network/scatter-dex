@@ -101,6 +101,7 @@ const CHAIN_NAMES: Record<number, string> = {
   11155111: "Sepolia",
   17000: "Holesky",
   31337: "Localhost",
+  31338: "zkScatter Fork",
   137: "Polygon",
   42161: "Arbitrum",
   10: "Optimism",

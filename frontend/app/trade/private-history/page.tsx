@@ -51,6 +51,14 @@ interface OrderFile {
     expiry: string;
     nonce: string;
     leafIndex: number;
+    /** "market" for settleWithDex orders, otherwise limit. Stored by
+     *  private-order/page.tsx when a market trade saves its claim file. */
+    type?: "market" | "limit";
+    /** Market-only: quote snapshot + routing info. */
+    slippageBps?: number;
+    estimatedOutput?: string;
+    dexRouter?: string;
+    dexSource?: string;
   };
   change: {
     amount: string;
@@ -171,8 +179,13 @@ export default function PrivateHistoryPage() {
       const relayerOrders: Array<{ nonce: string; status: string; settleTxHash?: string; crossRelayer?: boolean }> =
         Array.isArray(data) ? data : data.orders ?? [];
 
-      // Match by nonce
+      // Match by nonce. Market orders never hit the relayer DB — they're
+      // already settled on-chain at file-creation time, so default their
+      // status to "settled" instead of leaving it blank.
       return orderList.map((o) => {
+        if (o.order?.type === "market") {
+          return { ...o, status: o.status ?? "settled" };
+        }
         if (!o.order?.nonce) return o;
         const match = relayerOrders.find((ro) => ro.nonce === o.order.nonce);
         return match ? { ...o, status: match.status, settleTxHash: match.settleTxHash, crossRelayer: match.crossRelayer } : o;
@@ -439,10 +452,19 @@ export default function PrivateHistoryPage() {
                     <span className="text-tertiary font-bold">{ethers.formatUnits(o.order.buyAmount, buy.decimals)}</span>
                     <span className="text-on-surface-variant ml-1">{buy.symbol}</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`font-bold text-xs ${STATUS_COLORS[o.status ?? ""] ?? "text-on-surface-variant/40"}`}>
                       {o.status ?? (keyPair ? "\u2014" : "unlock key")}
                     </span>
+                    {o.order?.type === "market" ? (
+                      <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-tertiary/15 text-tertiary border border-tertiary/30">
+                        Market
+                      </span>
+                    ) : (
+                      <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/15 text-primary border border-primary/30">
+                        Limit
+                      </span>
+                    )}
                     {o.crossRelayer && (
                       <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/20">
                         Cross
@@ -488,6 +510,49 @@ export default function PrivateHistoryPage() {
               </div>
             )}
           </div>
+
+          {/* Market-order fee breakdown: Max Fee is 0 on market path; the
+              real economic cost is the positive-slippage surplus that goes
+              to FeeVault.platformRevenue. Bound = estimatedOutput − totalLocked. */}
+          {selectedOrder.order.type === "market" && (() => {
+            const buy = resolveToken(selectedOrder.order.buyToken, tokens);
+            const totalLocked = (() => { try { return BigInt(selectedOrder.order.buyAmount); } catch { return 0n; } })();
+            const estimated = (() => { try { return BigInt(selectedOrder.order.estimatedOutput ?? "0"); } catch { return 0n; } })();
+            const surplusMax = estimated > totalLocked ? estimated - totalLocked : 0n;
+            const slip = selectedOrder.order.slippageBps;
+            const fmt = (v: bigint) => ethers.formatUnits(v, buy.decimals);
+            return (
+              <div className="bg-warning/10 border border-warning/20 rounded-md px-4 py-3 space-y-1.5 text-xs">
+                <div className="font-bold text-warning uppercase tracking-wider">DEX Trade Fees</div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant/70">Platform fee (upfront)</span>
+                  <span className="font-mono text-on-surface-variant">0.00% / 0 {buy.symbol}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant/70">Slippage tolerance</span>
+                  <span className="font-mono text-on-surface">{slip != null ? `${(slip / 100).toFixed(2)}%` : "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant/70">Est. output at submission</span>
+                  <span className="font-mono text-on-surface">{estimated > 0n ? `${fmt(estimated)} ${buy.symbol}` : "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant/70">Min receive (you get)</span>
+                  <span className="font-mono text-tertiary">{fmt(totalLocked)} {buy.symbol}</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-warning/20">
+                  <span className="text-on-surface-variant/70">Surplus → FeeVault (max)</span>
+                  <span className="font-mono text-warning">≤ {fmt(surplusMax)} {buy.symbol}</span>
+                </div>
+                {selectedOrder.order.dexSource && (
+                  <div className="flex justify-between pt-1">
+                    <span className="text-on-surface-variant/70">Route</span>
+                    <span className="font-mono text-on-surface-variant">{selectedOrder.order.dexSource}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {selectedOrder.change && (
             <div className="bg-tertiary/10 text-tertiary rounded-md px-4 py-3 space-y-1 text-sm">

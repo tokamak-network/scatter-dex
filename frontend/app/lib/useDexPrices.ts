@@ -5,7 +5,14 @@ import { ethers } from "ethers";
 
 // ── Mainnet price lookup by token symbol ────────────────────────────
 
-const MAINNET_RPC = "https://eth.llamarpc.com";
+// In fork mode, the local anvil mirrors mainnet state (same router + pool
+// addresses) so we can skip the flaky public RPC and query locally. Outside
+// fork mode, fall back to a well-behaved public endpoint; llamarpc's shard
+// rotation frequently returns "block not found" for Quoter calls.
+const MAINNET_RPC =
+  process.env.NEXT_PUBLIC_FORK_MODE === "true"
+    ? (process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545")
+    : "https://eth.drpc.org";
 
 const QUOTER_V2_IFACE = new ethers.Interface([
   "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
@@ -32,6 +39,7 @@ const MAINNET_TOKENS: Record<string, { address: string; decimals: number }> = {
   DAI:   { address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
   WBTC:  { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
   TON:   { address: "0x582d872A1B094FC48F5DE31D3B73F2D9bE47def1", decimals: 9 },
+  WTON:  { address: "0xc4A11aaf6ea915Ed7Ac194161d2fC9384F15bff2", decimals: 27 },
   LINK:  { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", decimals: 18 },
   UNI:   { address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", decimals: 18 },
   AAVE:  { address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", decimals: 18 },

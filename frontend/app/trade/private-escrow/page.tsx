@@ -178,19 +178,32 @@ export default function PrivateEscrowPage() {
           // Query per change note using indexed commitment filter (efficient).
           // Compute fromBlock once to avoid repeated localStorage reads.
           const fromBlock = getEarliestBlock();
-          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
-            try {
-              const commitBigInt = BigInt(cn.commitment);
-              const logs = await poolContract.queryFilter(
-                poolContract.filters.CommitmentInserted(commitBigInt),
-                fromBlock,
-              );
-              if (logs.length > 0) {
-                // Use latest log in case of duplicate commitments
-                const e = logs[logs.length - 1] as ethers.EventLog;
-                return { cn, leafIdx: Number(e.args.leafIndex) };
+          // Resolve leafIndex for each pending change note. Retry on
+          // transient RPC errors (e.g. drpc's 500 "Temporary internal error")
+          // so a single blip doesn't leave the note stuck at leafIndex=-1 —
+          // those notes aren't selectable in the trade form.
+          const queryWithRetry = async (commitBigInt: bigint, maxAttempts = 3): Promise<ethers.EventLog[] | null> => {
+            for (let i = 0; i < maxAttempts; i++) {
+              try {
+                const logs = await poolContract.queryFilter(
+                  poolContract.filters.CommitmentInserted(commitBigInt),
+                  fromBlock,
+                );
+                return logs as ethers.EventLog[];
+              } catch (e) {
+                if (i === maxAttempts - 1) { console.warn("Failed to resolve change note after retries:", e); return null; }
+                await new Promise((r) => setTimeout(r, 400 * (i + 1)));
               }
-            } catch (e) { console.warn("Failed to resolve change note:", e); }
+            }
+            return null;
+          };
+          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
+            const commitBigInt = BigInt(cn.commitment);
+            const logs = await queryWithRetry(commitBigInt);
+            if (logs && logs.length > 0) {
+              const e = logs[logs.length - 1];
+              return { cn, leafIdx: Number(e.args.leafIndex) };
+            }
             return null;
           }));
 
@@ -716,11 +729,20 @@ export default function PrivateEscrowPage() {
                       ? "bg-on-surface-variant/10 text-on-surface-variant/50"
                       : "bg-blue-500/10 text-blue-400")
                     : "bg-emerald-500/10 text-emerald-400";
+                  // Spent notes that have no pending change are dead — fully
+                  // gray them out (bg + opacity) so they visually recede.
+                  // Spent notes with Trading-state change keep normal colors
+                  // so the user can still interact with the pending payout.
+                  const isDead = isSpent && claimsDone;
                   return (
                   <div key={n.commitment}>
                     <div
                       onClick={() => setExpandedKey(expandedKey === n.commitment ? null : n.commitment)}
-                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedKey === n.commitment ? "bg-surface-bright/10" : ""} ${isSpent && !hasChange ? "opacity-50" : ""}`}
+                      className={`px-6 py-4 flex items-center justify-between cursor-pointer transition-colors ${expandedKey === n.commitment ? "bg-surface-bright/10" : ""} ${
+                        isDead
+                          ? "opacity-40 grayscale bg-on-surface-variant/5 hover:bg-on-surface-variant/10"
+                          : "hover:bg-surface-bright/20"
+                      }`}
                     >
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSpent ? "bg-on-surface-variant/10" : "bg-primary/10"}`}>

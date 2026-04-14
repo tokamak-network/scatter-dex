@@ -15,6 +15,15 @@ export interface TradeOrder {
   expiry: string;
   nonce: string;
   leafIndex: number;
+  /** Present on market-order claim files saved by private-order/page.tsx. */
+  type?: "market" | "limit";
+  /** Slippage in basis points at submission time (market only). */
+  slippageBps?: number;
+  /** Quoter-reported output used to bound the surplus upper limit (market only). */
+  estimatedOutput?: string;
+  /** DEX router used for settleWithDex (market only). */
+  dexRouter?: string;
+  dexSource?: string;
 }
 
 export interface TradeClaim {
@@ -187,6 +196,51 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
           <div className="text-sm font-mono mt-1">#{trade.order.leafIndex}</div>
         </div>
       </div>
+
+      {/* DEX Trade fees — market-order only. Max Fee above is always 0 for
+          market; the real economic cost is positive slippage that flows to
+          FeeVault.platformRevenue, bounded by (estimatedOutput − buyAmount). */}
+      {trade.order.type === "market" && (() => {
+        const totalLocked = (() => { try { return BigInt(trade.order.buyAmount); } catch { return 0n; } })();
+        const estimated = (() => { try { return BigInt(trade.order.estimatedOutput ?? "0"); } catch { return 0n; } })();
+        const surplusMax = estimated > totalLocked ? estimated - totalLocked : 0n;
+        const slip = trade.order.slippageBps;
+        const fmt = (v: bigint) => ethers.formatUnits(v, buy.decimals);
+        return (
+          <div className="bg-warning/10 border border-warning/20 rounded-lg px-4 py-3 space-y-1.5 text-xs">
+            <div className="flex items-center gap-1.5 text-warning font-bold uppercase tracking-wider">
+              <Coins className="w-3.5 h-3.5" />
+              DEX Trade Fees
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant/70">Platform fee (upfront)</span>
+              <span className="font-mono text-on-surface-variant">0.00% / 0 {buy.symbol}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant/70">Slippage tolerance</span>
+              <span className="font-mono text-on-surface">{slip != null ? `${(slip / 100).toFixed(2)}%` : "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant/70">Est. output at submission</span>
+              <span className="font-mono text-on-surface">{estimated > 0n ? `${fmt(estimated)} ${buy.symbol}` : "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-on-surface-variant/70">Min receive (you get)</span>
+              <span className="font-mono text-tertiary">{fmt(totalLocked)} {buy.symbol}</span>
+            </div>
+            <div className="flex justify-between pt-1 border-t border-warning/20">
+              <span className="text-on-surface-variant/70">Surplus → FeeVault (max)</span>
+              <span className="font-mono text-warning">≤ {fmt(surplusMax)} {buy.symbol}</span>
+            </div>
+            {trade.order.dexSource && (
+              <div className="flex justify-between pt-1">
+                <span className="text-on-surface-variant/70">Route</span>
+                <span className="font-mono text-on-surface-variant">{trade.order.dexSource}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Change */}
       {trade.change && (
