@@ -8,7 +8,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ethers } from 'ethers';
-import { colors } from '../styles/theme';
+import { colors, layout, shadowTab } from '../styles/theme';
+import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
@@ -346,24 +347,12 @@ export default function TradeScreen() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
+      <ScreenHeader
+        title="Private Trade"
+        variant="surface"
+        onBack={() => navigation.goBack()}
+      />
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
-        {/* Header */}
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-            <Text style={s.backIcon}>←</Text>
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>Private Trade</Text>
-          <View style={s.profileWrap}>
-            <View style={s.profileCircle}>
-              <Text style={s.profileIcon}>👤</Text>
-            </View>
-            <View style={s.shieldBadge}>
-              <Text style={s.shieldIcon}>🛡</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Tabs */}
         <View style={s.tabsWrap}>
           <View style={s.tabsBg}>
             <TouchableOpacity
@@ -385,20 +374,19 @@ export default function TradeScreen() {
         <View style={s.tokenRow}>
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
-              <View style={[s.tokenDot, { backgroundColor: '#3B82F6' }]} />
+              <View style={[s.tokenDot, { backgroundColor: colors.primary }]} />
               <Text style={s.tokenName}>{selectedNote?.tokenSymbol || 'ETH'}</Text>
             </View>
           </View>
           <Text style={s.swapIcon}>→</Text>
           <View style={s.tokenBox}>
             <View style={s.tokenInner}>
-              <View style={[s.tokenDot, { backgroundColor: '#22C55E' }]} />
+              <View style={[s.tokenDot, { backgroundColor: colors.success }]} />
               <Text style={s.tokenName}>{buyTokenSymbol}</Text>
             </View>
           </View>
         </View>
 
-        {/* Inputs */}
         <View style={s.inputsRow}>
           <View style={s.inputCol}>
             <Text style={s.inputLabel}>Amount ({selectedNote?.tokenSymbol || 'ETH'})</Text>
@@ -581,7 +569,7 @@ export default function TradeScreen() {
         {/* Error display */}
         {error && (
           <View style={s.actionWrap}>
-            <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '600', textAlign: 'center' }}>{error}</Text>
+            <Text style={{ color: colors.danger, fontSize: 12, fontWeight: '600', textAlign: 'center' }}>{error}</Text>
           </View>
         )}
 
@@ -620,14 +608,14 @@ export default function TradeScreen() {
             </TouchableOpacity>
           </View>
           {activeNotes.length === 0 ? (
-            <Text style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', paddingVertical: 16 }}>
+            <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 16 }}>
               {loading ? 'Loading notes...' : 'No active notes found. Deposit first to trade.'}
             </Text>
           ) : (
             activeNotes.map((note) => (
               <TouchableOpacity
                 key={note.id}
-                style={[s.orderRow, selectedNote?.id === note.id && { backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 8 }]}
+                style={[s.orderRow, selectedNote?.id === note.id && { backgroundColor: colors.primaryLight, borderRadius: 8, paddingHorizontal: 8 }]}
                 onPress={() => setSelectedNote(note)}
               >
                 <Text style={s.orderName}>{note.tokenSymbol} Note</Text>
@@ -642,7 +630,6 @@ export default function TradeScreen() {
           )}
         </View>
 
-        <View style={{ height: 96 }} />
       </ScrollView>
 
       <AddressBookModal
@@ -665,104 +652,89 @@ export default function TradeScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
-  scrollContent: { gap: 24, paddingBottom: 24 },
+  scrollContent: { gap: layout.sectionGap, paddingBottom: layout.contentBottom, paddingTop: layout.contentTop },
 
-  /* Header */
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16 },
-  backBtn: { padding: 8, marginLeft: -8 },
-  backIcon: { fontSize: 24, color: '#4B5563' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  profileWrap: { position: 'relative' },
-  profileCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
-  profileIcon: { fontSize: 20, color: '#4B5563' },
-  shieldBadge: { position: 'absolute', top: -4, right: -4, width: 20, height: 20, borderRadius: 10, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
-  shieldIcon: { fontSize: 8, color: '#FFFFFF' },
-
-  /* Tabs */
-  tabsWrap: { paddingHorizontal: 24 },
-  tabsBg: { flexDirection: 'row', backgroundColor: '#F9FAFB', padding: 4, borderRadius: 12 },
+  tabsWrap: { paddingHorizontal: layout.screenHZ },
+  tabsBg: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 12 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  tabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
-  tabText: { fontSize: 14, fontWeight: '700', color: '#9CA3AF' },
-  tabTextActive: { color: '#2563EB' },
+  tabActive: { backgroundColor: colors.card, ...shadowTab },
+  tabText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
+  tabTextActive: { color: colors.primaryDark },
 
   /* Token Selector */
-  tokenRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, gap: 16 },
-  tokenBox: { flex: 1, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6' },
+  tokenRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: layout.screenHZ, gap: 16 },
+  tokenBox: { flex: 1, padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight },
   tokenInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   tokenDot: { width: 24, height: 24, borderRadius: 12 },
   tokenName: { fontSize: 14, fontWeight: '700' },
-  swapIcon: { fontSize: 20, color: '#9CA3AF' },
+  swapIcon: { fontSize: 20, color: colors.textMuted },
 
-  /* Inputs */
-  inputsRow: { flexDirection: 'row', paddingHorizontal: 24, gap: 16 },
+  inputsRow: { flexDirection: 'row', paddingHorizontal: layout.screenHZ, gap: 16 },
   inputCol: { flex: 1, gap: 8 },
-  inputLabel: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  inputLabel: { fontSize: 12, fontWeight: '700', color: colors.gray500 },
   inputWrap: { position: 'relative' },
-  input: { padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', fontSize: 14, fontWeight: '700', color: '#111827' },
-  inputReadonly: { backgroundColor: '#F3F4F6', color: '#6B7280' },
+  input: { padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, fontSize: 14, fontWeight: '700', color: colors.text },
+  inputReadonly: { backgroundColor: colors.borderLight, color: colors.gray500 },
   maxBtn: { position: 'absolute', right: 12, top: 0, bottom: 0, justifyContent: 'center' },
-  maxText: { fontSize: 10, fontWeight: '700', color: '#2563EB' },
-  inputHint: { fontSize: 10, color: '#9CA3AF', fontWeight: '500' },
+  maxText: { fontSize: 10, fontWeight: '700', color: colors.primaryDark },
+  inputHint: { fontSize: 10, color: colors.textMuted, fontWeight: '500' },
 
   /* Limit Price */
-  limitSection: { paddingHorizontal: 24, gap: 8 },
-  limitRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6' },
-  limitInput: { flex: 1, fontSize: 14, fontWeight: '700', color: '#111827' },
-  limitUnit: { fontSize: 12, fontWeight: '700', color: '#9CA3AF' },
-  limitDivider: { width: 1, height: 20, backgroundColor: '#E5E7EB' },
+  limitSection: { paddingHorizontal: layout.screenHZ, gap: 8 },
+  limitRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight },
+  limitInput: { flex: 1, fontSize: 14, fontWeight: '700', color: colors.text },
+  limitUnit: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+  limitDivider: { width: 1, height: 20, backgroundColor: colors.borderMedium },
   pmBtn: { padding: 4 },
-  pmText: { fontSize: 16, color: '#2563EB', fontWeight: '700' },
+  pmText: { fontSize: 16, color: colors.primaryDark, fontWeight: '700' },
 
-  /* Action */
-  /* Claim builder */
-  claimSection: { paddingHorizontal: 24, gap: 12 },
+  claimSection: { paddingHorizontal: layout.screenHZ, gap: 12 },
   claimHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  claimSubtotal: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
-  claimRow: { padding: 12, backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', gap: 8 },
+  claimSubtotal: { fontSize: 12, fontWeight: '600', color: colors.gray500 },
+  claimRow: { padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, gap: 8 },
   claimRowHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  claimRowTitle: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  claimRemove: { fontSize: 12, fontWeight: '700', color: '#EF4444' },
+  claimRowTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
+  claimRemove: { fontSize: 12, fontWeight: '700', color: colors.danger },
   claimRowInputs: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  claimInput: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', fontSize: 13, color: '#111827' },
-  claimRestBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
-  claimPickBtn: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#EFF6FF', borderRadius: 10 },
+  claimInput: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.borderMedium, fontSize: 13, color: colors.text },
+  claimRestBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.primaryLight, borderRadius: 10 },
+  claimPickBtn: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.primaryLight, borderRadius: 10 },
   claimPickText: { fontSize: 16 },
-  claimModeRow: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, padding: 4, gap: 4 },
+  claimModeRow: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 10, padding: 4, gap: 4 },
   claimModeBtn: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
-  claimModeBtnActive: { backgroundColor: '#EFF6FF' },
-  claimModeText: { fontSize: 12, fontWeight: '700', color: '#9CA3AF' },
-  claimModeTextActive: { color: '#2563EB' },
-  claimRestText: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
-  delayUnitRow: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' },
+  claimModeBtnActive: { backgroundColor: colors.primaryLight },
+  claimModeText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+  claimModeTextActive: { color: colors.primaryDark },
+  claimRestText: { fontSize: 12, fontWeight: '700', color: colors.primaryDark },
+  delayUnitRow: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.borderMedium, overflow: 'hidden' },
   delayUnitBtn: { paddingHorizontal: 10, paddingVertical: 8 },
-  delayUnitBtnActive: { backgroundColor: '#2563EB' },
-  delayUnitText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  delayUnitTextActive: { color: '#FFFFFF' },
-  addClaimBtn: { paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#DBEAFE', borderStyle: 'dashed', alignItems: 'center' },
-  addClaimText: { fontSize: 13, fontWeight: '700', color: '#2563EB' },
-  claimWarn: { fontSize: 12, fontWeight: '600', color: '#EF4444', textAlign: 'center' },
+  delayUnitBtnActive: { backgroundColor: colors.primaryDark },
+  delayUnitText: { fontSize: 12, fontWeight: '700', color: colors.gray500 },
+  delayUnitTextActive: { color: colors.card },
+  addClaimBtn: { paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.blueBorder, borderStyle: 'dashed', alignItems: 'center' },
+  addClaimText: { fontSize: 13, fontWeight: '700', color: colors.primaryDark },
+  claimWarn: { fontSize: 12, fontWeight: '600', color: colors.danger, textAlign: 'center' },
 
-  actionWrap: { paddingHorizontal: 24, marginTop: 8 },
-  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
-  actionBtnDisabled: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
-  actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  actionWrap: { paddingHorizontal: layout.screenHZ },
+  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
+  actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
 
   /* Order Book */
-  orderSection: { paddingHorizontal: 24, gap: 16 },
-  orderTabs: { flexDirection: 'row', gap: 24, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  orderSection: { paddingHorizontal: layout.screenHZ, gap: 16 },
+  orderTabs: { flexDirection: 'row', gap: 24, borderBottomWidth: 1, borderBottomColor: colors.borderLight },
   orderTab: { paddingBottom: 8 },
-  orderTabActive: { borderBottomWidth: 2, borderBottomColor: '#2563EB' },
-  orderTabText: { fontSize: 14, fontWeight: '700', color: '#9CA3AF' },
-  orderTabTextActive: { color: '#111827' },
+  orderTabActive: { borderBottomWidth: 2, borderBottomColor: colors.primaryDark },
+  orderTabText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
+  orderTabTextActive: { color: colors.text },
   orderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  orderName: { fontSize: 12, fontWeight: '500', color: '#6B7280' },
+  orderName: { fontSize: 12, fontWeight: '500', color: colors.gray500 },
   orderRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   orderTypeBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
-  orderBuy: { backgroundColor: '#EFF6FF' },
-  orderSell: { backgroundColor: '#FFF7ED' },
+  orderBuy: { backgroundColor: colors.primaryLight },
+  orderSell: { backgroundColor: colors.orangeLight },
   orderTypeText: { fontSize: 12, fontWeight: '500' },
-  orderBuyText: { color: '#2563EB' },
-  orderSellText: { color: '#EA580C' },
-  orderPrice: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  orderBuyText: { color: colors.primaryDark },
+  orderSellText: { color: colors.orange },
+  orderPrice: { fontSize: 12, fontWeight: '700', color: colors.text },
 });
