@@ -15,7 +15,7 @@
  * back to a fresh fetch so we never execute on stale calldata.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { getBestSwapRoute, SwapRoute } from '../lib/dex-aggregator';
+import { DEFAULT_SLIPPAGE_BPS, getBestSwapRoute, SwapRoute } from '../lib/dex-aggregator';
 import { friendlyError } from '../lib/error-messages';
 
 const DEBOUNCE_MS = 500;
@@ -27,7 +27,12 @@ export interface MarketQuoteParams {
   sellAmount: bigint;     // post-fee amount fed into the router
   minReceive: bigint;
   recipient: string;      // settlement contract — baked into calldata
-  slippageBps?: number;
+  /** Slippage tolerance in bps. Required at this layer so the hook and
+   *  submit path agree on a concrete value: the aggregator silently
+   *  defaults omitted slippage to `DEFAULT_SLIPPAGE_BPS`, and treating
+   *  `undefined` as `0` here would accept a cached route built against
+   *  a different slippage setting as a match. */
+  slippageBps: number;
 }
 
 export interface MarketQuoteState {
@@ -51,7 +56,7 @@ export function paramsMatch(a: MarketQuoteParams | null, b: MarketQuoteParams | 
     && a.sellAmount === b.sellAmount
     && a.minReceive === b.minReceive
     && a.recipient === b.recipient
-    && (a.slippageBps ?? 0) === (b.slippageBps ?? 0)
+    && a.slippageBps === b.slippageBps
   );
 }
 
@@ -75,7 +80,7 @@ export function useMarketQuote(
   // object identities (TradeScreen rebuilds `params` on every render).
   const sig = useMemo(() => {
     if (!params) return null;
-    return `${params.chainId}|${params.sellToken}|${params.buyToken}|${params.sellAmount}|${params.minReceive}|${params.recipient}|${params.slippageBps ?? ''}`;
+    return `${params.chainId}|${params.sellToken}|${params.buyToken}|${params.sellAmount}|${params.minReceive}|${params.recipient}|${params.slippageBps}`;
   }, [params]);
 
   useEffect(() => {

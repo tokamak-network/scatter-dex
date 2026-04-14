@@ -52,7 +52,7 @@ function delayToSeconds(delay: string, unit: DelayUnit): number {
 
 export default function TradeScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, readProvider } = useWallet();
+  const { account, signer, readProvider, chainId: walletChainId } = useWallet();
 
   const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
   const [amount, setAmount] = useState('');
@@ -229,9 +229,17 @@ export default function TradeScreen() {
   // whenever the inputs don't yet add up to a real quote (empty amount,
   // missing token, unmounted wallet) so the hook skips the fetch.
   const marketQuoteParams: MarketQuoteParams | null = useMemo(() => {
+    // `chainId` comes from the wallet context (reactive on network
+    // switch via the EIP-1193 `chainChanged` emitter and
+    // `ProviderService.subscribeReset`). Using `ConfigService.getChainId()`
+    // here would capture the value at memo-eval time and miss network
+    // switches that happen while the screen stays mounted — the cached
+    // route would then match submit params but execute against a
+    // different chain.
+    if (walletChainId == null) return null;
     if (!marketQuoteInput || !selectedNote || !buyTokenAddress || !settlementAddress) return null;
     return {
-      chainId: ConfigService.getChainId(),
+      chainId: walletChainId,
       sellToken: selectedNote.token,
       buyToken: buyTokenAddress,
       sellAmount: marketQuoteInput.swapAmount,
@@ -243,7 +251,7 @@ export default function TradeScreen() {
       recipient: settlementAddress,
       slippageBps: DEFAULT_SLIPPAGE_BPS,
     };
-  }, [marketQuoteInput, selectedNote, buyTokenAddress, settlementAddress]);
+  }, [marketQuoteInput, selectedNote, buyTokenAddress, settlementAddress, walletChainId]);
 
   // Debounced background fetch; disabled when the user is on the limit
   // tab so we don't burn 1inch rate limit while they type out claims.
@@ -454,8 +462,16 @@ export default function TradeScreen() {
         // already fired and settled before the user tapped submit.
         // Falls back to a fresh fetch if the user submitted before the
         // debounce landed or edited a field after preview loaded.
+        // Same reactive-chainId argument as `marketQuoteParams` above —
+        // otherwise a network switch between preview and submit could
+        // make `paramsMatch` accept a route built on the old chain.
+        if (walletChainId == null) {
+          setSubmitting(false);
+          Alert.alert('Wallet not connected', 'Connect your wallet to continue.');
+          return;
+        }
         const submitParams: MarketQuoteParams = {
-          chainId: ConfigService.getChainId(),
+          chainId: walletChainId,
           sellToken: selectedNote.token,
           buyToken,
           sellAmount: swapAmount,
@@ -505,7 +521,7 @@ export default function TradeScreen() {
     // `marketQuote` object) keeps this callback stable across loading
     // flips and transient errors — the submit path only cares about
     // whether there's a cached route and what it was built for.
-  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers, marketQuote.route, marketQuote.params, dexPlatformFeeBps, makeSubmitAbort, isMounted]);
+  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers, marketQuote.route, marketQuote.params, dexPlatformFeeBps, makeSubmitAbort, isMounted, walletChainId]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
