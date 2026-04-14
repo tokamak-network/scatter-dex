@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Manual trigger for the fork-integration job (and any future
+  # opt-in steps gated on workflow_dispatch).
+  workflow_dispatch:
 
 concurrency:
   # Cancel only PR runs on rapid pushes — keep main runs intact so the
@@ -118,7 +121,11 @@ jobs:
           cache: npm
           cache-dependency-path: zk-relayer/package-lock.json
 
-      - run: npm ci
+      # `npm ci` interacts with npm CLI bug #4828 — optional native
+      # binaries (rollup-linux-x64-gnu here) get pruned during the cached
+      # restore. Use `npm install` so the platform-specific package gets
+      # resolved every run.
+      - run: npm install --no-audit --no-fund
 
       - name: tsc --noEmit
         # Pre-existing type errors in routes/p2p.ts predate CI wiring;
