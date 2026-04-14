@@ -16,8 +16,9 @@ import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
 import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { CrossRelayerMatchService } from "./core/cross-relayer-matcher.js";
 import { createP2PRoutes } from "./routes/p2p.js";
+import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders } from "./routes/authorize-orders.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
@@ -53,6 +54,11 @@ async function main() {
   const submitter = new PrivateSubmitter();
   submitter.setDB(db);
 
+  // Authorize (half-proof) submitter — instantiated here so the cross-relayer
+  // service below can depend on it before the route is mounted.
+  const authSubmitter = new AuthorizeSubmitter();
+  authSubmitter.setDB(db);
+
   // R-2: Recover pending TXs from previous run (receipt check only, no resend)
   const pendingTxs = db.getPendingTxs();
   if (pendingTxs.length > 0) {
@@ -85,6 +91,7 @@ async function main() {
   let sharedClient: SharedOrderbookClient | null = null;
   let remoteOrderbook: RemoteOrderStore | null = null;
   let crossRelayerService: CrossRelayerMatchService | null = null;
+  let authorizeCrossRelayerService: AuthorizeCrossRelayerMatchService | null = null;
   const orderIdMap = new Map<string, string>();
 
   // Create matcher (with remote orderbook if available)
@@ -107,11 +114,22 @@ async function main() {
       orderbook, remoteOrderbook, matcher, submitter, sharedClient, orderIdMap, db,
     );
 
+    authorizeCrossRelayerService = new AuthorizeCrossRelayerMatchService(
+      authorizeOrders, sharedClient, authSubmitter, authSubmitter.getAddress(),
+      orderIdMap, db,
+    );
+
     sharedClient.onOrder((summary) => {
       remoteOrderbook!.add(summary);
-      // Reactive matching: try to match against local pending orders
+      // Reactive matching on both paths:
+      //   (a) Private path — currently dead post-S-M14 but kept until the
+      //       cleanup PR lands (tracker #29).
+      //   (b) Authorize path — the live half-proof flow.
       crossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
         console.warn("[cross-relayer] Reactive match error:", err instanceof Error ? err.message : "unknown");
+      });
+      authorizeCrossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
+        console.warn("[authorize-cross] Reactive match error:", err instanceof Error ? err.message : "unknown");
       });
     });
 
@@ -207,9 +225,9 @@ async function main() {
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
   app.use("/api/relayer", createRelayerStatsRoutes(db, orderbook, submitter, readLimiter));
 
-  // Half-proof (trustless) order routes — settleAuth path
-  const authSubmitter = new AuthorizeSubmitter();
-  authSubmitter.setDB(db);
+  // Half-proof (trustless) order routes — settleAuth path.
+  // `authSubmitter` was instantiated earlier so the cross-relayer service
+  // could depend on it; here we just mount the HTTP routes.
   app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
     sharedClient, orderIdMap, authWriteLimiter,
@@ -220,10 +238,20 @@ async function main() {
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(
-    (order) => { remoteOrderbook?.add(order); },
+    (order) => {
+      remoteOrderbook?.add(order);
+      // P2P fallback path (used when shared-OB server is down) also triggers
+      // reactive matching so cross-relayer settlement still works.
+      authorizeCrossRelayerService?.onRemoteOrderArrived(order).catch((err) => {
+        console.warn("[authorize-cross] P2P match error:", err instanceof Error ? err.message : "unknown");
+      });
+    },
     (orderId) => { remoteOrderbook?.remove(orderId); },
     crossRelayerService
       ? (offer, addr) => crossRelayerService!.handleTradeOffer(offer, addr)
+      : undefined,
+    authorizeCrossRelayerService
+      ? (offer, addr) => authorizeCrossRelayerService!.handleTradeOffer(offer, addr)
       : undefined,
   ));
 

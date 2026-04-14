@@ -30,7 +30,7 @@ import { isSanctionedById } from "../core/sanctions-list.js";
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
  * are reloaded from DB so they survive relayer restarts.
  */
-const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+export const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 /** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
 const pendingCountByPubKey = new Map<string, number>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
