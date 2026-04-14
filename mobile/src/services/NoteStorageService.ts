@@ -14,6 +14,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const NOTE_INDEX_KEY = 'scatterdex_note_index';
 const NOTE_PREFIX = 'scatterdex_note_';
 
+// Serialize index read-modify-write across all mutating methods so a
+// deposit's `saveNote` can't race a Settings `saveNotesBulk` restore
+// (or even two deposits landing in the same tick). Mirrors the lock
+// pattern in AddressBookService.
+let _indexMutationQueue: Promise<unknown> = Promise.resolve();
+function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = _indexMutationQueue.catch(() => {}).then(task);
+  _indexMutationQueue = run.catch(() => {});
+  return run;
+}
+
 export interface StoredNote {
   id: string;              // commitment hex (unique identifier)
   commitment: string;      // Poseidon hash hex
@@ -67,12 +78,64 @@ export const NoteStorageService = {
       `${NOTE_PREFIX}${note.id}`,
       JSON.stringify(note),
     );
+    await withIndexLock(async () => {
+      const ids = await this.getNoteIds();
+      if (!ids.includes(note.id)) {
+        ids.push(note.id);
+        await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(ids));
+      }
+    });
+  },
 
-    const ids = await this.getNoteIds();
-    if (!ids.includes(note.id)) {
-      ids.push(note.id);
-      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(ids));
+  /**
+   * Bulk save — chunked parallel per-key SecureStore writes, then a single
+   * index update that runs through the shared `withIndexLock` serializer
+   * so it can't race a concurrent `saveNote` / `deleteNote` from elsewhere
+   * in the app (e.g. a deposit landing while a Settings restore is
+   * in flight).
+   *
+   * Concurrency is capped at 32 to avoid pinning the JS bridge / saturating
+   * the iOS Keychain queue when a user restores a large (thousand-note)
+   * backup; SecureStore dispatches serially under the hood anyway, so
+   * going wider buys nothing.
+   */
+  async saveNotesBulk(notes: StoredNote[]): Promise<Array<{ id: string; ok: boolean }>> {
+    if (notes.length === 0) return [];
+    const results: Array<{ id: string; ok: boolean }> = new Array(notes.length);
+    const CONCURRENCY = 32;
+    for (let off = 0; off < notes.length; off += CONCURRENCY) {
+      const chunk = notes.slice(off, off + CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map(async (note) => {
+          try {
+            await SecureStore.setItemAsync(
+              `${NOTE_PREFIX}${note.id}`,
+              JSON.stringify(note),
+            );
+            return { id: note.id, ok: true };
+          } catch {
+            return { id: note.id, ok: false };
+          }
+        }),
+      );
+      for (let i = 0; i < chunkResults.length; i++) results[off + i] = chunkResults[i];
     }
+    const successIds = results.filter((r) => r.ok).map((r) => r.id);
+    if (successIds.length > 0) {
+      await withIndexLock(async () => {
+        const existing = await this.getNoteIds();
+        const existingSet = new Set(existing);
+        const merged = existing.slice();
+        for (const id of successIds) {
+          if (!existingSet.has(id)) {
+            merged.push(id);
+            existingSet.add(id);
+          }
+        }
+        await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(merged));
+      });
+    }
+    return results;
   },
 
   async updateNoteStatus(id: string, status: StoredNote['status']): Promise<void> {
@@ -87,9 +150,11 @@ export const NoteStorageService = {
 
   async deleteNote(id: string): Promise<void> {
     await SecureStore.deleteItemAsync(`${NOTE_PREFIX}${id}`);
-    const ids = await this.getNoteIds();
-    const updated = ids.filter((i) => i !== id);
-    await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(updated));
+    await withIndexLock(async () => {
+      const ids = await this.getNoteIds();
+      const updated = ids.filter((i) => i !== id);
+      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(updated));
+    });
   },
 
   async getActiveNotes(): Promise<StoredNote[]> {
