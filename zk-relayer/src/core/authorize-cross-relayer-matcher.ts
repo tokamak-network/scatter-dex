@@ -10,6 +10,7 @@ import {
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
+import { decPubKeyCount } from "../routes/authorize-orders.js";
 
 /**
  * Cross-relayer trade-offer for the authorize (half-proof) path.
@@ -107,6 +108,12 @@ export class AuthorizeCrossRelayerMatchService {
           local.status = "settled";
           local.settleTxHash = result.txHash;
           local.crossRelayer = true;
+          // Release the per-pubKey pending slot so the user can submit
+          // their next order. Without this, MAX_ORDERS_PER_PUBKEY would
+          // count this long-gone order against them.
+          if (local.pubKeyAx && local.pubKeyAy) {
+            decPubKeyCount(local.pubKeyAx, local.pubKeyAy);
+          }
           this.db?.updateAuthorizeOrderStatus(nullifier, "settled", result.txHash);
           this.onSettled?.(nullifier, result.txHash);
 
@@ -246,6 +253,11 @@ export class AuthorizeCrossRelayerMatchService {
       makerStored.status = "settled";
       makerStored.settleTxHash = txHash;
       makerStored.crossRelayer = true;
+      // Mirror the decrement from the taker-side settle path above so the
+      // per-pubKey MAX_ORDERS_PER_PUBKEY counter stays in sync.
+      if (makerStored.pubKeyAx && makerStored.pubKeyAy) {
+        decPubKeyCount(makerStored.pubKeyAx, makerStored.pubKeyAy);
+      }
       this.db?.updateAuthorizeOrderStatus(mapKey, "settled", txHash);
       this.onSettled?.(mapKey, txHash);
 

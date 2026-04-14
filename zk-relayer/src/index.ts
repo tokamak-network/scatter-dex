@@ -240,8 +240,13 @@ async function main() {
   app.use("/api/p2p", createP2PRoutes(
     (order) => {
       remoteOrderbook?.add(order);
-      // P2P fallback path (used when shared-OB server is down) also triggers
-      // reactive matching so cross-relayer settlement still works.
+      // NOTE: the P2P fallback path (POST /api/p2p/orders) validates fields
+      // like `nonce`/`pubKeyAx`/`pubKeyAy` that don't exist on the shared
+      // `OrderSummary` shape used by the shared-OB WS stream (see routes/p2p.ts
+      // :60-68). Authorize summaries will 400 before reaching this callback
+      // today — this fan-out is dead code for the authorize flow until the
+      // p2p/orders schema is aligned with OrderSummary. Keeping the hook so
+      // once that alignment lands, matching kicks in without further wiring.
       authorizeCrossRelayerService?.onRemoteOrderArrived(order).catch((err) => {
         console.warn("[authorize-cross] P2P match error:", err instanceof Error ? err.message : "unknown");
       });

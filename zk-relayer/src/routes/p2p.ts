@@ -194,7 +194,10 @@ export function createP2PRoutes(
         res.json(result);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown error";
-        res.status(500).json({ status: "rejected", reason: msg } satisfies AuthorizeTradeOfferResponse);
+        // Reserve "rejected" for validated-but-declined offers; use "error"
+        // for the unexpected-exception path so the sending relayer can
+        // distinguish network/infra failures from business rejects.
+        res.status(500).json({ status: "error", reason: msg } satisfies AuthorizeTradeOfferResponse);
       }
     });
   }

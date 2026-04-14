@@ -54,7 +54,7 @@ function incPubKeyCount(ax: string, ay: string): void {
   pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
 }
 
-function decPubKeyCount(ax: string, ay: string): void {
+export function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
   const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
   if (count <= 0) pendingCountByPubKey.delete(id);
