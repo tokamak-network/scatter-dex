@@ -121,6 +121,9 @@ export default function PrivateHistoryPage() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
   const [orders, setOrders] = useState<OrderFile[]>([]);
+  // Surfaces SettledWithDex lookup failures in the detail panel so the user
+  // can distinguish "not yet settled on chain" from "RPC failed".
+  const [enrichError, setEnrichError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderFile | null>(null);
 
@@ -182,8 +185,9 @@ export default function PrivateHistoryPage() {
   const enrichMarketFromChain = useCallback(async (orderList: OrderFile[]): Promise<OrderFile[]> => {
     if (!account) return orderList;
     const marketEntries = orderList.filter((o) => o.order?.type === "market");
-    if (marketEntries.length === 0) return orderList;
+    if (marketEntries.length === 0) { setEnrichError(null); return orderList; }
 
+    setEnrichError(null);
     try {
       const provider = getReadProvider();
       const settlementAddr = getPrivateSettlementAddress();
@@ -220,32 +224,54 @@ export default function PrivateHistoryPage() {
           try {
             const b = await provider.getBlock(bn);
             if (b) blockTs.set(bn, Number(b.timestamp));
-          } catch { /* skip */ }
+          } catch { /* block missing — leave timestamp undefined */ }
         }),
       );
 
-      return orderList.map((o) => {
-        if (o.order?.type !== "market") return o;
+      // Consume events by chronological order so two market orders with an
+      // identical (sellToken, buyToken, sellAmount, totalLocked) quadruple
+      // don't both alias onto the same (first) event. Pair earliest file
+      // with earliest event — `orderList` arrives sorted createdAt DESC,
+      // iterate it in reverse (ASC).
+      rows.sort((a, b) => a.blockNumber - b.blockNumber);
+      const available = [...rows];
+      const enrichedByFilename = new Map<string, { txHash: string; amountOut: bigint; ts?: number }>();
+      for (let i = orderList.length - 1; i >= 0; i--) {
+        const o = orderList[i];
+        if (o.order?.type !== "market") continue;
         let sell: bigint, locked: bigint;
         try {
           sell = BigInt(o.order.sellAmount);
           locked = BigInt(o.order.buyAmount);
-        } catch { return o; }
+        } catch { continue; }
         const st = o.order.sellToken.toLowerCase();
         const bt = o.order.buyToken.toLowerCase();
-        const match = rows.find((r) =>
+        const idx = available.findIndex((r) =>
           r.sellToken === st && r.buyToken === bt && r.sellAmount === sell && r.totalLocked === locked,
         );
-        if (!match) return o;
+        if (idx < 0) continue;
+        const match = available[idx];
+        available.splice(idx, 1);
+        enrichedByFilename.set(o.filename, {
+          txHash: match.txHash,
+          amountOut: match.amountOut,
+          ts: blockTs.get(match.blockNumber),
+        });
+      }
+
+      return orderList.map((o) => {
+        const m = enrichedByFilename.get(o.filename);
+        if (!m) return o;
         return {
           ...o,
-          settleTxHash: match.txHash,
-          onchainAmountOut: match.amountOut.toString(),
-          onchainSettledAt: blockTs.get(match.blockNumber),
+          settleTxHash: m.txHash,
+          onchainAmountOut: m.amountOut.toString(),
+          onchainSettledAt: m.ts,
         };
       });
     } catch (e) {
       console.warn("SettledWithDex enrichment failed:", e);
+      setEnrichError(e instanceof Error ? e.message : "on-chain lookup failed");
       return orderList;
     }
   }, [account]);
@@ -295,11 +321,14 @@ export default function PrivateHistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [folderName, fetchStatuses]);
+  }, [folderName, fetchStatuses, enrichMarketFromChain]);
 
   useEffect(() => {
     if (folderName) loadOrders();
-  }, [folderName, loadOrders, keyPair, enrichMarketFromChain]);
+    // `keyPair` retained as an explicit trigger: unlocking the trading key
+    // is a user action that should refresh statuses. `enrichMarketFromChain`
+    // is transitively covered by `loadOrders`.
+  }, [folderName, loadOrders, keyPair]);
 
   const handleCancel = useCallback(async (order: OrderFile) => {
     if (!keyPair || !signer || !account) return;
@@ -607,6 +636,11 @@ export default function PrivateHistoryPage() {
               <div>
                 <span className="text-on-surface-variant/60">Settled at:</span>{" "}
                 <span className="font-mono">{new Date(selectedOrder.onchainSettledAt * 1000).toLocaleString()}</span>
+              </div>
+            )}
+            {selectedOrder.order.type === "market" && !selectedOrder.onchainAmountOut && enrichError && (
+              <div className="col-span-2 text-xs text-error/70">
+                On-chain lookup failed — retry with Refresh. ({enrichError})
               </div>
             )}
           </div>
