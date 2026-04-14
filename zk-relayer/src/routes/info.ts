@@ -3,6 +3,14 @@ import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { config } from "../config.js";
 import { authorizeOrders } from "./authorize-orders.js";
 
+function countPending(): number {
+  let n = 0;
+  for (const o of authorizeOrders.values()) {
+    if (o.status === "pending") n++;
+  }
+  return n;
+}
+
 export function createInfoRoutes(submitter: PrivateSubmitter): Router {
   const router = Router();
 
@@ -12,9 +20,10 @@ export function createInfoRoutes(submitter: PrivateSubmitter): Router {
       version: "0.1.0",
       address: submitter.getAddress(),
       fee: config.relayerFee,
-      // Counts pending authorize orders. The legacy private_orders Map was
-      // retired (tracker #29) — its `orderCount` was always 0 anyway.
-      orderCount: authorizeOrders.size,
+      // Counts *pending* authorize orders only — `Map.size` would also
+      // include matched/settled rows that haven't been purged yet, which
+      // misrepresents the relayer's queue depth.
+      orderCount: countPending(),
       commitmentPool: config.commitmentPoolAddress,
       privateSettlement: config.privateSettlementAddress,
     });

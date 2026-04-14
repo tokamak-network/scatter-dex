@@ -183,7 +183,7 @@ async function main() {
     next();
   };
 
-  app.use("/api/private-orders", pauseGuard, createPrivateOrderRoutes(writeLimiter));
+  app.use("/api/private-orders", readLimiter, pauseGuard, createPrivateOrderRoutes(writeLimiter));
   app.use("/api/info", readLimiter, createInfoRoutes(submitter));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));

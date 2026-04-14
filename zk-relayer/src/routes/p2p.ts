@@ -18,9 +18,10 @@ import type {
 export function createP2PRoutes(
   onRemoteOrder: (order: OrderSummary) => void,
   onRemoteCancel: (orderId: string) => void,
-  // Slot retained for API stability with index.ts wiring; the Private-flow
-  // trade-offer handler was retired with tracker #29.
-  _onTradeOfferRetired: undefined,
+  // Slot retained for API stability; the Private-flow trade-offer
+  // handler was retired with tracker #29. Optional so existing 2-arg
+  // callers don't have to pass an explicit `undefined`.
+  _onTradeOfferRetired?: undefined,
   onAuthorizeTradeOffer?: (offer: AuthorizeTradeOfferRequest, relayerAddress: string) => Promise<AuthorizeTradeOfferResponse>,
 ): Router {
   const router = Router();
