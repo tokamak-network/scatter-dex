@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
-  Modal, TextInput,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +16,7 @@ import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import AddressBookModal from '../components/AddressBookModal';
+import BaseModal from '../components/BaseModal';
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { Share } from 'react-native';
 import BackupModal from '../components/BackupModal';
@@ -509,17 +510,12 @@ export default function SettingsScreen() {
         <View style={{ height: 96 }} />
       </ScrollView>
 
-      {/* Import Wallet Modal (cross-platform replacement for Alert.prompt) */}
-      <Modal
+      <BaseModal
         visible={importModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setImportModalVisible(false)}
+        onClose={() => setImportModalVisible(false)}
+        title="Import Wallet"
       >
-        <View style={s.modalOverlay}>
-          <View style={s.modalContent}>
-            <Text style={s.modalTitle}>Import Wallet</Text>
-            <View style={s.modeTabs}>
+        <View style={s.modeTabs}>
               <TouchableOpacity
                 style={[s.modeTab, importMode === 'mnemonic' && s.modeTabActive]}
                 onPress={() => { setImportMode('mnemonic'); setImportSecret(''); }}
@@ -571,9 +567,7 @@ export default function SettingsScreen() {
                 <Text style={s.modalBtnConfirmText}>Import</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
+      </BaseModal>
 
       <AddressBookModal
         visible={addressBookVisible}
@@ -648,8 +642,6 @@ const s = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: '700', color: colors.danger },
   chevron: { fontSize: 24, color: colors.textDim, fontWeight: '300' },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  modalContent: { backgroundColor: colors.card, borderRadius: 20, padding: 24, width: '100%', gap: 16 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
   modalSubtitle: { fontSize: 14, color: colors.gray500 },
   modalInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 14, color: colors.text, minHeight: 80 },

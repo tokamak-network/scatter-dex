@@ -12,7 +12,7 @@
  */
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Modal, View, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, StyleSheet,
+  View, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
 import { colors } from '../styles/theme';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../services/AddressBookService';
 import { META_ADDRESS_PREFIX } from '../lib/stealth';
 import { shortAddr } from '../lib/format';
+import BaseModal from './BaseModal';
 
 // Discriminated union — `onPick` is required exactly when `mode === 'pick'`.
 // Without this, a misconfigured callsite can silently no-op when the user
@@ -193,17 +194,12 @@ export default function AddressBookModal(props: Props) {
   );
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <View style={s.overlay}>
-        <View style={s.sheet}>
-          <View style={s.header}>
-            <Text style={s.title}>
-              {mode === 'pick' ? 'Pick recipient' : 'Address Book'}
-            </Text>
-            <TouchableOpacity onPress={handleClose}><Text style={s.close}>✕</Text></TouchableOpacity>
-          </View>
-
-          {error && (
+    <BaseModal
+      visible={visible}
+      onClose={handleClose}
+      title={mode === 'pick' ? 'Pick recipient' : 'Address Book'}
+    >
+      {error && (
             <View style={s.errorBox}>
               <Text style={s.errorText}>{error}</Text>
               {isCorrupt && (
@@ -323,19 +319,11 @@ export default function AddressBookModal(props: Props) {
               </View>
             </View>
           )}
-        </View>
-      </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
 const s = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-  sheet: { backgroundColor: colors.bg, borderRadius: 20, width: '100%', maxWidth: 480, maxHeight: '90%', padding: 16, gap: 12 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 18, fontWeight: '700', color: colors.text },
-  close: { fontSize: 22, color: colors.textSecondary, paddingHorizontal: 8 },
-
   errorBox: { padding: 12, backgroundColor: colors.dangerLight, borderRadius: 10, gap: 6 },
   errorText: { fontSize: 13, color: colors.danger },
   resetLink: { fontSize: 13, fontWeight: '700', color: colors.danger, textDecorationLine: 'underline' },
