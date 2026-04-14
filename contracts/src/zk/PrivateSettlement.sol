@@ -339,8 +339,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
     modifier onlyRelayer() {
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
         }
         _;
     }
@@ -545,9 +546,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
 
         // 11. Relayer registry gating (if configured)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
-            if (!relayerRegistry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
+            if (!_registry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
         }
 
         // 12. Mark nullifiers
@@ -911,7 +913,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Order-of-checks preserved from before: cheap calldata compare gates
         // state reads, and relayer registry is checked before proof verify.
         if (paused) revert ContractPaused();
-        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        IAuthorizeVerifier _verifier = authorizeVerifier;
+        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
         _requireNotSanctioned(msg.sender);
 
         // Relayer binding, same-token invariant, whitelist, non-zero
@@ -919,8 +922,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee, whitelistedTokens);
 
         // Relayer registry (before expensive proof verification — saves ~200K gas on revert)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
         }
 
         // 8. Nullifier double-spend (escrow + nonce — 2 cold SLOADs)
@@ -932,7 +936,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
         uint[15] memory signals = SettleVerifyLib.packAuthSignals(ap);
-        if (!authorizeVerifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
+        if (!_verifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
             revert InvalidProof();
         }
 
