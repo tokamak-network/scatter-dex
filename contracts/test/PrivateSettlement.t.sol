@@ -790,22 +790,23 @@ contract FeeVaultTest is Test {
         p.claimsRootTaker = bytes32(uint256(0x6444));
         p.takerRelayer = RELAYER_2;
 
-        // Set fees: feeTokenMaker (WETH) + feeTokenTaker (USDC)
-        p.feeTokenMaker = uint96(0.1 ether);  // fee in WETH (from taker's sell) → takerRelayer
-        p.feeTokenTaker = uint96(50e18);       // fee in USDC (from maker's sell) → makerRelayer
+        // Set fees: feeTokenMaker (WETH = maker.buyToken) + feeTokenTaker (USDC = taker.buyToken)
+        p.feeTokenMaker = uint96(0.1 ether);  // fee drawn from maker's buyAmount → makerRelayer
+        p.feeTokenTaker = uint96(50e18);       // fee drawn from taker's buyAmount → takerRelayer
 
         // RELAYER_2 (takerRelayer) submits
         vm.prank(RELAYER_2);
         settlement.settlePrivate(p);
 
-        // Fee split assertions:
-        // feeTokenMaker (WETH) → takerRelayer (RELAYER_2)
-        assertEq(vault.balances(RELAYER_2, address(weth)), 0.1 ether, "takerRelayer should receive feeTokenMaker (WETH)");
-        assertEq(vault.balances(relayer, address(weth)), 0, "makerRelayer should NOT receive feeTokenMaker");
+        // Fee split assertions (fee-semantics redesign: each user's fee goes
+        // to the relayer holding their order):
+        // feeTokenMaker (WETH) → makerRelayer (relayer)
+        assertEq(vault.balances(relayer, address(weth)), 0.1 ether, "makerRelayer should receive feeTokenMaker (WETH)");
+        assertEq(vault.balances(RELAYER_2, address(weth)), 0, "takerRelayer should NOT receive feeTokenMaker");
 
-        // feeTokenTaker (USDC) → makerRelayer (relayer)
-        assertEq(vault.balances(relayer, address(usdc)), 50e18, "makerRelayer should receive feeTokenTaker (USDC)");
-        assertEq(vault.balances(RELAYER_2, address(usdc)), 0, "takerRelayer should NOT receive feeTokenTaker");
+        // feeTokenTaker (USDC) → takerRelayer (RELAYER_2)
+        assertEq(vault.balances(RELAYER_2, address(usdc)), 50e18, "takerRelayer should receive feeTokenTaker (USDC)");
+        assertEq(vault.balances(relayer, address(usdc)), 0, "makerRelayer should NOT receive feeTokenTaker");
     }
 
     // ─── FeeVault ───────────────────────────────────────────────
@@ -825,8 +826,8 @@ contract FeeVaultTest is Test {
     function test_fees_both_tokens_same_relayer() public {
         // Local match: same relayer for both sides → all fees go to that relayer
         SettleVerifyLib.SettleParams memory p = _params();
-        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH → takerRelayer (= relayer)
-        p.feeTokenTaker = uint96(100e18);       // fee in USDC → makerRelayer (= relayer)
+        p.feeTokenMaker = uint96(0.05 ether);  // fee in WETH → makerRelayer (= relayer)
+        p.feeTokenTaker = uint96(100e18);       // fee in USDC → takerRelayer (= relayer)
 
         vm.prank(relayer);
         settlement.settlePrivate(p);

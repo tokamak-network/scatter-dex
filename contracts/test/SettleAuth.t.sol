@@ -193,33 +193,30 @@ contract SettleAuthTest is Test {
 
     function test_settleAuth_happyPath_withFees() public {
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
-        // Set fees within the user-signed maxFee = 100 bps = 1%
-        // taker.sellAmount * maxFee / 10000 = 20_000e18 * 100 / 10000 = 200e18
-        p.feeTokenMaker = uint96(200e18); // exactly at the cap (taker pays)
-        // maker.sellAmount * maxFee / 10000 = 10 ether * 100 / 10000 = 0.1 ether
-        p.feeTokenTaker = uint96(0.1 ether); // exactly at the cap (maker pays)
-        // We must also reduce totalLocked so totalLocked + fee <= sellAmount holds.
+        // Fee caps under the 2026-04-14 redesign are maker.buyAmount × maker.maxFee / 10000
+        // (and same on taker side) — i.e., each user's fee comes out of their own receive.
+        // maxFee = 100 bps = 1%.
+        // feeTokenMaker cap = maker.buyAmount × 100 / 10000 = 20_000e18 × 0.01 = 200e18
+        p.feeTokenMaker = uint96(200e18);   // exactly at cap (maker pays, in USDC)
+        // feeTokenTaker cap = taker.buyAmount × 100 / 10000 = 10 ether × 0.01 = 0.1 ether
+        p.feeTokenTaker = uint96(0.1 ether); // exactly at cap (taker pays, in WETH)
+        // totalLocked + fee ≤ counterparty.sellAmount keeps the pool whole.
         p.maker.totalLocked = uint128(20_000e18 - 200e18);
         p.taker.totalLocked = uint128(10 ether - 0.1 ether);
-        // And then the per-side minimum-receive guarantee
-        // (totalLocked >= buyAmount) is enforced inside authorize.circom,
-        // so we relax buyAmount in the test inputs to keep things consistent.
-        p.maker.buyAmount = uint128(20_000e18 - 200e18);
-        p.taker.buyAmount = uint128(10 ether - 0.1 ether);
 
         // Capture relayer balances before
-        uint256 makerRelayerWethBefore = weth.balanceOf(makerRelayer);
-        uint256 takerRelayerUsdcBefore = usdc.balanceOf(takerRelayer);
+        uint256 makerRelayerUsdcBefore = usdc.balanceOf(makerRelayer);
+        uint256 takerRelayerWethBefore = weth.balanceOf(takerRelayer);
 
         vm.prank(makerRelayer);
         settlement.settleAuth(p);
 
-        // Fee paid by maker (in WETH, denominated in tokenTaker = maker.sellToken)
-        // → goes to makerRelayer
-        assertEq(weth.balanceOf(makerRelayer) - makerRelayerWethBefore, 0.1 ether);
-        // Fee paid by taker (in USDC, denominated in tokenMaker = maker.buyToken)
+        // Fee paid by maker (feeTokenMaker = 200 USDC, drawn from maker's buyAmount)
+        // → goes to makerRelayer (the relayer holding maker's order)
+        assertEq(usdc.balanceOf(makerRelayer) - makerRelayerUsdcBefore, 200e18);
+        // Fee paid by taker (feeTokenTaker = 0.1 WETH, drawn from taker's buyAmount)
         // → goes to takerRelayer
-        assertEq(usdc.balanceOf(takerRelayer) - takerRelayerUsdcBefore, 200e18);
+        assertEq(weth.balanceOf(takerRelayer) - takerRelayerWethBefore, 0.1 ether);
     }
 
     function test_settleAuth_happyPath_emitsEvent() public {
