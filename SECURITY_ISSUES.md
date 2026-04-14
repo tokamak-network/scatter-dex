@@ -2,7 +2,7 @@
 
 보안 감사에서 발견된 이슈 목록. 작업 시 **브랜치 명을 기록**하여 동시 작업 충돌 방지.
 
-> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋)
+> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋) | ❌ WON'T DO (결정 사유 기재)
 
 ## TODO — 2026-04-11 전체 스택 보안 감사
 
@@ -244,7 +244,7 @@
 
 | # | 작업 | 상태 | 브랜치 |
 |---|------|------|--------|
-| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | — |
+| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
 
 ### 🟡 UX 개선 (사용자 플로우 체크에서 발견)
@@ -252,12 +252,12 @@
 | # | 작업 | 상태 | 브랜치 |
 |---|------|------|--------|
 | 14 | 폴더 선택 전역화 (localStorage persist) | ✅ | PR #190 |
-| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
+| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
 | 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
 | 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
-| 20 | Batch Claim | ⬜ | — |
+| 20 | Batch Claim | ✅ | `claimWithProofBatch` (PrivateSettlement.sol:1006, MAX_CLAIM_BATCH_SIZE=20) + `handleClaimBatchViaWallet` UI (private-claim/page.tsx:314) |
 
 ### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
 
@@ -268,13 +268,13 @@
 
 ### 🟢 보강 가능 (UX 점검 결과)
 
-| # | 작업 | 상태 |
-|---|------|------|
-| 24 | Safari File System API 미지원 대체 경로 | ⬜ |
-| 25 | Claims 10개 도달 시 사유 표시 | ⬜ |
-| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ |
-| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⬜ |
-| 28 | 가스비 추정 패널 더 눈에 띄게 | ⬜ |
+| # | 작업 | 상태 | 비고 |
+|---|------|------|------|
+| 24 | Safari File System API 미지원 대체 경로 | ❌ | 작업하지 않기로 결정 (2026-04-14) |
+| 25 | Claims 16개 도달 시 사유 표시 | ⬜ | `ClaimsCapExceeded` 에러는 있으나 (error-messages.ts:33, cap=16) 주문 생성 UI 에서 사전 안내 없음 |
+| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ | UI 에 툴팁 없음 (grep 확인) |
+| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⚠️ | 한 줄 메시지는 있음 ("Escrow rotated to new commitment" — private-history/page.tsx:727), 더 친화적 설명 여지 있음 |
+| 28 | 가스비 추정 패널 더 눈에 띄게 | ⚠️ | `GasEstimate` 패널 이미 존재 (private-order/page.tsx:526). 가시성 강화는 주관적 판단 영역 |
 
 ### 🔴 릴레이어 메인넷 준비 (2026-04-11 릴레이어 점검)
 
@@ -304,7 +304,7 @@
 
 | # | 이슈 | 내용 | 상태 |
 |---|------|------|------|
-| R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ⬜ |
+| R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ❌ 작업하지 않기로 결정 (2026-04-14) |
 | R-12 | AMM/DEX 라우팅 | 미매칭 주문을 DEX로 자동 라우팅 | N/A — 지정가 주문 설계상 해당 없음 |
 | R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | ✅ (PR #218, #222, #224 — Tier-1+Tier-2 전체) |
 | R-14 | 부하 테스트 | 동시 주문/정산 부하 테스트 없음 | ⬜ |
