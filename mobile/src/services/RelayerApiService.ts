@@ -119,24 +119,18 @@ export const RelayerApiService = {
     return res.json();
   },
 
-  async getOrderStatus(
-    pubKeyAx: string,
-    relayerUrl?: string,
-  ): Promise<OrderStatus[]> {
-    const url = `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`;
-    const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
-    if (!res.ok) throw new Error(`Failed to fetch order status: ${res.status}`);
-    return res.json();
+  async getOrderStatus(pubKeyAx: string, relayerUrl?: string): Promise<OrderStatus[]> {
+    return relayerGetJson(
+      `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`,
+      'order status',
+    );
   },
 
-  async getOrderbook(
-    pair: string,
-    relayerUrl?: string,
-  ): Promise<any[]> {
-    const url = `${relayerUrl || this.getBaseUrl()}/api/orderbook/${pair}`;
-    const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
-    if (!res.ok) throw new Error(`Failed to fetch orderbook: ${res.status}`);
-    return res.json();
+  async getOrderbook(pair: string, relayerUrl?: string): Promise<any[]> {
+    return relayerGetJson(
+      `${relayerUrl || this.getBaseUrl()}/api/orderbook/${pair}`,
+      'orderbook',
+    );
   },
 
   /**
@@ -229,3 +223,10 @@ export const RelayerApiService = {
     }
   },
 };
+
+// Shared GET + ok-check + json shape used by the relayer read paths.
+async function relayerGetJson<T>(url: string, label: string): Promise<T> {
+  const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
+  if (!res.ok) throw new Error(`Failed to fetch ${label}: ${res.status}`);
+  return res.json();
+}
