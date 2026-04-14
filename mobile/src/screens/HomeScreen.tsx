@@ -14,7 +14,7 @@ import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { ethers } from 'ethers';
 import { formatBalance, formatRelativeTime, shortAddr } from '../lib/format';
-import { colors, layout, shadowSubtle } from '../styles/theme';
+import { colors, layout, shadowSubtle, HIT_SLOP_SM } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 
 const ACT_ICONS: Record<ActivityType, string> = {
@@ -25,7 +25,7 @@ const FALLBACK_ACT_ICON = '•';
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const { account, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error } = useWallet();
-  const { balances, loading: balLoading, refresh: refreshBal } = useBalances();
+  const { balances, refresh: refreshBal } = useBalances();
   const { activities, loading: actLoading, refresh: refreshAct } = useRecentActivity();
 
   const [showBalance, setShowBalance] = useState(true);
@@ -74,7 +74,7 @@ export default function HomeScreen() {
           title="Home"
           left={<View style={s.avatar}><Text style={s.avatarIcon}>👤</Text></View>}
           right={
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={s.settingsBtn} hitSlop={HIT_SLOP}>
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={s.settingsBtn} hitSlop={HIT_SLOP_SM}>
               <Text style={s.settingsIcon}>⚙</Text>
             </TouchableOpacity>
           }
@@ -91,7 +91,7 @@ export default function HomeScreen() {
                     <Text style={s.balanceAmount}>
                       {showBalance ? totalDisplay : '••••••'}
                     </Text>
-                    <TouchableOpacity onPress={() => setShowBalance(!showBalance)} hitSlop={HIT_SLOP}>
+                    <TouchableOpacity onPress={() => setShowBalance(!showBalance)} hitSlop={HIT_SLOP_SM}>
                       <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
                     </TouchableOpacity>
                   </View>
@@ -179,7 +179,9 @@ export default function HomeScreen() {
             ) : activities.length === 0 ? (
               <Text style={s.emptyText}>No recent activity</Text>
             ) : (
-              activities.slice(0, 5).map((item) => (
+              // `now` captured once so all rows render against the same
+              // reference — avoids "1m ago" / "2m ago" drift mid-paint.
+              (() => { const now = Date.now(); return activities.slice(0, 5).map((item) => (
                 // Compound key — a single tx can emit multiple event types
                 // (e.g. settle + claim) so `txHash` alone is not unique.
                 <View key={`${item.txHash}-${item.type}-${item.blockNumber}`} style={s.actCard}>
@@ -195,13 +197,13 @@ export default function HomeScreen() {
                       </Text>
                       <Text style={s.actSub}>
                         {item.timestamp != null
-                          ? formatRelativeTime(item.timestamp)
+                          ? formatRelativeTime(item.timestamp, now)
                           : `Block #${item.blockNumber}`}
                       </Text>
                     </View>
                   </View>
                 </View>
-              ))
+              )); })()
             )}
           </View>
         )}
@@ -209,8 +211,6 @@ export default function HomeScreen() {
     </SafeAreaView>
   );
 }
-
-const HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },

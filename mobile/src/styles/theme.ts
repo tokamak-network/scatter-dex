@@ -50,6 +50,9 @@ export const layout = {
   card: { padding: 24, radius: 24, borderWidth: 1 },
 } as const;
 
+// Small hitSlop tuple — default for icon buttons (back, gear, eye …).
+export const HIT_SLOP_SM = { top: 8, bottom: 8, left: 8, right: 8 } as const;
+
 // Shared shadow/elevation tuple. Inline-declared in six screens today;
 // collected here so migrations can drop the duplicates.
 export const shadowSubtle = {

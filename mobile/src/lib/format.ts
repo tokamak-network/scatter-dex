@@ -38,6 +38,10 @@ export function toBytes32Hex(value: string | bigint): string {
   return '0x' + BigInt(value).toString(16).padStart(64, '0');
 }
 
+// Pre-built formatter — constructing Intl.DateTimeFormat per call is
+// measurably slow on older Android devices.
+const ABSOLUTE_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+
 /** Relative time for activity feeds: "12m ago", "3h ago", "Yesterday", "Jul 18". */
 export function formatRelativeTime(timestampSec: number, now: number = Date.now()): string {
   const deltaMs = now - timestampSec * 1000;
@@ -50,7 +54,5 @@ export function formatRelativeTime(timestampSec: number, now: number = Date.now(
   const days = Math.floor(hrs / 24);
   if (days === 1) return 'Yesterday';
   if (days < 7) return `${days}d ago`;
-  const d = new Date(timestampSec * 1000);
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return ABSOLUTE_DATE_FMT.format(new Date(timestampSec * 1000));
 }

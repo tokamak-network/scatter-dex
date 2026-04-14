@@ -23,6 +23,21 @@ export interface ActivityItem {
 
 const MAX_ITEMS = 20;
 
+// Block timestamps are immutable once mined; cache across refreshes
+// so pull-to-refresh doesn't re-fetch the same blocks. Bounded so a
+// long-lived app session can't grow the map unboundedly.
+const blockTsCache = new Map<number, number>();
+const BLOCK_TS_CACHE_MAX = 500;
+
+function rememberBlockTs(blockNumber: number, ts: number) {
+  if (blockTsCache.size >= BLOCK_TS_CACHE_MAX) {
+    // Drop oldest entry (Map iteration is insertion-ordered).
+    const oldest = blockTsCache.keys().next().value;
+    if (oldest !== undefined) blockTsCache.delete(oldest);
+  }
+  blockTsCache.set(blockNumber, ts);
+}
+
 export function useRecentActivity() {
   const { account, readProvider } = useWallet();
   const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -132,21 +147,26 @@ export function useRecentActivity() {
       items.sort((a, b) => b.blockNumber - a.blockNumber);
       const top = items.slice(0, MAX_ITEMS);
 
-      // Enrich with block timestamps so the UI can render "12m ago" /
-      // "Yesterday". Dedup by block number — multiple events in one block
-      // share a timestamp, so N events → ≤N getBlock calls. Failures are
-      // tolerated: we leave `timestamp: null` and let the UI fall back.
-      const uniqueBlocks = Array.from(new Set(top.map((it) => it.blockNumber)));
+      // Render rows immediately — timestamp enrichment runs in a second
+      // pass so one slow getBlock doesn't delay the whole list.
+      setActivities(top.map((it) => ({ ...it, timestamp: blockTsCache.get(it.blockNumber) ?? null })));
+
+      // Fetch only the blocks we don't already have cached. Failures
+      // are tolerated; the UI falls back to block-number text.
+      const missing = Array.from(new Set(top.map((it) => it.blockNumber)))
+        .filter((n) => !blockTsCache.has(n));
+      if (missing.length === 0) return;
       const blocks = await Promise.allSettled(
-        uniqueBlocks.map((n) => readProvider.getBlock(n)),
+        missing.map((n) => readProvider.getBlock(n)),
       );
-      const tsByBlock = new Map<number, number>();
       blocks.forEach((res, i) => {
         if (res.status === 'fulfilled' && res.value) {
-          tsByBlock.set(uniqueBlocks[i], Number(res.value.timestamp));
+          rememberBlockTs(missing[i], Number(res.value.timestamp));
         }
       });
-      setActivities(top.map((it) => ({ ...it, timestamp: tsByBlock.get(it.blockNumber) ?? null })));
+      setActivities((prev) =>
+        prev.map((it) => ({ ...it, timestamp: blockTsCache.get(it.blockNumber) ?? it.timestamp })),
+      );
     } finally {
       setLoading(false);
     }
