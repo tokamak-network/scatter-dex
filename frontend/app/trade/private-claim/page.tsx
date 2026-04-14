@@ -10,6 +10,7 @@ import { getPrivateSettlementAddress } from "../../lib/config";
 import { generateClaimProof } from "../../lib/zk/claim-prover";
 import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
+import { useClaimsGroupStatus } from "../../lib/zk/useClaimsGroupStatus";
 import { friendlyError } from "../../lib/error-messages";
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";
@@ -99,6 +100,7 @@ export default function PrivateClaimPage() {
   } | null>(null);
 
   const claimedMap = useClaimStatuses(allClaims, { includeTxHash: true });
+  const settlementMap = useClaimsGroupStatus(allClaims);
 
   // Claims submitted via zk-relayer (no direct contract address needed)
 
@@ -313,6 +315,14 @@ export default function PrivateClaimPage() {
 
   const handleClaimBatchViaWallet = useCallback(async () => {
     if (!signer || eligibleClaims.length === 0) return;
+    // Exclude claims whose underlying order hasn't settled on-chain yet.
+    // claimWithProofBatch is all-or-nothing — a single unsettled claim
+    // reverts the whole tx with ClaimsGroupNotFound, wasting gas and the
+    // proofs we already generated. The UI guard disables the button when
+    // fewer than 2 are settled, but race against a freshly-submitted
+    // cancel or concurrent settle is still possible, so filter here too.
+    const batchable = eligibleClaims.filter((e) => settlementMap[e.i]?.settled === true);
+    if (batchable.length === 0) return;
     setStatus("generating");
     setError(null);
     setTxHashes([]);
@@ -322,11 +332,11 @@ export default function PrivateClaimPage() {
       // Per-chunk build-then-submit: first tx lands sooner (no wait for all N
       // proofs), and a later chunk failure doesn't waste CPU on unused proofs.
       const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
-      const totalChunks = Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE);
+      const totalChunks = Math.ceil(batchable.length / MAX_BATCH_SIZE);
       const hashes: string[] = [];
 
       for (let ci = 0; ci < totalChunks; ci++) {
-        const chunkClaims = eligibleClaims.slice(ci * MAX_BATCH_SIZE, (ci + 1) * MAX_BATCH_SIZE);
+        const chunkClaims = batchable.slice(ci * MAX_BATCH_SIZE, (ci + 1) * MAX_BATCH_SIZE);
 
         // Proof gen is CPU-heavy and runs on the main thread — keep sequential
         // so the progress UI can repaint between proofs.
@@ -368,7 +378,7 @@ export default function PrivateClaimPage() {
       setStatus("error");
       setBatchProgress(null);
     }
-  }, [signer, eligibleClaims]);
+  }, [signer, eligibleClaims, settlementMap]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -553,6 +563,24 @@ export default function PrivateClaimPage() {
                   )}
                 </div>
               )}
+
+              {/* Settlement status: the order this claim belongs to must have
+                  settled on-chain (claimsGroups[root] registered) before the
+                  claim contract call will succeed. Without this guard the
+                  button looks active but clicking reverts with
+                  `ClaimsGroupNotFound`. */}
+              {!claimedMap[selectedClaimIdx]?.claimed
+                && settlementMap[selectedClaimIdx]
+                && !settlementMap[selectedClaimIdx].settled && (
+                <div className="text-xs p-3 rounded-md bg-tertiary/5 border border-tertiary/20 space-y-1">
+                  <div className="flex items-center gap-1.5 text-tertiary font-semibold">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting for settlement
+                  </div>
+                  <div className="text-on-surface-variant/60">
+                    The underlying order hasn&apos;t matched or settled on-chain yet. The claim will be callable once a relayer finalises the trade. Check back shortly, or track the order on the <Link href="/trade/private-history" className="text-primary hover:underline">My Orders</Link> page.
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -568,28 +596,49 @@ export default function PrivateClaimPage() {
             <div className="text-xs p-3 rounded-md bg-error/5 text-error">{error}</div>
           )}
 
-          {allClaims.length > 1 && eligibleClaims.length >= 2 && (
+          {allClaims.length > 1 && eligibleClaims.length >= 2 && (() => {
+            // `eligibleClaims` stores `{ c, i }` where `i` is the index into
+            // `allClaims` — `settlementMap` is keyed the same way, so look
+            // up by `e.i` not by the `eligibleClaims` position.
+            // Treat `undefined` (initial fetch in flight) as "not yet
+            // confirmed" so the batch stays disabled during load.
+            const settledEligible = eligibleClaims.filter((e) => settlementMap[e.i]?.settled === true);
+            const stillLoading = eligibleClaims.some((e) => settlementMap[e.i] === undefined);
+            const batchDisabled = !signer || stillLoading || settledEligible.length < 2;
+            return (
             <button
               onClick={handleClaimBatchViaWallet}
-              disabled={!signer}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 font-bold text-sm transition-colors disabled:opacity-50"
+              disabled={batchDisabled}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 font-bold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Wallet className="w-4 h-4" />
-              {signer
-                ? `Claim All ${eligibleClaims.length} via Wallet${
-                    Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE) > 1
-                      ? ` (${Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE)} txs)`
-                      : ""
-                  }`
-                : "Connect Wallet to Batch Claim"}
+              {!signer
+                ? "Connect Wallet to Batch Claim"
+                : stillLoading || settledEligible.length < 2
+                  ? "Waiting for Settlement..."
+                  : `Claim All ${settledEligible.length} via Wallet${
+                      Math.ceil(settledEligible.length / MAX_BATCH_SIZE) > 1
+                        ? ` (${Math.ceil(settledEligible.length / MAX_BATCH_SIZE)} txs)`
+                        : ""
+                    }`}
             </button>
-          )}
+            );
+          })()}
 
           {claimData && !claimedMap[selectedClaimIdx]?.claimed && (() => {
             // Market-order claims aren't routed through the relayer today —
             // settleWithDex is permissionless, so the relayer has no order
             // context to pay gas against. Force wallet mode for those claims.
             const isMarketClaim = bundleIsMarket;
+            // Gate the claim buttons on the order having actually settled.
+            // `undefined` = still loading the on-chain check; treat it as
+            // "not yet confirmed" to avoid flashing an active button then
+            // disabling it on arrival.
+            const settlementInfo = settlementMap[selectedClaimIdx];
+            // `undefined` = initial fetch in flight — treat as "not yet
+            // confirmed" so the button starts disabled instead of flashing
+            // active then disabling when the RPC returns.
+            const notSettledYet = settlementInfo === undefined || !settlementInfo.settled;
             return (
             <div className="space-y-4">
               {/* Mode selector */}
@@ -626,17 +675,22 @@ export default function PrivateClaimPage() {
               {!isMarketClaim && claimMode === "relayer" ? (
                 <button
                   onClick={handleClaimViaRelayer}
-                  className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"
+                  disabled={notSettledYet}
+                  className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Generate Proof & Claim (Gasless)
+                  {notSettledYet ? "Waiting for Settlement..." : "Generate Proof & Claim (Gasless)"}
                 </button>
               ) : (
                 <button
                   onClick={handleClaimViaWallet}
-                  disabled={!signer}
-                  className="w-full bg-tertiary/80 hover:bg-tertiary text-on-tertiary-container py-4 rounded-md font-bold text-sm uppercase tracking-widest transition-colors disabled:opacity-50"
+                  disabled={!signer || notSettledYet}
+                  className="w-full bg-tertiary/80 hover:bg-tertiary text-on-tertiary-container py-4 rounded-md font-bold text-sm uppercase tracking-widest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {signer ? "Generate Proof & Claim (Wallet)" : "Connect Wallet First"}
+                  {!signer
+                    ? "Connect Wallet First"
+                    : notSettledYet
+                      ? "Waiting for Settlement..."
+                      : "Generate Proof & Claim (Wallet)"}
                 </button>
               )}
             </div>
