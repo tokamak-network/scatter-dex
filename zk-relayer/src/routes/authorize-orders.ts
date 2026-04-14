@@ -91,6 +91,13 @@ export function createAuthorizeOrderRoutes(
     let restored = 0;
     for (const row of rows) {
       try {
+        // Validate the nullifier shape upfront. Cleanup paths (purge,
+        // drain, post-settle) call `nullifierToOfferHandle(row.nullifier)`
+        // without a try/catch, so a corrupt key in this Map would take
+        // down the whole sweep on the first bad entry.
+        if (typeof row.nullifier !== "string" || !/^[0-9]+$/.test(row.nullifier)) {
+          throw new Error(`invalid nullifier shape: ${JSON.stringify(row.nullifier)}`);
+        }
         authorizeOrders.set(row.nullifier, {
           order: JSON.parse(row.orderJson),
           status: row.status as StoredAuthorizeOrder["status"],
