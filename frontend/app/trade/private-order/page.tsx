@@ -907,12 +907,13 @@ export default function PrivateOrderPage() {
       // bytes32 fields in the ABI need 0x-prefixed hex; snarkjs emits decimal
       // strings. uint256 fields (commitmentRoot) stay as strings — ethers
       // accepts them directly.
+      const nullifierHex = toBytes32Hex(BigInt(ps[2]));
       const tx = await settlement.settleWithDex({
         proof: {
           proofA, proofB, proofC,
           pubKeyBind: toBytes32Hex(BigInt(ps[0])),
           commitmentRoot: ps[1],
-          nullifier: toBytes32Hex(BigInt(ps[2])),
+          nullifier: nullifierHex,
           nonceNullifier: toBytes32Hex(BigInt(ps[3])),
           newCommitment: toBytes32Hex(BigInt(ps[4])),
           sellToken: sellToken.address,
@@ -950,12 +951,9 @@ export default function PrivateOrderPage() {
           nonce: nonce.toString(),
           leafIndex: selectedNote.leafIndex,
           type: "market" as const,
-          // Nullifier is already public (settleWithDex emits SettledWithDex
-          // with it as an indexed topic), so persisting it here doesn't leak
-          // anything new — but having it in the bundle lets private-history
-          // match a file to its on-chain event 1:1 instead of falling back
-          // to the quadruple-tuple heuristic.
-          nullifier: toBytes32Hex(BigInt(ps[2])),
+          // Already public on-chain (SettledWithDex indexed topic); persisted
+          // here so private-history can match file → event 1:1.
+          nullifier: nullifierHex,
           // Quote snapshot at submission time. estimatedOutput is what 1inch
           // / Uniswap Quoter expected; (estimatedOutput − buyAmount) upper-
           // bounds the surplus that would flow to FeeVault.platformRevenue.

@@ -253,8 +253,10 @@ export default function PrivateHistoryPage() {
 
         // 1) exact nullifier match if the bundle carries one
         if (o.order.nullifier) {
-          const match = byNullifier.get(o.order.nullifier.toLowerCase());
+          const key = o.order.nullifier.toLowerCase();
+          const match = byNullifier.get(key);
           if (match) {
+            byNullifier.delete(key);
             const idx = available.indexOf(match);
             if (idx >= 0) available.splice(idx, 1);
             enrichedByFilename.set(o.filename, {
