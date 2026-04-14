@@ -1,7 +1,7 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -20,11 +20,12 @@ import { ConfigService } from '../services/ConfigService';
 import AddressBookModal from '../components/AddressBookModal';
 import MarketQuoteCard from '../components/MarketQuoteCard';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
-import { formatAmount } from '../lib/format';
+import { formatAmount, parseHumanNumber, stripThousandsSep } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { computeMarketAmounts } from '../lib/market-amounts';
 import { DEFAULT_SLIPPAGE_BPS, getBestSwapRoute } from '../lib/dex-aggregator';
 import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
+import { useAbortOnUnmount } from '../hooks/useAbortOnUnmount';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -63,19 +64,7 @@ export default function TradeScreen() {
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // Cancels the in-flight submit-path getBestSwapRoute if the screen
-  // unmounts mid-submit. Without this the HTTP promise chain stays
-  // pinned (closing over signer/note/account) until 1inch responds.
-  // `mountedRef` then gates post-await setState calls so React
-  // doesn't log a "state update on unmounted component" warning.
-  const submitAbortRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      submitAbortRef.current?.abort();
-    };
-  }, []);
+  const { makeController: makeSubmitAbort, isMounted } = useAbortOnUnmount();
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
@@ -132,7 +121,7 @@ export default function TradeScreen() {
   // Compute USDC equivalent
   const usdcAmount = (() => {
     const a = parseFloat(amount);
-    const p = parseFloat(price.replace(/,/g, ''));
+    const p = parseHumanNumber(price);
     if (isNaN(a) || isNaN(p)) return '—';
     return (a * p).toLocaleString('en-US', { maximumFractionDigits: 2 });
   })();
@@ -200,7 +189,7 @@ export default function TradeScreen() {
 
   const buyAmountHuman = (() => {
     const a = parseFloat(amount);
-    const p = parseFloat(price.replace(/,/g, ''));
+    const p = parseHumanNumber(price);
     if (!Number.isFinite(a) || !Number.isFinite(p) || a <= 0 || p <= 0) return 0;
     return a * p;
   })();
@@ -210,7 +199,7 @@ export default function TradeScreen() {
   // effect refires on every parent render.
   const marketQuoteInput = useMemo(() => {
     const a = parseFloat(amount);
-    const p = parseFloat(price.replace(/,/g, ''));
+    const p = parseHumanNumber(price);
     if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
     try {
       const base = computeMarketAmounts({
@@ -309,7 +298,7 @@ export default function TradeScreen() {
           TokenService.getDecimals(readProvider, buyToken),
         ]);
 
-        const priceClean = price.replace(/,/g, '');
+        const priceClean = stripThousandsSep(price);
         const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
         // Price is buyToken-per-sellToken, so its native precision is
         // `buyDecimals`. Dividing by 10^sellDecimals cancels the sell-side
@@ -431,12 +420,7 @@ export default function TradeScreen() {
         const platformFee = (sellAmountBn * dexPlatformFeeBps) / 10_000n;
         const swapAmount = sellAmountBn - platformFee;
 
-        submitAbortRef.current?.abort();
-        const routeAbort = new AbortController();
-        submitAbortRef.current = routeAbort;
-        // ref is cleared either by the next submit overwriting it, or
-        // by the unmount cleanup — a completed/aborted controller is
-        // harmless to leave in the ref in the meantime.
+        const routeAbort = makeSubmitAbort();
         const route = await getBestSwapRoute({
           chainId: ConfigService.getChainId(),
           sellToken: selectedNote.token,
@@ -469,12 +453,11 @@ export default function TradeScreen() {
       // AbortError = user-driven cancel (unmount/navigation). Not an
       // error the user needs to see — skip the error toast and let
       // the finally handle submitting state.
-      if (mountedRef.current && err?.name !== 'AbortError') {
+      if (isMounted() && err?.name !== 'AbortError') {
         setError(friendlyError(err));
       }
     } finally {
-      submitAbortRef.current = null;
-      if (mountedRef.current) setSubmitting(false);
+      if (isMounted()) setSubmitting(false);
     }
   }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
@@ -572,13 +555,13 @@ export default function TradeScreen() {
             <Text style={s.limitUnit}>{buyTokenSymbol}</Text>
             <View style={s.limitDivider} />
             <TouchableOpacity style={s.pmBtn} onPress={() => {
-              const p = parseFloat(price.replace(/,/g, ''));
+              const p = parseHumanNumber(price);
               if (!isNaN(p)) setPrice(Math.max(0, p - 1).toFixed(2));
             }}>
               <Text style={s.pmText}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.pmBtn} onPress={() => {
-              const p = parseFloat(price.replace(/,/g, ''));
+              const p = parseHumanNumber(price);
               if (!isNaN(p)) setPrice(Math.max(0, p + 1).toFixed(2));
             }}>
               <Text style={s.pmText}>+</Text>

@@ -38,6 +38,24 @@ export function toBytes32Hex(value: string | bigint): string {
   return '0x' + BigInt(value).toString(16).padStart(64, '0');
 }
 
+// Hoisted so hot-path callers (per-keystroke input handlers in
+// TradeScreen) don't reallocate a regex on every invocation.
+const THOUSANDS_SEP_RE = /,/g;
+
+/** Strip thousands separators from a user-entered decimal string
+ *  (`"1,850.25"` → `"1850.25"`). Keeps the original precision so the
+ *  return value is still safe to pass to `ethers.parseUnits`. */
+export function stripThousandsSep(str: string): string {
+  return str.replace(THOUSANDS_SEP_RE, '');
+}
+
+/** Parse a user-entered decimal string that may contain thousands
+ *  separators to a number. Returns `NaN` for empty / unparseable
+ *  input so callers can early-return on `!Number.isFinite`. */
+export function parseHumanNumber(str: string): number {
+  return parseFloat(stripThousandsSep(str));
+}
+
 // Pre-built formatter — constructing Intl.DateTimeFormat per call is
 // measurably slow on older Android devices.
 const ABSOLUTE_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });

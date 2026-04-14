@@ -5,6 +5,7 @@
  * with the `minReceive` the execution path enforces.
  */
 import { ethers } from 'ethers';
+import { stripThousandsSep } from './format';
 
 export interface MarketAmountsInput {
   sellAmountHuman: string;  // human-readable sell amount ("1.5")
@@ -23,7 +24,7 @@ export interface MarketAmounts {
 /** Parse + compute. Throws if inputs can't be parsed as decimal numbers. */
 export function computeMarketAmounts(input: MarketAmountsInput): MarketAmounts {
   const { sellAmountHuman, priceHuman, sellDecimals, buyDecimals, slippageBps } = input;
-  const priceClean = priceHuman.replace(/,/g, '');
+  const priceClean = stripThousandsSep(priceHuman);
   const sellAmountBn = ethers.parseUnits(sellAmountHuman, sellDecimals);
   const priceBn = ethers.parseUnits(priceClean, buyDecimals);
   // Multiply sell × price, then cancel sell-side units to land in buy
