@@ -558,19 +558,6 @@ function PrivateOrderPageInner() {
     return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
   }, [claimTotalWei, buyTokenDecimals]);
 
-  // BigInt check that matches the authorize circuit constraint
-  // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
-  const claimShortfall = useMemo((): bigint | null => {
-    if (buyTokenDecimals == null || !buyAmount) return null;
-    try {
-      const need = ethers.parseUnits(buyAmount, buyTokenDecimals);
-      if (need === 0n) return null;
-      return claimTotalWei >= need ? 0n : need - claimTotalWei;
-    } catch {
-      return null;
-    }
-  }, [claimTotalWei, buyAmount, buyTokenDecimals]);
-
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
 
@@ -600,6 +587,22 @@ function PrivateOrderPageInner() {
 
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
+
+  // BigInt check — recipients must together cover the *post-fee* receive
+  // (maker pays the relayer fee out of buyAmount, then distributes the
+  // remainder to claim recipients).
+  const claimShortfall = useMemo((): bigint | null => {
+    if (buyTokenDecimals == null || !buyAmount) return null;
+    try {
+      const gross = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      if (gross === 0n) return null;
+      const feeWei = (gross * BigInt(effectiveFeeBps)) / 10000n;
+      const need = gross > feeWei ? gross - feeWei : 0n;
+      return claimTotalWei >= need ? 0n : need - claimTotalWei;
+    } catch {
+      return null;
+    }
+  }, [claimTotalWei, buyAmount, buyTokenDecimals, effectiveFeeBps]);
 
   // Scatter-mode cap: the contract's `validateScatterAuth` enforces
   // `totalLocked + fee <= sellAmount`, so the distributed amount (which
@@ -657,17 +660,27 @@ function PrivateOrderPageInner() {
     setBuyAmount(grossBuy.toFixed(dec));
   }, [buyToken, isScatterMode, sellTokenDecimals, effectiveFeeBps]);
 
+  // User-edited-buyAmount guard: once the user types into the Buy field
+  // directly, stop auto-rewriting it from sell × price × fee changes.
+  // A fresh price selection (handlePriceSelect) or sell edit via onChange
+  // explicitly overrides and resets this flag.
+  const userEditedBuyRef = useRef(false);
+
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
+    userEditedBuyRef.current = false;
     if (sellAmount) recomputeBuyAmount(sellAmount, p, effectiveFeeBps);
   }, [sellAmount, effectiveFeeBps, recomputeBuyAmount]);
 
   useEffect(() => {
+    if (userEditedBuyRef.current) return;
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
-  // Net amount after fee — this is the distributable amount for claims
-  const netBuyAmount = parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000) || 0;
+  // Net amount after relay fee — this is the distributable pot for claims.
+  //   maker receives buyAmount gross; fee deducted for the relayer;
+  //   recipients share (buyAmount × (1 − fee)).
+  const netBuyAmount = (parseFloat(buyAmount) || 0) * (1 - effectiveFeeBps / 10000);
 
   // Change (remainder) calculation
   const changeAmount = useMemo(() => {
@@ -698,10 +711,15 @@ function PrivateOrderPageInner() {
     if (buyTokenDecimals == null || !buyAmount) return;
     try {
       const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      // Recipients share the amount *after* the relay fee — maker keeps
+      // buyAmount × (1 − fee), so Rest must not push the total past that
+      // post-fee pot. BigInt math: feeWei = parsedBuy × effectiveFeeBps / 10000.
+      const feeWei = (parsedBuy * BigInt(effectiveFeeBps)) / 10000n;
+      const netBuyWei = parsedBuy > feeWei ? parsedBuy - feeWei : 0n;
       const target =
-        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < parsedBuy
+        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < netBuyWei
           ? scatterMaxDistributeWei
-          : parsedBuy;
+          : netBuyWei;
       const othersBig = sumClaimWei(id);
       const restBig = target > othersBig ? target - othersBig : 0n;
       updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
@@ -1293,6 +1311,7 @@ function PrivateOrderPageInner() {
                   onChange={(e) => {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
+                      userEditedBuyRef.current = false;
                       recomputeBuyAmount(e.target.value, price, effectiveFeeBps);
                     }
                   }}
@@ -1325,7 +1344,7 @@ function PrivateOrderPageInner() {
                   // Guard the setter with the readOnly condition so a stray programmatic
                   // change event (autofill, form reset) can't desync `buyAmount` from
                   // the `sellAmount` it's mirroring while the field is read-only.
-                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => setBuyAmount(e.target.value)}
+                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => { userEditedBuyRef.current = true; setBuyAmount(e.target.value); }}
                   readOnly={orderType === "market" || isScatterMode}
                   className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 text-right ${
                     orderType === "market" || isScatterMode ? "opacity-70" : ""
@@ -1486,29 +1505,16 @@ function PrivateOrderPageInner() {
                 >
                   <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
                   <span className="font-mono">
-                    −{(
-                      (isScatterMode ? parseFloat(sellAmount) : parseFloat(buyAmount))
-                      * effectiveFeeBps / 10000
-                    ).toFixed(4)} {buyToken?.symbol}
+                    −{(parseFloat(buyAmount) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </button>
-                {!isScatterMode && sellToken && (
-                  <div className="flex justify-between text-error/60 text-xs">
-                    <span>Relay fee on sell side</span>
-                    <span className="font-mono">
-                      −{(parseFloat(sellAmount) * effectiveFeeBps / 10000).toFixed(4)} {sellToken.symbol}
-                    </span>
-                  </div>
-                )}
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>{isScatterMode ? "Recipients receive" : "You receive"}</span>
                   <span className="font-mono">
-                    {isScatterMode
-                      ? parseFloat(buyAmount).toFixed(4)
-                      : (parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}
+                    {(parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </div>
               </div>
@@ -1642,7 +1648,7 @@ function PrivateOrderPageInner() {
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (!isScatterMode || scatterExcessWei === 0n) && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "recipients receive" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total at least {netBuyAmount.toFixed(4)} {buyToken.symbol} (buyAmount − fee). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (

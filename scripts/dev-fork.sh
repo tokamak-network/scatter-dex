@@ -299,7 +299,7 @@ TOKENS="$TOKEN_LIST"
 # Preserve developer-owned secrets (not regenerated from the deployment)
 PRESERVED_ENV=""
 if [ -f "$ROOT_DIR/frontend/.env.local" ]; then
-  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY)=' "$ROOT_DIR/frontend/.env.local" || true)
+  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$ROOT_DIR/frontend/.env.local" || true)
 fi
 
 cat > "$ROOT_DIR/frontend/.env.local" << EOF
