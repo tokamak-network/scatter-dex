@@ -5,7 +5,7 @@
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Alert, Linking, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, AppState, AppStateStatus, Linking, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ethers } from 'ethers';
 import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
@@ -33,6 +33,12 @@ interface WalletContextValue extends WalletState {
   disconnect: () => Promise<void>;
   readProvider: ethers.JsonRpcProvider;
 }
+
+// Grace window for backgrounded built-in sessions. A shorter value trips on
+// users pulling down the notification centre for a glance; much longer and
+// the lock stops being meaningful against a stolen device. 30s is in line
+// with common wallet-app defaults.
+const BG_LOCK_MS = 30_000;
 
 const INITIAL_STATE: WalletState = {
   account: null,
@@ -230,6 +236,72 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [readProvider]);
+
+  // Background-reauth: clear the cached signer if the app was backgrounded
+  // for longer than `BG_LOCK_MS`. Only applies to the built-in wallet mode
+  // — WalletConnect sessions are gated by the external wallet app, which
+  // does its own session handling. The user lands back on the connect
+  // screen and re-taps to go through the biometric prompt again.
+  const hasBuiltinSigner = connectionMode === 'builtin' && !!state.signer;
+  const backgroundedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!hasBuiltinSigner) return;
+
+    // Only `background` stamps the timestamp — `inactive` fires on
+    // transient iOS interruptions (notification pull-down, app-switcher
+    // peek) that shouldn't start the lock timer. If the user actually
+    // leaves the app those `inactive` events are followed by
+    // `background`, which DOES stamp.
+    //
+    // Listener is declared sync so `AppState`'s non-Promise-aware
+    // dispatcher doesn't swallow rejections — the async work is
+    // fire-and-forget inside, with an explicit catch for SecureStore
+    // hiccups so a rejection never lands as an unhandled promise.
+    const handleChange = (next: AppStateStatus): void => {
+      if (next === 'background') {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+      if (next !== 'active' || backgroundedAtRef.current == null) return;
+      const elapsed = Date.now() - backgroundedAtRef.current;
+      backgroundedAtRef.current = null;
+      if (elapsed < BG_LOCK_MS) return;
+
+      void (async () => {
+        try {
+          // Re-check the opt-in at the moment we'd act on it — the user
+          // may have toggled biometric off in Settings while we were
+          // subscribed, and caching the value at subscribe time would
+          // keep locking their session against their preference.
+          const enabled = await KeySecurityService.isBiometricEnabled();
+          if (!enabled) return;
+          // If the app slipped back to background during the
+          // `isBiometricEnabled` await, a fresh `active` handler will
+          // re-evaluate the elapsed time — don't race it by locking now.
+          if (AppState.currentState !== 'active') return;
+          // Full teardown — resetting to INITIAL_STATE plus
+          // `connectionMode = 'none'` ensures the UI treats the app as
+          // disconnected instead of "account present but signer null",
+          // which HomeScreen would otherwise render as connected while
+          // any transaction-needing action fails silently.
+          setState(INITIAL_STATE);
+          setConnectionMode('none');
+        } catch (err) {
+          // SecureStore can reject on device edge cases (Keychain
+          // locked, hardware fault). Swallow so we don't redbox in
+          // production; the session simply stays unlocked — the user
+          // can still disconnect manually if they notice.
+          if (__DEV__) console.warn('bg-reauth: biometric check failed:', err);
+        }
+      })();
+    };
+
+    const subscription = AppState.addEventListener('change', handleChange);
+    return () => {
+      subscription.remove();
+      backgroundedAtRef.current = null;
+    };
+  }, [hasBuiltinSigner]);
 
   const disconnect = useCallback(async () => {
     if (wcProviderRef.current) {
