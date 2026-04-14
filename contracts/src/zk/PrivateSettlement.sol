@@ -469,8 +469,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
-        // Cache once — authorizeVerifier is read here, in the fallback
-        // verify path below, and in the failed-verify revert branch.
+        // Cache once — authorizeVerifier is read here (null-check) and again
+        // in the fallback verifyProof call below.
         IAuthorizeVerifier _verifier = authorizeVerifier;
         if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
 
