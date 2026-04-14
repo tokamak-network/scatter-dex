@@ -192,7 +192,9 @@ export default function PrivateHistoryPage() {
       const provider = getReadProvider();
       const settlementAddr = getPrivateSettlementAddress();
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
-      const fromBlock = getSafeFromBlock();
+      // getSafeFromBlock is async — awaiting is required; passing the
+      // pending Promise into queryFilter silently crashes the enrichment.
+      const fromBlock = await getSafeFromBlock(provider);
       // SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot,
       //                address sellToken, address buyToken, uint128 sellAmount,
       //                uint256 amountOut, uint128 totalLocked, address indexed submitter)
