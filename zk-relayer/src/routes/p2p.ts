@@ -120,7 +120,9 @@ export function createP2PRoutes(
       res.status(403).json({ error: "ownership verification not configured" });
       return;
     }
-    const owner = lookupOrderRelayer(orderId);
+    // Defensive lowercase even though `RemoteOrderStore.getRelayer`
+    // already normalises — guards against future callers that don't.
+    const owner = lookupOrderRelayer(orderId)?.toLowerCase() ?? null;
     if (owner !== null && owner !== peerAddress) {
       res.status(403).json({ error: "cannot cancel another relayer's order" });
       return;

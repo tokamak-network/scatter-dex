@@ -85,9 +85,10 @@ describe("POST /api/p2p/orders", () => {
 });
 
 describe("DELETE /api/p2p/orders/:id", () => {
-  // Ownership check now goes through `lookupOrderRelayer` (4th-from-last
-  // arg) instead of parsing `{relayer}-{nonce}` out of the id, since
-  // authorize-flow ids are bytes32(nullifier) with no embedded relayer.
+  // Ownership check now goes through `lookupOrderRelayer` (last arg of
+  // createP2PRoutes) instead of parsing `{relayer}-{nonce}` out of the
+  // id, since authorize-flow ids are bytes32(nullifier) with no
+  // embedded relayer.
   const otherRelayer = "0x" + "c".repeat(40);
   const otherId = "0xfeedface".padEnd(66, "0");
 
@@ -111,13 +112,16 @@ describe("DELETE /api/p2p/orders/:id", () => {
 
   it("accepts cancel when order is unknown to our cache (idempotent)", async () => {
     // Lookup wired but returns null — order isn't in our cache, treat
-    // as already-cancelled / never-seen and accept.
+    // as already-cancelled / never-seen and accept. Still forwards to
+    // `onCancel` so downstream stores (e.g. `RemoteOrderStore.remove`)
+    // can run their own no-op deletion paths idempotently.
     const onCancel = vi.fn();
     const lookup = vi.fn(() => null);
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), onCancel, undefined, undefined, lookup));
     const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
     const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
     expect(res.status).toBe(200);
+    expect(onCancel).toHaveBeenCalledWith(otherId);
   });
 
   it("rejects with 403 when no lookup callback is configured (fail-closed)", async () => {

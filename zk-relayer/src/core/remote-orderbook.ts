@@ -19,14 +19,24 @@ export class RemoteOrderStore {
 
   get size(): number { return this.byId.size; }
 
+  /**
+   * Order ids in this store are bytes32 hex strings, which are
+   * effectively case-insensitive on the wire — but `Map` keys are not.
+   * Normalise everything to lowercase at the boundary so a peer that
+   * sends "0xABCD..." can't bypass the ownership check just by
+   * differing-case lookup vs what we cached on `add`.
+   */
+  private normaliseId(id: string): string { return id.toLowerCase(); }
+
   /** Lowercased relayer address that owns `orderId`, or `null` if unknown. */
   getRelayer(orderId: string): string | null {
-    return this.byId.get(orderId)?.relayer.toLowerCase() ?? null;
+    return this.byId.get(this.normaliseId(orderId))?.relayer.toLowerCase() ?? null;
   }
 
   add(order: OrderSummary): void {
+    const id = this.normaliseId(order.id);
     // Skip if already exists
-    if (this.byId.has(order.id)) return;
+    if (this.byId.has(id)) return;
 
     // Skip expired
     const now = Math.floor(Date.now() / 1000);
@@ -41,12 +51,15 @@ export class RemoteOrderStore {
       return;
     }
 
-    this.byId.set(order.id, order);
+    // Store with the normalised id so all subsequent lookups (by-id,
+    // by-relayer set membership) match what `remove`/`getRelayer` see.
+    const normalised: OrderSummary = order.id === id ? order : { ...order, id };
+    this.byId.set(id, normalised);
 
     // Index by relayer
     const relayerKey = order.relayer.toLowerCase();
     if (!this.byRelayer.has(relayerKey)) this.byRelayer.set(relayerKey, new Set());
-    this.byRelayer.get(relayerKey)!.add(order.id);
+    this.byRelayer.get(relayerKey)!.add(id);
 
     // Insert into pair-sorted list
     const pair = pairKeyFromStrings(order.sellToken, order.buyToken);
@@ -62,8 +75,8 @@ export class RemoteOrderStore {
         const eBuy = BigInt(existing.buyAmount);
         return sellAmt * eBuy < eSell * buyAmt;
       });
-      if (idx === -1) list.push(order);
-      else list.splice(idx, 0, order);
+      if (idx === -1) list.push(normalised);
+      else list.splice(idx, 0, normalised);
       this.sells.set(pair, list);
     } else {
       const list = this.buys.get(pair) ?? [];
@@ -76,21 +89,22 @@ export class RemoteOrderStore {
         // new.sell/new.buy > existing.sell/existing.buy → new is more generous
         return sellAmt * eBuy > eSell * buyAmt;
       });
-      if (idx === -1) list.push(order);
-      else list.splice(idx, 0, order);
+      if (idx === -1) list.push(normalised);
+      else list.splice(idx, 0, normalised);
       this.buys.set(pair, list);
     }
   }
 
   remove(orderId: string): void {
-    const order = this.byId.get(orderId);
+    const id = this.normaliseId(orderId);
+    const order = this.byId.get(id);
     if (!order) return;
 
-    this.byId.delete(orderId);
+    this.byId.delete(id);
     const relayerKey = order.relayer.toLowerCase();
     const relayerSet = this.byRelayer.get(relayerKey);
     if (relayerSet) {
-      relayerSet.delete(orderId);
+      relayerSet.delete(id);
       if (relayerSet.size === 0) this.byRelayer.delete(relayerKey);
     }
 
@@ -99,10 +113,10 @@ export class RemoteOrderStore {
 
     if (isSellSide) {
       const list = this.sells.get(pair);
-      if (list) this.sells.set(pair, list.filter(o => o.id !== orderId));
+      if (list) this.sells.set(pair, list.filter(o => o.id !== id));
     } else {
       const list = this.buys.get(pair);
-      if (list) this.buys.set(pair, list.filter(o => o.id !== orderId));
+      if (list) this.buys.set(pair, list.filter(o => o.id !== id));
     }
   }
 
@@ -114,7 +128,7 @@ export class RemoteOrderStore {
   }
 
   get(orderId: string): OrderSummary | undefined {
-    return this.byId.get(orderId);
+    return this.byId.get(this.normaliseId(orderId));
   }
 
   getSellOrders(pair: string): OrderSummary[] {
