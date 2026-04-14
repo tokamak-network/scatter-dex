@@ -77,10 +77,14 @@ interface OrderFile {
   relayerUrl?: string;
   relayerAddress?: string;
   createdAt: string;
-  // Enriched from relayer API response
+  // Enriched from relayer API response (limit) or on-chain scan (market).
   status?: string;
   settleTxHash?: string;
   crossRelayer?: boolean;
+  /** Market-only: actual amountOut reported by SettledWithDex event. */
+  onchainAmountOut?: string;
+  /** Market-only: block timestamp (seconds) of the settle tx. */
+  onchainSettledAt?: number;
 }
 
 const CANCEL_STEP_LABEL: Record<string, string> = {
@@ -117,6 +121,9 @@ export default function PrivateHistoryPage() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
   const [orders, setOrders] = useState<OrderFile[]>([]);
+  // Surfaces SettledWithDex lookup failures in the detail panel so the user
+  // can distinguish "not yet settled on chain" from "RPC failed".
+  const [enrichError, setEnrichError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderFile | null>(null);
 
@@ -168,6 +175,109 @@ export default function PrivateHistoryPage() {
     }
   }, [signer, account]);
 
+  // Enrich market-order entries with on-chain SettledWithDex data.
+  // Market orders don't hit the relayer DB, so the tx hash / actual
+  // amountOut / block timestamp have to come from the settlement contract's
+  // event log. Matches by (sellToken, buyToken, sellAmount, totalLocked)
+  // tuple — market orders with the same quadruple in one account would
+  // still collide, but the overlap window is small in practice and the UI
+  // is read-only so an ambiguous match is harmless.
+  const enrichMarketFromChain = useCallback(async (orderList: OrderFile[]): Promise<OrderFile[]> => {
+    if (!account) return orderList;
+    const marketEntries = orderList.filter((o) => o.order?.type === "market");
+    if (marketEntries.length === 0) { setEnrichError(null); return orderList; }
+
+    setEnrichError(null);
+    try {
+      const provider = getReadProvider();
+      const settlementAddr = getPrivateSettlementAddress();
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
+      // getSafeFromBlock is async — awaiting is required; passing the
+      // pending Promise into queryFilter silently crashes the enrichment.
+      const fromBlock = await getSafeFromBlock(provider);
+      // SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot,
+      //                address sellToken, address buyToken, uint128 sellAmount,
+      //                uint256 amountOut, uint128 totalLocked, address indexed submitter)
+      const filter = settlement.filters.SettledWithDex(null, null, account);
+      const events = await settlement.queryFilter(filter, fromBlock, "latest");
+
+      type EvRow = { sellToken: string; buyToken: string; sellAmount: bigint; amountOut: bigint; totalLocked: bigint; txHash: string; blockNumber: number };
+      const rows: EvRow[] = [];
+      for (const ev of events) {
+        const log = ev as ethers.EventLog;
+        if (!log.args) continue;
+        rows.push({
+          sellToken: (log.args[2] as string).toLowerCase(),
+          buyToken: (log.args[3] as string).toLowerCase(),
+          sellAmount: BigInt(log.args[4]),
+          amountOut: BigInt(log.args[5]),
+          totalLocked: BigInt(log.args[6]),
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+        });
+      }
+      if (rows.length === 0) return orderList;
+
+      // Fetch block timestamps in parallel (once per unique block).
+      const blockSet = new Set(rows.map((r) => r.blockNumber));
+      const blockTs = new Map<number, number>();
+      await Promise.all(
+        [...blockSet].map(async (bn) => {
+          try {
+            const b = await provider.getBlock(bn);
+            if (b) blockTs.set(bn, Number(b.timestamp));
+          } catch { /* block missing — leave timestamp undefined */ }
+        }),
+      );
+
+      // Consume events by chronological order so two market orders with an
+      // identical (sellToken, buyToken, sellAmount, totalLocked) quadruple
+      // don't both alias onto the same (first) event. Pair earliest file
+      // with earliest event — `orderList` arrives sorted createdAt DESC,
+      // iterate it in reverse (ASC).
+      rows.sort((a, b) => a.blockNumber - b.blockNumber);
+      const available = [...rows];
+      const enrichedByFilename = new Map<string, { txHash: string; amountOut: bigint; ts?: number }>();
+      for (let i = orderList.length - 1; i >= 0; i--) {
+        const o = orderList[i];
+        if (o.order?.type !== "market") continue;
+        let sell: bigint, locked: bigint;
+        try {
+          sell = BigInt(o.order.sellAmount);
+          locked = BigInt(o.order.buyAmount);
+        } catch { continue; }
+        const st = o.order.sellToken.toLowerCase();
+        const bt = o.order.buyToken.toLowerCase();
+        const idx = available.findIndex((r) =>
+          r.sellToken === st && r.buyToken === bt && r.sellAmount === sell && r.totalLocked === locked,
+        );
+        if (idx < 0) continue;
+        const match = available[idx];
+        available.splice(idx, 1);
+        enrichedByFilename.set(o.filename, {
+          txHash: match.txHash,
+          amountOut: match.amountOut,
+          ts: blockTs.get(match.blockNumber),
+        });
+      }
+
+      return orderList.map((o) => {
+        const m = enrichedByFilename.get(o.filename);
+        if (!m) return o;
+        return {
+          ...o,
+          settleTxHash: m.txHash,
+          onchainAmountOut: m.amountOut.toString(),
+          onchainSettledAt: m.ts,
+        };
+      });
+    } catch (e) {
+      console.warn("SettledWithDex enrichment failed:", e);
+      setEnrichError(e instanceof Error ? e.message : "on-chain lookup failed");
+      return orderList;
+    }
+  }, [account]);
+
   // Fetch order statuses from relayer
   const fetchStatuses = useCallback(async (orderList: OrderFile[]) => {
     if (!keyPair || zkRelayers.length === 0 || orderList.length === 0) return orderList;
@@ -205,17 +315,21 @@ export default function PrivateHistoryPage() {
       const files = await loadClaimsFiles();
       const sorted = (files as unknown as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const enriched = await fetchStatuses(sorted);
-      setOrders(enriched);
+      const withOnchain = await enrichMarketFromChain(enriched);
+      setOrders(withOnchain);
     } catch (e) {
       console.error("Failed to load orders:", e);
       setOrders([]);
     } finally {
       setLoading(false);
     }
-  }, [folderName, fetchStatuses]);
+  }, [folderName, fetchStatuses, enrichMarketFromChain]);
 
   useEffect(() => {
     if (folderName) loadOrders();
+    // `keyPair` retained as an explicit trigger: unlocking the trading key
+    // is a user action that should refresh statuses. `enrichMarketFromChain`
+    // is transitively covered by `loadOrders`.
   }, [folderName, loadOrders, keyPair]);
 
   const handleCancel = useCallback(async (order: OrderFile) => {
@@ -508,6 +622,27 @@ export default function PrivateHistoryPage() {
               <div>
                 <span className="text-on-surface-variant/60">Settle Tx:</span>{" "}
                 <span className="font-mono">{shortenAddress(selectedOrder.settleTxHash)}</span>
+              </div>
+            )}
+            {selectedOrder.order.type === "market" && selectedOrder.onchainAmountOut && (() => {
+              const buy = resolveToken(selectedOrder.order.buyToken, tokens);
+              const out = BigInt(selectedOrder.onchainAmountOut);
+              return (
+                <div>
+                  <span className="text-on-surface-variant/60">Actual received:</span>{" "}
+                  <span className="font-mono text-tertiary">{ethers.formatUnits(out, buy.decimals)} {buy.symbol}</span>
+                </div>
+              );
+            })()}
+            {selectedOrder.onchainSettledAt && (
+              <div>
+                <span className="text-on-surface-variant/60">Settled at:</span>{" "}
+                <span className="font-mono">{new Date(selectedOrder.onchainSettledAt * 1000).toLocaleString()}</span>
+              </div>
+            )}
+            {selectedOrder.order.type === "market" && !selectedOrder.onchainAmountOut && enrichError && (
+              <div className="col-span-2 text-xs text-error/70">
+                On-chain lookup failed — retry with Refresh. ({enrichError})
               </div>
             )}
           </div>
