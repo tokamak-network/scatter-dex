@@ -161,14 +161,23 @@ function prepareEntry(input: {
   if (!isValidAddressForKind(input.address, kind)) {
     return { ok: false, reason: 'invalid-address', kind };
   }
-  const label = input.label?.trim();
+  // Runtime-guard `label` / `memo` against non-string values — the
+  // compile-time types say `string`, but BackupService hands bundle rows
+  // straight through from user-edited JSON, where a number / null would
+  // throw a TypeError inside `.trim()` and abort the whole `addMany`
+  // batch. Fall through to `missing-label` so the entry is rejected
+  // instead of crashing the transaction.
+  const rawLabel: unknown = input.label;
+  const label = typeof rawLabel === 'string' ? rawLabel.trim() : '';
   if (!label) return { ok: false, reason: 'missing-label', kind };
+  const rawMemo: unknown = input.memo;
+  const memo = typeof rawMemo === 'string' ? (rawMemo.trim() || undefined) : undefined;
   const entry: WalletEntry = {
     id: newId(),
     label,
     address: normalizeAddress(input.address),
     kind,
-    memo: input.memo?.trim() || undefined,
+    memo,
     createdAt: Math.floor(Date.now() / 1000),
   };
   return { ok: true, entry };

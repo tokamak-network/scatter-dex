@@ -105,7 +105,7 @@ export const NoteStorageService = {
     const CONCURRENCY = 32;
     for (let off = 0; off < notes.length; off += CONCURRENCY) {
       const chunk = notes.slice(off, off + CONCURRENCY);
-      const hashed = await Promise.all(
+      const chunkResults = await Promise.all(
         chunk.map(async (note) => {
           try {
             await SecureStore.setItemAsync(
@@ -118,7 +118,7 @@ export const NoteStorageService = {
           }
         }),
       );
-      for (let i = 0; i < hashed.length; i++) results[off + i] = hashed[i];
+      for (let i = 0; i < chunkResults.length; i++) results[off + i] = chunkResults[i];
     }
     const successIds = results.filter((r) => r.ok).map((r) => r.id);
     if (successIds.length > 0) {
