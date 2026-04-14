@@ -315,6 +315,14 @@ export default function PrivateClaimPage() {
 
   const handleClaimBatchViaWallet = useCallback(async () => {
     if (!signer || eligibleClaims.length === 0) return;
+    // Exclude claims whose underlying order hasn't settled on-chain yet.
+    // claimWithProofBatch is all-or-nothing — a single unsettled claim
+    // reverts the whole tx with ClaimsGroupNotFound, wasting gas and the
+    // proofs we already generated. The UI guard disables the button when
+    // fewer than 2 are settled, but race against a freshly-submitted
+    // cancel or concurrent settle is still possible, so filter here too.
+    const batchable = eligibleClaims.filter((e) => settlementMap[e.i]?.settled === true);
+    if (batchable.length === 0) return;
     setStatus("generating");
     setError(null);
     setTxHashes([]);
@@ -324,11 +332,11 @@ export default function PrivateClaimPage() {
       // Per-chunk build-then-submit: first tx lands sooner (no wait for all N
       // proofs), and a later chunk failure doesn't waste CPU on unused proofs.
       const settlement = new ethers.Contract(getPrivateSettlementAddress(), CLAIM_WITH_PROOF_ABI, signer);
-      const totalChunks = Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE);
+      const totalChunks = Math.ceil(batchable.length / MAX_BATCH_SIZE);
       const hashes: string[] = [];
 
       for (let ci = 0; ci < totalChunks; ci++) {
-        const chunkClaims = eligibleClaims.slice(ci * MAX_BATCH_SIZE, (ci + 1) * MAX_BATCH_SIZE);
+        const chunkClaims = batchable.slice(ci * MAX_BATCH_SIZE, (ci + 1) * MAX_BATCH_SIZE);
 
         // Proof gen is CPU-heavy and runs on the main thread — keep sequential
         // so the progress UI can repaint between proofs.
@@ -370,7 +378,7 @@ export default function PrivateClaimPage() {
       setStatus("error");
       setBatchProgress(null);
     }
-  }, [signer, eligibleClaims]);
+  }, [signer, eligibleClaims, settlementMap]);
 
   // Resolve token symbol
   const tokenSymbol = claimData
@@ -589,14 +597,14 @@ export default function PrivateClaimPage() {
           )}
 
           {allClaims.length > 1 && eligibleClaims.length >= 2 && (() => {
-            // Let batch-claim fire only when at least one eligible claim has
-            // actually settled. Mixed batches (some settled, some not) would
-            // revert entirely — filter to settled-only inside the handler.
-            // Treat `undefined` (initial fetch in flight) the same as the
-            // single-claim gate does: not-yet-confirmed, keep disabled.
-            const anySettled = eligibleClaims.some((_, i) => settlementMap[i]?.settled === true);
-            const stillLoading = eligibleClaims.some((_, i) => settlementMap[i] === undefined);
-            const batchDisabled = !signer || stillLoading || !anySettled;
+            // `eligibleClaims` stores `{ c, i }` where `i` is the index into
+            // `allClaims` — `settlementMap` is keyed the same way, so look
+            // up by `e.i` not by the `eligibleClaims` position.
+            // Treat `undefined` (initial fetch in flight) as "not yet
+            // confirmed" so the batch stays disabled during load.
+            const settledEligible = eligibleClaims.filter((e) => settlementMap[e.i]?.settled === true);
+            const stillLoading = eligibleClaims.some((e) => settlementMap[e.i] === undefined);
+            const batchDisabled = !signer || stillLoading || settledEligible.length < 2;
             return (
             <button
               onClick={handleClaimBatchViaWallet}
@@ -606,11 +614,11 @@ export default function PrivateClaimPage() {
               <Wallet className="w-4 h-4" />
               {!signer
                 ? "Connect Wallet to Batch Claim"
-                : stillLoading || !anySettled
+                : stillLoading || settledEligible.length < 2
                   ? "Waiting for Settlement..."
-                  : `Claim All ${eligibleClaims.length} via Wallet${
-                      Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE) > 1
-                        ? ` (${Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE)} txs)`
+                  : `Claim All ${settledEligible.length} via Wallet${
+                      Math.ceil(settledEligible.length / MAX_BATCH_SIZE) > 1
+                        ? ` (${Math.ceil(settledEligible.length / MAX_BATCH_SIZE)} txs)`
                         : ""
                     }`}
             </button>
@@ -627,7 +635,10 @@ export default function PrivateClaimPage() {
             // "not yet confirmed" to avoid flashing an active button then
             // disabling it on arrival.
             const settlementInfo = settlementMap[selectedClaimIdx];
-            const notSettledYet = settlementInfo !== undefined && !settlementInfo.settled;
+            // `undefined` = initial fetch in flight — treat as "not yet
+            // confirmed" so the button starts disabled instead of flashing
+            // active then disabling when the RPC returns.
+            const notSettledYet = settlementInfo === undefined || !settlementInfo.settled;
             return (
             <div className="space-y-4">
               {/* Mode selector */}

@@ -38,7 +38,14 @@ export function useClaimsGroupStatus(
   const [pollTick, setPollTick] = useState(0);
 
   useEffect(() => {
-    if (claims.length === 0) return;
+    if (claims.length === 0) {
+      // Clear on claims-empty so consumers don't see stale settlement state
+      // from a previously-loaded bundle after the user resets the page.
+      setStatuses({});
+      keyRef.current = "";
+      inflightKeyRef.current = "";
+      return;
+    }
     // `pollTick` is a suffix only so that repeated polls re-enter the effect
     // and bypass the `keyRef.current === key` short-circuit. When all claims
     // are already settled we stop ticking below.
