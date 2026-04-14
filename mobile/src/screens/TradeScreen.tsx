@@ -135,6 +135,7 @@ export default function TradeScreen() {
   const [sellDecimals, setSellDecimals] = useState<number>(18);
   const [buyDecimals, setBuyDecimals] = useState<number>(18);
   const buyTokenAddress = useMemo(() => ConfigService.getWethAddress() || '', []);
+  const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
     let cancelled = false;
@@ -511,7 +512,7 @@ export default function TradeScreen() {
           </View>
         </View>
 
-        {tradeType === 'market' && account && selectedNote && marketQuoteInput && (
+        {tradeType === 'market' && account && selectedNote && marketQuoteInput && settlementAddress && (
           <MarketQuoteCard
             sellAmount={marketQuoteInput.sellAmountBn}
             minReceive={marketQuoteInput.minReceive}
@@ -519,7 +520,13 @@ export default function TradeScreen() {
             buyToken={buyTokenAddress}
             buySymbol={buyTokenSymbol}
             buyDecimals={buyDecimals}
-            recipient={account}
+            // PrivateSettlement is the actual on-chain recipient of the
+            // swap output (MarketOrderService encodes the same address
+            // into the Uniswap calldata). Passing the user's wallet
+            // address would make the 1inch quote route through a
+            // different `from`, producing a different estimate than
+            // what executes.
+            recipient={settlementAddress}
           />
         )}
 
