@@ -115,8 +115,7 @@ async function main() {
     );
 
     authorizeCrossRelayerService = new AuthorizeCrossRelayerMatchService(
-      authorizeOrders, sharedClient, authSubmitter, authSubmitter.getAddress(),
-      orderIdMap, db,
+      authorizeOrders, sharedClient, authSubmitter, authSubmitter.getAddress(), db,
     );
 
     sharedClient.onOrder((summary) => {
@@ -230,7 +229,7 @@ async function main() {
   // could depend on it; here we just mount the HTTP routes.
   app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
-    sharedClient, orderIdMap, authWriteLimiter,
+    sharedClient, authWriteLimiter,
   ));
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)

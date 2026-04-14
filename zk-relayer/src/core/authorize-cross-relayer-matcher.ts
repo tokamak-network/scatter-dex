@@ -10,7 +10,7 @@ import {
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
-import { decPubKeyCount } from "../routes/authorize-orders.js";
+import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 
 /**
  * Cross-relayer trade-offer for the authorize (half-proof) path.
@@ -54,7 +54,6 @@ export class AuthorizeCrossRelayerMatchService {
     private sharedClient: SharedOrderbookClient,
     private submitter: AuthorizeSubmitter,
     private ownRelayerAddress: string,
-    private orderIdMap: Map<string, string>,
     private db: PrivateOrderDB | null,
     private onSettled?: OrderSettledCallback,
   ) {}
@@ -117,12 +116,10 @@ export class AuthorizeCrossRelayerMatchService {
           this.db?.updateAuthorizeOrderStatus(nullifier, "settled", result.txHash);
           this.onSettled?.(nullifier, result.txHash);
 
-          // Cancel our own listing from the shared orderbook.
-          const obId = this.orderIdMap.get(nullifier);
-          if (obId) {
-            this.sharedClient.cancelOrder(obId).catch(() => {});
-            this.orderIdMap.delete(nullifier);
-          }
+          // Cancel our own listing from the shared orderbook. Best-effort —
+          // a 404 here just means the entry was already cancelled or expired
+          // server-side, which is fine.
+          this.sharedClient.cancelOrder(nullifierToOfferHandle(nullifier)).catch(() => {});
           return; // Only match one pair per remote-arrival tick.
         }
 
@@ -262,11 +259,7 @@ export class AuthorizeCrossRelayerMatchService {
       this.onSettled?.(mapKey, txHash);
 
       // Cancel maker's listing from shared OB.
-      const obId = this.orderIdMap.get(mapKey);
-      if (obId) {
-        this.sharedClient.cancelOrder(obId).catch(() => {});
-        this.orderIdMap.delete(mapKey);
-      }
+      this.sharedClient.cancelOrder(nullifierToOfferHandle(mapKey)).catch(() => {});
 
       console.log(
         `[authorize-cross] Settled: maker=${mapKey.slice(0, 18)}... ` +

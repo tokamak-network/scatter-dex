@@ -54,6 +54,17 @@ function incPubKeyCount(ax: string, ay: string): void {
   pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
 }
 
+/**
+ * The shared-orderbook id we publish for an authorize order is the bytes32
+ * hex form of its nullifier (decimal-string form lives in `authorizeOrders`).
+ * Deterministic derivation lets cleanup paths cancel the listing without
+ * any side-table — survives relayer restarts and matches the publish-time
+ * `offerHandle` derivation below.
+ */
+export function nullifierToOfferHandle(nullifierDecimal: string): string {
+  return "0x" + BigInt(nullifierDecimal).toString(16).padStart(64, "0");
+}
+
 export function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
   const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
@@ -62,7 +73,6 @@ export function decPubKeyCount(ax: string, ay: string): void {
 }
 
 let _sharedClient: SharedOrderbookClient | null = null;
-let _orderIdMap: Map<string, string> | null = null;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -71,11 +81,9 @@ export function createAuthorizeOrderRoutes(
   readLimiter?: RequestHandler,
   db?: PrivateOrderDB,
   sharedClient?: SharedOrderbookClient | null,
-  orderIdMap?: Map<string, string>,
   authWriteLimiter?: RequestHandler,
 ): Router {
   _sharedClient = sharedClient ?? null;
-  _orderIdMap = orderIdMap ?? null;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -235,9 +243,7 @@ export function createAuthorizeOrderRoutes(
       // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
       if (_sharedClient) {
         const ps = order.publicSignals;
-        // Offer handle (OFFER_HANDLE_RE = /^0x[0-9a-fA-F]{64}$/):
-        // nullifier is already unique per order, so encode it as 32-byte hex.
-        const offerHandle = "0x" + BigInt(nullifier).toString(16).padStart(64, "0");
+        const offerHandle = nullifierToOfferHandle(nullifier);
         const orderbookId = await _sharedClient.postOrder({
           id: offerHandle,
           sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
@@ -250,7 +256,6 @@ export function createAuthorizeOrderRoutes(
         });
         if (orderbookId) {
           console.log(`[authorize-orders] Published to shared orderbook: ${orderbookId}`);
-          if (_orderIdMap) _orderIdMap.set(nullifier, orderbookId);
         }
       }
 
@@ -279,14 +284,13 @@ export function createAuthorizeOrderRoutes(
           _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
           _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
 
-          // Cancel both sides from shared orderbook
-          if (_sharedClient && _orderIdMap) {
-            const makerNull = match.maker.order.publicSignals.nullifier;
-            const takerNull = match.taker.order.publicSignals.nullifier;
-            const makerOid = _orderIdMap.get(makerNull);
-            const takerOid = _orderIdMap.get(takerNull);
-            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
-            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
+          // Cancel both sides from shared orderbook. Best-effort —
+          // a 404 here is harmless (already cancelled / expired).
+          if (_sharedClient) {
+            const makerOid = nullifierToOfferHandle(match.maker.order.publicSignals.nullifier);
+            const takerOid = nullifierToOfferHandle(match.taker.order.publicSignals.nullifier);
+            void _sharedClient.cancelOrder(makerOid).catch(() => {});
+            void _sharedClient.cancelOrder(takerOid).catch(() => {});
           }
 
           res.json({
@@ -403,9 +407,8 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
-    if (_sharedClient && _orderIdMap) {
-      const oid = _orderIdMap.get(key);
-      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+    if (_sharedClient) {
+      void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
     }
     toDelete.push(key);
   }
@@ -451,10 +454,9 @@ export function purgeNonPendingAuthorizeOrders(): number {
       if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
       }
-      // Cancel from shared orderbook if still listed
-      if (_sharedClient && _orderIdMap) {
-        const oid = _orderIdMap.get(key);
-        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+      // Cancel from shared orderbook if still listed (best-effort).
+      if (_sharedClient) {
+        void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
       }
       authorizeOrders.delete(key);
       removed++;
