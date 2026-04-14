@@ -93,6 +93,7 @@ async function main() {
   }
   const matcher = new PrivateMatcher(orderbook, remoteOrderbook);
   matcher.setRelayerAddress(submitter.getAddress());
+  matcher.setMinFeeBps(config.relayerFee);
 
   if (config.sharedOrderbookUrl && config.relayerPublicUrl && remoteOrderbook) {
     sharedClient = new SharedOrderbookClient({

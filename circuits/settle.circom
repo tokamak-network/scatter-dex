@@ -447,39 +447,42 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerFeeCheck.out === 1;
 
     // ── Per-token fee validation ──
-    // feeTokenMaker = floor(takerSellAmount * takerFee / 10000)
-    //   → fee in tokenMaker, deducted from taker's sell amount
-    // feeTokenTaker = floor(makerSellAmount * makerFee / 10000)
-    //   → fee in tokenTaker, deducted from maker's sell amount
+    // [2026-04-14 fee-semantics redesign] Each side's signed fee controls
+    // the fee drawn from their OWN receive side (each user's order locks
+    // in what they pay their relayer):
+    //   feeTokenMaker = floor(makerBuyAmount * makerFee / 10000)
+    //     → fee in tokenMaker, taken from taker.sellAmount; cap = maker's own
+    //   feeTokenTaker = floor(takerBuyAmount * takerFee / 10000)
+    //     → fee in tokenTaker, taken from maker.sellAmount; cap = taker's own
     // Floor-division check: fee * 10000 <= product < fee * 10000 + 10000
 
-    signal takerFeeProduct;
-    takerFeeProduct <== takerSellAmount * takerFee;
+    signal feeTokenMakerProduct;
+    feeTokenMakerProduct <== makerBuyAmount * makerFee;
     signal feeTokenMakerScaled;
     feeTokenMakerScaled <== feeTokenMaker * 10000;
 
     component feeTokenMakerLower = LessEqThan(252);
     feeTokenMakerLower.in[0] <== feeTokenMakerScaled;
-    feeTokenMakerLower.in[1] <== takerFeeProduct;
+    feeTokenMakerLower.in[1] <== feeTokenMakerProduct;
     feeTokenMakerLower.out === 1;
 
     component feeTokenMakerUpper = LessEqThan(252);
-    feeTokenMakerUpper.in[0] <== takerFeeProduct;
+    feeTokenMakerUpper.in[0] <== feeTokenMakerProduct;
     feeTokenMakerUpper.in[1] <== feeTokenMakerScaled + 9999;
     feeTokenMakerUpper.out === 1;
 
-    signal makerFeeProduct;
-    makerFeeProduct <== makerSellAmount * makerFee;
+    signal feeTokenTakerProduct;
+    feeTokenTakerProduct <== takerBuyAmount * takerFee;
     signal feeTokenTakerScaled;
     feeTokenTakerScaled <== feeTokenTaker * 10000;
 
     component feeTokenTakerLower = LessEqThan(252);
     feeTokenTakerLower.in[0] <== feeTokenTakerScaled;
-    feeTokenTakerLower.in[1] <== makerFeeProduct;
+    feeTokenTakerLower.in[1] <== feeTokenTakerProduct;
     feeTokenTakerLower.out === 1;
 
     component feeTokenTakerUpper = LessEqThan(252);
-    feeTokenTakerUpper.in[0] <== makerFeeProduct;
+    feeTokenTakerUpper.in[0] <== feeTokenTakerProduct;
     feeTokenTakerUpper.in[1] <== feeTokenTakerScaled + 9999;
     feeTokenTakerUpper.out === 1;
 

@@ -88,15 +88,15 @@ export default function SharedOrderbookPage() {
       const buyDec = resolveDecimals(o.buyToken);
       const makerSell = parseFloat(ethers.formatUnits(o.sellAmount, sellDec));
       const makerBuy = parseFloat(ethers.formatUnits(o.buyAmount, buyDec));
-      // The settle circuit enforces `makerSell × (1 − maxFee) ≥ takerBuy`
-      // (and the mirror for the taker side). A naive flip with maxFee > 0
-      // always violates this, so prefill with the *net* amounts that
-      // actually match:
-      //   takerBuy  = makerSell × (1 − fee)  — what taker will receive
-      //   takerSell = makerBuy  ÷ (1 − fee)  — gross to cover taker's own fee
-      const feeFactor = 1 - o.maxFee / 10000;
-      const sellAmt = (makerBuy / feeFactor).toFixed(Math.min(buyDec, 6));
-      const buyAmt = (makerSell * feeFactor).toFixed(Math.min(sellDec, 6));
+      // New fee semantics (2026-04-14 redesign): each side's own maxFee
+      // caps the fee against their own buyAmount. Matcher requires
+      //   counterpartySell × 10000 ≥ buyAmount × (10000 + maxFee)
+      // So the taker must oversell by (1 + makerMaxFee) to cover maker's
+      // fee, and undershoot their buy by (1 + makerMaxFee) to stay under
+      // maker's sellAmount ceiling.
+      const makerFeeFactor = 1 + o.maxFee / 10000;
+      const sellAmt = (makerBuy * makerFeeFactor).toFixed(Math.min(buyDec, 6));
+      const buyAmt = (makerSell / makerFeeFactor).toFixed(Math.min(sellDec, 6));
       const remaining = Math.max(1, Math.ceil((o.expiry - Math.floor(Date.now() / 1000)) / 3600));
       const params = new URLSearchParams({
         sell: sellSym,
@@ -272,10 +272,11 @@ export default function SharedOrderbookPage() {
               const buyDec = resolveDecimals(o.buyToken);
               const sell = parseFloat(ethers.formatUnits(o.sellAmount, sellDec));
               const buy = parseFloat(ethers.formatUnits(o.buyAmount, buyDec));
-              const feeFactor = 1 - o.maxFee / 10000;
-              const sellNet = sell * feeFactor;
-              // Effective price = what maker receives per unit of (net) sell.
-              const price = sellNet > 0 ? buy / sellNet : 0;
+              // New fee semantics: taker must oversell by (1 + makerMaxFee)
+              // to cover maker's fee. Effective min buy for taker ≈
+              // maker.sell / (1 + makerMaxFee).
+              const takerMaxBuy = sell / (1 + o.maxFee / 10000);
+              const price = takerMaxBuy > 0 ? buy / takerMaxBuy : 0;
               const relayer = relayerByAddr[o.relayer.toLowerCase()];
               return (
                 <div
@@ -289,9 +290,9 @@ export default function SharedOrderbookPage() {
                     {price.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                   </span>
                   <div className="text-right font-mono leading-tight">
-                    <div>{sellNet.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellSym}</div>
+                    <div>{sell.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellSym}</div>
                     <div className="text-[9px] text-on-surface-variant/60">
-                      signed {sell.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      taker gets ≤ {takerMaxBuy.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     </div>
                   </div>
                   <span className="text-right font-mono">
