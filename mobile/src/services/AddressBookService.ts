@@ -140,6 +140,40 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Shared input normalisation + validation for `add` and `addMany`. Keeps
+ * them bit-for-bit consistent so a rule added to one can't silently skip
+ * the other. The caller decides whether to throw (`add`) or collect the
+ * failure reason (`addMany`).
+ */
+function prepareEntry(input: {
+  label: string;
+  address: string;
+  kind?: WalletEntryKind;
+  memo?: string;
+}):
+  | { ok: true; entry: WalletEntry }
+  | { ok: false; reason: 'invalid-address' | 'missing-label'; kind: WalletEntryKind } {
+  // Runtime-validate kind. Callers that pass an untyped value (e.g.
+  // BackupService restoring user-edited JSON) could otherwise write an
+  // entry that `isValidEntry` later rejects as corrupt.
+  const kind: WalletEntryKind = input.kind === 'stealth' ? 'stealth' : 'standard';
+  if (!isValidAddressForKind(input.address, kind)) {
+    return { ok: false, reason: 'invalid-address', kind };
+  }
+  const label = input.label?.trim();
+  if (!label) return { ok: false, reason: 'missing-label', kind };
+  const entry: WalletEntry = {
+    id: newId(),
+    label,
+    address: normalizeAddress(input.address),
+    kind,
+    memo: input.memo?.trim() || undefined,
+    createdAt: Math.floor(Date.now() / 1000),
+  };
+  return { ok: true, entry };
+}
+
 export const AddressBookService = {
   /** Throws WalletBookCorruptError if the stored blob is unreadable. */
   async list(): Promise<WalletEntry[]> {
@@ -147,32 +181,64 @@ export const AddressBookService = {
   },
 
   async add(input: { label: string; address: string; kind?: WalletEntryKind; memo?: string }): Promise<WalletEntry> {
-    // Runtime-validate kind. Callers that pass an untyped value (e.g.
-    // BackupService, restoring user-edited JSON) could otherwise write
-    // an entry that `isValidEntry` later rejects as corrupt.
-    const kind: WalletEntryKind = input.kind === 'stealth' ? 'stealth' : 'standard';
-    if (!isValidAddressForKind(input.address, kind)) {
-      throw new Error(kind === 'stealth' ? 'Invalid meta-address' : 'Invalid address');
+    const prepared = prepareEntry(input);
+    if (!prepared.ok) {
+      throw new Error(prepared.reason === 'invalid-address'
+        ? (prepared.kind === 'stealth' ? 'Invalid meta-address' : 'Invalid address')
+        : 'Label is required');
     }
-    const label = input.label.trim();
-    if (!label) throw new Error('Label is required');
-    const address = normalizeAddress(input.address);
 
     return withLock(async () => {
       const entries = await readBook();
-      if (entries.some((e) => e.address === address)) {
+      if (entries.some((e) => e.address === prepared.entry.address)) {
         throw new Error('Address already in book');
       }
-      const entry: WalletEntry = {
-        id: newId(),
-        label,
-        address,
-        kind,
-        memo: input.memo?.trim() || undefined,
-        createdAt: Math.floor(Date.now() / 1000),
-      };
-      await writeBook([...entries, entry]);
-      return entry;
+      await writeBook([...entries, prepared.entry]);
+      return prepared.entry;
+    });
+  },
+
+  /**
+   * Bulk add — takes the mutation lock once and does a single
+   * read-all / write-all round-trip instead of the O(N) locks and
+   * O(N²) I/O cost of calling `add` in a loop (each call re-reads and
+   * re-writes the entire book). Per-input result mirrors `add`'s
+   * behaviour: `{ ok: true, entry }` on success, `{ ok: false, reason }`
+   * for validation failure / duplicate.
+   */
+  async addMany(
+    inputs: Array<{ label: string; address: string; kind?: WalletEntryKind; memo?: string }>,
+  ): Promise<Array<
+    | { ok: true; entry: WalletEntry }
+    | { ok: false; reason: 'invalid' | 'duplicate' }
+  >> {
+    if (inputs.length === 0) return [];
+    return withLock(async () => {
+      const entries = await readBook();
+      const taken = new Set(entries.map((e) => e.address));
+      const out: Array<
+        | { ok: true; entry: WalletEntry }
+        | { ok: false; reason: 'invalid' | 'duplicate' }
+      > = [];
+      const toAppend: WalletEntry[] = [];
+      for (const input of inputs) {
+        const prepared = prepareEntry(input);
+        if (!prepared.ok) {
+          out.push({ ok: false, reason: 'invalid' });
+          continue;
+        }
+        if (taken.has(prepared.entry.address)) {
+          out.push({ ok: false, reason: 'duplicate' });
+          continue;
+        }
+        taken.add(prepared.entry.address);
+        toAppend.push(prepared.entry);
+        out.push({ ok: true, entry: prepared.entry });
+      }
+      if (toAppend.length > 0) {
+        await writeBook([...entries, ...toAppend]);
+      }
+      return out;
     });
   },
 

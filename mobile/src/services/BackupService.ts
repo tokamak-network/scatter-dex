@@ -109,23 +109,28 @@ export const BackupService = {
       addressBook: { added: 0, skipped: 0, invalid: 0 },
     };
 
-    // Notes — keyed by id (= commitment). Skip if a note with that id
-    // already exists, or if the same id appears twice within this bundle
-    // (the dedup set is updated after each successful save so duplicates
-    // within the imported file don't silently overwrite the first copy).
+    // Notes — keyed by id (= commitment). Pre-filter against existing ids
+    // AND against duplicates within the bundle itself (same id appearing
+    // twice must not overwrite the first copy silently), then hand the
+    // filtered batch to `saveNotesBulk` — parallel per-key writes with a
+    // single index update at the end. The sequential `saveNote` loop this
+    // replaces also raced on the index read-modify-write.
     const existingNotes = await NoteStorageService.getAllNotes();
-    const existingNoteIds = new Set(existingNotes.map((n) => n.id));
+    const seenNoteIds = new Set(existingNotes.map((n) => n.id));
+    const notesToSave: StoredNote[] = [];
     for (const note of bundle.notes) {
-      if (existingNoteIds.has(note.id)) {
+      if (seenNoteIds.has(note.id)) {
         summary.notes.skipped++;
         continue;
       }
-      try {
-        await NoteStorageService.saveNote(note);
-        existingNoteIds.add(note.id);
-        summary.notes.added++;
-      } catch {
-        summary.notes.skipped++;
+      seenNoteIds.add(note.id);
+      notesToSave.push(note);
+    }
+    if (notesToSave.length > 0) {
+      const results = await NoteStorageService.saveNotesBulk(notesToSave);
+      for (const r of results) {
+        if (r.ok) summary.notes.added++;
+        else summary.notes.skipped++;
       }
     }
 
@@ -191,24 +196,23 @@ export const BackupService = {
       summary.pendingClaims.added = claimsToAdd.length;
     }
 
-    // Address book — keyed by lowercased address. The service itself
-    // throws on duplicate (benign — counts as `skipped`) and on bad
-    // input (counts as `invalid` so the UI can flag the file).
-    for (const entry of bundle.addressBook) {
-      try {
-        await AddressBookService.add({
+    // Address book — `addMany` takes the mutation lock once and writes
+    // the book in a single read-all / write-all round-trip. Iterating
+    // `add` per entry was O(N²) I/O because each call re-read and
+    // re-wrote the whole book under its own lock.
+    if (bundle.addressBook.length > 0) {
+      const results = await AddressBookService.addMany(
+        bundle.addressBook.map((entry) => ({
           label: entry.label,
           address: entry.address,
           kind: entry.kind,
           memo: entry.memo,
-        });
-        summary.addressBook.added++;
-      } catch (err: any) {
-        if (err?.message === 'Address already in book') {
-          summary.addressBook.skipped++;
-        } else {
-          summary.addressBook.invalid++;
-        }
+        })),
+      );
+      for (const r of results) {
+        if (r.ok) summary.addressBook.added++;
+        else if (r.reason === 'duplicate') summary.addressBook.skipped++;
+        else summary.addressBook.invalid++;
       }
     }
 

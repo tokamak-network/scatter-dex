@@ -75,6 +75,56 @@ export const NoteStorageService = {
     }
   },
 
+  /**
+   * Bulk save — chunked parallel per-key SecureStore writes, then a single
+   * index update. Collapses the per-note index read-modify-write (which
+   * `saveNote` does on every call) into one; doesn't eliminate the race
+   * between *concurrent* callers (`saveNotesBulk` vs `saveNote` still
+   * race on the index), so this is restore-path ergonomics, not a
+   * general-purpose concurrency primitive.
+   *
+   * Concurrency is capped at 32 to avoid pinning the JS bridge / saturating
+   * the iOS Keychain queue when a user restores a large (thousand-note)
+   * backup; SecureStore dispatches serially under the hood anyway, so
+   * going wider buys nothing.
+   */
+  async saveNotesBulk(notes: StoredNote[]): Promise<Array<{ id: string; ok: boolean }>> {
+    if (notes.length === 0) return [];
+    const results: Array<{ id: string; ok: boolean }> = new Array(notes.length);
+    const CONCURRENCY = 32;
+    for (let off = 0; off < notes.length; off += CONCURRENCY) {
+      const chunk = notes.slice(off, off + CONCURRENCY);
+      const hashed = await Promise.all(
+        chunk.map(async (note) => {
+          try {
+            await SecureStore.setItemAsync(
+              `${NOTE_PREFIX}${note.id}`,
+              JSON.stringify(note),
+            );
+            return { id: note.id, ok: true };
+          } catch {
+            return { id: note.id, ok: false };
+          }
+        }),
+      );
+      for (let i = 0; i < hashed.length; i++) results[off + i] = hashed[i];
+    }
+    const successIds = results.filter((r) => r.ok).map((r) => r.id);
+    if (successIds.length > 0) {
+      const existing = await this.getNoteIds();
+      const existingSet = new Set(existing);
+      const merged = existing.slice();
+      for (const id of successIds) {
+        if (!existingSet.has(id)) {
+          merged.push(id);
+          existingSet.add(id);
+        }
+      }
+      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(merged));
+    }
+    return results;
+  },
+
   async updateNoteStatus(id: string, status: StoredNote['status']): Promise<void> {
     const note = await this.getNote(id);
     if (!note) return;
