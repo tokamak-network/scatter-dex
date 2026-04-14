@@ -589,11 +589,14 @@ export default function PrivateClaimPage() {
           )}
 
           {allClaims.length > 1 && eligibleClaims.length >= 2 && (() => {
-            // Only let batch-claim fire when at least one eligible claim has
+            // Let batch-claim fire only when at least one eligible claim has
             // actually settled. Mixed batches (some settled, some not) would
             // revert entirely — filter to settled-only inside the handler.
-            const anySettled = eligibleClaims.some((_, i) => settlementMap[i]?.settled);
-            const batchDisabled = !signer || !anySettled;
+            // Treat `undefined` (initial fetch in flight) the same as the
+            // single-claim gate does: not-yet-confirmed, keep disabled.
+            const anySettled = eligibleClaims.some((_, i) => settlementMap[i]?.settled === true);
+            const stillLoading = eligibleClaims.some((_, i) => settlementMap[i] === undefined);
+            const batchDisabled = !signer || stillLoading || !anySettled;
             return (
             <button
               onClick={handleClaimBatchViaWallet}
@@ -603,7 +606,7 @@ export default function PrivateClaimPage() {
               <Wallet className="w-4 h-4" />
               {!signer
                 ? "Connect Wallet to Batch Claim"
-                : !anySettled
+                : stillLoading || !anySettled
                   ? "Waiting for Settlement..."
                   : `Claim All ${eligibleClaims.length} via Wallet${
                       Math.ceil(eligibleClaims.length / MAX_BATCH_SIZE) > 1

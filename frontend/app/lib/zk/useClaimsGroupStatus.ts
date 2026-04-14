@@ -13,8 +13,6 @@ const CLAIMS_TREE_DEPTH = 4;
 export interface ClaimsGroupStatus {
   /** Whether `claimsGroups[claimsRoot].totalLocked > 0` on-chain. */
   settled: boolean;
-  /** The computed claimsRoot for these leaves (0x-prefixed bytes32). */
-  claimsRootHex: string;
 }
 
 /**
@@ -26,16 +24,26 @@ export interface ClaimsGroupStatus {
  * Groups claims by claimsRoot (computed from `allLeaves`) so we only issue
  * one RPC call per distinct settlement.
  */
+/** Poll interval while any claim is still waiting for settlement. */
+const SETTLEMENT_POLL_MS = 10_000;
+
 export function useClaimsGroupStatus(
   claims: Array<{ allLeaves?: string[] }>,
 ): Record<number, ClaimsGroupStatus> {
   const [statuses, setStatuses] = useState<Record<number, ClaimsGroupStatus>>({});
   const keyRef = useRef("");
   const inflightKeyRef = useRef("");
+  // Used by the polling loop to force a refetch without changing the
+  // `claims` identity (which is content-keyed below).
+  const [pollTick, setPollTick] = useState(0);
 
   useEffect(() => {
     if (claims.length === 0) return;
-    const key = claims.map((c) => (c.allLeaves ?? []).join(":")).join("|");
+    // `pollTick` is a suffix only so that repeated polls re-enter the effect
+    // and bypass the `keyRef.current === key` short-circuit. When all claims
+    // are already settled we stop ticking below.
+    const contentKey = claims.map((c) => (c.allLeaves ?? []).join(":")).join("|");
+    const key = `${contentKey}#${pollTick}`;
     if (key === keyRef.current) return;
     if (key === inflightKeyRef.current) return;
     inflightKeyRef.current = key;
@@ -86,7 +94,6 @@ export function useClaimsGroupStatus(
           if (rootHex == null) continue;
           result[i] = {
             settled: settlementByRoot.get(rootHex) ?? false,
-            claimsRootHex: rootHex,
           };
         }
         setStatuses(result);
@@ -98,7 +105,18 @@ export function useClaimsGroupStatus(
       }
     })();
     return () => { cancelled = true; };
-  }, [claims]);
+  }, [claims, pollTick]);
+
+  // Poll while any claim is still unsettled. Stops once every claim reports
+  // settled=true so users waiting for cross-relayer match/settle see the UI
+  // flip without needing a manual reload, but idle pages don't burn RPCs.
+  useEffect(() => {
+    if (claims.length === 0) return;
+    const allSettled = claims.every((_, i) => statuses[i]?.settled === true);
+    if (allSettled) return;
+    const id = setInterval(() => { setPollTick((t) => t + 1); }, SETTLEMENT_POLL_MS);
+    return () => clearInterval(id);
+  }, [claims, statuses]);
 
   return statuses;
 }
