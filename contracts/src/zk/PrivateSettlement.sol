@@ -339,8 +339,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
     modifier onlyRelayer() {
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
         }
         _;
     }
@@ -376,10 +377,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             revert InvalidProof();
         }
 
-        // Verify both relayers are registered (if registry is set)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(p.makerRelayer)) revert NotActiveRelayer();
-            if (!relayerRegistry.isActiveRelayer(p.takerRelayer)) revert NotActiveRelayer();
+        // Verify both relayers are registered (if registry is set).
+        // Cache the reference to avoid three SLOADs in the common path.
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(p.makerRelayer)) revert NotActiveRelayer();
+            if (!_registry.isActiveRelayer(p.takerRelayer)) revert NotActiveRelayer();
         }
 
         nullifiers[p.makerNullifier] = true;
@@ -466,7 +469,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
-        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        // Cache once — authorizeVerifier is read here (null-check) and again
+        // in the fallback verifyProof call below.
+        IAuthorizeVerifier _verifier = authorizeVerifier;
+        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
 
         // Cross-side invariants: non-zero amounts, whitelist, token
         // compatibility (C1), price (C2), claims+fee cap (C4), fee
@@ -522,26 +528,28 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint[15] memory makerSignals = SettleVerifyLib.packAuthSignals(p.maker);
         uint[15] memory takerSignals = SettleVerifyLib.packAuthSignals(p.taker);
 
-        if (address(batchAuthorizeVerifier) != address(0)) {
-            if (!batchAuthorizeVerifier.verifyBatchProof(
+        IBatchAuthorizeVerifier _batchVerifier = batchAuthorizeVerifier;
+        if (address(_batchVerifier) != address(0)) {
+            if (!_batchVerifier.verifyBatchProof(
                 p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals,
                 p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals
             )) {
                 revert InvalidProof();
             }
         } else {
-            if (!authorizeVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
+            if (!_verifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
                 revert InvalidProof();
             }
-            if (!authorizeVerifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
+            if (!_verifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
                 revert InvalidProof();
             }
         }
 
         // 11. Relayer registry gating (if configured)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
-            if (!relayerRegistry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(p.maker.relayer)) revert NotActiveRelayer();
+            if (!_registry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
         }
 
         // 12. Mark nullifiers
@@ -708,7 +716,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     function settleWithDex(SettleDexParams calldata p) external nonReentrant {
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
-        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        // Cache storage refs used multiple times in this function so each is
+        // loaded once instead of at every reference.
+        IAuthorizeVerifier _verifier = authorizeVerifier;
+        FeeVault _feeVault = feeVault;
+        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
         if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
 
         SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
@@ -724,7 +736,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // 7. Verify Groth16 proof
         uint[15] memory signals = SettleVerifyLib.packAuthSignals(proof);
-        if (!authorizeVerifier.verifyProof(proof.proofA, proof.proofB, proof.proofC, signals)) {
+        if (!_verifier.verifyProof(proof.proofA, proof.proofB, proof.proofC, signals)) {
             revert InvalidProof();
         }
 
@@ -750,14 +762,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         //      withdrawPlatformRevenue(token). Kept out of the relayer deposit
         //      ledger on purpose — otherwise platform fee would be deducted
         //      twice (once here, again on relayer claim).
-        uint256 swapAmount = proof.sellAmount;
-        if (dexPlatformFeeBps > 0) {
-            uint256 platformFee = uint256(proof.sellAmount) * dexPlatformFeeBps / FEE_BPS_DENOMINATOR;
-            swapAmount = uint256(proof.sellAmount) - platformFee;
-            if (platformFee > 0 && address(feeVault) != address(0)) {
-                IERC20(proof.sellToken).safeTransfer(address(feeVault), platformFee);
-                feeVault.depositPlatformRevenue(proof.sellToken, platformFee, DEX_PLATFORM_FEE_SOURCE);
-                emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, address(feeVault));
+        uint256 sellAmountU256 = uint256(proof.sellAmount);
+        uint256 swapAmount = sellAmountU256;
+        {
+            uint256 feeBps = dexPlatformFeeBps;
+            if (feeBps > 0) {
+                uint256 platformFee = sellAmountU256 * feeBps / FEE_BPS_DENOMINATOR;
+                swapAmount = sellAmountU256 - platformFee;
+                if (platformFee > 0 && address(_feeVault) != address(0)) {
+                    IERC20(proof.sellToken).safeTransfer(address(_feeVault), platformFee);
+                    _feeVault.depositPlatformRevenue(proof.sellToken, platformFee, DEX_PLATFORM_FEE_SOURCE);
+                    emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, address(_feeVault));
+                }
             }
         }
 
@@ -793,10 +809,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         //     surplus stays in the contract (owner recovery).
         if (amountOut > proof.totalLocked) {
             uint256 surplus = amountOut - proof.totalLocked;
-            if (address(feeVault) != address(0)) {
-                IERC20(proof.buyToken).safeTransfer(address(feeVault), surplus);
-                feeVault.depositPlatformRevenue(proof.buyToken, surplus, DEX_SURPLUS_SOURCE);
-                emit DexSurplusCollected(proof.nullifier, proof.buyToken, surplus, address(feeVault));
+            if (address(_feeVault) != address(0)) {
+                IERC20(proof.buyToken).safeTransfer(address(_feeVault), surplus);
+                _feeVault.depositPlatformRevenue(proof.buyToken, surplus, DEX_SURPLUS_SOURCE);
+                emit DexSurplusCollected(proof.nullifier, proof.buyToken, surplus, address(_feeVault));
             }
         }
 
@@ -897,7 +913,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Order-of-checks preserved from before: cheap calldata compare gates
         // state reads, and relayer registry is checked before proof verify.
         if (paused) revert ContractPaused();
-        if (address(authorizeVerifier) == address(0)) revert AuthorizeVerifierNotSet();
+        IAuthorizeVerifier _verifier = authorizeVerifier;
+        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
         _requireNotSanctioned(msg.sender);
 
         // Relayer binding, same-token invariant, whitelist, non-zero
@@ -905,8 +922,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         SettleVerifyLib.validateScatterAuth(ap, msg.sender, p.fee, whitelistedTokens);
 
         // Relayer registry (before expensive proof verification — saves ~200K gas on revert)
-        if (address(relayerRegistry) != address(0)) {
-            if (!relayerRegistry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
+        RelayerRegistry _registry = relayerRegistry;
+        if (address(_registry) != address(0)) {
+            if (!_registry.isActiveRelayer(ap.relayer)) revert NotActiveRelayer();
         }
 
         // 8. Nullifier double-spend (escrow + nonce — 2 cold SLOADs)
@@ -918,7 +936,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
         // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
         uint[15] memory signals = SettleVerifyLib.packAuthSignals(ap);
-        if (!authorizeVerifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
+        if (!_verifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
             revert InvalidProof();
         }
 
