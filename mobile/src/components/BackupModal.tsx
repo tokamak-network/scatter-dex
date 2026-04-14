@@ -10,11 +10,12 @@
  */
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  Modal, View, Text, TouchableOpacity, TextInput, ActivityIndicator,
+  View, Text, TouchableOpacity, TextInput, ActivityIndicator,
   Alert, Share, StyleSheet,
 } from 'react-native';
 import { colors } from '../styles/theme';
 import { BackupService, BackupBundle, RestoreSummary } from '../services/BackupService';
+import BaseModal from './BaseModal';
 
 interface Props {
   visible: boolean;
@@ -113,15 +114,8 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
     : '';
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <View style={s.overlay}>
-        <View style={s.sheet}>
-          <View style={s.header}>
-            <Text style={s.title}>Backup & Restore</Text>
-            <TouchableOpacity onPress={handleClose}><Text style={s.close}>✕</Text></TouchableOpacity>
-          </View>
-
-          <View style={s.tabs}>
+    <BaseModal visible={visible} onClose={handleClose} title="Backup & Restore">
+      <View style={s.tabs}>
             <TouchableOpacity
               style={[s.tab, tab === 'export' && s.tabActive]}
               onPress={() => setTab('export')}
@@ -212,19 +206,11 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
               )}
             </View>
           )}
-        </View>
-      </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
 const s = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 },
-  sheet: { backgroundColor: colors.bg, borderRadius: 20, width: '100%', maxWidth: 480, maxHeight: '90%', padding: 16, gap: 12 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 18, fontWeight: '700', color: colors.text },
-  close: { fontSize: 22, color: colors.textSecondary, paddingHorizontal: 8 },
-
   tabs: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 10 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
   tabActive: { backgroundColor: colors.bg },
