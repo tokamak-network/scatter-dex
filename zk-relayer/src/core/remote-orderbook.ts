@@ -19,6 +19,11 @@ export class RemoteOrderStore {
 
   get size(): number { return this.byId.size; }
 
+  /** Lowercased relayer address that owns `orderId`, or `null` if unknown. */
+  getRelayer(orderId: string): string | null {
+    return this.byId.get(orderId)?.relayer.toLowerCase() ?? null;
+  }
+
   add(order: OrderSummary): void {
     // Skip if already exists
     if (this.byId.has(order.id)) return;

@@ -23,6 +23,12 @@ export function createP2PRoutes(
   // callers don't have to pass an explicit `undefined`.
   _onTradeOfferRetired?: undefined,
   onAuthorizeTradeOffer?: (offer: AuthorizeTradeOfferRequest, relayerAddress: string) => Promise<AuthorizeTradeOfferResponse>,
+  /** Lookup the relayer address that posted `orderId`. Used by DELETE
+   *  to verify the cancelling peer owns the order — replaces the old
+   *  `{relayer}-{nonce}` ID-prefix check, which only worked for the
+   *  retired Private flow's id format. Authorize ids are bytes32(nullifier)
+   *  with no relayer prefix. */
+  lookupOrderRelayer?: (orderId: string) => string | null,
 ): Router {
   const router = Router();
 
@@ -64,8 +70,11 @@ export function createP2PRoutes(
         res.status(400).json({ error: "invalid request body" });
         return;
       }
-      // Validate all required OrderSummary fields
-      const required = ["id", "relayer", "relayerUrl", "nonce", "sellToken", "buyToken",
+      // Validate all required OrderSummary fields. `nonce` was here from
+      // the retired Private flow's id format ({relayer}-{nonce}); not on
+      // the canonical `OrderSummary` (packages/types) so authorize
+      // summaries used to 400 here before the matcher could see them.
+      const required = ["id", "relayer", "relayerUrl", "sellToken", "buyToken",
         "sellAmount", "buyAmount", "minFillAmount", "maxFee", "expiry", "createdAt"] as const;
       for (const field of required) {
         if (raw[field] === undefined || raw[field] === null || raw[field] === "") {
@@ -88,18 +97,23 @@ export function createP2PRoutes(
 
   /**
    * DELETE /api/p2p/orders/:id — Peer notifies order cancellation
-   * Only the owning relayer can cancel (order ID format: "{relayerAddress}-{nonce}")
+   * Only the owning relayer can cancel.
    */
   router.delete("/orders/:id", (req, res) => {
     if (!verifyRelayerAuth(req)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
-    const peerAddress = (req.headers["x-relayer-address"] as string);
-
-    // Verify the peer owns this order (ID starts with their address)
+    const peerAddress = (req.headers["x-relayer-address"] as string).toLowerCase();
     const orderId = req.params.id;
-    if (!orderId.startsWith(peerAddress.toLowerCase() + "-")) {
+
+    // Ownership check: look up who posted this order. The retired
+    // {relayer}-{nonce} prefix scheme didn't work for authorize-flow
+    // ids (bytes32 nullifier, no embedded relayer). If the order
+    // isn't in our cache, treat it as already-cancelled / never-seen
+    // and 200 — idempotent peer protocol.
+    const owner = lookupOrderRelayer ? lookupOrderRelayer(orderId) : null;
+    if (owner !== null && owner !== peerAddress) {
       res.status(403).json({ error: "cannot cancel another relayer's order" });
       return;
     }

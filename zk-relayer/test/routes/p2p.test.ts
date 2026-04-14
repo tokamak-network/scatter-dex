@@ -85,22 +85,38 @@ describe("POST /api/p2p/orders", () => {
 });
 
 describe("DELETE /api/p2p/orders/:id", () => {
+  // Ownership check now goes through `lookupOrderRelayer` (4th-from-last
+  // arg) instead of parsing `{relayer}-{nonce}` out of the id, since
+  // authorize-flow ids are bytes32(nullifier) with no embedded relayer.
+  const otherRelayer = "0x" + "c".repeat(40);
+  const otherId = "0xfeedface".padEnd(66, "0");
+
   it("rejects cancel of another relayer's order with 403", async () => {
-    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn()));
-    const otherId = "0x" + "c".repeat(40) + "-42";
+    const lookup = vi.fn(() => otherRelayer); // order owned by someone else
+    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), undefined, undefined, lookup));
     const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
     const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
     expect(res.status).toBe(403);
   });
 
-  it("accepts cancel when id is prefixed with peer address", async () => {
+  it("accepts cancel when peer owns the order", async () => {
+    const onCancel = vi.fn();
+    const lookup = vi.fn(() => peerWallet.address.toLowerCase());
+    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), onCancel, undefined, undefined, lookup));
+    const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
+    const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
+    expect(res.status).toBe(200);
+    expect(onCancel).toHaveBeenCalledWith(otherId);
+  });
+
+  it("accepts cancel when order is unknown (idempotent)", async () => {
+    // No lookup callback, or callback returns null — order isn't in our
+    // cache, so we can't enforce ownership. Treat as already-cancelled.
     const onCancel = vi.fn();
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), onCancel));
-    const ownId = `${peerWallet.address.toLowerCase()}-7`;
-    const headers = await authHeaders("DELETE", `/api/p2p/orders/${ownId}`);
-    const res = await request(app).delete(`/api/p2p/orders/${ownId}`).set(headers);
+    const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
+    const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
     expect(res.status).toBe(200);
-    expect(onCancel).toHaveBeenCalledWith(ownId);
   });
 });
 

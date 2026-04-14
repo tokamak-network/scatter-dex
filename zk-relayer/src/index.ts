@@ -204,12 +204,10 @@ async function main() {
   app.use("/api/p2p", createP2PRoutes(
     (order) => {
       remoteOrderbook?.add(order);
-      // NOTE: the P2P fallback path (POST /api/p2p/orders) validates fields
-      // like `nonce`/`pubKeyAx`/`pubKeyAy` that don't exist on the shared
-      // `OrderSummary` shape used by the shared-OB WS stream (see routes/p2p.ts
-      // :60-68). Authorize summaries will 400 before reaching this callback
-      // today — tracker #30. Keep the hook so the schema-alignment PR
-      // turns this back on without further wiring.
+      // P2P fallback (when shared-OB server is down): peer relayer POSTs
+      // an OrderSummary directly to /api/p2p/orders. Tracker #30 aligned
+      // the route's validation with the canonical OrderSummary shape, so
+      // authorize summaries now reach this matcher hook.
       authorizeCrossRelayerService?.onRemoteOrderArrived(order).catch((err) => {
         console.warn("[authorize-cross] P2P match error:", err instanceof Error ? err.message : "unknown");
       });
@@ -219,6 +217,7 @@ async function main() {
     authorizeCrossRelayerService
       ? (offer, addr) => authorizeCrossRelayerService!.handleTradeOffer(offer, addr)
       : undefined,
+    (orderId) => remoteOrderbook?.getRelayer(orderId) ?? null,
   ));
 
   // Periodic commitment re-indexing (stay in sync with on-chain state)
