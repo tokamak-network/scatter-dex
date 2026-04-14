@@ -23,7 +23,7 @@ import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { computeMarketAmounts } from '../lib/market-amounts';
-import { DEFAULT_SLIPPAGE_BPS } from '../lib/dex-aggregator';
+import { DEFAULT_SLIPPAGE_BPS, getBestSwapRoute } from '../lib/dex-aggregator';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -357,10 +357,10 @@ export default function TradeScreen() {
           }
         });
       } else {
-        const dexRouter = ConfigService.getUniswapRouterAddress();
-        if (!dexRouter) {
+        const settlementAddr = ConfigService.getPrivateSettlementAddress();
+        if (!settlementAddr) {
           setSubmitting(false);
-          Alert.alert('Configuration Error', 'DEX router address is not configured.');
+          Alert.alert('Configuration Error', 'Settlement address is not configured.');
           return;
         }
 
@@ -369,7 +369,7 @@ export default function TradeScreen() {
           TokenService.getDecimals(readProvider, buyToken),
         ]);
 
-        const { minReceive } = computeMarketAmounts({
+        const { sellAmountBn, minReceive } = computeMarketAmounts({
           sellAmountHuman: amount,
           priceHuman: price,
           sellDecimals: sellDec,
@@ -378,16 +378,31 @@ export default function TradeScreen() {
         });
         const buyAmountMinHuman = ethers.formatUnits(minReceive, buyDec);
 
+        // Fetch the same route MarketQuoteCard shows in the preview, so
+        // the executed router/calldata match what the user saw. A
+        // minimal double-fetch — preview has its own debounced call —
+        // but required to keep the two in sync without lifting the
+        // preview's quote state up here.
+        const route = await getBestSwapRoute({
+          chainId: ConfigService.getChainId(),
+          sellToken: selectedNote.token,
+          buyToken,
+          sellAmount: sellAmountBn,
+          minReceive,
+          recipient: settlementAddr,
+          slippageBps: DEFAULT_SLIPPAGE_BPS,
+        });
+
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
           buyAmount: buyAmountMinHuman,
-          slippageBps: 50,
+          slippageBps: DEFAULT_SLIPPAGE_BPS,
           expiryHours: 1,
           claimRecipient: account,
-          dexRouter,
-          uniswapFeeTier: 3000,
+          dexRouter: route.dexRouter,
+          dexCalldata: route.dexCalldata,
         };
 
         await MarketOrderService.execute(signer, account, input, (p: MarketOrderProgress) => {
