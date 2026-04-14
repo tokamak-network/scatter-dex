@@ -3,12 +3,13 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Lock, ShieldCheck, Gift, FileText, Zap } from "lucide-react";
+import { Lock, ShieldCheck, Gift, FileText, Zap, Globe } from "lucide-react";
 
 const privateLinks = [
   { href: "/trade/private-escrow", label: "Escrow", icon: Lock, matchType: "path" as const },
   { href: "/trade/private-order", label: "Private Trade", icon: ShieldCheck, matchType: "order-limit" as const },
   { href: "/trade/private-order?type=market", label: "DEX Trade", icon: Zap, matchType: "order-market" as const },
+  { href: "/trade/orderbook", label: "Shared Book", icon: Globe, matchType: "path" as const },
   { href: "/trade/private-claim", label: "Claim", icon: Gift, matchType: "path" as const },
   { href: "/trade/private-history", label: "History", icon: FileText, matchType: "path" as const },
 ];

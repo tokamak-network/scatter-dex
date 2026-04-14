@@ -232,6 +232,9 @@ function PrivateOrderPageInner() {
     [relayers]
   );
   const [selectedRelayerIdx, setSelectedRelayerIdx] = useState(0);
+  // Preselect a relayer if the URL carries ?relayer=<address> (deep-link
+  // from the Shared Orderbook "Take" flow).
+  const didPrefillRelayerRef = useRef(false);
 
   const [step, setStep] = useState<Step>("setup_key");
   // Stepped status shown next to the spinner during proof generation —
@@ -311,8 +314,43 @@ function PrivateOrderPageInner() {
     if (isScatterMode && price !== "1") setPrice("1");
   }, [isScatterMode, price]);
 
+  // Relayer preselect from ?relayer=<address>
+  useEffect(() => {
+    if (didPrefillRelayerRef.current) return;
+    if (zkRelayers.length === 0) return;
+    const want = searchParams.get("relayer");
+    if (!want) return;
+    const idx = zkRelayers.findIndex((r) => r.address.toLowerCase() === want.toLowerCase());
+    if (idx >= 0) setSelectedRelayerIdx(idx);
+    didPrefillRelayerRef.current = true;
+  }, [zkRelayers, searchParams]);
+
+  // ── Prefill form from URL params (for "Take order" deep-links from the
+  // Shared Orderbook page). Runs once after the token list loads.
+  const didPrefillRef = useRef(false);
+  useEffect(() => {
+    if (didPrefillRef.current) return;
+    if (tokens.length === 0) return;
+    const sellSym = searchParams.get("sell");
+    const buySym = searchParams.get("buy");
+    if (!sellSym && !buySym) return;
+    const si = sellSym ? tokens.findIndex((t) => t.symbol === sellSym) : -1;
+    const bi = buySym ? tokens.findIndex((t) => t.symbol === buySym) : -1;
+    if (si >= 0) setSellTokenIdx(si);
+    if (bi >= 0) setBuyTokenIdx(bi);
+    const sa = searchParams.get("sellAmount");
+    const ba = searchParams.get("buyAmount");
+    if (sa) setSellAmount(sa);
+    if (ba) setBuyAmount(ba);
+    const mf = searchParams.get("maxFee");
+    if (mf) setMaxFeeBps(mf);
+    const eh = searchParams.get("expiryHours");
+    if (eh) setExpiry(eh);
+    didPrefillRef.current = true;
+  }, [tokens, searchParams]);
+
   // DEX prices for market order mode (only fetched when market tab is active)
-  const dexPrices = useMainnetPrice(
+  const { prices: dexPrices } = useMainnetPrice(
     orderType === "market" ? sellToken?.symbol : undefined,
     orderType === "market" ? buyToken?.symbol : undefined,
     "sell",
@@ -351,7 +389,17 @@ function PrivateOrderPageInner() {
 
   // [#23] Reset price/amount when switching between Limit and Market.
   // MUST be declared BEFORE auto-compute so React runs it first on tab switch.
+  // Track the previous orderType so we only clear state on a real transition,
+  // not on mount (otherwise URL prefills from Shared Orderbook "Take" get
+  // clobbered — and StrictMode double-invoke defeats a boolean ref guard).
+  const prevOrderTypeRef = useRef<OrderType | null>(null);
   useEffect(() => {
+    if (prevOrderTypeRef.current === null) {
+      prevOrderTypeRef.current = orderType;
+      return;
+    }
+    if (prevOrderTypeRef.current === orderType) return;
+    prevOrderTypeRef.current = orderType;
     setBuyAmount("");
     setPrice("");
     setManualPrice("");
@@ -438,11 +486,16 @@ function PrivateOrderPageInner() {
     }
   }, [availableNotes, selectedCommitment]);
 
-  // Auto-fill sellAmount from selected note
+  // When a note is picked and the user has *not* yet entered a sellAmount,
+  // default it to the full note balance. Do not overwrite an existing
+  // sellAmount — the change (remainder) commitment is derived from the
+  // current sellAmount, so clicking a note shouldn't stomp the user's
+  // intent.
   useEffect(() => {
-    if (selectedNote) {
+    if (selectedNote && !sellAmount) {
       setSellAmount(selectedNote.amount);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNote]);
 
   // Load notes from folder
@@ -1415,7 +1468,7 @@ function PrivateOrderPageInner() {
             </div>
 
             {/* Fee summary */}
-            {sellAmount && buyAmount && price && (
+            {sellAmount && buyAmount && (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Buy amount</span>
@@ -1439,6 +1492,14 @@ function PrivateOrderPageInner() {
                     ).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </button>
+                {!isScatterMode && sellToken && (
+                  <div className="flex justify-between text-error/60 text-xs">
+                    <span>Relay fee on sell side</span>
+                    <span className="font-mono">
+                      −{(parseFloat(sellAmount) * effectiveFeeBps / 10000).toFixed(4)} {sellToken.symbol}
+                    </span>
+                  </div>
+                )}
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}
@@ -1623,7 +1684,7 @@ function PrivateOrderPageInner() {
                 >
                   {zkRelayers.map((r, i) => (
                     <option key={r.address} value={i}>
-                      {r.api?.name} — {r.url} (Fee {(r.fee / 100).toFixed(2)}%)
+                      {r.api?.name} — {r.url}
                     </option>
                   ))}
                 </select>
@@ -1802,9 +1863,10 @@ function PrivateOrderPageInner() {
               buyTokenAddress={buyToken?.address}
               sellDecimals={sellToken?.decimals}
               buyDecimals={buyToken?.decimals}
-              relayerUrl={process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001"}
+              relayerUrl={process.env.NEXT_PUBLIC_ZK_RELAYER_URL || process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3002"}
               side="sell"
               onSelectPrice={handlePriceSelect}
+              disableAutoApply={searchParams.has("sell") || searchParams.has("buy") || searchParams.has("sellAmount") || searchParams.has("buyAmount")}
             />
           )}
         </div>
