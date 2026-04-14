@@ -7,7 +7,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors } from '../styles/theme';
+import { colors, layout, shadowSubtle, shadowTab } from '../styles/theme';
+import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
@@ -342,16 +343,11 @@ export default function ClaimScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.container}>
-        {/* Header */}
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-            <Text style={s.backIcon}>←</Text>
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>Claim Tokens</Text>
-          <TouchableOpacity style={s.helpBtn}>
-            <Text style={s.helpIcon}>?</Text>
-          </TouchableOpacity>
-        </View>
+        <ScreenHeader
+          title="Claim Tokens"
+          variant="surface"
+          onBack={() => navigation.goBack()}
+        />
 
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
           <View style={s.card}>
@@ -361,7 +357,6 @@ export default function ClaimScreen() {
               <Text style={s.cardSubtitle}>Use ZK-proofs to anonymously claim your traded assets.</Text>
             </View>
 
-            {/* Tabs */}
             <View style={s.tabsBg}>
               <TouchableOpacity
                 style={[s.tab, claimTab === 'json' && s.tabActive]}
@@ -426,17 +421,17 @@ export default function ClaimScreen() {
                 {loadingClaims ? (
                   <ActivityIndicator color="#2563EB" style={{ paddingVertical: 20 }} />
                 ) : pendingClaims.length === 0 ? (
-                  <Text style={{ fontSize: 13, color: '#9CA3AF', textAlign: 'center', paddingVertical: 20 }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted, textAlign: 'center', paddingVertical: 20 }}>
                     No pending claims found. Trade to generate claimable notes.
                   </Text>
                 ) : (
                   <>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <Text style={{ fontSize: 13, color: '#6B7280' }}>
+                      <Text style={{ fontSize: 13, color: colors.gray500 }}>
                         {selectedIndices.size > 0 ? `${selectedIndices.size} selected` : 'Tap to select (multi)'}
                       </Text>
                       <TouchableOpacity onPress={toggleSelectAll}>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#2563EB' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primaryDark }}>
                           {selectedIndices.size === pendingClaims.length ? 'Deselect All' : 'Select All'}
                         </Text>
                       </TouchableOpacity>
@@ -446,7 +441,7 @@ export default function ClaimScreen() {
                       <TouchableOpacity
                         style={[
                           s.itemRow,
-                          selectedIndices.has(index) && { borderColor: '#2563EB', borderWidth: 2 },
+                          selectedIndices.has(index) && { borderColor: colors.primaryDark, borderWidth: 2 },
                         ]}
                         onPress={() => togglePendingSelection(index)}
                       >
@@ -519,7 +514,7 @@ export default function ClaimScreen() {
           </View>
 
           <TouchableOpacity
-            style={[s.claimBtn, claiming && { backgroundColor: '#9CA3AF' }]}
+            style={[s.claimBtn, claiming && { backgroundColor: colors.textMuted }]}
             activeOpacity={0.8}
             onPress={handleClaim}
             disabled={claiming}
@@ -543,68 +538,65 @@ export default function ClaimScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F9FAFB' },
+  safe: { flex: 1, backgroundColor: colors.bgSecondary },
   container: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, gap: 24, paddingTop: 8 },
+  scrollContent: { paddingHorizontal: layout.screenHZ, gap: layout.sectionGap, paddingTop: layout.contentTop, paddingBottom: layout.contentBottom },
 
-  /* Header */
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
-  backBtn: { padding: 8, marginLeft: -8 },
-  backIcon: { fontSize: 24, color: '#4B5563' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  helpBtn: { padding: 8 },
-  helpIcon: { fontSize: 20, color: '#2563EB', fontWeight: '700' },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: layout.card.radius,
+    padding: layout.card.padding,
+    borderWidth: layout.card.borderWidth,
+    borderColor: colors.borderLight,
+    ...shadowSubtle,
+    gap: layout.sectionGap,
+  },
 
-  /* Card */
-  card: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1, gap: 24 },
-
-  /* Title */
   titleSection: { gap: 8 },
-  cardTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  cardSubtitle: { fontSize: 14, fontWeight: '500', color: '#6B7280' },
+  cardTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
+  cardSubtitle: { fontSize: 14, fontWeight: '500', color: colors.gray500 },
 
-  /* Tabs */
-  tabsBg: { flexDirection: 'row', backgroundColor: '#F9FAFB', padding: 4, borderRadius: 12 },
+  tabsBg: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 12 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  tabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  tabActive: { backgroundColor: colors.card, ...shadowTab },
   tabInactive: {},
   tabText: { fontSize: 14, fontWeight: '700' },
-  tabTextActive: { color: '#111827' },
-  tabTextInactive: { color: '#9CA3AF' },
+  tabTextActive: { color: colors.text },
+  tabTextInactive: { color: colors.textMuted },
 
   /* Items List */
   itemsList: { gap: 12 },
-  itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   itemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  itemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
-  itemIconText: { fontSize: 18, color: '#2563EB' },
-  itemAsset: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  itemAmount: { fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 2 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
+  itemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  itemIconText: { fontSize: 18, color: colors.primaryDark },
+  itemAsset: { fontSize: 15, fontWeight: '700', color: colors.text },
+  itemAmount: { fontSize: 12, fontWeight: '500', color: colors.gray500, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
   statusText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
 
   /* JSON Input */
-  jsonInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 13, color: '#111827', minHeight: 120, fontFamily: 'monospace' },
-  parseBtn: { backgroundColor: '#EFF6FF', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
-  parseBtnText: { fontSize: 14, fontWeight: '700', color: '#2563EB' },
+  jsonInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 13, color: colors.text, minHeight: 120, fontFamily: 'monospace' },
+  parseBtn: { backgroundColor: colors.primaryLight, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  parseBtnText: { fontSize: 14, fontWeight: '700', color: colors.primaryDark },
   revealBtn: { backgroundColor: '#FEF3C7', paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' },
   revealBtnText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
-  errorText: { fontSize: 12, color: '#EF4444', fontWeight: '600' },
+  errorText: { fontSize: 12, color: colors.danger, fontWeight: '600' },
 
   /* Bottom Panel */
-  bottomPanel: { backgroundColor: '#FFFFFF', padding: 24, borderTopWidth: 1, borderTopColor: '#F3F4F6', gap: 16 },
+  bottomPanel: { backgroundColor: colors.card, padding: 24, borderTopWidth: 1, borderTopColor: colors.borderLight, gap: 16 },
   proofHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  proofLabel: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  proofPercent: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  progressTrack: { height: 8, backgroundColor: '#F3F4F6', borderRadius: 4, overflow: 'hidden' },
-  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 4, backgroundColor: '#22C55E' },
-  proofHint: { fontSize: 12, fontWeight: '500', color: '#6B7280', textAlign: 'center' },
-  modeRow: { flexDirection: 'row', backgroundColor: '#F3F4F6', padding: 4, borderRadius: 10, marginVertical: 4 },
+  proofLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
+  proofPercent: { fontSize: 14, fontWeight: '700', color: colors.text },
+  progressTrack: { height: 8, backgroundColor: colors.borderLight, borderRadius: 4, overflow: 'hidden' },
+  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 4, backgroundColor: colors.success },
+  proofHint: { fontSize: 12, fontWeight: '500', color: colors.gray500, textAlign: 'center' },
+  modeRow: { flexDirection: 'row', backgroundColor: colors.borderLight, padding: 4, borderRadius: 10, marginVertical: 4 },
   modeBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  modeBtnActive: { backgroundColor: '#FFFFFF' },
-  modeBtnText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
-  modeBtnTextActive: { color: '#2563EB' },
-  claimBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
-  claimBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  modeBtnActive: { backgroundColor: colors.card },
+  modeBtnText: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
+  modeBtnTextActive: { color: colors.primaryDark },
+  claimBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  claimBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
 });
