@@ -22,6 +22,7 @@ import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
 import { confirmShareSecret } from '../lib/confirmShareSecret';
 import { friendlyError } from '../lib/error-messages';
+import SecretRevealModal from '../components/SecretRevealModal';
 
 interface ToggleItem {
   id: string;
@@ -63,6 +64,7 @@ export default function SettingsScreen() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [addressBookVisible, setAddressBookVisible] = useState(false);
+  const [stealthKeysReveal, setStealthKeysReveal] = useState<{ spendingKey: string; viewingKey: string } | null>(null);
   const [backupVisible, setBackupVisible] = useState(false);
   const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [importSecret, setImportSecret] = useState('');
@@ -161,24 +163,10 @@ export default function SettingsScreen() {
         { text: 'Share', onPress: () => Share.share({ message: existing.metaAddress }).catch(() => {}) },
         {
           text: 'Reveal Keys',
-          onPress: () => {
-            Alert.alert(
-              'Spending + Viewing Keys',
-              `These derive every stealth-address private key your meta-address has ever (or will ever) receive. Back them up before regenerating, or funds at existing stealth addresses become unspendable from this device.\n\nSpending key:\n${existing.spendingKey}\n\nViewing key:\n${existing.viewingKey}`,
-              [
-                { text: 'Close', style: 'cancel' },
-                {
-                  text: 'Share',
-                  style: 'destructive',
-                  onPress: () => confirmShareSecret({
-                    title: 'Share stealth keys?',
-                    body: 'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
-                    shareMessage: `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${existing.spendingKey}\nviewing: ${existing.viewingKey}`,
-                  }),
-                },
-              ],
-            );
-          },
+          onPress: () => setStealthKeysReveal({
+            spendingKey: existing.spendingKey,
+            viewingKey: existing.viewingKey,
+          }),
         },
         {
           text: 'Regenerate',
@@ -597,6 +585,23 @@ export default function SettingsScreen() {
       <BackupModal
         visible={backupVisible}
         onClose={() => setBackupVisible(false)}
+      />
+
+      <SecretRevealModal
+        visible={stealthKeysReveal !== null}
+        onClose={() => setStealthKeysReveal(null)}
+        title="Spending + Viewing Keys"
+        description="These derive every stealth-address private key your meta-address has ever (or will ever) receive. Back them up before regenerating, or funds at existing stealth addresses become unspendable from this device."
+        warning="Anyone with these keys can drain every stealth address your meta-address receives. Only share to an encrypted store you control."
+        fieldLabel="Keys"
+        secret={stealthKeysReveal
+          ? `Spending key:\n${stealthKeysReveal.spendingKey}\n\nViewing key:\n${stealthKeysReveal.viewingKey}`
+          : ''}
+        shareTitle="Share stealth keys?"
+        shareBody="These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control."
+        shareMessage={stealthKeysReveal
+          ? `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
+          : ''}
       />
     </SafeAreaView>
   );
