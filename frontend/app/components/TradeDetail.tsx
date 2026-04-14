@@ -5,6 +5,7 @@ import { ArrowRight, Clock, Shield, Coins, CheckCircle2 } from "lucide-react";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { toAddressHex } from "../lib/zk/commitment";
 import { useClaimStatuses } from "../lib/zk/useClaimStatuses";
+import MarketOrderFeeBreakdown from "./MarketOrderFeeBreakdown";
 
 export interface TradeOrder {
   sellToken: string;
@@ -15,6 +16,15 @@ export interface TradeOrder {
   expiry: string;
   nonce: string;
   leafIndex: number;
+  /** Present on market-order claim files saved by private-order/page.tsx. */
+  type?: "market" | "limit";
+  /** Slippage in basis points at submission time (market only). */
+  slippageBps?: number;
+  /** Quoter-reported output used to bound the surplus upper limit (market only). */
+  estimatedOutput?: string;
+  /** DEX router used for settleWithDex (market only). */
+  dexRouter?: string;
+  dexSource?: string;
 }
 
 export interface TradeClaim {
@@ -187,6 +197,16 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
           <div className="text-sm font-mono mt-1">#{trade.order.leafIndex}</div>
         </div>
       </div>
+
+      {trade.order.type === "market" && (
+        <MarketOrderFeeBreakdown
+          buyToken={{ symbol: buy.symbol, decimals: buy.decimals }}
+          buyAmount={trade.order.buyAmount}
+          estimatedOutput={trade.order.estimatedOutput}
+          slippageBps={trade.order.slippageBps}
+          dexSource={trade.order.dexSource}
+        />
+      )}
 
       {/* Change */}
       {trade.change && (

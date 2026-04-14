@@ -303,26 +303,40 @@ ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 
 ## Market Orders (Fork Mode)
 
-`settleWithDex` requires a whitelisted DEX router. The default plain anvil chain has none deployed, so `DeployLocal` prints `1inch Router not deployed on this chain (skipped)` and market orders will not execute end-to-end.
-
-To exercise market orders locally, start anvil in **fork mode** against mainnet (or a chain where the 1inch Aggregation Router V6 and Uniswap V3 SwapRouter02 are deployed), and connect with `dev.sh` in **integration mode** (not `--mock`):
+`settleWithDex` requires a whitelisted DEX router and real on-chain liquidity. Plain anvil has neither, so `dev.sh --mock` cannot exercise market orders. Use `dev-fork.sh` instead — it forks mainnet, deploys zkScatter against the forked state, and wires up real WETH/USDC so 1inch and Uniswap route through actual pools.
 
 ```bash
-# Terminal 1 — start your own forked anvil on 8545
-anvil --fork-url https://eth.llamarpc.com
-# or Alchemy / Infura / your own RPC
-
-# Terminal 2 — integration mode reuses the running anvil
-IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
+./scripts/dev-fork.sh
+# Optional env:
+#   FORK_URL=https://eth.drpc.org          (default; llamarpc lacks historical state)
+#   FORK_BLOCK=24874771                     (pin block — recommended if the
+#                                            upstream RPC rotates shards)
+#   FORK_CHAIN_ID=1                         (preserve mainnet chainid so 1inch
+#                                            API paths match)
 ```
 
-> **Note:** `dev.sh --mock` always starts its own anvil (and exits if port 8545 is already in use via `check_port 8545`), so it cannot be combined with a pre-started forked anvil. Use integration mode with zk-X509 as above. If you need mock identity against a fork, run `anvil --fork-url` then deploy manually via `forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://localhost:8545 --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` and start the relayer/frontend by hand (see **Manual Setup** above).
+What it does differently from `dev.sh --mock`:
 
-When fork mode is used, `DeployLocal` will whitelist:
-- 1inch Aggregation Router V6 — `0x111111125421cA6dc452d289314280a0f8842A65`
-- Uniswap V3 SwapRouter02 — `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`
+| | `dev.sh --mock` | `dev-fork.sh` |
+|---|---|---|
+| anvil | plain, chainid 31337 | `--fork-url`, chainid 1 |
+| Tokens | MockWETH / MockUSDC (18 dec) | Real mainnet WETH `0xC02a…` / USDC `0xA0b8…` (6 dec) |
+| DEX routers | none on chain → market orders disabled | 1inch V6 + Uniswap V3 SwapRouter02 whitelisted |
+| Prefund | mint Mock USDC to Alice/Bob | `anvil_setBalance` + impersonate Binance 14 → transfer real USDC |
+| Relayer indexing | `fromBlock=0` (fresh chain) | `INDEX_FROM_BLOCK=<post-deploy>` to skip pre-fork history (upstream RPCs reject >10k-block `eth_getLogs` ranges) |
+| Use case | Limit orders, private-order UI | Market orders (`settleWithDex`), aggregator integration |
 
-**1inch Swap API key:** the frontend route `/api/swap` requires `ONEINCH_API_KEY` in `frontend/.env.local`. Without it the UI falls back to Uniswap quoting.
+**Fork-mode defaults:** `dev-fork.sh` forks Ethereum mainnet from `https://eth.llamarpc.com` and starts the local RPC on `http://localhost:8545` with chain ID `31338`. The non-mainnet chain id lets MetaMask accept this as a custom network without colliding with its built-in Mainnet entry; the frontend separately pins the 1inch aggregator chain id to `1` via `NEXT_PUBLIC_AGGREGATOR_CHAIN_ID` so routing still looks up mainnet liquidity. Override with `FORK_URL=... FORK_CHAIN_ID=... ./scripts/dev-fork.sh` when you need a different RPC (drpc.org tends to be more stable than llamarpc).
+
+**1inch Swap API key:** `/api/swap` proxies to 1inch's Swap API (`https://api.1inch.dev/swap/v6.0/...`). Put your key in `frontend/.env.local` as `ONEINCH_API_KEY=...` (no `NEXT_PUBLIC_` prefix — server-side only). Without it the UI falls back to Uniswap V3 direct quoting. Get a free key at <https://portal.1inch.dev/>.
+
+Fork mode additionally sets `NEXT_PUBLIC_DISABLE_AGGREGATOR=true` by default because 1inch's Pathfinder often routes through non-Uniswap pools whose state drifts against the fork. Pin `FORK_BLOCK` close to the live tip and run `NEXT_PUBLIC_DISABLE_AGGREGATOR=false ./scripts/dev-fork.sh` when you specifically want to exercise the 1inch path.
+
+`dev.sh` and `dev-fork.sh` both preserve `ONEINCH_API_KEY` across `.env.local` regeneration.
+
+**MetaMask setup (fork mode):** add a custom network with RPC `http://localhost:8545` and Chain ID `31338`. Import anvil account #0 (`0xf39F…F2266`) — `dev-fork.sh` prefunds it with 100 ETH, 100,000 USDC, and 100,000 USDT. Keep the fork network separate from MetaMask's built-in Mainnet entry to avoid confusion.
+
+**Integration mode with zk-X509:** `./scripts/dev.sh` (no `--mock`) still works for zk-X509 testing against an already-running anvil — see the Integration Mode section above. Fork mode and zk-X509 integration aren't combined today.
 
 ## E2E Test Runbook
 

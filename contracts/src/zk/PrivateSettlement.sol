@@ -158,8 +158,21 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         bytes32 indexed nullifier,
         address indexed token,
         uint256 amount,
-        address treasury
+        address vault
     );
+
+    /// @notice Emitted when positive slippage from settleWithDex is credited
+    ///         to FeeVault.platformRevenue as market-order surplus.
+    event DexSurplusCollected(
+        bytes32 indexed nullifier,
+        address indexed token,
+        uint256 amount,
+        address vault
+    );
+
+    // ─── Platform revenue source tags (FeeVault.depositPlatformRevenue) ───
+    bytes32 internal constant DEX_PLATFORM_FEE_SOURCE = keccak256("market-platform-fee");
+    bytes32 internal constant DEX_SURPLUS_SOURCE = keccak256("market-surplus");
 
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
@@ -732,16 +745,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         pool.transferToSettlement(proof.sellToken, proof.sellAmount);
 
         // 11b. Deduct platform fee from sellAmount before DEX swap.
-        //      Fee goes directly to FeeVault treasury (not via deposit/claim)
-        //      to avoid double-deduction from the relayer claim flow.
+        //      Fee is routed through FeeVault.platformRevenue so it's tracked
+        //      independently from relayer balances; treasury pulls via
+        //      withdrawPlatformRevenue(token). Kept out of the relayer deposit
+        //      ledger on purpose — otherwise platform fee would be deducted
+        //      twice (once here, again on relayer claim).
         uint256 swapAmount = proof.sellAmount;
         if (dexPlatformFeeBps > 0) {
             uint256 platformFee = uint256(proof.sellAmount) * dexPlatformFeeBps / FEE_BPS_DENOMINATOR;
             swapAmount = uint256(proof.sellAmount) - platformFee;
-            if (platformFee > 0) {
-                address _treasury = feeVault.treasury();
-                IERC20(proof.sellToken).safeTransfer(_treasury, platformFee);
-                emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, _treasury);
+            if (platformFee > 0 && address(feeVault) != address(0)) {
+                IERC20(proof.sellToken).safeTransfer(address(feeVault), platformFee);
+                feeVault.depositPlatformRevenue(proof.sellToken, platformFee, DEX_PLATFORM_FEE_SOURCE);
+                emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, address(feeVault));
             }
         }
 
@@ -770,15 +786,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 13. Register claims group
         SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked);
 
-        // 14. Surplus handling: positive slippage goes directly to FeeVault
-        //     treasury (not via deposit/claim, which would deduct platform fee).
-        //     If no FeeVault is set, surplus stays in the contract.
+        // 14. Surplus handling: positive slippage is transferred to FeeVault
+        //     and credited to FeeVault.platformRevenue (independent of
+        //     relayer balances). Treasury later withdraws it via
+        //     withdrawPlatformRevenue(token). When no FeeVault is set,
+        //     surplus stays in the contract (owner recovery).
         if (amountOut > proof.totalLocked) {
             uint256 surplus = amountOut - proof.totalLocked;
             if (address(feeVault) != address(0)) {
-                IERC20(proof.buyToken).safeTransfer(feeVault.treasury(), surplus);
+                IERC20(proof.buyToken).safeTransfer(address(feeVault), surplus);
+                feeVault.depositPlatformRevenue(proof.buyToken, surplus, DEX_SURPLUS_SOURCE);
+                emit DexSurplusCollected(proof.nullifier, proof.buyToken, surplus, address(feeVault));
             }
-            // else: surplus stays in contract balance (recoverable by owner)
         }
 
         emit SettledWithDex(

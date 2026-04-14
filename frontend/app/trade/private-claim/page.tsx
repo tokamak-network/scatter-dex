@@ -82,6 +82,10 @@ export default function PrivateClaimPage() {
   const [parseError, setParseError] = useState<string | null>(null);
 
   const [bundleRelayerUrl, setBundleRelayerUrl] = useState<string | null>(null);
+  // Tracks whether the loaded bundle is a market-order (DEX Trade) bundle.
+  // Market claims aren't routed through the relayer path, so the Gasless
+  // button is disabled when this is true.
+  const [bundleIsMarket, setBundleIsMarket] = useState<boolean>(false);
   const [claimMode, setClaimMode] = useState<ClaimMode>("relayer");
   const [status, setStatus] = useState<ClaimStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -148,12 +152,17 @@ export default function PrivateClaimPage() {
       // Read relayer URL: from bundle top-level, or from individual claim entry
       const url = parsed.relayerUrl ?? claims[0]?.relayerUrl ?? null;
       setBundleRelayerUrl(validRelayerUrl(url));
+      // Detect market-order bundle so the Gasless button can be disabled.
+      // Works for both bundled format (`parsed.order.type`) and split
+      // single-claim files (`parsed.orderType` injected at zip-export time).
+      setBundleIsMarket(parsed?.order?.type === "market" || parsed?.orderType === "market");
     } catch (e) {
       setParseError(e instanceof Error ? e.message : "Invalid JSON");
       setAllClaims([]);
       setSelectedClaimIdx(0);
       setClaimData(null);
       setBundleRelayerUrl(null);
+      setBundleIsMarket(false);
     }
   }
 
@@ -425,7 +434,12 @@ export default function PrivateClaimPage() {
                       const addr = toAddressHex(c.recipient);
                       const shortAddr = addr.slice(0, 6) + "..." + addr.slice(-4);
                       const filename = `claim-${i + 1}-${shortAddr}.json`;
-                      zip.file(filename, JSON.stringify(c, null, 2));
+                      // Mark each split claim with the bundle's order type so
+                      // the claim page can detect market-order claims even
+                      // after zip extraction (the `order` field only exists
+                      // at the bundle level and would otherwise be lost).
+                      const marked = bundleIsMarket ? { ...c, orderType: "market" as const } : c;
+                      zip.file(filename, JSON.stringify(marked, null, 2));
                     });
                     const blob = await zip.generateAsync({ type: "blob" });
                     const url = URL.createObjectURL(blob);
@@ -567,20 +581,29 @@ export default function PrivateClaimPage() {
             </button>
           )}
 
-          {claimData && !claimedMap[selectedClaimIdx]?.claimed && (
+          {claimData && !claimedMap[selectedClaimIdx]?.claimed && (() => {
+            // Market-order claims aren't routed through the relayer today —
+            // settleWithDex is permissionless, so the relayer has no order
+            // context to pay gas against. Force wallet mode for those claims.
+            const isMarketClaim = bundleIsMarket;
+            return (
             <div className="space-y-4">
               {/* Mode selector */}
               <div className="flex gap-2">
                 <button
-                  onClick={() => setClaimMode("relayer")}
+                  onClick={() => !isMarketClaim && setClaimMode("relayer")}
+                  disabled={isMarketClaim}
+                  title={isMarketClaim ? "Market-order claims must be submitted from your wallet" : undefined}
                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-semibold transition-colors ${
-                    claimMode === "relayer"
+                    isMarketClaim
+                      ? "bg-surface-container-low/50 text-on-surface-variant/40 border border-outline-variant/10 cursor-not-allowed"
+                      : claimMode === "relayer"
                       ? "bg-primary/15 text-primary border border-primary/30"
                       : "bg-surface-container-low text-on-surface-variant border border-outline-variant/10 hover:bg-surface-bright/50"
                   }`}
                 >
                   <Radio className="w-4 h-4" />
-                  Gasless (Relayer)
+                  Gasless (Relayer){isMarketClaim && " — N/A for Market"}
                 </button>
                 <button
                   onClick={() => setClaimMode("wallet")}
@@ -596,7 +619,7 @@ export default function PrivateClaimPage() {
               </div>
 
               {/* Claim button */}
-              {claimMode === "relayer" ? (
+              {!isMarketClaim && claimMode === "relayer" ? (
                 <button
                   onClick={handleClaimViaRelayer}
                   className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest"
@@ -613,7 +636,8 @@ export default function PrivateClaimPage() {
                 </button>
               )}
             </div>
-          )}
+            );
+          })()}
 
           <div className="text-xs text-on-surface-variant/40 text-center space-y-1">
             <p>ZK proof generated in your browser. No one can see which settlement this claim belongs to.</p>
@@ -697,7 +721,7 @@ export default function PrivateClaimPage() {
               View My Orders
             </Link>
             <button
-              onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHashes([]); setBundleRelayerUrl(null); }}
+              onClick={() => { setStatus("idle"); setClaimData(null); setAllClaims([]); setSelectedClaimIdx(0); setClaimJson(""); setTxHashes([]); setBundleRelayerUrl(null); setBundleIsMarket(false); }}
               className="px-5 py-2.5 rounded-md bg-surface-bright text-on-surface text-sm font-medium hover:bg-surface-bright/80 transition-colors"
             >
               Claim Another

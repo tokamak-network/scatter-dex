@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, BookOpen } from "lucide-react";
+import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, BookOpen, ArrowLeftRight } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -41,6 +42,7 @@ import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
 import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
+import AggregatorQuotePanel from "../../components/AggregatorQuotePanel";
 import { useMainnetPrice } from "../../lib/useDexPrices";
 import { friendlyError } from "../../lib/error-messages";
 
@@ -235,7 +237,22 @@ export default function PrivateOrderPage() {
   const [price, setPrice] = useState("");
   const [changeSalt, setChangeSalt] = useState<bigint | null>(null);
   const [maxFeeBps, setMaxFeeBps] = useState("30"); // basis points
-  const [orderType, setOrderType] = useState<OrderType>("limit");
+  // Sidebar deep-links to this page with ?type=market to pre-select the
+  // DEX Trade tab. Default (no param) is limit. The tab buttons below
+  // rewrite the URL too so the sidebar's active indicator tracks in-page
+  // tab switches.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const initialOrderType: OrderType = searchParams.get("type") === "market" ? "market" : "limit";
+  const [orderType, setOrderTypeRaw] = useState<OrderType>(initialOrderType);
+  useEffect(() => {
+    const t = searchParams.get("type") === "market" ? "market" : "limit";
+    setOrderTypeRaw(t);
+  }, [searchParams]);
+  const setOrderType = useCallback((t: OrderType) => {
+    setOrderTypeRaw(t);
+    router.replace(t === "market" ? "/trade/private-order?type=market" : "/trade/private-order", { scroll: false });
+  }, [router]);
   // Snapshot of the order type at submission so the success screen's copy
   // and CTAs don't flip if the user toggles orderType after submitting.
   const [submittedOrderType, setSubmittedOrderType] = useState<OrderType | null>(null);
@@ -280,14 +297,37 @@ export default function PrivateOrderPage() {
     orderType === "market" ? buyToken?.symbol : undefined,
     "sell",
   );
+
+  // Aggregator quote — populated by AggregatorQuotePanel.onQuote in market mode.
+  // Takes precedence over Quoter/manual because it reflects the route that
+  // will actually execute (1inch multi-hop / Uniswap fallback).
+  const [aggregatorQuote, setAggregatorQuote] = useState<{
+    estimatedOutput: bigint;
+    effectivePrice: number;
+    source: string;
+  } | null>(null);
+  // Stable callback identity so AggregatorQuotePanel's effect (which now
+  // depends on onQuote to propagate clear signals) doesn't re-fire on every
+  // parent render.
+  const handleAggregatorQuote = useCallback(
+    (q: { estimatedOutput: bigint; effectivePrice: number; source: string } | null) => {
+      setAggregatorQuote(q);
+      if (q === null) {
+        setBuyAmount("");
+      }
+    },
+    [],
+  );
+
   const { marketPrice, marketPriceSource } = useMemo(() => {
+    if (aggregatorQuote) return { marketPrice: aggregatorQuote.effectivePrice, marketPriceSource: aggregatorQuote.source };
     const rec = dexPrices.find((p) => p.recommended && p.netPrice !== null);
     if (rec?.netPrice) return { marketPrice: rec.netPrice, marketPriceSource: rec.source ?? "DEX" };
     // Fallback: manual price input
     const manual = parseFloat(manualPrice);
     if (!isNaN(manual) && manual > 0) return { marketPrice: manual, marketPriceSource: "manual" };
     return { marketPrice: null, marketPriceSource: null };
-  }, [dexPrices, manualPrice]);
+  }, [aggregatorQuote, dexPrices, manualPrice]);
 
   // [#23] Reset price/amount when switching between Limit and Market.
   // MUST be declared BEFORE auto-compute so React runs it first on tab switch.
@@ -295,6 +335,13 @@ export default function PrivateOrderPage() {
     setBuyAmount("");
     setPrice("");
     setManualPrice("");
+    setAggregatorQuote(null);
+    // Scatter-mode (same token on both sides) is only valid for Limit.
+    // When switching to Market, break the collision by flipping Buy.
+    if (orderType === "market" && sellTokenIdx === buyTokenIdx) {
+      const alt = tokens.findIndex((_, i) => i !== sellTokenIdx);
+      if (alt >= 0) setBuyTokenIdx(alt);
+    }
   }, [orderType]);
 
   // Auto-compute buyAmount in market mode (BigInt floor to avoid rounding up)
@@ -828,10 +875,11 @@ export default function PrivateOrderPage() {
       // Get best swap route via DEX aggregator (1inch → Uniswap fallback)
       const { getBestSwapRoute } = await import("../../lib/dex-aggregator");
       const currentChainId = chainId ?? 1;
-      // Select fee tier from recommended DEX price
+      // Fee tier: prefer the recommended Quoter price's tier if available,
+      // otherwise let getUniswapRoute auto-pick by probing common tiers.
       const bestDexPrice = dexPrices.find(p => p.recommended && p.netPrice !== null);
       const feeParsed = Math.round(parseFloat(bestDexPrice?.fee ?? "0") * 10000);
-      const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : 3000;
+      const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : undefined;
 
       const swapRoute = await getBestSwapRoute({
         chainId: currentChainId,
@@ -856,24 +904,27 @@ export default function PrivateOrderPage() {
       ];
       const proofC = [BigInt(proofResult.proof.c[0]), BigInt(proofResult.proof.c[1])];
 
+      // bytes32 fields in the ABI need 0x-prefixed hex; snarkjs emits decimal
+      // strings. uint256 fields (commitmentRoot) stay as strings — ethers
+      // accepts them directly.
       const tx = await settlement.settleWithDex({
         proof: {
           proofA, proofB, proofC,
-          pubKeyBind: ps[0],
+          pubKeyBind: toBytes32Hex(BigInt(ps[0])),
           commitmentRoot: ps[1],
-          nullifier: ps[2],
-          nonceNullifier: ps[3],
-          newCommitment: ps[4],
+          nullifier: toBytes32Hex(BigInt(ps[2])),
+          nonceNullifier: toBytes32Hex(BigInt(ps[3])),
+          newCommitment: toBytes32Hex(BigInt(ps[4])),
           sellToken: sellToken.address,
           buyToken: buyToken.address,
           sellAmount: parsedSell,
           buyAmount: parsedBuy,
           maxFee: 0,
           expiry: expiryTimestamp,
-          claimsRoot: ps[11],
+          claimsRoot: toBytes32Hex(BigInt(ps[11])),
           totalLocked,
           relayer: account,
-          orderHash: ps[14],
+          orderHash: toBytes32Hex(BigInt(ps[14])),
         },
         dexRouter: swapRoute.dexRouter,
         dexCalldata: swapRoute.dexCalldata,
@@ -889,7 +940,24 @@ export default function PrivateOrderPage() {
         ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       }));
       const bundle = {
-        order: { sellToken: sellToken.address, buyToken: buyToken.address, sellAmount: parsedSell.toString(), buyAmount: parsedBuy.toString(), maxFee: 0, expiry: expiryTimestamp.toString(), nonce: nonce.toString(), leafIndex: selectedNote.leafIndex, type: "market" },
+        order: {
+          sellToken: sellToken.address,
+          buyToken: buyToken.address,
+          sellAmount: parsedSell.toString(),
+          buyAmount: parsedBuy.toString(),
+          maxFee: 0,
+          expiry: expiryTimestamp.toString(),
+          nonce: nonce.toString(),
+          leafIndex: selectedNote.leafIndex,
+          type: "market" as const,
+          // Quote snapshot at submission time. estimatedOutput is what 1inch
+          // / Uniswap Quoter expected; (estimatedOutput − buyAmount) upper-
+          // bounds the surplus that would flow to FeeVault.platformRevenue.
+          slippageBps: parseInt(slippageBps) || 50,
+          estimatedOutput: swapRoute.estimatedOutput.toString(),
+          dexRouter: swapRoute.dexRouter,
+          dexSource: swapRoute.source,
+        },
         change: change > 0n ? { amount: change.toString(), salt: newSalt.toString(), expectedCommitment: expectedChangeCommitment.toString() } : null,
         claims: claimFiles,
         txHash: tx.hash,
@@ -942,11 +1010,22 @@ export default function PrivateOrderPage() {
       <div className="flex-1 max-w-4xl space-y-6">
         <div>
           <h1 className="text-2xl font-headline font-semibold text-on-surface flex items-center gap-2">
-            <Shield className="w-6 h-6 text-primary" />
-            Private Order
+            {orderType === "market" ? (
+              <>
+                <Zap className="w-6 h-6 text-tertiary" />
+                DEX Trade
+              </>
+            ) : (
+              <>
+                <Shield className="w-6 h-6 text-primary" />
+                Privacy-preserving Trade (Limit Order)
+              </>
+            )}
           </h1>
           <p className="text-sm text-on-surface-variant/70 mt-1">
-            ZK-private order. Your identity and trade details are hidden on-chain.
+            {orderType === "market"
+              ? "Public market order via DEX aggregator. Swap details are visible on-chain."
+              : "ZK-private limit order. Your identity and trade details are hidden on-chain."}
           </p>
           {/* Order Type Toggle */}
           <div className="flex gap-1 mt-3 bg-surface-container-low/50 p-1 rounded-lg w-fit">
@@ -959,7 +1038,7 @@ export default function PrivateOrderPage() {
               }`}
             >
               <BookOpen className="w-4 h-4" />
-              Limit
+              Private Trade
             </button>
             <button
               onClick={() => setOrderType("market")}
@@ -970,7 +1049,7 @@ export default function PrivateOrderPage() {
               }`}
             >
               <Zap className="w-4 h-4" />
-              Market
+              DEX Trade
             </button>
           </div>
         </div>
@@ -1066,28 +1145,62 @@ export default function PrivateOrderPage() {
 
             {/* 2. Token & Amount */}
             <div className="bg-surface-container/40 rounded-xl p-6 border border-outline-variant/10 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-end">
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Sell</label>
                 <select
                   value={sellTokenIdx}
-                  onChange={(e) => setSellTokenIdx(Number(e.target.value))}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setSellTokenIdx(next);
+                    // Market mode rejects same-token pairs (settleWithDex
+                    // can't route a swap to itself). Auto-bump buy to the
+                    // first different token when collision would occur.
+                    if (orderType === "market" && next === buyTokenIdx) {
+                      const alt = tokens.findIndex((_, i) => i !== next);
+                      if (alt >= 0) setBuyTokenIdx(alt);
+                    }
+                  }}
                   className="w-full bg-white/10 border border-outline-variant/30 focus:ring-1 focus:ring-primary text-on-surface rounded-lg py-3 px-4 text-base"
                 >
                   {tokens.map((t, i) => (
-                    <option key={i} value={i}>{t.symbol}</option>
+                    <option key={i} value={i} disabled={orderType === "market" && i === buyTokenIdx}>
+                      {t.symbol}{orderType === "market" && i === buyTokenIdx ? " (in Buy)" : ""}
+                    </option>
                   ))}
                 </select>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const s = sellTokenIdx, b = buyTokenIdx;
+                  setSellTokenIdx(b);
+                  setBuyTokenIdx(s);
+                }}
+                title="Swap Sell / Buy tokens"
+                aria-label="Swap Sell and Buy tokens"
+                className="mb-1 w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-low border border-outline-variant/20 text-on-surface-variant hover:bg-tertiary/20 hover:text-tertiary hover:border-tertiary/30 transition-colors"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
               <div>
                 <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Buy</label>
                 <select
                   value={buyTokenIdx}
-                  onChange={(e) => setBuyTokenIdx(Number(e.target.value))}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setBuyTokenIdx(next);
+                    if (orderType === "market" && next === sellTokenIdx) {
+                      const alt = tokens.findIndex((_, i) => i !== next);
+                      if (alt >= 0) setSellTokenIdx(alt);
+                    }
+                  }}
                   className="w-full bg-white/10 border border-outline-variant/30 focus:ring-1 focus:ring-primary text-on-surface rounded-lg py-3 px-4 text-base"
                 >
                   {tokens.map((t, i) => (
-                    <option key={i} value={i}>{t.symbol}</option>
+                    <option key={i} value={i} disabled={orderType === "market" && i === sellTokenIdx}>
+                      {t.symbol}{orderType === "market" && i === sellTokenIdx ? " (in Sell)" : ""}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -1120,7 +1233,7 @@ export default function PrivateOrderPage() {
                 )}
               </div>
               <div>
-                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">
+                <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2 text-right">
                   {orderType === "market" ? "Min Receive (after slippage)" : "Buy Amount"}
                 </label>
                 <input
@@ -1137,19 +1250,19 @@ export default function PrivateOrderPage() {
                   // the `sellAmount` it's mirroring while the field is read-only.
                   onChange={orderType === "market" || isScatterMode ? undefined : (e) => setBuyAmount(e.target.value)}
                   readOnly={orderType === "market" || isScatterMode}
-                  className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 ${
+                  className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 text-right ${
                     orderType === "market" || isScatterMode ? "opacity-70" : ""
                   }`}
                   placeholder="0.00"
                 />
                 {orderType === "market" && marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
-                  <div className="text-xs text-on-surface-variant mt-1">
+                  <div className="text-xs text-on-surface-variant mt-1 text-right">
                     {marketPriceSource === "manual" ? "Manual" : "DEX"} rate: {marketPrice.toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
                     <span className={`ml-1 ${marketPriceSource === "manual" ? "text-warning" : "text-tertiary"}`}>({marketPriceSource})</span>
                   </div>
                 )}
                 {orderType === "limit" && sellAmount && buyAmount && parseFloat(sellAmount) > 0 && (
-                  <div className="text-xs text-on-surface-variant mt-1">
+                  <div className="text-xs text-on-surface-variant mt-1 text-right">
                     Price: {isScatterMode ? "1.000000" : (parseFloat(buyAmount) / parseFloat(sellAmount)).toFixed(6)} {buyToken?.symbol}/{sellToken?.symbol}
                   </div>
                 )}
@@ -1203,6 +1316,7 @@ export default function PrivateOrderPage() {
                 <div className="flex gap-1.5">
                   {[
                     { label: "0.1%", bps: "10" },
+                    { label: "0.3%", bps: "30" },
                     { label: "0.5%", bps: "50" },
                     { label: "1%", bps: "100" },
                     { label: "3%", bps: "300" },
@@ -1221,16 +1335,31 @@ export default function PrivateOrderPage() {
                     </button>
                   ))}
                 </div>
-                {marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (
-                  <div className="text-xs text-on-surface-variant mt-1">
-                    Expected: ~{(parseFloat(sellAmount) * marketPrice).toFixed(4)} {buyToken?.symbol}
-                    <span className="text-tertiary ml-1">(no relay fee)</span>
-                  </div>
-                )}
+                {marketPrice && sellAmount && parseFloat(sellAmount) > 0 && (() => {
+                  const gross = parseFloat(sellAmount) * marketPrice;
+                  const slip = (parseInt(slippageBps) || 50) / 10000;
+                  const minReceive = gross * (1 - slip);
+                  const surplusMax = gross - minReceive;
+                  return (
+                    <div className="text-xs text-on-surface-variant mt-1 space-y-0.5">
+                      <div>
+                        You receive (min): <span className="font-mono text-tertiary">{minReceive.toFixed(4)} {buyToken?.symbol}</span>
+                      </div>
+                      <div>
+                        Platform surplus (max): <span className="font-mono text-warning">≤ {surplusMax.toFixed(4)} {buyToken?.symbol}</span>
+                        <span className="ml-1 opacity-70">(positive slippage → treasury)</span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {!marketPrice && dexPrices.some(p => p.loading) && (
                   <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
                 )}
-                {!dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
+                {/* Manual price fallback only when both aggregator quote and
+                    Quoter-based dexPrices are unavailable. Aggregator success
+                    (marketPriceSource !== "manual") suppresses this block to
+                    avoid the stale "DEX unavailable" message. */}
+                {!marketPrice && !dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
                   <div className="space-y-1 mt-1">
                     <div className="text-xs text-error" id="manual-price-label">DEX price unavailable. Enter price manually:</div>
                     <div className="flex gap-2 items-center">
@@ -1544,7 +1673,7 @@ export default function PrivateOrderPage() {
             >
               {keyLoading ? (
                 <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Unlocking Key...</span>
-              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Trading Key" : !marketPrice ? "Waiting for DEX Price..." : "Execute Market Order"}
+              ) : !selectedNote ? "Select a Commitment Note" : !keyPair ? "Unlock Trading Key" : !marketPrice ? "Waiting for DEX Price..." : "Execute DEX Trade"}
             </button>
             )}
 
@@ -1575,7 +1704,7 @@ export default function PrivateOrderPage() {
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
             <Check className="w-12 h-12 text-emerald-400 mx-auto" />
             <p className="text-on-surface font-bold text-lg">
-              {submittedOrderType === "market" ? "Market Order Executed" : "Private Order Submitted"}
+              {submittedOrderType === "market" ? "DEX Trade Executed" : "Privacy-preserving Trade (Limit Order) Submitted"}
             </p>
             <p className="text-sm text-on-surface-variant/70">
               {submittedOrderType === "market"
@@ -1622,20 +1751,38 @@ export default function PrivateOrderPage() {
         )}
       </div>
 
-      {/* Right: Price Reference */}
-      <div className="w-full xl:w-[340px]">
+      {/* Right: Price Reference (limit) or Aggregator Quote (market).
+          `pt-32` pushes the panel down so its top aligns with the
+          Commitment (Escrow Balance) card on the left — the big
+          "Private Order" heading no longer has a right-side neighbor. */}
+      <div className="w-full xl:w-[340px] xl:pt-32">
         <div className="sticky top-20">
-          <PricePanel
-            sellSymbol={sellToken?.symbol}
-            buySymbol={buyToken?.symbol}
-            sellTokenAddress={sellToken?.address}
-            buyTokenAddress={buyToken?.address}
-            sellDecimals={sellToken?.decimals}
-            buyDecimals={buyToken?.decimals}
-            relayerUrl={process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001"}
-            side="sell"
-            onSelectPrice={handlePriceSelect}
-          />
+          {orderType === "market" ? (
+            <AggregatorQuotePanel
+              sellSymbol={sellToken?.symbol}
+              buySymbol={buyToken?.symbol}
+              sellTokenAddress={sellToken?.address}
+              buyTokenAddress={buyToken?.address}
+              sellDecimals={sellToken?.decimals}
+              buyDecimals={buyToken?.decimals}
+              sellAmount={sellAmount}
+              slippageBps={parseInt(slippageBps) || 50}
+              account={account ?? undefined}
+              onQuote={handleAggregatorQuote}
+            />
+          ) : (
+            <PricePanel
+              sellSymbol={sellToken?.symbol}
+              buySymbol={buyToken?.symbol}
+              sellTokenAddress={sellToken?.address}
+              buyTokenAddress={buyToken?.address}
+              sellDecimals={sellToken?.decimals}
+              buyDecimals={buyToken?.decimals}
+              relayerUrl={process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001"}
+              side="sell"
+              onSelectPrice={handlePriceSelect}
+            />
+          )}
         </div>
       </div>
     </div>
