@@ -22,11 +22,14 @@ export const colors = {
   primaryDark: '#2563EB',
 
   success: '#22C55E',
+  successDark: '#16A34A',   // tailwind green-600 — status-pill text
   successLight: '#F0FDF4',
+  successBorder: '#BBF7D0', // tailwind green-200 — status-pill border
   warning: '#F59E0B',
   warningLight: '#FFFBEB',
   danger: '#EF4444',
   dangerLight: '#FEF2F2',
+  dangerBorder: '#FEE2E2',  // tailwind red-100 — status-pill border
 
   cyan: '#06B6D4',
   cyanLight: '#ECFEFF',

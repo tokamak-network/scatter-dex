@@ -268,7 +268,6 @@ export default function HistoryScreen() {
         right={<View style={s.avatar}><Text style={s.avatarIcon}>👤</Text></View>}
       />
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
-        {/* Tabs */}
         <View style={s.tabsWrap}>
           <View style={s.tabsRow}>
             {(['active', 'spent', 'pending'] as Tab[]).map((t) => (
@@ -386,7 +385,6 @@ const s = StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.borderLight, alignItems: 'center', justifyContent: 'center' },
   avatarIcon: { fontSize: 20, color: colors.textSecondary },
 
-  /* Tabs */
   tabsWrap: { paddingHorizontal: layout.screenHZ },
   tabsRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: colors.borderLight },
   tab: { flex: 1, paddingBottom: 12, alignItems: 'center' },
@@ -394,7 +392,6 @@ const s = StyleSheet.create({
   tabText: { fontSize: 14, fontWeight: '700', color: colors.textMuted, textTransform: 'capitalize' },
   tabTextActive: { color: colors.primaryDark },
 
-  /* Search & Filter */
   searchRow: { flexDirection: 'row', paddingHorizontal: layout.screenHZ, gap: 12 },
   searchWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, backgroundColor: colors.bgSecondary, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   searchIcon: { fontSize: 16, marginRight: 8 },
@@ -402,7 +399,6 @@ const s = StyleSheet.create({
   filterBtn: { padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   filterIcon: { fontSize: 20, color: colors.textSecondary },
 
-  /* Activity List */
   listSection: { paddingHorizontal: layout.screenHZ, gap: 16 },
   actRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   actLeft: { flexDirection: 'row', gap: 16, flex: 1 },
@@ -413,20 +409,19 @@ const s = StyleSheet.create({
   actRight: { alignItems: 'flex-end', gap: 4 },
   actTime: { fontSize: 10, fontWeight: '700', color: colors.textMuted },
 
-  /* Status Badge */
   statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 99, borderWidth: 1 },
   statusIcon: { fontSize: 10 },
   statusText: { fontSize: 10, fontWeight: '700' },
 
   statusMatching: { backgroundColor: colors.bgSecondary, borderColor: colors.borderLight },
   statusMatchingText: { color: colors.textSecondary },
-  statusVerified: { backgroundColor: colors.successLight, borderColor: '#BBF7D0' },
-  statusVerifiedText: { color: '#16A34A' },
-  statusConfirmed: { backgroundColor: colors.primaryLight, borderColor: '#BFDBFE' },
+  statusVerified: { backgroundColor: colors.successLight, borderColor: colors.successBorder },
+  statusVerifiedText: { color: colors.successDark },
+  statusConfirmed: { backgroundColor: colors.primaryLight, borderColor: colors.blueBorder },
   statusConfirmedText: { color: colors.primaryDark },
   statusWaiting: { backgroundColor: colors.orangeLight, borderColor: '#FED7AA' },
   statusWaitingText: { color: '#EA580C' },
 
-  cancelBtn: { marginLeft: 64, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FEE2E2', backgroundColor: colors.dangerLight, alignSelf: 'flex-start' },
+  cancelBtn: { marginLeft: 64, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.dangerBorder, backgroundColor: colors.dangerLight, alignSelf: 'flex-start' },
   cancelBtnText: { fontSize: 12, fontWeight: '700', color: colors.danger },
 });
