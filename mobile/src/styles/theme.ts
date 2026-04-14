@@ -9,6 +9,7 @@ export const colors = {
   card: '#FFFFFF',
 
   border: '#F0F0F0',
+  borderLight: '#F3F4F6', // tailwind gray-100 — used on surface cards + inputs
   borderMedium: '#E5E7EB',
 
   text: '#111827',
@@ -40,18 +41,46 @@ export const colors = {
   textDimmer: '#D1D5DB',
 } as const;
 
+export const layout = {
+  screenHZ: 24,
+  sectionGap: 24,
+  contentTop: 8,
+  contentBottom: 96,
+  headerPV: 16,
+  card: { padding: 24, radius: 24, borderWidth: 1 },
+} as const;
+
+// Shared shadow/elevation tuple. Inline-declared in six screens today;
+// collected here so migrations can drop the duplicates.
+export const shadowSubtle = {
+  shadowColor: '#000',
+  shadowOpacity: 0.04,
+  shadowOffset: { width: 0, height: 1 } as const,
+  shadowRadius: 2,
+  elevation: 1,
+} as const;
+
 export const shared = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.bg },
   container: { flex: 1, backgroundColor: colors.bg },
   content: { paddingHorizontal: 20 },
 
+  // Sections using this container should NOT add their own horizontal
+  // padding — drift this way caused the pre-normalization inconsistency.
+  scrollContent: {
+    paddingHorizontal: layout.screenHZ,
+    paddingTop: layout.contentTop,
+    paddingBottom: layout.contentBottom,
+    gap: layout.sectionGap,
+  },
+
   card: {
     backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 12,
-    borderWidth: 1,
+    borderRadius: layout.card.radius,
+    padding: layout.card.padding,
+    borderWidth: layout.card.borderWidth,
     borderColor: colors.border,
+    ...shadowSubtle,
   },
 
   title: { fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },
