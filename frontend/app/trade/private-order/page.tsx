@@ -1470,6 +1470,11 @@ function PrivateOrderPageInner() {
                 <button
                   onClick={addClaim}
                   disabled={claims.length >= MAX_CLAIMS}
+                  title={
+                    claims.length >= MAX_CLAIMS
+                      ? `Up to ${MAX_CLAIMS} recipients per order. The claims Merkle tree has depth 4 (16 leaves); a few slots are reserved for padding + the order-owner change note.`
+                      : "Split this order across multiple recipients"
+                  }
                   className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add {claims.length >= MAX_CLAIMS ? `(max ${MAX_CLAIMS})` : ""}
@@ -1484,12 +1489,14 @@ function PrivateOrderPageInner() {
                       <div className="flex gap-1">
                         <button
                           onClick={() => updateClaim(c.id, "mode", "standard")}
+                          title="Send to a regular Ethereum address. Recipient claims directly from their wallet; the address is visible on-chain."
                           className={`px-2 py-0.5 rounded text-xs font-bold ${
                             c.mode === "standard" ? "bg-surface-container-highest text-on-surface" : "text-on-surface-variant"
                           }`}
                         >Standard</button>
                         <button
                           onClick={() => updateClaim(c.id, "mode", "stealth")}
+                          title="Send to a meta-address (st:eth:…). A one-time stealth address is derived per claim; the recipient's identity isn't linkable on-chain. Your wallet pays gas on their behalf."
                           className={`px-2 py-0.5 rounded text-xs font-bold ${
                             c.mode === "stealth" ? "bg-primary/10 text-primary" : "text-on-surface-variant"
                           }`}
@@ -1735,8 +1742,22 @@ function PrivateOrderPageInner() {
                 ? "Your market order has been settled via DEX on-chain. Claim your tokens on the Private Claim page."
                 : "Your order is in the private order book. When matched, a ZK proof will be generated and settled on-chain without revealing your identity."}
             </p>
+            {submittedOrderType !== "market" && (
+              <div className="bg-surface-container-low/60 border border-outline-variant/10 rounded-lg px-4 py-3 text-xs text-on-surface-variant/75 text-left space-y-1.5">
+                <p className="font-semibold text-on-surface">What happens next</p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Relayer holds your order and watches for a matching counterparty.</li>
+                  <li>When matched, settlement runs on-chain (no extra action from you).</li>
+                  <li>Recipients claim their tokens on the <Link href="/trade/private-claim" className="text-primary hover:underline">Private Claim</Link> page. You can track status under <Link href="/trade/private-history" className="text-primary hover:underline">My Orders</Link>.</li>
+                  <li>Want to cancel before it matches? Open it under My Orders — cancel rotates your escrow to a fresh commitment.</li>
+                </ol>
+              </div>
+            )}
             {process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL && (
-              <div className="bg-primary/5 border border-primary/15 rounded-lg px-4 py-3 text-xs text-on-surface-variant/60 text-left">
+              <div
+                className="bg-primary/5 border border-primary/15 rounded-lg px-4 py-3 text-xs text-on-surface-variant/60 text-left"
+                title="Cross-relayer matching lets a relayer you didn't submit to match your order against a counterparty on their book. Only the hashed order summary is shared — your identity and full order details stay private to your relayer."
+              >
                 <span className="text-primary font-semibold">Shared Orderbook:</span> Your order summary is also published to the shared orderbook, enabling cross-relayer matching with other relayers for better liquidity.
               </div>
             )}
