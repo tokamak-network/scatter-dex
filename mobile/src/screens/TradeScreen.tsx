@@ -1,7 +1,7 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -18,9 +18,12 @@ import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { TokenService } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
 import AddressBookModal from '../components/AddressBookModal';
+import MarketQuoteCard from '../components/MarketQuoteCard';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
+import { computeMarketAmounts } from '../lib/market-amounts';
+import { DEFAULT_SLIPPAGE_BPS } from '../lib/dex-aggregator';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -125,12 +128,65 @@ export default function TradeScreen() {
     ? `${formatAmount(selectedNote.amount)} ${selectedNote.tokenSymbol}`
     : '—';
 
+  // Token decimals for market-quote preview. Fetched lazily per note so
+  // we don't block render on an RPC round-trip; falls back to 18 if
+  // lookup fails — matches what ethers does for tokens without a
+  // `decimals()` function.
+  const [sellDecimals, setSellDecimals] = useState<number>(18);
+  const [buyDecimals, setBuyDecimals] = useState<number>(18);
+  const buyTokenAddress = useMemo(() => ConfigService.getWethAddress() || '', []);
+  const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
+  useEffect(() => {
+    if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
+    let cancelled = false;
+    // Silent fallback to 18 keeps the preview alive during a flaky RPC,
+    // but log so a systematic decimals-mismatch (which would make the
+    // preview's minReceive disagree with the submit path) is visible
+    // in dev.
+    const fetchDecimals = (addr: string) =>
+      TokenService.getDecimals(readProvider, addr).catch((e) => {
+        console.warn(`getDecimals(${addr}) failed — falling back to 18:`, e);
+        return 18;
+      });
+    Promise.all([
+      fetchDecimals(selectedNote.token),
+      fetchDecimals(buyTokenAddress),
+    ]).then(([s, b]) => {
+      if (cancelled) return;
+      setSellDecimals(s);
+      setBuyDecimals(b);
+    });
+    return () => { cancelled = true; };
+  }, [readProvider, selectedNote?.token, buyTokenAddress]);
+
   const buyAmountHuman = (() => {
     const a = parseFloat(amount);
     const p = parseFloat(price.replace(/,/g, ''));
     if (!Number.isFinite(a) || !Number.isFinite(p) || a <= 0 || p <= 0) return 0;
     return a * p;
   })();
+
+  // Memoized so the BigInt props handed to MarketQuoteCard keep the
+  // same identity across renders — otherwise the child's debounced
+  // effect refires on every parent render.
+  const marketQuoteInput = useMemo(() => {
+    const a = parseFloat(amount);
+    const p = parseFloat(price.replace(/,/g, ''));
+    if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
+    try {
+      return computeMarketAmounts({
+        sellAmountHuman: amount,
+        priceHuman: price,
+        sellDecimals,
+        buyDecimals,
+        slippageBps: DEFAULT_SLIPPAGE_BPS,
+      });
+    } catch {
+      // `parseUnits` throws on too-many-decimals during typing — fine
+      // to skip the preview until the user lands on a valid value.
+      return null;
+    }
+  }, [amount, price, sellDecimals, buyDecimals]);
 
   const claimTotal = claimRows.reduce((sum, r) => {
     const n = parseFloat(r.amount);
@@ -308,17 +364,19 @@ export default function TradeScreen() {
           return;
         }
 
-        const [sellDecimals, buyDecimals] = await Promise.all([
+        const [sellDec, buyDec] = await Promise.all([
           TokenService.getDecimals(readProvider, selectedNote.token),
           TokenService.getDecimals(readProvider, buyToken),
         ]);
 
-        const priceClean = price.replace(/,/g, '');
-        const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
-        const priceBn = ethers.parseUnits(priceClean, buyDecimals);
-        const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
-        const buyAmountMin = buyAmountBn * 995n / 1000n; // 0.5% slippage
-        const buyAmountMinHuman = ethers.formatUnits(buyAmountMin, buyDecimals);
+        const { minReceive } = computeMarketAmounts({
+          sellAmountHuman: amount,
+          priceHuman: price,
+          sellDecimals: sellDec,
+          buyDecimals: buyDec,
+          slippageBps: DEFAULT_SLIPPAGE_BPS,
+        });
+        const buyAmountMinHuman = ethers.formatUnits(minReceive, buyDec);
 
         const input: MarketOrderInput = {
           note: selectedNote,
@@ -453,6 +511,24 @@ export default function TradeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {tradeType === 'market' && account && selectedNote && marketQuoteInput && settlementAddress && (
+          <MarketQuoteCard
+            sellAmount={marketQuoteInput.sellAmountBn}
+            minReceive={marketQuoteInput.minReceive}
+            sellToken={selectedNote.token}
+            buyToken={buyTokenAddress}
+            buySymbol={buyTokenSymbol}
+            buyDecimals={buyDecimals}
+            // PrivateSettlement is the actual on-chain recipient of the
+            // swap output (MarketOrderService encodes the same address
+            // into the Uniswap calldata). Passing the user's wallet
+            // address would make the 1inch quote route through a
+            // different `from`, producing a different estimate than
+            // what executes.
+            recipient={settlementAddress}
+          />
+        )}
 
         {/* Claim Builder (limit mode only) */}
         {tradeType === 'limit' && (
