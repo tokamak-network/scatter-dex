@@ -29,7 +29,12 @@ export default function BaseModal({ visible, onClose, title, children, headerRig
           <View style={s.header}>
             <Text style={s.title}>{title}</Text>
             {headerRight ?? (
-              <TouchableOpacity onPress={onClose} hitSlop={8}>
+              <TouchableOpacity
+                onPress={onClose}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Close ${title} dialog`}
+              >
                 <Text style={s.closeIcon}>✕</Text>
               </TouchableOpacity>
             )}

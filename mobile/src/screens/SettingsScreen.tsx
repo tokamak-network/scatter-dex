@@ -20,7 +20,6 @@ import { StealthIdentityService } from '../services/StealthIdentityService';
 import { Share } from 'react-native';
 import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
-import { confirmShareSecret } from '../lib/confirmShareSecret';
 import { friendlyError } from '../lib/error-messages';
 import SecretRevealModal from '../components/SecretRevealModal';
 

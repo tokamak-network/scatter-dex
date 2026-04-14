@@ -16,7 +16,6 @@ import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsSto
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
-import { confirmShareSecret } from '../lib/confirmShareSecret';
 import { friendlyError } from '../lib/error-messages';
 import SecretRevealModal from '../components/SecretRevealModal';
 import { ethers } from 'ethers';
