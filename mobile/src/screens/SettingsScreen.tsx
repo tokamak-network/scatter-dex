@@ -8,7 +8,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors } from '../styles/theme';
+import { colors, layout, shadowSubtle } from '../styles/theme';
+import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { KeySecurityService } from '../services/KeySecurityService';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
@@ -355,14 +356,11 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-          <Text style={s.backIcon}>←</Text>
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Security & Biometrics</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <ScreenHeader
+        title="Security & Biometrics"
+        variant="surface"
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
         {/* Wallet Section */}
@@ -377,13 +375,13 @@ export default function SettingsScreen() {
                   </View>
                   <View>
                     <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
-                    <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                    <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
                       {connectionMode === 'builtin' ? 'Built-in Wallet' : 'WalletConnect'}
                     </Text>
                   </View>
                 </View>
                 <TouchableOpacity
-                  style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#FEF2F2', borderRadius: 8 }}
+                  style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.dangerLight, borderRadius: 8 }}
                   onPress={() => {
                     Alert.alert('Disconnect', 'Are you sure?', [
                       { text: 'Cancel', style: 'cancel' },
@@ -391,7 +389,7 @@ export default function SettingsScreen() {
                     ]);
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#EF4444' }}>Disconnect</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.danger }}>Disconnect</Text>
                 </TouchableOpacity>
               </View>
               {connectionMode === 'builtin' && (
@@ -402,7 +400,7 @@ export default function SettingsScreen() {
                     </View>
                     <View>
                       <Text style={[s.linkLabel, { color: colors.danger }]}>Delete Wallet</Text>
-                      <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                      <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
                         Permanently remove from this device
                       </Text>
                     </View>
@@ -508,13 +506,13 @@ export default function SettingsScreen() {
                 </View>
                 <View>
                   <Text style={s.toggleLabel}>{net.name}</Text>
-                  <Text style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+                  <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
                     Chain ID: {net.chainId}
                   </Text>
                 </View>
               </View>
               {selectedNetworkId === net.id && (
-                <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#F0FDF4', borderRadius: 8 }}>
+                <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
                   <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
                 </View>
               )}
@@ -606,61 +604,58 @@ export default function SettingsScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F9FAFB' },
+  safe: { flex: 1, backgroundColor: colors.bgSecondary },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, gap: 32, paddingTop: 8 },
+  // Settings groups (Wallet/Security/Network/…) get extra breathing
+  // room between group titles — keep `gap: 32` instead of the
+  // standard `sectionGap: 24` used on Trade/Claim/etc.
+  scrollContent: {
+    paddingHorizontal: layout.screenHZ,
+    paddingTop: layout.contentTop,
+    paddingBottom: layout.contentBottom,
+    gap: 32,
+  },
 
-  /* Header */
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 16, backgroundColor: '#FFFFFF' },
-  backBtn: { padding: 8, marginLeft: -8 },
-  backIcon: { fontSize: 24, color: '#4B5563' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700', color: '#111827', marginRight: 32 },
-
-  /* Section Group */
   sectionGroup: { gap: 12 },
-  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#111827', paddingHorizontal: 4 },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text, paddingHorizontal: 4 },
 
-  /* Toggle Row */
-  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, ...shadowSubtle },
   toggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 16, flex: 1 },
-  toggleIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
-  toggleIconText: { fontSize: 18, color: '#3B82F6' },
-  toggleLabel: { fontSize: 14, fontWeight: '700', color: '#111827', lineHeight: 18, maxWidth: 180 },
+  toggleIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  toggleIconText: { fontSize: 18, color: colors.primary },
+  toggleLabel: { fontSize: 14, fontWeight: '700', color: colors.text, lineHeight: 18, maxWidth: 180 },
 
-  /* Switch */
   switch: { width: 48, height: 24, borderRadius: 12, padding: 4, justifyContent: 'center' },
-  switchOn: { backgroundColor: '#3B82F6' },
-  switchOff: { backgroundColor: '#E5E7EB' },
-  switchThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#FFFFFF' },
+  switchOn: { backgroundColor: colors.primary },
+  switchOff: { backgroundColor: colors.borderMedium },
+  switchThumb: { width: 16, height: 16, borderRadius: 8, backgroundColor: colors.card },
   thumbOn: { alignSelf: 'flex-end' },
   thumbOff: { alignSelf: 'flex-start' },
 
-  /* Link Row */
-  linkRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 1 }, shadowRadius: 2, elevation: 1 },
+  linkRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, ...shadowSubtle },
   linkLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   linkIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  linkIconPrimary: { backgroundColor: '#EFF6FF' },
-  linkIconDanger: { backgroundColor: '#FEF2F2' },
+  linkIconPrimary: { backgroundColor: colors.primaryLight },
+  linkIconDanger: { backgroundColor: colors.dangerLight },
   linkIconText: { fontSize: 18 },
-  linkLabel: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  badgeWrap: { marginTop: 2, backgroundColor: '#FEF2F2', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, alignSelf: 'flex-start' },
-  badgeText: { fontSize: 10, fontWeight: '700', color: '#EF4444' },
-  chevron: { fontSize: 24, color: '#D1D5DB', fontWeight: '300' },
+  linkLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
+  badgeWrap: { marginTop: 2, backgroundColor: colors.dangerLight, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, alignSelf: 'flex-start' },
+  badgeText: { fontSize: 10, fontWeight: '700', color: colors.danger },
+  chevron: { fontSize: 24, color: colors.textDim, fontWeight: '300' },
 
-  /* Import Wallet Modal */
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  modalContent: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', gap: 16 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  modalSubtitle: { fontSize: 14, color: '#6B7280' },
-  modalInput: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', padding: 12, fontSize: 14, color: '#111827', minHeight: 80 },
+  modalContent: { backgroundColor: colors.card, borderRadius: 20, padding: 24, width: '100%', gap: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
+  modalSubtitle: { fontSize: 14, color: colors.gray500 },
+  modalInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 14, color: colors.text, minHeight: 80 },
   modalButtons: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },
-  modalBtnCancel: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F3F4F6' },
-  modalBtnCancelText: { fontSize: 14, fontWeight: '700', color: '#6B7280' },
-  modalBtnConfirm: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#2563EB' },
-  modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
-  modeTabs: { flexDirection: 'row', backgroundColor: '#F3F4F6', padding: 4, borderRadius: 10 },
+  modalBtnCancel: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.borderLight },
+  modalBtnCancelText: { fontSize: 14, fontWeight: '700', color: colors.gray500 },
+  modalBtnConfirm: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.primaryDark },
+  modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: colors.card },
+  modeTabs: { flexDirection: 'row', backgroundColor: colors.borderLight, padding: 4, borderRadius: 10 },
   modeTab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  modeTabActive: { backgroundColor: '#FFFFFF' },
-  modeTabText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
-  modeTabTextActive: { color: '#2563EB' },
+  modeTabActive: { backgroundColor: colors.card },
+  modeTabText: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
+  modeTabTextActive: { color: colors.primaryDark },
 });
