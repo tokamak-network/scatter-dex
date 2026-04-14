@@ -202,14 +202,22 @@ async function buildOrderProof(params: BuildOrderParams) {
 }
 
 // Next 16 requires useSearchParams callers to sit inside a Suspense
-// boundary. Wrap the whole page — the inner component depends on
-// `?type=` at render time, and there's no useful pre-suspense fallback
-// beyond the default Loading state Next.js renders.
+// boundary. Wrap the whole page; the inner component depends on `?type=`
+// at render time. Fallback shows a placeholder so the route doesn't
+// flash empty during the suspend window on initial entry.
 export default function PrivateOrderPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<PrivateOrderLoading />}>
       <PrivateOrderPageInner />
     </Suspense>
+  );
+}
+
+function PrivateOrderLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px] text-on-surface-variant/60">
+      <Loader2 className="w-6 h-6 animate-spin" />
+    </div>
   );
 }
 

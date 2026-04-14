@@ -7,8 +7,11 @@ on:
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel only PR runs on rapid pushes — keep main runs intact so the
+  # green-on-tip signal isn't lost mid-flight (matters once deploy gates
+  # consume it).
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -39,17 +42,20 @@ jobs:
           key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**') }}
           restore-keys: forge-${{ runner.os }}-
 
-      - name: forge build
-        run: forge build --skip test
-
       - name: forge fmt --check
+        # Warn-only — many existing files predate fmt standardisation.
         run: forge fmt --check
-        continue-on-error: true  # warn only — many existing files predate fmt standardisation
+        continue-on-error: true
 
       - name: forge test (non-fork)
+        # `forge test` compiles transitively, so a separate `forge build`
+        # step would just double the work. Skipping it.
         run: forge test --no-match-contract Fork -vvv
 
-      - name: forge snapshot (gas diff report)
+      - name: forge snapshot (gas diff)
+        # Doubles the contracts-job wall time and isn't gating anything;
+        # opt-in via the manual workflow_dispatch trigger.
+        if: github.event_name == 'workflow_dispatch'
         run: forge snapshot --no-match-contract Fork
         continue-on-error: true
 
