@@ -184,14 +184,14 @@ export default function HomeScreen() {
               (() => { const now = Date.now(); return activities.slice(0, 5).map((item) => (
                 // Compound key — a single tx can emit multiple event types
                 // (e.g. settle + claim) so `txHash` alone is not unique.
-                <View key={`${item.txHash}-${item.type}-${item.blockNumber}`} style={s.actCard}>
+                <View key={`${item.txHash}-${item.logIndex}`} style={s.actCard}>
                   <View style={s.actLeft}>
                     <View style={s.actIconCircle}>
                       <Text style={s.actIconText}>
                         {ACT_ICONS[item.type] ?? FALLBACK_ACT_ICON}
                       </Text>
                     </View>
-                    <View style={{ flex: 1 }}>
+                    <View style={s.actBody}>
                       <Text style={s.actTitle} numberOfLines={1}>
                         {item.details || item.type.charAt(0).toUpperCase() + item.type.slice(1)}
                       </Text>
@@ -265,6 +265,7 @@ const s = StyleSheet.create({
 
   actCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.border },
   actLeft: { flexDirection: 'row', alignItems: 'center', gap: 16, flex: 1 },
+  actBody: { flex: 1 },
   actIconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.bgSecondary, alignItems: 'center', justifyContent: 'center' },
   actIconText: { fontSize: 20, color: colors.textMuted },
   actTitle: { fontSize: 15, fontWeight: '700', color: colors.text },

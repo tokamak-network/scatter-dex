@@ -42,9 +42,14 @@ export function toBytes32Hex(value: string | bigint): string {
 // measurably slow on older Android devices.
 const ABSOLUTE_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
 
-/** Relative time for activity feeds: "12m ago", "3h ago", "Yesterday", "Jul 18". */
-export function formatRelativeTime(timestampSec: number, now: number = Date.now()): string {
-  const deltaMs = now - timestampSec * 1000;
+/** Relative time for activity feeds: "12m ago", "3h ago", "Yesterday", "Jul 18".
+ *  `timestampSec` is Unix seconds (matches block.timestamp). `nowMs` is
+ *  milliseconds (matches Date.now()) — the unit mismatch is deliberate:
+ *  passing seconds-since-epoch here would make everything look
+ *  "Just now".
+ */
+export function formatRelativeTime(timestampSec: number, nowMs: number = Date.now()): string {
+  const deltaMs = nowMs - timestampSec * 1000;
   if (deltaMs < 0) return 'Just now';
   const mins = Math.floor(deltaMs / 60_000);
   if (mins < 1) return 'Just now';
