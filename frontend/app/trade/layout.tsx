@@ -6,7 +6,7 @@ import { Lock, ShieldCheck, Gift, FileText, Zap } from "lucide-react";
 
 const privateLinks = [
   { href: "/trade/private-escrow", label: "Escrow", icon: Lock, matchType: "path" as const },
-  { href: "/trade/private-order", label: "Private Limit Order", icon: ShieldCheck, matchType: "order-limit" as const },
+  { href: "/trade/private-order", label: "Private Trade", icon: ShieldCheck, matchType: "order-limit" as const },
   { href: "/trade/private-order?type=market", label: "DEX Trade", icon: Zap, matchType: "order-market" as const },
   { href: "/trade/private-claim", label: "Claim", icon: Gift, matchType: "path" as const },
   { href: "/trade/private-history", label: "History", icon: FileText, matchType: "path" as const },
@@ -55,7 +55,7 @@ export default function TradeLayout({ children }: { children: React.ReactNode })
           <h2 className="text-lg font-headline font-semibold text-on-surface">
             zkScatter Trade
           </h2>
-          <p className="text-xs text-on-surface-variant/70">Private Limit · DEX Trade</p>
+          <p className="text-xs text-on-surface-variant/70">Privacy-preserving · DEX Trade</p>
         </div>
 
         <div className="flex flex-col gap-0.5 px-2">

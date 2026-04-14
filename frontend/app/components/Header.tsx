@@ -33,7 +33,7 @@ async function addForkNetworkToWallet(): Promise<void> {
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/identity", label: "Identity Verification" },
-  { href: "/trade", label: "Secret Trade" },
+  { href: "/trade", label: "Trade" },
   { href: "/relayer", label: "Relayer" },
   { href: "/wallets", label: "Address Book" },
   { href: "/faq", label: "FAQ" },

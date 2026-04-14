@@ -1006,7 +1006,7 @@ export default function PrivateOrderPage() {
             ) : (
               <>
                 <Shield className="w-6 h-6 text-primary" />
-                Private Limit Order
+                Privacy-preserving Trade (Limit Order)
               </>
             )}
           </h1>
@@ -1026,7 +1026,7 @@ export default function PrivateOrderPage() {
               }`}
             >
               <BookOpen className="w-4 h-4" />
-              Private Limit
+              Private Trade
             </button>
             <button
               onClick={() => setOrderType("market")}
@@ -1692,7 +1692,7 @@ export default function PrivateOrderPage() {
           <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
             <Check className="w-12 h-12 text-emerald-400 mx-auto" />
             <p className="text-on-surface font-bold text-lg">
-              {submittedOrderType === "market" ? "DEX Trade Executed" : "Private Limit Order Submitted"}
+              {submittedOrderType === "market" ? "DEX Trade Executed" : "Privacy-preserving Trade (Limit Order) Submitted"}
             </p>
             <p className="text-sm text-on-surface-variant/70">
               {submittedOrderType === "market"
