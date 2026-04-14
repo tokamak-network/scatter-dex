@@ -14,6 +14,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const NOTE_INDEX_KEY = 'scatterdex_note_index';
 const NOTE_PREFIX = 'scatterdex_note_';
 
+// Serialize index read-modify-write across all mutating methods so a
+// deposit's `saveNote` can't race a Settings `saveNotesBulk` restore
+// (or even two deposits landing in the same tick). Mirrors the lock
+// pattern in AddressBookService.
+let _indexMutationQueue: Promise<unknown> = Promise.resolve();
+function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = _indexMutationQueue.catch(() => {}).then(task);
+  _indexMutationQueue = run.catch(() => {});
+  return run;
+}
+
 export interface StoredNote {
   id: string;              // commitment hex (unique identifier)
   commitment: string;      // Poseidon hash hex
@@ -67,21 +78,21 @@ export const NoteStorageService = {
       `${NOTE_PREFIX}${note.id}`,
       JSON.stringify(note),
     );
-
-    const ids = await this.getNoteIds();
-    if (!ids.includes(note.id)) {
-      ids.push(note.id);
-      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(ids));
-    }
+    await withIndexLock(async () => {
+      const ids = await this.getNoteIds();
+      if (!ids.includes(note.id)) {
+        ids.push(note.id);
+        await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(ids));
+      }
+    });
   },
 
   /**
    * Bulk save — chunked parallel per-key SecureStore writes, then a single
-   * index update. Collapses the per-note index read-modify-write (which
-   * `saveNote` does on every call) into one; doesn't eliminate the race
-   * between *concurrent* callers (`saveNotesBulk` vs `saveNote` still
-   * race on the index), so this is restore-path ergonomics, not a
-   * general-purpose concurrency primitive.
+   * index update that runs through the shared `withIndexLock` serializer
+   * so it can't race a concurrent `saveNote` / `deleteNote` from elsewhere
+   * in the app (e.g. a deposit landing while a Settings restore is
+   * in flight).
    *
    * Concurrency is capped at 32 to avoid pinning the JS bridge / saturating
    * the iOS Keychain queue when a user restores a large (thousand-note)
@@ -111,16 +122,18 @@ export const NoteStorageService = {
     }
     const successIds = results.filter((r) => r.ok).map((r) => r.id);
     if (successIds.length > 0) {
-      const existing = await this.getNoteIds();
-      const existingSet = new Set(existing);
-      const merged = existing.slice();
-      for (const id of successIds) {
-        if (!existingSet.has(id)) {
-          merged.push(id);
-          existingSet.add(id);
+      await withIndexLock(async () => {
+        const existing = await this.getNoteIds();
+        const existingSet = new Set(existing);
+        const merged = existing.slice();
+        for (const id of successIds) {
+          if (!existingSet.has(id)) {
+            merged.push(id);
+            existingSet.add(id);
+          }
         }
-      }
-      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(merged));
+        await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(merged));
+      });
     }
     return results;
   },
@@ -137,9 +150,11 @@ export const NoteStorageService = {
 
   async deleteNote(id: string): Promise<void> {
     await SecureStore.deleteItemAsync(`${NOTE_PREFIX}${id}`);
-    const ids = await this.getNoteIds();
-    const updated = ids.filter((i) => i !== id);
-    await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(updated));
+    await withIndexLock(async () => {
+      const ids = await this.getNoteIds();
+      const updated = ids.filter((i) => i !== id);
+      await AsyncStorage.setItem(NOTE_INDEX_KEY, JSON.stringify(updated));
+    });
   },
 
   async getActiveNotes(): Promise<StoredNote[]> {

@@ -115,8 +115,12 @@ export const BackupService = {
     // filtered batch to `saveNotesBulk` — parallel per-key writes with a
     // single index update at the end. The sequential `saveNote` loop this
     // replaces also raced on the index read-modify-write.
-    const existingNotes = await NoteStorageService.getAllNotes();
-    const seenNoteIds = new Set(existingNotes.map((n) => n.id));
+    //
+    // Use `getNoteIds` (AsyncStorage one-shot) instead of `getAllNotes` —
+    // we only need the ids for the dedup check, and `getAllNotes` would
+    // otherwise pay for N parallel SecureStore reads to hydrate full note
+    // bodies we immediately discard.
+    const seenNoteIds = new Set(await NoteStorageService.getNoteIds());
     const notesToSave: StoredNote[] = [];
     for (const note of bundle.notes) {
       if (seenNoteIds.has(note.id)) {
