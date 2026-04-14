@@ -27,14 +27,16 @@ Contracts (anvil :8545)
 
 ## 1. Quick Start
 
-> **최초 1회 — ZK 회로 아티팩트 빌드 필요**
-> `dev.sh`와 `make up`은 회로를 빌드하지 않습니다. 레포에는 `authorize.*` / `cancel.*` 만 커밋되어 있고, 나머지 4종(`deposit`, `withdraw`, `settle`, `claim`)은 아래 명령으로 직접 생성해야 프라이빗 트레이딩 플로우가 동작합니다:
+> **ZK 회로 아티팩트는 git 에 없습니다 (자동 재빌드)**
+> 생성된 zkey / wasm / `*Verifier.sol` 6종은 모두 gitignore 입니다. 각 phase-2 setup 이 새로운 random beacon 을 쓰기 때문에 커밋해두면 on-chain Verifier 와 로컬 zkey 가 어긋나서 `InvalidProof()` 가 납니다. `./scripts/dev.sh` / `./scripts/dev-fork.sh` 가 contract 배포 직전에 `npm run build` 를 자동 실행합니다 (최초 실행은 PTAU 생성으로 수 분 소요, 이후는 phase-2 만 ~30초+).
+>
+> 최초 1회 circom 툴체인 설치만 수동:
 >
 > ```bash
-> cd circuits && npm install && npm run build
+> cd circuits && npm install
 > ```
 >
-> 빌드하지 않으면 브라우저 콘솔에 `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` 가 발생합니다 (Next.js 404 HTML이 WASM 로더로 들어간 경우). 자세한 설명은 [docs/operations/local-setup.md](../operations/local-setup.md#prerequisite-build-zk-circuit-artifacts) 참고.
+> 변경 없이 빠르게 재시작하려면 `SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock`. 자세한 설명은 [docs/operations/local-setup.md](../operations/local-setup.md#prerequisite-zk-circuit-artifacts) 참고.
 
 ```bash
 ./scripts/dev.sh --mock

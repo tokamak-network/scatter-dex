@@ -35,3 +35,14 @@ export function getTokenList(): TokenInfo[] {
 
   return tokens;
 }
+
+/** Map of on-chain address (lowercase) → non-native TokenInfo.
+ *  Pair resolution (orderbook rows, history, claim) almost always wants
+ *  the ERC20 entry, not the ETH alias, so native tokens are skipped. */
+export function getTokenMap(): Record<string, TokenInfo> {
+  const map: Record<string, TokenInfo> = {};
+  for (const t of getTokenList()) {
+    if (!t.isNative) map[t.address.toLowerCase()] = t;
+  }
+  return map;
+}

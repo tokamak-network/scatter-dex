@@ -1,6 +1,7 @@
 import type { PrivateOrderbook } from "./orderbook.js";
 import type { RemoteOrderStore } from "./remote-orderbook.js";
 import type { PrivateMatcher } from "./matcher.js";
+import { isSettleFeeCovered } from "./matcher.js";
 import type { PrivateSubmitter } from "./private-submitter.js";
 import type { SharedOrderbookClient } from "./shared-orderbook-client.js";
 import {
@@ -69,6 +70,7 @@ export class CrossRelayerMatchService {
 
     const remoteSellAmount = BigInt(summary.sellAmount);
     const remoteBuyAmount = BigInt(summary.buyAmount);
+    const remoteMaxFee = BigInt(summary.maxFee);
 
     for (const local of localCandidates) {
       if (local.status !== "pending") continue;
@@ -87,9 +89,10 @@ export class CrossRelayerMatchService {
         local.order.buyAmount * remoteBuyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility
-      if (remoteSellAmount < local.order.buyAmount) continue;
-      if (local.order.sellAmount < remoteBuyAmount) continue;
+      // Amount compatibility — each side's own maxFee caps its own fee
+      // (see PrivateMatcher.isSettleFeeCovered, fee-semantics redesign).
+      if (!isSettleFeeCovered(remoteSellAmount, local.order.maxFee, local.order.buyAmount)) continue;
+      if (!isSettleFeeCovered(local.order.sellAmount, remoteMaxFee, remoteBuyAmount)) continue;
 
       // Match found! Local is taker, remote is maker.
       console.log(`[cross-relayer] Reactive match: local ${orderKey} ↔ remote ${summary.id}`);
@@ -298,7 +301,13 @@ export class CrossRelayerMatchService {
     if (!priceOk) {
       return { status: "rejected", reason: "price incompatible" };
     }
-    if (takerOrder.sellAmount < maker.buyAmount || maker.sellAmount < takerOrder.buyAmount) {
+    // Fee-aware amount check — mirrors the settle-circuit 8c cap
+    // (totalLocked + feeToken <= counterpartySell) combined with each
+    // side's own signed maxFee upper bound (fee-semantics redesign).
+    if (
+      !isSettleFeeCovered(takerOrder.sellAmount, maker.maxFee, maker.buyAmount) ||
+      !isSettleFeeCovered(maker.sellAmount, takerOrder.maxFee, takerOrder.buyAmount)
+    ) {
       return { status: "rejected", reason: "amount insufficient" };
     }
 

@@ -20,6 +20,7 @@ import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
+import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -101,7 +102,17 @@ export class PrivateSubmitter {
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
-    const events = await this.pool.queryFilter(filter, 0, "latest");
+    // On forked chains, querying from block 0 crosses pre-fork history and
+    // trips upstream RPC block-range limits (e.g. drpc free tier rejects
+    // >10k block ranges). INDEX_FROM_BLOCK lets operators skip the unused
+    // pre-deployment range. Defaults to 0 for fresh chains (anvil mock).
+    const raw = process.env.INDEX_FROM_BLOCK;
+    const parsed = raw !== undefined ? Number(raw) : 0;
+    const fromBlock = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+    if (raw !== undefined && fromBlock !== parsed) {
+      console.warn(`INDEX_FROM_BLOCK=${raw} is not a non-negative integer; falling back to 0`);
+    }
+    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
     this.commitmentLeaves = [];
 
     for (const event of events) {
@@ -222,13 +233,13 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Per-token fees (absolute amounts from bps)
-    const makerFeeBps = BigInt(config.relayerFee);
-    const takerFeeBps = BigInt(config.relayerFee);
-    // feeTokenMaker = fee in tokenMaker (from taker's sell)
-    const feeTokenMaker = (taker.sellAmount * takerFeeBps) / 10000n;
-    // feeTokenTaker = fee in tokenTaker (from maker's sell)
-    const feeTokenTaker = (maker.sellAmount * makerFeeBps) / 10000n;
+    const relayerFeeBps = BigInt(config.relayerFee);
+    // Each side's effective bps is also passed to the circuit as `makerFee`
+    // / `takerFee` (line 293 below) — keep the intermediate values.
+    const makerFeeBps = relayerFeeBps < maker.maxFee ? relayerFeeBps : maker.maxFee;
+    const takerFeeBps = relayerFeeBps < taker.maxFee ? relayerFeeBps : taker.maxFee;
+    const feeTokenMaker = computeSideFee(maker.buyAmount, maker.maxFee, relayerFeeBps);
+    const feeTokenTaker = computeSideFee(taker.buyAmount, taker.maxFee, relayerFeeBps);
 
     // Use latest block timestamp to stay within on-chain tolerance window
     const latestBlock = await this.provider.getBlock("latest");
@@ -449,7 +460,7 @@ export class PrivateSubmitter {
 
     const totalLocked = order.claims.reduce((sum, c) => sum + c.amount, 0n);
     const feeBps = BigInt(config.relayerFee);
-    const fee = (order.sellAmount * feeBps) / 10000n;
+    const fee = (order.sellAmount * feeBps) / FEE_BPS_DENOMINATOR;
     const withdrawAmount = totalLocked + fee;
 
     // Token address

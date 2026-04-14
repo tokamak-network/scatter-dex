@@ -183,6 +183,9 @@ function serializeInput(input: AuthorizeProofInput): Record<string, unknown> {
     result.merkleProof_pathElements = input.merkleProof.pathElements.map((e) => e.toString());
     result.merkleProof_pathIndices = input.merkleProof.pathIndices;
   }
+  if (input.newSalt !== undefined) {
+    result.newSalt = input.newSalt.toString();
+  }
   return result;
 }
 

@@ -26,6 +26,18 @@ circuits/node_modules/
 # ZK artifacts in frontend (copied by circuit build)
 frontend/public/zk/
 
+# Generated Groth16 verifier contracts. Each phase-2 setup uses a fresh
+# random beacon, so the embedded vkey constants change per build. Committing
+# them would let the tracked copy disagree with the locally-built zkey →
+# InvalidProof() at runtime. Hand-written verifiers (interfaces,
+# BatchAuthorizeVerifier) stay tracked.
+contracts/src/zk/AuthorizeVerifier.sol
+contracts/src/zk/CancelVerifier.sol
+contracts/src/zk/ClaimVerifier.sol
+contracts/src/zk/DepositVerifier.sol
+contracts/src/zk/SettleVerifier.sol
+contracts/src/zk/WithdrawVerifier.sol
+
 # Node modules
 node_modules/
 
@@ -41,3 +53,4 @@ relayer/dist/
 orderbook-data/
 relayer-a-data/
 relayer-b-data/
+.claude/

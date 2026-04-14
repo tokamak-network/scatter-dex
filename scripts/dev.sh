@@ -66,7 +66,10 @@ wait_for() {
 # Check if a port is already in use
 check_port() {
   local port="$1" name="$2"
-  if lsof -i :"$port" > /dev/null 2>&1; then
+  # Only fail on an actual LISTEN socket; ignore browser-side CLOSE_WAIT
+  # connections (e.g. MetaMask's lingering localhost:8545 socket) that
+  # aren't actually holding the port.
+  if lsof -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1; then
     echo "ERROR: port $port is already in use ($name). Kill the existing process first."
     exit 1
   fi
@@ -74,6 +77,30 @@ check_port() {
 
 # Create log directory
 mkdir -p "$LOG_DIR"
+
+# Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
+# setup emits different vkey constants, and the only way to guarantee
+# zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
+# regenerate them in one atomic build. The generated Verifier.sol files
+# are gitignored for this reason.
+#
+# Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
+# the last build (saves ~30s+ on the settle phase-2).
+ensure_circuits_built() {
+  if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
+    echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    return
+  fi
+  echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
+  # `if !` instead of post-hoc `$?` check so the failure is caught even
+  # under `set -e` (which would otherwise abort before the diagnostic runs).
+  if ! ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1; then
+    echo "  ERROR: circuit build failed. Tail of $LOG_DIR/circuit-build.log:"
+    tail -30 "$LOG_DIR/circuit-build.log" 2>/dev/null
+    exit 1
+  fi
+  echo "  Circuits built."
+}
 
 echo "=== ScatterDEX Local Dev Environment ==="
 echo ""
@@ -87,8 +114,11 @@ if [ "$MOCK_MODE" = true ]; then
   check_port 3002 "zk-relayer"
   check_port 3000 "frontend"
 
-  echo "[1/4] Starting anvil..."
-  anvil --silent &
+  echo "[1/4] Starting anvil (hardfork=prague for EIP-7702)..."
+  # `--hardfork prague` enables Pectra-era features — notably EIP-7702
+  # batch delegation, which the frontend uses to collapse the deposit
+  # popup chain into one tx when the wallet supports it.
+  anvil --silent --hardfork prague &
   last_pid=$!
   PIDS+=("$last_pid")
   if ! wait_for "$RPC_URL" "anvil" 10; then
@@ -98,6 +128,7 @@ if [ "$MOCK_MODE" = true ]; then
 
   echo ""
   echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
+  ensure_circuits_built
   cd "$ROOT_DIR/contracts"
   # `forge script` can exit non-zero even when the on-chain deployment
   # succeeded — e.g. `Error: IO error: not a terminal` under captured
@@ -123,6 +154,7 @@ if [ "$MOCK_MODE" = true ]; then
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
   FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "^  FeeVault:" | awk '{print $NF}')
+  BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
@@ -191,6 +223,7 @@ else
 
   echo ""
   echo "[2/4] Deploying contracts (real IdentityGate)..."
+  ensure_circuits_built
   cd "$ROOT_DIR/contracts"
 
   # See MOCK branch: suppress `set -e` only for known-benign forge exits.
@@ -270,6 +303,14 @@ echo "[4/4] Starting frontend..."
 TOKENS=""
 [ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
+# Preserve user-provided secrets (non-deployment env vars) across regeneration.
+# The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
+# like ONEINCH_API_KEY belong to the developer, not the deployment.
+PRESERVED_ENV=""
+if [ -f "$ROOT_DIR/frontend/.env.local" ]; then
+  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$ROOT_DIR/frontend/.env.local" || true)
+fi
+
 cat > "$ROOT_DIR/frontend/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
@@ -280,8 +321,14 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
+NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 EOF
+
+if [ -n "$PRESERVED_ENV" ]; then
+  echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
+fi
 
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &

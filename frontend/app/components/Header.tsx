@@ -2,15 +2,38 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { useWallet } from "../lib/wallet";
 import { RPC_URL, EXPECTED_CHAIN_ID, getChainName } from "../lib/config";
 import { shortenAddress } from "../lib/utils";
 
+// Fork-mode flag — dev-fork.sh writes this into .env.local to unlock the
+// "Add Fork Network" button. Production builds never see it.
+const IS_FORK_MODE = process.env.NEXT_PUBLIC_FORK_MODE === "true";
+
+async function addForkNetworkToWallet(): Promise<void> {
+  const eth = (window as unknown as { ethereum?: { request: (a: unknown) => Promise<unknown> } }).ethereum;
+  if (!eth) { alert("No wallet detected."); return; }
+  try {
+    await eth.request({
+      method: "wallet_addEthereumChain",
+      params: [{
+        chainId: "0x" + EXPECTED_CHAIN_ID.toString(16),
+        chainName: `zkScatter Fork (${EXPECTED_CHAIN_ID})`,
+        rpcUrls: [RPC_URL],
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      }],
+    });
+  } catch (e) {
+    console.error("addForkNetwork failed", e);
+    alert((e as Error).message ?? "Failed to add network");
+  }
+}
+
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/identity", label: "Identity Verification" },
-  { href: "/trade", label: "Secret Trade" },
+  { href: "/trade", label: "Trade" },
   { href: "/relayer", label: "Relayer" },
   { href: "/wallets", label: "Address Book" },
   { href: "/faq", label: "FAQ" },
@@ -76,6 +99,16 @@ export default function Header() {
 
           {/* Right: Wallet */}
           <div className="flex items-center gap-3">
+            {IS_FORK_MODE && (
+              <button
+                onClick={addForkNetworkToWallet}
+                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-tertiary/10 border border-tertiary/30 text-tertiary hover:bg-tertiary/20 transition-colors"
+                title="Add the local fork network to MetaMask"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Fork Network
+              </button>
+            )}
             {account && chainId !== null && (
               <div
                 className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono ${

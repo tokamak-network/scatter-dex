@@ -13,6 +13,7 @@ import { ethers } from "ethers";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
+import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import type { PrivateOrderDB } from "./db.js";
 import type {
   AuthorizeOrderFile,
@@ -66,8 +67,6 @@ const CANCEL_PRIVATE_ABI = [
 const PRIVATE_CANCEL_EVENT_ABI = [
   `event PrivateCancel(bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer)`,
 ];
-
-const FEE_BPS_DENOMINATOR = 10_000n;
 
 /** Callback invoked when a PrivateCancel event is detected on-chain. */
 export type CancelEventCallback = (
@@ -159,9 +158,8 @@ export class AuthorizeSubmitter {
     const makerPs = match.maker.order.publicSignals;
     const takerPs = match.taker.order.publicSignals;
 
-    // Compute relayer-chosen fees (capped by each side's maxFee)
-    const feeTokenMaker = this.computeFee(takerPs.sellAmount, takerPs.maxFee, feeBps);
-    const feeTokenTaker = this.computeFee(makerPs.sellAmount, makerPs.maxFee, feeBps);
+    const feeTokenMaker = computeSideFee(makerPs.buyAmount, makerPs.maxFee, feeBps);
+    const feeTokenTaker = computeSideFee(takerPs.buyAmount, takerPs.maxFee, feeBps);
 
     const params = {
       maker: this.buildAuthProofStruct(match.maker.order),
@@ -196,6 +194,15 @@ export class AuthorizeSubmitter {
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
+      // Same fix as scatterDirectAuth: record both maker and taker
+      // claimsRoots so the gasless `/api/private-claim/...` route
+      // accepts claims against this relayer's settlement. Reuses the
+      // already-formatted bytes32 strings from `params` (built above
+      // via buildAuthProofStruct) — avoids redundant BigInt parsing.
+      // Best-effort: a DB write failure here must not reject the
+      // promise after the on-chain tx already succeeded.
+      this.persistSettledClaimsRoot(params.maker.claimsRoot, "settleAuth maker", txHash);
+      this.persistSettledClaimsRoot(params.taker.claimsRoot, "settleAuth taker", txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
       return txHash;
     });
@@ -210,7 +217,13 @@ export class AuthorizeSubmitter {
     feeBps: bigint = 0n,
   ): Promise<string> {
     const ps = order.publicSignals;
-    const fee = this.computeFee(ps.sellAmount, ps.maxFee, feeBps);
+    // Scatter (same-token): on-chain cap is sellAmount × maxFee, not buyAmount
+    // × maxFee, so don't route through computeSideFee which targets the
+    // two-sided settle path.
+    const sellAmount = BigInt(ps.sellAmount);
+    const sideMaxFee = BigInt(ps.maxFee);
+    const effectiveBps = feeBps < sideMaxFee ? feeBps : sideMaxFee;
+    const fee = (sellAmount * effectiveBps) / FEE_BPS_DENOMINATOR;
 
     const params = {
       proof: this.buildAuthProofStruct(order),
@@ -234,6 +247,15 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // Record the claimsRoot so the gasless `/api/private-claim/...`
+      // route knows this relayer settled this batch and is willing to
+      // pay gas to submit individual claims. Without this, every claim
+      // against a scatterDirectAuth-settled batch hits the "claims root
+      // not settled by this relayer" 403 even though the on-chain
+      // settle succeeded. Reuses the already-formatted bytes32 from
+      // `params.proof` and tolerates DB-write failures so a transient
+      // I/O error doesn't reject after a successful tx.
+      this.persistSettledClaimsRoot(params.proof.claimsRoot, "scatterDirectAuth", txHash);
       console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
       return txHash;
     });
@@ -267,19 +289,21 @@ export class AuthorizeSubmitter {
     };
   }
 
+
   /**
-   * Compute the actual fee amount for one side.
-   * fee = floor(counterpartySellAmount * min(feeBps, sideMaxFee) / 10000)
+   * Persist a settled claimsRoot best-effort: log and swallow on
+   * failure so a transient DB error after a successful on-chain
+   * settle never rejects the submitter promise.
    */
-  private computeFee(
-    counterpartySellAmount: string,
-    sideMaxFee: string,
-    relayerFeeBps: bigint,
-  ): bigint {
-    const sell = BigInt(counterpartySellAmount);
-    const maxFee = BigInt(sideMaxFee);
-    const effectiveBps = relayerFeeBps < maxFee ? relayerFeeBps : maxFee;
-    return (sell * effectiveBps) / FEE_BPS_DENOMINATOR;
+  private persistSettledClaimsRoot(claimsRoot: string, label: string, txHash: string): void {
+    try {
+      this.db?.saveSettledClaimsRoot(claimsRoot);
+    } catch (err) {
+      console.warn(
+        `[authorize-submitter] ${label} settled on-chain (tx ${txHash}) but failed to persist claimsRoot ${claimsRoot}:`,
+        err,
+      );
+    }
   }
 
   /** Serialize concurrent settleAuth + claim txs to prevent nonce collision. */

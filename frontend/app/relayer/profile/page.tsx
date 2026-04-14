@@ -149,8 +149,8 @@ function RelayerProfileContent() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStats(data);
-    } catch (e: any) {
-      setStatsError(e?.message || "Failed to load stats");
+    } catch (e: unknown) {
+      setStatsError(e instanceof Error ? e.message : "Failed to load stats");
     } finally {
       clearTimeout(timeout);
       setStatsLoading(false);

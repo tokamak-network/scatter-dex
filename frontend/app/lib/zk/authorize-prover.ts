@@ -36,7 +36,6 @@ import {
 } from "./commitment";
 import { signEdDSA, hashOrder } from "./eddsa";
 import { wipeBytes } from "./secure-wipe";
-import { TAG_COMMITMENT_V2 } from "./tags";
 import { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from "./constants";
 
 const WASM_PATH = "/zk/authorize.wasm";
@@ -114,6 +113,22 @@ export interface AuthorizeProofInput {
    * enforces this constraint per used claim (PR #127 gemini HIGH fix).
    */
   claims: ClaimEntry[];
+
+  /**
+   * Salt for the residual (change) commitment. The circuit hashes it into
+   * `newCommitment = Poseidon(TAG_V2, secret, sellToken, newBalance, newSalt,
+   * pubKeyAx, pubKeyAy)`, so the caller MUST pass the same salt it used to
+   * pre-compute `expectedChangeCommitment` for the note file; otherwise the
+   * on-chain commitment will differ from the stored one, leaving the change
+   * UTXO indexable only by its unknown salt and effectively unspendable.
+   *
+   * Omit when `sellAmount === note.amount` (fully-spent, no change) — the
+   * prover ignores the salt and forces `newCommitment = 0`. When change > 0
+   * and this field is not supplied, the prover will generate its own random
+   * salt as a fallback, but the caller should NOT rely on that (the salt
+   * is then not surfaced back and the change note file will be inconsistent).
+   */
+  newSalt?: bigint;
 }
 
 export interface AuthorizeProofResult {
@@ -204,20 +219,24 @@ export async function generateAuthorizeProof(
   );
 
   // ── 3. Residual commitment (change UTXO) ──
+  // Delegate to `computeCommitment` so both the page's pre-computed
+  // `expectedChangeCommitment` and the circuit's on-chain `newCommitment`
+  // derive from the same helper — drift here is exactly the bug this
+  // PR fixes. Use `??` so a caller-supplied `0n` (valid field element)
+  // is honored; only omitted inputs trigger the random fallback.
   const newBalance = input.note.amount - input.sellAmount;
   let newCommitment = 0n;
   let newSalt = 0n;
   if (newBalance > 0n) {
-    newSalt = randomFieldElement();
-    newCommitment = await poseidonHash([
-      TAG_COMMITMENT_V2,
-      input.note.ownerSecret,
-      input.note.token,
-      newBalance,
-      newSalt,
-      input.note.pubKeyAx,
-      input.note.pubKeyAy,
-    ]);
+    newSalt = input.newSalt ?? randomFieldElement();
+    newCommitment = await computeCommitment({
+      ownerSecret: input.note.ownerSecret,
+      token: input.note.token,
+      amount: newBalance,
+      salt: newSalt,
+      pubKeyAx: input.note.pubKeyAx,
+      pubKeyAy: input.note.pubKeyAy,
+    });
   }
 
   // ── 4. Claims tree ──

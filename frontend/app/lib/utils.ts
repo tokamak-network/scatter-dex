@@ -27,3 +27,14 @@ export function timeAgo(timestamp: number): string {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 86400)}d`;
 }
+
+/** Human time-until for an expiry unix-seconds timestamp. */
+export function formatExpiry(ts: number): string {
+  const delta = ts - Math.floor(Date.now() / 1000);
+  if (delta <= 0) return "expired";
+  const h = Math.floor(delta / 3600);
+  const m = Math.floor((delta % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}

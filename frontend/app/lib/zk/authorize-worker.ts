@@ -14,7 +14,7 @@
  */
 
 // This file runs inside a Web Worker context — `self` is the worker global.
-// eslint-disable-next-line no-restricted-globals
+ 
 const ctx = self as unknown as Worker;
 
 // Pre-warm the prover import while the user fills in the form — saves
@@ -82,6 +82,7 @@ function deserializeInput(raw: Record<string, unknown>): import("./authorize-pro
       amount: BigInt(c.amount as string),
       releaseTime: BigInt(c.releaseTime as string),
     })),
+    newSalt: raw.newSalt !== undefined ? BigInt(raw.newSalt as string) : undefined,
   };
 }
 

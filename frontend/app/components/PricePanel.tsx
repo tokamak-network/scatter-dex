@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { Loader2, Star } from "lucide-react";
+import { Loader2, RefreshCw, Star } from "lucide-react";
 import { useMainnetPrice, getRecommendedPrice, type DexPrice } from "../lib/useDexPrices";
 import { RelayerClient, type OrderbookEntry } from "../lib/relayerApi";
 
@@ -23,6 +23,10 @@ interface PricePanelProps {
   side?: "buy" | "sell";
   /** Called when a price is selected (click or auto-recommend) */
   onSelectPrice?: (price: string) => void;
+  /** When true, skip the "apply recommended price on first load" behavior.
+   *  Used by deep-links (e.g. Shared Orderbook Take) that already pre-fill
+   *  sell/buy amounts and must not be overwritten by the DEX recommendation. */
+  disableAutoApply?: boolean;
 }
 
 export default function PricePanel({
@@ -35,27 +39,23 @@ export default function PricePanel({
   relayerUrl,
   side,
   onSelectPrice,
+  disableAutoApply,
 }: PricePanelProps) {
-  // ── DEX prices (mainnet) ──
-  const dexPrices = useMainnetPrice(sellSymbol, buySymbol, side);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  // Track when prices finish loading
-  useEffect(() => {
-    const anyLoaded = dexPrices.some((d) => !d.loading && (d.netPrice !== null || d.error));
-    if (anyLoaded) setLastUpdated(new Date());
-  }, [dexPrices]);
+  // ── DEX prices (mainnet) — fetch on mount + manual refresh ──
+  const { prices: dexPrices, refresh: refreshDex, lastUpdated } = useMainnetPrice(sellSymbol, buySymbol, side);
+  const dexLoading = dexPrices.some((d) => d.loading);
 
   // Auto-apply recommended price on first load
   const appliedRef = useRef(false);
   useEffect(() => {
+    if (disableAutoApply) return;
     if (appliedRef.current) return;
     const rec = getRecommendedPrice(dexPrices);
     if (rec !== null && onSelectPrice) {
       onSelectPrice(rec.toFixed(4));
       appliedRef.current = true;
     }
-  }, [dexPrices, onSelectPrice]);
+  }, [dexPrices, onSelectPrice, disableAutoApply]);
 
   // Reset auto-apply when pair changes
   useEffect(() => {
@@ -124,15 +124,27 @@ export default function PricePanel({
               Mainnet
             </span>
           </h3>
-          {lastUpdated && (
-            <span className="text-[9px] font-mono text-on-surface-variant/50">
-              {lastUpdated.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {lastUpdated && (
+              <span className="text-[9px] font-mono text-on-surface-variant/50">
+                {lastUpdated.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={refreshDex}
+              disabled={dexLoading}
+              className="text-[10px] flex items-center gap-1 px-2 py-0.5 rounded border border-outline-variant/20 text-on-surface-variant hover:bg-surface-bright/50 disabled:opacity-40 disabled:cursor-default"
+              title="Refresh prices"
+            >
+              <RefreshCw size={10} className={dexLoading ? "animate-spin" : undefined} />
+              Refresh
+            </button>
+          </div>
         </div>
         <p className="text-[9px] text-on-surface-variant/50 mt-0.5">
           {side === "buy" ? "Lowest net price recommended" : "Highest net price recommended"}
-          {" · updates every 30s"}
+          {" · manual refresh"}
         </p>
       </div>
 

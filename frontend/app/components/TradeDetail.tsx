@@ -5,6 +5,7 @@ import { ArrowRight, Clock, Shield, Coins, CheckCircle2 } from "lucide-react";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { toAddressHex } from "../lib/zk/commitment";
 import { useClaimStatuses } from "../lib/zk/useClaimStatuses";
+import MarketOrderFeeBreakdown from "./MarketOrderFeeBreakdown";
 
 export interface TradeOrder {
   sellToken: string;
@@ -15,6 +16,15 @@ export interface TradeOrder {
   expiry: string;
   nonce: string;
   leafIndex: number;
+  /** Present on market-order claim files saved by private-order/page.tsx. */
+  type?: "market" | "limit";
+  /** Slippage in basis points at submission time (market only). */
+  slippageBps?: number;
+  /** Quoter-reported output used to bound the surplus upper limit (market only). */
+  estimatedOutput?: string;
+  /** DEX router used for settleWithDex (market only). */
+  dexRouter?: string;
+  dexSource?: string;
 }
 
 export interface TradeClaim {
@@ -52,6 +62,17 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
   }
 }
 
+/** Format a wei BigInt to `maxFracDigits` decimals without an IEEE-754 round-trip. */
+function formatTokenBigInt(amount: bigint, decimals: number, maxFracDigits: number): string {
+  const full = ethers.formatUnits(amount, decimals);
+  const dot = full.indexOf(".");
+  if (dot < 0) return maxFracDigits > 0 ? `${full}.${"0".repeat(maxFracDigits)}` : full;
+  const intPart = full.slice(0, dot);
+  const fracPart = full.slice(dot + 1);
+  if (fracPart.length >= maxFracDigits) return `${intPart}.${fracPart.slice(0, maxFracDigits)}`;
+  return `${intPart}.${fracPart.padEnd(maxFracDigits, "0")}`;
+}
+
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-500/15 text-amber-400 border-amber-500/20",
   matched: "bg-blue-500/15 text-blue-400 border-blue-500/20",
@@ -65,6 +86,41 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   const sell = resolveToken(trade.order.sellToken, tokens);
   const buy = resolveToken(trade.order.buyToken, tokens);
 
+  // Same-token (scatter) trades are value-preserving: `buyAmount` in the
+  // stored order is the post-fee distributable, so showing Sell → Buy as
+  // "1.0000 → 0.9970" reads like a price drop. For the header display,
+  // surface the gross amount on both sides and let the Fee + Recipients
+  // rows account for where the difference goes.
+  const isSameToken = (() => {
+    try { return BigInt(trade.order.sellToken) === BigInt(trade.order.buyToken); }
+    catch { return trade.order.sellToken.toLowerCase() === trade.order.buyToken.toLowerCase(); }
+  })();
+  const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
+
+  // Fee withheld by the relayer, denominated in the sell token.
+  //   - scatter: exact (sellAmount − buyAmount)
+  //   - cross-token: upper bound (circuit constraint: fee*10000 ≤ sellAmount*maxFee)
+  // Skipped in compact mode since the row doesn't render it.
+  const feeAmountDisplay = compact ? null : (() => {
+    try {
+      const sellAmt = BigInt(trade.order.sellAmount);
+      if (isSameToken) {
+        // Scatter: `buyAmount` is post-fee distributable, so the
+        // residual `sellAmount − buyAmount` is the fee. `change` is
+        // `note.amount − sellAmount` (refund of unspent balance) and
+        // is independent of the fee — do NOT subtract it here.
+        const fee = sellAmt - BigInt(trade.order.buyAmount);
+        if (fee < 0n) return null;
+        return `${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
+      }
+      const fee = (sellAmt * BigInt(trade.order.maxFee)) / 10_000n;
+      return `≤ ${formatTokenBigInt(fee, sell.decimals, 4)} ${sell.symbol}`;
+    } catch (e) {
+      console.warn("TradeDetail: fee amount computation failed", e);
+      return null;
+    }
+  })();
+
   const claimStatuses = useClaimStatuses(compact ? [] : trade.claims);
 
   if (compact) {
@@ -77,7 +133,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
           <span className="text-xs text-on-surface-variant/60">{sell.symbol}</span>
           <ArrowRight className="w-3.5 h-3.5 text-on-surface-variant/30" />
           <span className="font-mono text-sm font-semibold text-tertiary">
-            {parseFloat(ethers.formatUnits(trade.order.buyAmount, buy.decimals)).toFixed(2)}
+            {parseFloat(ethers.formatUnits(isSameToken ? trade.order.sellAmount : trade.order.buyAmount, buy.decimals)).toFixed(2)}
           </span>
           <span className="text-xs text-on-surface-variant/60">{buy.symbol}</span>
         </div>
@@ -108,7 +164,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <ArrowRight className="w-6 h-6 text-on-surface-variant/30" />
         <div className="text-center">
           <div className="text-2xl font-mono font-bold text-tertiary">
-            {parseFloat(ethers.formatUnits(trade.order.buyAmount, buy.decimals)).toFixed(4)}
+            {parseFloat(ethers.formatUnits(headerBuyAmount, buy.decimals)).toFixed(4)}
           </div>
           <div className="text-xs text-on-surface-variant/60 mt-0.5">{buy.symbol}</div>
         </div>
@@ -128,6 +184,9 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Fee</div>
           <div className="text-sm font-mono mt-1">{(trade.order.maxFee / 100).toFixed(2)}%</div>
+          {feeAmountDisplay && (
+            <div className="text-[10px] font-mono text-on-surface-variant/60 mt-0.5">{feeAmountDisplay}</div>
+          )}
         </div>
         <div className="text-center">
           <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Expiry</div>
@@ -138,6 +197,16 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
           <div className="text-sm font-mono mt-1">#{trade.order.leafIndex}</div>
         </div>
       </div>
+
+      {trade.order.type === "market" && (
+        <MarketOrderFeeBreakdown
+          buyToken={{ symbol: buy.symbol, decimals: buy.decimals }}
+          buyAmount={trade.order.buyAmount}
+          estimatedOutput={trade.order.estimatedOutput}
+          slippageBps={trade.order.slippageBps}
+          dexSource={trade.order.dexSource}
+        />
+      )}
 
       {/* Change */}
       {trade.change && (

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Trash2, FolderOpen, Coins } from "lucide-react";
+import { Lock, Loader2, AlertCircle, Download, ShieldCheck, FolderOpen, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
@@ -30,30 +30,86 @@ import {
   deleteNote,
   loadConfigFromFolder,
   saveConfigToFolder,
+  loadEdDSAKeyFromFolder,
+  saveEdDSAKeyToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
 import { generateDepositProof } from "../../lib/zk/deposit-prover";
-import { deriveEdDSAKey } from "../../lib/zk/eddsa";
+import {
+  deriveEdDSAKey,
+  DERIVE_MESSAGE,
+  isEncryptedKeyPair,
+  serializeKeyPairEncrypted,
+  deserializeKeyPairEncrypted,
+  type EdDSAKeyPair,
+} from "../../lib/zk/eddsa";
+import {
+  fetchCapabilities,
+  supportsAtomicBatch,
+  sendCalls,
+  waitForCallsReceipt,
+  Eip5792Unsupported,
+  type SendCallsCall,
+} from "../../lib/eip5792";
 import { friendlyError } from "../../lib/error-messages";
 
 
-type TxState = "idle" | "approving" | "depositing" | "success" | "error";
+type TxState = "idle" | "deriving_key" | "approving" | "depositing" | "success" | "error";
 
 export default function PrivateEscrowPage() {
-  const { account, signer, connect } = useWallet();
+  const { account, signer, chainId, connect } = useWallet();
   const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
   const [orderFiles, setOrderFiles] = useState<Array<{ order?: { leafIndex: number; sellAmount: string; buyAmount: string; sellToken: string; buyToken: string; maxFee: number }; claims: Array<{ secret?: string; recipient: string; token?: string; amount: string; releaseTime: string; leafIndex?: number }>; createdAt: string }>>([]);
   const [folderReady, setFolderReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<TradeData | null>(null);
   const [depositTokenIdx, setDepositTokenIdx] = useState(0);
   const [depositAmount, setDepositAmount] = useState("");
   const [txState, setTxState] = useState<TxState>("idle");
   const [txError, setTxError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+
+  // EdDSA trading key cached for the session, scoped by account. First
+  // deposit either unlocks the stored key (1 signMessage popup) or
+  // derives+saves a new one (1 signMessage popup + folder write);
+  // subsequent deposits in the same session reuse this state and skip
+  // the popup entirely. Keeping the account alongside the key prevents
+  // a wallet switch mid-session from silently binding new deposits to
+  // the previous account's pubkey.
+  const [cachedKey, setCachedKey] = useState<{ account: string; keyPair: EdDSAKeyPair } | null>(null);
+  const keyPair = cachedKey && account && cachedKey.account.toLowerCase() === account.toLowerCase()
+    ? cachedKey.keyPair
+    : null;
+  useEffect(() => {
+    // Drop stale cache when the connected account changes (covers wallet
+    // switches and disconnects). The in-memory keyPair would otherwise
+    // still satisfy the "is cached" check inside handleDeposit.
+    if (cachedKey && account && cachedKey.account.toLowerCase() !== account.toLowerCase()) {
+      setCachedKey(null);
+    }
+  }, [account, cachedKey]);
+
+  // EIP-5792 capabilities are stable per (wallet, account, chain); caching
+  // at the page level keeps the deposit-click hot path free of the extra
+  // `wallet_getCapabilities` RPC.
+  const [canAtomicBatch, setCanAtomicBatch] = useState(false);
+  useEffect(() => {
+    setCanAtomicBatch(false);
+    if (!signer?.provider || !account || chainId == null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const caps = await fetchCapabilities(signer.provider as ethers.BrowserProvider, account);
+        if (!cancelled) setCanAtomicBatch(supportsAtomicBatch(caps, chainId));
+      } catch {
+        /* wallets that throw on the capability probe stay on sequential */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account, chainId, signer]);
 
   const poolAddress = process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS || "";
   const selectedToken = tokens[depositTokenIdx] as TokenInfo | undefined;
@@ -95,7 +151,7 @@ export default function PrivateEscrowPage() {
           .map(async (o) => {
             const leafIdx = o.order!.leafIndex;
             const results = await Promise.all(
-              o.claims.map(async (c: any) => {
+              o.claims.map(async (c: { secret?: string | bigint; leafIndex?: number }) => {
                 if (c.secret == null || c.leafIndex == null) return true;
                 // [M4] Use the centralised computeClaimNullifier helper so the
                 //      tag definition cannot drift from circuits/zk-prover.
@@ -122,19 +178,32 @@ export default function PrivateEscrowPage() {
           // Query per change note using indexed commitment filter (efficient).
           // Compute fromBlock once to avoid repeated localStorage reads.
           const fromBlock = getEarliestBlock();
-          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
-            try {
-              const commitBigInt = BigInt(cn.commitment);
-              const logs = await poolContract.queryFilter(
-                poolContract.filters.CommitmentInserted(commitBigInt),
-                fromBlock,
-              );
-              if (logs.length > 0) {
-                // Use latest log in case of duplicate commitments
-                const e = logs[logs.length - 1] as ethers.EventLog;
-                return { cn, leafIdx: Number(e.args.leafIndex) };
+          // Resolve leafIndex for each pending change note. Retry on
+          // transient RPC errors (e.g. drpc's 500 "Temporary internal error")
+          // so a single blip doesn't leave the note stuck at leafIndex=-1 —
+          // those notes aren't selectable in the trade form.
+          const queryWithRetry = async (commitBigInt: bigint, maxAttempts = 3): Promise<ethers.EventLog[] | null> => {
+            for (let i = 0; i < maxAttempts; i++) {
+              try {
+                const logs = await poolContract.queryFilter(
+                  poolContract.filters.CommitmentInserted(commitBigInt),
+                  fromBlock,
+                );
+                return logs as ethers.EventLog[];
+              } catch (e) {
+                if (i === maxAttempts - 1) { console.warn("Failed to resolve change note after retries:", e); return null; }
+                await new Promise((r) => setTimeout(r, 400 * (i + 1)));
               }
-            } catch (e) { console.warn("Failed to resolve change note:", e); }
+            }
+            return null;
+          };
+          const resolved = await Promise.all(changeNotesList.map(async (cn) => {
+            const commitBigInt = BigInt(cn.commitment);
+            const logs = await queryWithRetry(commitBigInt);
+            if (logs && logs.length > 0) {
+              const e = logs[logs.length - 1];
+              return { cn, leafIdx: Number(e.args.leafIndex) };
+            }
             return null;
           }));
 
@@ -223,63 +292,167 @@ export default function PrivateEscrowPage() {
 
       // [issue #128] Derive the user's deterministic BabyJub signing
       // keypair before generating the note — the commitment preimage
-      // now binds the pubkey so every deposit must be paired with a
-      // well-known key the user can re-derive from the same MetaMask
-      // signature. The downstream setTxState("approving") inside the
-      // native/ERC20 branches covers the actual approval step; the
-      // MetaMask sign-message popup for EdDSA derivation runs first.
-      const { keyPair } = await deriveEdDSAKey(signer);
+      // binds the pubkey so every deposit must be paired with a known
+      // key the user can re-derive from the same MetaMask signature.
+      //
+      // Session caching: once unlocked (or freshly generated) the key
+      // is kept in React state, so only the first deposit of a session
+      // incurs the sign-message popup. Private-order uses the same
+      // folder-backed pattern.
+      let kp = keyPair;
+      if (!kp) {
+        // Mark the handler busy before the first await — the button's
+        // `disabled={isBusy}` check (which now includes "deriving_key")
+        // prevents a double-click from launching a second signMessage
+        // prompt while this one is awaiting the wallet.
+        setTxState("deriving_key");
+        const saved = await loadEdDSAKeyFromFolder(account);
+        if (saved && isEncryptedKeyPair(saved)) {
+          const signature = await signer.signMessage(DERIVE_MESSAGE);
+          kp = await deserializeKeyPairEncrypted(saved, signature, account);
+        } else {
+          const { keyPair: derived, signature } = await deriveEdDSAKey(signer);
+          kp = derived;
+          try {
+            const encrypted = await serializeKeyPairEncrypted(kp, signature, account);
+            await saveEdDSAKeyToFolder(encrypted, account);
+          } catch (e) {
+            // Non-fatal: the in-memory key still lets the current
+            // session proceed; next session will re-derive.
+            console.warn("[private-escrow] failed to persist EdDSA key to folder:", e);
+          }
+        }
+        // Cache with the owning account so a wallet switch invalidates
+        // the cached key instead of reusing it for the new account.
+        setCachedKey({ account, keyPair: kp });
+      }
 
       // For native ETH: commitment uses the WETH address (same underlying token)
       const commitTokenAddr = selectedToken.address;
-      const note = generateNote(commitTokenAddr, parsed, keyPair.publicKey);
+      const note = generateNote(commitTokenAddr, parsed, kp.publicKey);
       // commitment is derived inside generateDepositProof so it cannot
       // drift from the note's preimage; we still compute it once here for
       // event parsing / note storage below.
       const commitment = await computeCommitment(note);
 
-      if (selectedToken.isNative) {
-        // ETH: wrap to WETH first, then approve + deposit
-        setTxState("approving");
-        const wethContract = new ethers.Contract(
-          selectedToken.address,
-          ["function deposit() external payable", ...ERC20_ABI],
-          signer
-        );
-        const wrapTx = await wethContract.deposit({ value: parsed });
-        await wrapTx.wait();
-
-        const allowance: bigint = await wethContract.allowance(account, poolAddress);
-        if (allowance < parsed) {
-          const approveTx = await wethContract.approve(poolAddress, ethers.MaxUint256);
-          await approveTx.wait();
-        }
-      } else {
-        // ERC20: just approve
-        setTxState("approving");
-        const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
-        const allowance: bigint = await erc20.allowance(account, poolAddress);
-        if (allowance < parsed) {
-          const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
-          await approveTx.wait();
-        }
-      }
-
-      // Deposit — generate the binding proof first, then submit on-chain.
-      // generateDepositProof derives the commitment from the note itself,
-      // so we cannot accidentally pair a stale commitment with the proof.
+      // Build the deposit proof up-front. It depends only on the note's
+      // own secrets (no on-chain state), so generating it now lets us
+      // bundle `deposit` into an EIP-7702 batch alongside wrap/approve.
+      // Falls back-to-back compatible: the legacy sequential path below
+      // reuses the same proof rather than regenerating it.
       setTxState("depositing");
       const depositProof = await generateDepositProof(note);
+
       const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, signer);
-      const tx = await pool.deposit(
+      const depositCallData = pool.interface.encodeFunctionData("deposit", [
         depositProof.proof.a,
         depositProof.proof.b,
         depositProof.proof.c,
         depositProof.commitment,
         commitTokenAddr,
         parsed,
-      );
-      const receipt = await tx.wait();
+      ]);
+
+      const wethIface = new ethers.Interface(["function deposit() external payable"]);
+      const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
+      const allowance: bigint = await erc20.allowance(account, poolAddress);
+      const needsApprove = allowance < parsed;
+
+      // Atomic batch via EIP-5792; falls back to sequential below.
+      let receipt: ethers.TransactionReceipt | null = null;
+      const provider = signer.provider;
+
+      if (provider && canAtomicBatch && chainId != null) {
+        const calls: SendCallsCall[] = [];
+        if (selectedToken.isNative) {
+          calls.push({
+            to: selectedToken.address,
+            value: ethers.toQuantity(parsed),
+            data: wethIface.encodeFunctionData("deposit", []),
+          });
+        }
+        if (needsApprove) {
+          calls.push({
+            to: selectedToken.address,
+            data: erc20.interface.encodeFunctionData("approve", [poolAddress, ethers.MaxUint256]),
+          });
+        }
+        calls.push({ to: poolAddress, data: depositCallData });
+
+        try {
+          const result = await sendCalls(provider as ethers.BrowserProvider, {
+            from: account,
+            chainId,
+            calls,
+          });
+          const status = await waitForCallsReceipt(provider as ethers.BrowserProvider, result.id);
+          // For atomic batches all entries share one transaction hash;
+          // the last receipt carries the full logs, which is what
+          // downstream leafIndex parsing needs. Reverted batches
+          // still come back as `status: "completed"` per 5792 — the
+          // per-tx `receipts[i].status` is `"0x0"` for revert — so
+          // we must check both presence and success before proceeding.
+          const last = status.receipts?.[status.receipts.length - 1];
+          if (!last) {
+            // Batch was accepted by the wallet but the status payload
+            // has no receipts. Proceeding to the sequential path here
+            // would double-submit, so raise instead.
+            throw new Error("Atomic batch completed but wallet returned no receipts");
+          }
+          if (last.status !== "0x1") {
+            throw new Error(`Atomic batch reverted on-chain (tx ${last.transactionHash})`);
+          }
+          receipt = {
+            hash: last.transactionHash,
+            blockNumber: Number(last.blockNumber),
+            logs: last.logs.map((l) => ({
+              address: l.address,
+              data: l.data,
+              topics: l.topics,
+            })),
+          } as unknown as ethers.TransactionReceipt;
+        } catch (err) {
+          if (!(err instanceof Eip5792Unsupported)) throw err;
+          console.info(
+            "[private-escrow] wallet does not support EIP-5792 atomic batch, falling back to sequential txs",
+          );
+        }
+      }
+
+      if (!receipt) {
+        // Legacy sequential path — one MetaMask popup per step.
+        if (selectedToken.isNative) {
+          setTxState("approving");
+          const wethContract = new ethers.Contract(
+            selectedToken.address,
+            ["function deposit() external payable", ...ERC20_ABI],
+            signer,
+          );
+          const wrapTx = await wethContract.deposit({ value: parsed });
+          await wrapTx.wait();
+          if (needsApprove) {
+            const approveTx = await wethContract.approve(poolAddress, ethers.MaxUint256);
+            await approveTx.wait();
+          }
+        } else if (needsApprove) {
+          setTxState("approving");
+          const approveTx = await erc20.approve(poolAddress, ethers.MaxUint256);
+          await approveTx.wait();
+        }
+
+        setTxState("depositing");
+        const tx = await pool.deposit(
+          depositProof.proof.a,
+          depositProof.proof.b,
+          depositProof.proof.c,
+          depositProof.commitment,
+          commitTokenAddr,
+          parsed,
+        );
+        receipt = await tx.wait();
+      }
+
+      if (!receipt) throw new Error("deposit receipt was null");
       setTxHash(receipt.hash);
 
       // Parse leafIndex from event
@@ -318,15 +491,89 @@ export default function PrivateEscrowPage() {
       setTxState("error");
       setTxError(friendlyError(e));
     }
-  }, [signer, account, selectedToken, depositAmount, poolAddress, refreshNotes]);
+  }, [signer, account, chainId, canAtomicBatch, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
 
-  // ─── Delete Note ───────────────────────────────────────────────
-  const handleDeleteNote = useCallback(async (n: StoredNote) => {
-    await deleteNote(n);
-    await refreshNotes();
-  }, [refreshNotes]);
+  // ─── Hide Note (local-only) ────────────────────────────────────
+  // Deletion is intentionally not exposed: a note file is the ONLY
+  // record of the secrets needed to spend or claim a commitment, so
+  // a UX-driven trash button is too dangerous (one wrong click loses
+  // funds). Instead we maintain a per-account "hidden" set in
+  // localStorage that filters notes out of the visible list. The
+  // file on disk is untouched, so unhiding restores the entry and
+  // the user can recover funds at any time.
+  const hiddenStorageKey = account ? `escrow:hiddenNotes:${account.toLowerCase()}` : null;
+  const [hiddenNotes, setHiddenNotes] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(false);
 
-  const isBusy = txState === "approving" || txState === "depositing";
+  useEffect(() => {
+    if (!hiddenStorageKey) { setHiddenNotes(new Set()); return; }
+    try {
+      const raw = window.localStorage.getItem(hiddenStorageKey);
+      // Guard against malformed payloads (manual edits, schema drift,
+      // legacy non-array values) — fall back to an empty set rather
+      // than throwing during render.
+      const parsed = raw ? JSON.parse(raw) : [];
+      setHiddenNotes(Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === "string")) : new Set());
+    } catch {
+      setHiddenNotes(new Set());
+    }
+  }, [hiddenStorageKey]);
+
+  // Functional-update wrapper: derives `next` from the latest state
+  // inside the setter so rapid hide/unhide clicks can't drop updates
+  // via stale closures, and only persists the actually-applied value.
+  const persistHidden = useCallback((update: (prev: Set<string>) => Set<string>) => {
+    setHiddenNotes((prev) => {
+      const next = update(prev);
+      if (hiddenStorageKey) {
+        try {
+          window.localStorage.setItem(hiddenStorageKey, JSON.stringify(Array.from(next)));
+        } catch { /* quota / private mode — keep state in memory */ }
+      }
+      return next;
+    });
+  }, [hiddenStorageKey]);
+
+  const handleHideNote = useCallback((n: StoredNote) => {
+    persistHidden((prev) => {
+      const next = new Set(prev);
+      next.add(n.commitment);
+      return next;
+    });
+  }, [persistHidden]);
+
+  const handleUnhideNote = useCallback((n: StoredNote) => {
+    persistHidden((prev) => {
+      const next = new Set(prev);
+      next.delete(n.commitment);
+      return next;
+    });
+  }, [persistHidden]);
+
+  // Manual refresh: re-read the notes folder + re-run on-chain status
+  // checks. Useful after a claim or settle that happened in another tab
+  // — without this the page only re-indexes when notes/orderFiles
+  // change, which doesn't fire on simple navigation back.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshNotes();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshNotes, isRefreshing]);
+
+  // Count hidden commitments that actually exist in the current
+  // folder, so the "Show hidden (N)" toggle reflects only what the
+  // user can see — not stale entries from past sessions / wallets.
+  const hiddenInFolderCount = useMemo(
+    () => notes.reduce((acc, n) => acc + (hiddenNotes.has(n.commitment) ? 1 : 0), 0),
+    [notes, hiddenNotes],
+  );
+
+  const isBusy = txState === "deriving_key" || txState === "approving" || txState === "depositing";
 
   if (!account) {
     return (
@@ -411,11 +658,34 @@ export default function PrivateEscrowPage() {
               <h3 className="font-headline font-bold text-on-surface">
                 Private Notes ({notes.length})
               </h3>
-              {folderReady && (
-                <span className="text-xs text-emerald-400 flex items-center gap-1">
-                  <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {folderReady && (
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
+                  </span>
+                )}
+                {hiddenInFolderCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowHidden((v) => !v)}
+                    className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors"
+                  >
+                    {showHidden ? `Hide hidden (${hiddenInFolderCount})` : `Show hidden (${hiddenInFolderCount})`}
+                  </button>
+                )}
+                {folderReady && (
+                  <button
+                    type="button"
+                    onClick={handleManualRefresh}
+                    disabled={isRefreshing}
+                    className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Re-read notes folder and re-check on-chain status"
+                  >
+                    {isRefreshing && <Loader2 className="w-3 h-3 animate-spin" />}
+                    Refresh
+                  </button>
+                )}
+              </div>
             </div>
 
             {syncError && (
@@ -438,7 +708,10 @@ export default function PrivateEscrowPage() {
               </div>
             ) : (
               <div className="divide-y divide-outline-variant/10">
-                {notes.filter((n) => n.leafIndex >= 0).map((n, i) => {
+                {notes
+                  .filter((n) => n.leafIndex >= 0)
+                  .filter((n) => showHidden || !hiddenNotes.has(n.commitment))
+                  .map((n) => {
                   // Find pending change notes linked to this note (same ownerSecret, leafIndex === -1)
                   const changeNotes = notes.filter((c) =>
                     c.leafIndex === -1 &&
@@ -456,11 +729,20 @@ export default function PrivateEscrowPage() {
                       ? "bg-on-surface-variant/10 text-on-surface-variant/50"
                       : "bg-blue-500/10 text-blue-400")
                     : "bg-emerald-500/10 text-emerald-400";
+                  // Spent notes that have no pending change are dead — fully
+                  // gray them out (bg + opacity) so they visually recede.
+                  // Spent notes with Trading-state change keep normal colors
+                  // so the user can still interact with the pending payout.
+                  const isDead = isSpent && claimsDone;
                   return (
                   <div key={n.commitment}>
                     <div
-                      onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                      className={`px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-surface-bright/20 transition-colors ${expandedIdx === i ? "bg-surface-bright/10" : ""} ${isSpent && !hasChange ? "opacity-50" : ""}`}
+                      onClick={() => setExpandedKey(expandedKey === n.commitment ? null : n.commitment)}
+                      className={`px-6 py-4 flex items-center justify-between cursor-pointer transition-colors ${expandedKey === n.commitment ? "bg-surface-bright/10" : ""} ${
+                        isDead
+                          ? "opacity-40 grayscale bg-on-surface-variant/5 hover:bg-on-surface-variant/10"
+                          : "hover:bg-surface-bright/20"
+                      }`}
                     >
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isSpent ? "bg-on-surface-variant/10" : "bg-primary/10"}`}>
@@ -486,15 +768,22 @@ export default function PrivateEscrowPage() {
                           {statusLabel}
                         </span>
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteNote(n); }}
-                          className="text-on-surface-variant/30 hover:text-error transition-colors p-1"
-                          title="Remove note file"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            hiddenNotes.has(n.commitment) ? handleUnhideNote(n) : handleHideNote(n);
+                          }}
+                          className="text-xs px-2 py-1 rounded text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-bright/40 transition-colors"
+                          title={
+                            hiddenNotes.has(n.commitment)
+                              ? "Unhide — show this commitment in the list again"
+                              : "Hide — remove from this list (note file stays on disk; funds are not affected)"
+                          }
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {hiddenNotes.has(n.commitment) ? "Unhide" : "Hide"}
                         </button>
                       </div>
                     </div>
-                    {expandedIdx === i && (
+                    {expandedKey === n.commitment && (
                       <div className="px-6 py-4 bg-surface-container/50 border-t border-outline-variant/5 space-y-4">
                         {/* Note details */}
                         <div className="bg-surface-container rounded-lg px-4 py-3">
@@ -594,9 +883,16 @@ export default function PrivateEscrowPage() {
                   );
                 })}
 
-                {/* Change notes from settled trades — shown as independent escrow entries */}
+                {/* Change notes from settled trades — shown as independent escrow entries.
+                    Once the parent escrow is spent AND all its claims are done, the change
+                    commitment is effectively a finalized balance for the user, so we drop
+                    the amber "Change" styling and surface it as a regular commitment entry. */}
                 {notes.filter((cn) => {
                   if (cn.leafIndex !== -1) return false;
+                  // Hide change entries when the user hid them (toggle
+                  // controlled by `showHidden`) — keeps the change list
+                  // consistent with the parent note list above.
+                  if (!showHidden && hiddenNotes.has(cn.commitment)) return false;
                   // Show as independent entry only when parent note is spent
                   return notes.some((parent) =>
                     parent.leafIndex >= 0 &&
@@ -604,26 +900,37 @@ export default function PrivateEscrowPage() {
                     parent.commitment !== cn.commitment &&
                     spentNotes.has(parent.commitment)
                   );
-                }).map((cn) => (
-                  <div key={cn.commitment} className="px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
-                        <Coins className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div>
-                        <div className="font-semibold text-on-surface">
-                          {cn.amount} {cn.tokenSymbol}
+                }).map((cn) => {
+                  const parent = notes.find((p) =>
+                    p.leafIndex >= 0 &&
+                    p.note.ownerSecret === cn.note.ownerSecret &&
+                    p.commitment !== cn.commitment &&
+                    spentNotes.has(p.commitment)
+                  );
+                  const finalized = !!parent && allClaimsDone[parent.leafIndex] === true;
+                  return (
+                    <div key={cn.commitment} className="px-6 py-4 flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${finalized ? "bg-primary/10" : "bg-amber-500/10"}`}>
+                          {finalized
+                            ? <Lock className="w-5 h-5 text-primary" />
+                            : <Coins className="w-5 h-5 text-amber-400" />}
                         </div>
-                        <div className="text-xs text-on-surface-variant/50">
-                          Change &middot; {new Date(cn.createdAt).toLocaleDateString()}
+                        <div>
+                          <div className="font-semibold text-on-surface">
+                            {cn.amount} {cn.tokenSymbol}
+                          </div>
+                          <div className="text-xs text-on-surface-variant/50">
+                            {finalized ? "Commitment" : "Change"} &middot; {new Date(cn.createdAt).toLocaleDateString()}
+                          </div>
                         </div>
                       </div>
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${finalized ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>
+                        {finalized ? "Active" : "Change"}
+                      </span>
                     </div>
-                    <span className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 font-medium">
-                      Change
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -669,6 +976,11 @@ export default function PrivateEscrowPage() {
                 />
               </div>
 
+              {txState === "deriving_key" && (
+                <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Unlocking trading key...
+                </div>
+              )}
               {txState === "approving" && (
                 <div className="flex items-center gap-2 text-xs text-on-surface-variant">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Approving token...

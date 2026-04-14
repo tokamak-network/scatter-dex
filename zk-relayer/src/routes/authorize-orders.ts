@@ -22,6 +22,7 @@ import {
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
+import { config } from "../config.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
 import { isSanctionedById } from "../core/sanctions-list.js";
 
@@ -29,7 +30,7 @@ import { isSanctionedById } from "../core/sanctions-list.js";
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
  * are reloaded from DB so they survive relayer restarts.
  */
-const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
+export const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 /** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
 const pendingCountByPubKey = new Map<string, number>();
 const MAX_AUTHORIZE_ORDERS = 10_000;
@@ -53,7 +54,18 @@ function incPubKeyCount(ax: string, ay: string): void {
   pendingCountByPubKey.set(id, (pendingCountByPubKey.get(id) ?? 0) + 1);
 }
 
-function decPubKeyCount(ax: string, ay: string): void {
+/**
+ * The shared-orderbook id we publish for an authorize order is the bytes32
+ * hex form of its nullifier (decimal-string form lives in `authorizeOrders`).
+ * Deterministic derivation lets cleanup paths cancel the listing without
+ * any side-table — survives relayer restarts and matches the publish-time
+ * `offerHandle` derivation below.
+ */
+export function nullifierToOfferHandle(nullifierDecimal: string): string {
+  return "0x" + BigInt(nullifierDecimal).toString(16).padStart(64, "0");
+}
+
+export function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
   const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
   if (count <= 0) pendingCountByPubKey.delete(id);
@@ -61,7 +73,6 @@ function decPubKeyCount(ax: string, ay: string): void {
 }
 
 let _sharedClient: SharedOrderbookClient | null = null;
-let _orderIdMap: Map<string, string> | null = null;
 
 export function createAuthorizeOrderRoutes(
   submitter: AuthorizeSubmitter,
@@ -70,11 +81,9 @@ export function createAuthorizeOrderRoutes(
   readLimiter?: RequestHandler,
   db?: PrivateOrderDB,
   sharedClient?: SharedOrderbookClient | null,
-  orderIdMap?: Map<string, string>,
   authWriteLimiter?: RequestHandler,
 ): Router {
   _sharedClient = sharedClient ?? null;
-  _orderIdMap = orderIdMap ?? null;
   // [R-6] Persist authorize orders to SQLite
   if (db) {
     _db = db;
@@ -82,6 +91,13 @@ export function createAuthorizeOrderRoutes(
     let restored = 0;
     for (const row of rows) {
       try {
+        // Validate the nullifier shape upfront. Cleanup paths (purge,
+        // drain, post-settle) call `nullifierToOfferHandle(row.nullifier)`
+        // without a try/catch, so a corrupt key in this Map would take
+        // down the whole sweep on the first bad entry.
+        if (typeof row.nullifier !== "string" || !/^[0-9]+$/.test(row.nullifier)) {
+          throw new Error(`invalid nullifier shape: ${JSON.stringify(row.nullifier)}`);
+        }
         authorizeOrders.set(row.nullifier, {
           order: JSON.parse(row.orderJson),
           status: row.status as StoredAuthorizeOrder["status"],
@@ -204,7 +220,11 @@ export function createAuthorizeOrderRoutes(
         console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
         stored.status = "matched";
         try {
-          const txHash = await submitter.submitScatterDirectAuth(order, 0n);
+          // Use the relayer's configured fee so the fee is actually routed
+          // to the FeeVault (capped by the user's signed maxFee inside
+          // `computeFee`). Previously hard-coded to 0n, which meant every
+          // scatter settled with fee=0 and no vault deposit.
+          const txHash = await submitter.submitScatterDirectAuth(order, BigInt(config.relayerFee));
           stored.status = "settled";
           stored.settleTxHash = txHash;
           decPubKeyCount(pubKeyAx, pubKeyAy);
@@ -230,9 +250,9 @@ export function createAuthorizeOrderRoutes(
       // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
       if (_sharedClient) {
         const ps = order.publicSignals;
+        const offerHandle = nullifierToOfferHandle(nullifier);
         const orderbookId = await _sharedClient.postOrder({
-          nonce: nullifier,
-          pubKeyAx: pubKeyAx!,
+          id: offerHandle,
           sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
           buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
           sellAmount: ps.sellAmount,
@@ -241,8 +261,8 @@ export function createAuthorizeOrderRoutes(
           maxFee: Number(ps.maxFee),
           expiry: Number(ps.expiry),
         });
-        if (orderbookId && _orderIdMap) {
-          _orderIdMap.set(nullifier, orderbookId);
+        if (orderbookId) {
+          console.log(`[authorize-orders] Published to shared orderbook: ${orderbookId}`);
         }
       }
 
@@ -255,8 +275,12 @@ export function createAuthorizeOrderRoutes(
           match.maker.status = "matched";
           match.taker.status = "matched";
 
-          // Submit on-chain (fee = 0 for now; configurable in follow-up)
-          const txHash = await submitter.submitAuthSettle(match, 0n);
+          // Use the relayer's configured fee — `computeFee` caps each
+          // side by the respective maker/taker maxFee, so the signed
+          // bound is always respected. Hard-coding 0n here silently
+          // skipped the fee deposit to FeeVault on every cross-token
+          // settlement.
+          const txHash = await submitter.submitAuthSettle(match, BigInt(config.relayerFee));
 
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
@@ -267,14 +291,13 @@ export function createAuthorizeOrderRoutes(
           _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
           _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
 
-          // Cancel both sides from shared orderbook
-          if (_sharedClient && _orderIdMap) {
-            const makerNull = match.maker.order.publicSignals.nullifier;
-            const takerNull = match.taker.order.publicSignals.nullifier;
-            const makerOid = _orderIdMap.get(makerNull);
-            const takerOid = _orderIdMap.get(takerNull);
-            if (makerOid) { void _sharedClient.cancelOrder(makerOid).catch(() => {}); _orderIdMap.delete(makerNull); }
-            if (takerOid) { void _sharedClient.cancelOrder(takerOid).catch(() => {}); _orderIdMap.delete(takerNull); }
+          // Cancel both sides from shared orderbook. Best-effort —
+          // a 404 here is harmless (already cancelled / expired).
+          if (_sharedClient) {
+            const makerOid = nullifierToOfferHandle(match.maker.order.publicSignals.nullifier);
+            const takerOid = nullifierToOfferHandle(match.taker.order.publicSignals.nullifier);
+            void _sharedClient.cancelOrder(makerOid).catch(() => {});
+            void _sharedClient.cancelOrder(takerOid).catch(() => {});
           }
 
           res.json({
@@ -391,9 +414,8 @@ export function drainAuthorizeOrders(): number {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
     }
     _db?.updateAuthorizeOrderStatus(key, "cancelled");
-    if (_sharedClient && _orderIdMap) {
-      const oid = _orderIdMap.get(key);
-      if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+    if (_sharedClient) {
+      void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
     }
     toDelete.push(key);
   }
@@ -439,10 +461,9 @@ export function purgeNonPendingAuthorizeOrders(): number {
       if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
       }
-      // Cancel from shared orderbook if still listed
-      if (_sharedClient && _orderIdMap) {
-        const oid = _orderIdMap.get(key);
-        if (oid) { void _sharedClient.cancelOrder(oid).catch(() => {}); _orderIdMap.delete(key); }
+      // Cancel from shared orderbook if still listed (best-effort).
+      if (_sharedClient) {
+        void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
       }
       authorizeOrders.delete(key);
       removed++;

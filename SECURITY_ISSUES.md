@@ -2,7 +2,7 @@
 
 보안 감사에서 발견된 이슈 목록. 작업 시 **브랜치 명을 기록**하여 동시 작업 충돌 방지.
 
-> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋)
+> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋) | ❌ WON'T DO (결정 사유 기재)
 
 ## TODO — 2026-04-11 전체 스택 보안 감사
 
@@ -244,20 +244,46 @@
 
 | # | 작업 | 상태 | 브랜치 |
 |---|------|------|--------|
-| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | — |
+| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
+| 29 | Dead `private_orders` / full proof(relayer-side proof 생성) 경로 정리 | ⬜ | — |
+
+<details>
+<summary>#29 범위 메모 (2026-04-14)</summary>
+
+S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_orders` 경로로만 들어옴. `private_orders` 쓰기 엔드포인트(`POST /api/private-orders`)는 이미 410 Gone 반환하는 상태. 남아 있는 dead 코드:
+
+- **Relayer**
+  - `zk-relayer/src/core/orderbook.ts` — `PrivateOrderbook` 클래스 (이제 항상 빈 상태, `loadFromDB` 가 항상 0 반환)
+  - `zk-relayer/src/core/private-submitter.ts` — `submitPrivateSettle`, `submitScatterDirect` (PrivateOrder 기반)
+  - `zk-relayer/src/core/matcher.ts` — `PrivateMatcher` 클래스 + `isSettleFeeCovered` (authorize 쪽에선 별도의 `findMatch` 사용 — `routes/authorize-orders.ts:364`)
+  - `zk-relayer/src/core/cross-relayer-matcher.ts` — PrivateMatcher + PrivateOrderbook 기반. **현재 authorize 주문에 대한 크로스-릴레이어 매칭은 동작하지 않음** — 공유 오더북으로 broadcast 만 되고 실제 매칭 로직이 이 dead 경로만 훑기 때문.
+  - `zk-relayer/src/routes/orders.ts` — `GET /api/private-orders/:pubKeyAx` (프런트에서 `private-history/page.tsx:323` 가 호출하지만 응답은 항상 빈 배열)
+  - `zk-relayer/src/types/order.ts` — `PrivateOrder`, `StoredPrivateOrder`, `PrivateMatch`, `CrossRelayerMatch`, `parsePrivateOrder`, `serializePrivateOrder`, `pairKey`
+  - `zk-relayer/src/core/db.ts` — `private_orders` 테이블 스키마 + prepared statements
+  - 테스트: `test/orderbook.test.ts`, `test/matcher.test.ts`, `test/cross-relayer-matcher.test.ts`, `test/scenarios.test.ts`, `test/e2e-private-flow.ts` (+ admin/api-routes 내 일부 assertion)
+
+- **Frontend**
+  - `frontend/app/trade/private-history/page.tsx:323` — `GET /api/private-orders/:pubKeyAx` 호출 지점. authorize 기반 히스토리로 교체 필요.
+
+- **Contract (scope 밖 — 별도 감사 필요)**
+  - `PrivateSettlement.settlePrivate()` — on-chain 함수. 배포된 컨트랙트에서 제거하려면 재배포 필요. 테스트넷 배포 전에 같이 검토.
+
+주의: cross-relayer 매칭을 authorize 주문에 대해서도 동작하게 하려면 **이 dead 코드를 지우기 전에** `routes/authorize-orders.ts`의 `findMatch` 를 원격 오더북까지 훑도록 확장하거나, 별도의 `AuthorizeCrossRelayerMatchService` 를 추가해야 함. 단순 삭제만 하면 크로스-릴레이어 매칭 기능이 명시적으로 0 이 됨 (지금도 사실상 0 이지만 코드상으론 살아있음).
+
+</details>
 
 ### 🟡 UX 개선 (사용자 플로우 체크에서 발견)
 
 | # | 작업 | 상태 | 브랜치 |
 |---|------|------|--------|
 | 14 | 폴더 선택 전역화 (localStorage persist) | ✅ | PR #190 |
-| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | — |
+| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
 | 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
 | 17 | 주문 후 다음 단계 안내 | ⬜ | — |
 | 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
 | 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
-| 20 | Batch Claim | ⬜ | — |
+| 20 | Batch Claim | ✅ | `claimWithProofBatch` (PrivateSettlement.sol:1006, MAX_CLAIM_BATCH_SIZE=20) + `handleClaimBatchViaWallet` UI (private-claim/page.tsx:314) |
 
 ### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
 
@@ -268,13 +294,13 @@
 
 ### 🟢 보강 가능 (UX 점검 결과)
 
-| # | 작업 | 상태 |
-|---|------|------|
-| 24 | Safari File System API 미지원 대체 경로 | ⬜ |
-| 25 | Claims 10개 도달 시 사유 표시 | ⬜ |
-| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ |
-| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⬜ |
-| 28 | 가스비 추정 패널 더 눈에 띄게 | ⬜ |
+| # | 작업 | 상태 | 비고 |
+|---|------|------|------|
+| 24 | Safari File System API 미지원 대체 경로 | ❌ | 작업하지 않기로 결정 (2026-04-14) |
+| 25 | Claims 16개 도달 시 사유 표시 | ⬜ | `ClaimsCapExceeded` 에러는 있으나 (error-messages.ts:33, cap=16) 주문 생성 UI 에서 사전 안내 없음 |
+| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ | UI 에 툴팁 없음 (grep 확인) |
+| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⚠️ | 한 줄 메시지는 있음 ("Escrow rotated to new commitment" — private-history/page.tsx:727), 더 친화적 설명 여지 있음 |
+| 28 | 가스비 추정 패널 더 눈에 띄게 | ⚠️ | `GasEstimate` 패널 이미 존재 (private-order/page.tsx:526). 가시성 강화는 주관적 판단 영역 |
 
 ### 🔴 릴레이어 메인넷 준비 (2026-04-11 릴레이어 점검)
 
@@ -304,7 +330,7 @@
 
 | # | 이슈 | 내용 | 상태 |
 |---|------|------|------|
-| R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ⬜ |
+| R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ❌ 작업하지 않기로 결정 (2026-04-14) |
 | R-12 | AMM/DEX 라우팅 | 미매칭 주문을 DEX로 자동 라우팅 | N/A — 지정가 주문 설계상 해당 없음 |
 | R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | ✅ (PR #218, #222, #224 — Tier-1+Tier-2 전체) |
 | R-14 | 부하 테스트 | 동시 주문/정산 부하 테스트 없음 | ⬜ |

@@ -105,7 +105,7 @@ export function useRelayers() {
 }
 
 export async function fetchOrderbook(relayerUrl: string, pair: string): Promise<RelayerOrderbook> {
-  const res = await fetch(`${relayerUrl}/api/orderbook/${pair}`);
+  const res = await fetch(`${relayerUrl}/api/private-orderbook/${pair}`);
   if (!res.ok) throw new Error(`Failed to fetch orderbook: ${res.statusText}`);
   return res.json();
 }

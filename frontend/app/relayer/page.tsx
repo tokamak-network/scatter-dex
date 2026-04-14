@@ -11,6 +11,7 @@ import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
 import { shortenAddress, formatBond, timeAgo } from "../lib/utils";
+import { extractMessage } from "../lib/error-messages";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
 
@@ -211,7 +212,7 @@ export default function RelayersPage() {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 3000);
             try {
-              const res = await fetch(`${r.url}/api/orderbook/${p.value}`, { signal: controller.signal });
+              const res = await fetch(`${r.url}/api/private-orderbook/${p.value}`, { signal: controller.signal });
               if (res.ok) pairResults.set(p.value, await res.json());
             } catch { /* skip */ } finally {
               clearTimeout(timeout);
@@ -270,8 +271,7 @@ export default function RelayersPage() {
       await loadVaultBalances();
     } catch (e: unknown) {
       console.error("Vault claim failed:", e);
-      const err = e as any;
-      setClaimError(err.reason || (e instanceof Error ? e.message : "Claim failed"));
+      setClaimError(extractMessage(e));
     } finally {
       setClaimingToken(null);
     }

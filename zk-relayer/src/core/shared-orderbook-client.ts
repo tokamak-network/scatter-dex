@@ -145,6 +145,16 @@ export class SharedOrderbookClient {
         this.serverOnline = true;
         this.wsReconnectDelay = 1000; // reset backoff on success
         console.log("[shared-orderbook] WebSocket connected");
+        // Reconcile on every open (first connect + each reconnect). The
+        // shared-OB WS stream only broadcasts NEW events, so without this
+        // a relayer that joins/restarts after others have already posted
+        // will never see (and thus never match) those existing orders.
+        this.syncOpenOrders().catch((err) => {
+          console.warn(
+            "[shared-orderbook] Snapshot reconcile failed:",
+            err instanceof Error ? err.message : "unknown",
+          );
+        });
       };
 
       this.ws.onmessage = (event) => {
@@ -154,8 +164,13 @@ export class SharedOrderbookClient {
             const order = data.order as OrderSummary;
             // Skip own orders
             if (order.relayer.toLowerCase() !== this.wallet.address.toLowerCase()) {
+              // De-dup against the snapshot path: if syncOpenOrders already
+              // fired the callback for this id (common on reconnect), don't
+              // invoke it again. Downstream matcher guards would catch the
+              // redundancy but re-running the full scan is wasted work.
+              const isNew = !this.remoteOrders.has(order.id);
               this.remoteOrders.set(order.id, order);
-              this.onOrderCallback?.(order);
+              if (isNew) this.onOrderCallback?.(order);
             }
           } else if (data.type === "order:cancelled" && data.orderId) {
             this.remoteOrders.delete(data.orderId);
@@ -200,7 +215,7 @@ export class SharedOrderbookClient {
   // ─── Order operations ───
 
   /** Post an order summary to the shared orderbook */
-  async postOrder(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+  async postOrder(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     if (this.serverOnline) {
       return this.postOrderToServer(order);
     }
@@ -208,7 +223,7 @@ export class SharedOrderbookClient {
     return this.postOrderToPeers(order);
   }
 
-  private async postOrderToServer(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+  private async postOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     try {
       const headers = await this.authHeaders("POST", "/api/orders");
       const res = await fetch(`${this.serverUrl}/api/orders`, {
@@ -220,9 +235,12 @@ export class SharedOrderbookClient {
         const data = await res.json() as { id: string };
         return data.id;
       }
+      const body = await res.text().catch(() => "");
+      console.warn(`[shared-orderbook] postOrder rejected: HTTP ${res.status} ${body.slice(0, 200)}`);
       return null;
-    } catch {
+    } catch (err) {
       this.serverOnline = false;
+      console.warn(`[shared-orderbook] postOrder server unreachable, falling back to P2P:`, err instanceof Error ? err.message : err);
       return this.postOrderToPeers(order);
     }
   }
@@ -243,6 +261,40 @@ export class SharedOrderbookClient {
     }
     // P2P: broadcast cancel to peers
     return this.broadcastCancelToPeers(orderId);
+  }
+
+  /**
+   * Pull the current open-orders snapshot and fire `onOrderCallback` for
+   * any order the local side hasn't already seen. Used on (re)connect —
+   * the WS stream only carries *new* events, so historical orders posted
+   * while this relayer was offline/uninitialised never reach the local
+   * matcher otherwise.
+   */
+  private async syncOpenOrders(): Promise<void> {
+    try {
+      const res = await fetch(`${this.serverUrl}/api/orders`);
+      if (!res.ok) return;
+      const data = await res.json() as { orders: OrderSummary[] };
+      const myAddr = this.wallet.address.toLowerCase();
+      let added = 0;
+      for (const order of data.orders) {
+        if (order.relayer.toLowerCase() === myAddr) continue;
+        if (this.remoteOrders.has(order.id)) continue;
+        this.remoteOrders.set(order.id, order);
+        this.onOrderCallback?.(order);
+        added++;
+      }
+      if (added > 0) {
+        console.log(`[shared-orderbook] Reconciled ${added} open order(s) from snapshot`);
+      }
+    } catch (err) {
+      // Network failure here isn't fatal — the WS stream is still live
+      // and the next reconnect will retry.
+      console.warn(
+        "[shared-orderbook] syncOpenOrders fetch failed:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
   }
 
   /** Fetch all open orders from server (initial sync or periodic refresh) */
@@ -287,16 +339,14 @@ export class SharedOrderbookClient {
   }
 
   /** P2P: post order directly to all known peers */
-  private async postOrderToPeers(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
-    const id = `${this.wallet.address.toLowerCase()}-${order.nonce}`;
-
+  private async postOrderToPeers(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     const summary: OrderSummary = {
       ...order,
-      id,
       relayer: this.wallet.address.toLowerCase(),
       relayerUrl: this.relayerUrl,
       createdAt: Math.floor(Date.now() / 1000),
     };
+    const id = summary.id;
 
     const promises = [...this.peers.values()].map(async (peer) => {
       try {

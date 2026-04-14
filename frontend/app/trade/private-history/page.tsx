@@ -6,6 +6,7 @@ import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, Chec
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { shortenAddress } from "../../lib/utils";
+import { extractMessage } from "../../lib/error-messages";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   deriveEdDSAKey,
@@ -31,6 +32,7 @@ import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib
 import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
 import { generateCancelProof } from "../../lib/zk/cancel-prover";
+import MarketOrderFeeBreakdown from "../../components/MarketOrderFeeBreakdown";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "text-yellow-400",
@@ -51,6 +53,19 @@ interface OrderFile {
     expiry: string;
     nonce: string;
     leafIndex: number;
+    /** "market" for settleWithDex orders, otherwise limit. Stored by
+     *  private-order/page.tsx when a market trade saves its claim file. */
+    type?: "market" | "limit";
+    /** Market-only: on-chain nullifier (0x-hex bytes32). Primary key for
+     *  matching to the SettledWithDex event; legacy bundles without this
+     *  field fall back to the (sellToken, buyToken, sellAmount,
+     *  totalLocked) tuple match. */
+    nullifier?: string;
+    /** Market-only: quote snapshot + routing info. */
+    slippageBps?: number;
+    estimatedOutput?: string;
+    dexRouter?: string;
+    dexSource?: string;
   };
   change: {
     amount: string;
@@ -68,10 +83,14 @@ interface OrderFile {
   relayerUrl?: string;
   relayerAddress?: string;
   createdAt: string;
-  // Enriched from relayer API response
+  // Enriched from relayer API response (limit) or on-chain scan (market).
   status?: string;
   settleTxHash?: string;
   crossRelayer?: boolean;
+  /** Market-only: actual amountOut reported by SettledWithDex event. */
+  onchainAmountOut?: string;
+  /** Market-only: block timestamp (seconds) of the settle tx. */
+  onchainSettledAt?: number;
 }
 
 const CANCEL_STEP_LABEL: Record<string, string> = {
@@ -108,6 +127,9 @@ export default function PrivateHistoryPage() {
   const [keyLoading, setKeyLoading] = useState(false);
   const [hasStoredKey, setHasStoredKey] = useState(false);
   const [orders, setOrders] = useState<OrderFile[]>([]);
+  // Surfaces SettledWithDex lookup failures in the detail panel so the user
+  // can distinguish "not yet settled on chain" from "RPC failed".
+  const [enrichError, setEnrichError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderFile | null>(null);
 
@@ -159,6 +181,139 @@ export default function PrivateHistoryPage() {
     }
   }, [signer, account]);
 
+  // Enrich market-order entries with on-chain SettledWithDex data.
+  // Market orders don't hit the relayer DB, so the tx hash / actual
+  // amountOut / block timestamp have to come from the settlement contract's
+  // event log. Matches by (sellToken, buyToken, sellAmount, totalLocked)
+  // tuple — market orders with the same quadruple in one account would
+  // still collide, but the overlap window is small in practice and the UI
+  // is read-only so an ambiguous match is harmless.
+  const enrichMarketFromChain = useCallback(async (orderList: OrderFile[]): Promise<OrderFile[]> => {
+    if (!account) return orderList;
+    const marketEntries = orderList.filter((o) => o.order?.type === "market");
+    if (marketEntries.length === 0) { setEnrichError(null); return orderList; }
+
+    setEnrichError(null);
+    try {
+      const provider = getReadProvider();
+      const settlementAddr = getPrivateSettlementAddress();
+      const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
+      // getSafeFromBlock is async — awaiting is required; passing the
+      // pending Promise into queryFilter silently crashes the enrichment.
+      const fromBlock = await getSafeFromBlock(provider);
+      // SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot,
+      //                address sellToken, address buyToken, uint128 sellAmount,
+      //                uint256 amountOut, uint128 totalLocked, address indexed submitter)
+      const filter = settlement.filters.SettledWithDex(null, null, account);
+      const events = await settlement.queryFilter(filter, fromBlock, "latest");
+
+      type EvRow = { nullifier: string; sellToken: string; buyToken: string; sellAmount: bigint; amountOut: bigint; totalLocked: bigint; txHash: string; blockNumber: number };
+      const rows: EvRow[] = [];
+      for (const ev of events) {
+        const log = ev as ethers.EventLog;
+        if (!log.args) continue;
+        rows.push({
+          nullifier: (log.args[0] as string).toLowerCase(),
+          sellToken: (log.args[2] as string).toLowerCase(),
+          buyToken: (log.args[3] as string).toLowerCase(),
+          sellAmount: BigInt(log.args[4]),
+          amountOut: BigInt(log.args[5]),
+          totalLocked: BigInt(log.args[6]),
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+        });
+      }
+      if (rows.length === 0) return orderList;
+
+      // Fetch block timestamps in parallel (once per unique block).
+      const blockSet = new Set(rows.map((r) => r.blockNumber));
+      const blockTs = new Map<number, number>();
+      await Promise.all(
+        [...blockSet].map(async (bn) => {
+          try {
+            const b = await provider.getBlock(bn);
+            if (b) blockTs.set(bn, Number(b.timestamp));
+          } catch { /* block missing — leave timestamp undefined */ }
+        }),
+      );
+
+      // Preferred path: match by nullifier (bundles saved after this change
+      // carry it in `order.nullifier`). 1:1 guaranteed since nullifiers are
+      // globally unique per settle. Legacy bundles without a nullifier fall
+      // back to a chronological consume-on-match against the tuple
+      // (sellToken, buyToken, sellAmount, totalLocked) — earliest file ↔
+      // earliest event, `orderList` arrives sorted createdAt DESC so we
+      // iterate it in reverse (ASC).
+      rows.sort((a, b) => a.blockNumber - b.blockNumber);
+      const available = [...rows];
+      const byNullifier = new Map(rows.map((r) => [r.nullifier, r]));
+      const enrichedByFilename = new Map<string, { txHash: string; amountOut: bigint; ts?: number }>();
+      for (let i = orderList.length - 1; i >= 0; i--) {
+        const o = orderList[i];
+        if (o.order?.type !== "market") continue;
+
+        // 1) exact nullifier match if the bundle carries one
+        if (o.order.nullifier) {
+          const key = o.order.nullifier.toLowerCase();
+          const match = byNullifier.get(key);
+          if (match) {
+            byNullifier.delete(key);
+            const idx = available.indexOf(match);
+            if (idx >= 0) available.splice(idx, 1);
+            enrichedByFilename.set(o.filename, {
+              txHash: match.txHash,
+              amountOut: match.amountOut,
+              ts: blockTs.get(match.blockNumber),
+            });
+            continue;
+          }
+        }
+
+        // 2) legacy tuple fallback. `totalLocked` on-chain is the sum of
+        //    claim amounts (enforced by the circuit as >= buyAmount), so
+        //    comparing against BigInt(buyAmount) would miss every bundle
+        //    whose recipients over-allocate the min-receive floor. Recover
+        //    the real totalLocked by summing the claims array.
+        let sell: bigint, locked: bigint;
+        try {
+          sell = BigInt(o.order.sellAmount);
+          locked = (o.claims ?? []).reduce<bigint>(
+            (sum, c) => sum + BigInt(c.amount ?? 0),
+            0n,
+          );
+        } catch { continue; }
+        const st = o.order.sellToken.toLowerCase();
+        const bt = o.order.buyToken.toLowerCase();
+        const idx = available.findIndex((r) =>
+          r.sellToken === st && r.buyToken === bt && r.sellAmount === sell && r.totalLocked === locked,
+        );
+        if (idx < 0) continue;
+        const match = available[idx];
+        available.splice(idx, 1);
+        enrichedByFilename.set(o.filename, {
+          txHash: match.txHash,
+          amountOut: match.amountOut,
+          ts: blockTs.get(match.blockNumber),
+        });
+      }
+
+      return orderList.map((o) => {
+        const m = enrichedByFilename.get(o.filename);
+        if (!m) return o;
+        return {
+          ...o,
+          settleTxHash: m.txHash,
+          onchainAmountOut: m.amountOut.toString(),
+          onchainSettledAt: m.ts,
+        };
+      });
+    } catch (e) {
+      console.warn("SettledWithDex enrichment failed:", e);
+      setEnrichError(e instanceof Error ? e.message : "on-chain lookup failed");
+      return orderList;
+    }
+  }, [account]);
+
   // Fetch order statuses from relayer
   const fetchStatuses = useCallback(async (orderList: OrderFile[]) => {
     if (!keyPair || zkRelayers.length === 0 || orderList.length === 0) return orderList;
@@ -171,8 +326,13 @@ export default function PrivateHistoryPage() {
       const relayerOrders: Array<{ nonce: string; status: string; settleTxHash?: string; crossRelayer?: boolean }> =
         Array.isArray(data) ? data : data.orders ?? [];
 
-      // Match by nonce
+      // Match by nonce. Market orders never hit the relayer DB — they're
+      // already settled on-chain at file-creation time, so default their
+      // status to "settled" instead of leaving it blank.
       return orderList.map((o) => {
+        if (o.order?.type === "market") {
+          return { ...o, status: o.status ?? "settled" };
+        }
         if (!o.order?.nonce) return o;
         const match = relayerOrders.find((ro) => ro.nonce === o.order.nonce);
         return match ? { ...o, status: match.status, settleTxHash: match.settleTxHash, crossRelayer: match.crossRelayer } : o;
@@ -191,17 +351,21 @@ export default function PrivateHistoryPage() {
       const files = await loadClaimsFiles();
       const sorted = (files as unknown as OrderFile[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const enriched = await fetchStatuses(sorted);
-      setOrders(enriched);
+      const withOnchain = await enrichMarketFromChain(enriched);
+      setOrders(withOnchain);
     } catch (e) {
       console.error("Failed to load orders:", e);
       setOrders([]);
     } finally {
       setLoading(false);
     }
-  }, [folderName, fetchStatuses]);
+  }, [folderName, fetchStatuses, enrichMarketFromChain]);
 
   useEffect(() => {
     if (folderName) loadOrders();
+    // `keyPair` retained as an explicit trigger: unlocking the trading key
+    // is a user action that should refresh statuses. `enrichMarketFromChain`
+    // is transitively covered by `loadOrders`.
   }, [folderName, loadOrders, keyPair]);
 
   const handleCancel = useCallback(async (order: OrderFile) => {
@@ -314,9 +478,9 @@ export default function PrivateHistoryPage() {
         o.order?.nonce === nonce ? { ...o, status: "cancelled" } : o;
       setOrders((prev) => prev.map(updater));
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Cancel failed:", e);
-      setCancelError(e?.reason || e?.message || "Unknown error");
+      setCancelError(extractMessage(e));
       setCancelStep("error");
     }
   }, [keyPair, signer, account]);
@@ -439,10 +603,19 @@ export default function PrivateHistoryPage() {
                     <span className="text-tertiary font-bold">{ethers.formatUnits(o.order.buyAmount, buy.decimals)}</span>
                     <span className="text-on-surface-variant ml-1">{buy.symbol}</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`font-bold text-xs ${STATUS_COLORS[o.status ?? ""] ?? "text-on-surface-variant/40"}`}>
                       {o.status ?? (keyPair ? "\u2014" : "unlock key")}
                     </span>
+                    {o.order?.type === "market" ? (
+                      <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-tertiary/15 text-tertiary border border-tertiary/30">
+                        DEX
+                      </span>
+                    ) : (
+                      <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/15 text-primary border border-primary/30">
+                        Limit
+                      </span>
+                    )}
                     {o.crossRelayer && (
                       <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/20">
                         Cross
@@ -487,7 +660,42 @@ export default function PrivateHistoryPage() {
                 <span className="font-mono">{shortenAddress(selectedOrder.settleTxHash)}</span>
               </div>
             )}
+            {selectedOrder.order.type === "market" && selectedOrder.onchainAmountOut && (() => {
+              const buy = resolveToken(selectedOrder.order.buyToken, tokens);
+              const out = BigInt(selectedOrder.onchainAmountOut);
+              return (
+                <div>
+                  <span className="text-on-surface-variant/60">Actual received:</span>{" "}
+                  <span className="font-mono text-tertiary">{ethers.formatUnits(out, buy.decimals)} {buy.symbol}</span>
+                </div>
+              );
+            })()}
+            {selectedOrder.onchainSettledAt && (
+              <div>
+                <span className="text-on-surface-variant/60">Settled at:</span>{" "}
+                <span className="font-mono">{new Date(selectedOrder.onchainSettledAt * 1000).toLocaleString()}</span>
+              </div>
+            )}
+            {selectedOrder.order.type === "market" && !selectedOrder.onchainAmountOut && enrichError && (
+              <div className="col-span-2 text-xs text-error/70">
+                On-chain lookup failed — retry with Refresh. ({enrichError})
+              </div>
+            )}
           </div>
+
+          {selectedOrder.order.type === "market" && (() => {
+            const buy = resolveToken(selectedOrder.order.buyToken, tokens);
+            return (
+              <MarketOrderFeeBreakdown
+                variant="inline"
+                buyToken={{ symbol: buy.symbol, decimals: buy.decimals }}
+                buyAmount={selectedOrder.order.buyAmount}
+                estimatedOutput={selectedOrder.order.estimatedOutput}
+                slippageBps={selectedOrder.order.slippageBps}
+                dexSource={selectedOrder.order.dexSource}
+              />
+            );
+          })()}
 
           {selectedOrder.change && (
             <div className="bg-tertiary/10 text-tertiary rounded-md px-4 py-3 space-y-1 text-sm">

@@ -157,11 +157,14 @@ export async function saveNote(note: StoredNote): Promise<void> {
   await writable.close();
 }
 
-/** Load all notes from the selected folder. */
+/** Load all notes from the selected folder. Deduped by commitment —
+ *  multiple files for the same commitment (e.g. leafIndex resolution
+ *  races, re-save after retry) are collapsed; the entry with the
+ *  resolved leafIndex (≥ 0) wins over a pending `-1`. */
 export async function loadNotes(): Promise<StoredNote[]> {
   if (!dirHandle) return [];
 
-  const notes: StoredNote[] = [];
+  const byCommitment = new Map<string, StoredNote>();
 
   for await (const [name, handle] of dirHandle.entries()) {
     if (handle.kind !== "file" || !name.startsWith(NOTES_PREFIX) || !name.endsWith(".json")) {
@@ -171,12 +174,25 @@ export async function loadNotes(): Promise<StoredNote[]> {
       const file = await handle.getFile();
       const text = await file.text();
       const parsed = JSON.parse(text);
-      notes.push(deserializeFromFile(parsed));
+      const note = deserializeFromFile(parsed);
+      const prev = byCommitment.get(note.commitment);
+      if (!prev) {
+        byCommitment.set(note.commitment, note);
+      } else {
+        // Prefer the entry that has a real on-chain leafIndex; between two
+        // resolved entries prefer the newer one.
+        const prevResolved = prev.leafIndex >= 0;
+        const curResolved = note.leafIndex >= 0;
+        if ((!prevResolved && curResolved) || (prevResolved === curResolved && note.createdAt > prev.createdAt)) {
+          byCommitment.set(note.commitment, note);
+        }
+      }
     } catch {
       // skip malformed files
     }
   }
 
+  const notes = Array.from(byCommitment.values());
   // Sort by creation time
   notes.sort((a, b) => a.createdAt - b.createdAt);
   return notes;
@@ -186,6 +202,10 @@ export async function loadNotes(): Promise<StoredNote[]> {
 export async function deleteNote(note: StoredNote): Promise<void> {
   if (!dirHandle) return;
 
+  // Collect all matching files, then remove — if a commitment was saved
+  // multiple times (retry race, repeated resolution), one removeEntry pass
+  // was leaving duplicates in the folder.
+  const matches: string[] = [];
   for await (const [name, handle] of dirHandle.entries()) {
     if (handle.kind !== "file" || !name.startsWith(NOTES_PREFIX)) continue;
     try {
@@ -193,12 +213,12 @@ export async function deleteNote(note: StoredNote): Promise<void> {
       const text = await file.text();
       const parsed = JSON.parse(text);
       if (parsed.commitment === note.commitment) {
-        await dirHandle.removeEntry(name);
-        return;
+        matches.push(name);
       }
-    } catch {
-      // skip
-    }
+    } catch { /* skip malformed */ }
+  }
+  for (const name of matches) {
+    try { await dirHandle.removeEntry(name); } catch { /* already gone */ }
   }
 }
 
@@ -231,12 +251,15 @@ export async function loadEdDSAKeyFromFolder(account: string): Promise<string | 
   }
 }
 
-/** Load all zkscatter-claims-*.json files from folder. */
+/** Load all zkscatter-claims-*.json and zkscatter-market-claims-*.json
+ *  files from the notes folder. Market orders write the latter prefix; both
+ *  share the same schema (order + claim fields). */
 export async function loadClaimsFiles(): Promise<Array<{ filename: string } & Record<string, unknown>>> {
   if (!dirHandle) return [];
   const files: Array<{ filename: string } & Record<string, unknown>> = [];
   for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind !== "file" || !name.startsWith("zkscatter-claims-") || !name.endsWith(".json")) continue;
+    if (handle.kind !== "file" || !name.endsWith(".json")) continue;
+    if (!name.startsWith("zkscatter-claims-") && !name.startsWith("zkscatter-market-claims-")) continue;
     try {
       const file = await handle.getFile();
       const text = await file.text();
@@ -341,6 +364,9 @@ function serializeForFile(note: StoredNote) {
   };
 }
 
+// Parsed JSON from disk — shape isn't compile-time guaranteed, so the
+// dynamic dot-access reads are intentional.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function deserializeFromFile(parsed: any): StoredNote {
   return {
     commitment: parsed.commitment,

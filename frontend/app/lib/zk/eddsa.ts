@@ -12,7 +12,11 @@ import { ethers } from "ethers";
 
 export const DERIVE_MESSAGE = "Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.";
 
+// circomlibjs has no type definitions; instances are callable objects
+// with attached helpers — `any` is the practical type.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let eddsaInstance: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let babyjubInstance: any = null;
 
 async function getEdDSA() {

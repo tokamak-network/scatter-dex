@@ -159,6 +159,30 @@ for i in $(seq 1 15); do
   [ $i -eq 15 ] && { echo "  ERROR: Failed to start"; exit 1; }
 done
 
+# Register Relayer B in the on-chain RelayerRegistry so the frontend
+# (which discovers relayers via getActiveRelayers()) can see both.
+# DeployLocal.s.sol only registers Account #1; Account #2 needs a
+# post-deploy registration the first time the cross-relayer script runs.
+echo ""
+echo "[5/5] Registering Relayer B on RelayerRegistry..."
+REGISTRY=$(grep '^NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=' "$ROOT_DIR/frontend/.env.local" 2>/dev/null | cut -d= -f2)
+if [ -z "$REGISTRY" ]; then
+  echo "  [warn] NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS not found; skipping on-chain registration"
+else
+  ALREADY=$(cast call "$REGISTRY" "relayers(address)(string,uint256,uint256,uint256,uint256,bool)" \
+    0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC --rpc-url "$RPC_URL" 2>/dev/null | head -1)
+  if echo "$ALREADY" | grep -q "http://localhost:3003"; then
+    echo "  [ok] Already registered"
+  else
+    if cast send "$REGISTRY" "register(string,uint256)" "http://localhost:3003" 30 \
+      --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+      echo "  [ok] Relayer B registered (url=http://localhost:3003, fee=30 bps)"
+    else
+      echo "  [warn] Registration call failed — frontend may only list Relayer A"
+    fi
+  fi
+fi
+
 echo ""
 echo "==============================================="
 echo "  Infrastructure ready!"

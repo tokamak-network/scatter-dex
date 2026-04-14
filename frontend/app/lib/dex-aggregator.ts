@@ -22,8 +22,12 @@ const UNISWAP_ROUTERS: Record<number, string> = {
   11155111: "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E", // sepolia
 };
 
+// SwapRouter02 — `exactInputSingle` dropped the `deadline` field (multicall
+// with a separate `checkDeadline` is used instead). Matching the V1 ABI
+// here would shift the struct layout and cause a silent revert when the
+// router decodes the calldata.
 const UNISWAP_ROUTER_IFACE = new ethers.Interface([
-  "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
+  "function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)",
 ]);
 
 // Client timeout slightly longer than server (10s) to receive server's error response
@@ -52,13 +56,22 @@ export interface SwapParams {
  * Tries 1inch first (best routing), falls back to Uniswap V3 direct.
  */
 export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
-  // Try 1inch first
-  try {
-    const route = await get1inchRoute(params);
-    if (route) return route;
-  } catch (e) {
-    if (process.env.NODE_ENV === "development") {
-      console.warn("1inch API failed, falling back to Uniswap:", e);
+  // Fork-mode kill switch: 1inch's Pathfinder routes often traverse
+  // non-Uniswap contracts whose state diverges between the fork block
+  // and mainnet, causing silent reverts inside the aggregator executor.
+  // Setting NEXT_PUBLIC_DISABLE_AGGREGATOR=true restricts routing to the
+  // Uniswap V3 SwapRouter02 direct path, which uses a single stable pool
+  // and is forgiving of small state drift.
+  const disableAggregator = process.env.NEXT_PUBLIC_DISABLE_AGGREGATOR === "true";
+
+  if (!disableAggregator) {
+    try {
+      const route = await get1inchRoute(params);
+      if (route) return route;
+    } catch (e) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("1inch API failed, falling back to Uniswap:", e);
+      }
     }
   }
 
@@ -73,8 +86,13 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
 async function get1inchRoute(params: SwapParams): Promise<SwapRoute | null> {
   const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, slippageBps = 50 } = params;
 
+  // NEXT_PUBLIC_AGGREGATOR_CHAIN_ID overrides the wallet chainId for 1inch
+  // lookups. Fork-mode dev (wallet on chain 31338) still wants mainnet (1)
+  // routing because the fork mirrors mainnet state — same router + pools.
+  const aggregatorChainId = process.env.NEXT_PUBLIC_AGGREGATOR_CHAIN_ID || chainId.toString();
+
   const queryParams = new URLSearchParams({
-    chainId: chainId.toString(),
+    chainId: aggregatorChainId,
     src: sellToken,
     dst: buyToken,
     amount: sellAmount.toString(),
@@ -116,20 +134,83 @@ async function get1inchRoute(params: SwapParams): Promise<SwapRoute | null> {
 /**
  * Fallback: Uniswap V3 direct swap (no aggregation).
  */
-function getUniswapRoute(params: SwapParams): SwapRoute {
-  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier = 3000 } = params;
+// Uniswap V3 QuoterV2 — used to compute estimatedOutput for the fallback
+// route. Same address across the chains we care about (mainnet + fork).
+const UNISWAP_QUOTER_V2 = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
+const UNISWAP_QUOTER_IFACE = new ethers.Interface([
+  "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
+]);
 
-  const routerAddr = UNISWAP_ROUTERS[chainId];
-  if (!routerAddr) {
-    throw new Error(`Uniswap V3 router not configured for chain ${chainId}`);
+// Module-level provider cache — the Quoter probe fires 4 fee tiers in
+// parallel per quote request, so sharing a provider saves 4 network-detect
+// handshakes per call. `staticNetwork: true` skips the chainId round trip
+// since the fork RPC's chainId doesn't change at runtime.
+let _quoterProvider: ethers.JsonRpcProvider | null = null;
+function quoterProvider(): ethers.JsonRpcProvider {
+  if (!_quoterProvider) {
+    const rpc = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+    _quoterProvider = new ethers.JsonRpcProvider(rpc, undefined, { staticNetwork: true });
   }
+  return _quoterProvider;
+}
+
+async function quoteUniswapV3(
+  sellToken: string,
+  buyToken: string,
+  sellAmount: bigint,
+  feeTier: number,
+): Promise<bigint | null> {
+  try {
+    const provider = quoterProvider();
+    const data = UNISWAP_QUOTER_IFACE.encodeFunctionData("quoteExactInputSingle", [{
+      tokenIn: sellToken,
+      tokenOut: buyToken,
+      amountIn: sellAmount,
+      fee: feeTier,
+      sqrtPriceLimitX96: 0n,
+    }]);
+    // QuoterV2 reverts with the result — ethers `call` handles both paths
+    // but simplest is to use provider.call and decode ourselves.
+    const res = await provider.call({ to: UNISWAP_QUOTER_V2, data });
+    const [amountOut] = UNISWAP_QUOTER_IFACE.decodeFunctionResult("quoteExactInputSingle", res);
+    return BigInt(amountOut);
+  } catch {
+    return null;
+  }
+}
+
+async function getUniswapRoute(params: SwapParams): Promise<SwapRoute> {
+  const { chainId, sellToken, buyToken, sellAmount, minReceive, recipient, feeTier } = params;
+
+  // See get1inchRoute — fork-mode wallet sits on a non-mainnet chainId but
+  // the forked state has mainnet router addresses. Override so the lookup
+  // still resolves to the real router.
+  const routerChainId = Number(process.env.NEXT_PUBLIC_AGGREGATOR_CHAIN_ID || chainId);
+  const routerAddr = UNISWAP_ROUTERS[routerChainId];
+  if (!routerAddr) {
+    throw new Error(`Uniswap V3 router not configured for chain ${routerChainId}`);
+  }
+
+  // Fee-tier auto-pick: when the caller doesn't pin a tier, quote every
+  // common WETH/USDC tier in parallel and select the one with the deepest
+  // output. Hard-coding 3000 loses ~90% of liquidity on pairs where the
+  // 500-bp pool is the main venue (e.g. WETH/USDC, USDC/USDT).
+  const tiersToProbe = feeTier ? [feeTier] : [500, 3000, 100, 10000];
+  const quotes = await Promise.all(
+    tiersToProbe.map(async (t) => ({ tier: t, out: await quoteUniswapV3(sellToken, buyToken, sellAmount, t) })),
+  );
+  const best = quotes
+    .filter((q): q is { tier: number; out: bigint } => q.out !== null && q.out > 0n)
+    .sort((a, b) => (a.out > b.out ? -1 : 1))[0];
+
+  const chosenTier = best?.tier ?? feeTier ?? 500;
+  const estimatedOutput = best?.out ?? minReceive;
 
   const dexCalldata = UNISWAP_ROUTER_IFACE.encodeFunctionData("exactInputSingle", [{
     tokenIn: sellToken,
     tokenOut: buyToken,
-    fee: feeTier,
+    fee: chosenTier,
     recipient,
-    deadline: Math.floor(Date.now() / 1000) + 1800,
     amountIn: sellAmount,
     amountOutMinimum: minReceive,
     sqrtPriceLimitX96: 0n,
@@ -138,8 +219,8 @@ function getUniswapRoute(params: SwapParams): SwapRoute {
   return {
     dexRouter: routerAddr,
     dexCalldata,
-    source: "uniswap",
-    estimatedOutput: minReceive,
+    source: `uniswap-${chosenTier}`,
+    estimatedOutput,
   };
 }
 
