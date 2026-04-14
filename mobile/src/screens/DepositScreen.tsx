@@ -225,7 +225,6 @@ export default function DepositScreen() {
             </View>
           </View>
 
-          <View style={{ height: 120 }} />
         </ScrollView>
 
         {/* Fixed Bottom Action */}
@@ -270,7 +269,7 @@ const s = StyleSheet.create({
     borderWidth: layout.card.borderWidth,
     borderColor: colors.borderLight,
     ...shadowSubtle,
-    gap: 24,
+    gap: layout.sectionGap,
   },
   cardDisabled: { opacity: 0.5 },
   cardTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
@@ -303,7 +302,7 @@ const s = StyleSheet.create({
   infoIcon: { fontSize: 18, marginTop: 2 },
   infoText: { flex: 1, fontSize: 12, fontWeight: '500', color: colors.gray500, lineHeight: 18 },
 
-  bottomAction: { position: 'absolute', bottom: 96, left: 0, right: 0, paddingHorizontal: layout.screenHZ },
+  bottomAction: { position: 'absolute', bottom: layout.contentBottom, left: 0, right: 0, paddingHorizontal: layout.screenHZ },
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },

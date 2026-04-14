@@ -28,9 +28,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   // Fixed-width slots on each side so the centered title doesn't shift
-  // when buttons appear/disappear.
-  side: { minWidth: 40 },
-  sideRight: { minWidth: 40, alignItems: 'flex-end' },
+  // when buttons appear/disappear. Use `width` (not `minWidth`) so
+  // wider slot content (e.g. a trailing badge cluster) doesn't push
+  // the title off-center — callers that need more room should size
+  // their own content within the 40-px slot.
+  side: { width: 40 },
+  sideRight: { width: 40, alignItems: 'flex-end' },
   backBtn: { padding: 8, marginLeft: -8 },
   backIcon: { fontSize: 24, color: colors.textSecondary },
   title: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },
@@ -43,12 +46,14 @@ const HEADER_BY_VARIANT: Record<NonNullable<ScreenHeaderProps['variant']>, Style
   surface: [s.header, s.headerSurface],
 };
 
+const HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
+
 function ScreenHeaderImpl({ title, onBack, right, variant = 'transparent', style }: ScreenHeaderProps) {
   const headerStyle = HEADER_BY_VARIANT[variant];
   return (
     <View style={style ? [headerStyle, style] : headerStyle}>
       {onBack ? (
-        <TouchableOpacity onPress={onBack} style={s.backBtn} hitSlop={8}>
+        <TouchableOpacity onPress={onBack} style={s.backBtn} hitSlop={HIT_SLOP}>
           <Text style={s.backIcon}>←</Text>
         </TouchableOpacity>
       ) : (
