@@ -232,13 +232,15 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Per-token fees (absolute amounts from bps)
-    const makerFeeBps = BigInt(config.relayerFee);
-    const takerFeeBps = BigInt(config.relayerFee);
-    // feeTokenMaker = fee in tokenMaker (from taker's sell)
-    const feeTokenMaker = (taker.sellAmount * takerFeeBps) / 10000n;
-    // feeTokenTaker = fee in tokenTaker (from maker's sell)
-    const feeTokenTaker = (maker.sellAmount * makerFeeBps) / 10000n;
+    // Per-token fees (2026-04-14 fee-semantics redesign — circuits/settle.circom:464–527):
+    //   feeTokenMaker = floor(maker.buyAmount × makerFee / 10000)   ← paid by maker, in tokenMaker
+    //   feeTokenTaker = floor(taker.buyAmount × takerFee / 10000)   ← paid by taker, in tokenTaker
+    // Each side's effective fee is capped by that user's signed maxFee.
+    const relayerFeeBps = BigInt(config.relayerFee);
+    const makerFeeBps = relayerFeeBps < maker.maxFee ? relayerFeeBps : maker.maxFee;
+    const takerFeeBps = relayerFeeBps < taker.maxFee ? relayerFeeBps : taker.maxFee;
+    const feeTokenMaker = (maker.buyAmount * makerFeeBps) / 10000n;
+    const feeTokenTaker = (taker.buyAmount * takerFeeBps) / 10000n;
 
     // Use latest block timestamp to stay within on-chain tolerance window
     const latestBlock = await this.provider.getBlock("latest");

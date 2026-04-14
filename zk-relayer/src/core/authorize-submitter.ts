@@ -159,9 +159,12 @@ export class AuthorizeSubmitter {
     const makerPs = match.maker.order.publicSignals;
     const takerPs = match.taker.order.publicSignals;
 
-    // Compute relayer-chosen fees (capped by each side's maxFee)
-    const feeTokenMaker = this.computeFee(takerPs.sellAmount, takerPs.maxFee, feeBps);
-    const feeTokenTaker = this.computeFee(makerPs.sellAmount, makerPs.maxFee, feeBps);
+    // Compute relayer-chosen fees (2026-04-14 fee-semantics redesign):
+    //   feeTokenMaker = floor(maker.buyAmount × maker.maxFee / 10000)  ← paid by maker
+    //   feeTokenTaker = floor(taker.buyAmount × taker.maxFee / 10000)  ← paid by taker
+    // The relayer may undercut each side's signed cap with its own `feeBps`.
+    const feeTokenMaker = this.computeFee(makerPs.buyAmount, makerPs.maxFee, feeBps);
+    const feeTokenTaker = this.computeFee(takerPs.buyAmount, takerPs.maxFee, feeBps);
 
     const params = {
       maker: this.buildAuthProofStruct(match.maker.order),
