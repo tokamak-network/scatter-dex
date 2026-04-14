@@ -309,27 +309,29 @@ ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 
 ```bash
 ./scripts/dev-fork.sh
-# Optional env:
-#   FORK_URL=https://eth.drpc.org                 (default: llamarpc — drpc
-#                                                  is a more stable alternate
-#                                                  when llamarpc's shard
-#                                                  rotation returns 404s for
-#                                                  Quoter / getLogs calls)
-#   FORK_BLOCK=24874771                            (pin block — use to avoid
-#                                                  "block not found" / state-
-#                                                  drift reverts; unset =
-#                                                  tip)
-#   FORK_CHAIN_ID=1                                (default: 31338 — keeps
-#                                                  MetaMask happy; the
-#                                                  frontend pins 1inch
-#                                                  routing to chainId=1 via
-#                                                  NEXT_PUBLIC_AGGREGATOR_
-#                                                  CHAIN_ID regardless)
-#   NEXT_PUBLIC_DISABLE_AGGREGATOR=false          (default: true — flip to
-#                                                  false to exercise the
-#                                                  1inch Pathfinder path;
-#                                                  works best with a
-#                                                  FORK_BLOCK near tip)
+# Optional env (values shown are the defaults — override as needed):
+#   FORK_URL=https://eth.llamarpc.com              (use https://eth.drpc.org
+#                                                   as a more stable alternate
+#                                                   when llamarpc's shard
+#                                                   rotation returns 404s for
+#                                                   Quoter / getLogs calls)
+#   FORK_BLOCK=                                    (unset = tip; pin to a
+#                                                   concrete block number to
+#                                                   avoid "block not found" /
+#                                                   state-drift reverts)
+#   FORK_CHAIN_ID=31338                            (keeps MetaMask happy; do
+#                                                   NOT override to 1, which
+#                                                   collides with MetaMask's
+#                                                   built-in Mainnet. The
+#                                                   frontend pins 1inch
+#                                                   routing to chainId=1 via
+#                                                   NEXT_PUBLIC_AGGREGATOR_
+#                                                   CHAIN_ID regardless.)
+#   NEXT_PUBLIC_DISABLE_AGGREGATOR=true            (Uniswap-only routing;
+#                                                   flip to false to exercise
+#                                                   the 1inch Pathfinder path
+#                                                   — works best with a
+#                                                   FORK_BLOCK near tip)
 ```
 
 What it does differently from `dev.sh --mock`:
@@ -381,7 +383,7 @@ When all else fails, `make clean` (Docker) or `rm -rf .dev-logs zk-relayer/zk-re
 |---|---|---|
 | Full limit-order flow (single relayer) | open `http://localhost:3000`, deposit → order → claim | `dev.sh --mock` |
 | Cross-relayer matching | `cd zk-relayer && npx tsx test/e2e-cross-relayer.ts` | `dev.sh --mock` + `start-cross-relayer-e2e.sh` |
-| Market order (DEX Trade) browser flow | open `http://localhost:3000`, add fork network, deposit → DEX Trade → claim; check `FeeVault.platformRevenue(USDC) > 0` | `dev-fork.sh` |
+| Market order (DEX Trade) browser flow | open `http://localhost:3000`, add fork network, deposit → DEX Trade → claim; verify `DexSurplusCollected` / `PlatformRevenueDeposited` events fired (`cast logs --address <feeVault> …`). `FeeVault.platformRevenue(buyToken)` is only non-zero when the swap yielded positive slippage, and `platformRevenue(sellToken)` only when `dexPlatformFeeBps > 0` — events are the reliable invariant. | `dev-fork.sh` |
 | Market order (settleWithDex) Foundry fork | `cd contracts && forge test --match-contract SettleWithDex --fork-url <MAINNET_RPC>` | mainnet RPC URL |
 | FeeVault platformRevenue unit tests | `cd contracts && forge test --match-contract FeeVaultPlatformRevenue` | none (hermetic) |
 | Relayer HTTP route tests | `cd zk-relayer && npm test` | none (hermetic) |
