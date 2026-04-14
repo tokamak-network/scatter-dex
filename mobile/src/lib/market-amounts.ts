@@ -7,8 +7,8 @@
 import { ethers } from 'ethers';
 
 export interface MarketAmountsInput {
-  amount: string;           // human-readable sell amount ("1.5")
-  price: string;            // human-readable price (may contain `,`)
+  sellAmountHuman: string;  // human-readable sell amount ("1.5")
+  priceHuman: string;       // human-readable price (may contain `,`)
   sellDecimals: number;
   buyDecimals: number;
   slippageBps: number;      // 50 = 0.5%
@@ -22,9 +22,9 @@ export interface MarketAmounts {
 
 /** Parse + compute. Throws if inputs can't be parsed as decimal numbers. */
 export function computeMarketAmounts(input: MarketAmountsInput): MarketAmounts {
-  const { amount, price, sellDecimals, buyDecimals, slippageBps } = input;
-  const priceClean = price.replace(/,/g, '');
-  const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+  const { sellAmountHuman, priceHuman, sellDecimals, buyDecimals, slippageBps } = input;
+  const priceClean = priceHuman.replace(/,/g, '');
+  const sellAmountBn = ethers.parseUnits(sellAmountHuman, sellDecimals);
   const priceBn = ethers.parseUnits(priceClean, buyDecimals);
   // Multiply sell × price, then cancel sell-side units to land in buy
   // decimals (matches the web frontend's private-order math).

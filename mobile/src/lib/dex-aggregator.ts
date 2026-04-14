@@ -30,7 +30,7 @@ const UNISWAP_ROUTER_IFACE = new ethers.Interface([
 const FETCH_TIMEOUT_MS = 12_000;
 
 // Defaults shared with `frontend/app/lib/dex-aggregator.ts` — keep in sync.
-const DEFAULT_SLIPPAGE_BPS = 50;
+export const DEFAULT_SLIPPAGE_BPS = 50;
 const DEFAULT_FEE_TIER = 3000;
 const UNISWAP_DEADLINE_SEC = 1800;
 

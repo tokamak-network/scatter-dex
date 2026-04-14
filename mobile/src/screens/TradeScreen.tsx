@@ -23,6 +23,7 @@ import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { computeMarketAmounts } from '../lib/market-amounts';
+import { DEFAULT_SLIPPAGE_BPS } from '../lib/dex-aggregator';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -137,9 +138,18 @@ export default function TradeScreen() {
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
     let cancelled = false;
+    // Silent fallback to 18 keeps the preview alive during a flaky RPC,
+    // but log so a systematic decimals-mismatch (which would make the
+    // preview's minReceive disagree with the submit path) is visible
+    // in dev.
+    const fetchDecimals = (addr: string) =>
+      TokenService.getDecimals(readProvider, addr).catch((e) => {
+        console.warn(`getDecimals(${addr}) failed — falling back to 18:`, e);
+        return 18;
+      });
     Promise.all([
-      TokenService.getDecimals(readProvider, selectedNote.token).catch(() => 18),
-      TokenService.getDecimals(readProvider, buyTokenAddress).catch(() => 18),
+      fetchDecimals(selectedNote.token),
+      fetchDecimals(buyTokenAddress),
     ]).then(([s, b]) => {
       if (cancelled) return;
       setSellDecimals(s);
@@ -163,7 +173,13 @@ export default function TradeScreen() {
     const p = parseFloat(price.replace(/,/g, ''));
     if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
     try {
-      return computeMarketAmounts({ amount, price, sellDecimals, buyDecimals, slippageBps: 50 });
+      return computeMarketAmounts({
+        sellAmountHuman: amount,
+        priceHuman: price,
+        sellDecimals,
+        buyDecimals,
+        slippageBps: DEFAULT_SLIPPAGE_BPS,
+      });
     } catch {
       // `parseUnits` throws on too-many-decimals during typing — fine
       // to skip the preview until the user lands on a valid value.
@@ -353,7 +369,11 @@ export default function TradeScreen() {
         ]);
 
         const { minReceive } = computeMarketAmounts({
-          amount, price, sellDecimals: sellDec, buyDecimals: buyDec, slippageBps: 50,
+          sellAmountHuman: amount,
+          priceHuman: price,
+          sellDecimals: sellDec,
+          buyDecimals: buyDec,
+          slippageBps: DEFAULT_SLIPPAGE_BPS,
         });
         const buyAmountMinHuman = ethers.formatUnits(minReceive, buyDec);
 
