@@ -123,6 +123,12 @@ const CLAIM_ABI = [
 
 // ─── Helpers ────────────────────────────────────────────────
 
+interface KeyMaterial {
+  privKey: Buffer;
+  pubKeyAx: bigint;
+  pubKeyAy: bigint;
+}
+
 interface UserCtx {
   label: string;
   wallet: ethers.NonceManager;
@@ -134,6 +140,12 @@ interface UserCtx {
   buyAmount: bigint;
   relayerUrl: string;
   relayerAddr: string;
+  /** Pre-derived to keep the deposit-time commitment and the order-time
+   *  EdDSA signature locked to the same key. Was previously derived
+   *  twice (once at deposit, once at order build) from string-templated
+   *  seeds — a one-character drift between sites silently broke the
+   *  authorize proof. */
+  key: KeyMaterial;
 }
 
 interface DepositInfo {
@@ -174,16 +186,13 @@ async function deposit(
   pool: ethers.Contract,
   tokenAddr: string,
   amount: bigint,
-  pubKeyAx: bigint,
-  pubKeyAy: bigint,
 ): Promise<DepositInfo> {
   const eddsaCtx = await getEdDSAImpl();
   const F = eddsaCtx.babyJub.F;
-  const eddsaPrivKey = Buffer.from(ethers.keccak256(ethers.toUtf8Bytes(`e2e-${user.label}-key`)).slice(2), "hex");
 
   const ownerSecret = randomFieldElement();
   const salt = randomFieldElement();
-  const commitment = computeCommitmentV2(ownerSecret, BigInt(tokenAddr), amount, salt, pubKeyAx, pubKeyAy);
+  const commitment = computeCommitmentV2(ownerSecret, BigInt(tokenAddr), amount, salt, user.key.pubKeyAx, user.key.pubKeyAy);
 
   // `makeDepositProof` already returns Solidity-formatted {a,b,c}
   // tuples (with the pi_b coordinate transpose applied). Don't go
@@ -191,7 +200,7 @@ async function deposit(
   // crash because the returned object doesn't have a `.proof` member.
   const proof = await makeDepositProof({
     secret: ownerSecret, salt, token: tokenAddr, commitment, amount,
-    pubKeyAx, pubKeyAy,
+    pubKeyAx: user.key.pubKeyAx, pubKeyAy: user.key.pubKeyAy,
   });
 
   const tx = await pool.deposit(proof.a, proof.b, proof.c, commitment, tokenAddr, amount);
@@ -203,20 +212,35 @@ async function deposit(
   const decoded = pool.interface.decodeEventLog("CommitmentInserted", log.data, log.topics);
   const leafIndex = Number(decoded[1]);
 
-  return { ownerSecret, salt, commitment, leafIndex, pubKeyAx, pubKeyAy, eddsaPrivKey, eddsa: eddsaCtx.eddsa, F };
+  return {
+    ownerSecret, salt, commitment, leafIndex,
+    pubKeyAx: user.key.pubKeyAx, pubKeyAy: user.key.pubKeyAy,
+    eddsaPrivKey: user.key.privKey,
+    eddsa: eddsaCtx.eddsa,
+    F,
+  };
 }
 
 async function buildAndSubmitOrder(
   user: UserCtx,
   dep: DepositInfo,
   pool: ethers.Contract,
-  /** All deposit leaves observed across both users — needed for accurate Merkle proof */
-  allLeaves: bigint[],
+  /** Pool leaves indexed by leafIndex — accurate Merkle proof requires
+   *  the array element at `dep.leafIndex` to be the user's commitment.
+   *  Push-order would silently break if the pool already had prior
+   *  deposits (re-runs, dev env activity). */
+  leafByIndex: bigint[],
 ): Promise<OrderArtifacts> {
-  // Claim recipient + secret — single claim spending the whole buy side
+  // Claim recipient + secret — single claim sized to (buyAmount − fee).
+  // settle.circom enforces `totalLocked + feeToken ≤ counterpartySell`,
+  // and `feeToken = floor(buyAmount × maxFee / 10000)`. Since our orders
+  // use sellAmount === counterparty.buyAmount, packing `claimAmount =
+  // buyAmount` would trip ClaimsCapExceeded the moment the relayer adds
+  // any fee. Reserve the cap for the fee.
   const claimSecret = randomFieldElement();
   const releaseTime = BigInt(Math.floor(Date.now() / 1000)) + RELEASE_DELAY_SEC;
-  const claimAmount = user.buyAmount;
+  const expectedFee = (user.buyAmount * ORDER_MAX_FEE_BPS) / 10_000n;
+  const claimAmount = user.buyAmount - expectedFee;
   const claim = {
     secret: claimSecret,
     recipient: BigInt(user.recipient),
@@ -233,9 +257,10 @@ async function buildAndSubmitOrder(
   const nonce = randomFieldElement() % (1n << 32n);
   const expiry = BigInt(Math.floor(Date.now() / 1000)) + 86400n;
 
-  // Commitment Merkle proof (depth 20)
+  // Commitment Merkle proof (depth 20). Caller supplies the leaves
+  // already aligned to their on-chain leafIndex slots.
   const COMMIT_DEPTH = 20;
-  const commitTree = await buildTree(allLeaves, COMMIT_DEPTH);
+  const commitTree = await buildTree(leafByIndex, COMMIT_DEPTH);
   const commitProof = getMerkleProof(commitTree.layers, dep.leafIndex);
 
   // Order hash for EdDSA signing
@@ -307,6 +332,13 @@ async function buildAndSubmitOrder(
       orderHash: authResult.publicSignals[14],
     },
     publicSignalsArray: authResult.publicSignals,
+    // The relayer's POST handler (validateAuthorizeOrder) requires the
+    // claimed pubKey separately so it can be cross-checked against
+    // pubKeyBind in the proof and routed through the OFAC filter. The
+    // raw `publicSignals.pubKeyBind` alone (it's a hash) doesn't let the
+    // relayer recover ax/ay.
+    pubKeyAx: dep.pubKeyAx.toString(),
+    pubKeyAy: dep.pubKeyAy.toString(),
   };
 
   const submitRes = await fetch(`${user.relayerUrl}/api/authorize-orders`, {
@@ -469,30 +501,39 @@ async function main(): Promise<void> {
     sellToken: wethAddr, buyToken: USDC_ADDRESS,
     sellAmount: SELL_WETH, buyAmount: BUY_USDC,
     relayerUrl: RELAYER_A_URL, relayerAddr: RELAYER_A_ADDR,
+    key: { privKey: Buffer.from(aliceKeyHash, "hex"), pubKeyAx: alicePubAx, pubKeyAy: alicePubAy },
   };
   const bob: UserCtx = {
     label: "Bob", wallet: bobWallet, addr: BOB_ADDR, recipient: bobRecipient,
     sellToken: USDC_ADDRESS, buyToken: wethAddr,
     sellAmount: BUY_USDC, buyAmount: SELL_WETH,
     relayerUrl: RELAYER_B_URL, relayerAddr: RELAYER_B_ADDR,
+    key: { privKey: Buffer.from(bobKeyHash, "hex"), pubKeyAx: bobPubAx, pubKeyAy: bobPubAy },
   };
 
   const alicePool = new ethers.Contract(poolAddr, POOL_ABI, aliceWallet);
   const bobPool = new ethers.Contract(poolAddr, POOL_ABI, bobWallet);
 
-  const aliceDep = await deposit(alice, alicePool, wethAddr, SELL_WETH, alicePubAx, alicePubAy);
-  const bobDep = await deposit(bob, bobPool, USDC_ADDRESS, BUY_USDC, bobPubAx, bobPubAy);
+  const aliceDep = await deposit(alice, alicePool, wethAddr, SELL_WETH);
+  const bobDep = await deposit(bob, bobPool, USDC_ADDRESS, BUY_USDC);
   console.log(`  Alice deposit leaf=${aliceDep.leafIndex}`);
   console.log(`  Bob deposit leaf=${bobDep.leafIndex}`);
 
   // ─── Step 3: build authorize orders and submit ─────────────
   console.log("\n[3/8] Building + submitting authorize orders...");
-  // Snapshot of all commitments — both deposits go through the same pool,
-  // so each user's authorize proof needs to walk a tree containing both.
-  const allLeaves = [aliceDep.commitment, bobDep.commitment];
+  // Build the leaf-by-index array. The pool may already have prior
+  // deposits (re-runs, dev-env activity), so leafIndex isn't always
+  // 0/1 — push-order would silently misalign Merkle proofs. Size to
+  // `max(leafIndex)+1` and place each commitment at its actual slot;
+  // unused slots stay 0n which `buildTree` hashes to the zero subtree
+  // identical to what's on-chain.
+  const maxLeaf = Math.max(aliceDep.leafIndex, bobDep.leafIndex);
+  const leafByIndex: bigint[] = new Array(maxLeaf + 1).fill(0n);
+  leafByIndex[aliceDep.leafIndex] = aliceDep.commitment;
+  leafByIndex[bobDep.leafIndex] = bobDep.commitment;
 
-  const aliceArt = await buildAndSubmitOrder(alice, aliceDep, alicePool, allLeaves);
-  const bobArt = await buildAndSubmitOrder(bob, bobDep, bobPool, allLeaves);
+  const aliceArt = await buildAndSubmitOrder(alice, aliceDep, alicePool, leafByIndex);
+  const bobArt = await buildAndSubmitOrder(bob, bobDep, bobPool, leafByIndex);
 
   // ─── Step 4: wait for cross-relayer match + on-chain settle ─
   console.log("\n[4/8] Waiting for cross-relayer settleAuth...");
@@ -529,13 +570,15 @@ async function main(): Promise<void> {
   await claimFor(bob, bobArt, settlementAddr, provider, bobWallet);
 
   // ─── Step 8: verify recipient balances ─────────────────────
+  // Recipients receive `claimAmount` (= buyAmount − fee), not the
+  // gross buyAmount — the fee was already routed to FeeVault in step 6.
   console.log("\n[8/8] Verifying recipient balances...");
   const usdcRead = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
   const wethRead = new ethers.Contract(wethAddr, WETH_ABI, provider);
   const aliceRecvBal = await usdcRead.balanceOf(aliceRecipient);
   const bobRecvBal = await wethRead.balanceOf(bobRecipient);
-  assert(BigInt(aliceRecvBal) === BUY_USDC, `Alice recipient received ${BUY_USDC} USDC`);
-  assert(BigInt(bobRecvBal) === SELL_WETH, `Bob recipient received ${SELL_WETH} WETH`);
+  assert(BigInt(aliceRecvBal) === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
+  assert(BigInt(bobRecvBal) === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} WETH`);
 
   console.log("\n═══════════════════════════════════════════════════════");
   console.log("  ✅ AUTHORIZE CROSS-RELAYER E2E — ALL CHECKS PASSED");
