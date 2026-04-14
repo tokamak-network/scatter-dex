@@ -5,7 +5,7 @@
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Alert, Linking, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, AppState, AppStateStatus, Linking, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ethers } from 'ethers';
 import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
@@ -33,6 +33,12 @@ interface WalletContextValue extends WalletState {
   disconnect: () => Promise<void>;
   readProvider: ethers.JsonRpcProvider;
 }
+
+// Grace window for backgrounded built-in sessions. A shorter value trips on
+// users pulling down the notification centre for a glance; much longer and
+// the lock stops being meaningful against a stolen device. 30s matches the
+// default on most wallet apps we surveyed (Trust, Rainbow).
+const BG_LOCK_MS = 30_000;
 
 const INITIAL_STATE: WalletState = {
   account: null,
@@ -230,6 +236,50 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [readProvider]);
+
+  // Background-reauth: clear the cached signer if the app was backgrounded
+  // for longer than `BG_LOCK_MS`. Only applies to the built-in wallet mode
+  // — WalletConnect sessions are gated by the external wallet app, which
+  // does its own session handling. The user lands back on the connect
+  // screen and re-taps to go through the biometric prompt again.
+  const hasBuiltinSigner = connectionMode === 'builtin' && !!state.signer;
+  const backgroundedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!hasBuiltinSigner) return;
+
+    // Only `background` stamps the timestamp — `inactive` fires on
+    // transient iOS interruptions (notification pull-down, app-switcher
+    // peek) that shouldn't start the lock timer. If the user actually
+    // leaves the app those `inactive` events are followed by
+    // `background`, which DOES stamp.
+    const handleChange = async (next: AppStateStatus) => {
+      if (next === 'background') {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+      if (next === 'active' && backgroundedAtRef.current != null) {
+        const elapsed = Date.now() - backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        if (elapsed < BG_LOCK_MS) return;
+        // Re-check the opt-in at the moment we'd act on it — the user
+        // may have toggled biometric off in Settings while we were
+        // subscribed, and caching the value at subscribe time would
+        // keep locking their session against their preference.
+        const enabled = await KeySecurityService.isBiometricEnabled();
+        if (!enabled) return;
+        // Drop only the auth-bearing bits — preserve `account` and
+        // `chainId` so the Connect screen can show "Welcome back,
+        // 0x…" instead of a cold-start prompt.
+        setState((s) => ({ ...s, signer: null, provider: null }));
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleChange);
+    return () => {
+      subscription.remove();
+      backgroundedAtRef.current = null;
+    };
+  }, [hasBuiltinSigner]);
 
   const disconnect = useCallback(async () => {
     if (wcProviderRef.current) {
