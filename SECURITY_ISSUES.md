@@ -1,378 +1,191 @@
-# Security Issues Tracker
+# Security & Roadmap Tracker
 
-보안 감사에서 발견된 이슈 목록. 작업 시 **브랜치 명을 기록**하여 동시 작업 충돌 방지.
+보안 감사 / 기능 / UX / 운영 항목의 단일 트래커. 작업 시작 시 브랜치명을
+기입해 동시 작업 충돌을 막는다. 완료된 라운드별 감사는 본문 하단 `Archive`
+섹션에 요약만 보관한다.
 
-> ⬜ TODO | 🔧 IN PROGRESS (브랜치: `xxx`) | ⚠️ PARTIAL | ✅ DONE (PR/커밋) | ❌ WON'T DO (결정 사유 기재)
-
-## TODO — 2026-04-11 전체 스택 보안 감사
-
-### 🔴 CRITICAL (즉시 조치)
-
-#### C-1. settleWithDex 프론트러닝/샌드위치 공격
-- **파일**: `PrivateSettlement.sol:938-941`
-- **내용**: DEX calldata가 멤풀에 노출되어 MEV 샌드위치 공격 가능.
-- **수정**: `amountOut < totalLocked` 검증(DexOutputInsufficient) 추가 + 프론트엔드에서 slippage 기반 minReceive 설정 + 1inch Pathfinder 분할 주문으로 슬리피지 최소화
-- **상태**: ✅ DONE (PR #151, #172, #188). deadline + Flashbots/private mempool 권장 문서화
-
-#### C-2. claim.circom token/releaseTime 미구속
-- **파일**: `claim.circom:49-51`
-- **내용**: public input `token`, `releaseTime`이 회로 내에서 equality constraint 없음. 위조된 값으로 클레임 가능.
-- **수정**: `tokenSq <== token * token;` 등 바인딩 제약 추가
-- **상태**: ✅ DONE (PR #176)
-
-#### C-3. 하드코딩된 프라이빗 키 (.env 파일)
-- **파일**: `relayer/.env:2`, `zk-relayer/.env:2,7`, `docker-compose.yml:30,67,99`
-- **내용**: Anvil 테스트 키 + Admin API 키가 버전 컨트롤에 노출. 프로덕션 배포 시 자금 탈취 위험.
-- **수정**: `.env`를 `.gitignore`에 추가, `.env.example`만 유지, 시크릿 매니저 도입
-- **상태**: ✅ DONE (PR #175)
-
-### 🟠 HIGH (메인넷 전 필수)
-
-#### H-3. transferFee 풀 드레인 벡터
-- **파일**: `CommitmentPool.sol:240-246`
-- **내용**: fee 금액 상한 없음, `setAuthorizedSettlement` 타임락 없이 즉시 변경 가능.
-- **수정**: per-tx fee 상한 + `setAuthorizedSettlement` 타임락(24~48h) 도입
-- **상태**: ✅ DONE (PR #178)
-
-#### H-4. SSRF in /api/swap (chainId 미검증)
-- **파일**: `frontend/app/api/swap/route.ts`
-- **내용**: `chainId` 파라미터가 URL에 직접 삽입됨. 서버사이드 요청 위조 가능.
-- **수정**: chainId 숫자 검증 + src/dst/from 주소 형식 검증 + 에러 텍스트 200자 절삭
-- **상태**: ✅ DONE (PR #174, 커밋 3a9bdbc + fe3b10a)
-
-#### H-5. claimCount 범위 미검증 (ZK 회로)
-- **파일**: `authorize.circom:214`, `settle.circom:189,197`
-- **내용**: `claimCount`에 범위 검증 없어 필드 산술 오버플로로 로직 우회 가능.
-- **수정**: `Num2Bits(5)` + `LessEqThan(5)` 범위 체크 추가 (`claimCount ≤ 16`). settle.circom도 동일 수정 + `LessThan(252)` → `LessThan(5)` 최적화 (~7,900 constraints 절감)
-- **상태**: ✅ DONE (PR #179)
-
-#### H-6. Admin API 키 노출 + 약한 검증
-- **파일**: `zk-relayer/.env:7`, `zk-relayer/src/routes/vault.ts:25-37`
-- **내용**: 하드코딩된 dev 키 + 타이밍 공격 취약한 단순 문자열 비교.
-- **수정**: 환경변수로 분리 + `crypto.timingSafeEqual` 사용
-- **상태**: ✅ DONE (PR #177)
-
-### 🟡 MEDIUM (강력 권장)
-
-#### M-6. CORS 기본값 `["*"]`
-- **파일**: `shared-orderbook/src/config.ts:26`
-- **수정**: 명시적 origin 허용 목록 설정
-- **상태**: ✅ DONE (PR #180)
-
-#### M-7. API Rate Limiting 미구현
-- **파일**: `frontend/app/api/swap/route.ts`, `frontend/app/api/upbit/route.ts`
-- **수정**: Next.js 미들웨어 또는 rate-limit 패키지 도입
-- **상태**: ✅ DONE (PR #181)
-
-#### M-8. pubKeyBind 체인 분석 링크 가능성
-- **파일**: `authorize.circom:489-490`
-- **수정**: 프라이버시 영향 문서화, 필요시 랜덤 블라인딩 추가 검토
-- **상태**: ✅ DONE (PR #182)
-
-#### M-9. 클라이언트 사이드 SSRF 검증 (우회 가능)
-- **파일**: `frontend/app/trade/private-claim/page.tsx:134-152`
-- **수정**: 서버사이드 프록시 도입, 클라이언트에서 직접 릴레이어 호출 금지
-- **상태**: ✅ DONE (PR #183)
-
-#### M-10. DB 파일 퍼미션 644
-- **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
-- **수정**: 퍼미션 600으로 변경
-- **상태**: ✅ DONE (PR #184)
-
-#### M-11. cross-relayer 매칭 race condition
-- **파일**: `zk-relayer/src/core/cross-relayer-matcher.ts`
-- **수정**: 수평 확장 시 분산 락(distributed lock) 도입 필요
-- **상태**: ✅ DONE (PR #186)
-
-### 🟢 LOW (개선 권장)
-
-#### L-5. Stealth 링크 시크릿 URL 노출
-- **파일**: `frontend/app/lib/stealth.ts:154-160`
-- **수정**: URL fragment(`#`) 사용 또는 POST 방식으로 변경
-- **상태**: ✅ DONE (PR #187)
-
-#### L-6. XSS 시 EdDSA 키 탈취 가능
-- **파일**: `frontend/app/lib/zk/eddsa.ts:156-173`
-- **수정**: CSP 헤더 강화, Web Worker 격리 검토
-- **상태**: ✅ DONE (PR #187)
-
-#### L-7. localStorage 도메인/지갑 격리 미흡
-- **파일**: `frontend/app/lib/provider.ts`, `frontend/app/lib/zk/note-storage.ts`
-- **수정**: 키 네임스페이스에 지갑 주소 포함
-- **상태**: ✅ DONE (PR #187)
-
-#### L-8. DB 암호화 미적용
-- **파일**: `relayer/relayer.db`, `zk-relayer/zk-relayer.db`
-- **수정**: SQLCipher 또는 프로덕션 DB 전환 시 암호화 적용
-- **상태**: ✅ DONE (PR #187)
-
-#### L-9. withdraw.circom recipient/relayer 바인딩 불완전
-- **파일**: `circuits/withdraw.circom:56-61`
-- **수정**: 명시적 equality constraint 추가 검토
-- **상태**: ✅ DONE (PR #187)
-
-## 2026-04-11 세션에서 발견 및 수정된 이슈
-
-### settleWithDex 관련 (25건)
-
-#### ✅ C-4. feeVault 미설정 + dexPlatformFeeBps > 0 → revert
-- **커밋**: ab4f847
-- **수정**: `FeeVaultRequired` 에러 + `setFeeVault(0)` 시 fee 자동 리셋
-
-#### ✅ C-5. 프론트엔드 DEX calldata에 full sellAmount 인코딩 (fee 차감 전)
-- **커밋**: ab4f847
-- **수정**: on-chain `dexPlatformFeeBps` 읽어서 post-fee swapAmountIn 계산
-
-#### ✅ C-6. sellToken == buyToken 시 Panic(17) underflow
-- **커밋**: 75db603, d25a4f3
-- **수정**: unspent sellToken 반환 가드 + `TokenSidesMismatch` revert 추가
-
-#### ✅ H-7. settleWithDex 릴레이어 레지스트리 체크가 일반 사용자 차단
-- **커밋**: ab4f847
-- **수정**: 시장가는 permissionless — 릴레이어 체크 제거
-
-#### ✅ H-8. settleAuth/settlePrivate sanctions 체크 누락
-- **커밋**: feeec6d
-- **수정**: `_requireNotSanctioned(msg.sender)` 추가
-
-#### ✅ H-9. WithdrawVerifier delta == gamma (phase-2 미실행)
-- **커밋**: 0b578c9
-- **수정**: dev phase-2 contribution 추가, 독립 delta 생성
-
-#### ✅ M-12. DexSwapFailed 가 두 실패 구분 불가
-- **커밋**: 3b40e73
-- **수정**: `DexCallReverted` + `DexOutputInsufficient(actual, required)` 분리
-
-#### ✅ M-13. Uniswap router 주소 오류 (SwapRouter vs SwapRouter02)
-- **커밋**: 3b40e73
-- **수정**: 0xE592 → 0x68b3 + per-chain map
-
-#### ✅ M-14. minReceive 부동소수점 반올림
-- **커밋**: 3b40e73
-- **수정**: BigInt 정수 연산으로 floor 보장
-
-#### ✅ M-15. setSanctionsList EOA 체크 없음
-- **커밋**: 206dc51
-- **수정**: `code.length` 검증 추가
-
-## 작업 완료
-
-### H-1. Fee-on-transfer / Rebasing 토큰 회계 불일치
-- **PR**: `optimize/gas-settlement` (토큰 화이트리스트로 해결)
-- **내용**: fee-on-transfer/rebasing 토큰은 실제 수신량 != 기록량. 표준 ERC20만 허용하는 화이트리스트 도입.
-- **상태**: ✅ DONE
-
-### H-2. Exit 중인 relayer가 updateInfo() 호출 가능
-- **내용**: `updateInfo()`에 `exitRequestedAt == 0` 체크 누락. exit 요청 중 fee 변경 가능.
-- **수정**: `updateInfo()`에 `if (r.exitRequestedAt > 0) revert AlreadyExiting();` 추가.
-- **파일**: `RelayerRegistry.sol:105`
-- **상태**: ✅ DONE (PR #20에서 해결)
-
-### M-1. Owner 단일 실패점 — 2단계 이전
-- **내용**: `transferOwnership()`이 즉시 소유권 이전. 잘못된 주소 입력 시 복구 불가.
-- **수정**: 2단계 패턴 도입 (pendingOwner → acceptOwnership). ScatterSettlement + RelayerRegistry 모두.
-- **파일**: `ScatterSettlement.sol`, `RelayerRegistry.sol`
-- **상태**: ✅ DONE (PR #19)
-
-### M-3. claimHash 영구 재사용 불가 — 문서화
-- **내용**: claimed/refunded된 claimHash는 amount != 0이므로 영구적으로 재사용 불가. depositor가 매번 고유 secret 사용해야 함.
-- **수정**: NatSpec 주석 추가.
-- **파일**: `ScatterSettlement.sol`
-- **상태**: ✅ DONE (PR #20)
-
-### M-4. withdraw()에 identity 검증 없음 — 문서화
-- **내용**: 의도적 설계 (fund lockup 방지). 제재 대상 사용자도 인출 가능.
-- **수정**: NatSpec 주석으로 설계 의도 명시.
-- **파일**: `ScatterSettlement.sol`
-- **상태**: ✅ DONE (PR #20)
-
-### M-5. 양측 fee 적용 — 문서화
-- **내용**: actualFee가 maker/taker 양쪽 sellAmount 각각에 적용됨. 사용자가 인지해야 함.
-- **수정**: NatSpec + PAPER.md에 명시.
-- **파일**: `ScatterSettlement.sol`, `docs/research/PAPER.md`
-- **상태**: ✅ DONE (PR #20)
-
-### L-1. releaseDelay = 0 허용 — 최소 지연 도입
-- **내용**: releaseDelay에 최소값 없어 즉시 claim 가능. privacy temporal dissociation 무효화.
-- **수정**: `MIN_RELEASE_DELAY` 상수 도입 (1 hour).
-- **파일**: `ScatterSettlement.sol`
-- **상태**: ✅ DONE (PR #20)
-
-### L-2. Unpause delay 없음 — 문서화
-- **내용**: setPaused(false) 즉시 적용. owner 키 탈취 시나리오에서만 관련.
-- **수정**: NatSpec 주석. 향후 Timelock 거버넌스 권장 명시.
-- **파일**: `ScatterSettlement.sol`
-- **상태**: ✅ DONE (PR #20)
-
-### L-3. RelayerRegistry bond slashing 없음 — 문서화
-- **내용**: 악의적 relayer에 대한 경제적 제재 메커니즘 없음.
-- **수정**: NatSpec 주석으로 향후 슬래싱 도입 가능성 명시.
-- **파일**: `RelayerRegistry.sol`
-- **상태**: ✅ DONE (PR #20)
-
-### L-4. getActiveRelayers() unbounded loop — 문서화
-- **내용**: relayerList 무한 성장 시 gas limit 초과. view 함수이므로 on-chain 영향 없음.
-- **수정**: NatSpec 경고 주석. pagination 파라미터 추가 검토.
-- **파일**: `RelayerRegistry.sol`
-- **상태**: ✅ DONE (PR #20)
+> ⬜ TODO | 🔧 IN PROGRESS (브랜치) | ⚠️ PARTIAL | ✅ DONE (PR/커밋) | ❌ WON'T DO (사유)
 
 ---
 
-## 전체 로드맵 (보안 + 기능 + UX)
+## Open items
 
-> 작업 시작 시 브랜치명을 기입하여 동시 작업 충돌 방지
+| # | 영역 | 항목 | 상태 | 비고 |
+|---|------|------|------|------|
+| 12 | mobile | 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
+| 15 | mobile | 네비게이션 (hamburger 메뉴) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
+| 21 | infra | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | 최근 fee redesign / cross-relayer / claim guard 모두 main 반영됨, 좋은 타이밍 |
+| 27 | UX | Cancel "Commitment rotation" 친화적 설명 | ⚠️ | 한 줄 메시지 있음 ("Escrow rotated to new commitment", `private-history/page.tsx:727`); 더 친화적 설명 여지 |
+| 28 | UX | 가스비 추정 패널 가시성 강화 | ⚠️ | `GasEstimate` 패널 이미 존재 (`private-order/page.tsx:526`); 가시성 보강은 주관 영역 |
+| 29 | tech-debt | Dead `private_orders` / full-proof 경로 정리 | ⬜ | 아래 #29 메모 참고 |
+| 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ⬜ | `OrderSummary` 와 P2P 라우트 검증 필드 불일치로 P2P fallback 시 authorize 매칭이 동작하지 않음. PR #308 Copilot finding |
+| 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ⬜ | 현재 cross-relayer 매칭 시 전체 Map 스캔. 10k cap 안에서는 무시 가능, 트래픽 늘면 우선순위 상향. PR #308 gemini finding |
+| R-14 | relayer | 부하 테스트 (k6/artillery) | ⬜ | 동시 주문/정산 부하 시나리오 |
 
-### 🔴 미해결 보안 이슈 (메인넷 전 필수)
+### #29 범위 메모 (2026-04-15 갱신)
 
-| # | 이슈 | 심각도 | 상태 | 브랜치 |
-|---|------|--------|------|--------|
-| C-1 | settleWithDex MEV (deadline) | CRITICAL | ✅ | PR #188 |
-| C-2 | claim.circom token/releaseTime 미구속 | CRITICAL | ✅ | PR #176 |
-| C-3 | 하드코딩 프라이빗 키 (.env) | CRITICAL | ✅ | PR #175 |
-| H-3 | transferFee 풀 드레인 벡터 | HIGH | ✅ | PR #178 |
-| H-5 | claimCount 범위 미검증 | HIGH | ✅ | PR #179 |
-| H-6 | Admin API 키 노출 + 약한 검증 | HIGH | ✅ | PR #177 |
-| M-6 | CORS `["*"]` | MEDIUM | ✅ | PR #180 |
-| M-7 | API Rate Limiting | MEDIUM | ✅ | PR #181 |
-| M-8 | pubKeyBind 체인 분석 | MEDIUM | ✅ | PR #182 |
-| M-9 | 클라이언트 SSRF (claim) | MEDIUM | ✅ | PR #183 |
-| M-10 | DB 파일 퍼미션 | MEDIUM | ✅ | PR #184 |
-| M-11 | cross-relayer race condition | MEDIUM | ✅ | PR #186 |
-| L-5~L-9 | 5건 LOW | LOW | ✅ | PR #187 |
+S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_orders`
+경로로만 들어옴. `POST /api/private-orders` 는 410 Gone. 남은 dead 코드:
 
-### 🟠 기능 개발
+- **Relayer**: `core/orderbook.ts` `PrivateOrderbook`, `core/private-submitter.ts`
+  `submitPrivateSettle`/`submitScatterDirect`, `core/matcher.ts` `PrivateMatcher`,
+  `core/cross-relayer-matcher.ts` 전체, `routes/orders.ts` `GET /:pubKeyAx`,
+  `types/order.ts` `PrivateOrder`/`StoredPrivateOrder`/`PrivateMatch`/
+  `CrossRelayerMatch`/`parsePrivateOrder`/`serializePrivateOrder`/`pairKey`,
+  `core/db.ts` `private_orders` 테이블, 테스트 5개 (`orderbook.test.ts`,
+  `matcher.test.ts`, `cross-relayer-matcher.test.ts`, `scenarios.test.ts`,
+  `e2e-private-flow.ts`).
+- **Frontend**: `private-history/page.tsx:323` `GET /api/private-orders/:pubKeyAx`
+  호출 (현재 항상 빈 배열). authorize 기반 히스토리로 교체.
+- **Contract** (별도 감사): `PrivateSettlement.settlePrivate()` 온체인 함수.
+  배포된 컨트랙트에서 제거하려면 재배포 필요 — 테스트넷 배포 (#21) 시 같이 검토.
 
-| # | 작업 | 상태 | 브랜치 |
-|---|------|------|--------|
-| 12 | 모바일 앱 키 보안 (Keychain/Keystore + 생체인증) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
-| 21 | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | — |
-| 29 | Dead `private_orders` / full proof(relayer-side proof 생성) 경로 정리 | ⬜ | — |
+기존 메모의 "단순 삭제 시 cross-relayer 매칭 0" 경고는 **PR #308
+(`AuthorizeCrossRelayerMatchService`) 도입으로 해소됨**. 이제는 dead 경로를
+지워도 cross-relayer 매칭이 authorize 쪽에서 정상 동작.
+
+---
+
+## 결정 — 작업하지 않음
+
+| # | 항목 | 사유 |
+|---|------|------|
+| 24 | Safari File System API 미지원 대체 경로 | 작업하지 않기로 결정 (2026-04-14) |
+| R-11 | 부분 체결 (partial fill) | 작업하지 않기로 결정 (2026-04-14) |
+| R-12 | AMM/DEX 라우팅 (미매칭 주문 자동 라우팅) | N/A — 지정가 주문 설계상 해당 없음 |
+
+---
+
+## Archive — 완료된 작업
+
+이 섹션은 **참고용**이다. 운영 중 같은 이슈가 재발하면 어느 PR 에서 처리됐는지
+역추적할 수 있게 요약만 남긴다. 자세한 내용은 git history.
+
+### 1차 보안 감사 (2026-04-11) — C-1 ~ L-9
 
 <details>
-<summary>#29 범위 메모 (2026-04-14)</summary>
+<summary>전체 13건 모두 ✅ 처리</summary>
 
-S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_orders` 경로로만 들어옴. `private_orders` 쓰기 엔드포인트(`POST /api/private-orders`)는 이미 410 Gone 반환하는 상태. 남아 있는 dead 코드:
-
-- **Relayer**
-  - `zk-relayer/src/core/orderbook.ts` — `PrivateOrderbook` 클래스 (이제 항상 빈 상태, `loadFromDB` 가 항상 0 반환)
-  - `zk-relayer/src/core/private-submitter.ts` — `submitPrivateSettle`, `submitScatterDirect` (PrivateOrder 기반)
-  - `zk-relayer/src/core/matcher.ts` — `PrivateMatcher` 클래스 + `isSettleFeeCovered` (authorize 쪽에선 별도의 `findMatch` 사용 — `routes/authorize-orders.ts:364`)
-  - `zk-relayer/src/core/cross-relayer-matcher.ts` — PrivateMatcher + PrivateOrderbook 기반. **현재 authorize 주문에 대한 크로스-릴레이어 매칭은 동작하지 않음** — 공유 오더북으로 broadcast 만 되고 실제 매칭 로직이 이 dead 경로만 훑기 때문.
-  - `zk-relayer/src/routes/orders.ts` — `GET /api/private-orders/:pubKeyAx` (프런트에서 `private-history/page.tsx:323` 가 호출하지만 응답은 항상 빈 배열)
-  - `zk-relayer/src/types/order.ts` — `PrivateOrder`, `StoredPrivateOrder`, `PrivateMatch`, `CrossRelayerMatch`, `parsePrivateOrder`, `serializePrivateOrder`, `pairKey`
-  - `zk-relayer/src/core/db.ts` — `private_orders` 테이블 스키마 + prepared statements
-  - 테스트: `test/orderbook.test.ts`, `test/matcher.test.ts`, `test/cross-relayer-matcher.test.ts`, `test/scenarios.test.ts`, `test/e2e-private-flow.ts` (+ admin/api-routes 내 일부 assertion)
-
-- **Frontend**
-  - `frontend/app/trade/private-history/page.tsx:323` — `GET /api/private-orders/:pubKeyAx` 호출 지점. authorize 기반 히스토리로 교체 필요.
-
-- **Contract (scope 밖 — 별도 감사 필요)**
-  - `PrivateSettlement.settlePrivate()` — on-chain 함수. 배포된 컨트랙트에서 제거하려면 재배포 필요. 테스트넷 배포 전에 같이 검토.
-
-주의: cross-relayer 매칭을 authorize 주문에 대해서도 동작하게 하려면 **이 dead 코드를 지우기 전에** `routes/authorize-orders.ts`의 `findMatch` 를 원격 오더북까지 훑도록 확장하거나, 별도의 `AuthorizeCrossRelayerMatchService` 를 추가해야 함. 단순 삭제만 하면 크로스-릴레이어 매칭 기능이 명시적으로 0 이 됨 (지금도 사실상 0 이지만 코드상으론 살아있음).
+| # | 이슈 | PR |
+|---|------|----|
+| C-1 | settleWithDex MEV/sandwich (deadline + slippage + 1inch split) | #151, #172, #188 |
+| C-2 | claim.circom token/releaseTime 미구속 | #176 |
+| C-3 | 하드코딩 프라이빗 키 (.env 노출) | #175 |
+| H-3 | transferFee 풀 드레인 벡터 (per-tx cap + setAuthorizedSettlement timelock) | #178 |
+| H-4 | SSRF in /api/swap (chainId 검증) | #178 |
+| H-5 | claimCount 범위 미검증 (ZK 회로) | #179 |
+| H-6 | Admin API 키 노출 + 약한 검증 (timing-safe) | #177 |
+| M-6 | CORS `["*"]` | #180 |
+| M-7 | API rate limiting | #181 |
+| M-8 | pubKeyBind 체인 분석 링크 가능성 | #182 |
+| M-9 | 클라이언트 사이드 SSRF (claim) | #183 |
+| M-10 | DB 파일 퍼미션 644 | #184 |
+| M-11 | cross-relayer 매칭 race condition | #186 |
+| L-5~L-9 | 5건 LOW (stealth secret URL, XSS→EdDSA, localStorage 격리, DB 암호화, withdraw recipient/relayer 바인딩) | #187 |
 
 </details>
 
-### 🟡 UX 개선 (사용자 플로우 체크에서 발견)
+### settleWithDex 라운드 (2026-04-11) — C-4 ~ M-15
 
-| # | 작업 | 상태 | 브랜치 |
-|---|------|------|--------|
-| 14 | 폴더 선택 전역화 (localStorage persist) | ✅ | PR #190 |
-| 15 | 모바일 네비게이션 (hamburger 메뉴) | ⬜ | `feat/mobile-app` 전용 (main 범위 외) |
-| 16 | 에러 메시지 사용자 친화적 | ✅ | PR #194 |
-| 17 | 주문 후 다음 단계 안내 | ⬜ | — |
-| 18 | DEX 가격 로딩 폴백 | ✅ | PR #191 |
-| 19 | 다중 지갑 지원 (WalletConnect) | ✅ | PR #193 |
-| 20 | Batch Claim | ✅ | `claimWithProofBatch` (PrivateSettlement.sol:1006, MAX_CLAIM_BATCH_SIZE=20) + `handleClaimBatchViaWallet` UI (private-claim/page.tsx:314) |
+<details>
+<summary>10건 ✅ 처리</summary>
 
-### 🔴 수정 필요 (2026-04-11 전체 점검에서 발견)
+| # | 이슈 | PR/커밋 |
+|---|------|---------|
+| C-4 | feeVault 미설정 + dexPlatformFeeBps > 0 → revert | (commit) |
+| C-5 | 프론트 DEX calldata에 fee 차감 전 sellAmount 인코딩 | (commit) |
+| C-6 | sellToken == buyToken 시 Panic(17) underflow | (commit) |
+| H-7 | settleWithDex 릴레이어 레지스트리 체크가 일반 사용자 차단 | (commit) |
+| H-8 | settleAuth/settlePrivate sanctions 체크 누락 | (commit) |
+| H-9 | WithdrawVerifier delta == gamma (phase-2 미실행) | (commit) |
+| M-12 | DexSwapFailed 가 두 실패 구분 불가 | (commit) |
+| M-13 | Uniswap router 주소 오류 (SwapRouter vs SwapRouter02) | (commit) |
+| M-14 | minReceive 부동소수점 반올림 | (commit) |
+| M-15 | setSanctionsList EOA 체크 없음 | (commit) |
 
-| # | 작업 | 상태 | 브랜치 |
-|---|------|------|--------|
-| 22 | Order 키 파생 UX — 자동 키 언락 | ✅ | PR #195 |
-| 23 | Limit↔Market 전환 시 상태 초기화 | ✅ | PR #195 |
+</details>
 
-### 🟢 보강 가능 (UX 점검 결과)
+### 컨트랙트 감사 일반 (H-1, H-2, M-1, M-3~M-5, L-1~L-4)
 
-| # | 작업 | 상태 | 비고 |
-|---|------|------|------|
-| 24 | Safari File System API 미지원 대체 경로 | ❌ | 작업하지 않기로 결정 (2026-04-14) |
-| 25 | Claims 16개 도달 시 사유 표시 | ⬜ | `ClaimsCapExceeded` 에러는 있으나 (error-messages.ts:33, cap=16) 주문 생성 UI 에서 사전 안내 없음 |
-| 26 | Stealth/Cross-relayer 개념 툴팁 설명 | ⬜ | UI 에 툴팁 없음 (grep 확인) |
-| 27 | Cancel 시 "Commitment rotation" 쉬운 설명 | ⚠️ | 한 줄 메시지는 있음 ("Escrow rotated to new commitment" — private-history/page.tsx:727), 더 친화적 설명 여지 있음 |
-| 28 | 가스비 추정 패널 더 눈에 띄게 | ⚠️ | `GasEstimate` 패널 이미 존재 (private-order/page.tsx:526). 가시성 강화는 주관적 판단 영역 |
+<details>
+<summary>10건 ✅ 처리 / 문서화</summary>
 
-### 🔴 릴레이어 메인넷 준비 (2026-04-11 릴레이어 점검)
+H-1 fee-on-transfer 회계 / H-2 exiting relayer updateInfo / M-1 owner
+2단계 이전 / M-3~M-5 claimHash 영구 / withdraw identity / 양측 fee
+(설계상 의도) / L-1~L-4 (releaseDelay 0, unpause delay, bond slashing,
+unbounded loop) — 모두 처리 또는 문서화 완료.
 
-> 릴레이어 운영자 관점에서 메인넷 배포 전 필수 보강 사항
+</details>
 
-#### 🔴 CRITICAL (메인넷 필수)
+### 릴레이어 메인넷 준비 (R-1 ~ R-10, R-13)
 
-| # | 이슈 | 내용 | 상태 | 브랜치 |
-|---|------|------|------|--------|
-| R-1 | 가스 추정 없음 | gas-guard 구현 + 유닛 테스트 12건 (#199) | ✅ | PR #198, #200 |
-| R-2 | TX 재시도 없음 | send-phase retry + wait timeout + receipt recovery + pending TX DB | ✅ | PR #201 |
-| R-3 | 헬스체크 없음 | `/health` 엔드포인트 (RPC + DB 체크) | ✅ | PR #202 |
-| R-4 | RPC 페일오버 없음 | FallbackProvider + `RPC_URLS_FALLBACK` env var | ✅ | PR #202 |
-| R-5 | 커밋먼트 재인덱싱 | DB 체크포인트로 마지막 인덱싱 블록 저장, 재시작 시 이어서 스캔 | ✅ | PR #202 |
-| R-6 | authorize 주문 인메모리 | SQLite `authorize_orders` 테이블 + 재시작 시 pending 주문 복원 | ✅ | PR #202 |
+<details>
+<summary>11건 ✅ 처리</summary>
 
-#### 🟠 HIGH (강력 권장)
+| # | 이슈 | PR |
+|---|------|----|
+| R-1 | 가스 추정 (gas-guard) | #198, #200 |
+| R-2 | TX 재시도 (send-phase + wait timeout + receipt recovery + pending TX DB) | #201 |
+| R-3 | 헬스체크 `/health` | #202 |
+| R-4 | RPC 페일오버 (FallbackProvider) | #202 |
+| R-5 | 커밋먼트 재인덱싱 체크포인트 | #202 |
+| R-6 | authorize 주문 SQLite 영속화 + 재시작 복원 | #202 |
+| R-7 | Admin API (fee/drain/balance/pause) | #205 |
+| R-8 | 인메모리 런타임 메트릭스 | #214 |
+| R-9 | 운영 가이드 (operations-guide.md) | #216 |
+| R-10 | OFAC 제재 목록 연동 | #217 |
+| R-13 | API 라우트 테스트 (Tier-1 + Tier-2) | #218, #222, #224 |
 
-| # | 이슈 | 내용 | 상태 | 브랜치 |
-|---|------|------|------|--------|
-| R-7 | Admin API 부재 | 런타임 fee 변경, 주문 drain, ETH 잔액 조회, pause/resume 불가 | ✅ | PR #205 |
-| R-8 | 메트릭스 없음 | 인메모리 런타임 메트릭스 (가스비/처리량/정산시간) | ✅ | PR #214 |
-| R-9 | 운영 문서 없음 | operations-guide.md (설정/모니터링/Admin API/트러블슈팅) | ✅ | PR #216 |
-| R-10 | 제재 목록 미연동 | pubKeyBind 필드 있지만 실제 OFAC 블록리스트 연동 없음 | ✅ | PR #217 |
+</details>
 
-#### 🟡 MEDIUM (개선 권장)
+### 2차 보안 감사 (S-C1, S-H1~H7, S-M1~M15)
 
-| # | 이슈 | 내용 | 상태 |
-|---|------|------|------|
-| R-11 | 부분 체결 | 주문 전체 체결만 가능 (partial fill 미지원) | ❌ 작업하지 않기로 결정 (2026-04-14) |
-| R-12 | AMM/DEX 라우팅 | 미매칭 주문을 DEX로 자동 라우팅 | N/A — 지정가 주문 설계상 해당 없음 |
-| R-13 | API 라우트 테스트 | HTTP 상태코드, 에러 처리, rate limiting 테스트 없음 | ✅ (PR #218, #222, #224 — Tier-1+Tier-2 전체) |
-| R-14 | 부하 테스트 | 동시 주문/정산 부하 테스트 없음 | ⬜ |
+<details>
+<summary>23건 ✅ 처리</summary>
 
-### 🔴 2차 보안 감사 (2026-04-11 전체 스택 5개 영역 병렬 감사)
+ownerSecret 레거시 제거 (S-C1, PR #197) / settle.circom claim token 검증
+(S-H1) / withdraw.circom range check (S-H2, 확인) / note 직렬화 pubKey
+(S-H3, S-H4) / CSP/COOP/COEP (S-H5, PR #187) / cross-relayer secrets
+평문 제거 (S-H6, PR #197) / authorize orders DoS 방어 (S-H7, PR #203) /
+회로 최적화/검증 (S-M1~M5, PR #179/#207/#204) / RelayerRegistry
+ReentrancyGuard (S-M6, PR #208) / FeeVault claim 프론트런 (S-M7, PR #209)
+/ Trade Offer 검증 (S-M8, PR #210) / rate limiter identity-based (S-M9,
+PR #212) / Worker secrets 제로화 (S-M12, PR #211) / totalLocked bit-width
+정합 (S-M13, PR #206) / scatterDirect → authorize 마이그레이션 (S-M14,
+PR #215) / shared orderbook 연동 (S-M15, PR #213).
 
-> 기존 1차 감사 이슈(C-1~L-9) 해결 후 추가 발견. 이미 수정된 항목은 ✅ 표시.
+</details>
 
-#### 🔴 CRITICAL
+### 기능 / UX 라운드 (#14 ~ #28)
 
-| # | 영역 | 이슈 | 상태 |
-|---|------|------|------|
-| S-C1 | Frontend/Relayer | ownerSecret 레거시 경로 제거 — UI는 이미 authorize 사용 중, 릴레이어 레거시 엔드포인트 비활성화 필요 | ✅ PR #197 |
+<details>
+<summary>9건 ✅ + 2건 ⚠️ + 2건 ❌ (active 항목은 위 Open items 참고)</summary>
 
-#### 🟠 HIGH
+| # | 항목 | PR |
+|---|------|----|
+| 14 | 폴더 선택 전역화 | #190 |
+| 16 | 에러 메시지 친화적 | #194 |
+| 17 | 주문 후 다음 단계 안내 | #290 |
+| 18 | DEX 가격 로딩 폴백 | #191 |
+| 19 | 다중 지갑 지원 (WalletConnect) | #193 |
+| 20 | Batch Claim (`claimWithProofBatch`, MAX_CLAIM_BATCH_SIZE=20) | (이전 세션) |
+| 22 | Order 키 파생 UX — 자동 키 언락 | #195 |
+| 23 | Limit↔Market 전환 시 상태 초기화 | #195 |
+| 25 | Claims 16개 cap 사유 표시 (툴팁) | #290 |
+| 26 | Stealth/Cross-relayer 툴팁 설명 | #290 |
 
-| # | 영역 | 이슈 | 상태 |
-|---|------|------|------|
-| S-H1 | Circuit | settle.circom claim token 검증 누락 | ✅ 이전 세션 수정 (커밋 feeec6d) |
-| S-H2 | Circuit | withdraw.circom amount/withdrawAmount range check 없음 | ✅ 이미 수정됨 (`Num2Bits(128)` on amount + amount-withdrawAmount, withdraw.circom:125-133) |
-| S-H3 | Frontend | note 직렬화 pubKeyAx/Ay — 이미 수정됨 확인 | ✅ 수정 완료 |
-| S-H4 | Frontend | change note pubKey — 이미 수정됨 확인 | ✅ 수정 완료 |
-| S-H5 | Frontend | CSP/COOP/COEP 헤더 | ✅ PR #187 (L-6) |
-| S-H6 | Relayer | cross-relayer Trade Offer에서 secrets 평문 전송 (레거시 경로) | ✅ PR #197 |
-| S-H7 | Relayer | authorize orders DoS 방어 (전역 cap + max expiry 24h + per-pubKey limit 50 + BigInt 정규화) | ✅ PR #203 |
+</details>
 
-#### 🟡 MEDIUM
+### 2026-04-15 추가 (cross-relayer 사이클)
 
-| # | 영역 | 이슈 | 상태 |
-|---|------|------|------|
-| S-M1 | Circuit | settle.circom LessThan(252)→LessThan(5) 최적화 | ✅ PR #179 (H-5) |
-| S-M2 | Circuit | settle.circom expiry/timestamp range check 없음 | ✅ 이미 구현됨 (LessEqThan(252) + TIMESTAMP_TOLERANCE) |
-| S-M3 | Circuit | authorize.circom expiry 회로 내 미검증 (컨트랙트 의존) | ✅ 의도적 설계 — orderHash에 EdDSA 서명, 컨트랙트 settleAuth()에서 block.timestamp 검증 |
-| S-M4 | Circuit | cancel.circom balance range check 없음 | ✅ PR #207 |
-| S-M5 | Contract | settleAuth zero-amount 방어 없음 | ✅ PR #204 |
-| S-M6 | Contract | RelayerRegistry ReentrancyGuard 없음 | ✅ PR #208 |
-| S-M7 | Contract | FeeVault.claim 플랫폼 수수료 프론트런 가능 | ✅ PR #209 |
-| S-M8 | Relayer | Trade Offer body 유효성 검증 얕음 | ✅ PR #210 |
-| S-M9 | Relayer | rate limiter IP 기반만 — multi-IP 우회 가능 | ✅ PR #212 |
-| S-M10 | Relayer | admin API timing-safe 비교 | ✅ PR #177 (H-6) |
-| S-M11 | Frontend | relayerUrl 검증 없이 fetch | ✅ PR #183 (M-9) |
-| S-M12 | Frontend | Worker에서 secrets 제로화 안 됨 | ✅ PR #211 |
-| S-M13 | Cross | totalLocked 128-bit (circuit) vs 96-bit (contract) 불일치 | ✅ PR #206 |
-| S-M14 | Relayer | ScatterDirect를 authorize 경로로 마이그레이션 (현재 레거시 POST에서만 지원) | ✅ PR #215 |
-| S-M15 | Relayer | authorize-orders에 shared orderbook 연동 (cross-relayer 가시성 없음) | ✅ PR #213 |
+<details>
+<summary>최근 세션에서 처리된 4건 — 모두 main 머지</summary>
+
+| 영역 | 항목 | PR |
+|------|------|----|
+| relayer | Authorize cross-relayer matching (`AuthorizeCrossRelayerMatchService` + P2P trade-offer + WS reconcile-on-reconnect) | #308 |
+| frontend | Claim UI 정산 대기 가드 (`useClaimsGroupStatus` + 10s 폴링 + 3-버튼 + batch gate) | #310 |
+| relayer | Shared-OB id derivation from nullifier (post-restart cleanup 정상화) | #313 |
+| docs | Dead `private_orders` 청소 tracker (#29) 등재 | #306 |
+
+</details>
