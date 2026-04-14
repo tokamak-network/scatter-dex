@@ -17,6 +17,7 @@ import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { confirmShareSecret } from '../lib/confirmShareSecret';
+import { friendlyError } from '../lib/error-messages';
 import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
@@ -325,7 +326,7 @@ export default function ClaimScreen() {
       }
     } catch (err: any) {
       setClaiming(false);
-      setClaimError(err?.message || 'Claim failed');
+      setClaimError(friendlyError(err));
     }
   }, [signer, readProvider, claimTab, parsedJsonClaim, selectedIndices, pendingClaims, submitMode, relayers, claimError]);
 

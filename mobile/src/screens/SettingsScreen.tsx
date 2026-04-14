@@ -21,6 +21,7 @@ import { Share } from 'react-native';
 import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
 import { confirmShareSecret } from '../lib/confirmShareSecret';
+import { friendlyError } from '../lib/error-messages';
 
 interface ToggleItem {
   id: string;
@@ -344,9 +345,7 @@ export default function SettingsScreen() {
               await KeySecurityService.deleteWallet();
               Alert.alert('Wallet Deleted', 'The wallet has been removed from this device.');
             } catch (err: any) {
-              console.error(err);
-              const msg = err?.shortMessage || err?.reason || err?.info?.error?.message || err?.message;
-              Alert.alert('Error', msg || 'Failed to delete wallet');
+              Alert.alert('Error', friendlyError(err));
             }
           },
         },
