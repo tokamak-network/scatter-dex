@@ -38,11 +38,15 @@ export function toBytes32Hex(value: string | bigint): string {
   return '0x' + BigInt(value).toString(16).padStart(64, '0');
 }
 
+// Hoisted so hot-path callers (per-keystroke input handlers in
+// TradeScreen) don't reallocate a regex on every invocation.
+const THOUSANDS_SEP_RE = /,/g;
+
 /** Strip thousands separators from a user-entered decimal string
  *  (`"1,850.25"` → `"1850.25"`). Keeps the original precision so the
  *  return value is still safe to pass to `ethers.parseUnits`. */
 export function stripThousandsSep(str: string): string {
-  return str.replace(/,/g, '');
+  return str.replace(THOUSANDS_SEP_RE, '');
 }
 
 /** Parse a user-entered decimal string that may contain thousands

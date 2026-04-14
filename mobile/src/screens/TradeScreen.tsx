@@ -64,7 +64,7 @@ export default function TradeScreen() {
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const { makeController: makeSubmitAbort, mountedRef } = useAbortOnUnmount();
+  const { makeController: makeSubmitAbort, isMounted } = useAbortOnUnmount();
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
@@ -453,11 +453,11 @@ export default function TradeScreen() {
       // AbortError = user-driven cancel (unmount/navigation). Not an
       // error the user needs to see — skip the error toast and let
       // the finally handle submitting state.
-      if (mountedRef.current && err?.name !== 'AbortError') {
+      if (isMounted() && err?.name !== 'AbortError') {
         setError(friendlyError(err));
       }
     } finally {
-      if (mountedRef.current) setSubmitting(false);
+      if (isMounted()) setSubmitting(false);
     }
   }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
