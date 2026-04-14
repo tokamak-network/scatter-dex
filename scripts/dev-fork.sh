@@ -20,7 +20,12 @@ ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b7869
 RPC_URL="http://localhost:8545"
 FORK_URL="${FORK_URL:-https://eth.llamarpc.com}"
 FORK_BLOCK="${FORK_BLOCK:-}"
-FORK_CHAIN_ID="${FORK_CHAIN_ID:-1}"
+# Default to 31338 so MetaMask accepts this as a custom network.
+# Using chain-id 1 would collide with mainnet and MetaMask blocks adding it.
+# The frontend decouples wallet chain id from the aggregator chain id —
+# 1inch is always queried with chainId=1 since the fork mirrors mainnet
+# state (same router / pool addresses).
+FORK_CHAIN_ID="${FORK_CHAIN_ID:-31338}"
 PIDS=()
 CLEANED_UP=false
 
@@ -60,7 +65,9 @@ wait_for() {
 
 check_port() {
   local port="$1" name="$2"
-  if lsof -i :"$port" > /dev/null 2>&1; then
+  # Only treat LISTENING sockets as "in use"; stale CLOSE_WAIT connections
+  # from browsers/wallets must not block a fresh anvil startup.
+  if lsof -iTCP:"$port" -sTCP:LISTEN -P > /dev/null 2>&1; then
     echo "ERROR: port $port is already in use ($name). Kill the existing process first."
     exit 1
   fi
@@ -98,10 +105,12 @@ fi
 echo "  anvil running on $RPC_URL (PID $last_pid)"
 
 echo ""
-echo "[2/4] Deploying contracts (MockIdentityRegistry on forked chain)..."
+echo "[2/4] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
 cd "$ROOT_DIR/contracts"
 set +e
-DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
+# USE_REAL_TOKENS=true → DeployLocal uses mainnet WETH/USDC (0xC02a…, 0xA0b8…)
+# so settleWithDex can route through actual 1inch / Uniswap liquidity.
+DEPLOY_OUTPUT=$(USE_REAL_TOKENS=true forge script script/DeployLocal.s.sol:DeployLocal \
   --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
 DEPLOY_STATUS=$?
 set -e
@@ -115,6 +124,8 @@ fi
 RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
 WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
 USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
+USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
+WTON=$(echo "$DEPLOY_OUTPUT" | grep "^  WTON:" | awk '{print $NF}')
 COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^  CommitmentPool:" | awk '{print $NF}')
 PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
 IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
@@ -143,21 +154,83 @@ echo "  USDC:                $USDC"
 echo "  CommitmentPool:      $COMMITMENT_POOL"
 echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
 
+# Real USDC has 6 decimals; Mock USDC has 18. DeployLocal's summary line
+# encodes the correct value, but build it here so the rest of the script
+# (relayer env, frontend env) stays consistent.
+USDC_DECIMALS=6
+if [ "${USE_REAL_TOKENS:-true}" != "true" ]; then USDC_DECIMALS=18; fi
+
+# Token list shared by relayer and frontend — appends real USDT/WTON
+# when the fork-mode deploy surfaced their addresses.
+TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:$USDC_DECIMALS"
+[ -n "$USDT" ] && TOKEN_LIST="$TOKEN_LIST,$USDT:USDT:6"
+[ -n "$WTON" ] && TOKEN_LIST="$TOKEN_LIST,$WTON:WTON:27"
+
+# ── 2b. Prefund anvil Alice with ETH + USDC + USDT ────────
+#        Real stablecoins can't be minted, so impersonate a whale and
+#        transfer. ETH gives Alice gas + WETH wrapping headroom.
+ALICE=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+# Multiple whales so one failing (e.g. moved balance since fork block)
+# doesn't break prefund. First match wins.
+USDC_WHALES=(
+  0x55FE002aefF02F77364de339a1292923A15844B8  # Circle
+  0xF977814e90dA44bFA03b6295A0616a897441aceC  # Binance 8
+  0x28C6c06298d514Db089934071355E5743bf21d60  # Binance 14
+)
+USDT_WHALES=(
+  0xF977814e90dA44bFA03b6295A0616a897441aceC  # Binance 8
+  0x5754284f345afc66a98fbB0a0Afe71e0F007B949  # Tether treasury
+  0x28C6c06298d514Db089934071355E5743bf21d60  # Binance 14
+)
+
+echo ""
+echo "[2b] Prefunding Alice ($ALICE) with ETH + USDC + USDT..."
+cast rpc anvil_setBalance "$ALICE" 0x56BC75E2D63100000 --rpc-url "$RPC_URL" > /dev/null  # 100 ETH
+
+prefund_from_whale() {
+  local token="$1" amount="$2" label="$3" ; shift 3
+  local whales=("$@")
+  for whale in "${whales[@]}"; do
+    cast rpc anvil_impersonateAccount "$whale" --rpc-url "$RPC_URL" > /dev/null
+    cast rpc anvil_setBalance "$whale" 0x56BC75E2D63100000 --rpc-url "$RPC_URL" > /dev/null
+    if cast send "$token" "transfer(address,uint256)" "$ALICE" "$amount" \
+        --from "$whale" --unlocked --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+      cast rpc anvil_stopImpersonatingAccount "$whale" --rpc-url "$RPC_URL" > /dev/null
+      echo "  Alice funded: $label via $whale"
+      return 0
+    fi
+    cast rpc anvil_stopImpersonatingAccount "$whale" --rpc-url "$RPC_URL" > /dev/null
+  done
+  echo "  WARNING: $label prefund failed — try FORK_BLOCK=<older block> or add whale"
+  return 1
+}
+
+prefund_from_whale "$USDC" 100000000000 "100,000 USDC" "${USDC_WHALES[@]}" || true
+[ -n "$USDT" ] && { prefund_from_whale "$USDT" 100000000000 "100,000 USDT" "${USDT_WHALES[@]}" || true; }
+# WTON is not worth chasing a whale for — UI can acquire via market order
+# once WETH/USDC liquidity is available.
+
 # ── 3. Start zk-relayer ─────────────────────────────────────
 echo ""
 echo "[3/4] Starting zk-relayer..."
 ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
+# Capture the post-deploy block number so the relayer skips pre-fork history
+# when scanning commitment events (upstream RPCs reject large ranges).
+INDEX_FROM=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
 cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
 RELAYER_PRIVATE_KEY=$ZK_RELAYER_KEY
 COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 FEE_VAULT_ADDRESS=$FEE_VAULT
-TOKEN_LIST=$WETH:WETH:18,$USDC:USDC:18
+TOKEN_LIST=$TOKEN_LIST
 ADMIN_API_KEY=$ADMIN_KEY
 RELAYER_FEE=30
 PORT=3002
+INDEX_FROM_BLOCK=$INDEX_FROM
 EOF
+echo "  INDEX_FROM_BLOCK:    $INDEX_FROM"
 echo "  Admin API key: $ADMIN_KEY"
 
 cd "$ROOT_DIR/zk-relayer"
@@ -174,7 +247,7 @@ echo "  zk-relayer running on http://localhost:3002 (PID $last_pid)"
 # ── 4. Start frontend ──────────────────────────────────────
 echo ""
 echo "[4/4] Starting frontend..."
-TOKENS="$WETH:WETH:18,$USDC:USDC:18"
+TOKENS="$TOKEN_LIST"
 
 # Preserve developer-owned secrets (not regenerated from the deployment)
 PRESERVED_ENV=""
@@ -188,6 +261,9 @@ NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
 NEXT_PUBLIC_WETH_ADDRESS=$WETH
 NEXT_PUBLIC_TOKENS=$TOKENS
 NEXT_PUBLIC_CHAIN_ID=$FORK_CHAIN_ID
+NEXT_PUBLIC_AGGREGATOR_CHAIN_ID=1
+NEXT_PUBLIC_FORK_MODE=true
+NEXT_PUBLIC_DISABLE_AGGREGATOR=true
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE

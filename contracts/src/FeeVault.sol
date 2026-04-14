@@ -20,6 +20,11 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @notice Total tracked liabilities per token (sum of all relayer balances).
     mapping(address => uint256) public totalTracked;
 
+    /// @notice Revenue accumulated from market-order platform fees and
+    ///         positive-slippage surplus (settleWithDex). Tracked per token,
+    ///         independently from relayer `balances`. Withdrawn by treasury.
+    mapping(address => uint256) public platformRevenue;
+
     /// @notice Platform fee in basis points (e.g., 500 = 5%). Max 50%.
     uint256 public platformFeeBps;
     uint256 public constant MAX_PLATFORM_FEE = 5000; // 50%
@@ -40,6 +45,8 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     // ─── Events ─────────────────────────────────────────────────
     event FeeDeposited(address indexed relayer, address indexed token, uint256 amount);
     event FeeClaimed(address indexed relayer, address indexed token, uint256 amount, uint256 platformFee);
+    event PlatformRevenueDeposited(address indexed token, uint256 amount, bytes32 indexed source);
+    event PlatformRevenueWithdrawn(address indexed token, uint256 amount, address indexed to);
     event FeeChangeScheduled(uint256 currentBps, uint256 newBps, uint256 effectiveTime);
     event FeeChangeCancelled(uint256 cancelledBps);
     event PlatformFeeUpdated(uint256 oldBps, uint256 newBps);
@@ -81,11 +88,45 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
 
         // Verify vault actually holds enough tokens to cover all tracked balances.
         // This catches cases where deposit() is called without prior token transfer.
-        if (IERC20(token).balanceOf(address(this)) < totalTracked[token]) {
+        if (IERC20(token).balanceOf(address(this)) < totalTracked[token] + platformRevenue[token]) {
             revert InsufficientTokenBalance();
         }
 
         emit FeeDeposited(relayer, token, amount);
+    }
+
+    /// @notice Credit platform revenue from a settleWithDex path (market order
+    ///         platform fee or positive-slippage surplus). Caller must have
+    ///         already transferred `amount` of `token` to this contract.
+    /// @param source Semantic tag for analytics (e.g. keccak256("market-surplus"),
+    ///        keccak256("market-platform-fee")). Not interpreted on-chain.
+    function depositPlatformRevenue(address token, uint256 amount, bytes32 source) external nonReentrant {
+        if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
+        if (token == address(0)) revert ZeroAddress();
+        if (amount == 0) return;
+
+        platformRevenue[token] += amount;
+
+        if (IERC20(token).balanceOf(address(this)) < totalTracked[token] + platformRevenue[token]) {
+            revert InsufficientTokenBalance();
+        }
+
+        emit PlatformRevenueDeposited(token, amount, source);
+    }
+
+    /// @notice Pull accumulated platform revenue for a specific token to the
+    ///         treasury address. Only the treasury (or owner, which typically
+    ///         is the same party) can call.
+    function withdrawPlatformRevenue(address token) external nonReentrant {
+        if (msg.sender != treasury && msg.sender != owner()) revert NotAuthorized();
+        if (token == address(0)) revert ZeroAddress();
+        uint256 amount = platformRevenue[token];
+        if (amount == 0) revert NothingToClaim();
+
+        platformRevenue[token] = 0;
+        IERC20(token).safeTransfer(treasury, amount);
+
+        emit PlatformRevenueWithdrawn(token, amount, treasury);
     }
 
     // ─── Claim (called by relayers) ─────────────────────────────

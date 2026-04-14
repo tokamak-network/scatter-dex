@@ -101,7 +101,12 @@ export class PrivateSubmitter {
   /** Index all commitment deposits from on-chain events. */
   async indexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
-    const events = await this.pool.queryFilter(filter, 0, "latest");
+    // On forked chains, querying from block 0 crosses pre-fork history and
+    // trips upstream RPC block-range limits (e.g. drpc free tier rejects
+    // >10k block ranges). INDEX_FROM_BLOCK lets operators skip the unused
+    // pre-deployment range. Defaults to 0 for fresh chains (anvil mock).
+    const fromBlock = Number(process.env.INDEX_FROM_BLOCK ?? 0);
+    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
     this.commitmentLeaves = [];
 
     for (const event of events) {
