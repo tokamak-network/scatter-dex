@@ -6,7 +6,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from './ConfigService';
 
 let readProvider: ethers.JsonRpcProvider | null = null;
-let cachedSanctionsAddr: string | null = null;
+// Three-state cache: `undefined` = never fetched, `null` = pool
+// doesn't implement sanctionsList() (older deployments), string =
+// real address. A two-state `string | null` couldn't distinguish
+// "not fetched" from "fetched and absent", causing repeat RPCs.
+let cachedSanctionsAddr: string | null | undefined = undefined;
 const resetListeners = new Set<() => void>();
 
 export const ProviderService = {
@@ -27,10 +31,10 @@ export const ProviderService = {
     await AsyncStorage.setItem('scatterdex_earliest_block', String(block));
   },
 
-  /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit. */
-  /** Returns null gracefully if pool doesn't support sanctionsList() (older deployments). */
+  /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit.
+   *  Returns null gracefully if pool doesn't support sanctionsList() (older deployments). */
   async getSanctionsListAddress(): Promise<string | null> {
-    if (cachedSanctionsAddr !== null) return cachedSanctionsAddr;
+    if (cachedSanctionsAddr !== undefined) return cachedSanctionsAddr;
 
     const poolAddr = ConfigService.getCommitmentPoolAddress();
     if (!poolAddr) return null;
@@ -42,15 +46,16 @@ export const ProviderService = {
       cachedSanctionsAddr = addr;
       return addr;
     } catch {
-      // Pool doesn't implement sanctionsList() — skip sanctions check
-      cachedSanctionsAddr = ethers.ZeroAddress;
+      // Pool doesn't implement sanctionsList() — cache null so later
+      // callers short-circuit without a repeat RPC attempt.
+      cachedSanctionsAddr = null;
       return null;
     }
   },
 
   reset() {
     readProvider = null;
-    cachedSanctionsAddr = null;
+    cachedSanctionsAddr = undefined;
     resetListeners.forEach((fn) => {
       try { fn(); } catch (err) {
         console.warn('ProviderService reset listener failed:', err);
