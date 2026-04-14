@@ -268,11 +268,18 @@ export default function PrivateHistoryPage() {
           }
         }
 
-        // 2) legacy tuple fallback
+        // 2) legacy tuple fallback. `totalLocked` on-chain is the sum of
+        //    claim amounts (enforced by the circuit as >= buyAmount), so
+        //    comparing against BigInt(buyAmount) would miss every bundle
+        //    whose recipients over-allocate the min-receive floor. Recover
+        //    the real totalLocked by summing the claims array.
         let sell: bigint, locked: bigint;
         try {
           sell = BigInt(o.order.sellAmount);
-          locked = BigInt(o.order.buyAmount);
+          locked = (o.claims ?? []).reduce<bigint>(
+            (sum, c) => sum + BigInt(c.amount ?? 0),
+            0n,
+          );
         } catch { continue; }
         const st = o.order.sellToken.toLowerCase();
         const bt = o.order.buyToken.toLowerCase();
