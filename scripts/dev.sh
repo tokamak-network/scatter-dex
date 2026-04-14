@@ -89,8 +89,9 @@ ensure_circuits_built() {
     return
   fi
   echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
-  ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1
-  if [ $? -ne 0 ]; then
+  # `if !` instead of post-hoc `$?` check so the failure is caught even
+  # under `set -e` (which would otherwise abort before the diagnostic runs).
+  if ! ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1; then
     echo "  ERROR: circuit build failed. Tail of $LOG_DIR/circuit-build.log:"
     tail -30 "$LOG_DIR/circuit-build.log" 2>/dev/null
     exit 1
