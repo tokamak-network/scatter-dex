@@ -13,6 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { formatBalance } from '../lib/format';
+import { friendlyError } from '../lib/error-messages';
 
 const STEP_PROGRESS: Record<DepositStep, number> = {
   idle: 0,
@@ -115,7 +116,7 @@ export default function DepositScreen() {
         await DepositService.execute(signer, account, selectedToken, amount, onProgress);
       } catch (err: any) {
         setIsGenerating(false);
-        setDepositError(err?.message || 'Deposit failed unexpectedly');
+        setDepositError(friendlyError(err));
       }
     } else if (step === 2 && progress >= 100 && !isGenerating) {
       // Complete Deposit — reset to step 1

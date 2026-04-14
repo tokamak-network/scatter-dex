@@ -15,6 +15,7 @@ import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
 import { CancelService, CancelProgress } from '../services/CancelService';
 import { formatAmount, formatDate, shortAddr } from '../lib/format';
+import { friendlyError } from '../lib/error-messages';
 
 type Tab = 'active' | 'spent' | 'pending';
 type StatusType = 'matching' | 'verified' | 'confirmed' | 'waiting';
@@ -196,7 +197,7 @@ export default function HistoryScreen() {
                 setPendingOrders((prev) => prev.filter((o) => o.nonce !== nonce));
               }
             } catch (err: any) {
-              setError(err?.message || 'Cancel failed');
+              setError(friendlyError(err));
             } finally {
               setCancellingNoteId(null);
             }

@@ -20,6 +20,7 @@ import { ConfigService } from '../services/ConfigService';
 import AddressBookModal from '../components/AddressBookModal';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
+import { friendlyError } from '../lib/error-messages';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -339,7 +340,7 @@ export default function TradeScreen() {
         });
       }
     } catch (err: any) {
-      setError(err?.message || 'Trade failed');
+      setError(friendlyError(err));
     } finally {
       setSubmitting(false);
     }
