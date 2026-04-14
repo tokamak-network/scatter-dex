@@ -306,6 +306,18 @@ export default function PrivateOrderPage() {
     effectivePrice: number;
     source: string;
   } | null>(null);
+  // Stable callback identity so AggregatorQuotePanel's effect (which now
+  // depends on onQuote to propagate clear signals) doesn't re-fire on every
+  // parent render.
+  const handleAggregatorQuote = useCallback(
+    (q: { estimatedOutput: bigint; effectivePrice: number; source: string } | null) => {
+      setAggregatorQuote(q);
+      if (q === null) {
+        setBuyAmount("");
+      }
+    },
+    [],
+  );
 
   const { marketPrice, marketPriceSource } = useMemo(() => {
     if (aggregatorQuote) return { marketPrice: aggregatorQuote.effectivePrice, marketPriceSource: aggregatorQuote.source };
@@ -1756,7 +1768,7 @@ export default function PrivateOrderPage() {
               sellAmount={sellAmount}
               slippageBps={parseInt(slippageBps) || 50}
               account={account ?? undefined}
-              onQuote={setAggregatorQuote}
+              onQuote={handleAggregatorQuote}
             />
           ) : (
             <PricePanel

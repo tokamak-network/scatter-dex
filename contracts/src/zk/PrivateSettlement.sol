@@ -786,10 +786,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 13. Register claims group
         SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked);
 
-        // 14. Surplus handling: positive slippage is routed through
-        //     FeeVault.platformRevenue (independent of relayer balances).
-        //     Treasury withdraws via withdrawPlatformRevenue(token). When no
-        //     FeeVault is set, surplus stays in the contract (owner recovery).
+        // 14. Surplus handling: positive slippage is transferred to FeeVault
+        //     and credited to FeeVault.platformRevenue (independent of
+        //     relayer balances). Treasury later withdraws it via
+        //     withdrawPlatformRevenue(token). When no FeeVault is set,
+        //     surplus stays in the contract (owner recovery).
         if (amountOut > proof.totalLocked) {
             uint256 surplus = amountOut - proof.totalLocked;
             if (address(feeVault) != address(0)) {

@@ -40,13 +40,16 @@ export default function AggregatorQuotePanel({
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<number | null>(null);
 
-  // Debounce-fetch on amount/pair change
+  // Debounce-fetch on amount/pair change. `onQuote(null)` fires on every
+  // early-return path so the parent can clear derived state (min-receive,
+  // effective price) the instant inputs become invalid — otherwise a stale
+  // quote lingers after the user empties the amount or flips the pair.
   useEffect(() => {
     if (!sellTokenAddress || !buyTokenAddress || !sellAmount || !account || sellDecimals == null || buyDecimals == null) {
-      setRoute(null); setError(null); return;
+      setRoute(null); setError(null); onQuote?.(null); return;
     }
     const parsed = parseFloat(sellAmount);
-    if (!isFinite(parsed) || parsed <= 0) { setRoute(null); setError(null); return; }
+    if (!isFinite(parsed) || parsed <= 0) { setRoute(null); setError(null); onQuote?.(null); return; }
 
     let cancelled = false;
     setLoading(true); setError(null);
@@ -70,14 +73,17 @@ export default function AggregatorQuotePanel({
           onQuote?.({ estimatedOutput: r.estimatedOutput, effectivePrice: price, source: r.source });
         }
       } catch (e) {
-        if (!cancelled) setError((e as Error).message ?? "quote failed");
+        if (!cancelled) {
+          setError((e as Error).message ?? "quote failed");
+          onQuote?.(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }, 600);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [sellTokenAddress, buyTokenAddress, sellAmount, sellDecimals, buyDecimals, slippageBps, account]);
+  }, [sellTokenAddress, buyTokenAddress, sellAmount, sellDecimals, buyDecimals, slippageBps, account, onQuote]);
 
   const effectivePrice = route && sellAmount && buyDecimals != null
     ? Number(ethers.formatUnits(route.estimatedOutput, buyDecimals)) / parseFloat(sellAmount)

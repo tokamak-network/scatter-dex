@@ -9,9 +9,21 @@ set -e
 # exercise the Market Order (`settleWithDex`) flow end-to-end locally.
 #
 # Env:
-#   FORK_URL        (default: https://eth.llamarpc.com)
-#   FORK_BLOCK      (default: latest — pin for reproducibility)
-#   FORK_CHAIN_ID   (default: 1 — preserves mainnet semantics for 1inch API)
+#   FORK_URL                     (default: https://eth.llamarpc.com — drpc is
+#                                 a good alternate when llamarpc shards flap)
+#   FORK_BLOCK                   (default: latest — pin for reproducibility)
+#   FORK_CHAIN_ID                (default: 31338 — avoids MetaMask's mainnet
+#                                 collision; the frontend overrides the 1inch
+#                                 aggregator chainId to 1 via
+#                                 NEXT_PUBLIC_AGGREGATOR_CHAIN_ID so routing
+#                                 keeps using mainnet liquidity data)
+#   NEXT_PUBLIC_DISABLE_AGGREGATOR
+#                                (default: true on fork because 1inch's
+#                                 Pathfinder often picks non-Uniswap pools
+#                                 whose state diverges on the fork; set to
+#                                 false when you've pinned FORK_BLOCK to the
+#                                 current mainnet tip and want to exercise
+#                                 the 1inch path end-to-end)
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.dev-logs"
@@ -272,7 +284,7 @@ NEXT_PUBLIC_TOKENS=$TOKENS
 NEXT_PUBLIC_CHAIN_ID=$FORK_CHAIN_ID
 NEXT_PUBLIC_AGGREGATOR_CHAIN_ID=1
 NEXT_PUBLIC_FORK_MODE=true
-NEXT_PUBLIC_DISABLE_AGGREGATOR=true
+NEXT_PUBLIC_DISABLE_AGGREGATOR=${NEXT_PUBLIC_DISABLE_AGGREGATOR:-true}
 NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
@@ -283,6 +295,11 @@ EOF
 
 if [ -n "$PRESERVED_ENV" ]; then
   echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
+  if [ "${NEXT_PUBLIC_DISABLE_AGGREGATOR:-true}" = "true" ]; then
+    echo "  NOTE: ONEINCH_API_KEY is set, but NEXT_PUBLIC_DISABLE_AGGREGATOR=true"
+    echo "        still pins routing to Uniswap V3. Re-run with"
+    echo "        NEXT_PUBLIC_DISABLE_AGGREGATOR=false to enable the 1inch path."
+  fi
 else
   echo "  NOTE: ONEINCH_API_KEY not set — market orders will use Uniswap fallback."
   echo "        Add it to frontend/.env.local and restart the frontend to enable 1inch."
