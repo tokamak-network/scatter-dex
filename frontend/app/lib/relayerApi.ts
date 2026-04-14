@@ -106,7 +106,7 @@ export class RelayerClient {
   }
 
   async getOrderbook(pair: string): Promise<{ pair: string; sells: OrderbookEntry[]; buys: OrderbookEntry[] }> {
-    const res = await fetch(`${this.baseUrl}/api/orderbook/${pair}`);
+    const res = await fetch(`${this.baseUrl}/api/private-orderbook/${pair}`);
     if (!res.ok) throw new Error(`Failed to get orderbook: ${res.statusText}`);
     return res.json();
   }

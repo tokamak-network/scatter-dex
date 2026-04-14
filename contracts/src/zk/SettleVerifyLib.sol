@@ -171,11 +171,15 @@ library SettleVerifyLib {
             revert ClaimsCapExceeded();
         }
 
-        // Fee upper bound (user-signed maxFee, bps)
-        if (uint256(feeTokenMaker) * FEE_BPS_DENOMINATOR > uint256(taker.sellAmount) * uint256(taker.maxFee)) {
+        // Fee upper bound (user-signed maxFee, bps).
+        // [2026-04-14 fee-semantics redesign] Each side's maxFee caps the
+        // fee charged against their OWN buyAmount (receive token), so the
+        // user locks in what they pay their relayer when signing — the
+        // counterparty's maxFee can't inflate it.
+        if (uint256(feeTokenMaker) * FEE_BPS_DENOMINATOR > uint256(maker.buyAmount) * uint256(maker.maxFee)) {
             revert FeeExceedsMax();
         }
-        if (uint256(feeTokenTaker) * FEE_BPS_DENOMINATOR > uint256(maker.sellAmount) * uint256(maker.maxFee)) {
+        if (uint256(feeTokenTaker) * FEE_BPS_DENOMINATOR > uint256(taker.buyAmount) * uint256(taker.maxFee)) {
             revert FeeExceedsMax();
         }
 

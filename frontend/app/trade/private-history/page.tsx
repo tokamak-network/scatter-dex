@@ -609,7 +609,7 @@ export default function PrivateHistoryPage() {
                     </span>
                     {o.order?.type === "market" ? (
                       <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-tertiary/15 text-tertiary border border-tertiary/30">
-                        Market
+                        DEX
                       </span>
                     ) : (
                       <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/15 text-primary border border-primary/30">

@@ -235,9 +235,11 @@ export function createAuthorizeOrderRoutes(
       // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
       if (_sharedClient) {
         const ps = order.publicSignals;
+        // Offer handle (OFFER_HANDLE_RE = /^0x[0-9a-fA-F]{64}$/):
+        // nullifier is already unique per order, so encode it as 32-byte hex.
+        const offerHandle = "0x" + BigInt(nullifier).toString(16).padStart(64, "0");
         const orderbookId = await _sharedClient.postOrder({
-          nonce: nullifier,
-          pubKeyAx: pubKeyAx!,
+          id: offerHandle,
           sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
           buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
           sellAmount: ps.sellAmount,
@@ -246,8 +248,9 @@ export function createAuthorizeOrderRoutes(
           maxFee: Number(ps.maxFee),
           expiry: Number(ps.expiry),
         });
-        if (orderbookId && _orderIdMap) {
-          _orderIdMap.set(nullifier, orderbookId);
+        if (orderbookId) {
+          console.log(`[authorize-orders] Published to shared orderbook: ${orderbookId}`);
+          if (_orderIdMap) _orderIdMap.set(nullifier, orderbookId);
         }
       }
 

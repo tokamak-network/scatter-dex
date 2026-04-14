@@ -89,10 +89,10 @@ export class CrossRelayerMatchService {
         local.order.buyAmount * remoteBuyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility with each side's signed maxFee as the
-      // worst-case fee bound (see PrivateMatcher.isSettleFeeCovered).
-      if (!isSettleFeeCovered(remoteSellAmount, remoteMaxFee, local.order.buyAmount)) continue;
-      if (!isSettleFeeCovered(local.order.sellAmount, local.order.maxFee, remoteBuyAmount)) continue;
+      // Amount compatibility — each side's own maxFee caps its own fee
+      // (see PrivateMatcher.isSettleFeeCovered, fee-semantics redesign).
+      if (!isSettleFeeCovered(remoteSellAmount, local.order.maxFee, local.order.buyAmount)) continue;
+      if (!isSettleFeeCovered(local.order.sellAmount, remoteMaxFee, remoteBuyAmount)) continue;
 
       // Match found! Local is taker, remote is maker.
       console.log(`[cross-relayer] Reactive match: local ${orderKey} ↔ remote ${summary.id}`);
@@ -302,11 +302,11 @@ export class CrossRelayerMatchService {
       return { status: "rejected", reason: "price incompatible" };
     }
     // Fee-aware amount check — mirrors the settle-circuit 8c cap
-    // (totalLocked + feeToken <= counterpartySell) combined with the
-    // signed maxFee upper bound.
+    // (totalLocked + feeToken <= counterpartySell) combined with each
+    // side's own signed maxFee upper bound (fee-semantics redesign).
     if (
-      !isSettleFeeCovered(takerOrder.sellAmount, takerOrder.maxFee, maker.buyAmount) ||
-      !isSettleFeeCovered(maker.sellAmount, maker.maxFee, takerOrder.buyAmount)
+      !isSettleFeeCovered(takerOrder.sellAmount, maker.maxFee, maker.buyAmount) ||
+      !isSettleFeeCovered(maker.sellAmount, takerOrder.maxFee, takerOrder.buyAmount)
     ) {
       return { status: "rejected", reason: "amount insufficient" };
     }

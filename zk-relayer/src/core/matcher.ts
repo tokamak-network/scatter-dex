@@ -8,31 +8,31 @@ import type { RemoteOrderStore } from "./remote-orderbook.js";
 export const FEE_BPS_DENOMINATOR = 10_000n;
 
 /**
- * Conservative worst-case feasibility check: under each side's signed
- * `maxFee` ceiling, will the trade still close at settle?
+ * Feasibility check under the [2026-04-14 fee redesign, v2]. Each side's
+ * relayer fee now comes out of their own receive, so:
  *
- *   totalLocked >= counterpartyBuy               (settle 8b)
- *   totalLocked + feeToken <= sellAmount         (settle 8c)
- *   feeToken   <= sellAmount * maxFee / 10000    (authorize cap)
+ *   totalLocked >= buyAmount − feeToken         (settle 8b, relaxed)
+ *   totalLocked + feeToken <= counterpartySell  (settle 8c)
+ *   ⇒ (buyAmount − feeToken) + feeToken ≤ counterpartySell
+ *   ⇒ buyAmount ≤ counterpartySell
  *
- * Combining yields `sellAmount * (10000 − maxFee) >= counterpartyBuy * 10000`.
- * The relayer may charge less than `maxFee` at settle, so a failing
- * check here only means the *worst case* fails — not that settlement
- * is impossible. The matcher stays strict to avoid "matched but then
- * reverts at settle" outcomes.
+ * The fee drops out of the feasibility inequality entirely — matching
+ * reduces to a plain sufficient-counterparty-sell check. Fee is
+ * independently bounded by `feeToken ≤ buyAmount × maxFee / 10000` and
+ * applied at settle time without needing any extra headroom.
  *
- * `maxFee` is parsed as a uint16 upstream (up to 65535). Anything above
- * `FEE_BPS_DENOMINATOR` is a nonsensical "fee > 100%" value; clamp so
- * the subtraction can't go negative and the check degrades to
- * "counterpartyBuy must be 0" — the mathematically correct reject.
+ * `maxFee` is kept in the signature for backward compatibility but is
+ * no longer used in this inequality. Callers should still ensure
+ * `maxFee ≥ relayer.minFeeBps` separately (see PrivateMatcher).
  */
-export function isSettleFeeCovered(sellAmount: bigint, maxFee: bigint, counterpartyBuy: bigint): boolean {
-  const capped = maxFee > FEE_BPS_DENOMINATOR ? FEE_BPS_DENOMINATOR : maxFee;
-  return sellAmount * (FEE_BPS_DENOMINATOR - capped) >= counterpartyBuy * FEE_BPS_DENOMINATOR;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function isSettleFeeCovered(counterpartySell: bigint, _maxFee: bigint, buyAmount: bigint): boolean {
+  return counterpartySell >= buyAmount;
 }
 
 export class PrivateMatcher {
   private relayerAddress: string | null = null;
+  private minFeeBps: bigint = 0n;
 
   constructor(
     private orderbook: PrivateOrderbook,
@@ -42,6 +42,13 @@ export class PrivateMatcher {
   /** Set this relayer's address to skip own orders in remote matching */
   setRelayerAddress(address: string): void {
     this.relayerAddress = address.toLowerCase();
+  }
+
+  /** Minimum fee (bps) this relayer is willing to serve. Orders whose
+   *  signed maxFee is below this threshold are skipped — each relayer
+   *  decides whether an order's terms are worth settling. */
+  setMinFeeBps(bps: number): void {
+    this.minFeeBps = BigInt(bps);
   }
 
   /**
@@ -69,6 +76,12 @@ export class PrivateMatcher {
       if (candidate.status !== "pending") continue;
       if (candidate.order.expiry <= now) continue;
 
+      // Relayer's minimum fee filter — if either order's signed maxFee is
+      // below our min, this relayer refuses to settle (both sides' fees
+      // may flow to us; we need each side to authorize at least our min).
+      if (order.maxFee < this.minFeeBps) continue;
+      if (candidate.order.maxFee < this.minFeeBps) continue;
+
       // Self-match prevention (same EdDSA pubkey)
       if (candidate.order.pubKeyAx === order.pubKeyAx &&
           candidate.order.pubKeyAy === order.pubKeyAy) continue;
@@ -84,9 +97,10 @@ export class PrivateMatcher {
         order.buyAmount * candidate.order.buyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility with the signed maxFee as worst-case fee bound.
-      if (!isSettleFeeCovered(candidate.order.sellAmount, candidate.order.maxFee, order.buyAmount)) continue;
-      if (!isSettleFeeCovered(order.sellAmount, order.maxFee, candidate.order.buyAmount)) continue;
+      // Amount compatibility: each side's own maxFee caps the fee
+      // charged against their own buyAmount (fee-semantics redesign).
+      if (!isSettleFeeCovered(candidate.order.sellAmount, order.maxFee, order.buyAmount)) continue;
+      if (!isSettleFeeCovered(order.sellAmount, candidate.order.maxFee, candidate.order.buyAmount)) continue;
 
       return { maker: newOrder, taker: candidate };
     }
@@ -140,11 +154,11 @@ export class PrivateMatcher {
         order.buyAmount * remoteBuyAmount;
       if (!compatible) continue;
 
-      // Amount compatibility with worst-case fee — same shape as the local
-      // matcher, but `remote.maxFee` arrives as a string on OrderSummary.
+      // Amount compatibility with each side's own maxFee — fee-semantics
+      // redesign. `remote.maxFee` arrives as a string on OrderSummary.
       const remoteMaxFee = BigInt(remote.maxFee);
-      if (!isSettleFeeCovered(remoteSellAmount, remoteMaxFee, order.buyAmount)) continue;
-      if (!isSettleFeeCovered(order.sellAmount, order.maxFee, remoteBuyAmount)) continue;
+      if (!isSettleFeeCovered(remoteSellAmount, order.maxFee, order.buyAmount)) continue;
+      if (!isSettleFeeCovered(order.sellAmount, remoteMaxFee, remoteBuyAmount)) continue;
 
       // Cross-relayer match found!
       // New order is taker (arrived later), remote order is maker (was there first)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 
 // ── Mainnet price lookup by token symbol ────────────────────────────
@@ -12,7 +12,7 @@ import { ethers } from "ethers";
 const MAINNET_RPC =
   process.env.NEXT_PUBLIC_FORK_MODE === "true"
     ? (process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545")
-    : "https://eth.drpc.org";
+    : (process.env.NEXT_PUBLIC_MAINNET_RPC || "https://ethereum-rpc.publicnode.com");
 
 const QUOTER_V2_IFACE = new ethers.Interface([
   "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
@@ -138,12 +138,16 @@ export function useMainnetPrice(
   sellSymbol: string | undefined,
   buySymbol: string | undefined,
   side?: "buy" | "sell",
-): DexPrice[] {
+): { prices: DexPrice[]; refresh: () => void; lastUpdated: Date | null } {
   const sourceNames = [...DEX_QUOTERS.map((d) => d.name), "Curve", "Upbit"];
 
   const [prices, setPrices] = useState<DexPrice[]>(
     sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: true })),
   );
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
 
   useEffect(() => {
     if (!sellSymbol || !buySymbol) return;
@@ -160,13 +164,6 @@ export function useMainnetPrice(
 
     if (sell.address.toLowerCase() === buy.address.toLowerCase()) {
       setPrices(sourceNames.map((s) => ({ source: s, price: 1, netPrice: 1, fee: "0%", loading: false })));
-      return;
-    }
-
-    // Skip mainnet price fetch on local dev (anvil) to avoid rate limiting
-    const host = typeof window !== "undefined" ? window.location.hostname : "";
-    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
-      setPrices(sourceNames.map((s) => ({ source: s, price: null, netPrice: null, fee: null, loading: false })));
       return;
     }
 
@@ -243,15 +240,17 @@ export function useMainnetPrice(
         if (idx >= 0) results[idx].recommended = true;
       }
 
-      if (!cancelled) setPrices(results);
+      if (!cancelled) {
+        setPrices(results);
+        setLastUpdated(new Date());
+      }
     };
 
     fetchAll();
-    const interval = setInterval(fetchAll, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [sellSymbol, buySymbol, side]);
+    return () => { cancelled = true; };
+  }, [sellSymbol, buySymbol, side, refreshTick]);
 
-  return prices;
+  return { prices, refresh, lastUpdated };
 }
 
 /** Returns the recommended price from the list, or null */

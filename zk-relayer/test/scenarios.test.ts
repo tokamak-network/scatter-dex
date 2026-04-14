@@ -222,8 +222,8 @@ describe("Edge Cases", () => {
     });
   });
 
-  describe("E3: Fee-aware amount bound — matcher rejects matches that would revert at settle", () => {
-    it("1:1 amounts with maxFee > 0 are rejected (settle 8c would fail)", () => {
+  describe("E3: Fee-semantics redesign — fee comes from receive side, 1:1 matches", () => {
+    it("1:1 amounts with maxFee > 0 still match (each side absorbs own fee)", () => {
       const maker = makeOrder({
         pubKeyAx: 100n, maxFee: 30n,
         sellAmount: 1000n, buyAmount: 2000n,
@@ -235,22 +235,22 @@ describe("Edge Cases", () => {
       });
       orderbook.add(maker);
       const stored = orderbook.add(taker);
-      expect(matcher.findMatch(stored)).toBeNull();
+      expect(matcher.findMatch(stored)).not.toBeNull();
     });
 
-    it("same 1:1 amounts with maxFee = 0 still match", () => {
+    it("rejects when taker.sellAmount is below maker.buyAmount (literal price shortfall)", () => {
       const maker = makeOrder({
-        pubKeyAx: 100n, maxFee: 0n,
+        pubKeyAx: 100n, maxFee: 30n,
         sellAmount: 1000n, buyAmount: 2000n,
       });
       const taker = makeOrder({
-        pubKeyAx: 200n, maxFee: 0n,
+        pubKeyAx: 200n, maxFee: 30n,
         sellToken: TOKEN_B, buyToken: TOKEN_A,
-        sellAmount: 2000n, buyAmount: 1000n,
+        sellAmount: 1999n, buyAmount: 1000n,
       });
       orderbook.add(maker);
       const stored = orderbook.add(taker);
-      expect(matcher.findMatch(stored)).not.toBeNull();
+      expect(matcher.findMatch(stored)).toBeNull();
     });
   });
 

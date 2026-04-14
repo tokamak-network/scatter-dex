@@ -299,7 +299,7 @@ TOKENS="$TOKEN_LIST"
 # Preserve developer-owned secrets (not regenerated from the deployment)
 PRESERVED_ENV=""
 if [ -f "$ROOT_DIR/frontend/.env.local" ]; then
-  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY)=' "$ROOT_DIR/frontend/.env.local" || true)
+  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$ROOT_DIR/frontend/.env.local" || true)
 fi
 
 cat > "$ROOT_DIR/frontend/.env.local" << EOF
@@ -317,6 +317,7 @@ NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 EOF
 
 if [ -n "$PRESERVED_ENV" ]; then

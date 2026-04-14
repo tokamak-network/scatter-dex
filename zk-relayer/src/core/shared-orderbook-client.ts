@@ -200,7 +200,7 @@ export class SharedOrderbookClient {
   // ─── Order operations ───
 
   /** Post an order summary to the shared orderbook */
-  async postOrder(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+  async postOrder(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     if (this.serverOnline) {
       return this.postOrderToServer(order);
     }
@@ -208,7 +208,7 @@ export class SharedOrderbookClient {
     return this.postOrderToPeers(order);
   }
 
-  private async postOrderToServer(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+  private async postOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     try {
       const headers = await this.authHeaders("POST", "/api/orders");
       const res = await fetch(`${this.serverUrl}/api/orders`, {
@@ -220,9 +220,12 @@ export class SharedOrderbookClient {
         const data = await res.json() as { id: string };
         return data.id;
       }
+      const body = await res.text().catch(() => "");
+      console.warn(`[shared-orderbook] postOrder rejected: HTTP ${res.status} ${body.slice(0, 200)}`);
       return null;
-    } catch {
+    } catch (err) {
       this.serverOnline = false;
+      console.warn(`[shared-orderbook] postOrder server unreachable, falling back to P2P:`, err instanceof Error ? err.message : err);
       return this.postOrderToPeers(order);
     }
   }
@@ -287,16 +290,14 @@ export class SharedOrderbookClient {
   }
 
   /** P2P: post order directly to all known peers */
-  private async postOrderToPeers(order: Omit<OrderSummary, "id" | "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
-    const id = `${this.wallet.address.toLowerCase()}-${order.nonce}`;
-
+  private async postOrderToPeers(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     const summary: OrderSummary = {
       ...order,
-      id,
       relayer: this.wallet.address.toLowerCase(),
       relayerUrl: this.relayerUrl,
       createdAt: Math.floor(Date.now() / 1000),
     };
+    const id = summary.id;
 
     const promises = [...this.peers.values()].map(async (peer) => {
       try {

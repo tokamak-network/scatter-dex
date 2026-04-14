@@ -8,6 +8,7 @@ import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOp
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { applyFeeBig } from "../../lib/fee";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import { AddressPicker } from "../../components/AddressPicker";
 import {
@@ -232,6 +233,9 @@ function PrivateOrderPageInner() {
     [relayers]
   );
   const [selectedRelayerIdx, setSelectedRelayerIdx] = useState(0);
+  // Preselect a relayer if the URL carries ?relayer=<address> (deep-link
+  // from the Shared Orderbook "Take" flow).
+  const didPrefillRelayerRef = useRef(false);
 
   const [step, setStep] = useState<Step>("setup_key");
   // Stepped status shown next to the spinner during proof generation —
@@ -311,8 +315,43 @@ function PrivateOrderPageInner() {
     if (isScatterMode && price !== "1") setPrice("1");
   }, [isScatterMode, price]);
 
+  // Relayer preselect from ?relayer=<address>
+  useEffect(() => {
+    if (didPrefillRelayerRef.current) return;
+    if (zkRelayers.length === 0) return;
+    const want = searchParams.get("relayer");
+    if (!want) return;
+    const idx = zkRelayers.findIndex((r) => r.address.toLowerCase() === want.toLowerCase());
+    if (idx >= 0) setSelectedRelayerIdx(idx);
+    didPrefillRelayerRef.current = true;
+  }, [zkRelayers, searchParams]);
+
+  // ── Prefill form from URL params (for "Take order" deep-links from the
+  // Shared Orderbook page). Runs once after the token list loads.
+  const didPrefillRef = useRef(false);
+  useEffect(() => {
+    if (didPrefillRef.current) return;
+    if (tokens.length === 0) return;
+    const sellSym = searchParams.get("sell");
+    const buySym = searchParams.get("buy");
+    if (!sellSym && !buySym) return;
+    const si = sellSym ? tokens.findIndex((t) => t.symbol === sellSym) : -1;
+    const bi = buySym ? tokens.findIndex((t) => t.symbol === buySym) : -1;
+    if (si >= 0) setSellTokenIdx(si);
+    if (bi >= 0) setBuyTokenIdx(bi);
+    const sa = searchParams.get("sellAmount");
+    const ba = searchParams.get("buyAmount");
+    if (sa) setSellAmount(sa);
+    if (ba) setBuyAmount(ba);
+    const mf = searchParams.get("maxFee");
+    if (mf) setMaxFeeBps(mf);
+    const eh = searchParams.get("expiryHours");
+    if (eh) setExpiry(eh);
+    didPrefillRef.current = true;
+  }, [tokens, searchParams]);
+
   // DEX prices for market order mode (only fetched when market tab is active)
-  const dexPrices = useMainnetPrice(
+  const { prices: dexPrices } = useMainnetPrice(
     orderType === "market" ? sellToken?.symbol : undefined,
     orderType === "market" ? buyToken?.symbol : undefined,
     "sell",
@@ -351,7 +390,17 @@ function PrivateOrderPageInner() {
 
   // [#23] Reset price/amount when switching between Limit and Market.
   // MUST be declared BEFORE auto-compute so React runs it first on tab switch.
+  // Track the previous orderType so we only clear state on a real transition,
+  // not on mount (otherwise URL prefills from Shared Orderbook "Take" get
+  // clobbered — and StrictMode double-invoke defeats a boolean ref guard).
+  const prevOrderTypeRef = useRef<OrderType | null>(null);
   useEffect(() => {
+    if (prevOrderTypeRef.current === null) {
+      prevOrderTypeRef.current = orderType;
+      return;
+    }
+    if (prevOrderTypeRef.current === orderType) return;
+    prevOrderTypeRef.current = orderType;
     setBuyAmount("");
     setPrice("");
     setManualPrice("");
@@ -438,11 +487,16 @@ function PrivateOrderPageInner() {
     }
   }, [availableNotes, selectedCommitment]);
 
-  // Auto-fill sellAmount from selected note
+  // When a note is picked and the user has *not* yet entered a sellAmount,
+  // default it to the full note balance. Do not overwrite an existing
+  // sellAmount — the change (remainder) commitment is derived from the
+  // current sellAmount, so clicking a note shouldn't stomp the user's
+  // intent.
   useEffect(() => {
-    if (selectedNote) {
+    if (selectedNote && !sellAmount) {
       setSellAmount(selectedNote.amount);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNote]);
 
   // Load notes from folder
@@ -505,19 +559,6 @@ function PrivateOrderPageInner() {
     return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
   }, [claimTotalWei, buyTokenDecimals]);
 
-  // BigInt check that matches the authorize circuit constraint
-  // `sum(claim amounts) >= parseUnits(buyAmount, decimals)`.
-  const claimShortfall = useMemo((): bigint | null => {
-    if (buyTokenDecimals == null || !buyAmount) return null;
-    try {
-      const need = ethers.parseUnits(buyAmount, buyTokenDecimals);
-      if (need === 0n) return null;
-      return claimTotalWei >= need ? 0n : need - claimTotalWei;
-    } catch {
-      return null;
-    }
-  }, [claimTotalWei, buyAmount, buyTokenDecimals]);
-
   const feeBps = parseInt(maxFeeBps) || 0;
   const feePercent = feeBps / 100;
 
@@ -548,6 +589,21 @@ function PrivateOrderPageInner() {
   const minFeeBps = gasEstimate?.minFeeBps ?? 0;
   const effectiveFeeBps = Math.max(feeBps, minFeeBps);
 
+  // BigInt check — recipients must together cover the *post-fee* receive
+  // (maker pays the relayer fee out of buyAmount, then distributes the
+  // remainder to claim recipients).
+  const claimShortfall = useMemo((): bigint | null => {
+    if (buyTokenDecimals == null || !buyAmount) return null;
+    try {
+      const gross = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      if (gross === 0n) return null;
+      const { net: need } = applyFeeBig(gross, effectiveFeeBps);
+      return claimTotalWei >= need ? 0n : need - claimTotalWei;
+    } catch {
+      return null;
+    }
+  }, [claimTotalWei, buyAmount, buyTokenDecimals, effectiveFeeBps]);
+
   // Scatter-mode cap: the contract's `validateScatterAuth` enforces
   // `totalLocked + fee <= sellAmount`, so the distributed amount (which
   // equals the signed `buyAmount` in scatter semantics) cannot exceed
@@ -565,8 +621,7 @@ function PrivateOrderPageInner() {
       // `sell * (10000 - fee) / 10000`; the two differ by a 1-wei
       // rounding that otherwise false-blocks distribute=sell at
       // sub-10000-wei amounts.
-      const feeWei = (sell * BigInt(effectiveFeeBps)) / 10000n;
-      return sell > feeWei ? sell - feeWei : 0n;
+      return applyFeeBig(sell, effectiveFeeBps).net;
     } catch { return null; }
   }, [isScatterMode, sellAmount, sellTokenDecimals, effectiveFeeBps]);
 
@@ -590,8 +645,7 @@ function PrivateOrderPageInner() {
     if (isScatterMode && sellTokenDecimals != null) {
       try {
         const sellWei = ethers.parseUnits(sell, sellTokenDecimals);
-        const feeWei = (sellWei * BigInt(effectiveFeeBps)) / 10000n;
-        const capWei = sellWei > feeWei ? sellWei - feeWei : 0n;
+        const capWei = applyFeeBig(sellWei, effectiveFeeBps).net;
         setBuyAmount(ethers.formatUnits(capWei, sellTokenDecimals));
       } catch {
         /* sellAmount mid-typing — leave buyAmount alone */
@@ -604,17 +658,27 @@ function PrivateOrderPageInner() {
     setBuyAmount(grossBuy.toFixed(dec));
   }, [buyToken, isScatterMode, sellTokenDecimals, effectiveFeeBps]);
 
+  // User-edited-buyAmount guard: once the user types into the Buy field
+  // directly, stop auto-rewriting it from sell × price × fee changes.
+  // A fresh price selection (handlePriceSelect) or sell edit via onChange
+  // explicitly overrides and resets this flag.
+  const userEditedBuyRef = useRef(false);
+
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
+    userEditedBuyRef.current = false;
     if (sellAmount) recomputeBuyAmount(sellAmount, p, effectiveFeeBps);
   }, [sellAmount, effectiveFeeBps, recomputeBuyAmount]);
 
   useEffect(() => {
+    if (userEditedBuyRef.current) return;
     if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
-  // Net amount after fee — this is the distributable amount for claims
-  const netBuyAmount = parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000) || 0;
+  // Net amount after relay fee — this is the distributable pot for claims.
+  //   maker receives buyAmount gross; fee deducted for the relayer;
+  //   recipients share (buyAmount × (1 − fee)).
+  const netBuyAmount = (parseFloat(buyAmount) || 0) * (1 - effectiveFeeBps / 10000);
 
   // Change (remainder) calculation
   const changeAmount = useMemo(() => {
@@ -645,10 +709,13 @@ function PrivateOrderPageInner() {
     if (buyTokenDecimals == null || !buyAmount) return;
     try {
       const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
+      // Recipients share the amount *after* the relay fee — maker keeps
+      // buyAmount × (1 − fee).
+      const netBuyWei = applyFeeBig(parsedBuy, effectiveFeeBps).net;
       const target =
-        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < parsedBuy
+        isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < netBuyWei
           ? scatterMaxDistributeWei
-          : parsedBuy;
+          : netBuyWei;
       const othersBig = sumClaimWei(id);
       const restBig = target > othersBig ? target - othersBig : 0n;
       updateClaim(id, "amount", ethers.formatUnits(restBig, buyTokenDecimals));
@@ -1240,6 +1307,7 @@ function PrivateOrderPageInner() {
                   onChange={(e) => {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
+                      userEditedBuyRef.current = false;
                       recomputeBuyAmount(e.target.value, price, effectiveFeeBps);
                     }
                   }}
@@ -1272,7 +1340,7 @@ function PrivateOrderPageInner() {
                   // Guard the setter with the readOnly condition so a stray programmatic
                   // change event (autofill, form reset) can't desync `buyAmount` from
                   // the `sellAmount` it's mirroring while the field is read-only.
-                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => setBuyAmount(e.target.value)}
+                  onChange={orderType === "market" || isScatterMode ? undefined : (e) => { userEditedBuyRef.current = true; setBuyAmount(e.target.value); }}
                   readOnly={orderType === "market" || isScatterMode}
                   className={`w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3 text-right ${
                     orderType === "market" || isScatterMode ? "opacity-70" : ""
@@ -1414,8 +1482,9 @@ function PrivateOrderPageInner() {
               </div>
             </div>
 
-            {/* Fee summary */}
-            {sellAmount && buyAmount && price && (
+            {/* Fee summary — relayer fee is a limit-order concept; market
+                orders settle directly via the DEX with no bps relay fee. */}
+            {orderType !== "market" && sellAmount && buyAmount && (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Buy amount</span>
@@ -1433,10 +1502,7 @@ function PrivateOrderPageInner() {
                 >
                   <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
                   <span className="font-mono">
-                    −{(
-                      (isScatterMode ? parseFloat(sellAmount) : parseFloat(buyAmount))
-                      * effectiveFeeBps / 10000
-                    ).toFixed(4)} {buyToken?.symbol}
+                    −{(parseFloat(buyAmount) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </button>
                 {feeBreakdownOpen && gasEstimate && (
@@ -1445,9 +1511,7 @@ function PrivateOrderPageInner() {
                 <div className="flex justify-between font-bold text-tertiary pt-1 border-t border-outline-variant/10">
                   <span>{isScatterMode ? "Recipients receive" : "You receive"}</span>
                   <span className="font-mono">
-                    {isScatterMode
-                      ? parseFloat(buyAmount).toFixed(4)
-                      : (parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}
+                    {(parseFloat(buyAmount) * (1 - effectiveFeeBps / 10000)).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </div>
               </div>
@@ -1591,7 +1655,7 @@ function PrivateOrderPageInner() {
                   </div>
                   {claimShortfall !== null && claimShortfall > 0n && (!isScatterMode || scatterExcessWei === 0n) && (
                     <div className="text-xs text-error font-bold">
-                      Claims must total at least {buyAmount} {buyToken.symbol} ({isScatterMode ? "recipients receive" : "buyAmount"}). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
+                      Claims must total at least {netBuyAmount.toFixed(4)} {buyToken.symbol} (buyAmount − fee). Short by {ethers.formatUnits(claimShortfall, buyToken.decimals)} {buyToken.symbol}.
                     </div>
                   )}
                   {claimShortfall === null && buyAmount !== "" && (
@@ -1633,7 +1697,7 @@ function PrivateOrderPageInner() {
                 >
                   {zkRelayers.map((r, i) => (
                     <option key={r.address} value={i}>
-                      {r.api?.name} — {r.url} (Fee {(r.fee / 100).toFixed(2)}%)
+                      {r.api?.name} — {r.url}
                     </option>
                   ))}
                 </select>
@@ -1826,9 +1890,10 @@ function PrivateOrderPageInner() {
               buyTokenAddress={buyToken?.address}
               sellDecimals={sellToken?.decimals}
               buyDecimals={buyToken?.decimals}
-              relayerUrl={process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001"}
+              relayerUrl={process.env.NEXT_PUBLIC_ZK_RELAYER_URL || process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3002"}
               side="sell"
               onSelectPrice={handlePriceSelect}
+              disableAutoApply={searchParams.has("sell") || searchParams.has("buy") || searchParams.has("sellAmount") || searchParams.has("buyAmount")}
             />
           )}
         </div>
