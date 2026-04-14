@@ -17,8 +17,12 @@ export interface ActivityItem {
   type: ActivityType;
   txHash: string;
   blockNumber: number;
+  // Per-log index within the tx. Needed as a tiebreaker for React keys
+  // because a single tx (e.g. claimWithProofBatch) can emit multiple
+  // `PrivateClaim` events — txHash+type+blockNumber is not unique.
+  logIndex: number;
   timestamp: number | null;
-  details: string; // human-readable summary
+  details: string;
 }
 
 const MAX_ITEMS = 20;
@@ -119,6 +123,7 @@ export function useRecentActivity() {
             type,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
+            logIndex: log.index,
             timestamp: null,
             details: details(log),
           });
