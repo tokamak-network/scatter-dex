@@ -314,33 +314,18 @@ export default function PrivateHistoryPage() {
     }
   }, [account]);
 
-  // Fetch order statuses from relayer
+  // Status enrichment for *limit* orders previously came from
+  // `/api/private-orders/:pubKeyAx`, but that endpoint and the underlying
+  // PrivateOrderbook were retired with the tracker #29 cleanup. The
+  // authorize-flow doesn't yet expose a by-pubKey lookup; until it does,
+  // limit orders show their last locally-cached status (set when the user
+  // submitted), and on-chain enrichment (`enrichMarketFromChain` below)
+  // continues to cover market orders.
   const fetchStatuses = useCallback(async (orderList: OrderFile[]) => {
-    if (!keyPair || zkRelayers.length === 0 || orderList.length === 0) return orderList;
-    const pubKeyAx = keyPair.publicKey[0].toString();
-    try {
-      const relayerUrl = zkRelayers[0].url;
-      const res = await fetch(`${relayerUrl}/api/private-orders/${pubKeyAx}`);
-      if (!res.ok) return orderList;
-      const data = await res.json();
-      const relayerOrders: Array<{ nonce: string; status: string; settleTxHash?: string; crossRelayer?: boolean }> =
-        Array.isArray(data) ? data : data.orders ?? [];
-
-      // Match by nonce. Market orders never hit the relayer DB — they're
-      // already settled on-chain at file-creation time, so default their
-      // status to "settled" instead of leaving it blank.
-      return orderList.map((o) => {
-        if (o.order?.type === "market") {
-          return { ...o, status: o.status ?? "settled" };
-        }
-        if (!o.order?.nonce) return o;
-        const match = relayerOrders.find((ro) => ro.nonce === o.order.nonce);
-        return match ? { ...o, status: match.status, settleTxHash: match.settleTxHash, crossRelayer: match.crossRelayer } : o;
-      });
-    } catch {
-      return orderList;
-    }
-  }, [keyPair, zkRelayers]);
+    return orderList.map((o) =>
+      o.order?.type === "market" ? { ...o, status: o.status ?? "settled" } : o,
+    );
+  }, []);
 
   // Load order files from folder
   const loadOrders = useCallback(async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createRelayerStatsRoutes } from "../../src/routes/relayer-stats.js";
-import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
+import { mountRouter, makeSubmitterStub, makeDbStub } from "./helpers.js";
 
 describe("/api/relayer", () => {
   it("GET /stats returns aggregated stats + metrics", async () => {
@@ -13,11 +13,11 @@ describe("/api/relayer", () => {
       getSettledVolume: () => [{ sellToken: "0xA", count: 3, totalVolume: "1000" }],
     });
     const app = mountRouter("/api/relayer",
-      createRelayerStatsRoutes(db, makeOrderbookStub({ pendingOrderCount: 4 }), makeSubmitterStub()));
+      createRelayerStatsRoutes(db, makeSubmitterStub()));
     const res = await request(app).get("/api/relayer/stats");
     expect(res.status).toBe(200);
     expect(res.body.totalOrders).toBe(12);
-    expect(res.body.pendingOrders).toBe(4);
+    expect(res.body.pendingOrders).toBe(0); // no authorize orders in this test env
     expect(res.body.settledVolume).toEqual([{ sellToken: "0xA", count: 3, totalVolume: "1000" }]);
     expect(res.body.metrics).toBeDefined();
   });
@@ -25,7 +25,7 @@ describe("/api/relayer", () => {
   it("GET /stats returns 500 when DB throws", async () => {
     const db = makeDbStub({ getRelayerStats: () => { throw new Error("db error"); } });
     const app = mountRouter("/api/relayer",
-      createRelayerStatsRoutes(db, makeOrderbookStub(), makeSubmitterStub()));
+      createRelayerStatsRoutes(db, makeSubmitterStub()));
     const res = await request(app).get("/api/relayer/stats");
     expect(res.status).toBe(500);
   });
@@ -36,7 +36,7 @@ describe("/api/relayer", () => {
       getTradeOffers: (limit: number, offset: number) => { calls.push([limit, offset]); return []; },
     });
     const app = mountRouter("/api/relayer",
-      createRelayerStatsRoutes(db, makeOrderbookStub(), makeSubmitterStub()));
+      createRelayerStatsRoutes(db, makeSubmitterStub()));
     await request(app).get("/api/relayer/trade-offers?limit=9999&offset=-5");
     expect(calls[0]).toEqual([200, 0]);
     // limit=0 is falsy → falls back to default 50 (documented quirk of `|| 50`)
@@ -52,7 +52,7 @@ describe("/api/relayer", () => {
   it("GET /trade-offers returns 500 when DB throws", async () => {
     const db = makeDbStub({ getTradeOffers: () => { throw new Error("db error"); } });
     const app = mountRouter("/api/relayer",
-      createRelayerStatsRoutes(db, makeOrderbookStub(), makeSubmitterStub()));
+      createRelayerStatsRoutes(db, makeSubmitterStub()));
     const res = await request(app).get("/api/relayer/trade-offers");
     expect(res.status).toBe(500);
   });

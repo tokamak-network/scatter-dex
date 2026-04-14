@@ -1,12 +1,9 @@
 import { Router, Request, Response } from "express";
-import type { PrivateOrderbook } from "../core/orderbook.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { config } from "../config.js";
+import { authorizeOrders } from "./authorize-orders.js";
 
-export function createInfoRoutes(
-  orderbook: PrivateOrderbook,
-  submitter: PrivateSubmitter,
-): Router {
+export function createInfoRoutes(submitter: PrivateSubmitter): Router {
   const router = Router();
 
   router.get("/", (_req: Request, res: Response) => {
@@ -15,7 +12,9 @@ export function createInfoRoutes(
       version: "0.1.0",
       address: submitter.getAddress(),
       fee: config.relayerFee,
-      orderCount: orderbook.getOrderCount(),
+      // Counts pending authorize orders. The legacy private_orders Map was
+      // retired (tracker #29) — its `orderCount` was always 0 anyway.
+      orderCount: authorizeOrders.size,
       commitmentPool: config.commitmentPoolAddress,
       privateSettlement: config.privateSettlementAddress,
     });

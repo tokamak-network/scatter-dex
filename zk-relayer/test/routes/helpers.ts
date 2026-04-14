@@ -1,7 +1,6 @@
 import express, { Express, Router } from "express";
 import type { PrivateSubmitter } from "../../src/core/private-submitter.js";
 import type { PrivateOrderDB } from "../../src/core/db.js";
-import type { PrivateOrderbook } from "../../src/core/orderbook.js";
 
 export function mountRouter(basePath: string, router: Router): Express {
   const app = express();
@@ -76,28 +75,7 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
   return stub as unknown as PrivateOrderDB;
 }
 
-type OrderbookStub = {
-  getOrderCount: () => number;
-  cancelAll: () => number;
-  pendingOrderCount: number;
-  getOrdersByPubKey: (pubKeyAx: bigint) => unknown[];
-  getOrderByNonce: (pubKeyAx: bigint, nonce: bigint) => unknown | null;
-  getOrderHistory: (pubKeyAx: bigint, opts: unknown) => unknown[];
-  countOrders: (pubKeyAx: bigint, status?: string) => number;
-  cancel: (pubKeyAx: bigint, nonce: bigint) => boolean;
-};
-
-export function makeOrderbookStub(overrides: Partial<OrderbookStub> = {}): PrivateOrderbook {
-  const stub: OrderbookStub = {
-    getOrderCount: () => 0,
-    cancelAll: () => 0,
-    pendingOrderCount: 0,
-    getOrdersByPubKey: () => [],
-    getOrderByNonce: () => null,
-    getOrderHistory: () => [],
-    countOrders: () => 0,
-    cancel: () => false,
-    ...overrides,
-  };
-  return stub as unknown as PrivateOrderbook;
-}
+// `makeOrderbookStub` and `OrderbookStub` were retired alongside the
+// PrivateOrderbook class (tracker #29). Tests that were using them have
+// been removed; authorize-orders has its own in-memory store accessed
+// directly via the `authorizeOrders` Map export.

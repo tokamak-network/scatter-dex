@@ -3,21 +3,19 @@ import request from "supertest";
 import { createAdminRoutes } from "../../src/routes/admin.js";
 import { clearSanctionedPubKeys } from "../../src/core/sanctions-list.js";
 import { config, updateRelayerFee } from "../../src/config.js";
-import { mountRouter, makeSubmitterStub, makeDbStub, makeOrderbookStub } from "./helpers.js";
+import { mountRouter, makeSubmitterStub, makeDbStub } from "./helpers.js";
 
 const ADMIN_KEY = process.env.ADMIN_API_KEY;
 if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
 
 function buildApp(opts: {
   db?: ReturnType<typeof makeDbStub>;
-  orderbook?: ReturnType<typeof makeOrderbookStub>;
   drainAuthorizeOrders?: () => number;
   getAuthorizeOrderStats?: () => { pending: number; matched: number; total: number };
 } = {}) {
   const router = createAdminRoutes({
     submitter: makeSubmitterStub(),
     db: opts.db ?? makeDbStub(),
-    orderbook: opts.orderbook ?? makeOrderbookStub(),
     drainAuthorizeOrders: opts.drainAuthorizeOrders ?? (() => 0),
     getAuthorizeOrderStats: opts.getAuthorizeOrderStats ?? (() => ({ pending: 0, matched: 0, total: 0 })),
   });
@@ -57,7 +55,6 @@ describe("/api/admin — auth", () => {
 describe("/api/admin/status + /balance", () => {
   it("GET /status includes relayer config + paused state + authorizeOrders", async () => {
     const res = await request(buildApp({
-      orderbook: makeOrderbookStub({ pendingOrderCount: 3 }),
       getAuthorizeOrderStats: () => ({ pending: 5, matched: 2, total: 7 }),
     }))
       .get("/api/admin/status")
@@ -65,7 +62,7 @@ describe("/api/admin/status + /balance", () => {
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(false);
     expect(res.body.authorizeOrders).toEqual({ pending: 5, matched: 2, total: 7 });
-    expect(res.body.privateOrders.pending).toBe(3);
+    expect(res.body.privateOrders).toBeUndefined();
     expect(res.body.feeBps).toBeTypeOf("number");
   });
 
@@ -141,16 +138,15 @@ describe("/api/admin/pause + /resume", () => {
 });
 
 describe("/api/admin/drain", () => {
-  it("returns counts from both drain functions", async () => {
+  it("returns count from authorize drain", async () => {
     const res = await request(buildApp({
-      orderbook: makeOrderbookStub({ cancelAll: () => 4 }),
       drainAuthorizeOrders: () => 7,
     }))
       .post("/api/admin/drain")
       .set("x-admin-key", ADMIN_KEY);
     expect(res.status).toBe(200);
-    expect(res.body.privateOrdersCancelled).toBe(4);
     expect(res.body.authorizeOrdersCancelled).toBe(7);
+    expect(res.body.privateOrdersCancelled).toBeUndefined();
   });
 });
 

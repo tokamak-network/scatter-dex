@@ -17,7 +17,6 @@ import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
-import type { PrivateOrderbook } from "../core/orderbook.js";
 
 let paused = false;
 
@@ -28,14 +27,13 @@ export function isPaused(): boolean {
 export interface AdminRouteDeps {
   submitter: PrivateSubmitter;
   db: PrivateOrderDB;
-  orderbook: PrivateOrderbook;
   drainAuthorizeOrders: () => number;
   getAuthorizeOrderStats: () => { pending: number; matched: number; total: number };
   writeLimiter?: RequestHandler;
 }
 
 export function createAdminRoutes(deps: AdminRouteDeps): Router {
-  const { submitter, db, orderbook, drainAuthorizeOrders: drainAuthFn, getAuthorizeOrderStats: getAuthStatsFn, writeLimiter } = deps;
+  const { submitter, db, drainAuthorizeOrders: drainAuthFn, getAuthorizeOrderStats: getAuthStatsFn, writeLimiter } = deps;
 
   // Restore pause state from DB on startup
   const savedPause = db.getMeta("paused");
@@ -64,9 +62,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         feeBps: config.relayerFee,
         ethBalance: ethBalance.toString(),
         maxGasPriceGwei: config.maxGasPriceGwei,
-        privateOrders: {
-          pending: orderbook.pendingOrderCount,
-        },
+        // privateOrders path retired (tracker #29). authorize is the only live flow.
         authorizeOrders: authStats,
         stats: {
           totalOrders: stats.totalOrders,
@@ -143,13 +139,10 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   });
 
   router.post("/drain", ...wl, (_req: Request, res: Response) => {
-    const privateRemoved = orderbook.cancelAll();
     const authRemoved = drainAuthFn();
-
-    console.log(`[admin] Drained orders: ${privateRemoved} private, ${authRemoved} authorize`);
+    console.log(`[admin] Drained orders: ${authRemoved} authorize`);
     res.json({
       status: "drained",
-      privateOrdersCancelled: privateRemoved,
       authorizeOrdersCancelled: authRemoved,
     });
   });
