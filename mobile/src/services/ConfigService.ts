@@ -23,6 +23,10 @@ export const ConfigService = {
   getWalletConnectProjectId: () => getEnv('WALLETCONNECT_PROJECT_ID') || '',
   getUniswapRouterAddress: () => getEnv('UNISWAP_ROUTER_ADDRESS') || '',
   getBuyTokenSymbol: () => getEnv('BUY_TOKEN_SYMBOL') || 'WETH',
+  // Optional: URL of a deployed web instance whose /api/swap endpoint
+  // proxies 1inch with a server-side API key. Leave empty to skip
+  // 1inch and use Uniswap V3 direct only.
+  getWebApiBaseUrl: () => getEnv('WEB_API_BASE_URL') || '',
 
   applyNetworkOverride(rpcUrl: string, chainId: number) {
     _rpcOverride = rpcUrl;
