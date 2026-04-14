@@ -6,6 +6,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useWallet } from '../contexts/WalletContext';
 import { useBalances } from '../hooks/useBalances';
@@ -61,7 +62,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={s.safe}>
+    <SafeAreaView style={s.safe} edges={['top']}>
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.scrollContent}
@@ -200,12 +201,12 @@ export default function HomeScreen() {
 
         <View style={{ height: 96 }} />
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg, paddingTop: 40 },
+  safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1, backgroundColor: colors.bg },
   scrollContent: { paddingBottom: 24 },
 
