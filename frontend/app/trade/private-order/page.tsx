@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ethers } from "ethers";
@@ -201,7 +201,19 @@ async function buildOrderProof(params: BuildOrderParams) {
   return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
 }
 
+// Next 16 requires useSearchParams callers to sit inside a Suspense
+// boundary. Wrap the whole page — the inner component depends on
+// `?type=` at render time, and there's no useful pre-suspense fallback
+// beyond the default Loading state Next.js renders.
 export default function PrivateOrderPage() {
+  return (
+    <Suspense>
+      <PrivateOrderPageInner />
+    </Suspense>
+  );
+}
+
+function PrivateOrderPageInner() {
   const { account, signer, readProvider, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
   const tokens = getTokenList().filter((t) => !t.isNative);

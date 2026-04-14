@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  #  Contracts — Foundry build + non-fork test suite
+  # ────────────────────────────────────────────────────────────────
+  contracts:
+    name: contracts / forge test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Cache forge build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**') }}
+          restore-keys: forge-${{ runner.os }}-
+
+      - name: forge build
+        run: forge build --skip test
+
+      - name: forge fmt --check
+        run: forge fmt --check
+        continue-on-error: true  # warn only — many existing files predate fmt standardisation
+
+      - name: forge test (non-fork)
+        run: forge test --no-match-contract Fork -vvv
+
+      - name: forge snapshot (gas diff report)
+        run: forge snapshot --no-match-contract Fork
+        continue-on-error: true
+
+  # ────────────────────────────────────────────────────────────────
+  #  Frontend — typecheck + lint + production build
+  # ────────────────────────────────────────────────────────────────
+  frontend:
+    name: frontend / build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: ESLint
+        # 28 pre-existing errors + 36 warnings from code that predates CI
+        # wiring. Warn-only for now so unrelated PRs aren't blocked; track
+        # a cleanup in a follow-up PR and flip to blocking.
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Next.js build
+        # Build validates types + compiles the full bundle, catching the
+        # "compiles in dev mode but fails in prod" class of bugs (stale
+        # imports, missing ABI entries, unresolved env vars).
+        run: npm run build
+        env:
+          # Non-zero placeholders so build-time checks pass without real
+          # addresses — all actual env is injected at runtime via .env.local.
+          NEXT_PUBLIC_RPC_URL: http://localhost:8545
+          NEXT_PUBLIC_CHAIN_ID: "31337"
+          NEXT_PUBLIC_ZK_RELAYER_URL: http://localhost:3002
+
+  # ────────────────────────────────────────────────────────────────
+  #  Relayer — vitest suite
+  # ────────────────────────────────────────────────────────────────
+  relayer:
+    name: relayer / vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zk-relayer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: zk-relayer/package-lock.json
+
+      - run: npm ci
+
+      - name: tsc --noEmit
+        # Pre-existing type errors in routes/p2p.ts predate CI wiring;
+        # warn-only until the cleanup PR. vitest below covers runtime
+        # correctness independently (esbuild's loose typing).
+        run: npx tsc --noEmit
+        continue-on-error: true
+
+      - name: vitest
+        run: npm test
+
+  # ────────────────────────────────────────────────────────────────
+  #  Fork integration — manual trigger only (needs MAINNET_RPC secret)
+  # ────────────────────────────────────────────────────────────────
+  fork-integration:
+    name: contracts / fork tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: forge test --match-contract Fork
+        env:
+          MAINNET_RPC: ${{ secrets.MAINNET_RPC }}
+        run: |
+          if [ -z "$MAINNET_RPC" ]; then
+            echo "MAINNET_RPC secret not configured — skipping fork tests"
+            exit 0
+          fi
+          forge test --match-contract Fork --fork-url "$MAINNET_RPC" -vvv
