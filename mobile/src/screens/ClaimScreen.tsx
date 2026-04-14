@@ -560,12 +560,10 @@ const s = StyleSheet.create({
   tabsBg: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 12 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
   tabActive: { backgroundColor: colors.card, ...shadowTab },
-  tabInactive: {},
   tabText: { fontSize: 14, fontWeight: '700' },
   tabTextActive: { color: colors.text },
   tabTextInactive: { color: colors.textMuted },
 
-  /* Items List */
   itemsList: { gap: 12 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   itemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -573,10 +571,9 @@ const s = StyleSheet.create({
   itemIconText: { fontSize: 18, color: colors.primaryDark },
   itemAsset: { fontSize: 15, fontWeight: '700', color: colors.text },
   itemAmount: { fontSize: 12, fontWeight: '500', color: colors.gray500, marginTop: 2 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 99, borderWidth: 1, borderColor: '#BBF7D0' },
-  statusText: { fontSize: 10, fontWeight: '700', color: '#16A34A' },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 99, borderWidth: 1, borderColor: colors.successBorder },
+  statusText: { fontSize: 10, fontWeight: '700', color: colors.successDark },
 
-  /* JSON Input */
   jsonInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 13, color: colors.text, minHeight: 120, fontFamily: 'monospace' },
   parseBtn: { backgroundColor: colors.primaryLight, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   parseBtnText: { fontSize: 14, fontWeight: '700', color: colors.primaryDark },
@@ -584,7 +581,6 @@ const s = StyleSheet.create({
   revealBtnText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
   errorText: { fontSize: 12, color: colors.danger, fontWeight: '600' },
 
-  /* Bottom Panel */
   bottomPanel: { backgroundColor: colors.card, padding: 24, borderTopWidth: 1, borderTopColor: colors.borderLight, gap: 16 },
   proofHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   proofLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
