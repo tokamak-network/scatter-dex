@@ -246,11 +246,12 @@ export default function SharedOrderbookPage() {
               const buySym = buyTok?.symbol || shortAddr(o.buyToken);
               const sell = parseFloat(ethers.formatUnits(o.sellAmount, sellTok?.decimals ?? 18));
               const buy = parseFloat(ethers.formatUnits(o.buyAmount, buyTok?.decimals ?? 18));
-              // Maker keeps `buy × (1 − maxFee)` of the proceeds (relay fee
-              // comes off their receive). Display effective price + the net
-              // taker delivers so makers see the actual rate, not the gross.
+              // Price is the gross quote/base ratio the taker actually
+              // pays — keep it consistent across the orderbook so users
+              // can compare rows without mentally undoing fee math. The
+              // post-fee net the maker keeps is shown separately below.
+              const price = sell > 0 ? buy / sell : 0;
               const makerNet = buy * (FEE_BPS_DENOMINATOR - o.maxFee) / FEE_BPS_DENOMINATOR;
-              const price = sell > 0 ? makerNet / sell : 0;
               const relayer = relayerByAddr[o.relayer.toLowerCase()];
               return (
                 <div
