@@ -245,7 +245,11 @@ export const MarketOrderService = {
       onProgress({ step: 'submitting' });
 
       const settlement = new ethers.Contract(settlementAddr, [
-        'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint96 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata) p) external',
+        // Must match SettleDexParams + SettleVerifyLib.AuthorizeProof
+        // exactly — `totalLocked` is uint128 (widened from the old
+        // uint96, see SettleVerifyLib.sol:54) and `deadline` is a
+        // required outer-tuple field (PrivateSettlement.sol:680).
+        'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata, uint256 deadline) p) external',
       ], signer);
 
       // publicSignals layout (see circuits/authorize.circom:506-529):
@@ -295,6 +299,9 @@ export const MarketOrderService = {
         },
         dexRouter,
         dexCalldata,
+        // Mirror the 30-minute deadline the DEX calldata itself
+        // encodes so a slow block doesn't expire one half of the pair.
+        deadline: Math.floor(Date.now() / 1000) + 1800,
       });
 
       await tx.wait();
