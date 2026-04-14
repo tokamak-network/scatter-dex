@@ -31,6 +31,7 @@ import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib
 import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
 import { generateCancelProof } from "../../lib/zk/cancel-prover";
+import MarketOrderFeeBreakdown from "../../components/MarketOrderFeeBreakdown";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "text-yellow-400",
@@ -511,46 +512,17 @@ export default function PrivateHistoryPage() {
             )}
           </div>
 
-          {/* Market-order fee breakdown: Max Fee is 0 on market path; the
-              real economic cost is the positive-slippage surplus that goes
-              to FeeVault.platformRevenue. Bound = estimatedOutput − totalLocked. */}
           {selectedOrder.order.type === "market" && (() => {
             const buy = resolveToken(selectedOrder.order.buyToken, tokens);
-            const totalLocked = (() => { try { return BigInt(selectedOrder.order.buyAmount); } catch { return 0n; } })();
-            const estimated = (() => { try { return BigInt(selectedOrder.order.estimatedOutput ?? "0"); } catch { return 0n; } })();
-            const surplusMax = estimated > totalLocked ? estimated - totalLocked : 0n;
-            const slip = selectedOrder.order.slippageBps;
-            const fmt = (v: bigint) => ethers.formatUnits(v, buy.decimals);
             return (
-              <div className="bg-warning/10 border border-warning/20 rounded-md px-4 py-3 space-y-1.5 text-xs">
-                <div className="font-bold text-warning uppercase tracking-wider">DEX Trade Fees</div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant/70">Platform fee (upfront)</span>
-                  <span className="font-mono text-on-surface-variant">0.00% / 0 {buy.symbol}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant/70">Slippage tolerance</span>
-                  <span className="font-mono text-on-surface">{slip != null ? `${(slip / 100).toFixed(2)}%` : "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant/70">Est. output at submission</span>
-                  <span className="font-mono text-on-surface">{estimated > 0n ? `${fmt(estimated)} ${buy.symbol}` : "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-on-surface-variant/70">Min receive (you get)</span>
-                  <span className="font-mono text-tertiary">{fmt(totalLocked)} {buy.symbol}</span>
-                </div>
-                <div className="flex justify-between pt-1 border-t border-warning/20">
-                  <span className="text-on-surface-variant/70">Surplus → FeeVault (max)</span>
-                  <span className="font-mono text-warning">≤ {fmt(surplusMax)} {buy.symbol}</span>
-                </div>
-                {selectedOrder.order.dexSource && (
-                  <div className="flex justify-between pt-1">
-                    <span className="text-on-surface-variant/70">Route</span>
-                    <span className="font-mono text-on-surface-variant">{selectedOrder.order.dexSource}</span>
-                  </div>
-                )}
-              </div>
+              <MarketOrderFeeBreakdown
+                variant="inline"
+                buyToken={{ symbol: buy.symbol, decimals: buy.decimals }}
+                buyAmount={selectedOrder.order.buyAmount}
+                estimatedOutput={selectedOrder.order.estimatedOutput}
+                slippageBps={selectedOrder.order.slippageBps}
+                dexSource={selectedOrder.order.dexSource}
+              />
             );
           })()}
 

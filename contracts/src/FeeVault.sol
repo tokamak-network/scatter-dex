@@ -85,12 +85,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
 
         balances[relayer][token] += amount;
         totalTracked[token] += amount;
-
-        // Verify vault actually holds enough tokens to cover all tracked balances.
-        // This catches cases where deposit() is called without prior token transfer.
-        if (IERC20(token).balanceOf(address(this)) < totalTracked[token] + platformRevenue[token]) {
-            revert InsufficientTokenBalance();
-        }
+        _assertBalanceBacked(token);
 
         emit FeeDeposited(relayer, token, amount);
     }
@@ -106,12 +101,17 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
         if (amount == 0) return;
 
         platformRevenue[token] += amount;
+        _assertBalanceBacked(token);
 
+        emit PlatformRevenueDeposited(token, amount, source);
+    }
+
+    /// @dev Catches deposit paths that credit an accounting bucket without
+    ///      first transferring the underlying tokens.
+    function _assertBalanceBacked(address token) internal view {
         if (IERC20(token).balanceOf(address(this)) < totalTracked[token] + platformRevenue[token]) {
             revert InsufficientTokenBalance();
         }
-
-        emit PlatformRevenueDeposited(token, amount, source);
     }
 
     /// @notice Pull accumulated platform revenue for a specific token to the

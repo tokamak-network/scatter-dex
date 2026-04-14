@@ -895,25 +895,24 @@ export default function PrivateOrderPage() {
       // bytes32 fields in the ABI need 0x-prefixed hex; snarkjs emits decimal
       // strings. uint256 fields (commitmentRoot) stay as strings — ethers
       // accepts them directly.
-      const asB32 = (v: string) => toBytes32Hex(BigInt(v));
       const tx = await settlement.settleWithDex({
         proof: {
           proofA, proofB, proofC,
-          pubKeyBind: asB32(ps[0]),
+          pubKeyBind: toBytes32Hex(BigInt(ps[0])),
           commitmentRoot: ps[1],
-          nullifier: asB32(ps[2]),
-          nonceNullifier: asB32(ps[3]),
-          newCommitment: asB32(ps[4]),
+          nullifier: toBytes32Hex(BigInt(ps[2])),
+          nonceNullifier: toBytes32Hex(BigInt(ps[3])),
+          newCommitment: toBytes32Hex(BigInt(ps[4])),
           sellToken: sellToken.address,
           buyToken: buyToken.address,
           sellAmount: parsedSell,
           buyAmount: parsedBuy,
           maxFee: 0,
           expiry: expiryTimestamp,
-          claimsRoot: asB32(ps[11]),
+          claimsRoot: toBytes32Hex(BigInt(ps[11])),
           totalLocked,
           relayer: account,
-          orderHash: asB32(ps[14]),
+          orderHash: toBytes32Hex(BigInt(ps[14])),
         },
         dexRouter: swapRoute.dexRouter,
         dexCalldata: swapRoute.dexCalldata,

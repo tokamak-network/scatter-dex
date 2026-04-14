@@ -141,6 +141,19 @@ const UNISWAP_QUOTER_IFACE = new ethers.Interface([
   "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)",
 ]);
 
+// Module-level provider cache — the Quoter probe fires 4 fee tiers in
+// parallel per quote request, so sharing a provider saves 4 network-detect
+// handshakes per call. `staticNetwork: true` skips the chainId round trip
+// since the fork RPC's chainId doesn't change at runtime.
+let _quoterProvider: ethers.JsonRpcProvider | null = null;
+function quoterProvider(): ethers.JsonRpcProvider {
+  if (!_quoterProvider) {
+    const rpc = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+    _quoterProvider = new ethers.JsonRpcProvider(rpc, undefined, { staticNetwork: true });
+  }
+  return _quoterProvider;
+}
+
 async function quoteUniswapV3(
   sellToken: string,
   buyToken: string,
@@ -148,8 +161,7 @@ async function quoteUniswapV3(
   feeTier: number,
 ): Promise<bigint | null> {
   try {
-    const rpc = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
-    const provider = new ethers.JsonRpcProvider(rpc);
+    const provider = quoterProvider();
     const data = UNISWAP_QUOTER_IFACE.encodeFunctionData("quoteExactInputSingle", [{
       tokenIn: sellToken,
       tokenOut: buyToken,

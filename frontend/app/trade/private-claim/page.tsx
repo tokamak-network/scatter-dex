@@ -583,13 +583,9 @@ export default function PrivateClaimPage() {
 
           {claimData && !claimedMap[selectedClaimIdx]?.claimed && (() => {
             // Market-order claims aren't routed through the relayer today —
-            // settleWithDex is a single-party permissionless path and the
-            // relayer has no order context to pay gas against. Force wallet
-            // mode for those claims so the UI doesn't offer a dead option.
-            // The bundle-level flag is set by parseClaims; individual claim
-            // entries don't carry `order` since the loader flattens them.
-            const isMarketClaim = bundleIsMarket
-              || (claimData as { order?: { type?: string } })?.order?.type === "market";
+            // settleWithDex is permissionless, so the relayer has no order
+            // context to pay gas against. Force wallet mode for those claims.
+            const isMarketClaim = bundleIsMarket;
             return (
             <div className="space-y-4">
               {/* Mode selector */}

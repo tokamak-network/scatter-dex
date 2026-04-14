@@ -206,8 +206,17 @@ prefund_from_whale() {
   return 1
 }
 
-prefund_from_whale "$USDC" 100000000000 "100,000 USDC" "${USDC_WHALES[@]}" || true
-[ -n "$USDT" ] && { prefund_from_whale "$USDT" 100000000000 "100,000 USDT" "${USDT_WHALES[@]}" || true; }
+# Run USDC and USDT prefunds concurrently — each is a sequence of RPC
+# roundtrips to the fork, independent of the other. Cuts wall time roughly
+# in half when both need to fall back to a later whale.
+prefund_from_whale "$USDC" 100000000000 "100,000 USDC" "${USDC_WHALES[@]}" &
+USDC_PID=$!
+if [ -n "$USDT" ]; then
+  prefund_from_whale "$USDT" 100000000000 "100,000 USDT" "${USDT_WHALES[@]}" &
+  USDT_PID=$!
+fi
+wait "$USDC_PID" 2>/dev/null || true
+[ -n "${USDT_PID:-}" ] && wait "$USDT_PID" 2>/dev/null || true
 # WTON is not worth chasing a whale for — UI can acquire via market order
 # once WETH/USDC liquidity is available.
 
