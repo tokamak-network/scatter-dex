@@ -6,6 +6,7 @@ import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, Chec
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { shortenAddress } from "../../lib/utils";
+import { extractMessage } from "../../lib/error-messages";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
   deriveEdDSAKey,
@@ -479,9 +480,7 @@ export default function PrivateHistoryPage() {
       setSelectedOrder((prev) => prev ? updater(prev) : prev);
     } catch (e: unknown) {
       console.error("Cancel failed:", e);
-      const reason = (e as { reason?: string })?.reason;
-      const message = e instanceof Error ? e.message : null;
-      setCancelError(reason || message || "Unknown error");
+      setCancelError(extractMessage(e));
       setCancelStep("error");
     }
   }, [keyPair, signer, account]);

@@ -65,13 +65,12 @@ export function useWallet() {
  * Check specific flags BEFORE isMetaMask — many wallets set isMetaMask=true
  * for compatibility (Rabby, Coinbase, etc.).
  */
+type InjectedProvider = NonNullable<Window["ethereum"]>;
+
 function detectWalletName(provider: ethers.Eip1193Provider): string {
-  // Wallet vendors set non-standard boolean flags (isRabby / isMetaMask /
-  // isCoinbaseWallet etc.) on the EIP-1193 provider. They aren't part of
-  // the spec'd type, so narrow via a structural cast at access time.
-  const flags = provider as ethers.Eip1193Provider & {
-    isRabby?: boolean; isCoinbaseWallet?: boolean; isMetaMask?: boolean;
-  };
+  // The wallet vendor flags (isRabby / isMetaMask / isCoinbaseWallet) are
+  // declared on Window["ethereum"] above; narrow to that augmented shape.
+  const flags = provider as InjectedProvider;
   if (flags.isRabby) return "Rabby";
   if (flags.isCoinbaseWallet) return "Coinbase Wallet";
   if (flags.isMetaMask) return "MetaMask";
@@ -147,12 +146,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setupProvider();
     };
 
-    // EIP-1193 emitter methods are typed as `unknown[] => void`; our
-    // handlers narrow per event so cast back to the structural shape.
-    const ethEmitter = eth as unknown as {
-      on?: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
-    };
+    const ethEmitter = eth as InjectedProvider;
     ethEmitter.on?.("accountsChanged", handleAccountsChanged as (...args: unknown[]) => void);
     ethEmitter.on?.("chainChanged", handleChainChanged);
 

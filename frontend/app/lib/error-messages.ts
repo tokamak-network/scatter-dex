@@ -75,7 +75,7 @@ const ZK_PATTERNS: Array<[RegExp, string]> = [
  * Extract the most useful error string from an error object.
  * ethers v6 wraps revert reasons in nested objects.
  */
-function extractMessage(error: unknown): string {
+export function extractMessage(error: unknown): string {
   if (error == null) return "Unknown error";
   if (typeof error === "string") return error;
   const e = error as Record<string, unknown>;
