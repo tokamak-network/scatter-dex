@@ -114,18 +114,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No npm cache here — the npm CLI bug #4828 prunes platform-
+      # specific optional binaries (rollup-linux-x64-gnu, swc, etc.) when
+      # restoring from any cached state, including the npm registry cache
+      # itself. A clean wipe + install is the only reliable workaround
+      # until the upstream fix lands.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: zk-relayer/package-lock.json
 
-      # `npm ci` interacts with npm CLI bug #4828 — optional native
-      # binaries (rollup-linux-x64-gnu here) get pruned during the cached
-      # restore. Use `npm install` so the platform-specific package gets
-      # resolved every run.
-      - run: npm install --no-audit --no-fund
+      - name: Clean install (workaround for npm CLI bug #4828)
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --no-audit --no-fund
 
       - name: tsc --noEmit
         # Pre-existing type errors in routes/p2p.ts predate CI wiring;
