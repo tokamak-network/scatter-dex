@@ -109,14 +109,27 @@ describe("DELETE /api/p2p/orders/:id", () => {
     expect(onCancel).toHaveBeenCalledWith(otherId);
   });
 
-  it("accepts cancel when order is unknown (idempotent)", async () => {
-    // No lookup callback, or callback returns null — order isn't in our
-    // cache, so we can't enforce ownership. Treat as already-cancelled.
+  it("accepts cancel when order is unknown to our cache (idempotent)", async () => {
+    // Lookup wired but returns null — order isn't in our cache, treat
+    // as already-cancelled / never-seen and accept.
+    const onCancel = vi.fn();
+    const lookup = vi.fn(() => null);
+    const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), onCancel, undefined, undefined, lookup));
+    const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
+    const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects with 403 when no lookup callback is configured (fail-closed)", async () => {
+    // Without `lookupOrderRelayer` we can't enforce ownership. Old
+    // behaviour silently accepted, which would let any authenticated
+    // peer cancel any order. Fail closed instead.
     const onCancel = vi.fn();
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), onCancel));
     const headers = await authHeaders("DELETE", `/api/p2p/orders/${otherId}`);
     const res = await request(app).delete(`/api/p2p/orders/${otherId}`).set(headers);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });
 

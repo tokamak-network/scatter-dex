@@ -136,7 +136,7 @@ WS     /ws/orders               — real-time order/cancel broadcast
 **Order Summary Schema:**
 ```json
 {
-  "id": "relayer-nonce",
+  "id": "0x...",  // 32-byte hex offer handle (e.g. bytes32(nullifier) for authorize orders)
   "relayer": "0x...",
   "relayerUrl": "https://relayer-x.example.com",
   "sellToken": "0x...",

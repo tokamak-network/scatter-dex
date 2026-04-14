@@ -109,10 +109,18 @@ export function createP2PRoutes(
 
     // Ownership check: look up who posted this order. The retired
     // {relayer}-{nonce} prefix scheme didn't work for authorize-flow
-    // ids (bytes32 nullifier, no embedded relayer). If the order
-    // isn't in our cache, treat it as already-cancelled / never-seen
-    // and 200 — idempotent peer protocol.
-    const owner = lookupOrderRelayer ? lookupOrderRelayer(orderId) : null;
+    // ids (bytes32 nullifier, no embedded relayer). If `lookupOrderRelayer`
+    // wasn't wired we have no way to enforce ownership — fail closed
+    // rather than silently accept arbitrary deletes (any authenticated
+    // peer cancelling any order would be a regression vs the old
+    // prefix check). If the order is in cache and matches the peer,
+    // accept; if owner is unknown (`null`), treat as already-cancelled /
+    // never-seen and 200 idempotently.
+    if (!lookupOrderRelayer) {
+      res.status(403).json({ error: "ownership verification not configured" });
+      return;
+    }
+    const owner = lookupOrderRelayer(orderId);
     if (owner !== null && owner !== peerAddress) {
       res.status(403).json({ error: "cannot cancel another relayer's order" });
       return;
