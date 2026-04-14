@@ -169,13 +169,23 @@ contract SettleWithDexForkTest is Test {
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 
-        // Verify: surplus went to treasury (amountOut > totalLocked)
-        uint256 treasuryBal = IERC20(USDC).balanceOf(treasury);
-        assertGt(treasuryBal, 0, "Treasury should have received surplus");
+        // Verify: surplus credited to FeeVault.platformRevenue (not treasury
+        // directly — the new market-order ledger holds it until treasury
+        // calls withdrawPlatformRevenue). Treasury EOA holds zero at this
+        // point; only the platformRevenue bucket moves.
+        uint256 surplus = feeVault.platformRevenue(USDC);
+        assertGt(surplus, 0, "FeeVault.platformRevenue(USDC) should carry surplus");
+        assertEq(IERC20(USDC).balanceOf(treasury), 0, "Treasury EOA must not receive surplus directly");
+
+        // Withdraw path: treasury pulls from FeeVault and ends up with the surplus.
+        vm.prank(treasury);
+        feeVault.withdrawPlatformRevenue(USDC);
+        assertEq(IERC20(USDC).balanceOf(treasury), surplus, "Treasury holds surplus after withdraw");
+        assertEq(feeVault.platformRevenue(USDC), 0, "platformRevenue cleared after withdraw");
 
         console2.log("Uniswap V3: 1 WETH -> USDC");
         console2.log("  totalLocked (claims):", totalLocked / 1e6, "USDC");
-        console2.log("  surplus to treasury:", treasuryBal / 1e6, "USDC");
+        console2.log("  surplus via FeeVault:", surplus / 1e6, "USDC");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -220,13 +230,18 @@ contract SettleWithDexForkTest is Test {
         assertEq(token, DAI);
         assertEq(locked, totalLocked);
 
-        // Verify: surplus to treasury
-        uint256 treasuryBal = IERC20(DAI).balanceOf(treasury);
-        assertGt(treasuryBal, 0, "Treasury should have received surplus from Curve swap");
+        // Verify: surplus routed through FeeVault.platformRevenue.
+        uint256 surplus = feeVault.platformRevenue(DAI);
+        assertGt(surplus, 0, "FeeVault.platformRevenue(DAI) should carry Curve surplus");
+        assertEq(IERC20(DAI).balanceOf(treasury), 0, "Treasury EOA must not receive surplus directly");
+
+        vm.prank(treasury);
+        feeVault.withdrawPlatformRevenue(DAI);
+        assertEq(IERC20(DAI).balanceOf(treasury), surplus);
 
         console2.log("Curve 3pool: 10,000 USDC -> DAI");
         console2.log("  totalLocked (claims):", totalLocked / 1e18, "DAI");
-        console2.log("  surplus to treasury:", treasuryBal / 1e18, "DAI");
+        console2.log("  surplus via FeeVault:", surplus / 1e18, "DAI");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -309,17 +324,23 @@ contract SettleWithDexForkTest is Test {
         vm.prank(user);
         settlement.settleWithDex(params);
 
-        // Platform fee (1% of 10 ETH = 0.1 ETH) sent to treasury in WETH
-        uint256 wethFee = IERC20(WETH).balanceOf(treasury);
-        assertEq(wethFee, 0.1 ether, "Treasury should receive 1% WETH platform fee");
+        // Platform fee (1% of 10 ETH = 0.1 ETH) credited to
+        // FeeVault.platformRevenue[WETH], not sent to treasury directly.
+        assertEq(feeVault.platformRevenue(WETH), 0.1 ether, "FeeVault should hold 1% WETH platform fee");
+        assertEq(IERC20(WETH).balanceOf(treasury), 0, "Treasury EOA must not hold WETH directly");
 
         // Claims group registered
         (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xd4)));
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 
+        // Treasury can pull the fee via withdrawPlatformRevenue.
+        vm.prank(treasury);
+        feeVault.withdrawPlatformRevenue(WETH);
+        assertEq(IERC20(WETH).balanceOf(treasury), 0.1 ether);
+
         console2.log("Uniswap V3 + 1% platform fee: 10 WETH");
-        console2.log("  platform fee:", wethFee / 1e18, "WETH");
+        console2.log("  platform fee via FeeVault:", uint256(0.1 ether) / 1e18, "WETH");
         console2.log("  claims:", totalLocked / 1e6, "USDC");
     }
 

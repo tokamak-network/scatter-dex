@@ -202,9 +202,13 @@ contract SettleWithDexTest is Test {
         vm.prank(user);
         settlement.settleWithDex(p);
 
-        // Surplus goes directly to FeeVault's treasury address
-        uint256 surplusInTreasury = usdc.balanceOf(treasury);
-        assertEq(surplusInTreasury, 1_000e18);
+        // Surplus is now credited to FeeVault.platformRevenue (not treasury
+        // EOA). Treasury pulls via withdrawPlatformRevenue.
+        assertEq(feeVault.platformRevenue(address(usdc)), 1_000e18);
+        assertEq(usdc.balanceOf(treasury), 0);
+        vm.prank(treasury);
+        feeVault.withdrawPlatformRevenue(address(usdc));
+        assertEq(usdc.balanceOf(treasury), 1_000e18);
     }
 
     function test_settleWithDex_multiple_dex_routers() public {
@@ -224,10 +228,10 @@ contract SettleWithDexTest is Test {
         vm.prank(user);
         settlement.settleWithDex(p);
 
-        // Should use second router's rate: 10 * 2100 = 21_000 USDC
-        // surplus = 21_000 - 19_000 = 2_000
-        uint256 surplusInTreasury = usdc.balanceOf(treasury);
-        assertEq(surplusInTreasury, 2_000e18);
+        // Second router's rate: 10 * 2100 = 21_000 USDC → surplus 2_000
+        // routed through FeeVault.platformRevenue.
+        assertEq(feeVault.platformRevenue(address(usdc)), 2_000e18);
+        assertEq(usdc.balanceOf(treasury), 0);
     }
 
     // ─── Revert Cases ───────────────────────────────────────────
@@ -373,9 +377,10 @@ contract SettleWithDexTest is Test {
         vm.prank(user);
         settlement.settleWithDex(p);
 
-        // Platform fee (0.1 WETH) should go to treasury in sellToken (WETH)
-        uint256 feeInTreasury = weth.balanceOf(treasury);
-        assertEq(feeInTreasury, 0.1 ether, "Treasury should receive 1% WETH platform fee");
+        // Platform fee (0.1 WETH) is credited to FeeVault.platformRevenue
+        // rather than sent to treasury directly; treasury withdraws later.
+        assertEq(feeVault.platformRevenue(address(weth)), 0.1 ether, "FeeVault holds 1% WETH platform fee");
+        assertEq(weth.balanceOf(treasury), 0, "Treasury must not hold WETH directly");
 
         // Claims group should still be registered
         (uint128 locked,, address token) = settlement.claimsGroups(CLAIMS_ROOT);
@@ -397,8 +402,9 @@ contract SettleWithDexTest is Test {
         vm.prank(user);
         settlement.settleWithDex(p);
 
-        // No WETH fee to treasury
-        uint256 feeInTreasury = weth.balanceOf(treasury);
-        assertEq(feeInTreasury, 0);
+        // No WETH platform fee anywhere — neither the vault ledger nor the
+        // treasury EOA should accumulate sellToken.
+        assertEq(feeVault.platformRevenue(address(weth)), 0);
+        assertEq(weth.balanceOf(treasury), 0);
     }
 }
