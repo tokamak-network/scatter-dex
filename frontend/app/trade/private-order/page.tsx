@@ -8,6 +8,7 @@ import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOp
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { applyFeeBig, FEE_BPS_DENOMINATOR } from "../../lib/fee";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import { AddressPicker } from "../../components/AddressPicker";
 import {
@@ -596,8 +597,7 @@ function PrivateOrderPageInner() {
     try {
       const gross = ethers.parseUnits(buyAmount, buyTokenDecimals);
       if (gross === 0n) return null;
-      const feeWei = (gross * BigInt(effectiveFeeBps)) / 10000n;
-      const need = gross > feeWei ? gross - feeWei : 0n;
+      const { net: need } = applyFeeBig(gross, effectiveFeeBps);
       return claimTotalWei >= need ? 0n : need - claimTotalWei;
     } catch {
       return null;
@@ -621,8 +621,7 @@ function PrivateOrderPageInner() {
       // `sell * (10000 - fee) / 10000`; the two differ by a 1-wei
       // rounding that otherwise false-blocks distribute=sell at
       // sub-10000-wei amounts.
-      const feeWei = (sell * BigInt(effectiveFeeBps)) / 10000n;
-      return sell > feeWei ? sell - feeWei : 0n;
+      return applyFeeBig(sell, effectiveFeeBps).net;
     } catch { return null; }
   }, [isScatterMode, sellAmount, sellTokenDecimals, effectiveFeeBps]);
 
@@ -646,8 +645,7 @@ function PrivateOrderPageInner() {
     if (isScatterMode && sellTokenDecimals != null) {
       try {
         const sellWei = ethers.parseUnits(sell, sellTokenDecimals);
-        const feeWei = (sellWei * BigInt(effectiveFeeBps)) / 10000n;
-        const capWei = sellWei > feeWei ? sellWei - feeWei : 0n;
+        const capWei = applyFeeBig(sellWei, effectiveFeeBps).net;
         setBuyAmount(ethers.formatUnits(capWei, sellTokenDecimals));
       } catch {
         /* sellAmount mid-typing — leave buyAmount alone */
@@ -712,10 +710,8 @@ function PrivateOrderPageInner() {
     try {
       const parsedBuy = ethers.parseUnits(buyAmount, buyTokenDecimals);
       // Recipients share the amount *after* the relay fee — maker keeps
-      // buyAmount × (1 − fee), so Rest must not push the total past that
-      // post-fee pot. BigInt math: feeWei = parsedBuy × effectiveFeeBps / 10000.
-      const feeWei = (parsedBuy * BigInt(effectiveFeeBps)) / 10000n;
-      const netBuyWei = parsedBuy > feeWei ? parsedBuy - feeWei : 0n;
+      // buyAmount × (1 − fee).
+      const netBuyWei = applyFeeBig(parsedBuy, effectiveFeeBps).net;
       const target =
         isScatterMode && scatterMaxDistributeWei !== null && scatterMaxDistributeWei < netBuyWei
           ? scatterMaxDistributeWei

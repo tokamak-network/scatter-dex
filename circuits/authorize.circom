@@ -422,17 +422,27 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     claimsRoot === claimsRootComp.root;
 
     // ════════════════════════════════════════
-    //  7. MINIMUM RECEIVE GUARANTEE
-    //     totalLocked ≥ buyAmount
-    //     (the user is guaranteed to get at least the limit they signed)
+    //  7. MINIMUM RECEIVE GUARANTEE (fee-semantics redesign, 2026-04-14)
+    //     totalLocked × 10000 ≥ buyAmount × (10000 − maxFee)
+    //     ⇔ totalLocked ≥ buyAmount − (buyAmount × maxFee / 10000)
+    //     The user's relayer fee is drawn from their own receive side, so
+    //     recipients distribute at least the worst-case net:
+    //       buyAmount × (1 − maxFee).
+    //     At settle time the actual fee may be ≤ maxFee, so totalLocked
+    //     (which was fixed here) is always ≥ what the user needs.
     //
-    //  [PR #127 optimization] LessEqThan(128) is sufficient because both
-    //  inputs are independently range-checked above (buyAmount ≤ 2^126,
-    //  totalLocked ≤ 2^128).
+    //  Widths: buyAmount ≤ 2^126, maxFee ≤ 2^16, so `buyAmount × (10000 −
+    //  maxFee)` fits in 142 bits. `totalLocked × 10000` is ≤ 2^128 × 2^14
+    //  = 2^142. LessEqThan(144) is the tightest bound (saves ~108
+    //  constraints vs LessEqThan(252)).
     // ════════════════════════════════════════
-    component receiveCheck = LessEqThan(128);
-    receiveCheck.in[0] <== buyAmount;
-    receiveCheck.in[1] <== totalLocked;
+    signal lockedScaled;
+    lockedScaled <== totalLocked * 10000;
+    signal minReceiveScaled;
+    minReceiveScaled <== buyAmount * (10000 - maxFee);
+    component receiveCheck = LessEqThan(144);
+    receiveCheck.in[0] <== minReceiveScaled;
+    receiveCheck.in[1] <== lockedScaled;
     receiveCheck.out === 1;
 
     // ════════════════════════════════════════

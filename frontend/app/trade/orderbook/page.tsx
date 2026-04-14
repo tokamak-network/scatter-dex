@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useRouter } from "next/navigation";
 import { Globe, RefreshCw, Server, ShoppingBag, Activity, ArrowRightLeft } from "lucide-react";
@@ -13,24 +13,12 @@ import {
   type SharedRelayer,
   type SharedOrderbookStats,
 } from "../../lib/sharedOrderbook";
-import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { getTokenMap, type TokenInfo } from "../../lib/tokens";
 import { useRelayers } from "../../lib/useRelayers";
+import { shortenAddress, formatExpiry } from "../../lib/utils";
+import { FEE_BPS_DENOMINATOR } from "../../lib/fee";
 
-function shortAddr(a: string): string {
-  if (!a) return "—";
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
-}
-
-function formatExpiry(ts: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const delta = ts - now;
-  if (delta <= 0) return "expired";
-  const h = Math.floor(delta / 3600);
-  const m = Math.floor((delta % 3600) / 60);
-  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
+const shortAddr = (a: string) => (a ? shortenAddress(a) : "—");
 
 export default function SharedOrderbookPage() {
   const [orders, setOrders] = useState<SharedOrder[]>([]);
@@ -51,56 +39,33 @@ export default function SharedOrderbookPage() {
     if (!submitVia && zkRelayers.length > 0) setSubmitVia(zkRelayers[0].address);
   }, [submitVia, zkRelayers]);
 
-  const tokens = useMemo(() => getTokenList(), []);
-  const tokenByAddr = useMemo(() => {
-    const map: Record<string, TokenInfo> = {};
-    for (const t of tokens) {
-      if (!t.isNative) map[t.address.toLowerCase()] = t;
-    }
-    return map;
-  }, [tokens]);
+  const tokenByAddr = useMemo(() => getTokenMap(), []);
 
-  const resolveSymbol = useCallback(
-    (addr: string): string => tokenByAddr[addr.toLowerCase()]?.symbol || shortAddr(addr),
-    [tokenByAddr],
-  );
-  const resolveDecimals = useCallback(
-    (addr: string): number => tokenByAddr[addr.toLowerCase()]?.decimals ?? 18,
+  const resolveToken = useCallback(
+    (addr: string): TokenInfo | undefined => tokenByAddr[addr.toLowerCase()],
     [tokenByAddr],
   );
 
   /**
-   * Build a URL to /trade/private-order that pre-fills a *counter* limit
-   * order for the given maker order. To match, the taker must flip
-   * sell/buy and the amounts. We also carry maxFee and remaining expiry
-   * (rounded up to the next hour) so the signed order can still settle
-   * before the maker's order expires.
+   * Build a URL to /trade/private-order that pre-fills a counter limit
+   * order. Under the fee-semantics redesign (each side pays fee from
+   * their own receive), matching is a plain `counterpartySell ≥ buyAmount`
+   * check, so the taker just flips the maker's signed amounts 1:1.
    */
   const takeOrder = useCallback(
     (o: SharedOrder) => {
-      const sellSym = resolveSymbol(o.buyToken);    // I sell what maker wants to buy
-      const buySym = resolveSymbol(o.sellToken);    // I buy what maker is selling
-      if (!tokenByAddr[o.buyToken.toLowerCase()] || !tokenByAddr[o.sellToken.toLowerCase()]) {
+      const sellTok = resolveToken(o.buyToken);  // I sell what maker wants to buy
+      const buyTok = resolveToken(o.sellToken);  // I buy what maker is selling
+      if (!sellTok || !buyTok) {
         alert("Cannot take order: one of the tokens is not in this environment's token list.");
         return;
       }
-      const sellDec = resolveDecimals(o.sellToken);
-      const buyDec = resolveDecimals(o.buyToken);
-      const makerSell = parseFloat(ethers.formatUnits(o.sellAmount, sellDec));
-      const makerBuy = parseFloat(ethers.formatUnits(o.buyAmount, buyDec));
-      // New fee semantics (2026-04-14 redesign): each side's own maxFee
-      // caps the fee against their own buyAmount. Matcher requires
-      //   counterpartySell × 10000 ≥ buyAmount × (10000 + maxFee)
-      // So the taker must oversell by (1 + makerMaxFee) to cover maker's
-      // fee, and undershoot their buy by (1 + makerMaxFee) to stay under
-      // maker's sellAmount ceiling.
-      const makerFeeFactor = 1 + o.maxFee / 10000;
-      const sellAmt = (makerBuy * makerFeeFactor).toFixed(Math.min(buyDec, 6));
-      const buyAmt = (makerSell / makerFeeFactor).toFixed(Math.min(sellDec, 6));
+      const sellAmt = ethers.formatUnits(o.buyAmount, sellTok.decimals);
+      const buyAmt = ethers.formatUnits(o.sellAmount, buyTok.decimals);
       const remaining = Math.max(1, Math.ceil((o.expiry - Math.floor(Date.now() / 1000)) / 3600));
       const params = new URLSearchParams({
-        sell: sellSym,
-        buy: buySym,
+        sell: sellTok.symbol,
+        buy: buyTok.symbol,
         sellAmount: sellAmt,
         buyAmount: buyAmt,
         maxFee: String(o.maxFee),
@@ -109,19 +74,28 @@ export default function SharedOrderbookPage() {
       if (submitVia) params.set("relayer", submitVia);
       router.push(`/trade/private-order?${params.toString()}`);
     },
-    [resolveSymbol, resolveDecimals, tokenByAddr, submitVia, router],
+    [resolveToken, submitVia, router],
   );
+
+  // Mounted-flag guards setOrders/etc. against late callbacks after unmount
+  // (e.g. user navigates away mid-fetch).
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const [o, r, s] = await Promise.all([getOrders(500), getRelayers(), getStats()]);
+      if (cancelledRef.current) return;
       setOrders(o);
       setRelayers(r);
       setStats(s);
       setLastUpdated(new Date());
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   }, []);
 
@@ -217,10 +191,10 @@ export default function SharedOrderbookPage() {
             <option value="all">All ({orders.length})</option>
             {pairs.map((p) => {
               const [a, b] = p.split("|");
+              const aSym = resolveToken(a)?.symbol || shortAddr(a);
+              const bSym = resolveToken(b)?.symbol || shortAddr(b);
               return (
-                <option key={p} value={p}>
-                  {resolveSymbol(a)} / {resolveSymbol(b)}
-                </option>
+                <option key={p} value={p}>{aSym} / {bSym}</option>
               );
             })}
           </select>
@@ -266,17 +240,17 @@ export default function SharedOrderbookPage() {
         ) : (
           <div className="divide-y divide-outline-variant/5">
             {filtered.map((o) => {
-              const sellSym = resolveSymbol(o.sellToken);
-              const buySym = resolveSymbol(o.buyToken);
-              const sellDec = resolveDecimals(o.sellToken);
-              const buyDec = resolveDecimals(o.buyToken);
-              const sell = parseFloat(ethers.formatUnits(o.sellAmount, sellDec));
-              const buy = parseFloat(ethers.formatUnits(o.buyAmount, buyDec));
-              // New fee semantics: taker must oversell by (1 + makerMaxFee)
-              // to cover maker's fee. Effective min buy for taker ≈
-              // maker.sell / (1 + makerMaxFee).
-              const takerMaxBuy = sell / (1 + o.maxFee / 10000);
-              const price = takerMaxBuy > 0 ? buy / takerMaxBuy : 0;
+              const sellTok = resolveToken(o.sellToken);
+              const buyTok = resolveToken(o.buyToken);
+              const sellSym = sellTok?.symbol || shortAddr(o.sellToken);
+              const buySym = buyTok?.symbol || shortAddr(o.buyToken);
+              const sell = parseFloat(ethers.formatUnits(o.sellAmount, sellTok?.decimals ?? 18));
+              const buy = parseFloat(ethers.formatUnits(o.buyAmount, buyTok?.decimals ?? 18));
+              // Maker keeps `buy × (1 − maxFee)` of the proceeds (relay fee
+              // comes off their receive). Display effective price + the net
+              // taker delivers so makers see the actual rate, not the gross.
+              const makerNet = buy * (FEE_BPS_DENOMINATOR - o.maxFee) / FEE_BPS_DENOMINATOR;
+              const price = sell > 0 ? makerNet / sell : 0;
               const relayer = relayerByAddr[o.relayer.toLowerCase()];
               return (
                 <div
@@ -289,15 +263,15 @@ export default function SharedOrderbookPage() {
                   <span className="text-right font-mono">
                     {price.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                   </span>
+                  <span className="text-right font-mono">
+                    {sell.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellSym}
+                  </span>
                   <div className="text-right font-mono leading-tight">
-                    <div>{sell.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellSym}</div>
+                    <div>{buy.toLocaleString(undefined, { maximumFractionDigits: 6 })} {buySym}</div>
                     <div className="text-[9px] text-on-surface-variant/60">
-                      taker gets ≤ {takerMaxBuy.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      maker keeps ≈ {makerNet.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     </div>
                   </div>
-                  <span className="text-right font-mono">
-                    {buy.toLocaleString(undefined, { maximumFractionDigits: 6 })} {buySym}
-                  </span>
                   <span className="text-right font-mono text-on-surface-variant">{(o.maxFee / 100).toFixed(2)}%</span>
                   <span className="text-right font-mono text-on-surface-variant">{formatExpiry(o.expiry)}</span>
                   <span className="text-xs font-mono text-on-surface-variant truncate" title={o.relayer}>

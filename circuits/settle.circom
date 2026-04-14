@@ -461,12 +461,12 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal feeTokenMakerScaled;
     feeTokenMakerScaled <== feeTokenMaker * 10000;
 
-    component feeTokenMakerLower = LessEqThan(252);
+    component feeTokenMakerLower = LessEqThan(144);
     feeTokenMakerLower.in[0] <== feeTokenMakerScaled;
     feeTokenMakerLower.in[1] <== feeTokenMakerProduct;
     feeTokenMakerLower.out === 1;
 
-    component feeTokenMakerUpper = LessEqThan(252);
+    component feeTokenMakerUpper = LessEqThan(144);
     feeTokenMakerUpper.in[0] <== feeTokenMakerProduct;
     feeTokenMakerUpper.in[1] <== feeTokenMakerScaled + 9999;
     feeTokenMakerUpper.out === 1;
@@ -476,12 +476,12 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     signal feeTokenTakerScaled;
     feeTokenTakerScaled <== feeTokenTaker * 10000;
 
-    component feeTokenTakerLower = LessEqThan(252);
+    component feeTokenTakerLower = LessEqThan(144);
     feeTokenTakerLower.in[0] <== feeTokenTakerScaled;
     feeTokenTakerLower.in[1] <== feeTokenTakerProduct;
     feeTokenTakerLower.out === 1;
 
-    component feeTokenTakerUpper = LessEqThan(252);
+    component feeTokenTakerUpper = LessEqThan(144);
     feeTokenTakerUpper.in[0] <== feeTokenTakerProduct;
     feeTokenTakerUpper.in[1] <== feeTokenTakerScaled + 9999;
     feeTokenTakerUpper.out === 1;
@@ -500,18 +500,26 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     takerBalCheck.out === 1;
 
     // ════════════════════════════════════════
-    //  8b. MINIMUM RECEIVE GUARANTEE
-    //      Each party receives at least their signed buyAmount.
-    //      totalLockedMaker >= makerBuyAmount (maker receives enough)
-    //      totalLockedTaker >= takerBuyAmount (taker receives enough)
+    //  8b. MINIMUM RECEIVE GUARANTEE (fee-semantics redesign)
+    //      Each party's relayer fee is drawn from what they receive, so
+    //      recipients distribute the signed buyAmount *minus* fee:
+    //        totalLockedMaker >= makerBuyAmount − feeTokenMaker
+    //        totalLockedTaker >= takerBuyAmount − feeTokenTaker
+    //      Range-check ranges above already guarantee
+    //      feeTokenMaker ≤ buyAmount (cap: buyAmount × maxFee ≤ 10000 ×
+    //      buyAmount), so `buyAmount − feeToken` stays non-negative.
     // ════════════════════════════════════════
-    component makerReceiveCheck = LessEqThan(252);
-    makerReceiveCheck.in[0] <== makerBuyAmount;
+    signal makerNetReceive;
+    makerNetReceive <== makerBuyAmount - feeTokenMaker;
+    component makerReceiveCheck = LessEqThan(144);
+    makerReceiveCheck.in[0] <== makerNetReceive;
     makerReceiveCheck.in[1] <== totalLockedMaker;
     makerReceiveCheck.out === 1;
 
-    component takerReceiveCheck = LessEqThan(252);
-    takerReceiveCheck.in[0] <== takerBuyAmount;
+    signal takerNetReceive;
+    takerNetReceive <== takerBuyAmount - feeTokenTaker;
+    component takerReceiveCheck = LessEqThan(144);
+    takerReceiveCheck.in[0] <== takerNetReceive;
     takerReceiveCheck.in[1] <== totalLockedTaker;
     takerReceiveCheck.out === 1;
 
