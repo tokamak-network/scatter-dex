@@ -339,8 +339,13 @@ contract SettleWithDexForkTest is Test {
         feeVault.withdrawPlatformRevenue(WETH);
         assertEq(IERC20(WETH).balanceOf(treasury), fee);
 
+        // Log with integer + fractional parts so sub-ether fees don't
+        // collapse to "0 WETH" under integer division. 1e14 divisor = 4
+        // decimal places, enough to read 0.1000 / 0.0100 etc.
         console2.log("Uniswap V3 + 1% platform fee: 10 WETH");
-        console2.log("  platform fee via FeeVault:", fee / 1e18, "WETH");
+        console2.log("  platform fee via FeeVault (wei):", fee);
+        console2.log("  platform fee integer WETH:", fee / 1e18);
+        console2.log("  platform fee fractional (4dp x 1e4):", (fee % 1e18) / 1e14);
         console2.log("  claims:", totalLocked / 1e6, "USDC");
     }
 
