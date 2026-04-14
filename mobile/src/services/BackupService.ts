@@ -190,6 +190,7 @@ export const BackupService = {
         await AddressBookService.add({
           label: entry.label,
           address: entry.address,
+          kind: entry.kind,
           memo: entry.memo,
         });
         summary.addressBook.added++;
