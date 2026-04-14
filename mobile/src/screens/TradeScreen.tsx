@@ -466,8 +466,14 @@ export default function TradeScreen() {
         });
       }
     } catch (err: any) {
-      if (mountedRef.current) setError(friendlyError(err));
+      // AbortError = user-driven cancel (unmount/navigation). Not an
+      // error the user needs to see — skip the error toast and let
+      // the finally handle submitting state.
+      if (mountedRef.current && err?.name !== 'AbortError') {
+        setError(friendlyError(err));
+      }
     } finally {
+      submitAbortRef.current = null;
       if (mountedRef.current) setSubmitting(false);
     }
   }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);

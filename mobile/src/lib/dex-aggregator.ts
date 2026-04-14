@@ -72,12 +72,20 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
       const route = await get1inchRoute(params, webBase);
       if (route) return route;
     } catch (e) {
+      // Propagate user-driven cancellation up the stack — falling back
+      // to Uniswap after an unmount would keep the quote flow alive
+      // against an already-dead caller.
+      if (isAbortError(e) || params.signal?.aborted) throw e;
       if (__DEV__) {
         console.warn('1inch API failed, falling back to Uniswap:', e);
       }
     }
   }
   return getUniswapRoute(params);
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === 'AbortError';
 }
 
 async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapRoute | null> {

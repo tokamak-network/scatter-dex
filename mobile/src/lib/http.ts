@@ -26,13 +26,16 @@ export async function fetchWithTimeout(
   { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
 ): Promise<Response> {
   const controller = new AbortController();
+  // Honour a parent that's already aborted — otherwise `addEventListener`
+  // never fires and the fetch proceeds despite the caller having
+  // cancelled before we got here.
+  if (parentSignal?.aborted) controller.abort();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // Re-abort ours if the parent aborts — keeps the outer `fetch` in
-  // sync with UI-driven cancels. Forward-listener is removed in
-  // `finally` so the parent signal doesn't retain a reference to this
-  // controller after the call resolves.
+  // `{ once: true }` auto-removes on fire; we still remove in `finally`
+  // for the happy path so the parent signal doesn't retain a reference
+  // to this controller after the call resolves.
   const onParentAbort = () => controller.abort();
-  parentSignal?.addEventListener('abort', onParentAbort);
+  parentSignal?.addEventListener('abort', onParentAbort, { once: true });
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
