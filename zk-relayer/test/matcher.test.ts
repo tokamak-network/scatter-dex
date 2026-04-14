@@ -178,11 +178,12 @@ describe("PrivateMatcher", () => {
   // through that then reverted at settle with ClaimsCapExceeded
   // (settle.circom §8c: totalLockedMaker + feeTokenMaker ≤ takerSell,
   // and feeTokenMaker can be up to takerSell × taker.maxFee / 10000).
+  // Under the [2026-04-14 fee-semantics redesign] each side's fee is
+  // drawn from their *own* receive (totalLocked ≥ buyAmount − feeToken),
+  // so the matcher reduces to `counterpartySell ≥ buyAmount`. The fee
+  // no longer requires the taker to oversell.
   describe("fee-aware amount check", () => {
-    it("rejects 1:1 amounts when maxFee > 0", () => {
-      // Both sides sign maxFee=30bps. takerSell = 21000 = makerBuy exactly,
-      // but feeTokenMaker could take up to 63 of the 21000, leaving only
-      // 20937 to cover maker's claims of 21000 → settle would revert.
+    it("matches 1:1 amounts even when maxFee > 0 (fee comes from receive side)", () => {
       const maker = book.add(makePrivateOrder({
         pubKeyAx: 1n, pubKeyAy: 1n,
         sellToken: TOKEN_A, buyToken: TOKEN_B,
@@ -199,29 +200,29 @@ describe("PrivateMatcher", () => {
         maxFee: 30n,
         nonce: 2n,
       }));
-      expect(matcher.findMatch(maker)).toBeNull();
+      expect(matcher.findMatch(maker)).not.toBeNull();
     });
 
-    it("matches when taker.sellAmount covers buyAmount + fee cap", () => {
-      // takerSell * (10000 - 30) = 21000 * 9970 = 209370000
-      // needed: makerBuy * 10000 = 20937 * 10000 = 209370000 → exactly meets.
+    it("rejects when taker.sellAmount is below maker.buyAmount", () => {
+      // Worst-case headroom is no longer required, but a literal price
+      // shortfall must still be rejected.
       const maker = book.add(makePrivateOrder({
         pubKeyAx: 1n, pubKeyAy: 1n,
         sellToken: TOKEN_A, buyToken: TOKEN_B,
         sellAmount: 10n * 10n ** 18n,
-        buyAmount: 20937n * 10n ** 18n,
+        buyAmount: 21000n * 10n ** 18n,
         maxFee: 30n,
         nonce: 1n,
       }));
       book.add(makePrivateOrder({
         pubKeyAx: 2n, pubKeyAy: 2n,
         sellToken: TOKEN_B, buyToken: TOKEN_A,
-        sellAmount: 21000n * 10n ** 18n,
-        buyAmount: 9970n * 10n ** 18n / 1000n,  // = 9.97, fee-adjusted on the other side
+        sellAmount: 20999n * 10n ** 18n,  // 1 short
+        buyAmount: 10n * 10n ** 18n,
         maxFee: 30n,
         nonce: 2n,
       }));
-      expect(matcher.findMatch(maker)).not.toBeNull();
+      expect(matcher.findMatch(maker)).toBeNull();
     });
 
     it("matches 1:1 when maxFee is 0 on both sides", () => {
@@ -242,31 +243,6 @@ describe("PrivateMatcher", () => {
         nonce: 2n,
       }));
       expect(matcher.findMatch(maker)).not.toBeNull();
-    });
-
-    it("clamps out-of-range maxFee (uint16 but > 10000 bps) instead of flipping the check", () => {
-      // maxFee = 65535 passes parsePrivateOrder's uint16 bound but means
-      // "fee > 100%". Without clamping, (10000n − 65535n) would be
-      // negative and BigInt multiplication would silently flip the
-      // inequality. Clamp degrades the check to "counterpartyBuy must
-      // be 0" which is the mathematically correct reject.
-      const maker = book.add(makePrivateOrder({
-        pubKeyAx: 1n, pubKeyAy: 1n,
-        sellToken: TOKEN_A, buyToken: TOKEN_B,
-        sellAmount: 10n * 10n ** 18n,
-        buyAmount: 100n,
-        maxFee: 65535n,
-        nonce: 1n,
-      }));
-      book.add(makePrivateOrder({
-        pubKeyAx: 2n, pubKeyAy: 2n,
-        sellToken: TOKEN_B, buyToken: TOKEN_A,
-        sellAmount: 1000n,
-        buyAmount: 10n * 10n ** 18n,
-        maxFee: 65535n,
-        nonce: 2n,
-      }));
-      expect(matcher.findMatch(maker)).toBeNull();
     });
   });
 });
