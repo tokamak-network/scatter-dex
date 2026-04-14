@@ -212,7 +212,7 @@ export default function RelayersPage() {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 3000);
             try {
-              const res = await fetch(`${r.url}/api/orderbook/${p.value}`, { signal: controller.signal });
+              const res = await fetch(`${r.url}/api/private-orderbook/${p.value}`, { signal: controller.signal });
               if (res.ok) pairResults.set(p.value, await res.json());
             } catch { /* skip */ } finally {
               clearTimeout(timeout);

@@ -435,15 +435,12 @@ template Settle(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     rcMakerFee.in <== makerFee;
     component rcTakerFee = Num2Bits(16);
     rcTakerFee.in <== takerFee;
-    component rcMakerMaxFee = Num2Bits(16);
-    rcMakerMaxFee.in <== makerMaxFee;
-    component rcTakerMaxFee = Num2Bits(16);
-    rcTakerMaxFee.in <== takerMaxFee;
     // [Gemini PR #299 review] Cap maxFee at 10000 bps (100%). Without
-    // this, `makerBuyAmount × makerFee` could exceed the field modulus
-    // and the floor-division comparators below would silently flip,
-    // letting feeTokenMaker take the full taker.sellAmount while
-    // recipients still pass §8b.
+    // this, `makerBuyAmount × (10000 − makerMaxFee)` could underflow
+    // the field modulus inside the receive guarantee, and
+    // `makerBuyAmount × makerFee` could exceed it inside the floor-
+    // division comparators below — letting feeTokenMaker drain the
+    // full taker.sellAmount while recipients still pass §8b.
     component makerMaxFeeUpper = LessEqThan(16);
     makerMaxFeeUpper.in[0] <== makerMaxFee;
     makerMaxFeeUpper.in[1] <== 10000;
