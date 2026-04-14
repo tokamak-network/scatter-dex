@@ -26,9 +26,17 @@ export function confirmShareSecret({ title, body, shareMessage }: ConfirmShareSe
     {
       text: 'Continue to Share',
       style: 'destructive',
-      // Swallow share errors — user cancelling the share sheet rejects
-      // the promise and is not actionable for us.
-      onPress: () => Share.share({ message: shareMessage }).catch(() => {}),
+      // Share.share resolves with `{action}` on both success and user
+      // dismissal, so the resolved path is a no-op. Rejection signals a
+      // real failure (system error, invalid payload) — log it and tell
+      // the user so real failures are not silently hidden, matching
+      // BackupModal's share-sheet handling.
+      onPress: () => {
+        Share.share({ message: shareMessage }).catch((err: unknown) => {
+          console.error('confirmShareSecret: Share.share failed', err);
+          Alert.alert('Share failed', 'Unable to open the share sheet. Please try again.');
+        });
+      },
     },
   ]);
 }
