@@ -8,7 +8,7 @@ import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOp
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
-import { applyFeeBig, FEE_BPS_DENOMINATOR } from "../../lib/fee";
+import { applyFeeBig } from "../../lib/fee";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import { AddressPicker } from "../../components/AddressPicker";
 import {
@@ -1482,8 +1482,9 @@ function PrivateOrderPageInner() {
               </div>
             </div>
 
-            {/* Fee summary */}
-            {sellAmount && buyAmount && (
+            {/* Fee summary — relayer fee is a limit-order concept; market
+                orders settle directly via the DEX with no bps relay fee. */}
+            {orderType !== "market" && sellAmount && buyAmount && (
               <div className="bg-surface-container-low/30 rounded-lg px-4 py-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Buy amount</span>
