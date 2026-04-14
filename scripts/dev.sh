@@ -274,6 +274,14 @@ echo "[4/4] Starting frontend..."
 TOKENS=""
 [ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
+# Preserve user-provided secrets (non-deployment env vars) across regeneration.
+# The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
+# like ONEINCH_API_KEY belong to the developer, not the deployment.
+PRESERVED_ENV=""
+if [ -f "$ROOT_DIR/frontend/.env.local" ]; then
+  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY)=' "$ROOT_DIR/frontend/.env.local" || true)
+fi
+
 cat > "$ROOT_DIR/frontend/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
@@ -287,6 +295,10 @@ NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
+
+if [ -n "$PRESERVED_ENV" ]; then
+  echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
+fi
 
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
