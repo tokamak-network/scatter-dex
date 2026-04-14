@@ -252,30 +252,48 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // peek) that shouldn't start the lock timer. If the user actually
     // leaves the app those `inactive` events are followed by
     // `background`, which DOES stamp.
-    const handleChange = async (next: AppStateStatus) => {
+    //
+    // Listener is declared sync so `AppState`'s non-Promise-aware
+    // dispatcher doesn't swallow rejections — the async work is
+    // fire-and-forget inside, with an explicit catch for SecureStore
+    // hiccups so a rejection never lands as an unhandled promise.
+    const handleChange = (next: AppStateStatus): void => {
       if (next === 'background') {
         backgroundedAtRef.current = Date.now();
         return;
       }
-      if (next === 'active' && backgroundedAtRef.current != null) {
-        const elapsed = Date.now() - backgroundedAtRef.current;
-        backgroundedAtRef.current = null;
-        if (elapsed < BG_LOCK_MS) return;
-        // Re-check the opt-in at the moment we'd act on it — the user
-        // may have toggled biometric off in Settings while we were
-        // subscribed, and caching the value at subscribe time would
-        // keep locking their session against their preference.
-        const enabled = await KeySecurityService.isBiometricEnabled();
-        if (!enabled) return;
-        // If the app slipped back to background during the
-        // `isBiometricEnabled` await, a fresh `active` handler will
-        // re-evaluate the elapsed time — don't race it by locking now.
-        if (AppState.currentState !== 'active') return;
-        // Drop only the auth-bearing bits — preserve `account` and
-        // `chainId` so the Connect screen can show "Welcome back,
-        // 0x…" instead of a cold-start prompt.
-        setState((s) => ({ ...s, signer: null, provider: null }));
-      }
+      if (next !== 'active' || backgroundedAtRef.current == null) return;
+      const elapsed = Date.now() - backgroundedAtRef.current;
+      backgroundedAtRef.current = null;
+      if (elapsed < BG_LOCK_MS) return;
+
+      void (async () => {
+        try {
+          // Re-check the opt-in at the moment we'd act on it — the user
+          // may have toggled biometric off in Settings while we were
+          // subscribed, and caching the value at subscribe time would
+          // keep locking their session against their preference.
+          const enabled = await KeySecurityService.isBiometricEnabled();
+          if (!enabled) return;
+          // If the app slipped back to background during the
+          // `isBiometricEnabled` await, a fresh `active` handler will
+          // re-evaluate the elapsed time — don't race it by locking now.
+          if (AppState.currentState !== 'active') return;
+          // Full teardown — resetting to INITIAL_STATE plus
+          // `connectionMode = 'none'` ensures the UI treats the app as
+          // disconnected instead of "account present but signer null",
+          // which HomeScreen would otherwise render as connected while
+          // any transaction-needing action fails silently.
+          setState(INITIAL_STATE);
+          setConnectionMode('none');
+        } catch (err) {
+          // SecureStore can reject on device edge cases (Keychain
+          // locked, hardware fault). Swallow so we don't redbox in
+          // production; the session simply stays unlocked — the user
+          // can still disconnect manually if they notice.
+          if (__DEV__) console.warn('bg-reauth: biometric check failed:', err);
+        }
+      })();
     };
 
     const subscription = AppState.addEventListener('change', handleChange);
