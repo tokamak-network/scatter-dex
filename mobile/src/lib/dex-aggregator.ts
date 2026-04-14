@@ -12,6 +12,7 @@
 
 import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
+import { fetchWithTimeout, TIMEOUT_AGGREGATOR_MS } from './http';
 
 // 1inch Aggregation Router V6 — same address on all EVM chains.
 const ONEINCH_ROUTER = '0x111111125421cA6dc452d289314280a0f8842A65';
@@ -24,10 +25,6 @@ const UNISWAP_ROUTERS: Record<number, string> = {
 const UNISWAP_ROUTER_IFACE = new ethers.Interface([
   'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)',
 ]);
-
-// Client-side timeout slightly longer than the web server's (10 s) so
-// the server's error response has a chance to arrive.
-const FETCH_TIMEOUT_MS = 12_000;
 
 // Defaults shared with `frontend/app/lib/dex-aggregator.ts` — keep in sync.
 export const DEFAULT_SLIPPAGE_BPS = 50;
@@ -75,12 +72,20 @@ export async function getBestSwapRoute(params: SwapParams): Promise<SwapRoute> {
       const route = await get1inchRoute(params, webBase);
       if (route) return route;
     } catch (e) {
+      // Propagate user-driven cancellation up the stack — falling back
+      // to Uniswap after an unmount would keep the quote flow alive
+      // against an already-dead caller.
+      if (isAbortError(e) || params.signal?.aborted) throw e;
       if (__DEV__) {
         console.warn('1inch API failed, falling back to Uniswap:', e);
       }
     }
   }
   return getUniswapRoute(params);
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === 'AbortError';
 }
 
 async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapRoute | null> {
@@ -95,45 +100,33 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
     slippage: (slippageBps / 100).toString(),
   });
 
-  // Chain the caller-provided abort signal with our own timeout so
-  // either a parent-driven cancel (stale preview) or a timeout aborts
-  // the underlying fetch.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  const onParentAbort = () => controller.abort();
-  signal?.addEventListener('abort', onParentAbort);
-
-  try {
-    const res = await fetch(`${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`, {
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'unknown' }));
-      throw new Error(`Swap API error ${res.status}: ${err.error}`);
-    }
-
-    const data = await res.json();
-
-    let estimated: bigint;
-    try {
-      estimated = BigInt(data.estimatedOutput);
-    } catch {
-      throw new Error(`Swap API returned invalid estimatedOutput: ${String(data.estimatedOutput)}`);
-    }
-    if (estimated < minReceive) {
-      throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
-    }
-
-    return {
-      dexRouter: String(data.dexRouter),
-      dexCalldata: String(data.dexCalldata),
-      source: '1inch',
-      estimatedOutput: estimated,
-    };
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', onParentAbort);
+  const res = await fetchWithTimeout(
+    `${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`,
+    { timeoutMs: TIMEOUT_AGGREGATOR_MS, parentSignal: signal },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'unknown' }));
+    throw new Error(`Swap API error ${res.status}: ${err.error}`);
   }
+
+  const data = await res.json();
+
+  let estimated: bigint;
+  try {
+    estimated = BigInt(data.estimatedOutput);
+  } catch {
+    throw new Error(`Swap API returned invalid estimatedOutput: ${String(data.estimatedOutput)}`);
+  }
+  if (estimated < minReceive) {
+    throw new Error(`1inch estimated output ${estimated} < minReceive ${minReceive}`);
+  }
+
+  return {
+    dexRouter: String(data.dexRouter),
+    dexCalldata: String(data.dexCalldata),
+    source: '1inch',
+    estimatedOutput: estimated,
+  };
 }
 
 function getUniswapRoute(params: SwapParams): SwapRoute {

@@ -1,7 +1,7 @@
 /**
  * TradeScreen — converted from web design prototype Trade.tsx
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -63,6 +63,19 @@ export default function TradeScreen() {
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Cancels the in-flight submit-path getBestSwapRoute if the screen
+  // unmounts mid-submit. Without this the HTTP promise chain stays
+  // pinned (closing over signer/note/account) until 1inch responds.
+  // `mountedRef` then gates post-await setState calls so React
+  // doesn't log a "state update on unmounted component" warning.
+  const submitAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      submitAbortRef.current?.abort();
+    };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
@@ -418,6 +431,12 @@ export default function TradeScreen() {
         const platformFee = (sellAmountBn * dexPlatformFeeBps) / 10_000n;
         const swapAmount = sellAmountBn - platformFee;
 
+        submitAbortRef.current?.abort();
+        const routeAbort = new AbortController();
+        submitAbortRef.current = routeAbort;
+        // ref is cleared either by the next submit overwriting it, or
+        // by the unmount cleanup — a completed/aborted controller is
+        // harmless to leave in the ref in the meantime.
         const route = await getBestSwapRoute({
           chainId: ConfigService.getChainId(),
           sellToken: selectedNote.token,
@@ -426,6 +445,7 @@ export default function TradeScreen() {
           minReceive,
           recipient: settlementAddr,
           slippageBps: DEFAULT_SLIPPAGE_BPS,
+          signal: routeAbort.signal,
         });
 
         const input: MarketOrderInput = {
@@ -446,9 +466,15 @@ export default function TradeScreen() {
         });
       }
     } catch (err: any) {
-      setError(friendlyError(err));
+      // AbortError = user-driven cancel (unmount/navigation). Not an
+      // error the user needs to see — skip the error toast and let
+      // the finally handle submitting state.
+      if (mountedRef.current && err?.name !== 'AbortError') {
+        setError(friendlyError(err));
+      }
     } finally {
-      setSubmitting(false);
+      submitAbortRef.current = null;
+      if (mountedRef.current) setSubmitting(false);
     }
   }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
