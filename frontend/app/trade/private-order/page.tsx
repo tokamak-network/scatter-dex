@@ -950,6 +950,12 @@ export default function PrivateOrderPage() {
           nonce: nonce.toString(),
           leafIndex: selectedNote.leafIndex,
           type: "market" as const,
+          // Nullifier is already public (settleWithDex emits SettledWithDex
+          // with it as an indexed topic), so persisting it here doesn't leak
+          // anything new — but having it in the bundle lets private-history
+          // match a file to its on-chain event 1:1 instead of falling back
+          // to the quadruple-tuple heuristic.
+          nullifier: toBytes32Hex(BigInt(ps[2])),
           // Quote snapshot at submission time. estimatedOutput is what 1inch
           // / Uniswap Quoter expected; (estimatedOutput − buyAmount) upper-
           // bounds the surplus that would flow to FeeVault.platformRevenue.
