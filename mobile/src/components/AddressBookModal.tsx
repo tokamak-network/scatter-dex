@@ -34,7 +34,7 @@ type Props =
 
 function shortMeta(meta: string): string {
   const body = meta.slice(META_ADDRESS_PREFIX.length);
-  return `st:eth:${body.slice(0, 6)}…${body.slice(-4)}`;
+  return `${META_ADDRESS_PREFIX}${body.slice(0, 6)}…${body.slice(-4)}`;
 }
 
 export default function AddressBookModal(props: Props) {

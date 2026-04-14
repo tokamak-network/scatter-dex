@@ -116,7 +116,7 @@ async function readBook(): Promise<WalletEntry[]> {
   // don't have to think about casing.
   return book.entries.map((e) => ({
     ...e,
-    kind: (e as WalletEntry).kind ?? 'standard',
+    kind: e.kind ?? 'standard',
     address: normalizeAddress(e.address),
   }));
 }
@@ -147,7 +147,10 @@ export const AddressBookService = {
   },
 
   async add(input: { label: string; address: string; kind?: WalletEntryKind; memo?: string }): Promise<WalletEntry> {
-    const kind: WalletEntryKind = input.kind ?? 'standard';
+    // Runtime-validate kind. Callers that pass an untyped value (e.g.
+    // BackupService, restoring user-edited JSON) could otherwise write
+    // an entry that `isValidEntry` later rejects as corrupt.
+    const kind: WalletEntryKind = input.kind === 'stealth' ? 'stealth' : 'standard';
     if (!isValidAddressForKind(input.address, kind)) {
       throw new Error(kind === 'stealth' ? 'Invalid meta-address' : 'Invalid address');
     }
