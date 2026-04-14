@@ -425,7 +425,7 @@ export default function ClaimScreen() {
                       </TouchableOpacity>
                     </View>
                     {pendingClaims.map((item, index) => (
-                    <View key={`${item.txHash}-${index}`} style={{ gap: 6 }}>
+                    <View key={item.id} style={{ gap: 6 }}>
                       <TouchableOpacity
                         style={[
                           s.itemRow,

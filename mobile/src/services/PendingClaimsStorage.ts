@@ -46,6 +46,11 @@ export interface PendingClaim {
   leafIndex: number;       // position in the 16-leaf claims tree
   allLeaves: string[];     // all 16 claim leaf hashes (decimal strings)
   txHash: string;          // settle / order tx hash (best-effort for display)
+  /** Relayer-assigned order id for the settlement that produced this claim.
+   *  Historically OrderService stuffed this into `txHash`; the two are now
+   *  distinct. Old entries may still carry the orderId in `txHash` with no
+   *  `orderId` set — BackupService dedup accounts for both shapes. */
+  orderId?: string;
   /** Set when `recipient` is a stealth address — required to derive the
    *  recipient's private key. Absent on standard (non-stealth) claims. */
   ephemeralPubKey?: string; // 0x-prefixed compressed secp256k1 hex
@@ -151,7 +156,9 @@ async function migrateLegacy(): Promise<void> {
       leafIndex: Number(e.leafIndex ?? 0),
       allLeaves: Array.isArray(e.allLeaves) ? e.allLeaves.map(String) : [],
       txHash: String(e.txHash ?? ''),
-      ...(typeof e.ephemeralPubKey === 'string' ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
+      ...(typeof e.orderId === 'string' && e.orderId ? { orderId: e.orderId } : {}),
+      ...(typeof e.ephemeralPubKey === 'string' && e.ephemeralPubKey
+        ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
     };
     await Promise.all([
       AsyncStorage.setItem(metaKey(id), JSON.stringify(meta)),
@@ -233,6 +240,7 @@ export const PendingClaimsStorage = {
         leafIndex: e.leafIndex,
         allLeaves: e.allLeaves,
         txHash: e.txHash,
+        ...(e.orderId ? { orderId: e.orderId } : {}),
         ...(e.ephemeralPubKey ? { ephemeralPubKey: e.ephemeralPubKey } : {}),
       };
       // Write secret first — on partial failure we'd rather have an orphaned
