@@ -36,8 +36,8 @@ interface WalletContextValue extends WalletState {
 
 // Grace window for backgrounded built-in sessions. A shorter value trips on
 // users pulling down the notification centre for a glance; much longer and
-// the lock stops being meaningful against a stolen device. 30s matches the
-// default on most wallet apps we surveyed (Trust, Rainbow).
+// the lock stops being meaningful against a stolen device. 30s is in line
+// with common wallet-app defaults.
 const BG_LOCK_MS = 30_000;
 
 const INITIAL_STATE: WalletState = {
@@ -267,6 +267,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // keep locking their session against their preference.
         const enabled = await KeySecurityService.isBiometricEnabled();
         if (!enabled) return;
+        // If the app slipped back to background during the
+        // `isBiometricEnabled` await, a fresh `active` handler will
+        // re-evaluate the elapsed time — don't race it by locking now.
+        if (AppState.currentState !== 'active') return;
         // Drop only the auth-bearing bits — preserve `account` and
         // `chainId` so the Connect screen can show "Welcome back,
         // 0x…" instead of a cold-start prompt.
