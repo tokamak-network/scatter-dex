@@ -16,8 +16,8 @@ import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsSto
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
-import { confirmShareSecret } from '../lib/confirmShareSecret';
 import { friendlyError } from '../lib/error-messages';
+import SecretRevealModal from '../components/SecretRevealModal';
 import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
@@ -114,6 +114,8 @@ export default function ClaimScreen() {
     }
   }, [jsonInput]);
 
+  const [stealthPrivkeyReveal, setStealthPrivkeyReveal] = useState<{ privKey: string; stealthAddress: string } | null>(null);
+
   const handleRevealStealthKey = useCallback(async (ephemeralPubKey: string, stealthAddress: string) => {
     const identity = await StealthIdentityService.load();
     if (!identity) {
@@ -148,22 +150,7 @@ export default function ClaimScreen() {
       );
       return;
     }
-    Alert.alert(
-      'Stealth Private Key',
-      `Controls stealth address ${stealthAddress}.\n\nImport this into any secp256k1 wallet to move the claimed funds out. Anyone with this key can drain that address — share with care.\n\n${privKey}`,
-      [
-        { text: 'Close', style: 'cancel' },
-        {
-          text: 'Share',
-          style: 'destructive',
-          onPress: () => confirmShareSecret({
-            title: 'Share stealth private key?',
-            body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
-            shareMessage: `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthAddress}\nprivateKey: ${privKey}`,
-          }),
-        },
-      ],
-    );
+    setStealthPrivkeyReveal({ privKey, stealthAddress });
   }, []);
 
   const toPendingClaimData = (pc: PendingClaim): ClaimData => ({
@@ -534,6 +521,23 @@ export default function ClaimScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      <SecretRevealModal
+        visible={stealthPrivkeyReveal !== null}
+        onClose={() => setStealthPrivkeyReveal(null)}
+        title="Stealth Private Key"
+        description={stealthPrivkeyReveal ? `Controls stealth address ${stealthPrivkeyReveal.stealthAddress}.` : undefined}
+        warning="Anyone with this key can drain the stealth address. Only import into a wallet flow you control."
+        fieldLabel="Private key"
+        secret={stealthPrivkeyReveal?.privKey ?? ''}
+        share={{
+          title: 'Share stealth private key?',
+          body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
+          message: stealthPrivkeyReveal
+            ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
+            : '',
+        }}
+      />
     </SafeAreaView>
   );
 }
