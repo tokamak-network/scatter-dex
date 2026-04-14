@@ -89,10 +89,14 @@ export async function buildPoseidonMerkleTree(
 
   for (let d = 0; d < depth; d++) {
     if (current.length === 0) {
-      // No non-zero values remain; the subtree from here up is all zeros.
-      layers.push([ZEROS[d + 1]]);
-      current = layers[d + 1];
-      continue;
+      // No non-zero values remain — the rest of the tree is all zeros.
+      // Fill remaining layers from the precomputed `ZEROS` table and
+      // break out of the loop instead of asking the bridge to hash
+      // each level (which is what `continue` was doing).
+      for (let dd = d; dd < depth; dd++) {
+        layers.push([ZEROS[dd + 1]]);
+      }
+      break;
     }
     // Pipeline hashes within a level. Each pair is still its own bridge
     // postMessage — the bridge has no batch-hash command yet — but the

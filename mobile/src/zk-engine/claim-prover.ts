@@ -9,8 +9,7 @@
  */
 
 import { poseidonHash, buildMerkleTree, getMerkleProof, computeClaimNullifier } from "./commitment";
-
-const CLAIMS_TREE_DEPTH = 4;
+import { CLAIMS_TREE_DEPTH } from "./constants";
 
 const WASM_PATH = "/zk/claim.wasm";
 const ZKEY_PATH = "/zk/claim_final.zkey";
