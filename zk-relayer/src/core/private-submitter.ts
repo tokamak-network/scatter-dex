@@ -20,6 +20,7 @@ import type { PrivateOrder, PrivateMatch } from "../types/order.js";
 import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
+import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -232,13 +233,9 @@ export class PrivateSubmitter {
     const tokenMaker = taker.sellToken; // what maker receives
     const tokenTaker = maker.sellToken; // what taker receives
 
-    // Per-token fees (absolute amounts from bps)
-    const makerFeeBps = BigInt(config.relayerFee);
-    const takerFeeBps = BigInt(config.relayerFee);
-    // feeTokenMaker = fee in tokenMaker (from taker's sell)
-    const feeTokenMaker = (taker.sellAmount * takerFeeBps) / 10000n;
-    // feeTokenTaker = fee in tokenTaker (from maker's sell)
-    const feeTokenTaker = (maker.sellAmount * makerFeeBps) / 10000n;
+    const relayerFeeBps = BigInt(config.relayerFee);
+    const feeTokenMaker = computeSideFee(maker.buyAmount, maker.maxFee, relayerFeeBps);
+    const feeTokenTaker = computeSideFee(taker.buyAmount, taker.maxFee, relayerFeeBps);
 
     // Use latest block timestamp to stay within on-chain tolerance window
     const latestBlock = await this.provider.getBlock("latest");
@@ -459,7 +456,7 @@ export class PrivateSubmitter {
 
     const totalLocked = order.claims.reduce((sum, c) => sum + c.amount, 0n);
     const feeBps = BigInt(config.relayerFee);
-    const fee = (order.sellAmount * feeBps) / 10000n;
+    const fee = (order.sellAmount * feeBps) / FEE_BPS_DENOMINATOR;
     const withdrawAmount = totalLocked + fee;
 
     // Token address
