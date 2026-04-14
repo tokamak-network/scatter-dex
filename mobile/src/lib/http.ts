@@ -8,7 +8,10 @@
  * them included inconsistent cleanup of the parent-abort listener.
  */
 
-export interface FetchWithTimeoutOptions extends RequestInit {
+// `signal` is intentionally stripped so callers can't silently bypass
+// the chained timeout by passing their own — they must route cancels
+// through `parentSignal`, which gets composed with the timeout below.
+export interface FetchWithTimeoutOptions extends Omit<RequestInit, 'signal'> {
   /** Milliseconds before the request is aborted. */
   timeoutMs: number;
   /** Optional external cancel (e.g. unmounting UI). Chained with the
@@ -18,7 +21,7 @@ export interface FetchWithTimeoutOptions extends RequestInit {
 
 export async function fetchWithTimeout(
   url: string,
-  { timeoutMs, parentSignal, signal: _ignored, ...init }: FetchWithTimeoutOptions,
+  { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

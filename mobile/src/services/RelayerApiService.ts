@@ -106,10 +106,11 @@ export const RelayerApiService = {
     relayerUrl?: string,
   ): Promise<PrivateOrderResponse> {
     const url = `${relayerUrl || this.getBaseUrl()}/api/private-orders`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order),
+      timeoutMs: 30_000,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -123,7 +124,7 @@ export const RelayerApiService = {
     relayerUrl?: string,
   ): Promise<OrderStatus[]> {
     const url = `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, { timeoutMs: 5_000 });
     if (!res.ok) throw new Error(`Failed to fetch order status: ${res.status}`);
     return res.json();
   },
@@ -133,7 +134,7 @@ export const RelayerApiService = {
     relayerUrl?: string,
   ): Promise<any[]> {
     const url = `${relayerUrl || this.getBaseUrl()}/api/orderbook/${pair}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, { timeoutMs: 5_000 });
     if (!res.ok) throw new Error(`Failed to fetch orderbook: ${res.status}`);
     return res.json();
   },

@@ -428,6 +428,9 @@ export default function TradeScreen() {
         submitAbortRef.current?.abort();
         const routeAbort = new AbortController();
         submitAbortRef.current = routeAbort;
+        // ref is cleared either by the next submit overwriting it, or
+        // by the unmount cleanup — a completed/aborted controller is
+        // harmless to leave in the ref in the meantime.
         const route = await getBestSwapRoute({
           chainId: ConfigService.getChainId(),
           sellToken: selectedNote.token,
@@ -438,7 +441,6 @@ export default function TradeScreen() {
           slippageBps: DEFAULT_SLIPPAGE_BPS,
           signal: routeAbort.signal,
         });
-        if (submitAbortRef.current === routeAbort) submitAbortRef.current = null;
 
         const input: MarketOrderInput = {
           note: selectedNote,
