@@ -18,6 +18,7 @@ import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { TokenService } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
 import AddressBookModal from '../components/AddressBookModal';
+import MarketQuoteCard from '../components/MarketQuoteCard';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
@@ -124,6 +125,27 @@ export default function TradeScreen() {
   const privateBalance = selectedNote
     ? `${formatAmount(selectedNote.amount)} ${selectedNote.tokenSymbol}`
     : '—';
+
+  // Token decimals for market-quote preview. Fetched lazily per note so
+  // we don't block render on an RPC round-trip; falls back to 18 if
+  // lookup fails — matches what ethers does for tokens without a
+  // `decimals()` function.
+  const [sellDecimals, setSellDecimals] = useState<number>(18);
+  const [buyDecimals, setBuyDecimals] = useState<number>(18);
+  const buyTokenAddress = ConfigService.getWethAddress() || '';
+  useEffect(() => {
+    if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
+    let cancelled = false;
+    Promise.all([
+      TokenService.getDecimals(readProvider, selectedNote.token).catch(() => 18),
+      TokenService.getDecimals(readProvider, buyTokenAddress).catch(() => 18),
+    ]).then(([s, b]) => {
+      if (cancelled) return;
+      setSellDecimals(s);
+      setBuyDecimals(b);
+    });
+    return () => { cancelled = true; };
+  }, [readProvider, selectedNote?.token, buyTokenAddress]);
 
   const buyAmountHuman = (() => {
     const a = parseFloat(amount);
@@ -453,6 +475,28 @@ export default function TradeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Market-order route preview — only shown in market mode. */}
+        {tradeType === 'market' && account && selectedNote && (() => {
+          const a = parseFloat(amount);
+          const p = parseFloat(price.replace(/,/g, ''));
+          if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
+          const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+          const priceBn = ethers.parseUnits(price.replace(/,/g, ''), buyDecimals);
+          const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
+          const minReceive = (buyAmountBn * 995n) / 1000n; // 0.5% slippage
+          return (
+            <MarketQuoteCard
+              sellAmount={sellAmountBn}
+              minReceive={minReceive}
+              sellToken={selectedNote.token}
+              buyToken={buyTokenAddress}
+              buySymbol={buyTokenSymbol}
+              buyDecimals={buyDecimals}
+              recipient={account}
+            />
+          );
+        })()}
 
         {/* Claim Builder (limit mode only) */}
         {tradeType === 'limit' && (
