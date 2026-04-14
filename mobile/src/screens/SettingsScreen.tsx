@@ -642,7 +642,6 @@ const s = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: '700', color: colors.danger },
   chevron: { fontSize: 24, color: colors.textDim, fontWeight: '300' },
 
-  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
   modalSubtitle: { fontSize: 14, color: colors.gray500 },
   modalInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 14, color: colors.text, minHeight: 80 },
   modalButtons: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },

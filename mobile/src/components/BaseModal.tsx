@@ -57,6 +57,10 @@ const s = StyleSheet.create({
   sheet: {
     width: '100%',
     maxWidth: 420,
+    // Keep tall content (long lists, multi-section forms) inside the
+    // viewport — pre-extraction copies all capped here and would
+    // overflow the screen edge without it.
+    maxHeight: '90%',
     backgroundColor: colors.card,
     borderRadius: layout.card.radius,
     padding: layout.card.padding,

@@ -5,11 +5,13 @@
  * connect() → WalletConnect 모달 → 지갑 앱 딥링크 → 세션 수립 → ethers Signer 제공
  */
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Alert, Linking, Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, Linking, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ethers } from 'ethers';
 import QRCode from 'react-native-qrcode-svg';
 import { ConfigService } from '../services/ConfigService';
 import { ProviderService } from '../services/ProviderService';
+import BaseModal from '../components/BaseModal';
+import { colors } from '../styles/theme';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 import { KeySecurityService } from '../services/KeySecurityService';
 
@@ -242,49 +244,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     <WalletContext.Provider value={{ ...state, connectionMode, connect, connectBuiltin, disconnect, readProvider }}>
       {children}
 
-      {/* QR Code Modal for WalletConnect */}
-      <Modal visible={!!qrUri} transparent animationType="fade">
-        <View style={wcStyles.overlay}>
-          <View style={wcStyles.modal}>
-            <Text style={wcStyles.title}>Scan with Wallet</Text>
-            <Text style={wcStyles.desc}>
-              Open MetaMask on your phone and scan this QR code
-            </Text>
-            <View style={wcStyles.qrBox}>
-              {qrUri && <QRCode value={qrUri} size={240} backgroundColor="#fff" />}
-            </View>
-            <TouchableOpacity
-              style={wcStyles.cancelBtn}
-              onPress={() => { setQrUri(null); setState((s) => ({ ...s, isConnecting: false })); }}
-            >
-              <Text style={wcStyles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+      <BaseModal
+        visible={!!qrUri}
+        onClose={() => { setQrUri(null); setState((s) => ({ ...s, isConnecting: false })); }}
+        title="Scan with Wallet"
+      >
+        <Text style={wcStyles.desc}>Open MetaMask on your phone and scan this QR code</Text>
+        <View style={wcStyles.qrBox}>
+          {qrUri && <QRCode value={qrUri} size={240} backgroundColor="#fff" />}
         </View>
-      </Modal>
+        <TouchableOpacity
+          style={wcStyles.cancelBtn}
+          onPress={() => { setQrUri(null); setState((s) => ({ ...s, isConnecting: false })); }}
+        >
+          <Text style={wcStyles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
+      </BaseModal>
     </WalletContext.Provider>
   );
 }
 
 const wcStyles = StyleSheet.create({
-  overlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  modal: {
-    backgroundColor: '#1a1f2e', borderRadius: 20, padding: 24,
-    alignItems: 'center', width: 320,
-  },
-  title: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 8 },
-  desc: { fontSize: 14, color: '#8899bb', textAlign: 'center', marginBottom: 20 },
+  desc: { fontSize: 14, color: colors.gray500, textAlign: 'center' },
   qrBox: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 20,
+    backgroundColor: '#fff', borderRadius: 12, padding: 16, alignSelf: 'center',
   },
   cancelBtn: {
-    paddingVertical: 12, paddingHorizontal: 40,
-    borderRadius: 8, borderWidth: 1, borderColor: '#374151',
+    paddingVertical: 12, paddingHorizontal: 40, alignSelf: 'center',
+    borderRadius: 10, borderWidth: 1, borderColor: colors.borderMedium,
   },
-  cancelText: { color: '#9ca3af', fontSize: 15, fontWeight: '600' },
+  cancelText: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
 });
 
 export function useWallet(): WalletContextValue {
