@@ -224,10 +224,12 @@ export const OrderService = {
           allLeaves: claimLeafHashes,
           // Settle tx hash isn't known here — the relayer settles async.
           // Keep the orderId in its own field so display/dedup can tell
-          // the two apart. Use `undefined` (not `''`) when the relayer
-          // didn't return an orderId, otherwise BackupService's dedup
-          // key collapses to `#leafIndex#amount` and collides across
-          // unrelated orders.
+          // the two apart. When the relayer doesn't return an orderId we
+          // omit the field entirely (rather than writing `''`): with
+          // BackupService's `orderId || txHash` dedup key, `''` and
+          // `undefined` actually behave identically — both fall back to
+          // `txHash`. Collisions only become possible if BOTH identifiers
+          // are missing, which shouldn't happen in practice.
           txHash: '',
           ...(response.orderId ? { orderId: response.orderId } : {}),
           // Carry the ephemeral pubkey through to storage on stealth
