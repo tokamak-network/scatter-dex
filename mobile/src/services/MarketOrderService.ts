@@ -18,6 +18,7 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { TokenService } from './TokenService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
+import type { SwapRoute } from '../lib/dex-aggregator';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
@@ -44,16 +45,15 @@ export interface MarketOrderInput {
   sellAmount: string;      // human-readable
   buyToken: string;        // address
   buyAmount: string;       // min receive (slippage-adjusted)
-  slippageBps: number;     // applied by UI to compute buyAmount (min receive)
   expiryHours: number;
   claimRecipient: string;  // typically self
-  dexRouter: string;       // Uniswap V3 router address
-  uniswapFeeTier: number;  // 500, 3000, 10000
+  // Pre-computed DEX route from the aggregator. Caller invokes
+  // `getBestSwapRoute` immediately before this call so the executed
+  // route matches what `MarketQuoteCard` showed the user. The
+  // previous local-only Uniswap-V3 encoding path lived here before
+  // DEX aggregator Phase C.
+  route: SwapRoute;
 }
-
-const UNISWAP_ROUTER_ABI = [
-  'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)',
-];
 
 export const MarketOrderService = {
   async execute(
@@ -68,7 +68,8 @@ export const MarketOrderService = {
     const poolAddr = ConfigService.getCommitmentPoolAddress();
     if (!poolAddr) throw new Error('CommitmentPool address not configured');
 
-    const { note, buyToken, dexRouter, uniswapFeeTier, expiryHours, claimRecipient } = input;
+    const { note, buyToken, route, expiryHours, claimRecipient } = input;
+    const { dexRouter, dexCalldata } = route;
     // Resolve decimals per token — using a hardcoded 18 silently miscomputes
     // amounts for tokens like USDC (6 decimals) by a factor of 10^12.
     const readProvider = ProviderService.getReadProvider();
@@ -241,23 +242,14 @@ export const MarketOrderService = {
       const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
       const proof = formatProofForSolidity(proofResult.proof);
 
-      // ─── Step 3: Encode DEX calldata + submit ─────────
       onProgress({ step: 'submitting' });
 
-      const routerIface = new ethers.Interface(UNISWAP_ROUTER_ABI);
-      const dexCalldata = routerIface.encodeFunctionData('exactInputSingle', [{
-        tokenIn: note.token,
-        tokenOut: buyToken,
-        fee: uniswapFeeTier,
-        recipient: settlementAddr,
-        deadline: Math.floor(Date.now() / 1000) + 1800,
-        amountIn: sellAmount,
-        amountOutMinimum: buyAmount,
-        sqrtPriceLimitX96: 0n,
-      }]);
-
       const settlement = new ethers.Contract(settlementAddr, [
-        'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint96 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata) p) external',
+        // Must match SettleDexParams + SettleVerifyLib.AuthorizeProof
+        // exactly — `totalLocked` is uint128 (widened from the old
+        // uint96, see SettleVerifyLib.sol:54) and `deadline` is a
+        // required outer-tuple field (PrivateSettlement.sol:680).
+        'function settleWithDex(tuple(tuple(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata, uint256 deadline) p) external',
       ], signer);
 
       // publicSignals layout (see circuits/authorize.circom:506-529):
@@ -307,6 +299,9 @@ export const MarketOrderService = {
         },
         dexRouter,
         dexCalldata,
+        // Mirror the 30-minute deadline the DEX calldata itself
+        // encodes so a slow block doesn't expire one half of the pair.
+        deadline: Math.floor(Date.now() / 1000) + 1800,
       });
 
       await tx.wait();

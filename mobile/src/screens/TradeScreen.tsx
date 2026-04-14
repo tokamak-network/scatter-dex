@@ -23,7 +23,8 @@ import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { computeMarketAmounts } from '../lib/market-amounts';
-import { DEFAULT_SLIPPAGE_BPS } from '../lib/dex-aggregator';
+import { DEFAULT_SLIPPAGE_BPS, getBestSwapRoute } from '../lib/dex-aggregator';
+import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -134,6 +135,11 @@ export default function TradeScreen() {
   // `decimals()` function.
   const [sellDecimals, setSellDecimals] = useState<number>(18);
   const [buyDecimals, setBuyDecimals] = useState<number>(18);
+  // settleWithDex deducts a platform fee from sellAmount *before* the
+  // DEX call, so the router calldata and 1inch quote must be built
+  // with the post-fee amount or the swap reverts on insufficient
+  // allowance. 0 is the safe default (no fee configured).
+  const [dexPlatformFeeBps, setDexPlatformFeeBps] = useState<bigint>(0n);
   const buyTokenAddress = useMemo(() => ConfigService.getWethAddress() || '', []);
   const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
   useEffect(() => {
@@ -159,6 +165,26 @@ export default function TradeScreen() {
     return () => { cancelled = true; };
   }, [readProvider, selectedNote?.token, buyTokenAddress]);
 
+  // dexPlatformFeeBps is a protocol-level setting that rarely changes,
+  // so fetching once on mount (and on settlement-address change) is
+  // plenty — no need to rebuild on every keystroke.
+  useEffect(() => {
+    if (!readProvider || !settlementAddress) return;
+    let cancelled = false;
+    const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_ABI, readProvider);
+    settlement.dexPlatformFeeBps()
+      .then((bps: bigint) => {
+        if (!cancelled) setDexPlatformFeeBps(bps);
+      })
+      .catch((e: unknown) => {
+        // Fall back to 0 — if the fee is actually non-zero and we
+        // couldn't read it, the swap will revert on-chain and the
+        // user sees the standard friendly error. Don't block the UI.
+        console.warn('dexPlatformFeeBps() read failed — assuming 0:', e);
+      });
+    return () => { cancelled = true; };
+  }, [readProvider, settlementAddress]);
+
   const buyAmountHuman = (() => {
     const a = parseFloat(amount);
     const p = parseFloat(price.replace(/,/g, ''));
@@ -174,19 +200,26 @@ export default function TradeScreen() {
     const p = parseFloat(price.replace(/,/g, ''));
     if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(p) || p <= 0) return null;
     try {
-      return computeMarketAmounts({
+      const base = computeMarketAmounts({
         sellAmountHuman: amount,
         priceHuman: price,
         sellDecimals,
         buyDecimals,
         slippageBps: DEFAULT_SLIPPAGE_BPS,
       });
+      // Post-fee amount matches what settleWithDex forwards to the
+      // router (PrivateSettlement.sol:739-740). Preview + submit must
+      // both build the quote against this value or the on-chain DEX
+      // call reverts on insufficient allowance.
+      const platformFee = (base.sellAmountBn * dexPlatformFeeBps) / 10_000n;
+      const swapAmount = base.sellAmountBn - platformFee;
+      return { ...base, swapAmount };
     } catch {
       // `parseUnits` throws on too-many-decimals during typing — fine
       // to skip the preview until the user lands on a valid value.
       return null;
     }
-  }, [amount, price, sellDecimals, buyDecimals]);
+  }, [amount, price, sellDecimals, buyDecimals, dexPlatformFeeBps]);
 
   const claimTotal = claimRows.reduce((sum, r) => {
     const n = parseFloat(r.amount);
@@ -357,10 +390,10 @@ export default function TradeScreen() {
           }
         });
       } else {
-        const dexRouter = ConfigService.getUniswapRouterAddress();
-        if (!dexRouter) {
+        const settlementAddr = ConfigService.getPrivateSettlementAddress();
+        if (!settlementAddr) {
           setSubmitting(false);
-          Alert.alert('Configuration Error', 'DEX router address is not configured.');
+          Alert.alert('Configuration Error', 'Settlement address is not configured.');
           return;
         }
 
@@ -369,7 +402,7 @@ export default function TradeScreen() {
           TokenService.getDecimals(readProvider, buyToken),
         ]);
 
-        const { minReceive } = computeMarketAmounts({
+        const { sellAmountBn, minReceive } = computeMarketAmounts({
           sellAmountHuman: amount,
           priceHuman: price,
           sellDecimals: sellDec,
@@ -378,16 +411,31 @@ export default function TradeScreen() {
         });
         const buyAmountMinHuman = ethers.formatUnits(minReceive, buyDec);
 
+        // Mirror the on-chain fee deduction (PrivateSettlement.sol:739)
+        // before quoting — the router only gets approved for the
+        // post-fee amount, so building calldata with the full
+        // sellAmount would revert on-chain.
+        const platformFee = (sellAmountBn * dexPlatformFeeBps) / 10_000n;
+        const swapAmount = sellAmountBn - platformFee;
+
+        const route = await getBestSwapRoute({
+          chainId: ConfigService.getChainId(),
+          sellToken: selectedNote.token,
+          buyToken,
+          sellAmount: swapAmount,
+          minReceive,
+          recipient: settlementAddr,
+          slippageBps: DEFAULT_SLIPPAGE_BPS,
+        });
+
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
           buyToken,
           buyAmount: buyAmountMinHuman,
-          slippageBps: 50,
           expiryHours: 1,
           claimRecipient: account,
-          dexRouter,
-          uniswapFeeTier: 3000,
+          route,
         };
 
         await MarketOrderService.execute(signer, account, input, (p: MarketOrderProgress) => {
@@ -514,7 +562,7 @@ export default function TradeScreen() {
 
         {tradeType === 'market' && account && selectedNote && marketQuoteInput && settlementAddress && (
           <MarketQuoteCard
-            sellAmount={marketQuoteInput.sellAmountBn}
+            sellAmount={marketQuoteInput.swapAmount}
             minReceive={marketQuoteInput.minReceive}
             sellToken={selectedNote.token}
             buyToken={buyTokenAddress}
