@@ -20,6 +20,7 @@
 import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ethers } from 'ethers';
+import { isMetaAddress } from '../lib/stealth';
 
 const STORAGE_KEY = 'scatterdex_wallet_book_v1';
 
@@ -30,10 +31,16 @@ export class WalletBookCorruptError extends Error {
   }
 }
 
+export type WalletEntryKind = 'standard' | 'stealth';
+
 export interface WalletEntry {
   id: string;
   label: string;
-  address: string;     // lowercase 0x-prefixed
+  // Shared field so pick callbacks return a single string and callers
+  // discriminate on `kind`: lowercase 0x EOA for 'standard', lowercase
+  // st:eth:0x meta-address for 'stealth'.
+  address: string;
+  kind: WalletEntryKind;
   memo?: string;
   createdAt: number;   // unix seconds
 }
@@ -55,19 +62,27 @@ function newId(): string {
 
 // Single source of truth for address normalization — keep in sync with
 // `readBook`'s map. If we ever want checksummed storage instead, this is
-// the only line to change.
+// the only line to change. Stealth meta-addresses already have a fixed
+// prefix plus hex, so lowercasing is safe for both kinds.
 function normalizeAddress(addr: string): string {
   return addr.toLowerCase();
+}
+
+export function isValidAddressForKind(addr: unknown, kind: WalletEntryKind): boolean {
+  if (typeof addr !== 'string') return false;
+  return kind === 'stealth' ? isMetaAddress(addr) : ethers.isAddress(addr);
 }
 
 function isValidEntry(e: unknown): e is WalletEntry {
   if (!e || typeof e !== 'object') return false;
   const v = e as Record<string, unknown>;
+  // Pre-stealth v1 blobs omitted `kind`; treat missing as 'standard'.
+  if (v.kind !== undefined && v.kind !== 'standard' && v.kind !== 'stealth') return false;
+  const kind: WalletEntryKind = v.kind === 'stealth' ? 'stealth' : 'standard';
   return (
     typeof v.id === 'string'
     && typeof v.label === 'string'
-    && typeof v.address === 'string'
-    && ethers.isAddress(v.address as string)
+    && isValidAddressForKind(v.address, kind)
     && typeof v.createdAt === 'number'
     && (v.memo === undefined || typeof v.memo === 'string')
   );
@@ -99,7 +114,11 @@ async function readBook(): Promise<WalletEntry[]> {
   }
   // Normalize addresses on read so callers and the dedup check in `add`
   // don't have to think about casing.
-  return book.entries.map((e) => ({ ...e, address: normalizeAddress(e.address) }));
+  return book.entries.map((e) => ({
+    ...e,
+    kind: e.kind ?? 'standard',
+    address: normalizeAddress(e.address),
+  }));
 }
 
 async function writeBook(entries: WalletEntry[]): Promise<void> {
@@ -127,8 +146,14 @@ export const AddressBookService = {
     return readBook();
   },
 
-  async add(input: { label: string; address: string; memo?: string }): Promise<WalletEntry> {
-    if (!ethers.isAddress(input.address)) throw new Error('Invalid address');
+  async add(input: { label: string; address: string; kind?: WalletEntryKind; memo?: string }): Promise<WalletEntry> {
+    // Runtime-validate kind. Callers that pass an untyped value (e.g.
+    // BackupService, restoring user-edited JSON) could otherwise write
+    // an entry that `isValidEntry` later rejects as corrupt.
+    const kind: WalletEntryKind = input.kind === 'stealth' ? 'stealth' : 'standard';
+    if (!isValidAddressForKind(input.address, kind)) {
+      throw new Error(kind === 'stealth' ? 'Invalid meta-address' : 'Invalid address');
+    }
     const label = input.label.trim();
     if (!label) throw new Error('Label is required');
     const address = normalizeAddress(input.address);
@@ -142,6 +167,7 @@ export const AddressBookService = {
         id: newId(),
         label,
         address,
+        kind,
         memo: input.memo?.trim() || undefined,
         createdAt: Math.floor(Date.now() / 1000),
       };

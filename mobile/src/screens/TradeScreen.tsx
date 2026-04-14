@@ -518,19 +518,12 @@ export default function TradeScreen() {
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
-                  {/* TODO(stealth-book): the address book stores plain
-                      0x addresses today. Expanding it to also hold
-                      `type: 'standard' | 'stealth'` entries (keyed by
-                      meta-address) would let stealth claims reuse the
-                      picker. Out of scope for this PR. */}
-                  {row.mode === 'standard' && (
-                    <TouchableOpacity
-                      style={s.claimPickBtn}
-                      onPress={() => setPickerForRow(row.id)}
-                    >
-                      <Text style={s.claimPickText}>📒</Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={s.claimPickBtn}
+                    onPress={() => setPickerForRow(row.id)}
+                  >
+                    <Text style={s.claimPickText}>📒</Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={s.claimRowInputs}>
                   <TextInput
@@ -655,6 +648,11 @@ export default function TradeScreen() {
       <AddressBookModal
         visible={pickerForRow !== null}
         mode="pick"
+        kindFilter={
+          pickerForRow !== null
+            ? (claimRows.find((r) => r.id === pickerForRow)?.mode ?? 'standard')
+            : undefined
+        }
         onClose={() => setPickerForRow(null)}
         onPick={(addr) => {
           if (pickerForRow !== null) updateClaim(pickerForRow, { address: addr });

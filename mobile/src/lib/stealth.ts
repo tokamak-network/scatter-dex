@@ -35,6 +35,8 @@ const CURVE_ORDER = secp256k1.CURVE.n;
 
 // ─── Meta-address ────────────────────────────────────────────
 
+export const META_ADDRESS_PREFIX = 'st:eth:0x';
+
 export interface MetaAddress {
   spendingKey: string; // hex private key (sensitive)
   viewingKey: string;  // hex private key (sensitive)
@@ -52,18 +54,17 @@ export function generateMetaAddress(): MetaAddress {
   const S = bytesToHex(secp256k1.getPublicKey(spendingKeyBytes, true));
   const V = bytesToHex(secp256k1.getPublicKey(viewingKeyBytes, true));
 
-  return { spendingKey, viewingKey, metaAddress: `st:eth:0x${S}${V}` };
+  return { spendingKey, viewingKey, metaAddress: `${META_ADDRESS_PREFIX}${S}${V}` };
 }
 
 export function parseMetaAddress(metaAddress: string): {
   spendingPubKey: Uint8Array;
   viewingPubKey: Uint8Array;
 } {
-  const prefix = 'st:eth:0x';
-  if (!metaAddress.startsWith(prefix)) {
+  if (!metaAddress.startsWith(META_ADDRESS_PREFIX)) {
     throw new Error('Invalid meta-address prefix (expected st:eth:0x...)');
   }
-  const hex = metaAddress.slice(prefix.length);
+  const hex = metaAddress.slice(META_ADDRESS_PREFIX.length);
   if (hex.length !== 132) {
     throw new Error('Invalid meta-address length (expected 66 bytes compressed)');
   }
@@ -77,8 +78,8 @@ export function isMetaAddress(input: string): boolean {
   // Length-only check would let `parseMetaAddress` and the downstream
   // `hexToBytes` throw on a junk-but-right-length payload. The regex
   // gates non-hex characters cheaply (no library import needed).
-  const prefix = 'st:eth:0x';
-  return input.startsWith(prefix) && /^[0-9a-fA-F]{132}$/.test(input.slice(prefix.length));
+  return input.startsWith(META_ADDRESS_PREFIX)
+    && /^[0-9a-fA-F]{132}$/.test(input.slice(META_ADDRESS_PREFIX.length));
 }
 
 // ─── Stealth address generation (sender side) ────────────────
