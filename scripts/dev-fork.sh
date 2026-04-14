@@ -87,6 +87,30 @@ check_port() {
 
 mkdir -p "$LOG_DIR"
 
+# Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
+# setup emits different vkey constants, and the only way to guarantee
+# zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
+# regenerate them in one atomic build. The generated Verifier.sol files
+# are gitignored for this reason; the hand-written interfaces and
+# BatchAuthorizeVerifier stay tracked.
+#
+# Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
+# the last build (saves ~30s+ on the settle phase-2).
+ensure_circuits_built() {
+  if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
+    echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    return
+  fi
+  echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
+  ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1
+  if [ $? -ne 0 ]; then
+    echo "  ERROR: circuit build failed. Tail of $LOG_DIR/circuit-build.log:"
+    tail -30 "$LOG_DIR/circuit-build.log" 2>/dev/null
+    exit 1
+  fi
+  echo "  Circuits built."
+}
+
 echo "=== ScatterDEX Local Dev Environment (FORK) ==="
 echo "  Fork URL:      $FORK_URL"
 [ -n "$FORK_BLOCK" ] && echo "  Fork block:    $FORK_BLOCK"
@@ -118,6 +142,7 @@ echo "  anvil running on $RPC_URL (PID $last_pid)"
 
 echo ""
 echo "[2/4] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
+ensure_circuits_built
 cd "$ROOT_DIR/contracts"
 set +e
 # USE_REAL_TOKENS=true → DeployLocal uses mainnet WETH/USDC (0xC02a…, 0xA0b8…)

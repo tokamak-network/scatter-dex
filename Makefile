@@ -1,7 +1,15 @@
-.PHONY: up up-multi down ps logs clean test up-integration
+.PHONY: up up-multi down ps logs clean test up-integration circuits
+
+# Generated zkeys / Verifier.sol are gitignored — must be built before
+# `docker compose up` since the images bake in `frontend/public/zk/*` at
+# image-build time. Skipped automatically when SKIP_CIRCUIT_BUILD=1.
+circuits:
+ifneq ($(SKIP_CIRCUIT_BUILD),1)
+	cd circuits && npm run build
+endif
 
 # ─── Mock Mode (standalone, no zk-X509) ──────────────────────
-up:
+up: circuits
 	docker compose --profile mock up -d
 	@echo ""
 	@echo "ScatterDEX is running (mock mode)"
@@ -15,7 +23,7 @@ up:
 	@echo "  make down      — stop all"
 
 # ─── Multi-Relayer Mode (cross-relayer matching) ─────────────
-up-multi:
+up-multi: circuits
 	docker compose --profile mock --profile multi-relayer up -d
 	@echo ""
 	@echo "ScatterDEX is running (multi-relayer mode)"
@@ -29,7 +37,7 @@ up-multi:
 	@echo "  make down   — stop all"
 
 # ─── Integration Mode (with zk-X509) ────────────────────────
-up-integration:
+up-integration: circuits
 ifndef IDENTITY_REGISTRY
 	$(error IDENTITY_REGISTRY is required. Usage: make up-integration IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x...)
 endif

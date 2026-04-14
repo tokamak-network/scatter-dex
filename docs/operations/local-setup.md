@@ -2,9 +2,22 @@
 
 zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA architecture). This guide covers how to run the full stack locally.
 
-## Prerequisite: build ZK circuit artifacts
+## Prerequisite: ZK circuit artifacts
 
-Neither `dev.sh` nor `make up` builds the circuits — they only start services. The frontend loads six `.wasm` / `_final.zkey` pairs from `frontend/public/zk/` at proof time (deposit, withdraw, settle, claim, authorize, cancel), but **only `authorize.*` and `cancel.*` are committed to the repo**. The other four must be generated locally before the private-order flows will work:
+The frontend loads six `.wasm` / `_final.zkey` pairs from `frontend/public/zk/` at proof time (deposit, withdraw, settle, claim, authorize, cancel) and `DeployLocal` deploys six matching `*Verifier.sol` contracts from `contracts/src/zk/`. **None of these are tracked in git** — both `dev.sh` and `dev-fork.sh` rebuild them automatically before the deploy step.
+
+### Why generated artifacts are gitignored
+
+Each Groth16 phase-2 setup uses a fresh random beacon (`scripts/build.sh` lines 99–100), so every build emits different vkey constants. The `_final.zkey` and the embedded Solidity verifier are mathematically a single pair — if the two come from different builds, on-chain `verifyProof()` returns `false` and every transaction reverts with `InvalidProof()`. Committing one without the other (the historical state of this repo) guaranteed the two would drift apart, so both are now treated as build outputs:
+
+| Artifact | Where | Tracked? |
+|---|---|---|
+| `circuits/build/*_final.zkey`, `*.wasm` | local build cache | no — `circuits/build/` ignored |
+| `frontend/public/zk/*` | copied during build | no — `frontend/public/zk/` ignored |
+| `contracts/src/zk/{Authorize,Cancel,Claim,Deposit,Settle,Withdraw}Verifier.sol` | rebuilt from same beacon | no — listed in `.gitignore` |
+| `contracts/src/zk/I*Verifier.sol`, `BatchAuthorizeVerifier.sol` | hand-written | yes |
+
+### Building manually
 
 ```bash
 cd circuits
@@ -12,9 +25,19 @@ npm install         # first time only
 npm run build       # runs scripts/build.sh
 ```
 
-`build.sh` compiles each `.circom`, runs Powers-of-Tau setup, exports Groth16 verifier keys, and copies the resulting `.wasm` + `_final.zkey` into `frontend/public/zk/`. First run is slow (PTAU generation); subsequent runs reuse `circuits/build/pot*_final.ptau`.
+First run is slow (Powers-of-Tau generation, several minutes); subsequent runs reuse `circuits/build/pot*_final.ptau` but still re-run phase-2 setup (~30s+ for `settle`).
 
-**Symptom if skipped:** the browser console shows `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` — that's the Next.js 404 HTML page being fed to `WebAssembly.compile` because e.g. `/zk/deposit.wasm` doesn't exist. Run the build above and reload.
+### Skipping the auto-rebuild
+
+Both deploy scripts rebuild on every invocation. When you know nothing changed since the last successful build, set `SKIP_CIRCUIT_BUILD=1`:
+
+```bash
+SKIP_CIRCUIT_BUILD=1 ./scripts/dev-fork.sh
+```
+
+This is purely a speed knob — leaving it unset is the safe default and the only thing that guarantees the on-chain Verifier.sol matches the zkey the frontend will load.
+
+**Symptom if you skip the build incorrectly:** browser console shows `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` (404 HTML being fed to WebAssembly because the `.wasm` is missing), or `InvalidProof()` (0x09bde339) at deposit time (`Verifier.sol` and `_final.zkey` came from different beacons). Re-run with the env var unset.
 
 ## Two ways to run the stack
 
@@ -367,7 +390,7 @@ Fork-mode failure modes fall into four buckets. Diagnose in this order:
 | `anvil failed to start (waited 30s)` in step [1/4] | Upstream RPC returned `block not found` or `historical state … is not available`. llamarpc rotates shards mid-query so the "latest" it returned a second ago may be gone. | Retry once, or `FORK_URL=https://eth.drpc.org ./scripts/dev-fork.sh`; pin with `FORK_BLOCK=<n>` a few hundred blocks behind tip. |
 | `dev-fork.sh` exits at `[3/4] zk-relayer failed to start` with `ranges over 10000 blocks are not supported on freetier` | The relayer's commitment indexer started querying `eth_getLogs` from block 0 and the upstream RPC rejected the range. | `dev-fork.sh` already sets `INDEX_FROM_BLOCK=<post-deploy>`; if you're running the relayer by hand, export it to the deploy block. |
 | `DexCallReverted()` (0x39753cda) on `settleWithDex` | Fork state drifted from live mainnet — the DEX pool the router is calling has a different tick/reserve snapshot than when the calldata was built. Especially 1inch multi-hop through non-Uniswap pools. | 1) Pin `FORK_BLOCK` close to tip and re-run. 2) Stay on the Uniswap-only path (`NEXT_PUBLIC_DISABLE_AGGREGATOR=true`, the default). 3) For Uniswap, the frontend auto-probes fee tiers (100/500/3000/10000) and picks the deepest pool — a tier-specific failure means that pool has near-zero liquidity for this pair on the fork block. |
-| `InvalidProof()` (0x09bde339) on deposit | Circuit `.wasm` / `_final.zkey` in `frontend/public/zk/` don't match the `*Verifier.sol` bytecode deployed on-chain. Happens when the contracts tree is reset but circuits weren't rebuilt. | `cd circuits && npm run build` — regenerates every zkey + verifier .sol; then redeploy via `./scripts/dev-fork.sh`. |
+| `InvalidProof()` (0x09bde339) on deposit | Circuit `.wasm` / `_final.zkey` in `frontend/public/zk/` don't match the `*Verifier.sol` bytecode deployed on-chain. Should not happen with the default flow (deploy scripts always rebuild before deploying), but possible if you ran with `SKIP_CIRCUIT_BUILD=1` after editing a `.circom` or after manually deleting `circuits/build/`. | Re-run `./scripts/dev-fork.sh` without `SKIP_CIRCUIT_BUILD` — it regenerates zkey + verifier in one atomic build and redeploys. |
 | `execution reverted` from Uniswap `exactInputSingle` even with matching fee tier | SwapRouter02's `exactInputSingle` struct dropped the `deadline` field (it's enforced via a separate multicall path); using the V1 ABI with V2 router shifts the struct layout. | The frontend's ABI is fixed — if you're testing directly, make sure your calldata uses the 7-field tuple `(tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96)`. |
 | Prefund warning: `USDC prefund failed — try FORK_BLOCK=<older block> or add whale` | The script impersonated a known whale (Circle, Binance 8/14) but that address no longer holds USDC at the current fork block. Non-fatal — services still start, but Alice has 0 USDC. | `FORK_BLOCK=<older> ./scripts/dev-fork.sh` (a day or two back is usually enough), or add a new whale to `USDC_WHALES=(...)` in the script. |
 | MetaMask: `This Chain ID is currently used by the Ethereum network` | You tried to add the fork as chain ID `1`, which MetaMask reserves for its built-in Mainnet. | `dev-fork.sh` uses chain ID `31338` by default for exactly this reason — don't override `FORK_CHAIN_ID=1`. The Add Fork Network header button uses 31338 automatically. |
