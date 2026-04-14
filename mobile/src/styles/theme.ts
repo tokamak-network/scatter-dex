@@ -9,6 +9,7 @@ export const colors = {
   card: '#FFFFFF',
 
   border: '#F0F0F0',
+  borderLight: '#F3F4F6', // tailwind gray-100 — used on surface cards + inputs
   borderMedium: '#E5E7EB',
 
   text: '#111827',
@@ -40,16 +41,23 @@ export const colors = {
   textDimmer: '#D1D5DB',
 } as const;
 
-// Layout tokens — consumed by screens so horizontal/vertical rhythm stays
-// consistent across Home, Trade, Deposit, Claim, Settings, History. Change
-// these and every screen updates in lockstep.
 export const layout = {
-  screenHZ: 24,        // horizontal screen padding — matches the 24px grid
-  sectionGap: 24,      // vertical gap between cards/sections
-  contentTop: 8,       // top breathing room below the header
-  contentBottom: 96,   // bottom breathing room above the tab bar
-  headerPV: 16,        // header vertical padding (top == bottom)
+  screenHZ: 24,
+  sectionGap: 24,
+  contentTop: 8,
+  contentBottom: 96,
+  headerPV: 16,
   card: { padding: 24, radius: 24, borderWidth: 1 },
+} as const;
+
+// Shared shadow/elevation tuple. Inline-declared in six screens today;
+// collected here so migrations can drop the duplicates.
+export const shadowSubtle = {
+  shadowColor: '#000',
+  shadowOpacity: 0.04,
+  shadowOffset: { width: 0, height: 1 } as const,
+  shadowRadius: 2,
+  elevation: 1,
 } as const;
 
 export const shared = StyleSheet.create({
@@ -57,9 +65,8 @@ export const shared = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { paddingHorizontal: 20 },
 
-  // Baseline scroll container for screens that use ScreenHeader + a
-  // ScrollView list of cards. `paddingHorizontal: layout.screenHZ` means
-  // sections should NOT add their own horizontal padding.
+  // Sections using this container should NOT add their own horizontal
+  // padding — drift this way caused the pre-normalization inconsistency.
   scrollContent: {
     paddingHorizontal: layout.screenHZ,
     paddingTop: layout.contentTop,
@@ -73,13 +80,7 @@ export const shared = StyleSheet.create({
     padding: layout.card.padding,
     borderWidth: layout.card.borderWidth,
     borderColor: colors.border,
-    // Subtle shadow/elevation so cards lift off the bgSecondary surface
-    // consistently on both platforms.
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 2,
-    elevation: 1,
+    ...shadowSubtle,
   },
 
   title: { fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },

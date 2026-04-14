@@ -7,7 +7,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors, layout } from '../styles/theme';
+import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
@@ -253,7 +253,7 @@ export default function DepositScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F9FAFB' },
+  safe: { flex: 1, backgroundColor: colors.bgSecondary },
   container: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: {
@@ -263,59 +263,48 @@ const s = StyleSheet.create({
     gap: layout.sectionGap,
   },
 
-  /* Card */
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderRadius: layout.card.radius,
     padding: layout.card.padding,
     borderWidth: layout.card.borderWidth,
-    borderColor: '#F3F4F6',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: colors.borderLight,
+    ...shadowSubtle,
     gap: 24,
   },
   cardDisabled: { opacity: 0.5 },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  cardTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
 
-  /* Field Group */
   fieldGroup: { gap: 8 },
   fieldHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  fieldLabel: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  fieldHint: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
+  fieldLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
+  fieldHint: { fontSize: 12, fontWeight: '500', color: colors.textMuted },
 
-  /* Token Selector */
-  tokenSelector: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  tokenSelector: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: colors.bgSecondary, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   tokenLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  tokenDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#3B82F6' },
-  tokenText: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  chevron: { fontSize: 18, color: '#9CA3AF' },
-  tokenDropdown: { backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#F3F4F6', overflow: 'hidden' },
-  tokenDropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  tokenDropdownText: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  tokenDot: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary },
+  tokenText: { fontSize: 15, fontWeight: '700', color: colors.text },
+  chevron: { fontSize: 18, color: colors.textMuted },
+  tokenDropdown: { backgroundColor: colors.card, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, overflow: 'hidden' },
+  tokenDropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: colors.borderLight },
+  tokenDropdownText: { fontSize: 14, fontWeight: '600', color: colors.text },
 
-  /* Amount Input */
   amountWrap: { position: 'relative' },
-  amountInput: { padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6', fontSize: 18, fontWeight: '700', color: '#111827' },
+  amountInput: { padding: 16, backgroundColor: colors.bgSecondary, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, fontSize: 18, fontWeight: '700', color: colors.text },
   maxBtn: { position: 'absolute', right: 16, top: 0, bottom: 0, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 4 },
-  maxText: { fontSize: 12, fontWeight: '700', color: '#2563EB', backgroundColor: '#EFF6FF', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, overflow: 'hidden' },
+  maxText: { fontSize: 12, fontWeight: '700', color: colors.primaryDark, backgroundColor: colors.primaryLight, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 8, overflow: 'hidden' },
 
-  /* Proof Section */
   proofSection: { gap: 16 },
-  progressTrack: { height: 16, backgroundColor: '#F3F4F6', borderRadius: 8, overflow: 'hidden' },
-  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 8, backgroundColor: '#3B82F6' },
-  proofStatus: { fontSize: 14, fontWeight: '700', color: '#111827', textAlign: 'center' },
+  progressTrack: { height: 16, backgroundColor: colors.borderLight, borderRadius: 8, overflow: 'hidden' },
+  progressFill: { position: 'absolute', top: 0, left: 0, height: '100%', borderRadius: 8, backgroundColor: colors.primary },
+  proofStatus: { fontSize: 14, fontWeight: '700', color: colors.text, textAlign: 'center' },
 
-  /* Info Box */
-  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 16, backgroundColor: '#F9FAFB', borderRadius: 16, borderWidth: 1, borderColor: '#F3F4F6' },
+  infoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 16, backgroundColor: colors.bgSecondary, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight },
   infoIcon: { fontSize: 18, marginTop: 2 },
-  infoText: { flex: 1, fontSize: 12, fontWeight: '500', color: '#6B7280', lineHeight: 18 },
+  infoText: { flex: 1, fontSize: 12, fontWeight: '500', color: colors.gray500, lineHeight: 18 },
 
-  /* Bottom Action */
   bottomAction: { position: 'absolute', bottom: 96, left: 0, right: 0, paddingHorizontal: layout.screenHZ },
-  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: '#2563EB', borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
-  actionBtnDisabled: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
-  actionBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
+  actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
 });
