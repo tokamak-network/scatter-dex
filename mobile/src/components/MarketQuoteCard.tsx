@@ -1,80 +1,29 @@
 /**
- * MarketQuoteCard — preview of the best swap route before the user
- * submits a market order.
+ * MarketQuoteCard — presentational preview of the best swap route.
  *
- * Phase B of the DEX aggregator port: display-only. Phase C refactors
- * MarketOrderService to accept the returned `{dexRouter, dexCalldata}`
- * so the displayed route is the executed route.
+ * Quote state (route / loading / error) is owned by `useMarketQuote` in
+ * the parent so the submit path can consume the same route instead of
+ * re-fetching. This card reads from that state and does nothing else.
  */
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { ethers } from 'ethers';
 import { colors, layout, shadowSubtle } from '../styles/theme';
-import { getBestSwapRoute, SOURCE_LABELS, SwapRoute } from '../lib/dex-aggregator';
-import { ConfigService } from '../services/ConfigService';
-import { friendlyError } from '../lib/error-messages';
+import { SOURCE_LABELS, SwapRoute } from '../lib/dex-aggregator';
 import { formatBalance } from '../lib/format';
 
 interface Props {
-  sellAmount: bigint;
+  route: SwapRoute | null;
+  loading: boolean;
+  error: string | null;
   minReceive: bigint;
-  sellToken: string;
-  buyToken: string;
   buySymbol: string;
   buyDecimals: number;
-  recipient: string;
 }
 
-const DEBOUNCE_MS = 500;
-
 export default function MarketQuoteCard({
-  sellAmount, minReceive, sellToken, buyToken, buySymbol, buyDecimals, recipient,
+  route, loading, error, minReceive, buySymbol, buyDecimals,
 }: Props) {
-  const [route, setRoute] = useState<SwapRoute | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (sellAmount <= 0n || !sellToken || !buyToken || !recipient) {
-      setRoute(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-
-    // Two-layer cancel: the AbortController kills any in-flight fetch
-    // (stacked fetches on fast typing would otherwise race), and the
-    // `cancelled` flag keeps setState out of an unmounted/stale render.
-    const controller = new AbortController();
-    let cancelled = false;
-    setLoading(true);
-    const chainId = ConfigService.getChainId();
-
-    const timer = setTimeout(async () => {
-      try {
-        const r = await getBestSwapRoute({
-          chainId, sellToken, buyToken, sellAmount, minReceive, recipient,
-          signal: controller.signal,
-        });
-        if (cancelled) return;
-        setRoute(r);
-        setError(null);
-      } catch (err) {
-        if (cancelled || controller.signal.aborted) return;
-        setRoute(null);
-        setError(friendlyError(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }, DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [sellAmount, minReceive, sellToken, buyToken, recipient]);
-
   if (loading) {
     return (
       <View style={s.card}>

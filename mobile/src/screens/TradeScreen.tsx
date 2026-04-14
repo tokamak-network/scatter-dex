@@ -26,6 +26,7 @@ import { computeMarketAmounts } from '../lib/market-amounts';
 import { DEFAULT_SLIPPAGE_BPS, getBestSwapRoute } from '../lib/dex-aggregator';
 import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
 import { useAbortOnUnmount } from '../hooks/useAbortOnUnmount';
+import { useMarketQuote, paramsMatch, MarketQuoteParams } from '../hooks/useMarketQuote';
 
 // Mirrors MAX_CLAIMS in frontend/app/trade/private-order/page.tsx:48. The circuit
 // (MAX_CLAIMS_PER_SIDE=16) would allow up to 16, but 10 is the UX cap the web
@@ -51,7 +52,7 @@ function delayToSeconds(delay: string, unit: DelayUnit): number {
 
 export default function TradeScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, readProvider } = useWallet();
+  const { account, signer, readProvider, chainId: walletChainId } = useWallet();
 
   const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
   const [amount, setAmount] = useState('');
@@ -222,6 +223,42 @@ export default function TradeScreen() {
       return null;
     }
   }, [amount, price, sellDecimals, buyDecimals, dexPlatformFeeBps]);
+
+  // Quote params — kept in sync with `marketQuoteInput` so `useMarketQuote`
+  // and `handlePlaceOrder` agree on exactly what was quoted. `null`
+  // whenever the inputs don't yet add up to a real quote (empty amount,
+  // missing token, unmounted wallet) so the hook skips the fetch.
+  const marketQuoteParams: MarketQuoteParams | null = useMemo(() => {
+    // `chainId` comes from the wallet context (reactive on network
+    // switch via the EIP-1193 `chainChanged` emitter and
+    // `ProviderService.subscribeReset`). Using `ConfigService.getChainId()`
+    // here would capture the value at memo-eval time and miss network
+    // switches that happen while the screen stays mounted — the cached
+    // route would then match submit params but execute against a
+    // different chain.
+    if (walletChainId == null) return null;
+    if (!marketQuoteInput || !selectedNote || !buyTokenAddress || !settlementAddress) return null;
+    return {
+      chainId: walletChainId,
+      sellToken: selectedNote.token,
+      buyToken: buyTokenAddress,
+      sellAmount: marketQuoteInput.swapAmount,
+      minReceive: marketQuoteInput.minReceive,
+      // PrivateSettlement is the on-chain recipient of the swap output
+      // (MarketOrderService encodes the same address into router calldata).
+      // Quoting against the user's wallet would produce a different
+      // estimate than what executes.
+      recipient: settlementAddress,
+      slippageBps: DEFAULT_SLIPPAGE_BPS,
+    };
+  }, [marketQuoteInput, selectedNote, buyTokenAddress, settlementAddress, walletChainId]);
+
+  // Debounced background fetch; disabled when the user is on the limit
+  // tab so we don't burn 1inch rate limit while they type out claims.
+  const marketQuote = useMarketQuote(
+    marketQuoteParams,
+    tradeType === 'market' && !!account,
+  );
 
   const claimTotal = claimRows.reduce((sum, r) => {
     const n = parseFloat(r.amount);
@@ -420,17 +457,38 @@ export default function TradeScreen() {
         const platformFee = (sellAmountBn * dexPlatformFeeBps) / 10_000n;
         const swapAmount = sellAmountBn - platformFee;
 
-        const routeAbort = makeSubmitAbort();
-        const route = await getBestSwapRoute({
-          chainId: ConfigService.getChainId(),
+        // Reuse the preview's cached route when it was built against
+        // exactly these inputs — the common case, since `useMarketQuote`
+        // already fired and settled before the user tapped submit.
+        // Falls back to a fresh fetch if the user submitted before the
+        // debounce landed or edited a field after preview loaded.
+        // Same reactive-chainId argument as `marketQuoteParams` above —
+        // otherwise a network switch between preview and submit could
+        // make `paramsMatch` accept a route built on the old chain.
+        if (walletChainId == null) {
+          setSubmitting(false);
+          Alert.alert('Wallet not connected', 'Connect your wallet to continue.');
+          return;
+        }
+        const submitParams: MarketQuoteParams = {
+          chainId: walletChainId,
           sellToken: selectedNote.token,
           buyToken,
           sellAmount: swapAmount,
           minReceive,
           recipient: settlementAddr,
           slippageBps: DEFAULT_SLIPPAGE_BPS,
-          signal: routeAbort.signal,
-        });
+        };
+        let route = (marketQuote.route && paramsMatch(marketQuote.params, submitParams))
+          ? marketQuote.route
+          : null;
+        if (!route) {
+          const routeAbort = makeSubmitAbort();
+          route = await getBestSwapRoute({
+            ...submitParams,
+            signal: routeAbort.signal,
+          });
+        }
 
         const input: MarketOrderInput = {
           note: selectedNote,
@@ -459,7 +517,11 @@ export default function TradeScreen() {
     } finally {
       if (isMounted()) setSubmitting(false);
     }
-  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
+    // Depending on `marketQuote.route` + `.params` (rather than the whole
+    // `marketQuote` object) keeps this callback stable across loading
+    // flips and transient errors — the submit path only cares about
+    // whether there's a cached route and what it was built for.
+  }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers, marketQuote.route, marketQuote.params, dexPlatformFeeBps, makeSubmitAbort, isMounted, walletChainId]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -571,19 +633,12 @@ export default function TradeScreen() {
 
         {tradeType === 'market' && account && selectedNote && marketQuoteInput && settlementAddress && (
           <MarketQuoteCard
-            sellAmount={marketQuoteInput.swapAmount}
+            route={marketQuote.route}
+            loading={marketQuote.loading}
+            error={marketQuote.error}
             minReceive={marketQuoteInput.minReceive}
-            sellToken={selectedNote.token}
-            buyToken={buyTokenAddress}
             buySymbol={buyTokenSymbol}
             buyDecimals={buyDecimals}
-            // PrivateSettlement is the actual on-chain recipient of the
-            // swap output (MarketOrderService encodes the same address
-            // into the Uniswap calldata). Passing the user's wallet
-            // address would make the 1inch quote route through a
-            // different `from`, producing a different estimate than
-            // what executes.
-            recipient={settlementAddress}
           />
         )}
 
