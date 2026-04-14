@@ -3,7 +3,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, Share,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +15,7 @@ import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsSto
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
+import { confirmShareSecret } from '../lib/confirmShareSecret';
 import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
@@ -153,22 +154,11 @@ export default function ClaimScreen() {
         {
           text: 'Share',
           style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Share stealth private key?',
-              'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Continue to Share',
-                  style: 'destructive',
-                  onPress: () => Share.share({
-                    message: `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthAddress}\nprivateKey: ${privKey}`,
-                  }).catch(() => {}),
-                },
-              ],
-            );
-          },
+          onPress: () => confirmShareSecret({
+            title: 'Share stealth private key?',
+            body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
+            shareMessage: `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthAddress}\nprivateKey: ${privKey}`,
+          }),
         },
       ],
     );
