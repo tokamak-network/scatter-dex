@@ -9,9 +9,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HiddenWebView from './src/components/HiddenWebView';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import TabNavigator from './src/navigation/TabNavigator';
-import { WalletProvider } from './src/contexts/WalletContext';
+import { WalletProvider, useWallet } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
 import { NetworkService } from './src/services/NetworkService';
+import LockedScreen from './src/screens/LockedScreen';
 
 // `phase: 'loading'` is the only sentinel App.tsx adds on top of the
 // service-level `ZKReadyStatus` — keeping the two types narrow rather than
@@ -20,6 +21,32 @@ type ZkBootState =
   | { phase: 'loading' }
   | { phase: 'ready' }
   | { phase: 'failed'; error: string };
+
+/**
+ * Shell between WalletProvider and the tab navigator. Lives here so it
+ * can call `useWallet()` — the root `App` component sits *above* the
+ * provider and can't.
+ *
+ * `LockedScreen` is rendered as an absolute overlay rather than swapped
+ * in for the navigator, so unlocking drops the user back exactly where
+ * they left off (same tab, same scroll position, same in-memory data)
+ * instead of resetting to the default tab.
+ */
+function AppShell() {
+  const { isLocked } = useWallet();
+  return (
+    <>
+      <NavigationContainer>
+        <TabNavigator />
+      </NavigationContainer>
+      {isLocked && (
+        <View style={StyleSheet.absoluteFill}>
+          <LockedScreen />
+        </View>
+      )}
+    </>
+  );
+}
 
 export default function App() {
   const [zkBoot, setZkBoot] = useState<ZkBootState>({ phase: 'loading' });
@@ -58,9 +85,7 @@ export default function App() {
           <View style={styles.root}>
             <StatusBar style="dark" />
             {zkBoot.phase === 'ready' ? (
-              <NavigationContainer>
-                <TabNavigator />
-              </NavigationContainer>
+              <AppShell />
             ) : zkBoot.phase === 'failed' ? (
               <View style={styles.loading}>
                 <Text style={styles.errorTitle}>ZK Engine failed to initialize</Text>
