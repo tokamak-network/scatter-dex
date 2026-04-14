@@ -7,7 +7,7 @@
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
-import { fetchWithTimeout } from '../lib/http';
+import { fetchWithTimeout, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
 
 export interface RelayerInfo {
@@ -110,7 +110,7 @@ export const RelayerApiService = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order),
-      timeoutMs: 30_000,
+      timeoutMs: TIMEOUT_SUBMIT_MS,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -124,7 +124,7 @@ export const RelayerApiService = {
     relayerUrl?: string,
   ): Promise<OrderStatus[]> {
     const url = `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`;
-    const res = await fetchWithTimeout(url, { timeoutMs: 5_000 });
+    const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
     if (!res.ok) throw new Error(`Failed to fetch order status: ${res.status}`);
     return res.json();
   },
@@ -134,7 +134,7 @@ export const RelayerApiService = {
     relayerUrl?: string,
   ): Promise<any[]> {
     const url = `${relayerUrl || this.getBaseUrl()}/api/orderbook/${pair}`;
-    const res = await fetchWithTimeout(url, { timeoutMs: 5_000 });
+    const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
     if (!res.ok) throw new Error(`Failed to fetch orderbook: ${res.status}`);
     return res.json();
   },
@@ -180,7 +180,7 @@ export const RelayerApiService = {
     return Promise.all(
       onChain.filter((r): r is NonNullable<typeof r> => !!r).map(async (r) => {
         try {
-          const res = await fetchWithTimeout(`${r.url}/api/info`, { timeoutMs: 3000 });
+          const res = await fetchWithTimeout(`${r.url}/api/info`, { timeoutMs: TIMEOUT_PROBE_MS });
           return { ...r, online: res.ok };
         } catch {
           return { ...r, online: false };
@@ -203,7 +203,7 @@ export const RelayerApiService = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(claim),
-      timeoutMs: 30_000,
+      timeoutMs: TIMEOUT_SUBMIT_MS,
     });
     let data: any;
     try { data = await res.json(); } catch {
@@ -222,7 +222,7 @@ export const RelayerApiService = {
 
   async healthCheck(relayerUrl?: string): Promise<boolean> {
     try {
-      const res = await fetchWithTimeout(`${relayerUrl || this.getBaseUrl()}/health`, { timeoutMs: 5000 });
+      const res = await fetchWithTimeout(`${relayerUrl || this.getBaseUrl()}/health`, { timeoutMs: TIMEOUT_READ_MS });
       return res.ok;
     } catch {
       return false;

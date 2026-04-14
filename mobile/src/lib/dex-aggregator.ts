@@ -12,7 +12,7 @@
 
 import { ethers } from 'ethers';
 import { ConfigService } from '../services/ConfigService';
-import { fetchWithTimeout } from './http';
+import { fetchWithTimeout, TIMEOUT_AGGREGATOR_MS } from './http';
 
 // 1inch Aggregation Router V6 — same address on all EVM chains.
 const ONEINCH_ROUTER = '0x111111125421cA6dc452d289314280a0f8842A65';
@@ -25,10 +25,6 @@ const UNISWAP_ROUTERS: Record<number, string> = {
 const UNISWAP_ROUTER_IFACE = new ethers.Interface([
   'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)',
 ]);
-
-// Client-side timeout slightly longer than the web server's (10 s) so
-// the server's error response has a chance to arrive.
-const FETCH_TIMEOUT_MS = 12_000;
 
 // Defaults shared with `frontend/app/lib/dex-aggregator.ts` — keep in sync.
 export const DEFAULT_SLIPPAGE_BPS = 50;
@@ -98,7 +94,7 @@ async function get1inchRoute(params: SwapParams, webBase: string): Promise<SwapR
 
   const res = await fetchWithTimeout(
     `${webBase.replace(/\/$/, '')}/api/swap?${queryParams}`,
-    { timeoutMs: FETCH_TIMEOUT_MS, parentSignal: signal },
+    { timeoutMs: TIMEOUT_AGGREGATOR_MS, parentSignal: signal },
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'unknown' }));

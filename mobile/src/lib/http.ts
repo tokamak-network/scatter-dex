@@ -1,12 +1,14 @@
 /**
  * fetchWithTimeout — `fetch` with a client-side timeout and optional
  * parent-driven abort signal.
- *
- * Four call sites in the codebase previously open-coded the same
- * `AbortController + setTimeout + finally clearTimeout` pattern
- * (RelayerApiService × 3, dex-aggregator × 1). Drift risk between
- * them included inconsistent cleanup of the parent-abort listener.
  */
+
+/** Per-call semantic buckets. Keeps the rationale (short for probes,
+ *  long for submits) in one place and avoids magic numbers at call sites. */
+export const TIMEOUT_PROBE_MS = 3_000;       // liveness probes (discoverRelayers)
+export const TIMEOUT_READ_MS = 5_000;        // relayer GETs + RPC eth_chainId
+export const TIMEOUT_AGGREGATOR_MS = 12_000; // 1inch proxy (its server has a 10 s budget)
+export const TIMEOUT_SUBMIT_MS = 30_000;     // relayer POSTs (claim + order submit)
 
 // `signal` is intentionally stripped so callers can't silently bypass
 // the chained timeout by passing their own — they must route cancels

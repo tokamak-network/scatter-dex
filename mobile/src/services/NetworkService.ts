@@ -7,7 +7,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
-import { fetchWithTimeout } from '../lib/http';
+import { fetchWithTimeout, TIMEOUT_READ_MS } from '../lib/http';
 
 const NETWORKS_KEY = 'scatterdex_custom_networks';
 const SELECTED_KEY = 'scatterdex_selected_network';
@@ -146,7 +146,7 @@ async function rpcCall(rpcUrl: string, method: string, id: number): Promise<numb
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', method, params: [], id }),
-    timeoutMs: 5_000,
+    timeoutMs: TIMEOUT_READ_MS,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} from RPC`);
   const data = await res.json();

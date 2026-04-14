@@ -66,9 +66,15 @@ export default function TradeScreen() {
   // Cancels the in-flight submit-path getBestSwapRoute if the screen
   // unmounts mid-submit. Without this the HTTP promise chain stays
   // pinned (closing over signer/note/account) until 1inch responds.
+  // `mountedRef` then gates post-await setState calls so React
+  // doesn't log a "state update on unmounted component" warning.
   const submitAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   useEffect(() => {
-    return () => { submitAbortRef.current?.abort(); };
+    return () => {
+      mountedRef.current = false;
+      submitAbortRef.current?.abort();
+    };
   }, []);
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
@@ -460,9 +466,9 @@ export default function TradeScreen() {
         });
       }
     } catch (err: any) {
-      setError(friendlyError(err));
+      if (mountedRef.current) setError(friendlyError(err));
     } finally {
-      setSubmitting(false);
+      if (mountedRef.current) setSubmitting(false);
     }
   }, [account, signer, readProvider, selectedNote, amount, price, tradeType, claimRows, claimsOverflow, claimTotal, buyAmountHuman, onlineRelayers]);
 
