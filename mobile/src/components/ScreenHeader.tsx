@@ -5,13 +5,15 @@
  */
 import React, { memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native';
-import { colors, layout } from '../styles/theme';
+import { colors, layout, HIT_SLOP_SM } from '../styles/theme';
 
 export interface ScreenHeaderProps {
   title: string;
   onBack?: () => void;
   /** Slot for trailing controls (settings gear, help button, avatar …). */
   right?: React.ReactNode;
+  /** Slot for leading content when there's no back button (Home avatar). */
+  left?: React.ReactNode;
   variant?: 'transparent' | 'surface';
   style?: StyleProp<ViewStyle>;
 }
@@ -46,18 +48,17 @@ const HEADER_BY_VARIANT: Record<NonNullable<ScreenHeaderProps['variant']>, Style
   surface: [s.header, s.headerSurface],
 };
 
-const HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
 
-function ScreenHeaderImpl({ title, onBack, right, variant = 'transparent', style }: ScreenHeaderProps) {
+function ScreenHeaderImpl({ title, onBack, right, left, variant = 'transparent', style }: ScreenHeaderProps) {
   const headerStyle = HEADER_BY_VARIANT[variant];
   return (
     <View style={style ? [headerStyle, style] : headerStyle}>
       {onBack ? (
-        <TouchableOpacity onPress={onBack} style={s.backBtn} hitSlop={HIT_SLOP}>
+        <TouchableOpacity onPress={onBack} style={s.backBtn} hitSlop={HIT_SLOP_SM}>
           <Text style={s.backIcon}>←</Text>
         </TouchableOpacity>
       ) : (
-        <View style={s.side} />
+        <View style={s.side}>{left}</View>
       )}
 
       <Text style={s.title} numberOfLines={1}>
