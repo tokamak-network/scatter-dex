@@ -258,16 +258,23 @@ WETH  | 0.42 ETH    | 12.3 ETH
 USDC  | 1 250 USDC  | 45 000 USDC
 
 Source breakdown (lifetime, USD-equiv):
-  ●●  market-platform-fee   60%
-  ●   market-surplus        40%
+  ●●●  Relayer-fee skim          50%
+  ●●   DEX market platform fee   30%
+  ●    DEX positive slippage     20%
 
 Last withdrawal: 2026-04-13 14:22 by treasury (tx 0x…)
 ```
 
 Data sources:
-- `vault.platformRevenue(token)` — current per-token balance
-- `PlatformRevenueDeposited(indexed token, indexed source)` events — lifetime
-  by source (`market-platform-fee` / `market-surplus`)
+- `vault.platformRevenue(token)` — current per-token balance (DEX-side
+  accruals only — relayer-fee skim is treasury-direct, never accumulates here)
+- `PlatformFeeFromDex(indexed token, amount)` events — lifetime DEX
+  market platform fee
+- `PlatformSurplusFromDex(indexed token, amount)` events — lifetime DEX
+  positive slippage
+- `PlatformFeeFromRelayerClaim(indexed token, amount, indexed relayer)`
+  events — lifetime skim from relayer claim flow (also visible on the
+  `FeeClaimed.platformFee` field)
 - `PlatformRevenueWithdrawn` events — last withdrawal
 
 ## 9. Editable relayer profile (name / description / logo)

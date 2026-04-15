@@ -160,10 +160,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address vault
     );
 
-    // ─── Platform revenue source tags (FeeVault.depositPlatformRevenue) ───
-    bytes32 internal constant DEX_PLATFORM_FEE_SOURCE = keccak256("market-platform-fee");
-    bytes32 internal constant DEX_SURPLUS_SOURCE = keccak256("market-surplus");
-
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
     CommitmentPool public immutable pool;
@@ -671,7 +667,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
                 swapAmount = sellAmountU256 - platformFee;
                 if (platformFee > 0 && address(_feeVault) != address(0)) {
                     IERC20(proof.sellToken).safeTransfer(address(_feeVault), platformFee);
-                    _feeVault.depositPlatformRevenue(proof.sellToken, platformFee, DEX_PLATFORM_FEE_SOURCE);
+                    _feeVault.accrueDexFee(proof.sellToken, platformFee);
                     emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, address(_feeVault));
                 }
             }
@@ -711,7 +707,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256 surplus = amountOut - proof.totalLocked;
             if (address(_feeVault) != address(0)) {
                 IERC20(proof.buyToken).safeTransfer(address(_feeVault), surplus);
-                _feeVault.depositPlatformRevenue(proof.buyToken, surplus, DEX_SURPLUS_SOURCE);
+                _feeVault.accrueDexSurplus(proof.buyToken, surplus);
                 emit DexSurplusCollected(proof.nullifier, proof.buyToken, surplus, address(_feeVault));
             }
         }
