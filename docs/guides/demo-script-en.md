@@ -94,7 +94,8 @@ After selecting a relayer and clicking "Submit Private Order":
 1. Compute each recipient's claim leaf hash: `Poseidon(secret, recipient, token, amount, releaseTime)`
 2. Pad to 16 leaves and build a depth-4 **Claims Merkle tree**
 3. **Sign the order content + claims root with EdDSA**
-4. Submit the signed order to the relayer API (`/api/private-orders`)
+4. Generate the `authorize.circom` ZK proof in the browser (~10–30s)
+5. Submit the proof + public signals to the relayer API (`/api/authorize-orders`)
 
 **No blockchain transaction occurs during this step.** Everything is off-chain.
 
