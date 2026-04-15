@@ -2,7 +2,7 @@
 
 ## 1. CommitmentPool.sol
 
-> 파일: `contracts/src/zk/CommitmentPool.sol` (390 라인)
+> 파일: `contracts/src/zk/CommitmentPool.sol`
 > 상속: `IncrementalMerkleTree`, `ReentrancyGuard`, `Ownable2Step`
 
 ### 1.1 역할
@@ -58,7 +58,7 @@
 
 ## 2. PrivateSettlement.sol
 
-> 파일: `contracts/src/zk/PrivateSettlement.sol` (1,113 라인)
+> 파일: `contracts/src/zk/PrivateSettlement.sol`
 > 시스템에서 가장 큰 컨트랙트 — ZK 세틀먼트 엔진 본체.
 
 ### 2.1 역할

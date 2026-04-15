@@ -1,6 +1,6 @@
 # 보조 컨트랙트 상세
 
-## 1. FeeVault.sol (199 라인)
+## 1. FeeVault.sol
 
 ### 목적
 릴레이어별/토큰별 수수료를 적립하고, 플랫폼 수수료 차감 후 릴레이어가 인출하게 한다. 플랫폼 수익(DEX 플랫폼 fee + positive slippage) 은 별도로 추적.
@@ -28,7 +28,7 @@
 
 ---
 
-## 2. RelayerRegistry.sol (208 라인)
+## 2. RelayerRegistry.sol
 
 ### 목적
 릴레이어 온체인 등록/본드/쿨다운 관리. 선택적 zk-X509 아이덴티티 게이트 연동.
@@ -56,7 +56,7 @@
 
 ---
 
-## 3. IdentityGate.sol (131 라인)
+## 3. IdentityGate.sol
 
 여러 CA(zk-X509 registry) 중 **하나라도** 인증한 사용자를 통과시키는 OR 게이트. 최대 10개 registry.
 
@@ -67,7 +67,7 @@
 
 ---
 
-## 4. SanctionsList.sol (74 라인)
+## 4. SanctionsList.sol
 
 OFAC 스타일 단순 블록리스트. Chainalysis 오라클과 교체 가능한 인터페이스.
 
@@ -76,7 +76,7 @@ OFAC 스타일 단순 블록리스트. Chainalysis 오라클과 교체 가능한
 
 ---
 
-## 5. BatchExecutor.sol (90 라인)
+## 5. BatchExecutor.sol
 
 **EIP-7702** 위임용 최소 ERC-7579 호환 배치 실행기.
 
@@ -86,7 +86,7 @@ OFAC 스타일 단순 블록리스트. Chainalysis 오라클과 교체 가능한
 
 ---
 
-## 6. IncrementalMerkleTree.sol (118 라인)
+## 6. IncrementalMerkleTree.sol
 
 Tornado 스타일 Poseidon append-only tree + 루트 링 버퍼.
 
@@ -97,7 +97,7 @@ Tornado 스타일 Poseidon append-only tree + 루트 링 버퍼.
 
 ---
 
-## 7. SettleVerifyLib.sol (278 라인)
+## 7. SettleVerifyLib.sol
 
 PrivateSettlement 의 EIP-170 (24KB 바이트코드) 초과를 피하기 위해 **외부 라이브러리로 분리**한 pure/view helpers.
 

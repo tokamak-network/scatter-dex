@@ -31,8 +31,8 @@ DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 # Anvil well-known test keys.
 # Account #1 — Relayer A (also registered on-chain by DeployLocal.s.sol).
 RELAYER_A_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-RELAYER_A_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-# Account #2 — Relayer B (registered post-deploy below).
+# Account #2 — Relayer B (registered post-deploy below; address is checked
+# against the on-chain registry to decide whether to register).
 RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
 RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 RPC_URL="http://localhost:8545"
@@ -131,7 +131,7 @@ check_port 3002 "relayer-a"
 check_port 3003 "relayer-b"
 check_port 3000 "frontend"
 
-echo "[1/4] Starting anvil (fork, hardfork=prague)..."
+echo "[1/6] Starting anvil (fork, hardfork=prague)..."
 ANVIL_ARGS=(
   --silent
   --hardfork prague
@@ -151,7 +151,7 @@ fi
 echo "  anvil running on $RPC_URL (PID $last_pid)"
 
 echo ""
-echo "[2/4] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
+echo "[2/6] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
 ensure_circuits_built
 cd "$ROOT_DIR/contracts"
 set +e
@@ -365,8 +365,11 @@ if cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
     > /dev/null 2>&1; then
   echo "  Relayer B registered on RelayerRegistry (fee=$RELAYER_FEE_BPS bps)"
 else
-  EXISTING_URL=$(cast call "$RELAYER_REGISTRY" "relayers(address)(string)" \
-    "$RELAYER_B_ADDR" --rpc-url "$RPC_URL" 2>/dev/null)
+  # RelayerRegistry.relayers(address) returns the full struct; decode with
+  # the full tuple signature and take the first line (the URL string).
+  EXISTING_URL=$(cast call "$RELAYER_REGISTRY" \
+    "relayers(address)(string,uint256,uint256,uint256,uint256,bool)" \
+    "$RELAYER_B_ADDR" --rpc-url "$RPC_URL" 2>/dev/null | head -1)
   if echo "$EXISTING_URL" | grep -q "http://localhost:3003"; then
     echo "  Relayer B already registered on RelayerRegistry"
   else
@@ -400,6 +403,9 @@ NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
+# /api/relay proxy only allowlists NEXT_PUBLIC_ZK_RELAYER_URL by default;
+# expand the allowlist so claim submissions can also target Relayer B.
+ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 EOF
 
 if [ -n "$PRESERVED_ENV" ]; then

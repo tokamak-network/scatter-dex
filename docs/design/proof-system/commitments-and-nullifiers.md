@@ -100,7 +100,7 @@ mapping(bytes32 => bool) public claimNullifiers;    // claim
 mapping(bytes32 => ClaimsGroup) public claimsGroups;// claimsRoot → {totalLocked, totalClaimed, token}
 ```
 
-> withdraw 용 nullifier 와 settle 용 nullifier 는 서로 다른 컨트랙트의 독립된 매핑에 저장되나, **도메인 태그 0 을 공유**하므로 동일한 escrow commitment 에 대해서는 어느 쪽에서든 한 번만 소진되면 다른 경로에서도 재현 불가(같은 해시를 두 컨트랙트가 각자 저장하지만, 실제 공격 경로는 회로가 sellToken/recipient 를 강제 바인딩하기 때문에 차단된다).
+> `CommitmentPool.nullifiers` 와 `PrivateSettlement.nullifiers` 는 **서로 독립된 저장소**이며, 한 컨트랙트에서 nullifier 를 소진해도 다른 컨트랙트의 매핑이 자동으로 갱신되지는 않는다. 두 경로가 **도메인 태그 0** 을 공유한다는 의미는 동일한 escrow commitment 로부터 동일한 nullifier 값이 파생된다는 뜻일 뿐, cross-contract spent 상태를 자동 보장한다는 뜻은 아니다. 따라서 withdraw/settle 간 이중 사용 방지는 "공유 태그" 자체가 아니라 각 경로의 회로 제약과 공개 입력 바인딩(예: sellToken, recipient 등), 그리고 허용된 프로토콜 플로우에 의해 별도로 성립해야 한다.
 
 ---
 
