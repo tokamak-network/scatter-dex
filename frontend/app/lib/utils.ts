@@ -47,6 +47,28 @@ export function formatTokenAmount(
   return truncated.length > 0 ? `${int}.${truncated}` : int;
 }
 
+/**
+ * Pull the most descriptive message out of an ethers v6 error
+ * (`shortMessage` → `reason` → nested `info.error.message` → `.message`)
+ * with a generic fallback. Caller should always also `console.warn(e)`
+ * so the full error stays available for debugging.
+ */
+export function extractEthersErrorMessage(e: unknown, fallback = "Request failed"): string {
+  if (e && typeof e === "object") {
+    const r = e as Record<string, unknown>;
+    const candidates = [
+      r.shortMessage,
+      r.reason,
+      (r.info as Record<string, unknown> | undefined)?.error
+        && ((r.info as { error: Record<string, unknown> }).error.message),
+    ];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.length > 0) return c;
+    }
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
 /** Human time-until for an expiry unix-seconds timestamp. */
 export function formatExpiry(ts: number): string {
   const delta = ts - Math.floor(Date.now() / 1000);

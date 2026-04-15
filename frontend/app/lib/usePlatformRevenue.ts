@@ -1,0 +1,261 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { ethers } from "ethers";
+import { getReadProvider, getSafeFromBlock } from "./provider";
+import { getFeeVaultAddress } from "./config";
+import { FEE_VAULT_ABI } from "./contracts";
+import { getTokenList, type TokenInfo } from "./tokens";
+import { extractEthersErrorMessage } from "./utils";
+
+/**
+ * Three platform-revenue streams emitted by FeeVault:
+ *
+ *   - `dex-fee`: the configured `dexPlatformFeeBps` cut on `settleWithDex`
+ *     market orders. Accumulates in `platformRevenue(token)` until
+ *     treasury sweeps it.
+ *   - `dex-surplus`: positive DEX slippage (returned more than minOut) on
+ *     `settleWithDex`. Same accumulation path as `dex-fee`.
+ *   - `relayer-claim-skim`: the `platformFeeBps` cut taken when a relayer
+ *     calls `FeeVault.claim()`. Funds go straight to treasury — *not*
+ *     accumulated in `platformRevenue[]`. Lifetime totals come from the
+ *     `PlatformFeeFromRelayerClaim` event stream alone, so they will
+ *     NOT reconcile with `accumulated + lifetimeWithdrawn` for the same
+ *     token. UI must call this out where the totals are surfaced.
+ */
+export const PLATFORM_REVENUE_SOURCES = [
+  { id: "relayer-claim-skim", label: "Relayer-claim skim" },
+  { id: "dex-fee",            label: "DEX market platform fee" },
+  { id: "dex-surplus",        label: "DEX positive slippage" },
+] as const;
+export type PlatformRevenueSourceId = typeof PLATFORM_REVENUE_SOURCES[number]["id"];
+
+export interface PlatformRevenueRow {
+  token: string;
+  symbol: string;
+  decimals: number;
+  /** Currently held by the FeeVault (DEX-side accruals only — relayer
+   *  skim is treasury-direct and never lands in this bucket). */
+  accumulated: bigint;
+  /** Sum of all `PlatformRevenueWithdrawn` events for this token. */
+  lifetimeWithdrawn: bigint;
+}
+
+export interface PlatformRevenueByTokenEntry {
+  token: string;
+  symbol: string;
+  decimals: number;
+  amount: bigint;
+}
+
+export interface PlatformRevenueBySource {
+  source: PlatformRevenueSourceId;
+  /** Per-token totals of lifetime accruals for this source. Only tokens
+   *  the frontend recognises are included; unknown-token events are
+   *  dropped silently (intentional — no symbol/decimals to render). */
+  entries: PlatformRevenueByTokenEntry[];
+}
+
+export interface PlatformRevenueWithdrawal {
+  token: string;
+  symbol: string;
+  decimals: number;
+  amount: bigint;
+  to: string;
+  blockNumber: number;
+  transactionIndex: number;
+  logIndex: number;
+  txHash: string;
+}
+
+export interface PlatformRevenueData {
+  treasury: string | null;
+  platformFeeBps: number | null;
+  rows: PlatformRevenueRow[];
+  bySource: PlatformRevenueBySource[];
+  recentWithdrawals: PlatformRevenueWithdrawal[];
+  loading: boolean;
+  error: string | null;
+  fromBlock: number | null;
+  /** Re-run the full fetch (useful for a manual "Refresh" button). */
+  refetch: () => void;
+}
+
+export const RECENT_WITHDRAWAL_LIMIT = 10;
+
+/**
+ * Reads platform-side FeeVault data for the treasury board:
+ *   - configured treasury address + relayer-claim platform fee bps
+ *   - per-token currently-accumulated balance + lifetime withdrawals
+ *   - per-source breakdown across all three accrual events
+ *   - last N `PlatformRevenueWithdrawn` events
+ *
+ * All reads go through the public read provider — no wallet required.
+ * Skips native (ETH) since FeeVault tracks ERC20 balances only. Each
+ * event-stream `queryFilter` is `allSettled`-wrapped so a single RPC
+ * timeout doesn't blank the whole page.
+ */
+export function usePlatformRevenue(): PlatformRevenueData {
+  const [data, setData] = useState<Omit<PlatformRevenueData, "refetch">>({
+    treasury: null, platformFeeBps: null, rows: [], bySource: [],
+    recentWithdrawals: [], loading: false, error: null, fromBlock: null,
+  });
+  const loadIdRef = useRef(0);
+
+  const load = useCallback(async () => {
+    const myId = ++loadIdRef.current;
+    setData((d) => ({ ...d, loading: true, error: null }));
+
+    try {
+      const feeVaultAddr = getFeeVaultAddress();
+      if (!feeVaultAddr) {
+        if (loadIdRef.current === myId) {
+          setData({
+            treasury: null, platformFeeBps: null, rows: [], bySource: [],
+            recentWithdrawals: [], loading: false,
+            error: "FeeVault not configured", fromBlock: null,
+          });
+        }
+        return;
+      }
+
+      const provider = getReadProvider();
+      const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
+      const tokens = getTokenList().filter((t: TokenInfo) => !t.isNative);
+      const fromBlock = await getSafeFromBlock(provider);
+
+      // Run everything in one batch. The `treasury()` / `platformFeeBps()`
+      // reads use `.catch` so they don't reject the whole batch (sentinel
+      // = null in the UI); the queryFilters are wrapped in `allSettled`
+      // so one failed range doesn't blank the whole page.
+      const [treasuryRes, feeBpsRes, accumSettled, eventsSettled] = await Promise.all([
+        vault.treasury().catch((e: unknown) => { console.warn("treasury() failed:", e); return null; }),
+        vault.platformFeeBps().catch((e: unknown) => { console.warn("platformFeeBps() failed:", e); return null; }),
+        Promise.allSettled(tokens.map((t) => vault.platformRevenue(t.address))),
+        Promise.allSettled([
+          vault.queryFilter(vault.filters.PlatformFeeFromDex(), fromBlock),
+          vault.queryFilter(vault.filters.PlatformSurplusFromDex(), fromBlock),
+          vault.queryFilter(vault.filters.PlatformFeeFromRelayerClaim(), fromBlock),
+          vault.queryFilter(vault.filters.PlatformRevenueWithdrawn(), fromBlock),
+        ]),
+      ]);
+      if (loadIdRef.current !== myId) return;
+
+      const eventNames = ["PlatformFeeFromDex", "PlatformSurplusFromDex", "PlatformFeeFromRelayerClaim", "PlatformRevenueWithdrawn"] as const;
+      const [dexFees, dexSurpluses, relayerSkims, withdrawals] = eventsSettled.map((res, i): ethers.Log[] => {
+        if (res.status === "rejected") {
+          console.warn(`event scan failed (${eventNames[i]}):`, res.reason);
+          return [];
+        }
+        return res.value as ethers.Log[];
+      });
+      accumSettled.forEach((res, i) => {
+        if (res.status === "rejected") {
+          console.warn(`platformRevenue read failed for ${tokens[i].symbol}:`, res.reason);
+        }
+      });
+
+      const tokensByAddress = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
+
+      // Sum a single event stream into a `Map<tokenLowercased, bigint>`.
+      const sumByToken = (logs: ethers.Log[]): Map<string, bigint> => {
+        const out = new Map<string, bigint>();
+        for (const log of logs) {
+          const e = log as ethers.EventLog;
+          const tokLc = (e.args.token as string).toLowerCase();
+          out.set(tokLc, (out.get(tokLc) ?? 0n) + (e.args.amount as bigint));
+        }
+        return out;
+      };
+
+      // Project a sum-Map onto the typed entries shape the UI consumes;
+      // tokens not in the configured list are silently dropped.
+      const toEntries = (sums: Map<string, bigint>): PlatformRevenueByTokenEntry[] => {
+        const entries: PlatformRevenueByTokenEntry[] = [];
+        for (const [tokLc, amount] of sums) {
+          const meta = tokensByAddress.get(tokLc);
+          if (!meta) continue;
+          entries.push({ token: meta.address, symbol: meta.symbol, decimals: meta.decimals, amount });
+        }
+        return entries;
+      };
+
+      const bySource: PlatformRevenueBySource[] = [
+        { source: "relayer-claim-skim", entries: toEntries(sumByToken(relayerSkims)) },
+        { source: "dex-fee",            entries: toEntries(sumByToken(dexFees)) },
+        { source: "dex-surplus",        entries: toEntries(sumByToken(dexSurpluses)) },
+      ];
+
+      // Single pass: aggregate withdrawals AND build the recent list.
+      const withdrawnByToken = new Map<string, bigint>();
+      const recentWithdrawals: PlatformRevenueWithdrawal[] = [];
+      for (const log of withdrawals) {
+        const e = log as ethers.EventLog;
+        const tokAddr = e.args.token as string;
+        const tokLc = tokAddr.toLowerCase();
+        const amount = e.args.amount as bigint;
+        withdrawnByToken.set(tokLc, (withdrawnByToken.get(tokLc) ?? 0n) + amount);
+        const meta = tokensByAddress.get(tokLc);
+        if (!meta) continue;
+        recentWithdrawals.push({
+          token: tokAddr, symbol: meta.symbol, decimals: meta.decimals, amount,
+          to: e.args.to as string,
+          blockNumber: e.blockNumber,
+          transactionIndex: e.transactionIndex,
+          logIndex: e.index,
+          txHash: e.transactionHash,
+        });
+      }
+      // Newest first; tx + log indices break ties for events in the
+      // same block so the order is deterministic across re-renders.
+      recentWithdrawals.sort((a, b) =>
+        b.blockNumber - a.blockNumber
+        || b.transactionIndex - a.transactionIndex
+        || b.logIndex - a.logIndex);
+
+      // Per-token rows: keep tokens with either current balance or any
+      // historical withdrawal so `accumulated + lifetimeWithdrawn` always
+      // reconciles to lifetime DEX-side revenue. `relayer-claim-skim`
+      // never lands in `platformRevenue[]`, so its totals stay in the
+      // by-source view only.
+      const rows: PlatformRevenueRow[] = [];
+      tokens.forEach((t, i) => {
+        const accRes = accumSettled[i];
+        const accumulated = accRes.status === "fulfilled" ? (accRes.value as bigint) : 0n;
+        const tokLc = t.address.toLowerCase();
+        const withdrawn = withdrawnByToken.get(tokLc) ?? 0n;
+        if (accumulated > 0n || withdrawn > 0n) {
+          rows.push({
+            token: t.address, symbol: t.symbol, decimals: t.decimals,
+            accumulated, lifetimeWithdrawn: withdrawn,
+          });
+        }
+      });
+
+      if (loadIdRef.current === myId) {
+        setData({
+          treasury: treasuryRes as string | null,
+          platformFeeBps: feeBpsRes != null ? Number(feeBpsRes) : null,
+          rows, bySource,
+          recentWithdrawals: recentWithdrawals.slice(0, RECENT_WITHDRAWAL_LIMIT),
+          loading: false, error: null, fromBlock,
+        });
+      }
+    } catch (e: unknown) {
+      console.warn("[usePlatformRevenue] load failed:", e);
+      if (loadIdRef.current === myId) {
+        setData({
+          treasury: null, platformFeeBps: null, rows: [], bySource: [],
+          recentWithdrawals: [], loading: false,
+          error: extractEthersErrorMessage(e, "Failed to load platform revenue"),
+          fromBlock: null,
+        });
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    return () => { loadIdRef.current++; };
+  }, [load]);
+
+  return { ...data, refetch: load };
+}
