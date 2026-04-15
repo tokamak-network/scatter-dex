@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, User } from "lucide-react";
+import { Radio, ExternalLink, Loader2, AlertCircle, RefreshCw, Circle, Globe, BarChart3, User, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
@@ -15,6 +15,34 @@ function feeBps(fee: number): string {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
+type SortKey = "status" | "fee" | "pending" | "bond" | "registered";
+
+function SortableHeader({
+  k, sortKey, sortDir, onClick, children,
+}: {
+  k: SortKey;
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
+  onClick: (k: SortKey) => void;
+  children: React.ReactNode;
+}) {
+  const active = sortKey === k;
+  return (
+    <th className="text-left px-4 py-2.5 font-semibold">
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 transition-colors ${
+          active ? "text-on-surface" : "hover:text-on-surface"
+        }`}
+      >
+        {children}
+        {active && (sortDir === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+      </button>
+    </th>
+  );
+}
+
 function buildPairOptions(tokens: TokenInfo[]) {
   const erc20 = tokens.filter((t) => !t.isNative);
   const pairs: { label: string; value: string }[] = [];
@@ -148,7 +176,11 @@ function OrderbookDisplay({ asks, bids, symA, symB }: {
 export default function RelayersPage() {
   const { relayers: allRelayers, loading, error, refresh } = useRelayers();
   const relayers = allRelayers;
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
+  // Default sort: status desc → online relayers first; address acts as the
+  // deterministic tiebreak so equal-status rows don't reshuffle on rerender.
+  const [sortKey, setSortKey] = useState<SortKey>("status");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [orderbooks, setOrderbooks] = useState<Map<string, Map<string, RelayerOrderbook>>>(new Map());
   const [obLoading, setObLoading] = useState(false);
 
@@ -181,7 +213,15 @@ export default function RelayersPage() {
   const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
 
   const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
-  const selected = useMemo(() => selectedIdx !== null ? relayers[selectedIdx] : null, [selectedIdx, relayers]);
+  // Lowercase comparison matches the rest of the file (sharedRelayerMap,
+  // findToken, profile/page.tsx) so future deep-links like
+  // `?selected=0xABC...` work regardless of input casing.
+  const selected = useMemo(
+    () => selectedAddress
+      ? relayers.find((r) => r.address.toLowerCase() === selectedAddress.toLowerCase()) ?? null
+      : null,
+    [selectedAddress, relayers],
+  );
 
   // Build per-relayer × per-pair orderbook view by filtering the shared
   // orderbook in a single fetch. Each relayer publishes its open orders
@@ -259,6 +299,37 @@ export default function RelayersPage() {
     return r.api?.orderCount ?? 0;
   }
 
+  // Address is the deterministic tiebreak so equal-value rows don't
+  // reshuffle on rerender.
+  const sortedRelayers = useMemo(() => {
+    const dirMul = sortDir === "asc" ? 1 : -1;
+    const addrTiebreak = (a: RelayerInfo, b: RelayerInfo) => a.address.localeCompare(b.address);
+    return [...relayers].sort((a, b) => {
+      let primary = 0;
+      switch (sortKey) {
+        // Treat online > offline so dirMul applies uniformly: status desc
+        // (default) puts online first; status asc puts offline first.
+        case "status":     primary = a.online === b.online ? 0 : a.online ? 1 : -1; break;
+        case "fee":        primary = a.fee - b.fee; break;
+        case "pending":    primary = relayerOrderCount(a) - relayerOrderCount(b); break;
+        case "bond":       primary = a.bond > b.bond ? 1 : a.bond < b.bond ? -1 : 0; break;
+        case "registered": primary = a.registeredAt - b.registeredAt; break;
+      }
+      return primary === 0 ? addrTiebreak(a, b) : primary * dirMul;
+    });
+  }, [relayers, sortKey, sortDir]);
+
+  // Pick each column's natural default direction so first click is intuitive
+  // (cheap fees first, large bonds first, etc.); same-key click flips.
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "fee" || key === "registered" ? "asc" : "desc");
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -305,97 +376,124 @@ export default function RelayersPage() {
       )}
 
       {relayers.length > 0 && (
-        <div className="flex gap-5">
-          {/* ─── Left: Relayer List ─── */}
-          <div className="w-[320px] flex-shrink-0 space-y-2">
-            {/* Network card */}
-            <button
-              onClick={() => setSelectedIdx(null)}
-              className={`w-full rounded-xl border px-5 py-4 text-left transition-all ${
-                selectedIdx === null
-                  ? "border-primary bg-primary/8 ring-1 ring-primary/30"
-                  : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Globe className="w-4 h-4 text-primary" />
-                <span className="text-sm font-semibold text-on-surface">All Network</span>
-              </div>
-              <div className="flex gap-4 text-[11px] text-on-surface-variant/60">
-                <span>{onlineRelayers.length} online</span>
-                <span>{onlineRelayers.reduce((s, r) => s + relayerOrderCount(r), 0)} pending</span>
-                <span>{formatBond(relayers.reduce((s, r) => s + r.bond, 0n))} bonded</span>
-              </div>
-            </button>
+        <div className="space-y-5">
+          {/* ─── Network summary banner ─── */}
+          <button
+            onClick={() => setSelectedAddress(null)}
+            className={`w-full rounded-xl border px-5 py-3 text-left transition-all ${
+              selectedAddress === null
+                ? "border-primary bg-primary/8 ring-1 ring-primary/30"
+                : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
+            }`}
+          >
+            <div className="flex items-center gap-3 flex-wrap">
+              <Globe className="w-4 h-4 text-primary flex-shrink-0" />
+              <span className="text-sm font-semibold text-on-surface">All Network</span>
+              <span className="text-[11px] text-on-surface-variant/60">{onlineRelayers.length} online</span>
+              <span className="text-[11px] text-on-surface-variant/60">
+                {onlineRelayers.reduce((s, r) => s + relayerOrderCount(r), 0)} pending
+              </span>
+              <span className="text-[11px] text-on-surface-variant/60">
+                {formatBond(relayers.reduce((s, r) => s + r.bond, 0n))} bonded
+              </span>
+            </div>
+          </button>
 
-            {/* Individual relayer cards */}
-            {relayers.map((r, i) => (
-              <div
-                key={r.address}
-                role="button"
-                tabIndex={0}
-                onClick={() => setSelectedIdx(i)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedIdx(i); }}
-                className={`w-full rounded-xl border px-5 py-4 text-left transition-all cursor-pointer ${
-                  selectedIdx === i
-                    ? "border-primary bg-primary/8 ring-1 ring-primary/30"
-                    : "border-outline-variant/15 bg-surface-container hover:bg-surface-bright/30"
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <Circle className={`w-2.5 h-2.5 fill-current ${r.online ? "text-primary" : "text-error/40"}`} />
-                  <span className="text-sm font-mono text-on-surface">{shortenAddress(r.address)}</span>
-                  {r.api?.name?.includes("ZK") && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
-                  )}
-                  {!r.online && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-error/10 text-error/60 font-bold">offline</span>
-                  )}
-                </div>
-                <div className="flex gap-4 text-[11px] text-on-surface-variant/60">
-                  <span>Fee {feeBps(r.fee)}</span>
-                  <span>{formatBond(r.bond)}</span>
-                  <span>{relayerOrderCount(r)} pending</span>
-                  <span>{timeAgo(r.registeredAt)}</span>
-                </div>
-                {r.online && r.url && (
-                  <div className="text-[10px] text-on-surface-variant/40 font-mono mt-1 truncate">
-                    {r.url}
-                  </div>
-                )}
-                <Link
-                  href={`/relayer/profile?address=${r.address}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center gap-1 mt-2 text-[10px] text-primary hover:text-primary-container transition-colors"
-                >
-                  <User className="w-3 h-3" /> View Profile
-                </Link>
-                {(() => {
+          {/* ─── Comparison table ─── */}
+          <div className="bg-surface-container rounded-xl border border-outline-variant/15 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wider text-on-surface-variant/50 border-b border-outline-variant/10">
+                  <th className="text-left px-4 py-2.5 font-semibold">Relayer</th>
+                  <SortableHeader k="status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort}>Status</SortableHeader>
+                  <SortableHeader k="fee" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort}>Fee</SortableHeader>
+                  <SortableHeader k="pending" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort}>Pending</SortableHeader>
+                  <SortableHeader k="bond" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort}>Bond</SortableHeader>
+                  <SortableHeader k="registered" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort}>Registered</SortableHeader>
+                  <th className="text-left px-4 py-2.5 font-semibold">Shared OB</th>
+                  <th className="text-right px-4 py-2.5 font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRelayers.map((r) => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
-                  if (!shared) return null;
+                  const isSelected = selectedAddress?.toLowerCase() === r.address.toLowerCase();
                   return (
-                    <div className="mt-2 pt-2 border-t border-outline-variant/10 flex gap-3 text-[10px] text-on-surface-variant/50">
-                      <span className="text-tertiary">Shared</span>
-                      <span>{shared.orderCount} shared orders</span>
-                      <span>Heartbeat: {timeAgo(shared.lastHeartbeat)}</span>
-                    </div>
+                    <tr
+                      key={r.address}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedAddress(r.address)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAddress(r.address); } }}
+                      className={`border-b border-outline-variant/5 last:border-0 cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-primary/40 ${
+                        isSelected ? "bg-primary/8" : "hover:bg-surface-bright/30"
+                      }`}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-on-surface">{shortenAddress(r.address)}</span>
+                          {r.api?.name?.includes("ZK") && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
+                          )}
+                        </div>
+                        {r.online && r.url && (
+                          <div className="text-[10px] text-on-surface-variant/40 font-mono mt-0.5 truncate max-w-[240px]">
+                            {r.url}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1.5 text-xs ${r.online ? "text-primary" : "text-error/60"}`}>
+                          <Circle className="w-2 h-2 fill-current" />
+                          {r.online ? "online" : "offline"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-on-surface-variant/80">{feeBps(r.fee)}</td>
+                      <td className="px-4 py-3 text-on-surface-variant/80">{relayerOrderCount(r)}</td>
+                      <td className="px-4 py-3 text-on-surface-variant/80">{formatBond(r.bond)}</td>
+                      <td className="px-4 py-3 text-on-surface-variant/60 text-xs">{timeAgo(r.registeredAt)}</td>
+                      <td className="px-4 py-3 text-xs">
+                        {shared ? (
+                          <span className="text-on-surface-variant/60">
+                            {shared.orderCount} · hb {timeAgo(shared.lastHeartbeat)}
+                          </span>
+                        ) : (
+                          <span className="text-on-surface-variant/30">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Link
+                          href={`/relayer/profile?address=${r.address}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary-container"
+                        >
+                          <User className="w-3 h-3" /> Profile
+                        </Link>
+                      </td>
+                    </tr>
                   );
-                })()}
-              </div>
-            ))}
+                })}
+              </tbody>
+            </table>
           </div>
 
-          {/* ─── Right: Selected Relayer Detail + Orderbooks per Pair ─── */}
-          <div className="flex-1 space-y-4">
+          {/* ─── Detail / orderbook panel ─── */}
+          <div className="space-y-4">
             {/* Detail bar */}
             {selected && (
               <div className="flex items-center gap-4 px-4 py-3 bg-surface-container rounded-xl border border-outline-variant/10 text-xs">
                 <Circle className={`w-2.5 h-2.5 fill-current flex-shrink-0 ${selected.online ? "text-primary" : "text-error/40"}`} />
                 <span className="font-mono text-on-surface">{selected.address}</span>
-                <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
-                  className="text-primary hover:underline flex items-center gap-1">
-                  API <ExternalLink className="w-3 h-3" />
-                </a>
+                {selected.online && selected.url ? (
+                  <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
+                    className="text-primary hover:underline flex items-center gap-1">
+                    API <ExternalLink className="w-3 h-3" />
+                  </a>
+                ) : (
+                  <span className="text-on-surface-variant/40 flex items-center gap-1" title="Relayer is offline or has no URL registered">
+                    API <ExternalLink className="w-3 h-3" />
+                  </span>
+                )}
                 {selected.api && (
                   <span className="text-on-surface-variant/50 ml-auto">
                     {selected.api.name} v{selected.api.version}
