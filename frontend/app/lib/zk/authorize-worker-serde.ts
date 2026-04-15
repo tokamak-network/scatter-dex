@@ -1,10 +1,12 @@
-// bigint values are mostly carried natively across postMessage
-// (structuredClone-safe), but `pubKey*` / amounts / nullifiers / claim
-// fields stay as decimal strings to keep the wire format stable across
-// platforms and to match the on-disk note-file shape consumers already
-// use elsewhere. The eddsaPrivateKey is the one true zero-copy hot
-// path — it's a Uint8Array round-trip and structuredClone takes its
-// own copy on the worker side.
+// structuredClone supports bigint + Uint8Array natively, so the wire
+// format mirrors the runtime shape and most fields pass through
+// unchanged. The serde functions stay for API symmetry with the other
+// `Serialized*` types — they make the wire-vs-runtime boundary visible
+// at every call site even when the conversion is a no-op.
+//
+// `eddsaPrivateKey` keeps its native Uint8Array but `serializeAuthorizeInput`
+// makes a defensive copy so the post-postMessage `wipeSerialized` zeros
+// only the throwaway copy, not the caller's buffer.
 
 import {
   serializeCommitmentNote,
@@ -20,79 +22,52 @@ import type {
   ClaimEntry,
 } from "./authorize-prover";
 
-interface SerializedClaim {
-  secret: string;
-  recipient: string;
-  token: string;
-  amount: string;
-  releaseTime: string;
-}
+// Claims pass through as-is — same shape on both sides of postMessage.
+type SerializedClaim = ClaimEntry;
 
 export interface SerializedAuthorizeInput {
   note: SerializedCommitmentNote;
   leafIndex: number;
   allLeaves?: bigint[];
   merkleProof?: SerializedMerkleProof;
-  sellAmount: string;
+  sellAmount: bigint;
   buyToken: string;
-  buyAmount: string;
-  maxFee: string;
-  expiry: string;
-  nonce: string;
+  buyAmount: bigint;
+  maxFee: bigint;
+  expiry: bigint;
+  nonce: bigint;
   relayer: string;
-  // Defensive copy of the caller's Uint8Array — the wipe in
-  // `wipeSerialized` zeros THIS copy, not the caller's buffer.
   eddsaPrivateKey: Uint8Array;
   claims: SerializedClaim[];
-  newSalt?: string;
+  newSalt?: bigint;
 }
 
 export interface SerializedAuthorizeOutput {
   proof: AuthorizeProofResult["proof"];
   publicSignals: string[];
-  commitmentRoot: string;
-  nullifier: string;
-  nonceNullifier: string;
-  newCommitment: string;
-  claimsRoot: string;
-  totalLocked: string;
-  orderHash: string;
-}
-
-function serializeClaim(c: ClaimEntry): SerializedClaim {
-  return {
-    secret: c.secret.toString(),
-    recipient: c.recipient,
-    token: c.token,
-    amount: c.amount.toString(),
-    releaseTime: c.releaseTime.toString(),
-  };
-}
-
-function deserializeClaim(c: SerializedClaim): ClaimEntry {
-  return {
-    secret: BigInt(c.secret),
-    recipient: c.recipient,
-    token: c.token,
-    amount: BigInt(c.amount),
-    releaseTime: BigInt(c.releaseTime),
-  };
+  commitmentRoot: bigint;
+  nullifier: bigint;
+  nonceNullifier: bigint;
+  newCommitment: bigint;
+  claimsRoot: bigint;
+  totalLocked: bigint;
+  orderHash: bigint;
 }
 
 export function serializeAuthorizeInput(input: AuthorizeProofInput): SerializedAuthorizeInput {
   const result: SerializedAuthorizeInput = {
     note: serializeCommitmentNote(input.note),
     leafIndex: input.leafIndex,
-    sellAmount: input.sellAmount.toString(),
+    sellAmount: input.sellAmount,
     buyToken: input.buyToken,
-    buyAmount: input.buyAmount.toString(),
-    maxFee: input.maxFee.toString(),
-    expiry: input.expiry.toString(),
-    nonce: input.nonce.toString(),
+    buyAmount: input.buyAmount,
+    maxFee: input.maxFee,
+    expiry: input.expiry,
+    nonce: input.nonce,
     relayer: input.relayer,
-    // Defensive copy: see `eddsaPrivateKey` field comment above.
+    // Defensive copy — see file header.
     eddsaPrivateKey: new Uint8Array(input.eddsaPrivateKey),
-    claims: input.claims.map(serializeClaim),
+    claims: input.claims,
   };
   if (input.allLeaves) {
     result.allLeaves = input.allLeaves;
@@ -101,7 +76,7 @@ export function serializeAuthorizeInput(input: AuthorizeProofInput): SerializedA
     result.merkleProof = serializeMerkleProof(input.merkleProof);
   }
   if (input.newSalt !== undefined) {
-    result.newSalt = input.newSalt.toString();
+    result.newSalt = input.newSalt;
   }
   return result;
 }
@@ -112,43 +87,23 @@ export function deserializeAuthorizeInput(raw: SerializedAuthorizeInput): Author
     leafIndex: raw.leafIndex,
     allLeaves: raw.allLeaves,
     merkleProof: raw.merkleProof ? deserializeMerkleProof(raw.merkleProof) : undefined,
-    sellAmount: BigInt(raw.sellAmount),
+    sellAmount: raw.sellAmount,
     buyToken: raw.buyToken,
-    buyAmount: BigInt(raw.buyAmount),
-    maxFee: BigInt(raw.maxFee),
-    expiry: BigInt(raw.expiry),
-    nonce: BigInt(raw.nonce),
+    buyAmount: raw.buyAmount,
+    maxFee: raw.maxFee,
+    expiry: raw.expiry,
+    nonce: raw.nonce,
     relayer: raw.relayer,
     eddsaPrivateKey: raw.eddsaPrivateKey,
-    claims: raw.claims.map(deserializeClaim),
-    newSalt: raw.newSalt !== undefined ? BigInt(raw.newSalt) : undefined,
+    claims: raw.claims,
+    newSalt: raw.newSalt,
   };
 }
 
 export function serializeAuthorizeOutput(out: AuthorizeProofResult): SerializedAuthorizeOutput {
-  return {
-    proof: out.proof,
-    publicSignals: out.publicSignals,
-    commitmentRoot: out.commitmentRoot.toString(),
-    nullifier: out.nullifier.toString(),
-    nonceNullifier: out.nonceNullifier.toString(),
-    newCommitment: out.newCommitment.toString(),
-    claimsRoot: out.claimsRoot.toString(),
-    totalLocked: out.totalLocked.toString(),
-    orderHash: out.orderHash.toString(),
-  };
+  return out;
 }
 
 export function deserializeAuthorizeOutput(raw: SerializedAuthorizeOutput): AuthorizeProofResult {
-  return {
-    proof: raw.proof,
-    publicSignals: raw.publicSignals,
-    commitmentRoot: BigInt(raw.commitmentRoot),
-    nullifier: BigInt(raw.nullifier),
-    nonceNullifier: BigInt(raw.nonceNullifier),
-    newCommitment: BigInt(raw.newCommitment),
-    claimsRoot: BigInt(raw.claimsRoot),
-    totalLocked: BigInt(raw.totalLocked),
-    orderHash: BigInt(raw.orderHash),
-  };
+  return raw;
 }

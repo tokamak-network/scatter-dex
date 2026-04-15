@@ -11,7 +11,9 @@ import type { CancelProofInput, CancelProofResult } from "./cancel-prover";
 export interface SerializedCancelInput {
   note: SerializedCommitmentNote;
   leafIndex: number;
-  allLeaves?: string[];
+  // Native bigint[] — structuredClone fast-path, matches the prover's
+  // runtime shape so no per-leaf round-trip on 10K+ pools.
+  allLeaves?: bigint[];
   merkleProof?: SerializedMerkleProof;
   nonce: string;
   relayer: string;
@@ -40,7 +42,7 @@ export function serializeCancelInput(input: CancelProofInput): SerializedCancelI
     eddsaPrivateKey: new Uint8Array(input.eddsaPrivateKey),
   };
   if (input.allLeaves) {
-    result.allLeaves = input.allLeaves.map((l) => l.toString());
+    result.allLeaves = input.allLeaves;
   }
   if (input.merkleProof) {
     result.merkleProof = serializeMerkleProof(input.merkleProof);
@@ -52,7 +54,7 @@ export function deserializeCancelInput(raw: SerializedCancelInput): CancelProofI
   return {
     note: deserializeCommitmentNote(raw.note),
     leafIndex: raw.leafIndex,
-    allLeaves: raw.allLeaves?.map(BigInt),
+    allLeaves: raw.allLeaves,
     merkleProof: raw.merkleProof ? deserializeMerkleProof(raw.merkleProof) : undefined,
     nonce: BigInt(raw.nonce),
     relayer: raw.relayer,
