@@ -75,7 +75,7 @@ interface ClaimData {
 
 export default function PrivateClaimPage() {
   const tokens = getTokenList();
-  const { signer, chainId } = useWallet();
+  const { signer } = useWallet();
 
   const [claimJson, setClaimJson] = useState("");
   const [allClaims, setAllClaims] = useState<ClaimData[]>([]);
@@ -559,7 +559,7 @@ export default function PrivateClaimPage() {
                   </div>
                   {claimedMap[selectedClaimIdx]?.txHash && (
                     <div className="text-[11px] text-on-surface-variant/60">
-                      Tx: <ExplorerLink kind="tx" value={claimedMap[selectedClaimIdx].txHash} chainId={chainId} />
+                      Tx: <ExplorerLink kind="tx" value={claimedMap[selectedClaimIdx].txHash} />
                     </div>
                   )}
                 </div>
@@ -721,7 +721,7 @@ export default function PrivateClaimPage() {
           {batchProgress && txHashes.length > 0 && (
             <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
               {txHashes.map((h, i) => (
-                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} /></div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} /></div>
               ))}
             </div>
           )}
@@ -745,7 +745,7 @@ export default function PrivateClaimPage() {
           {batchProgress && txHashes.length > 0 && (
             <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
               {txHashes.map((h, i) => (
-                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} /></div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} /></div>
               ))}
             </div>
           )}
@@ -762,13 +762,13 @@ export default function PrivateClaimPage() {
           </p>
           {txHashes.length === 1 && txHashes[0] && (
             <div className="text-xs text-primary bg-primary/5 rounded-md p-3">
-              tx: <ExplorerLink kind="tx" value={txHashes[0]} chainId={chainId} className="text-primary" />
+              tx: <ExplorerLink kind="tx" value={txHashes[0]} className="text-primary" />
             </div>
           )}
           {txHashes.length > 1 && (
             <div className="text-xs text-primary bg-primary/5 rounded-md p-3 space-y-1 text-left">
               {txHashes.map((h, i) => (
-                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} className="text-primary" /></div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} className="text-primary" /></div>
               ))}
             </div>
           )}

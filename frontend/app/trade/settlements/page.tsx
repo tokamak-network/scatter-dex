@@ -6,7 +6,6 @@ import { useRecentSettlements, type SettlementPath, type SettlementRow } from ".
 import { getTokenMap } from "../../lib/tokens";
 import { formatTokenAmount, timeAgo } from "../../lib/utils";
 import ExplorerLink from "../../components/ExplorerLink";
-import { useWallet } from "../../lib/wallet";
 
 const PATH_FILTERS: { id: "all" | SettlementPath; label: string }[] = [
   { id: "all", label: "All" },
@@ -15,7 +14,6 @@ const PATH_FILTERS: { id: "all" | SettlementPath; label: string }[] = [
 ];
 
 export default function SettlementsPage() {
-  const { chainId } = useWallet();
   const { rows, loading, error, refresh } = useRecentSettlements(100);
   const [pathFilter, setPathFilter] = useState<"all" | SettlementPath>("all");
   const [tokenQuery, setTokenQuery] = useState("");
@@ -113,7 +111,7 @@ export default function SettlementsPage() {
               </td></tr>
             )}
             {filtered.map((r) => (
-              <SettlementTableRow key={`${r.txHash}-${r.logIndex}`} row={r} tokenMap={tokenMap} chainId={chainId} />
+              <SettlementTableRow key={`${r.txHash}-${r.logIndex}`} row={r} tokenMap={tokenMap} />
             ))}
           </tbody>
         </table>
@@ -126,7 +124,7 @@ export default function SettlementsPage() {
   );
 }
 
-function SettlementTableRow({ row, tokenMap, chainId }: { row: SettlementRow; tokenMap: Record<string, { symbol: string; decimals: number }>; chainId: number | null }) {
+function SettlementTableRow({ row, tokenMap }: { row: SettlementRow; tokenMap: Record<string, { symbol: string; decimals: number }> }) {
   const sell = row.sellToken ? tokenMap[row.sellToken.toLowerCase()] : undefined;
   const buy = row.buyToken ? tokenMap[row.buyToken.toLowerCase()] : undefined;
   const when = row.timestamp ? timeAgo(row.timestamp) : "—";
@@ -159,10 +157,10 @@ function SettlementTableRow({ row, tokenMap, chainId }: { row: SettlementRow; to
         )}
       </td>
       <td className="px-4 py-3 align-top text-on-surface-variant">
-        <ExplorerLink kind="address" value={row.participant} chainId={chainId} />
+        <ExplorerLink kind="address" value={row.participant} />
       </td>
       <td className="px-4 py-3 align-top text-primary">
-        <ExplorerLink kind="tx" value={row.txHash} chainId={chainId} />
+        <ExplorerLink kind="tx" value={row.txHash} />
       </td>
     </tr>
   );

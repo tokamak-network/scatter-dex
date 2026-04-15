@@ -113,7 +113,7 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
 }
 
 export default function PrivateHistoryPage() {
-  const { account, chainId, signer, connect } = useWallet();
+  const { account, signer, connect } = useWallet();
   const { relayers } = useRelayers();
   const tokens = getTokenList();
 
@@ -636,13 +636,13 @@ export default function PrivateHistoryPage() {
             {selectedOrder.relayerAddress && (
               <div>
                 <span className="text-on-surface-variant/60">Relayer:</span>{" "}
-                <ExplorerLink kind="address" value={selectedOrder.relayerAddress} chainId={chainId} className="text-sm" />
+                <ExplorerLink kind="address" value={selectedOrder.relayerAddress} size="sm" />
               </div>
             )}
             {selectedOrder.settleTxHash && (
               <div>
                 <span className="text-on-surface-variant/60">Settle Tx:</span>{" "}
-                <ExplorerLink kind="tx" value={selectedOrder.settleTxHash} chainId={chainId} className="text-sm" />
+                <ExplorerLink kind="tx" value={selectedOrder.settleTxHash} size="sm" />
               </div>
             )}
             {selectedOrder.order.type === "market" && selectedOrder.onchainAmountOut && (() => {
@@ -780,7 +780,7 @@ export default function PrivateHistoryPage() {
                     {cs?.txHash && (
                       <div className="text-xs mt-1">
                         <span className="text-on-surface-variant/40">Claim Tx: </span>
-                        <ExplorerLink kind="tx" value={cs.txHash} chainId={chainId} className="text-primary" />
+                        <ExplorerLink kind="tx" value={cs.txHash} className="text-primary" />
                       </div>
                     )}
                     {!isClaimed && (

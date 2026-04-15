@@ -815,7 +815,7 @@ export default function PrivateEscrowPage() {
                               <div>
                                 <div className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">Deposit Tx</div>
                                 <div className="flex items-center gap-2 mt-1">
-                                  <ExplorerLink kind="tx" value={n.txHash} chainId={chainId} className="text-primary" />
+                                  <ExplorerLink kind="tx" value={n.txHash} className="text-primary" />
                                   <button
                                     onClick={() => navigator.clipboard.writeText(n.txHash)}
                                     className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors text-xs"
@@ -1000,7 +1000,7 @@ export default function PrivateEscrowPage() {
                   <div>Deposit successful! Note saved to folder.</div>
                   {txHash && (
                     <div className="flex items-center gap-2 text-on-surface-variant/50">
-                      <ExplorerLink kind="tx" value={txHash} chainId={chainId} />
+                      <ExplorerLink kind="tx" value={txHash} />
                       <button
                         onClick={() => navigator.clipboard.writeText(txHash)}
                         className="shrink-0 hover:text-on-surface transition-colors"

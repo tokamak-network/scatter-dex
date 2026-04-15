@@ -1,21 +1,20 @@
-// Block-explorer base URLs by chain id. Kept in sync with
-// `CHAIN_NAMES` in config.ts.
-const EXPLORER_BASE: Record<number, string> = {
-  1: "https://etherscan.io",
-  11155111: "https://sepolia.etherscan.io",
-  17000: "https://holesky.etherscan.io",
-};
+import { EXPECTED_CHAIN_ID, EXPLORER_BASES } from "./config";
+
+function resolveBase(chainId: number | null | undefined): string | null {
+  // Fall back to the deployment's configured chain so the explorer link
+  // works for disconnected users and survives the user being connected
+  // to a wrong network — the events / tx hashes shown are always from
+  // the deployment chain, not the wallet's.
+  const id = chainId ?? EXPECTED_CHAIN_ID;
+  return EXPLORER_BASES[id] ?? null;
+}
 
 export function getExplorerTxUrl(chainId: number | null | undefined, txHash: string): string | null {
-  if (chainId == null) return null;
-  const base = EXPLORER_BASE[chainId];
-  if (!base) return null;
-  return `${base}/tx/${txHash}`;
+  const base = resolveBase(chainId);
+  return base ? `${base}/tx/${txHash}` : null;
 }
 
 export function getExplorerAddressUrl(chainId: number | null | undefined, address: string): string | null {
-  if (chainId == null) return null;
-  const base = EXPLORER_BASE[chainId];
-  if (!base) return null;
-  return `${base}/address/${address}`;
+  const base = resolveBase(chainId);
+  return base ? `${base}/address/${address}` : null;
 }

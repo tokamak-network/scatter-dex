@@ -110,3 +110,12 @@ const CHAIN_NAMES: Record<number, string> = {
 export function getChainName(chainId: number): string {
   return CHAIN_NAMES[chainId] || `Chain ${chainId}`;
 }
+
+// Block-explorer base URLs by chain id. Chains zkScatter actually deploys
+// to only; unknown chains fall through to plain text at UI call sites
+// (silently pointing at the wrong explorer is worse than no link).
+export const EXPLORER_BASES: Record<number, string> = {
+  1: "https://etherscan.io",
+  11155111: "https://sepolia.etherscan.io",
+  17000: "https://holesky.etherscan.io",
+};
