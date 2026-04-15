@@ -4,10 +4,12 @@ import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "rea
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, Check, Plus, Trash2, Clock, FolderOpen, Wallet, ArrowLeftRight } from "lucide-react";
+import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, ArrowLeftRight } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
-import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { getTradableTokens } from "../../lib/tokens";
+import EmptyState from "../../components/EmptyState";
+import { useTokenPair } from "../../lib/useTokenPair";
 import { applyFeeBig } from "../../lib/fee";
 import { AddressPicker } from "../../components/AddressPicker";
 import {
@@ -82,7 +84,7 @@ function PrivateOrderLoading() {
 function PrivateOrderPageInner() {
   const { account, signer, readProvider, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
-  const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
+  const tokens = useMemo(() => getTradableTokens(), []);
 
   // ZK relayers (filter by name containing "ZK")
   const zkRelayers = useMemo(() =>
@@ -110,8 +112,7 @@ function PrivateOrderPageInner() {
   const [folderName, setFolderName] = useState<string | null>(null);
 
   // Order form
-  const [sellTokenIdx, setSellTokenIdx] = useState(0);
-  const [buyTokenIdx, setBuyTokenIdx] = useState(1);
+  const { sellToken, buyToken, sellTokenIdx, buyTokenIdx, setSellTokenIdx, setBuyTokenIdx, swap: swapTokens, isReady: tokenPairReady } = useTokenPair(tokens);
   const [sellAmount, setSellAmount] = useState("");
   const [buyAmount, setBuyAmount] = useState("");
   const [expiry, setExpiry] = useState("24");
@@ -133,9 +134,6 @@ function PrivateOrderPageInner() {
   const [claims, setClaims] = useState<ClaimRow[]>([
     { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
-
-  const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
-  const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
 
   // Same-token orders are direct distributions, not trades — the contract
   // enforces `totalLocked + fee <= sellAmount` (SettleVerifyLib.
@@ -185,7 +183,7 @@ function PrivateOrderPageInner() {
     const eh = searchParams.get("expiryHours");
     if (eh) setExpiry(eh);
     didPrefillRef.current = true;
-  }, [tokens, searchParams]);
+  }, [tokens, searchParams, setSellTokenIdx, setBuyTokenIdx]);
 
   // Check which notes are spent on-chain (parallel)
   useEffect(() => {
@@ -687,6 +685,16 @@ function PrivateOrderPageInner() {
     );
   }
 
+  if (!tokenPairReady) {
+    return (
+      <EmptyState
+        icon={AlertCircle}
+        title="Token list unavailable"
+        description={<>At least two tokens must be configured via <code>NEXT_PUBLIC_TOKENS</code> for trading. Contact the deployment operator if you&apos;re seeing this on a production build.</>}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col xl:flex-row gap-6">
       {/* Left: Order Form */}
@@ -807,11 +815,7 @@ function PrivateOrderPageInner() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  const s = sellTokenIdx, b = buyTokenIdx;
-                  setSellTokenIdx(b);
-                  setBuyTokenIdx(s);
-                }}
+                onClick={swapTokens}
                 title="Swap Sell / Buy tokens"
                 aria-label="Swap Sell and Buy tokens"
                 className="mb-1 w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-low border border-outline-variant/20 text-on-surface-variant hover:bg-tertiary/20 hover:text-tertiary hover:border-tertiary/30 transition-colors"
