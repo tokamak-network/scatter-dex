@@ -36,7 +36,6 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     error NotAContract();
     error FeeOnTransferTokenUnsupported();
     error AddressSanctioned();
-    error FeeExceedsMax();
     error TimelockNotExpired();
     error NoPendingSettlement();
     error SettlementAlreadySet();
@@ -74,9 +73,6 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot deposit or withdraw.
     ISanctionsList public sanctionsList;
-
-    /// @notice Maximum fee per transferFee call (bps of pool balance). 1000 = 10%.
-    uint256 public constant MAX_FEE_BPS = 1000;
 
     /// @notice Timelock delay for setAuthorizedSettlement (24 hours).
     uint256 public constant SETTLEMENT_TIMELOCK = 24 hours;
@@ -279,13 +275,23 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Transfer fee tokens from pool to a recipient (e.g., relayer).
     /// @dev Only callable by the authorized PrivateSettlement contract.
+    ///      Fee magnitude is bounded at the ORDER level, not here:
+    ///      `SettleVerifyLib.validateCrossSide` enforces
+    ///      `fee * 10000 ≤ buyAmount * maxFee`, while
+    ///      `validateScatterAuth` enforces
+    ///      `fee * 10000 ≤ sellAmount * maxFee`, each against the
+    ///      user-signed `maxFee` (circuit-bound). Adding a post-drain
+    ///      pool-balance cap here would reject legitimate settlements
+    ///      whenever `totalLocked` draws most of the pool's balance of
+    ///      a token (e.g. early-liquidity scenarios where a single
+    ///      matched pair is ~100% of that token's pool-wide supply).
+    ///      Owner-compromise drain protection is provided by the 24-hour
+    ///      `setAuthorizedSettlement` timelock below.
     function transferFee(address recipient, address token, uint256 amount) external nonReentrant {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
         if (recipient == address(0)) revert ZeroAddress();
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance < amount) revert InsufficientPoolBalance();
-        // [H-3] Cap fee at MAX_FEE_BPS of pool balance to prevent drain
-        if (amount > balance * MAX_FEE_BPS / 10_000) revert FeeExceedsMax();
         IERC20(token).safeTransfer(recipient, amount);
         emit FeeTransferred(recipient, token, amount);
     }
