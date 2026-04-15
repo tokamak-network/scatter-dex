@@ -118,11 +118,11 @@
 2. 사용자의 예치금에 대한 **머클 경로 증명(path elements + indices)** 추출
 3. **Nullifier 계산**: `Poseidon(secret, salt)` — 이중 사용 방지용
 4. 수령인 claims root, 수수료, 잔액(change) 커밋먼트 등을 포함한 **회로 입력값 구성**
-5. **snarkjs로 Groth16 증명 생성** (`settle.wasm` + `settle_final.zkey` 사용)
+5. **snarkjs로 Groth16 Half-proof 생성** (각 사용자 브라우저에서 `authorize.wasm` + `authorize_final.zkey` 사용)
 
 ### 온체인 제출
 
-생성된 증명을 **`PrivateSettlement.settlePrivate()`** 트랜잭션으로 온체인에 제출합니다.
+릴레이어가 두 Half-proof(maker + taker)를 매칭해서 **`PrivateSettlement.settleAuth(makerProof, takerProof)`** 트랜잭션으로 온체인에 제출합니다.
 
 온체인에서 일어나는 것:
 

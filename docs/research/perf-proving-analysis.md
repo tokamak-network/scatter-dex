@@ -15,7 +15,7 @@ All circuits compiled to BN254 Groth16 via circom 2.0 + snarkjs.
 | withdraw.circom | 6,344 | Yes (on withdraw) | Withdraw from pool |
 | claim.circom | 1,553 | Yes (on claim) | Claim settled funds |
 | deposit.circom | 400 | Yes (on deposit) | Deposit to pool |
-| settle.circom | 64,503 | No (legacy server) | Monolithic settle (deprecated) |
+| ~~settle.circom~~ | ~~64,503~~ | — | Monolithic settle (**removed** from repo; superseded by authorize.circom) |
 
 **authorize.circom is the critical path** — it runs on every order submission.
 

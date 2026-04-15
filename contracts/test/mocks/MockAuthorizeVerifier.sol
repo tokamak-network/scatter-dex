@@ -6,9 +6,9 @@ import {IAuthorizeVerifier} from "../../src/zk/IAuthorizeVerifier.sol";
 /// @notice Mock for `circuits/authorize.circom`'s Groth16 verifier.
 ///         Default behaviour: every call returns `true`. Tests can flip this
 ///         via `setShouldPass(false)` to exercise the `InvalidProof` revert
-///         path. The optional relayer-pinning mode mirrors `MockSettleVerifier`
-///         and lets a test assert that the proof was generated for a specific
-///         relayer (since the real Groth16 verifier cryptographically binds
+///         path. The optional relayer-pinning mode lets a test assert that
+///         the proof was generated for a specific relayer (since the real
+///         Groth16 verifier cryptographically binds
 ///         `relayer` as public signal #13 of the authorize circuit).
 contract MockAuthorizeVerifier is IAuthorizeVerifier {
     bool public shouldPass = true;

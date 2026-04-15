@@ -9,7 +9,6 @@ import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
-import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockBatchAuthorizeVerifier} from "./mocks/MockBatchAuthorizeVerifier.sol";
@@ -33,7 +32,6 @@ contract SettleAuthTest is Test {
     PrivateSettlement public settlement;
     MockVerifier public withdrawVerifier;
     MockDepositVerifier public depositVerifier;
-    MockSettleVerifier public settleVerifier;
     MockClaimVerifier public claimVerifier;
     MockAuthorizeVerifier public authVerifier;
     MockWETH public weth;
@@ -62,7 +60,6 @@ contract SettleAuthTest is Test {
     function setUp() public {
         withdrawVerifier = new MockVerifier();
         depositVerifier = new MockDepositVerifier();
-        settleVerifier = new MockSettleVerifier();
         claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
@@ -70,7 +67,6 @@ contract SettleAuthTest is Test {
         weth = new MockWETH();
         settlement = new PrivateSettlement(
             address(pool),
-            address(settleVerifier),
             address(claimVerifier),
             address(weth)
         );

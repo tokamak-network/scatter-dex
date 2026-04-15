@@ -9,7 +9,6 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
-import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
@@ -42,14 +41,13 @@ contract SanctionsListTest is Test {
 
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
-        MockSettleVerifier settleVerifier = new MockSettleVerifier();
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
         pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
         settlement = new PrivateSettlement(
-            address(pool), address(settleVerifier), address(claimVerifier), address(weth)
+            address(pool), address(claimVerifier), address(weth)
         );
         token = new SLToken();
 

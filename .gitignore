@@ -35,7 +35,6 @@ contracts/src/zk/AuthorizeVerifier.sol
 contracts/src/zk/CancelVerifier.sol
 contracts/src/zk/ClaimVerifier.sol
 contracts/src/zk/DepositVerifier.sol
-contracts/src/zk/SettleVerifier.sol
 contracts/src/zk/WithdrawVerifier.sol
 
 # Node modules

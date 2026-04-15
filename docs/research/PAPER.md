@@ -1,6 +1,8 @@
 # zkScatter: Private DEX Settlement with Zero-Knowledge Proofs and Regulatory Compliance
 
 > Technical Whitepaper — v1.0
+>
+> **Implementation update (2026-04)**: The settlement path described throughout this paper as `PrivateSettlement.settlePrivate()` with a single monolithic `settle.circom` proof has been superseded by the **Half-proof architecture**: each user proves their own side in the browser with `circuits/authorize.circom` and the relayer submits both proofs together via `PrivateSettlement.settleAuth(makerProof, takerProof)`. The legacy `settle.circom`, `ISettleVerifier.sol`, `settlePrivate()`, and `PrivateSettled` event have been removed from the repository. The paper's arguments about privacy, compliance, and gas cost all carry over — the on-chain settlement function name is the main observable difference. See `docs/architecture/architecture-v2.md` and `docs/design/circuit-split/design.md` for details.
 
 ---
 

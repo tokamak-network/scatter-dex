@@ -9,7 +9,6 @@ import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
-import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 
@@ -56,13 +55,12 @@ contract SettleWithDexForkTest is Test {
         // Deploy mock verifiers + core contracts
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
-        MockSettleVerifier settleVerifier = new MockSettleVerifier();
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
         pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
         settlement = new PrivateSettlement(
-            address(pool), address(settleVerifier), address(claimVerifier), WETH
+            address(pool), address(claimVerifier), WETH
         );
 
         feeVault = new FeeVault(treasury, 0);

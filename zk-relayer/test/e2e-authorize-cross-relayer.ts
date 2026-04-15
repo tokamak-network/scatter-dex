@@ -232,7 +232,7 @@ async function buildAndSubmitOrder(
   leafByIndex: bigint[],
 ): Promise<OrderArtifacts> {
   // Claim recipient + secret — single claim sized to (buyAmount − fee).
-  // settle.circom enforces `totalLocked + feeToken ≤ counterpartySell`,
+  // settleAuth enforces `totalLocked + feeToken ≤ counterpartySell`,
   // and `feeToken = floor(buyAmount × maxFee / 10000)`. Since our orders
   // use sellAmount === counterparty.buyAmount, packing `claimAmount =
   // buyAmount` would trip ClaimsCapExceeded the moment the relayer adds
@@ -374,7 +374,8 @@ async function waitForSettlement(
   while (Date.now() - start < SETTLE_TIMEOUT_MS) {
     // `nullifiers(...)` alone would also flip on a cancel — guard with
     // `claimsGroups[root].totalLocked > 0` since registerClaimsGroup is
-    // only called by settleAuth/settlePrivate/settleWithDex, never by cancel.
+    // only called by settleAuth / settleWithDex / scatterDirect(Auth),
+    // never by cancel.
     const [aSpent, bSpent, aGroup, bGroup] = await Promise.all([
       settlement.nullifiers(aHex),
       settlement.nullifiers(bHex),

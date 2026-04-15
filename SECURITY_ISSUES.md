@@ -37,8 +37,9 @@ S-M14 (PR #215, scatterDirectAuth) 이후 모든 프런트 주문은 `authorize_
   `e2e-private-flow.ts`).
 - **Frontend**: `private-history/page.tsx:323` `GET /api/private-orders/:pubKeyAx`
   호출 (현재 항상 빈 배열). authorize 기반 히스토리로 교체.
-- **Contract** (별도 감사): `PrivateSettlement.settlePrivate()` 온체인 함수.
-  배포된 컨트랙트에서 제거하려면 재배포 필요 — 테스트넷 배포 (#21) 시 같이 검토.
+- **Contract**: `PrivateSettlement.settlePrivate()` 온체인 함수는 소스에서
+  제거됨 (`chore/remove-settle-private`). 배포된 컨트랙트 반영은 테스트넷
+  재배포 (#21) 시 같이 적용.
 
 기존 메모의 "단순 삭제 시 cross-relayer 매칭 0" 경고는 **PR #308
 (`AuthorizeCrossRelayerMatchService`) 도입으로 해소됨**. 이제는 dead 경로를

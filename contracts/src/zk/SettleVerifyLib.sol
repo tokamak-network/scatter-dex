@@ -21,7 +21,6 @@ library SettleVerifyLib {
     error NullifierAlreadySpent();
     error DeadlineExpired();
     error SellBuyTokenMismatch();
-    error TimestampOutOfRange();
     error DuplicateClaimsRoot();
 
     error ClaimsGroupAlreadyExists();
@@ -56,30 +55,6 @@ library SettleVerifyLib {
         bytes32 orderHash;
     }
 
-    struct SettleParams {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
-        uint256 currentRoot;
-        uint256 currentTimestamp;
-        bytes32 makerNullifier;
-        bytes32 takerNullifier;
-        bytes32 makerNonceNullifier;
-        bytes32 takerNonceNullifier;
-        bytes32 makerNewCommitment;
-        bytes32 takerNewCommitment;
-        bytes32 claimsRootMaker;
-        bytes32 claimsRootTaker;
-        uint128 totalLockedMaker;
-        uint128 totalLockedTaker;
-        address tokenMaker;
-        address tokenTaker;
-        uint96 feeTokenMaker;
-        uint96 feeTokenTaker;
-        address makerRelayer;
-        address takerRelayer;
-    }
-
     // ─── Pack helpers (pure) ────────────────────────────────────
 
     /// @notice Pack an AuthorizeProof into the 15-element public-signal
@@ -104,33 +79,6 @@ library SettleVerifyLib {
         signals[12] = uint256(ap.totalLocked);
         signals[13] = uint256(uint160(ap.relayer));
         signals[14] = uint256(ap.orderHash);
-    }
-
-    /// @notice Pack SettleParams into the 18-element public-signal array
-    ///         expected by settle.circom's Groth16 verifier.
-    function packSettleSignals(SettleParams calldata p)
-        external
-        pure
-        returns (uint[18] memory signals)
-    {
-        signals[0]  = p.currentRoot;
-        signals[1]  = uint256(p.makerNullifier);
-        signals[2]  = uint256(p.takerNullifier);
-        signals[3]  = uint256(p.makerNonceNullifier);
-        signals[4]  = uint256(p.takerNonceNullifier);
-        signals[5]  = uint256(p.makerNewCommitment);
-        signals[6]  = uint256(p.takerNewCommitment);
-        signals[7]  = uint256(p.claimsRootMaker);
-        signals[8]  = uint256(p.claimsRootTaker);
-        signals[9]  = uint256(p.totalLockedMaker);
-        signals[10] = uint256(p.totalLockedTaker);
-        signals[11] = uint256(uint160(p.tokenMaker));
-        signals[12] = uint256(uint160(p.tokenTaker));
-        signals[13] = uint256(p.feeTokenMaker);
-        signals[14] = uint256(p.feeTokenTaker);
-        signals[15] = p.currentTimestamp;
-        signals[16] = uint256(uint160(p.makerRelayer));
-        signals[17] = uint256(uint160(p.takerRelayer));
     }
 
     // ─── Cross-side validators for settleAuth ──────────────────
@@ -228,15 +176,6 @@ library SettleVerifyLib {
             revert ClaimsCapExceeded();
         }
         if (block.timestamp > ap.expiry) revert OrderExpired();
-    }
-
-    /// @notice Bound the caller-provided `currentTimestamp` to a one-sided
-    ///         window around `block.timestamp`: future drift is forbidden,
-    ///         past drift is allowed up to `tolerance` seconds (for proof
-    ///         generation and tx-propagation latency).
-    function validateTimestampWindow(uint256 currentTimestamp, uint256 tolerance) external view {
-        if (currentTimestamp > block.timestamp) revert TimestampOutOfRange();
-        if (currentTimestamp + tolerance < block.timestamp) revert TimestampOutOfRange();
     }
 
     /// @notice Guard against two sides sharing the same `claimsRoot` when

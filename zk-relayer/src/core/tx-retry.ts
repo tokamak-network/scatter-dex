@@ -25,7 +25,7 @@ export interface SendAndWaitOptions {
   receiptPollRetries?: number;
   /** Delay between receipt poll attempts in ms (default: 10_000). */
   receiptPollIntervalMs?: number;
-  /** Label for logging (e.g. "settlePrivate"). */
+  /** Label for logging (e.g. "settleAuth"). */
   label?: string;
   /** Callback when txHash is known (before receipt). Use to persist hash. */
   onTxHash?: (txHash: string) => void;

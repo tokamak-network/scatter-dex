@@ -118,11 +118,11 @@ When the relayer receives the order, it performs the following:
 2. Extract the **Merkle path proof (path elements + indices)** for the user's deposit
 3. **Compute nullifier**: `Poseidon(secret, salt)` — prevents double-spending
 4. Assemble **circuit inputs** including claims root, fees, and change commitment
-5. **Generate Groth16 proof with snarkjs** (using `settle.wasm` + `settle_final.zkey`)
+5. **Generate Groth16 Half-proof with snarkjs** (each user's browser uses `authorize.wasm` + `authorize_final.zkey`)
 
 ### On-Chain Submission
 
-Submit the proof via **`PrivateSettlement.settlePrivate()`** (or `scatterDirect()` for same-token orders).
+The relayer matches the two Half-proofs (maker + taker) and submits them together via **`PrivateSettlement.settleAuth(makerProof, takerProof)`**.
 
 What happens on-chain:
 

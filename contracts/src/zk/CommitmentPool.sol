@@ -264,8 +264,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
 
     /// @notice Transfer tokens from pool to PrivateSettlement for claim distribution.
     /// @dev Only callable by the authorized PrivateSettlement contract.
-    ///      Called during settlePrivate() to move claim amounts to the settlement
-    ///      contract, which then distributes them via claimWithProof().
+    ///      Called during settleAuth / settleWithDex / scatterDirect(Auth) to
+    ///      move claim amounts to the settlement contract, which then
+    ///      distributes them via claimWithProof().
     function transferToSettlement(address token, uint256 amount) external nonReentrant {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
         if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();

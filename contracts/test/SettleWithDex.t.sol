@@ -10,7 +10,6 @@ import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
-import {MockSettleVerifier} from "./mocks/MockSettleVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
@@ -53,7 +52,6 @@ contract SettleWithDexTest is Test {
     PrivateSettlement public settlement;
     MockVerifier public withdrawVerifier;
     MockDepositVerifier public depositVerifier;
-    MockSettleVerifier public settleVerifier;
     MockClaimVerifier public claimVerifier;
     MockAuthorizeVerifier public authVerifier;
     MockDexRouter public dexRouter;
@@ -79,7 +77,6 @@ contract SettleWithDexTest is Test {
     function setUp() public {
         withdrawVerifier = new MockVerifier();
         depositVerifier = new MockDepositVerifier();
-        settleVerifier = new MockSettleVerifier();
         claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
         dexRouter = new MockDexRouter();
@@ -88,7 +85,6 @@ contract SettleWithDexTest is Test {
         weth = new MockWETH();
         settlement = new PrivateSettlement(
             address(pool),
-            address(settleVerifier),
             address(claimVerifier),
             address(weth)
         );

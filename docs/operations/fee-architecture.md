@@ -29,7 +29,7 @@ zkScatter has two distinct fee models for its two order types.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## 1. Limit Order Fees (settleAuth / settlePrivate)
+## 1. Limit Order Fees (settleAuth)
 
 **When**: Two users match via a relayer (P2P).
 

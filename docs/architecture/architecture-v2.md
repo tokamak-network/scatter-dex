@@ -79,7 +79,7 @@ These three values are referenced across all three documents and must remain con
 | `orderId` derivation: `Poseidon(makerSellToken, tokenMaker, makerSellAmount, makerBuyAmount, makerNonce, makerRelayer)` (6 inputs, normative form in circuit-split §5.2) | circuit-split §5.2 | relayer-protocol §4.2 (`ORDER_ANNOUNCE` carries the six binding fields), dispute-registry §"Evidence Schemas" |
 | `RelayerCommit` EIP-712 schema | dispute-registry §"Evidence Schemas" | relayer-protocol §4.3 (`COMMIT` message) |
 | `RelayerReveal` EIP-712 schema | dispute-registry §"Evidence Schemas" | relayer-protocol §4.3 (`REVEAL` message) |
-| `MAX_CLOCK_SKEW` = 5 min | aligned with `PrivateSettlement.TIMESTAMP_TOLERANCE` | relayer-protocol §4.4 message validation |
+| `MAX_CLOCK_SKEW` = 5 min | `authorize.circom` expiry window (validated relative to `block.timestamp` in `settleAuth`) | relayer-protocol §4.4 message validation |
 | `REVEAL_WINDOW` = 5 min | dispute-registry contract constant | relayer-protocol §13 |
 
 If any of these change, **all three documents must be updated together**.
@@ -147,7 +147,7 @@ Phase 4 — Migration & deprecation
    │
    ├─ Default flips to Half-proof protocol
    ├─ HTTP Trade Offer deprecated
-   ├─ Legacy settlePrivate marked deprecated
+   ├─ Legacy settlePrivate removed (circuits/settle.circom, ISettleVerifier, settlePrivate() deleted)
    ▼
 Phase 5 — Optimization
    │

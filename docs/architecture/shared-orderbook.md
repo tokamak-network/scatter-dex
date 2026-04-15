@@ -16,7 +16,7 @@ Steam bots trade game items (CS2 skins, etc.) through centralized marketplaces:
 | Bot | Trading bot (per operator) | Relayer (per operator) |
 | Item listing | Bot registers inventory via API | Relayer posts order summary via API |
 | Matching | Market matches buyer/seller | Orderbook matches maker/taker |
-| Settlement | Steam Trade Offer | settlePrivate() with ZK proof |
+| Settlement | Steam Trade Offer | settleAuth() with ZK proofs |
 | Fee | Market takes 2-5% | FeeVault (platform fee on claim) |
 | Escrow | Steam Guard holds items | CommitmentPool holds commitments |
 
@@ -88,7 +88,7 @@ Key insight: Steam bots don't share private inventory data with each other. They
 6. **Settlement relayer** is determined (see below)
 7. Both users are notified: "Send your secrets to [settling relayer]"
 8. Users send secrets to the settling relayer
-9. Settling relayer generates ZK proof and calls `settlePrivate()`
+9. Settling relayer matches the two Half-proofs and calls `settleAuth()`
 10. Fee goes to FeeVault → settling relayer claims, shares with matching relayer
 
 ### Settlement Relayer Selection
@@ -202,7 +202,7 @@ Settle circuit redesigned with dual relayer binding:
 1. **orderHash** now includes `relayerAddress` — user's EdDSA signature binds the order to a specific relayer
 2. **Public signals**: single `relayer` → `makerRelayer` + `takerRelayer`
 3. **Contract**: fee split based on proof — `feeTokenMaker` → `makerRelayer`, `feeTokenTaker` → `takerRelayer`
-4. **Either relayer can submit**: only makerRelayer or takerRelayer can call settlePrivate (prevents DoS)
+4. **Either relayer can submit**: only makerRelayer or takerRelayer can call settleAuth (prevents DoS)
 5. **Trustless**: Relayer A cannot redirect Relayer B's fee because it's bound in User B's EdDSA signature
 
 ### Phase 4: Decentralization (future)

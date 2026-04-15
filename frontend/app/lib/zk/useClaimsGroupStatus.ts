@@ -81,7 +81,7 @@ export function useClaimsGroupStatus(
 
         // `claimsGroups(root)` returns (totalLocked, totalClaimed, token).
         // Settled ↔ totalLocked > 0 (registerClaimsGroup writes this only
-        // after settlePrivate / settleAuth / settleWithDex succeeds).
+        // after settleAuth / settleWithDex / scatterDirect(Auth) succeeds).
         const settlementByRoot = new Map<string, boolean>();
         await Promise.all(
           distinctRoots.map(async (rootHex) => {

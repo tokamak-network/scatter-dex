@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 
 // Estimated gas units per operation
-const SETTLE_GAS = 800_000n; // settlePrivate() — includes ZK verify
+const SETTLE_GAS = 800_000n; // settleAuth() — includes ZK verify
 const CLAIM_GAS = 300_000n; // claimWithProof() per claim
 const DEFAULT_GAS_PRICE = 30_000_000_000n; // 30 gwei fallback
 

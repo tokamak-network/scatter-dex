@@ -2,8 +2,7 @@
  * Shared ZK circuit parameters.
  *
  * These values must stay in sync with the compiled circuits:
- *   - circuits/settle.circom (commitTreeDepth=20, maxClaimsPerSide=16, claimsTreeDepth=4)
- *   - circuits/authorize.circom (same parameters)
+ *   - circuits/authorize.circom (commitTreeDepth=20, maxClaimsPerSide=16, claimsTreeDepth=4)
  *   - circuits/claim.circom (claimsTreeDepth=4)
  *   - contracts/src/zk/IncrementalMerkleTree.sol (levels=20)
  *

@@ -74,7 +74,7 @@ A relayer revealed a proof that does not hash to the same value as their origina
 A relayer signed two distinct commits for the same `orderId` within overlapping reveal windows.
 
 ### Out of scope (same as before)
-- **Invalid proof submission** — handled naturally by `PrivateSettlement.settlePrivate*` reverting on bad proofs
+- **Invalid proof submission** — handled naturally by `PrivateSettlement.settleAuth` reverting on bad proofs
 - **Censorship / gossip suppression** — not provable on-chain; addressed architecturally by user fan-out
 
 ## Evidence Schemas
@@ -308,13 +308,13 @@ To let `_isAlreadySettled` work cryptographically, add a single mapping to `Priv
 // In PrivateSettlement.sol — single line addition
 mapping(bytes32 => bool) public orderSettled;
 
-// In settlePrivate / settlePrivateSplit, after successful verification:
+// In settleAuth, after successful verification:
 orderSettled[m.orderId] = true;
 ```
 
 **Cost**: one extra SSTORE per settlement (~20k gas, ~1.2% increase over the ~1.6M baseline). Acceptable.
 
-**Alternative (zero-cost)**: rely on the existing `PrivateSettled` event and have off-chain indexers prevent disputes for already-settled orders before submission. The contract can't enforce this directly without storage. **Recommendation**: do the small `PrivateSettlement` addition.
+**Alternative (zero-cost)**: rely on the existing `PrivateSettledAuth` event and have off-chain indexers prevent disputes for already-settled orders before submission. The contract can't enforce this directly without storage. **Recommendation**: do the small `PrivateSettlement` addition.
 
 ## How Reputation is Built
 
@@ -326,11 +326,11 @@ The on-chain `DisputeRegistry` is intentionally minimal. **Reputation lives off-
 Inputs (from on-chain logs):
   - DisputeRegistry.DisputeRecorded events
   - DisputeRegistry.DisputeRebutted events
-  - PrivateSettlement.PrivateSettled events
+  - PrivateSettlement.PrivateSettledAuth events
   - RelayerRegistry.RelayerRegistered / RelayerExited events
 
 For each relayer, compute:
-  - total_settlements   = count(PrivateSettled where relayer in {makerRelayer, takerRelayer})
+  - total_settlements   = count(PrivateSettledAuth where relayer in {makerRelayer, takerRelayer})
   - dispute_count       = count(DisputeRecorded where accused == relayer)
   - rebuttal_count      = count(DisputeRebutted where accused == relayer)
   - dispute_rate        = dispute_count / max(total_settlements, 1)

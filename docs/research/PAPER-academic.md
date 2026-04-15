@@ -1,6 +1,8 @@
 # zkScatter: Privacy-Preserving DEX Settlement via Zero-Knowledge Commitment Pools and Dual-CA Compliance
 
 > Draft Paper — Verified Privacy DEX Research
+>
+> **Implementation update (2026-04)**: The settlement path described in this paper as `PrivateSettlement.settlePrivate()` with a monolithic `settle.circom` proof has been superseded by the **Half-proof architecture** — each user proves their own side in the browser with `circuits/authorize.circom`, and the relayer submits both proofs via `PrivateSettlement.settleAuth(makerProof, takerProof)`. The legacy `settle.circom`, `ISettleVerifier.sol`, `settlePrivate()`, and `PrivateSettled` event have been removed from the repository. The paper's privacy, compliance, and cost arguments carry over; the settlement function name and per-side proof structure are the main observable differences. See `docs/architecture/architecture-v2.md` and `docs/design/circuit-split/design.md`.
 
 ---
 

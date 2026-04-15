@@ -13,14 +13,14 @@ Frontend (:3000)
 
 zk-relayer (:3002)
   ├── Order matching (EdDSA signature verification)
-  ├── Groth16 proof generation (snarkjs)
-  ├── settlePrivate() on-chain call
+  ├── Accepts two Half-proofs (maker + taker) from browsers
+  ├── settleAuth(makerProof, takerProof) on-chain call
   └── Gasless claim (claimWithProof on behalf of recipient)
 
 Contracts (anvil :8545)
   ├── CommitmentPool      — UTXO-based private escrow (Poseidon Merkle tree)
   ├── PrivateSettlement   — ZK settlement + claims
-  └── Groth16 Verifiers   — WithdrawVerifier, SettleVerifier, ClaimVerifier
+  └── Groth16 Verifiers   — WithdrawVerifier, AuthorizeVerifier, ClaimVerifier
 ```
 
 **참고**: 릴레이어 등록 시 bond 스테이킹은 선택사항입니다 (특허: "optionally stake a financial bond"). `minBond`은 owner가 설정 가능하며 기본값은 0입니다.
@@ -102,9 +102,9 @@ http://localhost:3000/trade/private-order
 **buyAmount는 "내가 받는 토큰" 기준의 최소 수령량입니다.** 내 수수료가 아니라 **상대방의 sell 금액에서 상대방 수수료가 차감된 후** 금액을 기준으로 설정해야 합니다. 예: Alice의 buyAmount는 Bob의 100 USDC에서 Bob의 fee 0.3 USDC가 차감된 99.7 이하여야 합니다. 회로가 `totalLockedMaker + feeTokenMaker <= takerSellAmount`를 검증합니다.
 
 ### 매칭 & 정산
-매칭되면 zk-relayer가:
-1. Groth16 proof 생성 (~수 초)
-2. `settlePrivate()` 온체인 호출:
+Half-proof 모델: 각 사용자 브라우저가 자신의 `authorize.circom` Groth16 proof 를 생성해서 zk-relayer 에 전달하고 (릴레이어는 witness 를 보지 못함), 매칭되면 zk-relayer가:
+1. 양쪽 Half-proof 를 매칭하여 단일 tx 로 결합
+2. `settleAuth(makerProof, takerProof)` 온체인 호출:
    - CommitmentPool → PrivateSettlement (claim 금액)
    - CommitmentPool → Relayer (수수료)
 3. 온체인에 **누가 거래했는지, 얼마에 거래했는지** 보이지 않음
@@ -222,7 +222,7 @@ npm run dev
 | ZK proof 생성 실패 | `frontend/public/zk/` 에 `.wasm`, `.zkey` 파일 존재 확인 |
 | 온체인 이벤트 조회 | `cast logs --address <Pool> --from-block 0` |
 | zk-relayer 매칭 안 됨 | `curl http://localhost:3002/api/info` 로 상태 확인 |
-| settlePrivate 실패 | zk-relayer 로그 확인 (`.dev-logs/zk-relayer.log`) |
+| settleAuth 실패 | zk-relayer 로그 확인 (`.dev-logs/zk-relayer.log`) |
 | TimestampOutOfRange | anvil block timestamp와 시스템 시간 차이 확인 |
 | claim proof 실패 | claim JSON의 `allLeaves` (프론트엔드에서 `allClaimLeaves`로 사용)가 16개인지, leafIndex 범위 확인 |
 | claims cap 실패 | `totalLocked + fee > 상대방의 sellAmount` → claims 금액을 상대방 sell에서 fee 차감 후로 조정 |
@@ -285,7 +285,7 @@ npm run build
 4. `contracts/src/zk/` 와 `frontend/public/zk/` 에 복사
 
 build.sh는 각 회로의 constraint 수에 맞게 PTAU 크기를 자동 결정합니다 (최소 pot14).
-settle 회로: ~58K constraints → pot16. withdraw/claim: ~6K/~2K → pot14.
+authorize 회로 (Half-proof, per-side): withdraw/claim 과 함께 pot14~pot16 수준. 정산은 `settleAuth(makerProof, takerProof)` 가 각각 독립적으로 검증합니다.
 
-settle 회로 public inputs (16개):
-`currentRoot(= commitmentRoot), makerNullifier, takerNullifier, makerNonceNullifier, takerNonceNullifier, makerNewCommitment, takerNewCommitment, claimsRootMaker, claimsRootTaker, totalLockedMaker, totalLockedTaker, tokenMaker, tokenTaker, feeTokenMaker, feeTokenTaker, currentTimestamp`
+authorize 회로 public inputs (per side, 14개):
+`commitmentRoot, nullifier, nonceNullifier, newCommitment, sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, claimsRoot, totalLocked, relayer, orderHash`
