@@ -22,6 +22,7 @@
 
 import type { AuthorizeProofInput, AuthorizeProofResult } from "./authorize-prover";
 import { wipeArray } from "./secure-wipe";
+import type { ProveTiming } from "./prove-timer";
 
 let worker: Worker | null = null;
 let workerFailed = false;
@@ -110,6 +111,17 @@ async function doGenerate(
 
   return new Promise<AuthorizeProofResult>((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
+      // Perf telemetry arrives before the result message — re-dispatch it
+      // on the main thread so listeners (dev panels, telemetry hooks) see
+      // worker-side timings, then keep waiting for the actual result.
+      if (event.data?.type === "perf") {
+        const timing = event.data.timing as ProveTiming;
+        window.dispatchEvent(
+          new CustomEvent<ProveTiming>("zk-perf:prove", { detail: timing }),
+        );
+        return;
+      }
+
       w.removeEventListener("message", onMessage);
       w.removeEventListener("error", onError);
 

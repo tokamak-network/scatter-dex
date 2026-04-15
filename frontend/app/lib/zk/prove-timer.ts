@@ -1,5 +1,7 @@
 // Worker-safe so the same wrapper works inside `authorize-worker.ts`;
-// only the main thread carries `window`, so dispatch is gated behind it.
+// only the main thread carries `window`, so the default reporter is gated
+// behind it. Workers can override the reporter via `setProveReporter` to
+// relay timings back to the main thread (see `authorize-worker.ts`).
 
 export type ZkCircuit = "authorize" | "cancel" | "claim" | "deposit" | "withdraw";
 
@@ -9,6 +11,22 @@ export interface ProveTiming {
   // ops (hashing, witness-only) later without lossy rounding here.
   durationMs: number;
   ok: boolean;
+}
+
+export type ProveReporter = (timing: ProveTiming) => void;
+
+let reporter: ProveReporter = defaultReporter;
+
+export function setProveReporter(fn: ProveReporter): void {
+  reporter = fn;
+}
+
+function defaultReporter(timing: ProveTiming): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent<ProveTiming>("zk-perf:prove", { detail: timing }),
+    );
+  }
 }
 
 export async function timeProve<T>(circuit: ZkCircuit, run: () => Promise<T>): Promise<T> {
@@ -25,12 +43,6 @@ export async function timeProve<T>(circuit: ZkCircuit, run: () => Promise<T>): P
       // eslint-disable-next-line no-console
       console.log(`[zk-perf] ${circuit} prove (${tag}): ${durationMs.toFixed(1)}ms`);
     }
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent<ProveTiming>("zk-perf:prove", {
-          detail: { circuit, durationMs, ok },
-        }),
-      );
-    }
+    reporter({ circuit, durationMs, ok });
   }
 }

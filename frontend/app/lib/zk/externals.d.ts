@@ -35,6 +35,3 @@ declare module "snarkjs" {
   };
 }
 
-interface WindowEventMap {
-  "zk-perf:prove": CustomEvent<import("./prove-timer").ProveTiming>;
-}
