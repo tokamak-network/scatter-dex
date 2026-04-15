@@ -21,14 +21,27 @@
 // Lazy-loaded to avoid blocking initial page load.
 // circomlibjs has no type definitions — `any` is intentional.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let poseidonInstance: any = null;
+let poseidonPromise: Promise<any> | null = null;
 
-async function getPoseidon() {
-  if (!poseidonInstance) {
-    const { buildPoseidon } = await import("circomlibjs");
-    poseidonInstance = await buildPoseidon();
+// Memoise the in-flight Promise (not just the resolved instance) so a
+// second caller arriving before `buildPoseidon()` settles waits on the
+// same build instead of starting a redundant ~50-150ms parallel one.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getPoseidon(): Promise<any> {
+  if (!poseidonPromise) {
+    poseidonPromise = import("circomlibjs").then(({ buildPoseidon }) => buildPoseidon());
   }
-  return poseidonInstance;
+  return poseidonPromise;
+}
+
+/**
+ * Eagerly build the Poseidon round-constant table and populate the
+ * module-level cache that `getPoseidon()` reads on first hash. Worker
+ * `preload` hooks call this so the first proof doesn't pay the
+ * ~50-150ms table build cost on the user's hot path.
+ */
+export async function warmupPoseidon(): Promise<void> {
+  await getPoseidon();
 }
 
 /** Generic Poseidon hash for arbitrary inputs. */
@@ -95,6 +108,26 @@ export function deserializeCommitmentNote(raw: SerializedCommitmentNote): Commit
     pubKeyAx: BigInt(raw.pubKeyAx),
     pubKeyAy: BigInt(raw.pubKeyAy),
   };
+}
+
+export interface MerkleProof {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+}
+
+// structuredClone supports bigint natively, so the wire format is the
+// same as the runtime shape — the serde functions are passthroughs but
+// kept for API symmetry with the other `Serialized*` types and to keep
+// the wire-vs-runtime distinction visible at the call site.
+export type SerializedMerkleProof = MerkleProof;
+
+export function serializeMerkleProof(proof: MerkleProof): SerializedMerkleProof {
+  return proof;
+}
+
+export function deserializeMerkleProof(raw: SerializedMerkleProof): MerkleProof {
+  return raw;
 }
 
 /**

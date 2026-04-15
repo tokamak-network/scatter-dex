@@ -11,12 +11,7 @@ setupProverWorker({
   prove: generateClaimProof,
   serializeOutput: (out) => serializeClaimOutput(out) as unknown as Record<string, unknown>,
   preload: async () => {
-    const [, circomlib] = await Promise.all([
-      import("snarkjs"),
-      import("circomlibjs"),
-      import("./claim-prover"),
-      import("./commitment"),
-    ]);
-    await circomlib.buildPoseidon();
+    const { warmupPoseidon } = await import("./commitment");
+    await Promise.all([import("snarkjs"), warmupPoseidon()]);
   },
 });
