@@ -31,7 +31,8 @@ import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
 import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
-import { generateCancelProofInWorker } from "../../lib/zk/cancel-worker-client";
+import { generateCancelProofInWorker, terminateCancelWorker } from "../../lib/zk/cancel-worker-client";
+import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
 import MarketOrderFeeBreakdown from "../../components/MarketOrderFeeBreakdown";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -150,6 +151,8 @@ export default function PrivateHistoryPage() {
     if (typeof window === "undefined") return;
     if (hasFolderSelected()) setFolderName(getFolderName());
   }, []);
+
+  useTerminateWorkerOnUnmount(terminateCancelWorker);
 
   useEffect(() => {
     if (!account || !hasFolderSelected()) return;

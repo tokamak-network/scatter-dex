@@ -13,9 +13,16 @@ export interface ClientHandlers<I, O> {
   wipeSerialized?: (serialized: Record<string, unknown>) => void;
 }
 
+export interface TerminateOptions {
+  // When set, an in-flight prove call's promise is dropped (orphaned for
+  // GC) instead of rejected. Used by page-unmount cleanup so the page's
+  // catch handler doesn't fire `setState` on an unmounted component.
+  silent?: boolean;
+}
+
 export interface ProverWorkerClient<I, O> {
   prove(input: I): Promise<O>;
-  terminate(): void;
+  terminate(options?: TerminateOptions): void;
 }
 
 export function createProverWorkerClient<I, O>(
@@ -125,14 +132,16 @@ export function createProverWorkerClient<I, O>(
     });
   }
 
-  function terminate(): void {
+  function terminate(options?: TerminateOptions): void {
     worker?.terminate();
     worker = null;
-    if (activeReject) {
-      const reject = activeReject;
-      activeReject = null;
+    if (!activeReject) return;
+    const reject = activeReject;
+    activeReject = null;
+    if (!options?.silent) {
       reject(new Error(`[${handlers.label}] Worker terminated mid-proof`));
     }
+    // silent: drop the reject reference, let the orphaned promise GC.
   }
 
   return { prove, terminate };

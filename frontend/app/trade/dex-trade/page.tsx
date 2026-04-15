@@ -7,6 +7,8 @@ import { ethers } from "ethers";
 import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, ArrowLeftRight } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
+import { terminateAuthorizeWorker } from "../../lib/zk/authorize-worker-client";
+import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
 import { getTradableTokens } from "../../lib/tokens";
 import EmptyState from "../../components/EmptyState";
 import { useTokenPair } from "../../lib/useTokenPair";
@@ -63,6 +65,7 @@ function DexTradeLoading() {
 function DexTradePageInner() {
   const { account, signer, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
+  useTerminateWorkerOnUnmount(terminateAuthorizeWorker);
   const tokens = useMemo(() => getTradableTokens(), []);
 
   const zkRelayers = useMemo(() =>

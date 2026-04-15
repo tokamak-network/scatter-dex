@@ -1,6 +1,4 @@
 import {
-  serializeCommitmentNote,
-  deserializeCommitmentNote,
   serializeMerkleProof,
   deserializeMerkleProof,
   type SerializedCommitmentNote,
@@ -34,7 +32,7 @@ export interface SerializedCancelOutput {
 
 export function serializeCancelInput(input: CancelProofInput): SerializedCancelInput {
   const result: SerializedCancelInput = {
-    note: serializeCommitmentNote(input.note),
+    note: input.note,
     leafIndex: input.leafIndex,
     nonce: input.nonce.toString(),
     relayer: input.relayer,
@@ -52,7 +50,7 @@ export function serializeCancelInput(input: CancelProofInput): SerializedCancelI
 
 export function deserializeCancelInput(raw: SerializedCancelInput): CancelProofInput {
   return {
-    note: deserializeCommitmentNote(raw.note),
+    note: raw.note,
     leafIndex: raw.leafIndex,
     allLeaves: raw.allLeaves,
     merkleProof: raw.merkleProof ? deserializeMerkleProof(raw.merkleProof) : undefined,
