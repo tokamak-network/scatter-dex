@@ -40,7 +40,7 @@ import { getPrivateSettlementAddress } from "../../lib/config";
 import { getReadProvider } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { useTokenEthPrice } from "../../lib/useTokenEthPrice";
-import { estimateMinFeeBps, type GasEstimate } from "../../lib/gasEstimate";
+import { estimateMinFeeBps, formatGasEth, type GasEstimate } from "../../lib/gasEstimate";
 import FeeBreakdown from "../../components/FeeBreakdown";
 import PricePanel from "../../components/PricePanel";
 import AggregatorQuotePanel from "../../components/AggregatorQuotePanel";
@@ -1500,11 +1500,25 @@ function PrivateOrderPageInner() {
                   className="flex w-full justify-between text-error/80 cursor-pointer hover:text-error transition-colors"
                   onClick={() => setFeeBreakdownOpen(!feeBreakdownOpen)}
                 >
-                  <span>Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%) ▾</span>
+                  <span>
+                    Relay fee ({(effectiveFeeBps / 100).toFixed(2)}%)
+                    {minFeeBps > feeBps && (
+                      <span className="ml-1 text-[10px] font-normal text-error/60">
+                        — bumped up to cover gas
+                      </span>
+                    )}
+                    {" "}▾
+                  </span>
                   <span className="font-mono">
                     −{(parseFloat(buyAmount) * effectiveFeeBps / 10000).toFixed(4)} {buyToken?.symbol}
                   </span>
                 </button>
+                {gasEstimate && !feeBreakdownOpen && (
+                  <div className="flex justify-between text-[10px] text-on-surface-variant/70 -mt-1">
+                    <span>↳ includes gas coverage</span>
+                    <span className="font-mono">~{formatGasEth(gasEstimate.totalGasWei)} ETH</span>
+                  </div>
+                )}
                 {feeBreakdownOpen && gasEstimate && (
                   <FeeBreakdown gasEstimate={gasEstimate} baseFeeBps={feeBps} minFeeBps={minFeeBps} effectiveFeeBps={effectiveFeeBps} claimCount={claims.length} />
                 )}
