@@ -33,6 +33,7 @@ import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
 import { generateCancelProofInWorker } from "../../lib/zk/cancel-worker-client";
 import MarketOrderFeeBreakdown from "../../components/MarketOrderFeeBreakdown";
+import EmptyState from "../../components/EmptyState";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "text-yellow-400",
@@ -472,13 +473,15 @@ export default function PrivateHistoryPage() {
 
   if (!account) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
-        <ClipboardList className="w-12 h-12 mb-4 opacity-40" />
-        <p className="text-lg font-medium mb-4">Connect wallet to view private order history</p>
-        <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
-          Connect Wallet
-        </button>
-      </div>
+      <EmptyState
+        icon={ClipboardList}
+        title="Connect wallet to view private order history"
+        action={
+          <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
+            Connect Wallet
+          </button>
+        }
+      />
     );
   }
 
