@@ -135,6 +135,11 @@ export function createProverWorkerClient<I, O>(
   function terminate(options?: TerminateOptions): void {
     worker?.terminate();
     worker = null;
+    // Always clear the single-flight slot. Without this, a silent
+    // terminate would orphan the in-flight promise (which now never
+    // settles, since the worker is gone) and the next `prove()` call
+    // would `await inFlight` forever — see PR #344 review #3085975266.
+    inFlight = null;
     if (!activeReject) return;
     const reject = activeReject;
     activeReject = null;
