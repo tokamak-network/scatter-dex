@@ -92,10 +92,14 @@ export class OrderbookDB {
         created_at         INTEGER NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_settle_submitter   ON settlements(submitter, block_time);
-      CREATE INDEX IF NOT EXISTS idx_settle_maker       ON settlements(maker_relayer, block_time);
-      CREATE INDEX IF NOT EXISTS idx_settle_taker       ON settlements(taker_relayer, block_time);
-      CREATE INDEX IF NOT EXISTS idx_settle_pair        ON settlements(sell_token, buy_token, block_time);
+      -- Composite secondary key is block_number (not block_time) so
+      -- listSettlements' ORDER BY block_number DESC can stream straight
+      -- off the index without a filesort. block_time is nullable in
+      -- Phase 2.5a (verify job backfills it), so it's a poor sort key.
+      CREATE INDEX IF NOT EXISTS idx_settle_submitter   ON settlements(submitter, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_maker       ON settlements(maker_relayer, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_taker       ON settlements(taker_relayer, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_pair        ON settlements(sell_token, buy_token, block_number);
       CREATE INDEX IF NOT EXISTS idx_settle_block       ON settlements(block_number);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_m ON settlements(maker_nullifier);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_t ON settlements(taker_nullifier);
@@ -350,7 +354,10 @@ export class OrderbookDB {
     let buyToken = payload.buyToken;
     let sellAmount = payload.sellAmount;
     let buyAmount = payload.buyAmount;
-    if (payload.makerOrderId && (!sellToken || !buyToken)) {
+    // Snapshot any field the client omitted, not just the tokens — a
+    // client that supplies tokens but omits amounts (or vice versa) still
+    // benefits from filling in the gaps from the still-present order row.
+    if (payload.makerOrderId && (!sellToken || !buyToken || !sellAmount || !buyAmount)) {
       const makerOrder = this.getOrder(payload.makerOrderId);
       if (makerOrder) {
         sellToken ??= makerOrder.order.sellToken;
@@ -406,7 +413,11 @@ export class OrderbookDB {
       params.push(a, b, b, a);
     }
     if (typeof filter.since === "number") {
-      where.push("block_time >= ?");
+      // block_time is nullable in Phase 2.5a (verify job backfills it).
+      // Without COALESCE, fresh rows pushed before the verifier ran would
+      // be invisible to "recent settlements" queries — fall back to
+      // created_at (server clock) so they still appear.
+      where.push("COALESCE(block_time, created_at) >= ?");
       params.push(filter.since);
     }
     const limit = Math.min(filter.limit ?? 100, 500);

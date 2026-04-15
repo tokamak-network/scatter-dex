@@ -233,7 +233,7 @@ export class AuthorizeSubmitter {
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
       const authSettleStart = Date.now();
-      const { txHash } = await sendAndWait(
+      const { txHash, receipt } = await sendAndWait(
         () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
         {
@@ -255,14 +255,14 @@ export class AuthorizeSubmitter {
       this.persistSettledClaimsRoot(params.taker.claimsRoot, "settleAuth taker", txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
 
-      // Best-effort push to the shared-OB indexer. Skip when the block
-      // number isn't available — the on-chain backfill scan in Phase 2.5b
-      // will pick the row up rather than us storing a sentinel 0.
-      this.fetchBlockNumber(txHash).then((blockNumber) => {
-        if (blockNumber === null) return;
+      // Best-effort push to the shared-OB indexer. Reuses the receipt we
+      // already have from sendAndWait (no extra RPC). Skipped entirely
+      // when no pusher is configured so an indexer-less deployment pays
+      // nothing for this hook.
+      if (this.settlementPusher) {
         this.firePush({
           txHash,
-          blockNumber,
+          blockNumber: receipt.blockNumber,
           makerNullifier: makerPs.nullifier,
           takerNullifier: takerPs.nullifier,
           feeMaker: feeTokenMaker.toString(),
@@ -277,28 +277,10 @@ export class AuthorizeSubmitter {
           takerOrderId: pushExtras?.takerOrderId,
           takerRelayer: pushExtras?.takerRelayer,
         });
-      }).catch(() => { /* fetchBlockNumber logs; nothing more to do */ });
+      }
 
       return txHash;
     });
-  }
-
-  // Resolves the block number from the receipt — block_time is left for
-  // the verify job (Phase 2.5b) to backfill so we don't pay an extra RPC
-  // on every settle. Returns null when the receipt isn't available, in
-  // which case the push is skipped (the on-chain backfill scan in 2.5b
-  // will pick the row up).
-  private async fetchBlockNumber(txHash: string): Promise<number | null> {
-    try {
-      const receipt = await this.provider.getTransactionReceipt(txHash);
-      return receipt ? receipt.blockNumber : null;
-    } catch (err) {
-      console.warn(
-        "[authorize-submitter] fetchBlockNumber failed:",
-        err instanceof Error ? err.message : "unknown",
-      );
-      return null;
-    }
   }
 
   /**

@@ -48,13 +48,24 @@ export interface SettlementListFilter {
 
 const HEX_BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
+const DECIMAL_RE = /^\d+$/;
 
 function isStringField(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
 }
 
+function isNonNegativeBigInt(v: unknown): boolean {
+  if (!isStringField(v)) return false;
+  if (!DECIMAL_RE.test(v)) return false;
+  // Cheap shape check above; BigInt() wouldn't throw on "0" or huge values
+  // but DECIMAL_RE already rules out signs / exponents / hex.
+  return true;
+}
+
 /** Validates and normalises an incoming settlement payload. Throws with a
- *  human-readable message on bad input — caller maps to 400. */
+ *  human-readable message on bad input — caller maps to 400. Optional
+ *  fields, when *present*, are also validated: silently dropping a
+ *  bad-but-present field would mask client bugs. */
 export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("body must be a JSON object");
@@ -64,8 +75,8 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (!isStringField(r.txHash) || !HEX_BYTES32.test(r.txHash)) {
     throw new Error("txHash: must be a 0x-prefixed 32-byte hex string");
   }
-  if (!Number.isFinite(r.blockNumber) || (r.blockNumber as number) < 0) {
-    throw new Error("blockNumber: must be a non-negative number");
+  if (!Number.isSafeInteger(r.blockNumber) || (r.blockNumber as number) < 0) {
+    throw new Error("blockNumber: must be a non-negative integer");
   }
   if (!isStringField(r.makerRelayer) || !HEX_ADDR.test(r.makerRelayer)) {
     throw new Error("makerRelayer: must be a 0x-prefixed 20-byte address");
@@ -77,7 +88,9 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     if (!isStringField(r[f])) throw new Error(`${f}: must be a non-empty string`);
   }
   for (const f of ["feeMaker", "feeTaker"] as const) {
-    if (!isStringField(r[f])) throw new Error(`${f}: must be a non-empty decimal string`);
+    if (!isNonNegativeBigInt(r[f])) {
+      throw new Error(`${f}: must be a non-negative decimal string`);
+    }
   }
   for (const f of ["userMaxFeeMaker", "userMaxFeeTaker"] as const) {
     const v = r[f];
@@ -86,9 +99,29 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     }
   }
 
+  // Optional snapshot fields — when *present*, validate them. Silently
+  // dropping a bad-but-present token field would mask client bugs.
+  if (r.blockTime !== undefined) {
+    if (!Number.isSafeInteger(r.blockTime) || (r.blockTime as number) < 0) {
+      throw new Error("blockTime: must be a non-negative integer (unix seconds)");
+    }
+  }
+  if (r.sellToken !== undefined && (!isStringField(r.sellToken) || !HEX_ADDR.test(r.sellToken))) {
+    throw new Error("sellToken: must be a 0x-prefixed 20-byte address when provided");
+  }
+  if (r.buyToken !== undefined && (!isStringField(r.buyToken) || !HEX_ADDR.test(r.buyToken))) {
+    throw new Error("buyToken: must be a 0x-prefixed 20-byte address when provided");
+  }
+  if (r.sellAmount !== undefined && !isNonNegativeBigInt(r.sellAmount)) {
+    throw new Error("sellAmount: must be a non-negative decimal string when provided");
+  }
+  if (r.buyAmount !== undefined && !isNonNegativeBigInt(r.buyAmount)) {
+    throw new Error("buyAmount: must be a non-negative decimal string when provided");
+  }
+
   const out: SettlementInsert = {
     txHash: r.txHash.toLowerCase(),
-    blockNumber: Number(r.blockNumber),
+    blockNumber: r.blockNumber as number,
     makerRelayer: (r.makerRelayer as string).toLowerCase(),
     makerNullifier: r.makerNullifier as string,
     takerNullifier: r.takerNullifier as string,
@@ -97,16 +130,14 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     userMaxFeeMaker: r.userMaxFeeMaker as number,
     userMaxFeeTaker: r.userMaxFeeTaker as number,
   };
-  if (typeof r.blockTime === "number" && Number.isFinite(r.blockTime)) {
-    out.blockTime = r.blockTime;
-  }
+  if (typeof r.blockTime === "number") out.blockTime = r.blockTime;
   if (r.takerRelayer) out.takerRelayer = (r.takerRelayer as string).toLowerCase();
   if (isStringField(r.makerOrderId)) out.makerOrderId = r.makerOrderId;
   if (isStringField(r.takerOrderId)) out.takerOrderId = r.takerOrderId;
-  if (isStringField(r.sellToken) && HEX_ADDR.test(r.sellToken)) out.sellToken = (r.sellToken as string).toLowerCase();
-  if (isStringField(r.buyToken) && HEX_ADDR.test(r.buyToken)) out.buyToken = (r.buyToken as string).toLowerCase();
-  if (isStringField(r.sellAmount)) out.sellAmount = r.sellAmount;
-  if (isStringField(r.buyAmount)) out.buyAmount = r.buyAmount;
+  if (r.sellToken) out.sellToken = (r.sellToken as string).toLowerCase();
+  if (r.buyToken) out.buyToken = (r.buyToken as string).toLowerCase();
+  if (r.sellAmount) out.sellAmount = r.sellAmount as string;
+  if (r.buyAmount) out.buyAmount = r.buyAmount as string;
 
   return out;
 }
