@@ -196,32 +196,40 @@ export default function RelayersPage() {
   const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
   const selected = useMemo(() => selectedIdx !== null ? relayers[selectedIdx] : null, [selectedIdx, relayers]);
 
-  // Fetch all pair orderbooks for the selected relayer (or all online relayers for Network view)
+  // Build per-relayer × per-pair orderbook view by filtering the shared
+  // orderbook in a single fetch. Each relayer publishes its open orders
+  // to shared OB, so filtering by `relayer` reconstructs the per-relayer
+  // book without per-relayer endpoints.
   const loadOrderbooks = useCallback(async (target: RelayerInfo | null) => {
     const targets = target && target.online ? [target] : onlineRelayers;
     if (targets.length === 0 || pairOptions.length === 0) return;
     setObLoading(true);
 
-    const results = new Map<string, Map<string, RelayerOrderbook>>();
+    let allOrders: SharedOrder[] = [];
+    try {
+      allOrders = await getOrders(500);
+    } catch { /* shared OB unreachable — leave books empty */ }
 
-    await Promise.allSettled(
-      targets.map(async (r) => {
-        const pairResults = new Map<string, RelayerOrderbook>();
-        await Promise.allSettled(
-          pairOptions.map(async (p) => {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            try {
-              const res = await fetch(`${r.url}/api/private-orderbook/${p.value}`, { signal: controller.signal });
-              if (res.ok) pairResults.set(p.value, await res.json());
-            } catch { /* skip */ } finally {
-              clearTimeout(timeout);
-            }
-          })
-        );
-        results.set(r.address, pairResults);
-      })
-    );
+    const results = new Map<string, Map<string, RelayerOrderbook>>();
+    for (const r of targets) {
+      const pairResults = new Map<string, RelayerOrderbook>();
+      const relayerOrders = allOrders.filter(
+        (o) => o.relayer.toLowerCase() === r.address.toLowerCase()
+      );
+      // `maker` carries the EdDSA pubKeyAx (per-trader identifier) — the
+      // wallet address never appears in shared OB summaries.
+      for (const p of pairOptions) {
+        const [tA, tB] = p.value.split("-").map((s) => s.toLowerCase());
+        const sells = relayerOrders
+          .filter((o) => o.sellToken.toLowerCase() === tA && o.buyToken.toLowerCase() === tB)
+          .map((o) => ({ maker: o.pubKeyAx, sellAmount: o.sellAmount, buyAmount: o.buyAmount }));
+        const buys = relayerOrders
+          .filter((o) => o.sellToken.toLowerCase() === tB && o.buyToken.toLowerCase() === tA)
+          .map((o) => ({ maker: o.pubKeyAx, sellAmount: o.sellAmount, buyAmount: o.buyAmount }));
+        pairResults.set(p.value, { pair: p.value, sells, buys });
+      }
+      results.set(r.address, pairResults);
+    }
 
     setOrderbooks(results);
     setObLoading(false);

@@ -1886,11 +1886,6 @@ function PrivateOrderPageInner() {
             <PricePanel
               sellSymbol={sellToken?.symbol}
               buySymbol={buyToken?.symbol}
-              sellTokenAddress={sellToken?.address}
-              buyTokenAddress={buyToken?.address}
-              sellDecimals={sellToken?.decimals}
-              buyDecimals={buyToken?.decimals}
-              relayerUrl={process.env.NEXT_PUBLIC_ZK_RELAYER_URL || process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3002"}
               side="sell"
               onSelectPrice={handlePriceSelect}
               disableAutoApply={searchParams.has("sell") || searchParams.has("buy") || searchParams.has("sellAmount") || searchParams.has("buyAmount")}
