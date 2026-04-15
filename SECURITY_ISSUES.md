@@ -17,8 +17,8 @@
 | 21 | infra | 테스트넷 배포 (Sepolia / Titan L2) | ⬜ | 최근 fee redesign / cross-relayer / claim guard 모두 main 반영됨, 좋은 타이밍 |
 | 27 | UX | Cancel "Commitment rotation" 친화적 설명 | ✅ | `private-history/page.tsx:712` 친화적 2-line 메시지로 교체 — "Order cancelled successfully" + "Your sell tokens stay safe in your private balance under a new note" (2026-04-15) |
 | 28 | UX | 가스비 추정 패널 가시성 강화 | ✅ | `private-order/page.tsx` 접힌 상태에서도 "↳ includes gas coverage ~X.XXXX ETH" 인라인 표시. `minFeeBps > feeBps` 인 경우 "bumped up to cover gas" 라벨 추가 (2026-04-15) |
-| 29 | tech-debt | Dead `private_orders` / full-proof 경로 정리 | ⬜ | 아래 #29 메모 참고 |
-| 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ⬜ | `OrderSummary` 와 P2P 라우트 검증 필드 불일치로 P2P fallback 시 authorize 매칭이 동작하지 않음. PR #308 Copilot finding |
+| 29 | tech-debt | Dead `private_orders` / full-proof 경로 정리 | ✅ | PR #316 / 커밋 `e4f5da5` — `PrivateOrderbook`/`PrivateMatcher`/cross-relayer-matcher/관련 테스트 5개 삭제. 컨트랙트 `PrivateSettlement.settlePrivate()` 도 source에서 제거. 배포 반영은 #21 테스트넷 배포 시 적용 (2026-04-15) |
+| 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ✅ | PR #318 / 커밋 `a046240` — POST 검증에서 `nonce` 제거, DELETE 권한 체크를 `lookupOrderRelayer` 콜백으로 교체. authorize 오더가 P2P fallback에서 정상 매칭됨 (2026-04-15) |
 | 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ✅ | `routes/authorize-orders.ts` 에 `ordersByPair` 인덱스 추가. `findMatch` + `AuthorizeCrossRelayerMatchService.onRemoteOrderArrived` 모두 pair lookup 사용 (2026-04-15) |
 | R-14 | relayer | 부하 테스트 (k6/artillery) | ⬜ | 동시 주문/정산 부하 시나리오 |
 

@@ -305,11 +305,11 @@ ls -lh zk-relayer.db*
 # Verify integrity
 sqlite3 zk-relayer.db "PRAGMA integrity_check;"
 
-# Check pending orders
-sqlite3 zk-relayer.db "SELECT COUNT(*) FROM private_orders WHERE status='pending';"
-
-# Check authorize orders
+# Check pending orders (active path — Half-proof / authorize)
 sqlite3 zk-relayer.db "SELECT COUNT(*) FROM authorize_orders WHERE status='pending';"
+
+# Inspect legacy private_orders (archival only — see Tables section below)
+sqlite3 zk-relayer.db "SELECT COUNT(*) FROM private_orders;"
 ```
 
 ---
@@ -320,9 +320,9 @@ sqlite3 zk-relayer.db "SELECT COUNT(*) FROM authorize_orders WHERE status='pendi
 
 | Table | Purpose |
 |-------|---------|
-| `private_orders` | Order history (all statuses) |
-| `private_claims` | Claim payout distribution per order |
-| `authorize_orders` | Half-proof order persistence |
+| `authorize_orders` | **Active** — Half-proof order persistence (the only intake path post-S-M14 / PR #215) |
+| `private_orders` | **Legacy / archival** — Full-proof order history. The intake endpoint (`POST /api/private-orders`) is 410 Gone since PR #316; rows here are pre-migration history kept for stats. |
+| `private_claims` | **Legacy / archival** — Claim payout distribution per legacy private order (same status as `private_orders`). |
 | `settled_claims_roots` | Prevents duplicate gasless claims |
 | `pending_txs` | TX recovery on restart |
 | `trade_offers` | Cross-relayer audit trail |
