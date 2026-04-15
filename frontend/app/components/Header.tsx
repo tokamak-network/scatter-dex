@@ -57,16 +57,20 @@ function shortenRpc(url: string) {
 }
 
 // Single source of truth for the active-route rule used by both the
-// desktop nav bar and the mobile drawer.
+// desktop nav bar and the mobile drawer. Match on a path-segment
+// boundary so `/identity` doesn't light up for a hypothetical
+// `/identity-verification` sibling route.
 function isLinkActive(pathname: string, href: string): boolean {
-  return pathname === href || (href !== "/" && pathname.startsWith(href));
+  return pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
 }
 
 function NavLink({ link, active, variant }: { link: NavLinkSpec; active: boolean; variant: "desktop" | "mobile" }) {
   const className =
     variant === "desktop"
-      ? `text-sm font-medium transition-colors ${
-          active ? "text-primary border-b-2 border-primary pb-1" : "text-on-surface-variant hover:text-on-surface"
+      ? // Always reserve the underline space (transparent on inactive)
+        // so the link doesn't jump vertically when it becomes active.
+        `text-sm font-medium transition-colors border-b-2 pb-1 ${
+          active ? "text-primary border-primary" : "text-on-surface-variant border-transparent hover:text-on-surface"
         }`
       : `px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
           active ? "bg-primary/10 text-primary" : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
@@ -103,12 +107,22 @@ export default function Header() {
   // doesn't ghost-scroll when the user drags inside the panel. Cleanup
   // restores the original value (not just `""`) so other code that
   // controls overflow keeps working after the drawer closes.
+  //
+  // Also force-close the drawer if the viewport crosses the `md`
+  // breakpoint while it's open. The drawer + hamburger themselves are
+  // CSS-hidden via `md:hidden`, but `menuOpen` would otherwise stay
+  // true — pinning `body { overflow: hidden }` on a desktop viewport
+  // with no visible close affordance.
   useEffect(() => {
     if (!menuOpen) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = (e: MediaQueryListEvent) => { if (e.matches) setMenuOpen(false); };
+    mq.addEventListener("change", onChange);
     return () => {
       document.body.style.overflow = previous;
+      mq.removeEventListener("change", onChange);
     };
   }, [menuOpen]);
 
