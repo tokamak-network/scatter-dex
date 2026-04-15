@@ -673,7 +673,7 @@ function PrivateOrderPageInner() {
       setSigningProgress("");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, maxFeeBps]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, effectiveFeeBps, zkRelayers, selectedRelayerIdx, changeAmount]);
 
   if (!account) {
     return (

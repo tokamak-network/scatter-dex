@@ -416,12 +416,18 @@ function DexTradePageInner() {
       const feeParsed = Math.round(parseFloat(bestDexPrice?.fee ?? "0") * 10000);
       const feeTier = [100, 500, 3000, 10000].includes(feeParsed) ? feeParsed : undefined;
 
+      // On-chain `settleWithDex` requires the DEX `amountOut >= totalLocked`.
+      // Using totalLocked as minReceive (tighter than parsedBuy) matches the
+      // contract's own check and prevents a revert when claims happen to sum
+      // slightly above the signed buyAmount.
+      const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
+
       const swapRoute = await getBestSwapRoute({
         chainId: currentChainId,
         sellToken: sellToken.address,
         buyToken: buyToken.address,
         sellAmount: swapAmountIn,
-        minReceive: parsedBuy,
+        minReceive: totalLocked,
         recipient: settlementAddr,
         slippageBps: parseInt(slippageBps) || 50,
         feeTier,
@@ -429,8 +435,6 @@ function DexTradePageInner() {
       if (process.env.NODE_ENV === "development") {
         console.log(`DEX route: ${swapRoute.source} (estimated: ${ethers.formatUnits(swapRoute.estimatedOutput, buyToken.decimals)} ${buyToken.symbol})`);
       }
-
-      const totalLocked = claimData.reduce((sum, c) => sum + BigInt(c.amount), 0n);
       const proofA = [BigInt(proofResult.proof.a[0]), BigInt(proofResult.proof.a[1])];
       const proofB = [
         [BigInt(proofResult.proof.b[0][0]), BigInt(proofResult.proof.b[0][1])],
@@ -504,7 +508,7 @@ function DexTradePageInner() {
       if (change > 0n && changeSalt) {
         try {
           await saveNote({ note: { ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token, amount: change, salt: changeSalt, pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy },
-            commitment: "0x" + expectedChangeCommitment.toString(16), tokenSymbol: sellToken.symbol, tokenAddress: sellToken.address,
+            commitment: toBytes32Hex(expectedChangeCommitment), tokenSymbol: sellToken.symbol, tokenAddress: sellToken.address,
             amount: ethers.formatUnits(change, sellToken.decimals), leafIndex: -1, txHash: tx.hash, createdAt: Date.now() });
         } catch { /* */ }
       }
@@ -783,7 +787,12 @@ function DexTradePageInner() {
                   {!marketPrice && dexPrices.some(p => p.loading) && (
                     <div className="text-xs text-warning mt-1">Loading DEX prices...</div>
                   )}
-                  {!marketPrice && !dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null) && (
+                  {/* Show the manual-price input whenever DEX prices are
+                      unavailable OR the user is currently using a manual
+                      value. Without the manual-source branch the input would
+                      vanish the instant typing promotes `marketPrice` to the
+                      parsed manual value, blocking further edits. */}
+                  {(!dexPrices.some(p => p.loading) && !dexPrices.some(p => p.recommended && p.netPrice !== null)) || marketPriceSource === "manual" ? (
                     <div className="space-y-1 mt-1">
                       <div className="text-xs text-error" id="manual-price-label">DEX price unavailable. Enter price manually:</div>
                       <div className="flex gap-2 items-center">
@@ -796,7 +805,7 @@ function DexTradePageInner() {
                         />
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-on-surface-variant uppercase mb-2">Expiry</label>
