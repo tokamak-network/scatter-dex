@@ -94,7 +94,7 @@ export default function SettlementsPage() {
               <th className="text-left px-4 py-3 font-semibold">Block</th>
               <th className="text-left px-4 py-3 font-semibold">Path</th>
               <th className="text-left px-4 py-3 font-semibold">Pair / Amount</th>
-              <th className="text-left px-4 py-3 font-semibold">Counterparty</th>
+              <th className="text-left px-4 py-3 font-semibold">Relayer / Submitter</th>
               <th className="text-left px-4 py-3 font-semibold">Tx</th>
             </tr>
           </thead>
@@ -110,14 +110,14 @@ export default function SettlementsPage() {
               </td></tr>
             )}
             {filtered.map((r) => (
-              <SettlementTableRow key={`${r.txHash}-${r.path}`} row={r} tokenMap={tokenMap} />
+              <SettlementTableRow key={`${r.txHash}-${r.logIndex}`} row={r} tokenMap={tokenMap} />
             ))}
           </tbody>
         </table>
       </div>
 
       <p className="text-xs text-on-surface-variant/50 mt-3">
-        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Click the tx hash to see full details on a block explorer.
+        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Copy the tx hash into a block explorer to see full details.
       </p>
     </div>
   );

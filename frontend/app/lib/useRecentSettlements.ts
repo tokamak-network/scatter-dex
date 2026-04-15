@@ -12,6 +12,12 @@ export interface SettlementRow {
   path: SettlementPath;
   txHash: string;
   blockNumber: number;
+  /** Position of the tx within the block; used for stable ordering
+   *  when multiple settlements land in the same block. */
+  transactionIndex: number;
+  /** Position of the log within the tx; needed as a React key and as
+   *  a secondary sort key when a tx emits multiple settlement logs. */
+  logIndex: number;
   /** seconds since epoch; undefined until the block header is fetched */
   timestamp?: number;
   /** P2P: makerRelayer. DEX: submitter. */
@@ -48,12 +54,16 @@ export function useRecentSettlements(limit: number = 100): UseRecentSettlementsR
   // Trivial ID — incrementing triggers the effect below without relying on
   // a boolean flag that could miss back-to-back refreshes.
   const [tick, setTick] = useState(0);
-  const cancelRef = useRef(false);
+  // Per-run token: each effect increments `loadIdRef` and captures the new
+  // value locally. State updates only commit when the captured value is
+  // still current. A shared cancellation boolean is racy across rapid
+  // refreshes — the cleanup flip gets stomped by the next effect's reset.
+  const loadIdRef = useRef(0);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
-    cancelRef.current = false;
+    const runId = ++loadIdRef.current;
     setLoading(true);
     setError(null);
 
@@ -81,6 +91,8 @@ export function useRecentSettlements(limit: number = 100): UseRecentSettlementsR
             path: "p2p",
             txHash: e.transactionHash,
             blockNumber: e.blockNumber,
+            transactionIndex: e.transactionIndex,
+            logIndex: e.index,
             participant: String(e.args.makerRelayer),
             feeTokenMaker: BigInt(e.args.feeTokenMaker),
             feeTokenTaker: BigInt(e.args.feeTokenTaker),
@@ -92,6 +104,8 @@ export function useRecentSettlements(limit: number = 100): UseRecentSettlementsR
             path: "dex",
             txHash: e.transactionHash,
             blockNumber: e.blockNumber,
+            transactionIndex: e.transactionIndex,
+            logIndex: e.index,
             participant: String(e.args.submitter),
             sellToken: String(e.args.sellToken),
             buyToken: String(e.args.buyToken),
@@ -100,27 +114,41 @@ export function useRecentSettlements(limit: number = 100): UseRecentSettlementsR
           });
         }
 
-        merged.sort((a, b) => b.blockNumber - a.blockNumber);
+        // (block, tx, log) descending — stable across ties so refresh
+        // doesn't shuffle same-block events.
+        merged.sort((a, b) =>
+          b.blockNumber - a.blockNumber
+          || b.transactionIndex - a.transactionIndex
+          || b.logIndex - a.logIndex
+        );
         const trimmed = merged.slice(0, limit);
 
         // Block timestamps are fetched only for the trimmed set so the cost
         // scales with `limit`, not with every historical event. Cache hits
-        // short-circuit the RPC entirely.
+        // short-circuit the RPC entirely. `allSettled` keeps a single
+        // pruned / flaky node from nuking the whole page — timestamps are
+        // UI polish, not load-bearing.
         const uniqueBlocks = Array.from(new Set(trimmed.map((r) => r.blockNumber)));
         const toFetch = uniqueBlocks.filter((n) => !tsCache.has(n));
-        const fetched = await Promise.all(toFetch.map((n) => provider.getBlock(n)));
-        for (const b of fetched) if (b) tsCache.set(b.number, Number(b.timestamp));
+        const fetched = await Promise.allSettled(toFetch.map((n) => provider.getBlock(n)));
+        for (const r of fetched) {
+          if (r.status === "fulfilled" && r.value) {
+            tsCache.set(r.value.number, Number(r.value.timestamp));
+          }
+        }
         for (const r of trimmed) r.timestamp = tsCache.get(r.blockNumber);
 
-        if (!cancelRef.current) setRows(trimmed);
+        if (runId === loadIdRef.current) setRows(trimmed);
       } catch (e) {
-        if (!cancelRef.current) setError(e instanceof Error ? e.message : String(e));
+        if (runId === loadIdRef.current) {
+          console.error("useRecentSettlements: failed to fetch events:", e);
+          const err = e as { shortMessage?: string; reason?: string; message?: string };
+          setError(err?.shortMessage || err?.reason || err?.message || "Failed to load settlements");
+        }
       } finally {
-        if (!cancelRef.current) setLoading(false);
+        if (runId === loadIdRef.current) setLoading(false);
       }
     })();
-
-    return () => { cancelRef.current = true; };
   }, [limit, tick]);
 
   return { rows, loading, error, refresh };
