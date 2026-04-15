@@ -116,6 +116,11 @@ async function fetchUncached(url: string): Promise<ArrayBuffer> {
   const bytes = await response.arrayBuffer();
   memCache.set(url, bytes);
   if (db) {
+    // `void` (not `await`): the prove path needs `bytes` returned now.
+    // Awaiting the IDB write would block 5-50 ms desktop / 50-200 ms
+    // mobile for an 18 MB blob — directly between "bytes resolved" and
+    // "prove starts". Worst case (tab closed mid-tx) is one missed
+    // warm-cache opportunity next session, never a correctness loss.
     void idbPut(db, {
       url,
       bytes,
