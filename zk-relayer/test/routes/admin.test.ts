@@ -220,3 +220,89 @@ describe("/api/admin/sanctions", () => {
     expect(res.body.invalidIndices).toEqual([0]);
   });
 });
+
+describe("/api/admin/profile", () => {
+  it("GET returns {} by default", async () => {
+    const res = await request(buildApp()).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({});
+  });
+
+  it("PATCH persists fields + sets updatedAt + subsequent GET returns them", async () => {
+    const db = makeDbStub();
+    const app = buildApp({ db });
+
+    const patchRes = await request(app)
+      .patch("/api/admin/profile")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ name: "Acme Relayer", website: "https://acme.example" });
+
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.name).toBe("Acme Relayer");
+    expect(patchRes.body.website).toBe("https://acme.example");
+    expect(typeof patchRes.body.updatedAt).toBe("number");
+
+    const getRes = await request(app).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    expect(getRes.body.name).toBe("Acme Relayer");
+    expect(getRes.body.website).toBe("https://acme.example");
+  });
+
+  it("PATCH merges — absent fields preserve, empty string clears", async () => {
+    const db = makeDbStub();
+    const app = buildApp({ db });
+
+    await request(app).patch("/api/admin/profile").set("x-admin-key", ADMIN_KEY)
+      .send({ name: "First", description: "Desc" });
+
+    await request(app).patch("/api/admin/profile").set("x-admin-key", ADMIN_KEY)
+      .send({ description: "" }); // clear description only
+
+    const res = await request(app).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    expect(res.body.name).toBe("First");
+    expect(res.body.description).toBeUndefined();
+  });
+
+  it("PATCH rejects non-string fields with 400", async () => {
+    const res = await request(buildApp())
+      .patch("/api/admin/profile")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ name: 123 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/string/i);
+  });
+
+  it("PATCH rejects over-length field with 400", async () => {
+    const longName = "x".repeat(100);
+    const res = await request(buildApp())
+      .patch("/api/admin/profile")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ name: longName });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/exceeds/);
+  });
+
+  it("PATCH rejects logoUrl with disallowed scheme", async () => {
+    const res = await request(buildApp())
+      .patch("/api/admin/profile")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ logoUrl: "javascript:alert(1)" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/scheme|URL/i);
+  });
+
+  it("PATCH accepts ipfs:// logoUrl", async () => {
+    const res = await request(buildApp())
+      .patch("/api/admin/profile")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ logoUrl: "ipfs://bafy.../logo.png" });
+    expect(res.status).toBe(200);
+    expect(res.body.logoUrl).toBe("ipfs://bafy.../logo.png");
+  });
+
+  it("PATCH requires admin auth", async () => {
+    const res = await request(buildApp())
+      .patch("/api/admin/profile")
+      .send({ name: "nope" });
+    expect(res.status).toBe(401);
+  });
+});

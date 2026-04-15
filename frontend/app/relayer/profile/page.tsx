@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback, useMemo, type ElementType }
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import {
-  User, Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity, Timer,
+  Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity, Timer,
   Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft, Wallet, ArrowDownToLine,
 } from "lucide-react";
 import Link from "next/link";
@@ -14,6 +14,7 @@ import { getPrivateSettlementAddress } from "../../lib/config";
 import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
+import RelayerLogo from "../../components/RelayerLogo";
 
 interface Badge {
   id: string;
@@ -250,22 +251,64 @@ function RelayerProfileContent() {
       <div className="glass-card rounded-xl p-6 border border-outline-variant/10 space-y-4">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-              <User className="w-7 h-7 text-primary" />
-            </div>
+            <RelayerLogo logoUrl={relayer.api?.profile?.logoUrl} size={56} />
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-headline font-bold text-on-surface font-mono">
-                  {shortenAddress(relayer.address)}
+                <h1 className={`text-xl font-headline font-bold text-on-surface ${relayer.api?.profile?.name ? "" : "font-mono"}`}>
+                  {relayer.api?.profile?.name ?? shortenAddress(relayer.address)}
                 </h1>
                 <Circle className={`w-2.5 h-2.5 fill-current ${relayer.online ? "text-primary" : "text-error/40"}`} />
                 {relayer.api?.name?.includes("ZK") && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
                 )}
               </div>
+              {relayer.api?.profile?.name && (
+                <p className="text-xs text-on-surface-variant/50 font-mono mt-0.5">{shortenAddress(relayer.address)}</p>
+              )}
+              {relayer.api?.profile?.description && (
+                <p className="text-sm text-on-surface-variant/70 mt-1 max-w-xl">{relayer.api.profile.description}</p>
+              )}
               <p className="text-sm text-on-surface-variant/60 mt-0.5">
                 {relayer.api?.name ?? "Unknown"} {relayer.api?.version ? `v${relayer.api.version}` : ""}
               </p>
+              {(relayer.api?.profile?.website || relayer.api?.profile?.socialX || relayer.api?.profile?.contact) && (
+                <div className="flex flex-wrap items-center gap-3 mt-2 text-xs">
+                  {/* useRelayers.sanitizeProfile already filters out non-http(s)/ipfs
+                      schemes, but we re-check here as defense in depth so a future
+                      caller bypassing that helper can never inject javascript:/data: */}
+                  {relayer.api.profile.website && /^https?:\/\//i.test(relayer.api.profile.website) && (
+                    <a href={relayer.api.profile.website} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline">
+                      <Globe className="w-3 h-3" /> Website
+                    </a>
+                  )}
+                  {typeof relayer.api.profile.socialX === "string" && relayer.api.profile.socialX && (() => {
+                    const handle = relayer.api.profile.socialX.replace(/^@/, "");
+                    return (
+                      <a
+                        href={`https://x.com/${encodeURIComponent(handle)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-on-surface-variant/60 hover:text-primary transition-colors"
+                      >
+                        @{handle}
+                      </a>
+                    );
+                  })()}
+                  {relayer.api.profile.contact && (
+                    relayer.api.profile.contact.includes("@") ? (
+                      <a
+                        href={`mailto:${encodeURIComponent(relayer.api.profile.contact)}`}
+                        className="text-on-surface-variant/60 hover:text-primary transition-colors truncate max-w-[200px]"
+                      >
+                        {relayer.api.profile.contact}
+                      </a>
+                    ) : (
+                      <span className="text-on-surface-variant/60 truncate max-w-[200px]">{relayer.api.profile.contact}</span>
+                    )
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

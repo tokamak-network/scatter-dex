@@ -1,7 +1,9 @@
 import { Router, Request, Response } from "express";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
+import type { PrivateOrderDB } from "../core/db.js";
 import { config } from "../config.js";
 import { authorizeOrders } from "./authorize-orders.js";
+import { getProfile } from "../core/profile.js";
 
 function countPending(): number {
   let n = 0;
@@ -11,7 +13,7 @@ function countPending(): number {
   return n;
 }
 
-export function createInfoRoutes(submitter: PrivateSubmitter): Router {
+export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB): Router {
   const router = Router();
 
   router.get("/", (_req: Request, res: Response) => {
@@ -26,6 +28,9 @@ export function createInfoRoutes(submitter: PrivateSubmitter): Router {
       orderCount: countPending(),
       commitmentPool: config.commitmentPoolAddress,
       privateSettlement: config.privateSettlementAddress,
+      // Operator-set cosmetic metadata (name, description, logoUrl, ...).
+      // Empty object when nothing has been configured.
+      profile: getProfile(db),
     });
   });
 

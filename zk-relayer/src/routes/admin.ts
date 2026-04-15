@@ -1,14 +1,7 @@
 /**
  * [R-7] Admin API — runtime relayer management endpoints.
- *
  * All endpoints require x-admin-key header (timing-safe comparison).
- *
- * GET    /api/admin/status   — relayer status overview
- * GET    /api/admin/balance  — ETH balance of relayer wallet
- * PUT    /api/admin/fee      — change relayer fee (bps)
- * POST   /api/admin/pause    — pause order acceptance
- * POST   /api/admin/resume   — resume order acceptance
- * POST   /api/admin/drain    — cancel all pending orders
+ * See individual route handlers below for the full endpoint list.
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
@@ -17,6 +10,7 @@ import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import { getProfile, updateProfile, validateProfile } from "../core/profile.js";
 
 let paused = false;
 
@@ -209,6 +203,25 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
     console.log(`[admin] Removed ${removed} sanctioned pubKeys`);
     res.json({ removed });
+  });
+
+  // GET /api/admin/profile — read current operator-set profile.
+  router.get("/profile", (_req: Request, res: Response) => {
+    res.json(getProfile(db));
+  });
+
+  // PATCH /api/admin/profile — merge the provided fields onto the
+  // existing profile. Empty-string fields clear; absent fields preserve.
+  // Returns the merged profile on success.
+  router.patch("/profile", ...wl, (req: Request, res: Response) => {
+    try {
+      const patch = validateProfile(req.body);
+      const next = updateProfile(db, patch);
+      console.log("[admin] Profile updated");
+      res.json(next);
+    } catch (e: unknown) {
+      res.status(400).json({ error: e instanceof Error ? e.message : "invalid profile" });
+    }
   });
 
   return router;
