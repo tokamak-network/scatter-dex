@@ -33,6 +33,54 @@ import { isSanctionedById } from "../core/sanctions-list.js";
 export const authorizeOrders = new Map<string, StoredAuthorizeOrder>();
 /** Pending-order count per pubKey (key = "pubKeyAx:pubKeyAy"). O(1) lookup. */
 const pendingCountByPubKey = new Map<string, number>();
+
+// Same-token orders settle via `scatterDirectAuth` and never participate
+// in cross-token matching, so they are excluded from this index.
+const ordersByPair = new Map<string, Set<string>>();
+
+// Directional `(sell, buy)` key — distinct from the sorted/hex `pairKey`
+// in `types/authorize-order.ts` because matching here transposes
+// (taker.sell == maker.buy). Inputs may be hex addresses or decimal
+// signal strings; BigInt normalises both forms to a common key.
+function directedPairKey(sellToken: string, buyToken: string): string {
+  return `${BigInt(sellToken).toString()}:${BigInt(buyToken).toString()}`;
+}
+
+function indexAuthorizeOrder(nullifier: string, order: AuthorizeOrderFile): void {
+  const ps = order.publicSignals;
+  if (BigInt(ps.sellToken) === BigInt(ps.buyToken)) return;
+  const key = directedPairKey(ps.sellToken, ps.buyToken);
+  let bucket = ordersByPair.get(key);
+  if (!bucket) {
+    bucket = new Set();
+    ordersByPair.set(key, bucket);
+  }
+  bucket.add(nullifier);
+}
+
+function unindexAuthorizeOrder(nullifier: string, order: AuthorizeOrderFile): void {
+  const ps = order.publicSignals;
+  if (BigInt(ps.sellToken) === BigInt(ps.buyToken)) return;
+  const key = directedPairKey(ps.sellToken, ps.buyToken);
+  const bucket = ordersByPair.get(key);
+  if (!bucket) return;
+  bucket.delete(nullifier);
+  if (bucket.size === 0) ordersByPair.delete(key);
+}
+
+// Caller still filters by status/expiry/price.
+export function* lookupAuthorizeOrdersByCounterPair(
+  counterSellToken: string,
+  counterBuyToken: string,
+): Generator<[string, StoredAuthorizeOrder]> {
+  const key = directedPairKey(counterBuyToken, counterSellToken);
+  const bucket = ordersByPair.get(key);
+  if (!bucket) return;
+  for (const nullifier of bucket) {
+    const stored = authorizeOrders.get(nullifier);
+    if (stored) yield [nullifier, stored];
+  }
+}
 const MAX_AUTHORIZE_ORDERS = 10_000;
 const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
@@ -98,14 +146,22 @@ export function createAuthorizeOrderRoutes(
         if (typeof row.nullifier !== "string" || !/^[0-9]+$/.test(row.nullifier)) {
           throw new Error(`invalid nullifier shape: ${JSON.stringify(row.nullifier)}`);
         }
+        const orderObj = JSON.parse(row.orderJson) as AuthorizeOrderFile;
         authorizeOrders.set(row.nullifier, {
-          order: JSON.parse(row.orderJson),
+          order: orderObj,
           status: row.status as StoredAuthorizeOrder["status"],
           submittedAt: row.submittedAt,
           pubKeyAx: row.pubKeyAx,
           pubKeyAy: row.pubKeyAy,
           settleTxHash: row.settleTx ?? undefined,
         });
+        indexAuthorizeOrder(row.nullifier, orderObj);
+        // Rebuild the per-pubKey pending counter so MAX_ORDERS_PER_PUBKEY
+        // can't be bypassed by restarting the relayer. Only pending orders
+        // count — settled/cancelled rows already had their slot released.
+        if (row.status === "pending" && row.pubKeyAx && row.pubKeyAy) {
+          incPubKeyCount(row.pubKeyAx, row.pubKeyAy);
+        }
         restored++;
       } catch (err) {
         console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
@@ -202,6 +258,7 @@ export function createAuthorizeOrderRoutes(
         pubKeyAy,
       };
       authorizeOrders.set(nullifier, stored);
+      indexAuthorizeOrder(nullifier, order);
       _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
       // [R-8] Record order submission for throughput metrics
       recordOrderSubmitted();
@@ -364,40 +421,19 @@ export function createAuthorizeOrderRoutes(
 
 // ─── Simple matching logic ──────────────────────────────────────
 
-/**
- * Find a matching counterparty for the given order among pending
- * authorize orders. Uses the same token/price compatibility checks
- * as settleAuth on-chain (steps 3 and 4).
- *
- * This is a basic O(n) scan — sufficient for an MVP. A production
- * deployment would use the pair-indexed orderbook from orderbook.ts.
- */
+// Token/price compatibility mirrors settleAuth on-chain (steps 3-4).
 function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
   const inPs = incoming.order.publicSignals;
-
-  for (const [, candidate] of authorizeOrders) {
+  for (const [, candidate] of lookupAuthorizeOrdersByCounterPair(inPs.sellToken, inPs.buyToken)) {
     if (candidate === incoming) continue;
     if (candidate.status !== "pending") continue;
 
     const cPs = candidate.order.publicSignals;
-
-    // Skip same-token orders — they are handled by scatterDirectAuth, not matching
-    if (BigInt(cPs.sellToken) === BigInt(cPs.buyToken)) continue;
-
-    // Convention: the existing order is maker, the incoming is taker.
-    // isTokenCompatible is symmetric (A.sell==B.buy ∧ B.sell==A.buy),
-    // so only one call is needed.
     if (!isTokenCompatible(cPs, inPs)) continue;
-
-    // Price compatibility (same as settleAuth step 4)
     if (!isPriceCompatible(cPs, inPs)) continue;
 
-    return {
-      maker: candidate,
-      taker: incoming,
-    };
+    return { maker: candidate, taker: incoming };
   }
-
   return null;
 }
 
@@ -406,7 +442,7 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
  * Called by admin API to clear the order queue before maintenance or shutdown.
  */
 export function drainAuthorizeOrders(): number {
-  const toDelete: string[] = [];
+  const toDelete: Array<[string, StoredAuthorizeOrder]> = [];
   for (const [key, stored] of authorizeOrders) {
     if (stored.status !== "pending") continue;
     stored.status = "cancelled";
@@ -417,9 +453,10 @@ export function drainAuthorizeOrders(): number {
     if (_sharedClient) {
       void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
     }
-    toDelete.push(key);
+    toDelete.push([key, stored]);
   }
-  for (const key of toDelete) {
+  for (const [key, stored] of toDelete) {
+    unindexAuthorizeOrder(key, stored.order);
     authorizeOrders.delete(key);
   }
   return toDelete.length;
@@ -465,6 +502,7 @@ export function purgeNonPendingAuthorizeOrders(): number {
       if (_sharedClient) {
         void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
       }
+      unindexAuthorizeOrder(key, stored.order);
       authorizeOrders.delete(key);
       removed++;
     }

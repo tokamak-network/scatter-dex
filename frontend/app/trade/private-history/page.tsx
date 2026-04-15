@@ -707,9 +707,15 @@ export default function PrivateHistoryPage() {
                       <span className="break-all">{cancelError}</span>
                     </div>
                   ) : cancelStep === "done" ? (
-                    <div className="flex items-center gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
-                      <CheckCircle2 className="w-4 h-4 shrink-0" />
-                      <span>Order cancelled. Escrow rotated to new commitment.</span>
+                    <div className="flex items-start gap-2 text-sm text-emerald-400 bg-emerald-500/10 px-4 py-3 rounded-md">
+                      <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="font-medium">Order cancelled successfully.</div>
+                        <div className="text-xs text-emerald-400/80">
+                          Your sell tokens stay safe in your private balance under a new note —
+                          they&apos;re ready for your next order. No further action needed.
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-3 rounded-md">

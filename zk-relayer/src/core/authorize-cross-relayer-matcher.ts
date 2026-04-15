@@ -46,6 +46,11 @@ export interface AuthorizeTradeOfferResponse {
 
 export type OrderSettledCallback = (nullifier: string, txHash: string) => void;
 
+export type LookupAuthorizeOrdersByCounterPair = (
+  remoteSellToken: string,
+  remoteBuyToken: string,
+) => Iterable<[string, StoredAuthorizeOrder]>;
+
 export class AuthorizeCrossRelayerMatchService {
   private lockingOrders = new Set<string>();
 
@@ -55,6 +60,7 @@ export class AuthorizeCrossRelayerMatchService {
     private submitter: AuthorizeSubmitter,
     private ownRelayerAddress: string,
     private db: PrivateOrderDB | null,
+    private lookupByCounterPair: LookupAuthorizeOrdersByCounterPair,
     private onSettled?: OrderSettledCallback,
   ) {}
 
@@ -67,24 +73,16 @@ export class AuthorizeCrossRelayerMatchService {
     const now = BigInt(Math.floor(Date.now() / 1000));
     if (BigInt(summary.expiry) <= now) return;
 
-    const remoteSellToken = BigInt(summary.sellToken);
-    const remoteBuyToken = BigInt(summary.buyToken);
     const remoteSellAmount = BigInt(summary.sellAmount);
     const remoteBuyAmount = BigInt(summary.buyAmount);
 
-    for (const [nullifier, local] of this.authorizeOrders) {
+    // Pair index already enforces local.sell == remote.buy && local.buy == remote.sell.
+    for (const [nullifier, local] of this.lookupByCounterPair(summary.sellToken, summary.buyToken)) {
       if (local.status !== "pending") continue;
       if (this.lockingOrders.has(nullifier)) continue;
 
       const ps = local.order.publicSignals;
       if (BigInt(ps.expiry) <= now) continue;
-
-      // Skip same-token scatter — those settle via scatterDirectAuth, not matching.
-      if (BigInt(ps.sellToken) === BigInt(ps.buyToken)) continue;
-
-      // Token compatibility: local is taker → local.sell == remote.buy && local.buy == remote.sell
-      if (BigInt(ps.sellToken) !== remoteBuyToken) continue;
-      if (BigInt(ps.buyToken) !== remoteSellToken) continue;
 
       // Price compatibility (same formula as `isPriceCompatible`, transposed
       // to treat remote as maker and local as taker).

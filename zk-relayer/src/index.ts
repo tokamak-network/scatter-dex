@@ -14,7 +14,7 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair } from "./routes/authorize-orders.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
@@ -92,6 +92,7 @@ async function main() {
 
     authorizeCrossRelayerService = new AuthorizeCrossRelayerMatchService(
       authorizeOrders, sharedClient, authSubmitter, authSubmitter.getAddress(), db,
+      lookupAuthorizeOrdersByCounterPair,
     );
 
     sharedClient.onOrder((summary) => {

@@ -5,14 +5,15 @@ import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import {
   User, Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity, Timer,
-  Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft,
+  Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft, Wallet, ArrowDownToLine,
 } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { shortenAddress, formatBond, formatDuration } from "../../lib/utils";
+import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
+import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
 
 interface Badge {
   id: string;
@@ -195,6 +196,12 @@ function RelayerProfileContent() {
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadSettlements(); }, [loadSettlements]);
 
+  const earnings = useRelayerEarnings(validAddress);
+  const decimalsByToken = useMemo(
+    () => new Map(earnings.rows.map((r) => [r.token.toLowerCase(), r.decimals])),
+    [earnings.rows],
+  );
+
   const badges = useMemo(
     () => relayer ? computeBadges(relayer, stats) : [],
     [relayer, stats],
@@ -362,6 +369,72 @@ function RelayerProfileContent() {
           </div>
         ) : (
           <p className="text-xs text-on-surface-variant/40">No stats available (relayer offline).</p>
+        )}
+      </div>
+
+      {/* Earnings (FeeVault) */}
+      <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-on-surface flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-tertiary" /> Earnings
+          </h2>
+          {earnings.fromBlock != null && (
+            <span className="text-[10px] text-on-surface-variant/40" title="Lifetime totals are computed from FeeVault events scanned from this block onward. If NEXT_PUBLIC_DEPLOY_BLOCK isn't configured the scan starts at latest − 50 000, so older activity is not counted.">
+              scanned from #{earnings.fromBlock}
+            </span>
+          )}
+        </div>
+
+        {earnings.loading ? (
+          <div className="flex items-center gap-2 py-6 justify-center text-on-surface-variant/50 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading earnings...
+          </div>
+        ) : earnings.error ? (
+          <div className="flex items-center gap-2 text-sm text-on-surface-variant/40">
+            <AlertCircle className="w-4 h-4" /> {earnings.error}
+          </div>
+        ) : earnings.rows.length === 0 ? (
+          <p className="text-xs text-on-surface-variant/40">No fees earned yet.</p>
+        ) : (
+          <div className="space-y-1">
+            <div className="grid grid-cols-[1fr_120px_120px_120px] gap-2 text-[10px] text-on-surface-variant/30 uppercase tracking-wider px-3 py-1">
+              <span>Token</span>
+              <span className="text-right">Unclaimed</span>
+              <span className="text-right">Lifetime earned</span>
+              <span className="text-right">Lifetime claimed</span>
+            </div>
+            {earnings.rows.map((row) => (
+              <div key={row.token} className="grid grid-cols-[1fr_120px_120px_120px] gap-2 px-3 py-2 text-xs hover:bg-surface-bright/20 rounded transition-colors">
+                <span className="font-bold text-on-surface">{row.symbol}</span>
+                <span className="text-right font-mono text-on-surface">{formatTokenAmount(row.unclaimed, row.decimals)}</span>
+                <span className="text-right font-mono text-on-surface-variant/70">{formatTokenAmount(row.lifetimeEarned, row.decimals)}</span>
+                <span className="text-right font-mono text-on-surface-variant/50">{formatTokenAmount(row.lifetimeClaimed, row.decimals)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {earnings.recent.length > 0 && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-[11px] text-on-surface-variant/50 hover:text-on-surface-variant select-none rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50 px-1 -mx-1 py-0.5">
+              Recent activity (last {RECENT_ACTIVITY_LIMIT})
+            </summary>
+            <div className="mt-2 space-y-1">
+              {earnings.recent.map((a) => {
+                const dec = decimalsByToken.get(a.token.toLowerCase()) ?? 18;
+                return (
+                  <div key={`${a.txHash}-${a.logIndex}`} className="grid grid-cols-[80px_1fr_120px_80px] gap-2 px-3 py-1.5 text-[11px] hover:bg-surface-bright/20 rounded transition-colors">
+                    <span className={a.kind === "earned" ? "text-emerald-400" : "text-amber-400 inline-flex items-center gap-1"}>
+                      {a.kind === "earned" ? "+ earned" : <><ArrowDownToLine className="w-3 h-3" /> claimed</>}
+                    </span>
+                    <span className="font-mono text-primary truncate">{a.txHash}</span>
+                    <span className="text-right font-mono text-on-surface">{formatTokenAmount(a.amount, dec)} {a.symbol}</span>
+                    <span className="text-right text-on-surface-variant/40 font-mono">#{a.blockNumber}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </details>
         )}
       </div>
 

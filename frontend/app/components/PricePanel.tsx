@@ -1,25 +1,12 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import { ethers } from "ethers";
-import { Loader2, RefreshCw, Star } from "lucide-react";
-import { useMainnetPrice, getRecommendedPrice, type DexPrice } from "../lib/useDexPrices";
-import { RelayerClient, type OrderbookEntry } from "../lib/relayerApi";
-
-interface BookLevel {
-  price: number;
-  amount: number;
-  maker: string;
-}
+import { useEffect, useRef } from "react";
+import { RefreshCw, Star } from "lucide-react";
+import { useMainnetPrice, getRecommendedPrice } from "../lib/useDexPrices";
 
 interface PricePanelProps {
   sellSymbol?: string;
   buySymbol?: string;
-  sellTokenAddress?: string;
-  buyTokenAddress?: string;
-  sellDecimals?: number;
-  buyDecimals?: number;
-  relayerUrl?: string;
   side?: "buy" | "sell";
   /** Called when a price is selected (click or auto-recommend) */
   onSelectPrice?: (price: string) => void;
@@ -32,11 +19,6 @@ interface PricePanelProps {
 export default function PricePanel({
   sellSymbol,
   buySymbol,
-  sellTokenAddress,
-  buyTokenAddress,
-  sellDecimals,
-  buyDecimals,
-  relayerUrl,
   side,
   onSelectPrice,
   disableAutoApply,
@@ -62,53 +44,9 @@ export default function PricePanel({
     appliedRef.current = false;
   }, [sellSymbol, buySymbol]);
 
-  // ── zkScatter orderbook ──
-  const [bookAsks, setBookAsks] = useState<BookLevel[]>([]);
-  const [bookBids, setBookBids] = useState<BookLevel[]>([]);
-  const [bookLoading, setBookLoading] = useState(false);
-
-  useEffect(() => {
-    if (!sellTokenAddress || !buyTokenAddress || !relayerUrl || sellDecimals == null || buyDecimals == null) return;
-    let cancelled = false;
-    // Sort addresses to match relayer's pairKey() convention
-    const [addrA, addrB] = [sellTokenAddress, buyTokenAddress].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-    const pair = `${addrA}-${addrB}`;
-    const client = new RelayerClient(relayerUrl);
-
-    const fetchBook = async () => {
-      setBookLoading(true);
-      try {
-        const data = await client.getOrderbook(pair);
-        if (cancelled) return;
-        const toLevel = (e: OrderbookEntry): BookLevel => {
-          const sell = parseFloat(ethers.formatUnits(e.sellAmount, sellDecimals!));
-          const buy = parseFloat(ethers.formatUnits(e.buyAmount, buyDecimals!));
-          return { price: buy / sell, amount: sell, maker: e.maker };
-        };
-        setBookAsks(data.sells.map(toLevel).sort((a, b) => a.price - b.price).slice(0, 8));
-        setBookBids(data.buys.map(toLevel).sort((a, b) => b.price - a.price).slice(0, 8));
-      } catch {
-        if (!cancelled) { setBookAsks([]); setBookBids([]); }
-      } finally {
-        if (!cancelled) setBookLoading(false);
-      }
-    };
-
-    fetchBook();
-    const interval = setInterval(fetchBook, 10_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [sellTokenAddress, buyTokenAddress, sellDecimals, buyDecimals, relayerUrl]);
-
   const handleSelect = (price: number) => {
     onSelectPrice?.(price.toFixed(4));
   };
-
-  const bookMid = useMemo(() => {
-    if (bookBids.length > 0 && bookAsks.length > 0) return (bookBids[0].price + bookAsks[0].price) / 2;
-    if (bookBids.length > 0) return bookBids[0].price;
-    if (bookAsks.length > 0) return bookAsks[0].price;
-    return null;
-  }, [bookBids, bookAsks]);
 
   return (
     <div className="bg-surface-container-high rounded-xl border border-outline-variant/10">
@@ -187,97 +125,9 @@ export default function PricePanel({
           </button>
         ))}
 
-        {/* zkScatter book mid-price (no swap fee — internal settlement) */}
-        <button
-          onClick={() => bookMid !== null && handleSelect(bookMid)}
-          disabled={bookMid === null}
-          className="w-full grid grid-cols-[1fr_80px_60px] items-center py-1.5 px-2 rounded-md hover:bg-surface-bright/50 transition-colors disabled:opacity-40 disabled:cursor-default"
-        >
-          <div className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full ${bookMid !== null ? "bg-primary" : "bg-outline-variant/30"}`} />
-            <span className="text-xs text-on-surface-variant">zkScatter Book</span>
-          </div>
-          <span className="text-xs font-mono text-right text-on-surface font-bold">
-            {bookMid !== null ? bookMid.toFixed(4) : "—"}
-          </span>
-          <span className="text-[10px] font-mono text-right text-tertiary">0%</span>
-        </button>
-
         {onSelectPrice && (
           <p className="text-[9px] text-on-surface-variant/40 text-center pt-1">Click a price to use it</p>
         )}
-      </div>
-
-      {/* Orderbook — Upbit style */}
-      <div className="px-4 py-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Order Book</span>
-          {bookLoading && <Loader2 className="w-3 h-3 animate-spin text-on-surface-variant" />}
-        </div>
-
-        <div className="grid grid-cols-3 text-[9px] uppercase tracking-widest text-on-surface-variant font-bold pb-1 border-b border-outline-variant/10">
-          <span>Price</span>
-          <span className="text-right">Amount</span>
-          <span className="text-right">Total</span>
-        </div>
-
-        {/* Asks */}
-        <div className="max-h-[140px] overflow-y-auto flex flex-col-reverse">
-          {bookAsks.length > 0 ? (() => {
-            const maxAskAmt = Math.max(...bookAsks.map((x) => x.amount), 1);
-            return bookAsks.map((a, i) => (
-              <button
-                key={`ask-${i}`}
-                onClick={() => handleSelect(a.price)}
-                className="relative grid grid-cols-3 px-0 py-[3px] text-[11px] font-mono hover:bg-error/10 transition-colors"
-              >
-                <div className="absolute inset-y-0 right-0 bg-error/8" style={{ width: `${(a.amount / maxAskAmt) * 100}%` }} />
-                <span className="relative text-error">{a.price.toFixed(4)}</span>
-                <span className="relative text-right text-on-surface-variant">{a.amount.toFixed(4)}</span>
-                <span className="relative text-right text-on-surface-variant">{(a.price * a.amount).toFixed(2)}</span>
-              </button>
-            ));
-          })() : (
-            <div className="py-2 text-[10px] text-on-surface-variant/50 text-center">No asks</div>
-          )}
-        </div>
-
-        {/* Spread */}
-        <div className="py-1.5 border-y border-outline-variant/10 flex items-center justify-center gap-2">
-          {bookBids.length > 0 && bookAsks.length > 0 ? (
-            <>
-              <span className="text-xs font-mono font-bold text-on-surface">
-                {((bookBids[0].price + bookAsks[0].price) / 2).toFixed(4)}
-              </span>
-              <span className="text-[10px] text-on-surface-variant">
-                spread {((bookAsks[0].price - bookBids[0].price) / bookAsks[0].price * 100).toFixed(2)}%
-              </span>
-            </>
-          ) : (
-            <span className="text-[10px] text-on-surface-variant/50">—</span>
-          )}
-        </div>
-
-        {/* Bids */}
-        <div className="max-h-[140px] overflow-y-auto">
-          {bookBids.length > 0 ? (() => {
-            const maxBidAmt = Math.max(...bookBids.map((x) => x.amount), 1);
-            return bookBids.map((b, i) => (
-              <button
-                key={`bid-${i}`}
-                onClick={() => handleSelect(b.price)}
-                className="relative grid grid-cols-3 px-0 py-[3px] text-[11px] font-mono w-full text-left hover:bg-tertiary/10 transition-colors"
-              >
-                <div className="absolute inset-y-0 right-0 bg-tertiary/8" style={{ width: `${(b.amount / maxBidAmt) * 100}%` }} />
-                <span className="relative text-tertiary">{b.price.toFixed(4)}</span>
-                <span className="relative text-right text-on-surface-variant">{b.amount.toFixed(4)}</span>
-                <span className="relative text-right text-on-surface-variant">{(b.price * b.amount).toFixed(2)}</span>
-              </button>
-            ));
-          })() : (
-            <div className="py-2 text-[10px] text-on-surface-variant/50 text-center">No bids</div>
-          )}
-        </div>
       </div>
     </div>
   );
