@@ -322,7 +322,7 @@ sqlite3 zk-relayer.db "SELECT COUNT(*) FROM private_orders;"
 |-------|---------|
 | `authorize_orders` | **Active** — Half-proof order persistence (the only intake path post-S-M14 / PR #215) |
 | `private_orders` | **Legacy / archival** — Full-proof order history. The intake endpoint (`POST /api/private-orders`) is 410 Gone since PR #316; rows here are pre-migration history kept for stats. |
-| `private_claims` | **Legacy / archival** — Claim payout distribution per legacy private order (same status as `private_orders`). |
+| `private_claims` | **Legacy / archival** — Claim payout distribution for legacy private orders. No own `status` column; join to `private_orders` for the order-level status. |
 | `settled_claims_roots` | Prevents duplicate gasless claims |
 | `pending_txs` | TX recovery on restart |
 | `trade_offers` | Cross-relayer audit trail |

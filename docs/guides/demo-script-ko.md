@@ -94,7 +94,7 @@
 1. 각 수령인별 claim leaf 해시를 계산합니다: `Poseidon(secret, recipient, token, amount, releaseTime)`
 2. 16개 leaf로 패딩하여 깊이 4의 **Claims 머클 트리**를 구성합니다
 3. 주문 내용 + claims root를 포함한 해시를 **EdDSA로 서명**합니다
-4. `authorize.circom` ZK 증명을 브라우저에서 생성합니다 (~2초)
+4. `authorize.circom` ZK 증명을 브라우저에서 생성합니다 (~10–30초)
 5. 증명 + public signals를 릴레이어 API(`/api/authorize-orders`)로 전송합니다
 
 이 과정에서 **블록체인 트랜잭션은 발생하지 않습니다**. 모두 오프체인입니다.
