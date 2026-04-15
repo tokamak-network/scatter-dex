@@ -6,6 +6,7 @@ import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { getTokenList } from "../../lib/tokens";
 import { shortenAddress, formatDuration } from "../../lib/utils";
 import FeeVaultPanel from "../../components/FeeVaultPanel";
+import ProfileEditor from "../../components/ProfileEditor";
 
 interface HealthData {
   status: "healthy" | "degraded";
@@ -201,6 +202,10 @@ export default function OpsMonitorPage() {
            operators' balances. */}
       <div className="mb-6">
         <FeeVaultPanel tokens={tokens} />
+      </div>
+
+      <div className="mb-6">
+        <ProfileEditor />
       </div>
 
       {/* Summary Cards */}

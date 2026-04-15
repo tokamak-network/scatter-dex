@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRelayers, type RelayerInfo, type RelayerOrderbook } from "../lib/useRelayers";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
 import { shortenAddress, formatBond, timeAgo } from "../lib/utils";
+import RelayerLogo from "../components/RelayerLogo";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
 
@@ -431,11 +432,21 @@ export default function RelayersPage() {
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-on-surface">{shortenAddress(r.address)}</span>
+                          {r.api?.profile?.logoUrl && (
+                            <RelayerLogo logoUrl={r.api.profile.logoUrl} size={20} />
+                          )}
+                          {r.api?.profile?.name ? (
+                            <span className="text-on-surface font-medium">{r.api.profile.name}</span>
+                          ) : (
+                            <span className="font-mono text-on-surface">{shortenAddress(r.address)}</span>
+                          )}
                           {r.api?.name?.includes("ZK") && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-tertiary/20 text-tertiary font-bold">ZK</span>
                           )}
                         </div>
+                        {r.api?.profile?.name && (
+                          <div className="text-[10px] text-on-surface-variant/40 font-mono mt-0.5">{shortenAddress(r.address)}</div>
+                        )}
                         {r.online && r.url && (
                           <div className="text-[10px] text-on-surface-variant/40 font-mono mt-0.5 truncate max-w-[240px]">
                             {r.url}

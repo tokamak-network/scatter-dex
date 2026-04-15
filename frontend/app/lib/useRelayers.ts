@@ -18,6 +18,16 @@ export interface RelayerOnChain {
   active: boolean;
 }
 
+export interface RelayerProfile {
+  name?: string;
+  description?: string;
+  logoUrl?: string;
+  contact?: string;
+  socialX?: string;
+  website?: string;
+  updatedAt?: number;
+}
+
 export interface RelayerApiInfo {
   name: string;
   version: string;
@@ -25,6 +35,7 @@ export interface RelayerApiInfo {
   fee: number;
   orderCount: number;
   settlement: string;
+  profile?: RelayerProfile;
 }
 
 export interface RelayerOrderbook {
