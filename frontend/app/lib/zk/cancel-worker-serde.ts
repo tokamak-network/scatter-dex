@@ -1,15 +1,12 @@
 import {
   serializeCommitmentNote,
   deserializeCommitmentNote,
+  serializeMerkleProof,
+  deserializeMerkleProof,
   type SerializedCommitmentNote,
+  type SerializedMerkleProof,
 } from "./commitment";
 import type { CancelProofInput, CancelProofResult } from "./cancel-prover";
-
-interface SerializedMerkleProof {
-  root: string;
-  pathElements: string[];
-  pathIndices: number[];
-}
 
 export interface SerializedCancelInput {
   note: SerializedCommitmentNote;
@@ -18,7 +15,8 @@ export interface SerializedCancelInput {
   merkleProof?: SerializedMerkleProof;
   nonce: string;
   relayer: string;
-  // Native Uint8Array — structuredClone fast-path, zero-copy in V8.
+  // Defensive copy of the caller's Uint8Array — the wipe in
+  // `wipeSerialized` zeros THIS copy, not the caller's buffer.
   eddsaPrivateKey: Uint8Array;
 }
 
@@ -38,17 +36,14 @@ export function serializeCancelInput(input: CancelProofInput): SerializedCancelI
     leafIndex: input.leafIndex,
     nonce: input.nonce.toString(),
     relayer: input.relayer,
-    eddsaPrivateKey: input.eddsaPrivateKey,
+    // Defensive copy: see `eddsaPrivateKey` field comment above.
+    eddsaPrivateKey: new Uint8Array(input.eddsaPrivateKey),
   };
   if (input.allLeaves) {
     result.allLeaves = input.allLeaves.map((l) => l.toString());
   }
   if (input.merkleProof) {
-    result.merkleProof = {
-      root: input.merkleProof.root.toString(),
-      pathElements: input.merkleProof.pathElements.map((e) => e.toString()),
-      pathIndices: input.merkleProof.pathIndices,
-    };
+    result.merkleProof = serializeMerkleProof(input.merkleProof);
   }
   return result;
 }
@@ -58,13 +53,7 @@ export function deserializeCancelInput(raw: SerializedCancelInput): CancelProofI
     note: deserializeCommitmentNote(raw.note),
     leafIndex: raw.leafIndex,
     allLeaves: raw.allLeaves?.map(BigInt),
-    merkleProof: raw.merkleProof
-      ? {
-          root: BigInt(raw.merkleProof.root),
-          pathElements: raw.merkleProof.pathElements.map(BigInt),
-          pathIndices: raw.merkleProof.pathIndices,
-        }
-      : undefined,
+    merkleProof: raw.merkleProof ? deserializeMerkleProof(raw.merkleProof) : undefined,
     nonce: BigInt(raw.nonce),
     relayer: raw.relayer,
     eddsaPrivateKey: raw.eddsaPrivateKey,

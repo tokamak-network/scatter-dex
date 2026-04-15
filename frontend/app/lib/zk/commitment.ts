@@ -31,6 +31,16 @@ async function getPoseidon() {
   return poseidonInstance;
 }
 
+/**
+ * Eagerly build the Poseidon round-constant table and populate the
+ * module-level cache that `getPoseidon()` reads on first hash. Worker
+ * `preload` hooks call this so the first proof doesn't pay the
+ * ~50-150ms table build cost on the user's hot path.
+ */
+export async function warmupPoseidon(): Promise<void> {
+  await getPoseidon();
+}
+
 /** Generic Poseidon hash for arbitrary inputs. */
 export async function poseidonHash(inputs: bigint[]): Promise<bigint> {
   const poseidon = await getPoseidon();
@@ -94,6 +104,34 @@ export function deserializeCommitmentNote(raw: SerializedCommitmentNote): Commit
     salt: BigInt(raw.salt),
     pubKeyAx: BigInt(raw.pubKeyAx),
     pubKeyAy: BigInt(raw.pubKeyAy),
+  };
+}
+
+export interface MerkleProof {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+}
+
+export interface SerializedMerkleProof {
+  root: string;
+  pathElements: string[];
+  pathIndices: number[];
+}
+
+export function serializeMerkleProof(proof: MerkleProof): SerializedMerkleProof {
+  return {
+    root: proof.root.toString(),
+    pathElements: proof.pathElements.map((e) => e.toString()),
+    pathIndices: proof.pathIndices,
+  };
+}
+
+export function deserializeMerkleProof(raw: SerializedMerkleProof): MerkleProof {
+  return {
+    root: BigInt(raw.root),
+    pathElements: raw.pathElements.map(BigInt),
+    pathIndices: raw.pathIndices,
   };
 }
 

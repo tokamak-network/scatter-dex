@@ -22,13 +22,7 @@ setupProverWorker({
     if (rawKey instanceof Uint8Array) wipeBytes(rawKey);
   },
   preload: async () => {
-    const [, circomlib] = await Promise.all([
-      import("snarkjs"),
-      import("circomlibjs"),
-      import("./cancel-prover"),
-      import("./commitment"),
-      import("./secure-wipe"),
-    ]);
-    await circomlib.buildPoseidon();
+    const { warmupPoseidon } = await import("./commitment");
+    await Promise.all([import("snarkjs"), warmupPoseidon()]);
   },
 });
