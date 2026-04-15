@@ -11,7 +11,8 @@ setupProverWorker({
   prove: generateClaimProof,
   serializeOutput: (out) => serializeClaimOutput(out) as unknown as Record<string, unknown>,
   preload: async () => {
-    const { warmupPoseidon } = await import("./commitment");
-    await Promise.all([import("snarkjs"), warmupPoseidon()]);
+    const { warmProverAssets } = await import("./zkey-cache");
+    const { CIRCUIT_ASSETS } = await import("./constants");
+    await warmProverAssets(CIRCUIT_ASSETS.claim);
   },
 });

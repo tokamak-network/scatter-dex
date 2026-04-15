@@ -9,10 +9,9 @@
  */
 
 import { computeCommitment, type CommitmentNote } from "./commitment";
+import { CIRCUIT_ASSETS } from "./constants";
 import { timeProve } from "./prove-timer";
-
-const WASM_PATH = "/zk/deposit.wasm";
-const ZKEY_PATH = "/zk/deposit_final.zkey";
+import { withCachedAssets } from "./zkey-cache";
 
 export interface DepositProofResult {
   /** Poseidon commitment derived from the note. Returned so callers
@@ -60,8 +59,10 @@ export async function generateDepositProof(
     pubKeyAy: note.pubKeyAy.toString(),
   };
 
-  const { proof, publicSignals } = await timeProve("deposit", () =>
-    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
+  const { proof, publicSignals } = await withCachedAssets(
+    CIRCUIT_ASSETS.deposit,
+    ({ wasm, zkey }) =>
+      timeProve("deposit", () => snarkjs.groth16.fullProve(circuitInput, wasm, zkey)),
   );
 
   // Sanity-check that the prover-emitted public signal matches the

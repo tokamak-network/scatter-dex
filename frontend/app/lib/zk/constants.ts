@@ -18,3 +18,18 @@ export const MAX_CLAIMS_PER_SIDE = 16;
 
 /** Depth of the per-settlement claims Merkle tree (2^4 = 16 leaves). */
 export const CLAIMS_TREE_DEPTH = 4;
+
+import type { ZkCircuit } from "./prove-timer";
+
+// Single source of truth for `.wasm` / `.zkey` URLs so a rename in
+// `frontend/public/zk/` can't silently desync the prover (which proves
+// against ZKEY_PATH) from its worker preload (which prefetches it).
+// `Record<ZkCircuit, ...>` makes it a compile error to add a new
+// circuit to `ZkCircuit` without also wiring its assets here.
+export const CIRCUIT_ASSETS = {
+  authorize: { wasm: "/zk/authorize.wasm", zkey: "/zk/authorize_final.zkey" },
+  cancel:    { wasm: "/zk/cancel.wasm",    zkey: "/zk/cancel_final.zkey" },
+  claim:     { wasm: "/zk/claim.wasm",     zkey: "/zk/claim_final.zkey" },
+  deposit:   { wasm: "/zk/deposit.wasm",   zkey: "/zk/deposit_final.zkey" },
+  withdraw:  { wasm: "/zk/withdraw.wasm",  zkey: "/zk/withdraw_final.zkey" },
+} as const satisfies Record<ZkCircuit, { wasm: string; zkey: string }>;

@@ -33,11 +33,9 @@ import {
 import { signEdDSA } from "./eddsa";
 import { wipeBytes } from "./secure-wipe";
 import { TAG_COMMITMENT_V2 } from "./tags";
-import { COMMIT_TREE_DEPTH } from "./constants";
+import { COMMIT_TREE_DEPTH, CIRCUIT_ASSETS } from "./constants";
 import { timeProve } from "./prove-timer";
-
-const WASM_PATH = "/zk/cancel.wasm";
-const ZKEY_PATH = "/zk/cancel_final.zkey";
+import { withCachedAssets } from "./zkey-cache";
 
 export interface CancelProofInput {
   /** The user's escrow commitment note (v2 format with BabyJub pubkey). */
@@ -185,8 +183,10 @@ export async function generateCancelProof(
   };
 
   // ── 6. Generate Groth16 proof ──
-  const { proof, publicSignals } = await timeProve("cancel", () =>
-    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
+  const { proof, publicSignals } = await withCachedAssets(
+    CIRCUIT_ASSETS.cancel,
+    ({ wasm, zkey }) =>
+      timeProve("cancel", () => snarkjs.groth16.fullProve(circuitInput, wasm, zkey)),
   );
 
   return {
