@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { config } from "../config.js";
 import type { OrderSummary, OrderStatus, StoredOrder, MatchResult } from "../types/order.js";
+import type { SettlementInsert, StoredSettlement, SettlementListFilter } from "../types/settlement.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -18,6 +19,8 @@ export class OrderbookDB {
   private stmtInsertMatch!: Database.Statement;
   private stmtGetMatchJoin!: Database.Statement;
   private stmtListMatchesJoin!: Database.Statement;
+  private stmtInsertSettlement!: Database.Statement;
+  private stmtGetSettlement!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -59,6 +62,43 @@ export class OrderbookDB {
         price TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+
+      -- Phase 2.5a: relayer-pushed settlement records. See
+      -- docs/design/relayer-pages-redesign.md §7.1. Soft-references the
+      -- orders table so matched orders can be pruned without losing
+      -- settlement history; nullifiers are required so the verify job
+      -- (Phase 2.5b) can link rows to PrivateSettledAuth events keyed by
+      -- nullifier.
+      CREATE TABLE IF NOT EXISTS settlements (
+        tx_hash            TEXT PRIMARY KEY,
+        block_number       INTEGER NOT NULL,
+        block_time         INTEGER,
+        submitter          TEXT NOT NULL,
+        maker_relayer      TEXT NOT NULL,
+        taker_relayer      TEXT,
+        maker_order_id     TEXT,
+        taker_order_id     TEXT,
+        maker_nullifier    TEXT NOT NULL,
+        taker_nullifier    TEXT NOT NULL,
+        sell_token         TEXT,
+        buy_token          TEXT,
+        sell_amount        TEXT,
+        buy_amount         TEXT,
+        fee_maker          TEXT NOT NULL,
+        fee_taker          TEXT NOT NULL,
+        user_maxfee_maker  INTEGER NOT NULL,
+        user_maxfee_taker  INTEGER NOT NULL,
+        verified           INTEGER NOT NULL DEFAULT 0,
+        created_at         INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_settle_submitter   ON settlements(submitter, block_time);
+      CREATE INDEX IF NOT EXISTS idx_settle_maker       ON settlements(maker_relayer, block_time);
+      CREATE INDEX IF NOT EXISTS idx_settle_taker       ON settlements(taker_relayer, block_time);
+      CREATE INDEX IF NOT EXISTS idx_settle_pair        ON settlements(sell_token, buy_token, block_time);
+      CREATE INDEX IF NOT EXISTS idx_settle_block       ON settlements(block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_nullifier_m ON settlements(maker_nullifier);
+      CREATE INDEX IF NOT EXISTS idx_settle_nullifier_t ON settlements(taker_nullifier);
     `);
   }
 
@@ -125,6 +165,20 @@ export class OrderbookDB {
       JOIN orders tk ON tk.id = m.taker_id
       WHERE m.match_id = ?
     `);
+
+    // duplicate tx_hash → no-op; safe for relayer client retries.
+    this.stmtInsertSettlement = this.db.prepare(`
+      INSERT OR IGNORE INTO settlements (
+        tx_hash, block_number, block_time, submitter,
+        maker_relayer, taker_relayer, maker_order_id, taker_order_id,
+        maker_nullifier, taker_nullifier,
+        sell_token, buy_token, sell_amount, buy_amount,
+        fee_maker, fee_taker, user_maxfee_maker, user_maxfee_taker,
+        verified, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
+    `);
+
+    this.stmtGetSettlement = this.db.prepare(`SELECT * FROM settlements WHERE tx_hash = ?`);
 
     this.stmtListMatchesJoin = this.db.prepare(`
       SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
@@ -277,6 +331,123 @@ export class OrderbookDB {
       `SELECT * FROM orders WHERE status = 'open' ORDER BY created_at ASC`,
     ).all() as Record<string, unknown>[];
     return rows.map(r => this.rowToStoredOrder(r));
+  }
+
+  /**
+   * Insert a settlement record. Submitter is taken from the authenticated
+   * relayer (not the payload) so a relayer cannot attribute settlements to
+   * someone else. When the maker order is still in the orders table, its
+   * sell/buy token + amount are snapshotted onto the row so reads stay
+   * fast even after the order is pruned.
+   *
+   * Returns true if a row was inserted, false if it was a no-op (duplicate
+   * tx_hash already stored — the same relayer retrying or a backfill
+   * crossing a push).
+   */
+  insertSettlement(submitter: string, payload: SettlementInsert): boolean {
+    // Snapshot from the maker order if still present and not overridden.
+    let sellToken = payload.sellToken;
+    let buyToken = payload.buyToken;
+    let sellAmount = payload.sellAmount;
+    let buyAmount = payload.buyAmount;
+    if (payload.makerOrderId && (!sellToken || !buyToken)) {
+      const makerOrder = this.getOrder(payload.makerOrderId);
+      if (makerOrder) {
+        sellToken ??= makerOrder.order.sellToken;
+        buyToken ??= makerOrder.order.buyToken;
+        sellAmount ??= makerOrder.order.sellAmount;
+        buyAmount ??= makerOrder.order.buyAmount;
+      }
+    }
+    const result = this.stmtInsertSettlement.run(
+      payload.txHash,
+      payload.blockNumber,
+      payload.blockTime ?? null,
+      submitter.toLowerCase(),
+      payload.makerRelayer.toLowerCase(),
+      payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
+      payload.makerOrderId ?? null,
+      payload.takerOrderId ?? null,
+      payload.makerNullifier,
+      payload.takerNullifier,
+      sellToken ? sellToken.toLowerCase() : null,
+      buyToken ? buyToken.toLowerCase() : null,
+      sellAmount ?? null,
+      buyAmount ?? null,
+      payload.feeMaker,
+      payload.feeTaker,
+      payload.userMaxFeeMaker,
+      payload.userMaxFeeTaker,
+      Math.floor(Date.now() / 1000),
+    );
+    return result.changes > 0;
+  }
+
+  getSettlement(txHash: string): StoredSettlement | null {
+    const row = this.stmtGetSettlement.get(txHash.toLowerCase()) as Record<string, unknown> | undefined;
+    return row ? this.rowToSettlement(row) : null;
+  }
+
+  /**
+   * Read API used by Phase 2.5c. Filters compose with AND (relayer matches
+   * any of submitter/maker/taker; pair matches either direction).
+   */
+  listSettlements(filter: SettlementListFilter = {}): StoredSettlement[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.relayer) {
+      const r = filter.relayer.toLowerCase();
+      where.push("(submitter = ? OR maker_relayer = ? OR taker_relayer = ?)");
+      params.push(r, r, r);
+    }
+    if (filter.pair) {
+      const [a, b] = [filter.pair[0].toLowerCase(), filter.pair[1].toLowerCase()];
+      where.push("((sell_token = ? AND buy_token = ?) OR (sell_token = ? AND buy_token = ?))");
+      params.push(a, b, b, a);
+    }
+    if (typeof filter.since === "number") {
+      where.push("block_time >= ?");
+      params.push(filter.since);
+    }
+    const limit = Math.min(filter.limit ?? 100, 500);
+    const offset = filter.offset ?? 0;
+    // Dynamic WHERE — better-sqlite3 caches by SQL text so the up-to-8
+    // concrete shapes get reused. The other queries in this class are
+    // pre-prepared because their shape is fixed; this one isn't.
+    const sql = `SELECT * FROM settlements ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY block_number DESC, tx_hash ASC LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(sql).all(...params, limit, offset) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToSettlement(r));
+  }
+
+  private rowToSettlement(row: Record<string, unknown>): StoredSettlement {
+    return {
+      txHash: row.tx_hash as string,
+      blockNumber: row.block_number as number,
+      blockTime: (row.block_time as number | null) ?? undefined,
+      submitter: row.submitter as string,
+      makerRelayer: row.maker_relayer as string,
+      takerRelayer: (row.taker_relayer as string | null) ?? undefined,
+      makerOrderId: (row.maker_order_id as string | null) ?? undefined,
+      takerOrderId: (row.taker_order_id as string | null) ?? undefined,
+      makerNullifier: row.maker_nullifier as string,
+      takerNullifier: row.taker_nullifier as string,
+      sellToken: (row.sell_token as string | null) ?? undefined,
+      buyToken: (row.buy_token as string | null) ?? undefined,
+      sellAmount: (row.sell_amount as string | null) ?? undefined,
+      buyAmount: (row.buy_amount as string | null) ?? undefined,
+      feeMaker: row.fee_maker as string,
+      feeTaker: row.fee_taker as string,
+      userMaxFeeMaker: row.user_maxfee_maker as number,
+      userMaxFeeTaker: row.user_maxfee_taker as number,
+      verified: ((row.verified as number) ?? 0) === 1,
+      createdAt: row.created_at as number,
+    };
+  }
+
+  /** Truncate the settlements table — for tests only. Faster than dropping
+   *  and recreating, and keeps the indexes warm. */
+  _resetSettlementsForTests(): void {
+    this.db.exec("DELETE FROM settlements");
   }
 
   close(): void {

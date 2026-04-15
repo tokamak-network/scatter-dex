@@ -47,6 +47,7 @@ async function main() {
   // service below can depend on it before the route is mounted.
   const authSubmitter = new AuthorizeSubmitter();
   authSubmitter.setDB(db);
+  // Settlement push hook is wired below once `sharedClient` exists.
 
   // R-2: Recover pending TXs from previous run (receipt check only, no resend)
   const pendingTxs = db.getPendingTxs();
@@ -104,6 +105,23 @@ async function main() {
 
     sharedClient.onCancel((orderId) => {
       remoteOrderbook!.remove(orderId);
+    });
+
+    // Phase 2.5a: wire the settlement push hook. Both the cross-relayer
+    // matcher and the same-relayer settle path go through
+    // `authSubmitter.submitAuthSettle`, so a single hook here covers both.
+    // The pusher already swallows network failures (fire-and-forget), so
+    // it's safe even when the shared OB is down.
+    authSubmitter.setSettlementPusher((ctx) => {
+      // makerRelayer is always us when we're the settling relayer;
+      // takerRelayer is filled by the cross-relayer matcher when the
+      // counterparty came from a different relayer.
+      const ourAddr = authSubmitter.getAddress().toLowerCase();
+      sharedClient!.pushSettlement({
+        ...ctx,
+        makerRelayer: ourAddr,
+        takerRelayer: ctx.takerRelayer ?? ourAddr,
+      });
     });
 
     try {

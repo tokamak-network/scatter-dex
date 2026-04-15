@@ -14,6 +14,7 @@ import {
   validateAuthorizeOrder,
   isTokenCompatible,
   isPriceCompatible,
+  publicSignalToAddress,
   type AuthorizeOrderFile,
   type AuthorizePublicSignals,
   type StoredAuthorizeOrder,
@@ -310,8 +311,8 @@ export function createAuthorizeOrderRoutes(
         const offerHandle = nullifierToOfferHandle(nullifier);
         const orderbookId = await _sharedClient.postOrder({
           id: offerHandle,
-          sellToken: "0x" + BigInt(ps.sellToken).toString(16).padStart(40, "0"),
-          buyToken: "0x" + BigInt(ps.buyToken).toString(16).padStart(40, "0"),
+          sellToken: publicSignalToAddress(ps.sellToken),
+          buyToken: publicSignalToAddress(ps.buyToken),
           sellAmount: ps.sellAmount,
           buyAmount: ps.buyAmount,
           minFillAmount: ps.buyAmount,
@@ -337,7 +338,15 @@ export function createAuthorizeOrderRoutes(
           // bound is always respected. Hard-coding 0n here silently
           // skipped the fee deposit to FeeVault on every cross-token
           // settlement.
-          const txHash = await submitter.submitAuthSettle(match, BigInt(config.relayerFee));
+          // Send the same offer-handle encoding the cross-relayer matcher
+          // uses, so OrderbookDB.insertSettlement's snapshot lookup keys
+          // line up with shared-OB orders.id (which is the offer handle,
+          // not the raw nullifier). takerRelayer is omitted — submitter
+          // defaults it to itself in the push hook.
+          const txHash = await submitter.submitAuthSettle(match, BigInt(config.relayerFee), {
+            makerOrderId: nullifierToOfferHandle(match.maker.order.publicSignals.nullifier),
+            takerOrderId: nullifierToOfferHandle(match.taker.order.publicSignals.nullifier),
+          });
 
           match.maker.status = "settled";
           match.maker.settleTxHash = txHash;
