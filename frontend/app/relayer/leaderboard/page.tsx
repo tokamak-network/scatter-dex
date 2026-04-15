@@ -11,6 +11,7 @@ import {
 } from "../../lib/useLeaderboard";
 import { shortenAddress, timeAgo } from "../../lib/utils";
 import RelayerLogo from "../../components/RelayerLogo";
+import SegmentedToggle from "../../components/SegmentedToggle";
 
 const METRICS: Array<{ key: LeaderboardMetric; label: string; help: string }> = [
   { key: "count",         label: "Settlements",   help: "Total settlements where the relayer appears in any role" },
@@ -71,37 +72,8 @@ export default function LeaderboardPage() {
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="inline-flex rounded-lg bg-surface-container border border-outline-variant/15 overflow-hidden">
-          {METRICS.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => setMetric(m.key)}
-              title={m.help}
-              className={`px-3 py-1.5 text-xs transition-colors ${
-                metric === m.key
-                  ? "bg-primary text-on-primary font-semibold"
-                  : "text-on-surface-variant hover:bg-surface-bright/40"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <div className="inline-flex rounded-lg bg-surface-container border border-outline-variant/15 overflow-hidden">
-          {WINDOWS.map((w) => (
-            <button
-              key={w.key}
-              onClick={() => setWindowKey(w.key)}
-              className={`px-3 py-1.5 text-xs transition-colors ${
-                windowKey === w.key
-                  ? "bg-primary text-on-primary font-semibold"
-                  : "text-on-surface-variant hover:bg-surface-bright/40"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedToggle items={METRICS} value={metric} onChange={setMetric} />
+        <SegmentedToggle items={WINDOWS} value={windowKey} onChange={setWindowKey} />
         {loading && <Loader2 className="w-4 h-4 animate-spin text-on-surface-variant/50" />}
       </div>
 

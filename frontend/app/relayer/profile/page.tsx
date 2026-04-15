@@ -15,6 +15,7 @@ import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from ".
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
 import RelayerLogo from "../../components/RelayerLogo";
+import RelayerTradeStats from "../../components/RelayerTradeStats";
 
 interface Badge {
   id: string;
@@ -414,6 +415,9 @@ function RelayerProfileContent() {
           <p className="text-xs text-on-surface-variant/40">No stats available (relayer offline).</p>
         )}
       </div>
+
+      {/* Trade activity (indexer-sourced; independent of relayer uptime) */}
+      <RelayerTradeStats address={validAddress} />
 
       {/* Earnings (FeeVault) */}
       <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
