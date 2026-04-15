@@ -12,6 +12,7 @@ import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { useClaimsGroupStatus } from "../../lib/zk/useClaimsGroupStatus";
 import { friendlyError } from "../../lib/error-messages";
+import ExplorerLink from "../../components/ExplorerLink";
 
 type ClaimStatus = "idle" | "generating" | "submitting" | "success" | "error";
 type ClaimMode = "relayer" | "wallet";
@@ -74,7 +75,7 @@ interface ClaimData {
 
 export default function PrivateClaimPage() {
   const tokens = getTokenList();
-  const { signer } = useWallet();
+  const { signer, chainId } = useWallet();
 
   const [claimJson, setClaimJson] = useState("");
   const [allClaims, setAllClaims] = useState<ClaimData[]>([]);
@@ -557,8 +558,8 @@ export default function PrivateClaimPage() {
                     <CheckCircle2 className="w-3.5 h-3.5" /> Already Claimed
                   </div>
                   {claimedMap[selectedClaimIdx]?.txHash && (
-                    <div className="font-mono text-[11px] text-on-surface-variant/60 break-all">
-                      Tx: {claimedMap[selectedClaimIdx].txHash}
+                    <div className="text-[11px] text-on-surface-variant/60">
+                      Tx: <ExplorerLink kind="tx" value={claimedMap[selectedClaimIdx].txHash} chainId={chainId} />
                     </div>
                   )}
                 </div>
@@ -720,7 +721,7 @@ export default function PrivateClaimPage() {
           {batchProgress && txHashes.length > 0 && (
             <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
               {txHashes.map((h, i) => (
-                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} /></div>
               ))}
             </div>
           )}
@@ -744,7 +745,7 @@ export default function PrivateClaimPage() {
           {batchProgress && txHashes.length > 0 && (
             <div className="text-[11px] font-mono text-on-surface-variant/60 space-y-1">
               {txHashes.map((h, i) => (
-                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} /></div>
               ))}
             </div>
           )}
@@ -760,14 +761,14 @@ export default function PrivateClaimPage() {
             Funds have been transferred to the recipient address.
           </p>
           {txHashes.length === 1 && txHashes[0] && (
-            <div className="text-xs font-mono text-primary bg-primary/5 rounded-md p-3 break-all">
-              tx: {txHashes[0]}
+            <div className="text-xs text-primary bg-primary/5 rounded-md p-3">
+              tx: <ExplorerLink kind="tx" value={txHashes[0]} chainId={chainId} className="text-primary" />
             </div>
           )}
           {txHashes.length > 1 && (
-            <div className="text-xs font-mono text-primary bg-primary/5 rounded-md p-3 space-y-1 text-left">
+            <div className="text-xs text-primary bg-primary/5 rounded-md p-3 space-y-1 text-left">
               {txHashes.map((h, i) => (
-                <div key={i} className="break-all">batch #{i + 1}: {h}</div>
+                <div key={i}>batch #{i + 1}: <ExplorerLink kind="tx" value={h} chainId={chainId} className="text-primary" /></div>
               ))}
             </div>
           )}
