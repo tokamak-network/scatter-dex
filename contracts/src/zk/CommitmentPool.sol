@@ -276,8 +276,10 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     /// @notice Transfer fee tokens from pool to a recipient (e.g., relayer).
     /// @dev Only callable by the authorized PrivateSettlement contract.
     ///      Fee magnitude is bounded at the ORDER level, not here:
-    ///      `SettleVerifyLib.validateCrossSide` / `validateScatterAuth`
-    ///      enforce `fee * 10000 ≤ buyAmount * maxFee` against the
+    ///      `SettleVerifyLib.validateCrossSide` enforces
+    ///      `fee * 10000 ≤ buyAmount * maxFee`, while
+    ///      `validateScatterAuth` enforces
+    ///      `fee * 10000 ≤ sellAmount * maxFee`, each against the
     ///      user-signed `maxFee` (circuit-bound). Adding a post-drain
     ///      pool-balance cap here would reject legitimate settlements
     ///      whenever `totalLocked` draws most of the pool's balance of

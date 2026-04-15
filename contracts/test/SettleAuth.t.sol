@@ -420,8 +420,8 @@ contract SettleAuthTest is Test {
     /// @notice Regression: a single-pair settlement that drains most of a
     ///         token's pool balance used to revert with `FeeExceedsMax`
     ///         from the old `CommitmentPool.transferFee` post-drain 10% cap.
-    ///         The cap was removed (order-level `SettleVerifyLib` fee bound
-    ///         is authoritative). See `chore/remove-settle-private` follow-up.
+    ///         The cap was removed, and the order-level `SettleVerifyLib`
+    ///         fee bound is authoritative.
     function test_settleAuth_singlePairDrainsMostOfPool_succeeds() public {
         // Fresh pool with JUST ONE matched pair of liquidity — mirrors the
         // "1 WETH ↔ 2000 USDC, no other depositors" E2E scenario.
