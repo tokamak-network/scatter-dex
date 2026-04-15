@@ -37,6 +37,7 @@ import {
 import { signEdDSA, hashOrder } from "./eddsa";
 import { wipeBytes } from "./secure-wipe";
 import { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from "./constants";
+import { timeProve } from "./prove-timer";
 
 const WASM_PATH = "/zk/authorize.wasm";
 const ZKEY_PATH = "/zk/authorize_final.zkey";
@@ -363,10 +364,8 @@ export async function generateAuthorizeProof(
   };
 
   // ── 7. Generate Groth16 proof ──
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    WASM_PATH,
-    ZKEY_PATH,
+  const { proof, publicSignals } = await timeProve("authorize", () =>
+    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
   );
 
   return {
