@@ -28,6 +28,25 @@ export function timeAgo(timestamp: number): string {
   return `${Math.floor(diff / 86400)}d`;
 }
 
+/**
+ * Format a token amount for display: `formatUnits` then truncate (no
+ * rounding) to at most `maxFractionDigits`. The trailing `.` is stripped
+ * when the truncated fraction is empty (e.g. when `maxFractionDigits === 0`
+ * or the value has no fractional part). Use this anywhere a balance / fee
+ * is shown in the UI.
+ */
+export function formatTokenAmount(
+  value: bigint,
+  decimals: number,
+  maxFractionDigits = 6,
+): string {
+  const s = ethers.formatUnits(value, decimals);
+  const [int, frac] = s.split(".");
+  if (!frac || maxFractionDigits <= 0) return int;
+  const truncated = frac.slice(0, maxFractionDigits);
+  return truncated.length > 0 ? `${int}.${truncated}` : int;
+}
+
 /** Human time-until for an expiry unix-seconds timestamp. */
 export function formatExpiry(ts: number): string {
   const delta = ts - Math.floor(Date.now() / 1000);
