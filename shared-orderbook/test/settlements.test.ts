@@ -328,7 +328,7 @@ describe("/api/settlements", () => {
     expect(r.body.count).toBe(0);
   });
 
-  it("GET /api/leaderboard ?limit clamps to [1,500]", async () => {
+  it("GET /api/leaderboard rejects out-of-range ?limit with 400", async () => {
     await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
     const ok = await get("/api/leaderboard?limit=2");
     expect(ok.status).toBe(200);

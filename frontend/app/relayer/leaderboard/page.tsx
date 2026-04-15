@@ -72,8 +72,8 @@ export default function LeaderboardPage() {
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
-        <SegmentedToggle items={METRICS} value={metric} onChange={setMetric} />
-        <SegmentedToggle items={WINDOWS} value={windowKey} onChange={setWindowKey} />
+        <SegmentedToggle items={METRICS} value={metric} onChange={setMetric} ariaLabel="Ranking metric" />
+        <SegmentedToggle items={WINDOWS} value={windowKey} onChange={setWindowKey} ariaLabel="Time window" />
         {loading && <Loader2 className="w-4 h-4 animate-spin text-on-surface-variant/50" />}
       </div>
 

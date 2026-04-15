@@ -57,7 +57,16 @@ export function useSharedObFetch<T>(
   const fetchOnce = useCallback(async () => {
     if (!baseUrl) return;
     const path = buildPath();
-    if (path === null) return;
+    if (path === null) {
+      // Deps transitioned to "no fetch" (e.g. address became null). Clear
+      // any lingering loading/error state from a previous fetch and bump
+      // the request id so any still-in-flight response is ignored.
+      requestId.current += 1;
+      setLoading(false);
+      setError(null);
+      setData(null);
+      return;
+    }
     const myId = ++requestId.current;
     setLoading(true);
     setError(null);

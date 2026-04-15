@@ -55,7 +55,7 @@ export default function RelayerTradeStats({ address }: Props) {
             (indexer-sourced)
           </span>
         </h2>
-        <SegmentedToggle items={WINDOWS} value={window} onChange={setWindow} size="sm" />
+        <SegmentedToggle items={WINDOWS} value={window} onChange={setWindow} size="sm" ariaLabel="Time window" />
       </div>
 
       {unconfigured ? (
@@ -122,35 +122,40 @@ export default function RelayerTradeStats({ address }: Props) {
               <div className="text-[10px] uppercase tracking-wider text-on-surface-variant/40 mb-2">
                 Volume by token
               </div>
-              <div className="space-y-1">
-                <div className="grid grid-cols-[1fr_100px_100px_100px_100px] gap-2 text-[10px] text-on-surface-variant/30 uppercase tracking-wider px-3 py-1">
-                  <span>Token</span>
-                  <span className="text-right">Sold</span>
-                  <span className="text-right">Bought</span>
-                  <span className="text-right">Sell#</span>
-                  <span className="text-right">Buy#</span>
+              {/* overflow-x-auto + min-width lets the fixed-column grid
+                  scroll horizontally on mobile rather than clipping or
+                  squashing amounts. */}
+              <div className="overflow-x-auto -mx-1">
+                <div className="min-w-[540px] px-1 space-y-1">
+                  <div className="grid grid-cols-[1fr_100px_100px_100px_100px] gap-2 text-[10px] text-on-surface-variant/30 uppercase tracking-wider px-3 py-1">
+                    <span>Token</span>
+                    <span className="text-right">Sold</span>
+                    <span className="text-right">Bought</span>
+                    <span className="text-right">Sell#</span>
+                    <span className="text-right">Buy#</span>
+                  </div>
+                  {stats.volumeByToken.map((v) => {
+                    const dec = tokenDecimals(v.token);
+                    const sellBig = safeBigInt(v.totalSell);
+                    const buyBig = safeBigInt(v.totalBuy);
+                    return (
+                      <div
+                        key={v.token}
+                        className="grid grid-cols-[1fr_100px_100px_100px_100px] gap-2 px-3 py-1.5 text-xs hover:bg-surface-bright/20 rounded transition-colors"
+                      >
+                        <span className="font-bold text-on-surface">{tokenSymbol(v.token)}</span>
+                        <span className="text-right font-mono text-on-surface-variant/80">
+                          {sellBig === null ? "—" : formatTokenAmount(sellBig, dec)}
+                        </span>
+                        <span className="text-right font-mono text-on-surface-variant/80">
+                          {buyBig === null ? "—" : formatTokenAmount(buyBig, dec)}
+                        </span>
+                        <span className="text-right font-mono text-on-surface-variant/60">{v.sellCount}</span>
+                        <span className="text-right font-mono text-on-surface-variant/60">{v.buyCount}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-                {stats.volumeByToken.map((v) => {
-                  const dec = tokenDecimals(v.token);
-                  const sellBig = safeBigInt(v.totalSell);
-                  const buyBig = safeBigInt(v.totalBuy);
-                  return (
-                    <div
-                      key={v.token}
-                      className="grid grid-cols-[1fr_100px_100px_100px_100px] gap-2 px-3 py-1.5 text-xs hover:bg-surface-bright/20 rounded transition-colors"
-                    >
-                      <span className="font-bold text-on-surface">{tokenSymbol(v.token)}</span>
-                      <span className="text-right font-mono text-on-surface-variant/80">
-                        {sellBig === null ? "—" : formatTokenAmount(sellBig, dec)}
-                      </span>
-                      <span className="text-right font-mono text-on-surface-variant/80">
-                        {buyBig === null ? "—" : formatTokenAmount(buyBig, dec)}
-                      </span>
-                      <span className="text-right font-mono text-on-surface-variant/60">{v.sellCount}</span>
-                      <span className="text-right font-mono text-on-surface-variant/60">{v.buyCount}</span>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}
