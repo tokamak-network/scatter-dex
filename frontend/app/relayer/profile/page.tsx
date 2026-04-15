@@ -374,9 +374,16 @@ function RelayerProfileContent() {
 
       {/* Earnings (FeeVault) */}
       <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
-        <h2 className="text-sm font-bold text-on-surface mb-4 flex items-center gap-2">
-          <Wallet className="w-4 h-4 text-tertiary" /> Earnings
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-on-surface flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-tertiary" /> Earnings
+          </h2>
+          {earnings.fromBlock != null && (
+            <span className="text-[10px] text-on-surface-variant/40" title="Lifetime totals are computed from FeeVault events scanned from this block onward. If NEXT_PUBLIC_DEPLOY_BLOCK isn't configured the scan starts at latest − 50 000, so older activity is not counted.">
+              scanned from #{earnings.fromBlock}
+            </span>
+          )}
+        </div>
 
         {earnings.loading ? (
           <div className="flex items-center gap-2 py-6 justify-center text-on-surface-variant/50 text-sm">
@@ -416,7 +423,7 @@ function RelayerProfileContent() {
               {earnings.recent.map((a) => {
                 const dec = decimalsByToken.get(a.token.toLowerCase()) ?? 18;
                 return (
-                  <div key={`${a.txHash}-${a.kind}`} className="grid grid-cols-[80px_1fr_120px_80px] gap-2 px-3 py-1.5 text-[11px] hover:bg-surface-bright/20 rounded transition-colors">
+                  <div key={`${a.txHash}-${a.logIndex}`} className="grid grid-cols-[80px_1fr_120px_80px] gap-2 px-3 py-1.5 text-[11px] hover:bg-surface-bright/20 rounded transition-colors">
                     <span className={a.kind === "earned" ? "text-emerald-400" : "text-amber-400 inline-flex items-center gap-1"}>
                       {a.kind === "earned" ? "+ earned" : <><ArrowDownToLine className="w-3 h-3" /> claimed</>}
                     </span>

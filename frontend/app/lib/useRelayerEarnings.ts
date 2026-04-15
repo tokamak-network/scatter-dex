@@ -20,6 +20,12 @@ export interface RelayerEarningsActivity {
   symbol: string;
   amount: bigint;
   blockNumber: number;
+  // `transactionIndex`+`logIndex` give a stable per-block ordering, and
+  // (txHash, logIndex) together form a unique React key — multiple
+  // FeeVault events can land in one tx (e.g. relayer claims several
+  // tokens at once), so the txHash alone is not unique.
+  transactionIndex: number;
+  logIndex: number;
   txHash: string;
 }
 
@@ -28,9 +34,34 @@ export interface RelayerEarningsData {
   recent: RelayerEarningsActivity[];
   loading: boolean;
   error: string | null;
+  /** Block height at which the historical event scan started. UI can
+   *  expose this as a "since block N" caveat when the configured
+   *  deploy block isn't available and the helper falls back to a
+   *  recent window. */
+  fromBlock: number | null;
 }
 
 export const RECENT_ACTIVITY_LIMIT = 20;
+
+/** Pull the most descriptive message out of an ethers v6 error
+ *  (shortMessage > reason > nested RPC error > .message), with a
+ *  generic fallback. Full error always lands in the console for
+ *  debugging via the caller's `console.warn`. */
+function extractErrorMessage(e: unknown): string {
+  if (e && typeof e === "object") {
+    const r = e as Record<string, unknown>;
+    const candidates = [
+      r.shortMessage,
+      r.reason,
+      (r.info as Record<string, unknown> | undefined)?.error
+        && ((r.info as { error: Record<string, unknown> }).error.message),
+    ];
+    for (const c of candidates) {
+      if (typeof c === "string" && c.length > 0) return c;
+    }
+  }
+  return e instanceof Error && e.message ? e.message : "Failed to load earnings";
+}
 
 /**
  * Reads accumulated fee vault data for a relayer:
@@ -45,13 +76,13 @@ export const RECENT_ACTIVITY_LIMIT = 20;
  */
 export function useRelayerEarnings(address: string | null): RelayerEarningsData {
   const [data, setData] = useState<RelayerEarningsData>({
-    rows: [], recent: [], loading: false, error: null,
+    rows: [], recent: [], loading: false, error: null, fromBlock: null,
   });
   const loadIdRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!address) {
-      setData({ rows: [], recent: [], loading: false, error: null });
+      setData({ rows: [], recent: [], loading: false, error: null, fromBlock: null });
       return;
     }
     const myId = ++loadIdRef.current;
@@ -61,7 +92,7 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
       const feeVaultAddr = getFeeVaultAddress();
       if (!feeVaultAddr) {
         if (loadIdRef.current === myId) {
-          setData({ rows: [], recent: [], loading: false, error: "FeeVault not configured" });
+          setData({ rows: [], recent: [], loading: false, error: "FeeVault not configured", fromBlock: null });
         }
         return;
       }
@@ -79,6 +110,14 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
 
       const [balanceSettled, deposits, claims] = await Promise.all([balanceP, depositP, claimP]);
       if (loadIdRef.current !== myId) return;
+
+      // Surface RPC-level balance failures so an unclaimed=0 isn't
+      // confused with a "nothing earned" reading.
+      balanceSettled.forEach((res, i) => {
+        if (res.status === "rejected") {
+          console.warn(`Vault balance fetch failed for ${tokens[i].symbol}:`, res.reason);
+        }
+      });
 
       // Lifetime claimed counts the gross amount the relayer's vault
       // balance was reduced by — `amount + platformFee` (the deposit
@@ -104,7 +143,10 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
         if (!meta) continue;
         recent.push({
           kind: "earned", token: tokAddr, symbol: meta.symbol, amount,
-          blockNumber: e.blockNumber, txHash: e.transactionHash,
+          blockNumber: e.blockNumber,
+          transactionIndex: e.transactionIndex,
+          logIndex: e.index,
+          txHash: e.transactionHash,
         });
       }
       for (const log of claims) {
@@ -117,11 +159,16 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
         if (!meta) continue;
         recent.push({
           kind: "claimed", token: tokAddr, symbol: meta.symbol, amount: gross,
-          blockNumber: e.blockNumber, txHash: e.transactionHash,
+          blockNumber: e.blockNumber,
+          transactionIndex: e.transactionIndex,
+          logIndex: e.index,
+          txHash: e.transactionHash,
         });
       }
 
-      // Skip rows with no activity so the UI stays tight on day 1.
+      // Keep tokens that have any vault touch — `claimed > 0` covers the
+      // edge case where a relayer has only claim events in scan range
+      // (deposits happened earlier than `fromBlock`).
       const rows: RelayerEarningsRow[] = [];
       tokens.forEach((t, i) => {
         const balRes = balanceSettled[i];
@@ -129,7 +176,7 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
         const tokLc = t.address.toLowerCase();
         const earned = earnedByToken.get(tokLc) ?? 0n;
         const claimed = claimedByToken.get(tokLc) ?? 0n;
-        if (unclaimed > 0n || earned > 0n) {
+        if (unclaimed > 0n || earned > 0n || claimed > 0n) {
           rows.push({
             token: t.address, symbol: t.symbol, decimals: t.decimals,
             unclaimed, lifetimeEarned: earned, lifetimeClaimed: claimed,
@@ -137,19 +184,26 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
         }
       });
 
-      recent.sort((a, b) => b.blockNumber - a.blockNumber);
+      // Newest first; tx + log indices break ties for events in the
+      // same block so the order is deterministic across re-renders.
+      recent.sort((a, b) =>
+        b.blockNumber - a.blockNumber
+        || b.transactionIndex - a.transactionIndex
+        || b.logIndex - a.logIndex);
 
       if (loadIdRef.current === myId) {
         setData({
           rows, recent: recent.slice(0, RECENT_ACTIVITY_LIMIT),
-          loading: false, error: null,
+          loading: false, error: null, fromBlock,
         });
       }
     } catch (e: unknown) {
+      console.warn("[useRelayerEarnings] load failed:", e);
       if (loadIdRef.current === myId) {
         setData({
+          fromBlock: null,
           rows: [], recent: [], loading: false,
-          error: e instanceof Error ? e.message : "Failed to load earnings",
+          error: extractErrorMessage(e),
         });
       }
     }
