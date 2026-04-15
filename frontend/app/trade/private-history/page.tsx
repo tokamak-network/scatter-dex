@@ -31,7 +31,7 @@ import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
 import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI, COMMITMENT_POOL_IFACE } from "../../lib/contracts";
-import { generateCancelProof } from "../../lib/zk/cancel-prover";
+import { generateCancelProofInWorker } from "../../lib/zk/cancel-worker-client";
 import MarketOrderFeeBreakdown from "../../components/MarketOrderFeeBreakdown";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -397,7 +397,7 @@ export default function PrivateHistoryPage() {
       }
 
       setCancelStep("proving");
-      const cancelResult = await generateCancelProof({
+      const cancelResult = await generateCancelProofInWorker({
         note: fullNote,
         leafIndex: order.order.leafIndex,
         allLeaves,

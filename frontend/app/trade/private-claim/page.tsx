@@ -7,7 +7,7 @@ import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download,
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { generateClaimProof } from "../../lib/zk/claim-prover";
+import { generateClaimProofInWorker } from "../../lib/zk/claim-worker-client";
 import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { useClaimsGroupStatus } from "../../lib/zk/useClaimsGroupStatus";
@@ -223,7 +223,7 @@ export default function PrivateClaimPage() {
       throw new Error(`Not yet claimable. Release in ${mins} minute${mins > 1 ? "s" : ""}.`);
     }
 
-    const proofResult = await generateClaimProof({
+    const proofResult = await generateClaimProofInWorker({
       secret, recipient, token, amount, releaseTime,
       leafIndex: cd.leafIndex, allClaimLeaves: allLeaves,
     });

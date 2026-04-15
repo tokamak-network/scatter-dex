@@ -66,6 +66,37 @@ export interface CommitmentNote {
   pubKeyAy: bigint;
 }
 
+export interface SerializedCommitmentNote {
+  ownerSecret: string;
+  token: string;
+  amount: string;
+  salt: string;
+  pubKeyAx: string;
+  pubKeyAy: string;
+}
+
+export function serializeCommitmentNote(note: CommitmentNote): SerializedCommitmentNote {
+  return {
+    ownerSecret: note.ownerSecret.toString(),
+    token: note.token.toString(),
+    amount: note.amount.toString(),
+    salt: note.salt.toString(),
+    pubKeyAx: note.pubKeyAx.toString(),
+    pubKeyAy: note.pubKeyAy.toString(),
+  };
+}
+
+export function deserializeCommitmentNote(raw: SerializedCommitmentNote): CommitmentNote {
+  return {
+    ownerSecret: BigInt(raw.ownerSecret),
+    token: BigInt(raw.token),
+    amount: BigInt(raw.amount),
+    salt: BigInt(raw.salt),
+    pubKeyAx: BigInt(raw.pubKeyAx),
+    pubKeyAy: BigInt(raw.pubKeyAy),
+  };
+}
+
 /**
  * Generate a new commitment note bound to the caller's BabyJub pubkey.
  *
