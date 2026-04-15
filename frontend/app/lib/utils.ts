@@ -61,6 +61,9 @@ export function extractEthersErrorMessage(e: unknown, fallback = "Request failed
       r.reason,
       (r.info as Record<string, unknown> | undefined)?.error
         && ((r.info as { error: Record<string, unknown> }).error.message),
+      // Plain RPC payloads sometimes carry a top-level `message` without
+      // being a real `Error` instance — pick that up before the fallback.
+      r.message,
     ];
     for (const c of candidates) {
       if (typeof c === "string" && c.length > 0) return c;

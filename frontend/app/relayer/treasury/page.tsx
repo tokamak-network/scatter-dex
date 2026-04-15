@@ -49,21 +49,37 @@ export default function TreasuryPage() {
           </div>
         </div>
 
-        {data.treasury && (
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-outline-variant/10">
-            <div>
-              <div className="text-xs text-on-surface-variant/50">Treasury address</div>
-              <div className="text-sm font-mono text-on-surface mt-0.5">{shortenAddress(data.treasury)}</div>
-            </div>
-            <div>
-              <div className="text-xs text-on-surface-variant/50">Relayer-claim platform fee</div>
-              <div className="text-sm font-bold text-on-surface mt-0.5">
-                {data.platformFeeBps != null ? `${(data.platformFeeBps / 100).toFixed(2)}%` : "—"}
-              </div>
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-outline-variant/10">
+          <div>
+            <div className="text-xs text-on-surface-variant/50">Treasury address</div>
+            <div className="text-sm font-mono text-on-surface mt-0.5">
+              {data.treasury ? shortenAddress(data.treasury) : "—"}
             </div>
           </div>
-        )}
+          <div>
+            <div className="text-xs text-on-surface-variant/50">Relayer-claim platform fee</div>
+            <div className="text-sm font-bold text-on-surface mt-0.5">
+              {data.platformFeeBps != null ? `${(data.platformFeeBps / 100).toFixed(2)}%` : "—"}
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Partial-failure banner: distinguishes "RPC dropped some streams"
+          from "no events found" so the empty-state copy below isn't
+          mistaken for a true zero result. */}
+      {!data.loading && !data.error && data.partialFailures.length > 0 && (
+        <div className="glass-card rounded-xl p-4 border border-amber-500/30 bg-amber-500/5 flex items-start gap-2 text-xs text-amber-200/90">
+          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-400" />
+          <div>
+            <div className="font-semibold mb-1">Partial data — some RPC reads failed</div>
+            <ul className="space-y-0.5 font-mono text-[10px] text-amber-200/70">
+              {data.partialFailures.map((m, i) => (<li key={i}>· {m}</li>))}
+            </ul>
+            <div className="mt-1 text-amber-200/60">Numbers below may undercount. Try Refresh.</div>
+          </div>
+        </div>
+      )}
 
       {data.loading && (
         <div className="flex items-center justify-center py-10 text-on-surface-variant/50 text-sm">

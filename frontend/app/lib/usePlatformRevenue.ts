@@ -75,6 +75,10 @@ export interface PlatformRevenueData {
   loading: boolean;
   error: string | null;
   fromBlock: number | null;
+  /** Per-stream RPC failures that didn't cause a full reload error.
+   *  UI should surface these as a banner so a "no events found"
+   *  rendering isn't confused with a true empty result. */
+  partialFailures: string[];
   /** Re-run the full fetch (useful for a manual "Refresh" button). */
   refetch: () => void;
 }
@@ -97,12 +101,13 @@ export function usePlatformRevenue(): PlatformRevenueData {
   const [data, setData] = useState<Omit<PlatformRevenueData, "refetch">>({
     treasury: null, platformFeeBps: null, rows: [], bySource: [],
     recentWithdrawals: [], loading: false, error: null, fromBlock: null,
+    partialFailures: [],
   });
   const loadIdRef = useRef(0);
 
   const load = useCallback(async () => {
     const myId = ++loadIdRef.current;
-    setData((d) => ({ ...d, loading: true, error: null }));
+    setData((d) => ({ ...d, loading: true, error: null, partialFailures: [] }));
 
     try {
       const feeVaultAddr = getFeeVaultAddress();
@@ -112,6 +117,7 @@ export function usePlatformRevenue(): PlatformRevenueData {
             treasury: null, platformFeeBps: null, rows: [], bySource: [],
             recentWithdrawals: [], loading: false,
             error: "FeeVault not configured", fromBlock: null,
+            partialFailures: [],
           });
         }
         return;
@@ -120,6 +126,11 @@ export function usePlatformRevenue(): PlatformRevenueData {
       const provider = getReadProvider();
       const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
       const tokens = getTokenList().filter((t: TokenInfo) => !t.isNative);
+      // No tokens configured = nothing to map events onto. Treat as a
+      // configuration error rather than silently showing zeros.
+      if (tokens.length === 0) {
+        throw new Error("No ERC-20 tokens configured. Set NEXT_PUBLIC_TOKENS so platform revenue can be mapped to tokens.");
+      }
       const fromBlock = await getSafeFromBlock(provider);
 
       // Run everything in one batch. The `treasury()` / `platformFeeBps()`
@@ -140,16 +151,23 @@ export function usePlatformRevenue(): PlatformRevenueData {
       if (loadIdRef.current !== myId) return;
 
       const eventNames = ["PlatformFeeFromDex", "PlatformSurplusFromDex", "PlatformFeeFromRelayerClaim", "PlatformRevenueWithdrawn"] as const;
+      const partialFailures: string[] = [];
+      if (treasuryRes === null) partialFailures.push("treasury() RPC failed");
+      if (feeBpsRes === null) partialFailures.push("platformFeeBps() RPC failed");
       const [dexFees, dexSurpluses, relayerSkims, withdrawals] = eventsSettled.map((res, i): ethers.Log[] => {
         if (res.status === "rejected") {
+          const msg = `${eventNames[i]} scan: ${extractEthersErrorMessage(res.reason)}`;
           console.warn(`event scan failed (${eventNames[i]}):`, res.reason);
+          partialFailures.push(msg);
           return [];
         }
         return res.value as ethers.Log[];
       });
       accumSettled.forEach((res, i) => {
         if (res.status === "rejected") {
+          const msg = `platformRevenue(${tokens[i].symbol}): ${extractEthersErrorMessage(res.reason)}`;
           console.warn(`platformRevenue read failed for ${tokens[i].symbol}:`, res.reason);
+          partialFailures.push(msg);
         }
       });
 
@@ -237,6 +255,7 @@ export function usePlatformRevenue(): PlatformRevenueData {
           rows, bySource,
           recentWithdrawals: recentWithdrawals.slice(0, RECENT_WITHDRAWAL_LIMIT),
           loading: false, error: null, fromBlock,
+          partialFailures,
         });
       }
     } catch (e: unknown) {
@@ -247,6 +266,7 @@ export function usePlatformRevenue(): PlatformRevenueData {
           recentWithdrawals: [], loading: false,
           error: extractEthersErrorMessage(e, "Failed to load platform revenue"),
           fromBlock: null,
+          partialFailures: [],
         });
       }
     }
