@@ -79,36 +79,11 @@ export interface CommitmentNote {
   pubKeyAy: bigint;
 }
 
-export interface SerializedCommitmentNote {
-  ownerSecret: string;
-  token: string;
-  amount: string;
-  salt: string;
-  pubKeyAx: string;
-  pubKeyAy: string;
-}
-
-export function serializeCommitmentNote(note: CommitmentNote): SerializedCommitmentNote {
-  return {
-    ownerSecret: note.ownerSecret.toString(),
-    token: note.token.toString(),
-    amount: note.amount.toString(),
-    salt: note.salt.toString(),
-    pubKeyAx: note.pubKeyAx.toString(),
-    pubKeyAy: note.pubKeyAy.toString(),
-  };
-}
-
-export function deserializeCommitmentNote(raw: SerializedCommitmentNote): CommitmentNote {
-  return {
-    ownerSecret: BigInt(raw.ownerSecret),
-    token: BigInt(raw.token),
-    amount: BigInt(raw.amount),
-    salt: BigInt(raw.salt),
-    pubKeyAx: BigInt(raw.pubKeyAx),
-    pubKeyAy: BigInt(raw.pubKeyAy),
-  };
-}
+// `SerializedCommitmentNote` is the worker-postMessage type — note-storage
+// uses a separate JSON-friendly `StoredNote`. structuredClone carries
+// bigint natively so the wire format equals the runtime shape; worker
+// serdes can reference `CommitmentNote` directly without a wrapper pair.
+export type SerializedCommitmentNote = CommitmentNote;
 
 export interface MerkleProof {
   root: bigint;

@@ -34,7 +34,8 @@ import {
   saveEdDSAKeyToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
-import { generateDepositProofInWorker } from "../../lib/zk/deposit-worker-client";
+import { generateDepositProofInWorker, terminateDepositWorker } from "../../lib/zk/deposit-worker-client";
+import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
 import {
   deriveEdDSAKey,
   DERIVE_MESSAGE,
@@ -93,6 +94,8 @@ export default function PrivateEscrowPage() {
       setCachedKey(null);
     }
   }, [account, cachedKey]);
+
+  useTerminateWorkerOnUnmount(terminateDepositWorker);
 
   // EIP-5792 capabilities are stable per (wallet, account, chain); caching
   // at the page level keeps the deposit-click hot path free of the extra

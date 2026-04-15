@@ -7,7 +7,8 @@ import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download,
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { generateClaimProofInWorker } from "../../lib/zk/claim-worker-client";
+import { generateClaimProofInWorker, terminateClaimWorker } from "../../lib/zk/claim-worker-client";
+import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
 import { toAddressHex } from "../../lib/zk/commitment";
 import { useClaimStatuses } from "../../lib/zk/useClaimStatuses";
 import { useClaimsGroupStatus } from "../../lib/zk/useClaimsGroupStatus";
@@ -102,6 +103,8 @@ export default function PrivateClaimPage() {
 
   const claimedMap = useClaimStatuses(allClaims, { includeTxHash: true });
   const settlementMap = useClaimsGroupStatus(allClaims);
+
+  useTerminateWorkerOnUnmount(terminateClaimWorker);
 
   // Claims submitted via zk-relayer (no direct contract address needed)
 

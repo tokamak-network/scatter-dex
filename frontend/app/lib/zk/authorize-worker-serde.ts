@@ -9,8 +9,6 @@
 // only the throwaway copy, not the caller's buffer.
 
 import {
-  serializeCommitmentNote,
-  deserializeCommitmentNote,
   serializeMerkleProof,
   deserializeMerkleProof,
   type SerializedCommitmentNote,
@@ -56,7 +54,7 @@ export interface SerializedAuthorizeOutput {
 
 export function serializeAuthorizeInput(input: AuthorizeProofInput): SerializedAuthorizeInput {
   const result: SerializedAuthorizeInput = {
-    note: serializeCommitmentNote(input.note),
+    note: input.note,
     leafIndex: input.leafIndex,
     sellAmount: input.sellAmount,
     buyToken: input.buyToken,
@@ -83,7 +81,7 @@ export function serializeAuthorizeInput(input: AuthorizeProofInput): SerializedA
 
 export function deserializeAuthorizeInput(raw: SerializedAuthorizeInput): AuthorizeProofInput {
   return {
-    note: deserializeCommitmentNote(raw.note),
+    note: raw.note,
     leafIndex: raw.leafIndex,
     allLeaves: raw.allLeaves,
     merkleProof: raw.merkleProof ? deserializeMerkleProof(raw.merkleProof) : undefined,
