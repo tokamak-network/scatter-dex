@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Lock, ShieldCheck, Gift, FileText, Zap, Globe } from "lucide-react";
+import { Lock, ShieldCheck, Gift, FileText, Zap, Globe, Activity } from "lucide-react";
 
 const privateLinks = [
   { href: "/trade/private-escrow", label: "Escrow", icon: Lock },
@@ -11,6 +11,7 @@ const privateLinks = [
   { href: "/trade/orderbook", label: "Shared Book", icon: Globe },
   { href: "/trade/private-claim", label: "Claim", icon: Gift },
   { href: "/trade/private-history", label: "History", icon: FileText },
+  { href: "/trade/settlements", label: "Settlements", icon: Activity },
 ];
 
 export default function TradeLayout({ children }: { children: React.ReactNode }) {
