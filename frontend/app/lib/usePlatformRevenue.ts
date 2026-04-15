@@ -5,6 +5,7 @@ import { getFeeVaultAddress } from "./config";
 import { FEE_VAULT_ABI } from "./contracts";
 import { getTokenList, type TokenInfo } from "./tokens";
 import { extractEthersErrorMessage } from "./utils";
+import { multicall, encodeCall, decodeResult } from "./multicall";
 
 /**
  * Three platform-revenue streams emitted by FeeVault:
@@ -104,8 +105,14 @@ export function usePlatformRevenue(): PlatformRevenueData {
     partialFailures: [],
   });
   const loadIdRef = useRef(0);
+  // Cache the in-flight load promise so rapid concurrent `refetch`
+  // calls (e.g. user clicking the Refresh button repeatedly) await the
+  // same fetch instead of fanning out duplicate RPC traffic.
+  const inFlightRef = useRef<Promise<void> | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback((): Promise<void> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    const p = (async () => {
     const myId = ++loadIdRef.current;
     setData((d) => ({ ...d, loading: true, error: null, partialFailures: [] }));
 
@@ -137,10 +144,23 @@ export function usePlatformRevenue(): PlatformRevenueData {
       // reads use `.catch` so they don't reject the whole batch (sentinel
       // = null in the UI); the queryFilters are wrapped in `allSettled`
       // so one failed range doesn't blank the whole page.
-      const [treasuryRes, feeBpsRes, accumSettled, eventsSettled] = await Promise.all([
-        vault.treasury().catch((e: unknown) => { console.warn("treasury() failed:", e); return null; }),
-        vault.platformFeeBps().catch((e: unknown) => { console.warn("platformFeeBps() failed:", e); return null; }),
-        Promise.allSettled(tokens.map((t) => vault.platformRevenue(t.address))),
+      // Batch all N per-token `platformRevenue(token)` reads plus
+      // `treasury()` and `platformFeeBps()` into a single Multicall3
+      // request — one round trip instead of 2+N. Falls back to
+      // individual calls per-chunk inside `multicall()` if Multicall3
+      // is unavailable on this chain.
+      const vaultIface = new ethers.Interface(FEE_VAULT_ABI);
+      const viewCalls = [
+        { target: feeVaultAddr, callData: encodeCall(vaultIface, "treasury", []) },
+        { target: feeVaultAddr, callData: encodeCall(vaultIface, "platformFeeBps", []) },
+        ...tokens.map((t) => ({
+          target: feeVaultAddr,
+          callData: encodeCall(vaultIface, "platformRevenue", [t.address]),
+        })),
+      ];
+
+      const [viewResults, eventsSettled] = await Promise.all([
+        multicall(provider, viewCalls),
         Promise.allSettled([
           vault.queryFilter(vault.filters.PlatformFeeFromDex(), fromBlock),
           vault.queryFilter(vault.filters.PlatformSurplusFromDex(), fromBlock),
@@ -148,6 +168,26 @@ export function usePlatformRevenue(): PlatformRevenueData {
           vault.queryFilter(vault.filters.PlatformRevenueWithdrawn(), fromBlock),
         ]),
       ]);
+
+      const treasuryRes = viewResults[0].success
+        ? (decodeResult(vaultIface, "treasury", viewResults[0].returnData)[0] as string)
+        : null;
+      const feeBpsRes = viewResults[1].success
+        ? (decodeResult(vaultIface, "platformFeeBps", viewResults[1].returnData)[0] as bigint)
+        : null;
+      // Mirror the `PromiseSettledResult` shape for the per-token reads
+      // so the rest of the hook can use one code path regardless of
+      // whether the multicall or fallback path ran.
+      const accumSettled: PromiseSettledResult<bigint>[] = tokens.map((_, i) => {
+        const r = viewResults[2 + i];
+        if (r.success) {
+          return {
+            status: "fulfilled",
+            value: decodeResult(vaultIface, "platformRevenue", r.returnData)[0] as bigint,
+          };
+        }
+        return { status: "rejected", reason: new Error("multicall entry failed") };
+      });
       if (loadIdRef.current !== myId) return;
 
       const eventNames = ["PlatformFeeFromDex", "PlatformSurplusFromDex", "PlatformFeeFromRelayerClaim", "PlatformRevenueWithdrawn"] as const;
@@ -270,6 +310,10 @@ export function usePlatformRevenue(): PlatformRevenueData {
         });
       }
     }
+    })();
+    inFlightRef.current = p;
+    p.finally(() => { inFlightRef.current = null; });
+    return p;
   }, []);
 
   useEffect(() => {
