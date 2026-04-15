@@ -165,8 +165,8 @@ export function createSettlementStatsRoutes(
     let limit = 50;
     if (req.query.limit !== undefined) {
       const n = Number(req.query.limit);
-      if (!Number.isSafeInteger(n) || n < 1 || n > 500) {
-        res.status(400).json({ error: "limit: must be an integer in [1, 500]" });
+      if (!Number.isSafeInteger(n) || n < 1 || n > MAX_LIMIT) {
+        res.status(400).json({ error: `limit: must be an integer in [1, ${MAX_LIMIT}]` });
         return;
       }
       limit = n;

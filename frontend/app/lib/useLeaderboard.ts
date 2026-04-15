@@ -74,7 +74,16 @@ export function useLeaderboard(metric: LeaderboardMetric, window: LeaderboardWin
     }
   }, [baseUrl, metric, window]);
 
-  useEffect(() => { fetchOnce(); }, [fetchOnce]);
+  useEffect(() => {
+    fetchOnce();
+    // Bump the request id on unmount / dep change so any in-flight fetch
+    // that resolves after teardown is ignored — otherwise React warns on
+    // setState-after-unmount and a rapid toggle click could overwrite
+    // later state with an earlier response. The request-id guard inside
+    // fetchOnce already drops stale resolutions; this just makes the
+    // cleanup step explicit and consistent with other hooks in the repo.
+    return () => { requestId.current += 1; };
+  }, [fetchOnce]);
 
   return { rows, loading, error, unconfigured };
 }

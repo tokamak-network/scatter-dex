@@ -112,6 +112,14 @@ export class OrderbookDB {
       CREATE INDEX IF NOT EXISTS idx_settle_block       ON settlements(block_number);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_m ON settlements(maker_nullifier);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_t ON settlements(taker_nullifier);
+
+      -- Expression index so "since" filters on COALESCE(block_time,
+      -- created_at) >= ? (used by listSettlements, getNetworkSettlementTotals,
+      -- getLeaderboard) can be served by an index rather than a table scan.
+      -- SQLite expression indexes require the filter expression to match
+      -- verbatim — keep these in sync with the WHERE clauses.
+      CREATE INDEX IF NOT EXISTS idx_settle_time_coalesce
+        ON settlements(COALESCE(block_time, created_at));
     `);
   }
 
