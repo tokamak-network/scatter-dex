@@ -323,7 +323,7 @@ export default function RelayersPage() {
               </div>
               <div className="flex gap-4 text-[11px] text-on-surface-variant/60">
                 <span>{onlineRelayers.length} online</span>
-                <span>{onlineRelayers.reduce((s, r) => s + relayerOrderCount(r), 0)} orders</span>
+                <span>{onlineRelayers.reduce((s, r) => s + relayerOrderCount(r), 0)} pending</span>
                 <span>{formatBond(relayers.reduce((s, r) => s + r.bond, 0n))} bonded</span>
               </div>
             </button>

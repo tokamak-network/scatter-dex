@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Vault, Loader2, ArrowDownToLine } from "lucide-react";
 import { useWallet } from "../lib/wallet";
@@ -20,9 +20,11 @@ interface FeeVaultPanelProps {
   tokens: TokenInfo[];
 }
 
-/// Operator-only panel: shows the connected wallet's accumulated FeeVault
-/// balance per token and lets the operator claim. Renders nothing if either
-/// the FeeVault address is unconfigured or the wallet has no balance.
+/**
+ * Operator-only panel: shows the connected wallet's accumulated FeeVault
+ * balance per token and lets the operator claim. Renders nothing if either
+ * the FeeVault address is unconfigured or the wallet has no balance.
+ */
 export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
   const { account, signer } = useWallet();
   const feeVaultAddr = getFeeVaultAddress();
@@ -35,28 +37,50 @@ export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
 
   const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
 
+  // Bumped on every loadBalances call; in-flight responses that come back
+  // with a stale id are ignored, preventing late RPCs from overwriting the
+  // newer state after `account` changes or the component unmounts.
+  const loadIdRef = useRef(0);
+
   const loadBalances = useCallback(async () => {
     if (!account || !feeVaultAddr) { setBalances([]); return; }
+    const myLoadId = ++loadIdRef.current;
     try {
       const provider = getReadProvider();
       const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
       const feeBps = await vault.platformFeeBps();
+      if (loadIdRef.current !== myLoadId) return;
       setPlatformFee(Number(feeBps));
 
       const erc20Tokens = tokens.filter((t) => !t.isNative);
-      const bals = await Promise.all(
-        erc20Tokens.map(async (t) => {
-          const bal = await vault.balances(account, t.address);
-          return { token: t.address, symbol: t.symbol, balance: bal };
-        }),
+      // Promise.allSettled: a single failed RPC shouldn't drop the whole
+      // balance list. Successful entries still display.
+      const settled = await Promise.allSettled(
+        erc20Tokens.map((t) => vault.balances(account, t.address)),
       );
-      setBalances(bals.filter((b) => b.balance > 0n));
+      if (loadIdRef.current !== myLoadId) return;
+      const bals: VaultBalance[] = [];
+      settled.forEach((res, i) => {
+        if (res.status === "fulfilled" && res.value > 0n) {
+          bals.push({
+            token: erc20Tokens[i].address,
+            symbol: erc20Tokens[i].symbol,
+            balance: res.value,
+          });
+        } else if (res.status === "rejected") {
+          console.warn(`Vault balance fetch failed for ${erc20Tokens[i].symbol}:`, res.reason);
+        }
+      });
+      setBalances(bals);
     } catch (e) {
       console.warn("Failed to load vault balances:", e);
     }
   }, [account, feeVaultAddr, tokens]);
 
-  useEffect(() => { loadBalances(); }, [loadBalances]);
+  useEffect(() => {
+    loadBalances();
+    return () => { loadIdRef.current++; };
+  }, [loadBalances]);
 
   const handleClaim = useCallback(async (token: string) => {
     if (!signer || !feeVaultAddr) return;
@@ -101,7 +125,10 @@ export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
           const grossStr = ethers.formatUnits(b.balance, dec);
           const netStr = ethers.formatUnits(b.balance * BigInt(10000 - platformFee) / 10000n, dec);
           const maxDp = Math.min(dec, 6);
-          const truncate = (s: string) => { const [i, d] = s.split("."); return d ? `${i}.${d.slice(0, maxDp)}` : i; };
+          const truncate = (s: string) => {
+            const [i, d] = s.split(".");
+            return d && maxDp > 0 ? `${i}.${d.slice(0, maxDp)}` : i;
+          };
           return (
             <div key={b.token} className="flex items-center justify-between bg-surface rounded-lg px-4 py-3">
               <div>
