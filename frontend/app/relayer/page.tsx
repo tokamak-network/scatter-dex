@@ -177,10 +177,9 @@ export default function RelayersPage() {
   const { relayers: allRelayers, loading, error, refresh } = useRelayers();
   const relayers = allRelayers;
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
-  // Default sort: online relayers first (status desc), then fee ascending.
-  // Subsequent columns added in Phase 2/2.5 (avg take, latency, volume) are
-  // not yet wired — only the data we already have today.
-  const [sortKey, setSortKey] = useState<"status" | "fee" | "pending" | "bond" | "registered">("status");
+  // Default sort: status desc → online relayers first; address acts as the
+  // deterministic tiebreak so equal-status rows don't reshuffle on rerender.
+  const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [orderbooks, setOrderbooks] = useState<Map<string, Map<string, RelayerOrderbook>>>(new Map());
   const [obLoading, setObLoading] = useState(false);
@@ -214,8 +213,13 @@ export default function RelayersPage() {
   const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
 
   const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
+  // Lowercase comparison matches the rest of the file (sharedRelayerMap,
+  // findToken, profile/page.tsx) so future deep-links like
+  // `?selected=0xABC...` work regardless of input casing.
   const selected = useMemo(
-    () => selectedAddress ? relayers.find((r) => r.address === selectedAddress) ?? null : null,
+    () => selectedAddress
+      ? relayers.find((r) => r.address.toLowerCase() === selectedAddress.toLowerCase()) ?? null
+      : null,
     [selectedAddress, relayers],
   );
 
@@ -295,30 +299,27 @@ export default function RelayersPage() {
     return r.api?.orderCount ?? 0;
   }
 
-  // Stable sort over the displayed relayers. Each comparator falls back to
-  // address ordering so the rendered order doesn't reshuffle on tied values.
+  // Address is the deterministic tiebreak so equal-value rows don't
+  // reshuffle on rerender.
   const sortedRelayers = useMemo(() => {
     const dirMul = sortDir === "asc" ? 1 : -1;
     const addrTiebreak = (a: RelayerInfo, b: RelayerInfo) => a.address.localeCompare(b.address);
     return [...relayers].sort((a, b) => {
       let primary = 0;
       switch (sortKey) {
-        case "status":
-          // online > offline when desc (default); flip when asc.
-          primary = a.online === b.online ? 0 : a.online ? -1 : 1;
-          break;
-        case "fee":       primary = a.fee - b.fee; break;
-        case "pending":   primary = relayerOrderCount(a) - relayerOrderCount(b); break;
-        case "bond":      primary = a.bond > b.bond ? 1 : a.bond < b.bond ? -1 : 0; break;
+        case "status":     primary = a.online === b.online ? 0 : a.online ? -1 : 1; break;
+        case "fee":        primary = a.fee - b.fee; break;
+        case "pending":    primary = relayerOrderCount(a) - relayerOrderCount(b); break;
+        case "bond":       primary = a.bond > b.bond ? 1 : a.bond < b.bond ? -1 : 0; break;
         case "registered": primary = a.registeredAt - b.registeredAt; break;
       }
       return primary === 0 ? addrTiebreak(a, b) : primary * dirMul;
     });
   }, [relayers, sortKey, sortDir]);
 
-  // Header click: toggle direction when same key, otherwise pick the column's
-  // natural default (fee/registered ascend; status/pending/bond descend).
-  function toggleSort(key: typeof sortKey) {
+  // Pick each column's natural default direction so first click is intuitive
+  // (cheap fees first, large bonds first, etc.); same-key click flips.
+  function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -414,12 +415,15 @@ export default function RelayersPage() {
               <tbody>
                 {sortedRelayers.map((r) => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
-                  const isSelected = selectedAddress === r.address;
+                  const isSelected = selectedAddress?.toLowerCase() === r.address.toLowerCase();
                   return (
                     <tr
                       key={r.address}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedAddress(r.address)}
-                      className={`border-b border-outline-variant/5 last:border-0 cursor-pointer transition-colors ${
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAddress(r.address); } }}
+                      className={`border-b border-outline-variant/5 last:border-0 cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-primary/40 ${
                         isSelected ? "bg-primary/8" : "hover:bg-surface-bright/30"
                       }`}
                     >
