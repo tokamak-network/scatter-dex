@@ -1,6 +1,8 @@
 # zkScatter: 영지식 증명과 규정 준수를 갖춘 프라이버시 DEX 정산
 
 > 기술 백서 — v1.0
+>
+> **구현 업데이트 (2026-04)**: 본 문서 전반에서 단일 모놀리식 `settle.circom` proof 를 사용하는 `PrivateSettlement.settlePrivate()` 로 서술된 정산 경로는 **Half-proof 아키텍처**로 대체되었다: 각 사용자가 브라우저에서 `circuits/authorize.circom` 으로 자신의 side 를 증명하고, 릴레이어가 두 proof 를 `PrivateSettlement.settleAuth(makerProof, takerProof)` 로 함께 제출한다. 레거시 `settle.circom`, `ISettleVerifier.sol`, `settlePrivate()`, `PrivateSettled` 이벤트는 저장소에서 삭제되었다. 본 백서의 프라이버시/규정 준수/gas 비용 논증은 모두 그대로 유지되며, 온체인 정산 함수 이름이 관찰되는 주된 차이이다. 자세한 내용은 `docs/architecture/architecture-v2.md` 와 `docs/design/circuit-split/design.md` 참고.
 
 ---
 

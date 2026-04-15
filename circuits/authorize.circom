@@ -8,22 +8,16 @@ include "./node_modules/circomlib/circuits/mux1.circom";
 include "./tags.circom";
 
 // ════════════════════════════════════════════════════════════════════
-//  authorize.circom — Half-proof trustless settlement primitive (PoC)
+//  authorize.circom — Half-proof trustless settlement primitive
 //
-//  In the current settle.circom, the relayer proves a full maker+taker
-//  trade in one go, which forces the relayer to see both sides' private
-//  state (escrow secret, balance, path, claims). authorize.circom splits
-//  the proof in half: each user independently proves "I authorise
-//  spending `sellAmount` of tokenX out of my escrow, in exchange for at
-//  least `buyAmount` of tokenY distributed to these claims". The relayer
-//  then matches two authorize proofs and submits them as a single
-//  `settleAuth(makerProof, takerProof)` transaction.
-//
-//  The relayer never sees:
+//  Each user independently proves "I authorise spending `sellAmount` of
+//  tokenX out of my escrow, in exchange for at least `buyAmount` of
+//  tokenY distributed to these claims". The relayer matches two
+//  authorize proofs and submits them as a single
+//  `settleAuth(makerProof, takerProof)` transaction, never seeing:
 //    - the user's escrow secret / salt
 //    - the user's balance
-//    - the claim secrets (it already doesn't in settle.circom's private
-//      inputs, but now it doesn't even handle them)
+//    - the claim secrets
 //
 //  Public outputs (committed on-chain):
 //    - commitmentRoot          current commitment tree root
@@ -85,14 +79,14 @@ include "./tags.circom";
 //
 //  deposit.circom is the canonical place where the pubkey is validated
 //  (BabyCheck + identity rejection). Downstream circuits
-//  (withdraw/settle/authorize) rely on the invariant that every
+//  (withdraw/authorize/cancel/claim) rely on the invariant that every
 //  commitment in the merkle tree was produced by a well-formed pubkey.
 //
-//  See: project_half_proof_design.md and settle.circom for the full
-//  context on how this folds into the trustless settlement flow.
+//  See: project_half_proof_design.md for the full context on how this
+//  folds into the trustless settlement flow.
 // ════════════════════════════════════════════════════════════════════
 
-// ── Poseidon Merkle membership proof (duplicated from settle.circom) ──
+// ── Poseidon Merkle membership proof ──
 template AuthMerkleProof(levels) {
     signal input leaf;
     signal input pathElements[levels];
@@ -127,13 +121,12 @@ template AuthMerkleProof(levels) {
 
 // ── Fixed-size claim tree root computation ──
 //
-// [PR #127 optimization] Unlike the equivalent template in settle.circom,
-// this version is INTERNAL to authorize.circom and the caller (the
+// [PR #127 optimization] This template is INTERNAL to authorize.circom
+// and the caller (the
 // `Authorize` template below) always mutes unused leaves to zero before
 // passing them in. We therefore drop the inner `isUsed`/`LessThan(252)`
 // loop entirely, saving ~4 000 R1CS constraints (~13% of the unoptimized
-// authorize circuit). The settle.circom version keeps the check for
-// reusability; this one is a private helper so the trade is worth it.
+// authorize circuit).
 template AuthClaimsRoot(maxLeaves, depth) {
     signal input leaves[maxLeaves];
     signal output root;
@@ -216,36 +209,27 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // ════════════════════════════════════════
     //  1. RANGE CHECKS
     //
-    //  Same bounds as settle.circom after PR #124's gemini HIGH fix:
+    //  Bounds established by PR #124's gemini HIGH fix:
     //  - trade amounts (sell/buy) bounded to 126 bits so products fit
     //    the BN254 field after a future off-chain priceCheck
     //  - balance / totalLocked / individual claim amounts to 128 bits
     //  - maxFee to 16 bits (bps)
     //
-    //  [2026-04-10 audit] The 126-bit cap is **inherited from settle.circom
-    //  as a hard correctness boundary**, even though authorize.circom does
-    //  not itself perform a price-product comparison. The future settleAuth
-    //  glue contract (see docs/circuit-split/design.md §6) computes
-    //  `makerSellAmount * takerSellAmount` in Solidity uint256; that
-    //  multiplication does still fit even for full uint128 operands, so the
-    //  reason to keep 126 bits here is **not** EVM uint256 overflow
-    //  avoidance — `(2^128 − 1)^2 < 2^256` always holds (see
-    //  docs/circuit-split/bit-width-audit.md §5).
+    //  [2026-04-10 audit] The 126-bit cap is a hard correctness boundary.
+    //  `settleAuth` computes `makerSellAmount * takerSellAmount` in
+    //  Solidity uint256 during cross-side price checks. That
+    //  multiplication fits even for full uint128 operands
+    //  (`(2^128 − 1)^2 < 2^256`), so the reason to keep 126 bits here
+    //  is **not** EVM uint256 overflow avoidance.
     //
-    //  The real reason is **circuit-contract drift avoidance**: settle.circom
-    //  enforces 126 bits because of its in-circuit `LessEqThan(252)` price-
-    //  check headroom (see settle.circom §5 [M1]), and any settleAuth or
-    //  scatter-direct path that interoperates with the same merkle tree must
-    //  refuse the same set of "too large" amounts that settle.circom refuses.
-    //  If authorize.circom widened to 127 bits while settle.circom stayed at
-    //  126, the relayer could route the same user past two different
-    //  acceptance windows depending on which proof type they generated,
-    //  which would let an attacker construct an amount that one verifier
-    //  accepts and the other rejects.
+    //  The real reason is headroom for in-circuit `LessEqThan(252)`
+    //  range comparisons on price products — any path that reuses this
+    //  tree (settleAuth, settleWithDex, scatterDirectAuth) must refuse
+    //  the same set of "too large" amounts. See
+    //  `docs/circuit-split/bit-width-audit.md §5` for the full analysis.
     //
     //  Do NOT widen any of these range checks past 126 bits without
-    //  re-running the bit-width audit at docs/circuit-split/bit-width-audit.md.
-    //  See settle.circom §5 for the full LessEqThan(252) headroom analysis.
+    //  re-running that audit.
     // ════════════════════════════════════════
     component rcSell = Num2Bits(126);
     rcSell.in <== sellAmount;
@@ -527,7 +511,7 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 }
 
 // Parameters:
-// - commitTreeDepth=20   (1M commitments — matches settle.circom)
+// - commitTreeDepth=20   (1M commitments)
 // - maxClaimsPerSide=16  (padded to power of 2)
 // - claimsTreeDepth=4    (2^4 = 16 leaves)
 component main {public [

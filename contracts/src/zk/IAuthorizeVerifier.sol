@@ -23,11 +23,10 @@ pragma solidity ^0.8.28;
 ///   [12] relayer          uint160 packed into uint256 — relayer bound in proof
 ///   [13] orderHash        bytes32 — Poseidon hash over the EdDSA-signed order parameters
 ///
-/// The current `circuits/authorize.circom` is built with the same parameters as
-/// `settle.circom` (`commitTreeDepth = 20`, `maxClaimsPerSide = 16`,
-/// `claimsTreeDepth = 4`). If those parameters change, the deployed
-/// `AuthorizeVerifier` must be regenerated and re-pointed via
-/// `PrivateSettlement.setAuthorizeVerifier(...)`.
+/// The current `circuits/authorize.circom` uses `commitTreeDepth = 20`,
+/// `maxClaimsPerSide = 16`, `claimsTreeDepth = 4`. If those parameters
+/// change, the deployed `AuthorizeVerifier` must be regenerated and
+/// re-pointed via `PrivateSettlement.setAuthorizeVerifier(...)`.
 ///
 /// See `docs/circuit-split/design.md` for the architectural rationale and
 /// `docs/circuit-split/bit-width-audit.md` §5 for why `sellAmount` /

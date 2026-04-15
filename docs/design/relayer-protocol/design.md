@@ -162,7 +162,7 @@ Three distinct communication channels, each with different confidentiality and r
 | User → Relayer | HTTPS | 1:1 | Proof + order metadata + fee |
 | Relayer → Relayer (public) | Waku gossip | 1:N | Order announcements, heartbeats |
 | Relayer → Relayer (direct) | Waku direct or libp2p | 1:1 | Match negotiation, commit-reveal, settlement coordination |
-| Relayer → Chain | Ethereum RPC | 1:1 | `settlePrivate` tx |
+| Relayer → Chain | Ethereum RPC | 1:1 | `settleAuth` tx |
 
 ### 3.4 Trust boundaries
 
@@ -350,7 +350,7 @@ message SettleNotice {
   bytes order_id = 1;
   bytes tx_hash = 2;
   uint64 block_number = 3;      // may be 0 if not yet mined
-  bytes submitter = 4;          // relayer that actually called settlePrivate
+  bytes submitter = 4;          // relayer that actually called settleAuth
 }
 ```
 
@@ -387,7 +387,7 @@ Every received message is validated in this order, and rejected on first failure
 
 1. **Decode** — valid protobuf under the declared `MessageType`
 2. **Protocol version** — within the receiving relayer's supported range
-3. **Timestamp skew** — `|now - timestamp_ms| ≤ MAX_CLOCK_SKEW` (5 min, aligned with `PrivateSettlement.TIMESTAMP_TOLERANCE`)
+3. **Timestamp skew** — `|now - timestamp_ms| ≤ MAX_CLOCK_SKEW` (5 min, to tolerate normal relayer clock drift and bound message freshness; this is a relayer-to-relayer message guard and is separate from the strict per-order on-chain `expiry` check enforced by `settleAuth`)
 4. **Signature** — EIP-712 recover matches `sender_relayer_id`
 5. **Sender liveness** — `sender_relayer_id` is an active relayer in `RelayerRegistry`
 6. **Type-specific validation** — e.g., `COMMIT.reveal_deadline > commit_time`, `ORDER_ANNOUNCE.expiry > now`
@@ -421,7 +421,7 @@ REVEALED
   │    (both sides sent REVEAL within window; proofs ready)
   ▼
 SETTLING
-  │    (settlePrivate tx submitted to chain)
+  │    (settleAuth tx submitted to chain)
   ▼
 SETTLED              ← terminal (success)
 
@@ -429,7 +429,7 @@ Alternative terminals:
   CANCELLED          (user cancel / expiry / MATCH_REJECT before commit)
   DISPUTED           (commit sent but counterparty aborted; dispute filed)
   SLASHED            (on-chain dispute resolved against this relayer)
-  FAILED             (settlePrivate reverted; see below)
+  FAILED             (settleAuth reverted; see below)
 ```
 
 ### 5.2 Transition table
@@ -446,9 +446,9 @@ Alternative terminals:
 | `PROPOSED` | `COMMITTED` | Both `COMMIT` messages exchanged | No |
 | `COMMITTED` | `REVEALED` | Both `REVEAL` messages received within window | No |
 | `COMMITTED` | `DISPUTED` | Reveal window passed without counterparty reveal | No |
-| `REVEALED` | `SETTLING` | `settlePrivate` tx submitted | No |
+| `REVEALED` | `SETTLING` | `settleAuth` tx submitted | No |
 | `REVEALED` | `FAILED` | Submission failed before tx sent (RPC error, nonce issue) | No |
-| `SETTLING` | `SETTLED` | Tx mined, `PrivateSettled` event observed | Yes (via `SETTLE_NOTICE`) |
+| `SETTLING` | `SETTLED` | Tx mined, `PrivateSettledAuth` event observed | Yes (via `SETTLE_NOTICE`) |
 | `SETTLING` | `FAILED` | Tx reverted on-chain | Yes |
 | `DISPUTED` | `SLASHED` | `DisputeResolved` event upholds dispute | Yes |
 | `DISPUTED` | `REVEALED` | Counterparty submitted counter-evidence during challenge window | No |
@@ -466,7 +466,7 @@ The state machine above is driven by a concrete commit-reveal fair-exchange prot
 
 #### 5.4.1 Problem statement
 
-Two relayers A (maker side) and B (taker side) each hold one half of a matched trade. Neither has the other's proof. Both need to end up with both proofs so that either can call `settlePrivate` on-chain. The protocol must satisfy:
+Two relayers A (maker side) and B (taker side) each hold one half of a matched trade. Neither has the other's proof. Both need to end up with both proofs so that either can call `settleAuth` on-chain. The protocol must satisfy:
 
 1. **Liveness under cooperation** — if both relayers behave honestly and are both online, the exchange completes in bounded time and both sides end up with both proofs.
 2. **Abort safety** — if either relayer withholds, the other can detect the withholding within a bounded window and safely abandon the match without permanent value loss.
@@ -500,7 +500,7 @@ Let A be the **lower-address** relayer in the matched pair (by 20-byte Ethereum 
                         │           both REVEAL seen            │
                         │       → state REVEALED (both)         │
                         │                                       │
-   t≥          either side calls settlePrivate on-chain
+   t≥          either side calls settleAuth on-chain
 ```
 
 With the default parameters in §13:
@@ -525,7 +525,7 @@ B times out at `2·T_C + T_R`. Both commits are signed EIP-712 messages, so B ha
 
 **Point 3 — B does not REVEAL after A reveals.**
 This is the **asymmetric-reveal** position — A has already sent `REVEAL(A)` and B is holding both commits plus A's revealed proof. A times out at `2·T_C + 2·T_R`. Does A lose anything?
-  - B cannot submit `settlePrivate` with only A's proof. The on-chain contract requires both maker and taker proofs, and the taker proof is bound to the taker's relayer via `orderHash` (Phase 3.6). B has not produced a taker proof for this round.
+  - B cannot submit `settleAuth` with only A's proof. The on-chain contract requires both maker and taker proofs, and the taker proof is bound to the taker's relayer via `orderHash` (Phase 3.6). B has not produced a taker proof for this round.
   - B has seen A's proof. But A's proof is per-order (bound to `makerNonce`), and A's escrow nullifier is still unconsumed on-chain. A simply rematches with a different counterparty using a new order + new nonce. The old proof becomes worthless to B the moment A re-matches, because the nonce no longer corresponds to an open order.
   - A files a **Type 1 `AbortAfterCommit`** dispute. This is the *same* registry type as Point 2 — the registry does not have a separate "partial reveal" type, because from the registry's perspective the misbehaviour is identical: B committed and then failed to reveal. A simply attaches its own signed `REVEAL` to the evidence as additional context showing that A fulfilled the reveal obligation. The evidence is: B's signed COMMIT (proving B entered the round), A's signed REVEAL (proving A fulfilled the reveal obligation), and the absence of B's REVEAL before deadline.
 
@@ -572,8 +572,8 @@ t=0.15s   COMMIT(A→B)              A sends first (lower addr). A → COMMITTED
 t=0.30s   COMMIT(B→A)              B responds within T_C. Both → COMMITTED
 t=0.45s   REVEAL(A→B)              A reveals first.
 t=0.60s   REVEAL(B→A)              B reveals. Both → REVEALED
-t=0.60s   Either side builds the settlePrivate tx.
-t=2.50s   settlePrivate tx mined. PrivateSettled event → SETTLED
+t=0.60s   Either side builds the settleAuth tx.
+t=2.50s   settleAuth tx mined. PrivateSettledAuth event → SETTLED
 t=2.60s   SETTLE_NOTICE(A→B) (or B→A) — informational
 ```
 
@@ -867,9 +867,9 @@ No contract changes strictly required by this protocol alone. Relayer discovery 
 
 ### 11.4 Integration with `PrivateSettlement`
 
-No changes required. The `settlePrivate(SettleParams)` function remains the settlement target; the new protocol just changes how relayers get to the point of calling it.
+No changes required. The `settleAuth(makerProof, takerProof)` function is the settlement target; the new protocol just changes how relayers get to the point of calling it. (The legacy `settlePrivate(SettleParams)` entrypoint referenced in earlier drafts of this document has been removed; `settleAuth` is the sole ZK-settlement path.)
 
-The already-implemented `makerRelayer`/`takerRelayer` binding in the proof (Phase 3.6) is directly compatible: the commit-reveal exchange ensures both relayers have matching proofs, and either can call `settlePrivate`.
+The already-implemented `makerRelayer`/`takerRelayer` binding in the proof (Phase 3.6) is directly compatible: the commit-reveal exchange ensures both relayers have matching proofs, and either can call `settleAuth`.
 
 ### 11.5 Integration with `DisputeRegistry`
 
@@ -909,7 +909,7 @@ Can a relayer operate as a "solo" node, receiving only its own users' orders and
 
 | Parameter | Default | Where used | Notes |
 |---|---|---|---|
-| `MAX_CLOCK_SKEW` | 5 min | Message timestamp validation | Aligned with `PrivateSettlement.TIMESTAMP_TOLERANCE = 300s` |
+| `MAX_CLOCK_SKEW` | 5 min | Message timestamp validation | Off-chain tolerance for relayer-to-relayer message timestamps / clock drift. Independent of per-order `expiry`, which `settleAuth` checks strictly (`block.timestamp > expiry` reverts with no grace period). |
 | `HEARTBEAT_INTERVAL` | 30 s | Relayer liveness | Absence of 3 intervals = offline |
 | `MATCHING_SLOT_DURATION` | 5 s | Deterministic sharding | Trade-off: latency vs. liveness |
 | `MATCH_PROPOSE_TIMEOUT` | 10 s | Accept/reject window | Short — keep the protocol snappy |

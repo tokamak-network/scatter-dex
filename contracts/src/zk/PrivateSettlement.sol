@@ -6,7 +6,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {CommitmentPool} from "./CommitmentPool.sol";
-import {ISettleVerifier} from "./ISettleVerifier.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
 import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
 import {ICancelVerifier} from "./ICancelVerifier.sol";
@@ -20,9 +19,12 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 
 /// @title PrivateSettlement
-/// @notice ZK-based private settlement for ScatterDEX.
-///         settle: ZK proof hides maker/taker, amounts, and claims structure.
-///         claim: ZK proof proves membership in claimsRoot without revealing which settle.
+/// @notice ZK-based private settlement for zkScatter. Matches Half-proof
+///         (authorize.circom) orders via `settleAuth`, routes market orders
+///         through whitelisted DEXes via `settleWithDex`, and handles
+///         same-token scatters via `scatterDirectAuth`. Claims are
+///         distributed via `claimWithProof` — a ZK proof of membership in
+///         a per-settle `claimsRoot` without revealing which settle.
 contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
 
@@ -42,7 +44,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error AmountOverflow();
     error OnlyWETH();
     error DuplicateClaimsRoot();
-    error TimestampOutOfRange();
     error NotActiveRelayer();
     error AuthorizeVerifierNotSet();
     error CancelVerifierNotSet();
@@ -78,15 +79,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     uint256 public constant MAX_CLAIM_BATCH_SIZE = 20;
 
     // ─── Events ──────────────────────────────────────────────────
-    event PrivateSettled(
-        bytes32 indexed makerNullifier,
-        bytes32 indexed takerNullifier,
-        bytes32 claimsRootMaker,
-        bytes32 claimsRootTaker,
-        address relayer,
-        uint96 feeTokenMaker,
-        uint96 feeTokenTaker
-    );
     event PrivateClaim(
         bytes32 indexed claimsRoot,
         bytes32 indexed nullifier,
@@ -114,9 +106,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address indexed relayer
     );
 
-    /// @notice Emitted by `settleAuth` (Half-proof). Distinct from
-    ///         `PrivateSettled` (which `settlePrivate` emits) so off-chain
-    ///         indexers can tell the two settlement paths apart.
+    /// @notice Emitted by `settleAuth` (Half-proof).
     /// @dev    Solidity caps indexed event fields at 3, and the three
     ///         indexing slots are spent on `makerNullifier`, `takerNullifier`,
     ///         and `makerRelayer` (the first two for trade-level lookups,
@@ -177,7 +167,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
     CommitmentPool public immutable pool;
-    ISettleVerifier public immutable settleVerifier;
     IClaimVerifier public immutable claimVerifier;
     address public immutable weth;
 
@@ -211,19 +200,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         Similar to Tangem/MetaMask swap fee model. 0 = no fee. Max 500 (5%).
     uint256 public dexPlatformFeeBps;
 
-    /// @notice Maximum past skew allowed between `currentTimestamp` (set by
-    ///         the relayer at proof generation time) and `block.timestamp`.
-    ///         60 seconds is plenty for proof-gen + tx-propagation latency
-    ///         while keeping the stale-order surface tight (the previous
-    ///         300s window let an order that expired up to 5 min ago still
-    ///         settle — see PR #125 review). Future drift is forbidden by
-    ///         the upper bound in `settlePrivate`.
-    uint256 public constant TIMESTAMP_TOLERANCE = 60;
-
     /// @notice Denominator for fee basis points (1 bps = 1/10000).
     ///         Used by `settleAuth` to bound the relayer-chosen fee against
-    ///         each side's circuit-bound `maxFee`. Same value as the bps
-    ///         denominator inside `settle.circom` §7 (`fee * 10000` checks).
+    ///         each side's circuit-bound `maxFee`.
     uint256 public constant FEE_BPS_DENOMINATOR = 10_000;
 
     bool public paused;
@@ -240,14 +219,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── Constructor ─────────────────────────────────────────────
     constructor(
         address _pool,
-        address _settleVerifier,
         address _claimVerifier,
         address _weth
     ) Ownable(msg.sender) {
-        if (_pool == address(0) || _settleVerifier == address(0) || _claimVerifier == address(0) || _weth == address(0))
+        if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
         pool = CommitmentPool(_pool);
-        settleVerifier = ISettleVerifier(_settleVerifier);
         claimVerifier = IClaimVerifier(_claimVerifier);
         weth = _weth;
     }
@@ -346,87 +323,6 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _;
     }
 
-    // ─── Settle ──────────────────────────────────────────────────
-
-    /// @notice Execute a private settlement with ZK proof.
-    /// Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties).
-    /// Relayer addresses are bound in the ZK proof for trustless fee distribution.
-    function settlePrivate(SettleVerifyLib.SettleParams calldata p) external nonReentrant {
-        // Only the maker's or taker's relayer can submit (prevents DoS by unauthorized parties)
-        if (msg.sender != p.makerRelayer && msg.sender != p.takerRelayer) revert NotMakerOrTakerRelayer();
-        if (paused) revert ContractPaused();
-        _requireNotSanctioned(msg.sender);
-        if (!whitelistedTokens[p.tokenMaker]) revert TokenNotWhitelisted();
-        if (!whitelistedTokens[p.tokenTaker]) revert TokenNotWhitelisted();
-
-        if (nullifiers[p.makerNullifier]) revert NullifierAlreadySpent();
-        if (nullifiers[p.takerNullifier]) revert NullifierAlreadySpent();
-        if (nonceNullifiers[p.makerNonceNullifier]) revert NullifierAlreadySpent();
-        if (nonceNullifiers[p.takerNonceNullifier]) revert NullifierAlreadySpent();
-
-        // Verify the caller-provided root is known to the pool (avoids reading stale root)
-        if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
-
-        // [M7] One-sided timestamp window: future drift forbidden (prevents
-        //      settling already-expired orders whose expiry is ≤ tolerance
-        //      in the past), past drift allowed up to TIMESTAMP_TOLERANCE.
-        SettleVerifyLib.validateTimestampWindow(p.currentTimestamp, TIMESTAMP_TOLERANCE);
-
-        uint[18] memory pubSignals = SettleVerifyLib.packSettleSignals(p);
-        if (!settleVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
-            revert InvalidProof();
-        }
-
-        // Verify both relayers are registered (if registry is set).
-        // Cache the reference to avoid three SLOADs in the common path.
-        RelayerRegistry _registry = relayerRegistry;
-        if (address(_registry) != address(0)) {
-            if (!_registry.isActiveRelayer(p.makerRelayer)) revert NotActiveRelayer();
-            if (!_registry.isActiveRelayer(p.takerRelayer)) revert NotActiveRelayer();
-        }
-
-        nullifiers[p.makerNullifier] = true;
-        nullifiers[p.takerNullifier] = true;
-        nonceNullifiers[p.makerNonceNullifier] = true;
-        nonceNullifiers[p.takerNonceNullifier] = true;
-
-        // Insert new commitments (change UTXOs) into the CommitmentPool Merkle tree
-        SettleVerifyLib.maybeInsertCommitment(pool, p.makerNewCommitment);
-        SettleVerifyLib.maybeInsertCommitment(pool, p.takerNewCommitment);
-
-        // Transfer claim amounts from CommitmentPool to this contract.
-        // After settlement, PrivateSettlement holds the tokens and distributes
-        // them via claimWithProof(). Claims are permanently available.
-        if (p.totalLockedMaker > 0) {
-            pool.transferToSettlement(p.tokenMaker, p.totalLockedMaker);
-        }
-        if (p.totalLockedTaker > 0) {
-            pool.transferToSettlement(p.tokenTaker, p.totalLockedTaker);
-        }
-
-        // Fee split: each relayer earns the fee paid by THEIR user.
-        //
-        // Naming convention (matches the 2026-04-14 fee-semantics redesign
-        // in circuits/settle.circom:464–527):
-        //   feeTokenMaker = fee denominated in tokenMaker (= maker's buyToken)
-        //                 = deducted from maker's buyAmount → paid by maker
-        //                 → goes to makerRelayer
-        //   feeTokenTaker = fee denominated in tokenTaker (= taker's buyToken)
-        //                 = deducted from taker's buyAmount → paid by taker
-        //                 → goes to takerRelayer
-        if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.tokenMaker, p.feeTokenMaker, p.makerRelayer);
-        if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.tokenTaker, p.feeTokenTaker, p.takerRelayer);
-
-        // Prevent duplicate claims roots (unless one side has zero locked — e.g., one-sided settle)
-        SettleVerifyLib.requireDistinctClaimsRoots(
-            p.claimsRootMaker, p.claimsRootTaker, p.totalLockedMaker, p.totalLockedTaker
-        );
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootMaker, p.tokenMaker, p.totalLockedMaker);
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRootTaker, p.tokenTaker, p.totalLockedTaker);
-
-        emit PrivateSettled(p.makerNullifier, p.takerNullifier, p.claimsRootMaker, p.claimsRootTaker, msg.sender, p.feeTokenMaker, p.feeTokenTaker);
-    }
-
     // ─── settleAuth (Half-proof) ─────────────────────────────────
     //
     // Two `circuits/authorize.circom` proofs (one per party) are matched and
@@ -444,14 +340,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // Fee model: each side's `maxFee` (in basis points) is bound into its
     // EdDSA-signed `orderHash` inside the circuit. The relayer chooses the
     // actual fee (`feeTokenMaker` / `feeTokenTaker`) at submission time and
-    // this contract enforces the per-side bound:
-    //   feeTokenMaker * 10000 ≤ taker.sellAmount * taker.maxFee
-    //   feeTokenTaker * 10000 ≤ maker.sellAmount * maker.maxFee
-    // The naming convention matches `settlePrivate`: `feeTokenMaker` is
-    // denominated in `tokenMaker = maker.buyToken = taker.sellToken` and is
-    // paid by the taker → goes to `taker.relayer`. `feeTokenTaker` is
-    // denominated in `tokenTaker = taker.buyToken = maker.sellToken` and is
-    // paid by the maker → goes to `maker.relayer`.
+    // this contract enforces the per-side bound (each side's fee capped
+    // against that side's OWN `buyAmount`, matching the 2026-04-14
+    // fee-semantics redesign):
+    //   feeTokenMaker * 10000 ≤ maker.buyAmount * maker.maxFee
+    //   feeTokenTaker * 10000 ≤ taker.buyAmount * taker.maxFee
+    // Naming: `feeTokenMaker` is denominated in
+    // `tokenMaker = maker.buyToken = taker.sellToken` — it is the
+    // maker-side fee (drawn from what the maker receives) and goes to
+    // `maker.relayer`. `feeTokenTaker` is denominated in
+    // `tokenTaker = taker.buyToken = maker.sellToken` — it is the
+    // taker-side fee and goes to `taker.relayer`.
 
     struct SettleAuthParams {
         SettleVerifyLib.AuthorizeProof maker;
@@ -575,11 +474,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             pool.transferToSettlement(p.taker.buyToken, p.taker.totalLocked);
         }
 
-        // 15. Fee routing — same naming as settlePrivate. Each user's signed
-        //     maxFee caps the fee drawn from their own buyAmount, and that
-        //     fee goes to the relayer that holds their order (the relayer
-        //     that accepted the order into its local book earns the fee for
-        //     that order). See PrivateSettlement:407–418 for the semantics.
+        // 15. Fee routing — each user's signed maxFee caps the fee drawn
+        //     from their own buyAmount, and that fee goes to the relayer
+        //     that holds their order.
         if (p.feeTokenMaker > 0) _routeFeeFromPoolTo(p.maker.buyToken, p.feeTokenMaker, p.maker.relayer);
         if (p.feeTokenTaker > 0) _routeFeeFromPoolTo(p.taker.buyToken, p.feeTokenTaker, p.taker.relayer);
 

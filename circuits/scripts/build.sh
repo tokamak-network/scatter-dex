@@ -6,8 +6,8 @@ cd "$(dirname "$0")/.."
 BUILD=build
 SNARKJS=./node_modules/.bin/snarkjs
 
-# Circuits to build: deposit, withdraw, settle, claim, authorize, cancel
-CIRCUITS=(deposit withdraw settle claim authorize cancel)
+# Circuits to build: deposit, withdraw, claim, authorize, cancel
+CIRCUITS=(deposit withdraw claim authorize cancel)
 
 # Map circuit name → Solidity verifier contract name.
 # Kept as a function (rather than an associative array) so the script
@@ -16,7 +16,6 @@ verifier_name_for() {
   case "$1" in
     deposit)   printf "DepositVerifier\n" ;;
     withdraw)  printf "WithdrawVerifier\n" ;;
-    settle)    printf "SettleVerifier\n" ;;
     claim)     printf "ClaimVerifier\n" ;;
     authorize) printf "AuthorizeVerifier\n" ;;
     cancel)    printf "CancelVerifier\n" ;;

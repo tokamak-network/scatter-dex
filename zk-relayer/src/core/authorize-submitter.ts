@@ -1,11 +1,8 @@
 /**
  * Authorize (Half-proof) settlement submitter.
  *
- * Unlike `private-submitter.ts` (which generates a settle.circom proof
- * server-side from both parties' witness data), this submitter receives
- * two pre-generated `authorize.circom` proofs (one per party) and calls
- * `PrivateSettlement.settleAuth(makerProof, takerProof)` on-chain.
- *
+ * Receives two pre-generated `authorize.circom` proofs (one per party)
+ * and calls `PrivateSettlement.settleAuth(makerProof, takerProof)`.
  * The relayer NEVER holds witness data — only proofs + public signals.
  */
 

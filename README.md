@@ -15,9 +15,11 @@ Frontend (Next.js)  →  ZK Relayer (Node.js)   →  Contracts (Solidity / Found
                                                  IdentityGate (multi-CA)
 
 Circuits (Circom)
-  settle.circom      ~30K constraints — private settlement with EdDSA + fee validation
+  authorize.circom   ~15K constraints — Half-proof per-side settlement authorization
+  cancel.circom      ~8K  constraints — private order cancel
   claim.circom       ~1.5K constraints — claim with Merkle inclusion proof
   withdraw.circom    ~6K constraints — withdrawal from commitment pool
+  deposit.circom     ~4K constraints — private deposit into commitment pool
 ```
 
 ## Project Structure

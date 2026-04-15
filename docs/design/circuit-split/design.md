@@ -2,6 +2,8 @@
 
 > **Status (2026-04 update)**: This document was originally drafted as a *circuit split* analysis (`maker_order.circom` + `taker_match.circom`). The actual implementation collapses both halves into a single per-side circuit, **`circuits/authorize.circom`**, used by both maker and taker. Two `authorize` proofs are matched by the relayer and submitted as `PrivateSettlement.settleAuth(makerProof, takerProof)`. Throughout this document, the terms "maker_order/taker_match" refer to the analysis-level decomposition; the realised primitive is simply called **Half-proof** and lives in `authorize.circom`.
 >
+> **Migration complete (2026-04-14)**: The legacy monolithic `circuits/settle.circom`, `contracts/src/zk/ISettleVerifier.sol`, `PrivateSettlement.settlePrivate()`, the `PrivateSettled` event, `TIMESTAMP_TOLERANCE` constant, and the `SettleParams` / `packSettleSignals` / `validateTimestampWindow` library helpers have all been **deleted from the repository**. All references below to "legacy `settle.circom`", "existing `settlePrivate`", "during the migration window", or the two-path migration plan (§11) are **historical design records** — the migration has been executed and `settleAuth` is now the sole ZK-settlement entrypoint. The originally-sketched `settlePrivateSplit` entrypoint name was renamed to `settleAuth` in the shipped implementation.
+>
 > **Scope**: Replace the monolithic `circuits/settle.circom` with the Half-proof primitive — each user proves their own side in the browser, the relayer matches two proofs without ever seeing witness data, and a single `settleAuth` transaction settles the trade.
 >
 > **Design decisions referenced from this document** (see [../architecture-v2.md](../../architecture/architecture-v2.md) §"Design decisions"):
@@ -13,9 +15,9 @@
 > - [../dispute-registry/design.md](../dispute-registry/design.md) — dispute registry that records misbehavior detected via commit-reveal of Half-proofs
 > - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model — sections §1, §2, §3 become obsolete after Half-proof
 > - [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current HTTP Trade Offer (deprecated by Half-proof)
-> - [../../circuits/settle.circom](../../circuits/settle.circom) — legacy monolithic circuit (being replaced)
+> - ~~[../../circuits/settle.circom](../../circuits/settle.circom)~~ — legacy monolithic circuit (**DELETED** from the repository; references below are historical)
 > - [../../circuits/authorize.circom](../../circuits/authorize.circom) — Half-proof primitive (current implementation target)
-> - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target (`settleAuth` to be added)
+> - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target (`settleAuth` shipped; legacy `settlePrivate` removed)
 
 ## 1. Motivation
 

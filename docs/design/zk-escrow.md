@@ -1,6 +1,6 @@
 # Design: ZK Escrow + Private Settlement
 
-**Status: EXPLORING**
+**Status: HISTORICAL DESIGN RECORD** — this document captures the original monolithic `settle.circom` / `settlePrivate()` design. That path has since been superseded by the **Half-proof architecture** (`circuits/authorize.circom` + `PrivateSettlement.settleAuth(makerProof, takerProof)`), and the legacy `circuits/settle.circom`, `ISettleVerifier.sol`, `settlePrivate()` function, and `PrivateSettled` event have been removed. For the current settlement flow, see [../architecture/architecture-v2.md](../architecture/architecture-v2.md) and [circuit-split/design.md](circuit-split/design.md). The sections below are preserved for historical/archival reference.
 
 ## Overview
 

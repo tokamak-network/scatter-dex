@@ -18,7 +18,7 @@ function mockContract(
   const estimateGas = vi.fn().mockResolvedValue(estimatedGas);
   return {
     runner: { provider },
-    settlePrivate: { estimateGas },
+    settleAuth: { estimateGas },
   } as any;
 }
 
@@ -33,7 +33,7 @@ describe("estimateAndGuard", () => {
     const highGasPrice = 150_000_000_000n; // 150 gwei
     const contract = mockContract(100_000n, { gasPrice: highGasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 1_000_000_000_000_000n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 1_000_000_000_000_000n);
 
     expect(result.profitable).toBe(false);
     expect(result.reason).toContain("exceeds max");
@@ -46,7 +46,7 @@ describe("estimateAndGuard", () => {
     const contract = mockContract(100_000n, { gasPrice: normalGasPrice });
     const highFee = 100_000_000_000_000_000n; // 0.1 ETH — well above gas cost
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], highFee);
+    const result = await estimateAndGuard(contract, "settleAuth", [], highFee);
 
     expect(result.profitable).toBe(true);
     expect(result.reason).toBeUndefined();
@@ -61,7 +61,7 @@ describe("estimateAndGuard", () => {
     const contract = mockContract(estimatedGas, { gasPrice });
     const tinyFee = 1_000_000_000_000n; // 0.000001 ETH — below gas cost
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], tinyFee);
+    const result = await estimateAndGuard(contract, "settleAuth", [], tinyFee);
 
     expect(result.profitable).toBe(false);
     expect(result.reason).toContain("exceeds fee");
@@ -74,7 +74,7 @@ describe("estimateAndGuard", () => {
     const contract = mockContract(estimatedGas, { gasPrice });
     const largeFee = 10_000_000_000_000_000n; // 0.01 ETH
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], largeFee);
+    const result = await estimateAndGuard(contract, "settleAuth", [], largeFee);
 
     expect(result.profitable).toBe(true);
     expect(result.gasCostWei).toBeLessThan(largeFee);
@@ -85,12 +85,12 @@ describe("estimateAndGuard", () => {
     const gasPrice = 50_000_000_000n; // 50 gwei
     const contract = mockContract(500_000n, { gasPrice });
 
-    const explicit = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const explicit = await estimateAndGuard(contract, "settleAuth", [], 0n);
     expect(explicit.profitable).toBe(true);
     expect(explicit.reason).toBeUndefined();
     expect(explicit.gasCostWei).toBeGreaterThan(0n);
 
-    const defaultArg = await estimateAndGuard(contract, "settlePrivate", []);
+    const defaultArg = await estimateAndGuard(contract, "settleAuth", []);
     expect(defaultArg.profitable).toBe(true);
   });
 
@@ -99,15 +99,15 @@ describe("estimateAndGuard", () => {
     const contract = mockContract(100_000n, { gasPrice: null, maxFeePerGas: null });
 
     await expect(
-      estimateAndGuard(contract, "settlePrivate", []),
+      estimateAndGuard(contract, "settleAuth", []),
     ).rejects.toThrow("Unable to determine gas price from provider fee data");
   });
 
   it("should throw when contract has no provider", async () => {
-    const contract = { runner: {}, settlePrivate: { estimateGas: vi.fn() } } as any;
+    const contract = { runner: {}, settleAuth: { estimateGas: vi.fn() } } as any;
 
     await expect(
-      estimateAndGuard(contract, "settlePrivate", []),
+      estimateAndGuard(contract, "settleAuth", []),
     ).rejects.toThrow("Contract has no provider");
   });
 
@@ -115,7 +115,7 @@ describe("estimateAndGuard", () => {
     const maxFee = 30_000_000_000n; // 30 gwei
     const contract = mockContract(100_000n, { gasPrice: null, maxFeePerGas: maxFee });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 0n);
 
     expect(result.gasPrice).toBe(maxFee);
     expect(result.profitable).toBe(true);
@@ -127,7 +127,7 @@ describe("estimateAndGuard", () => {
     const estimatedGas = 100_000n;
     const contract = mockContract(estimatedGas, { gasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 0n);
 
     // bufferedGas = ceil(100_000 * 12 / 10) = 120_000
     expect(result.estimatedGas).toBe(120_000n);
@@ -138,7 +138,7 @@ describe("estimateAndGuard", () => {
     const estimatedGas = 100_001n; // not evenly divisible
     const contract = mockContract(estimatedGas, { gasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 0n);
 
     // bufferedGas = ceil(100_001 * 12 / 10) = ceil(1_200_012 / 10) = 120_002
     const expected = (100_001n * 12n + 9n) / 10n;
@@ -152,7 +152,7 @@ describe("estimateAndGuard", () => {
     const largeGas = BigInt("9007199254740993"); // 2^53 + 1
     const contract = mockContract(largeGas, { gasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 0n);
 
     // Verify pure bigint math: no precision loss
     const expected = (largeGas * 12n + 9n) / 10n;
@@ -167,7 +167,7 @@ describe("estimateAndGuard", () => {
     const estimatedGas = 200_000n;
     const contract = mockContract(estimatedGas, { gasPrice });
 
-    const result = await estimateAndGuard(contract, "settlePrivate", [], 0n);
+    const result = await estimateAndGuard(contract, "settleAuth", [], 0n);
 
     // bufferedGas = 240_000, gasCost = 240_000 * 20 gwei = 4_800_000_000_000_000
     expect(result.estimatedGas).toBe(240_000n);
