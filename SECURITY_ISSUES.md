@@ -19,7 +19,7 @@
 | 28 | UX | 가스비 추정 패널 가시성 강화 | ⚠️ | `GasEstimate` 이미 계산됨 — `private-order/page.tsx:567` 의 `useState`, `<FeeBreakdown>` 으로 1508 line 에서 렌더. 가시성 보강은 주관 영역 |
 | 29 | tech-debt | Dead `private_orders` / full-proof 경로 정리 | ⬜ | 아래 #29 메모 참고 |
 | 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ⬜ | `OrderSummary` 와 P2P 라우트 검증 필드 불일치로 P2P fallback 시 authorize 매칭이 동작하지 않음. PR #308 Copilot finding |
-| 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ⬜ | 현재 cross-relayer 매칭 시 전체 Map 스캔. 10k cap 안에서는 무시 가능, 트래픽 늘면 우선순위 상향. PR #308 gemini finding |
+| 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ✅ | `routes/authorize-orders.ts` 에 `ordersByPair` 인덱스 추가. `findMatch` + `AuthorizeCrossRelayerMatchService.onRemoteOrderArrived` 모두 pair lookup 사용 (2026-04-15) |
 | R-14 | relayer | 부하 테스트 (k6/artillery) | ⬜ | 동시 주문/정산 부하 시나리오 |
 
 ### #29 범위 메모 (2026-04-15 갱신)
