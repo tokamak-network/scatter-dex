@@ -1,7 +1,14 @@
 import Database from "better-sqlite3";
 import { config } from "../config.js";
 import type { OrderSummary, OrderStatus, StoredOrder, MatchResult } from "../types/order.js";
-import type { SettlementInsert, StoredSettlement, SettlementListFilter } from "../types/settlement.js";
+import type {
+  SettlementInsert,
+  StoredSettlement,
+  SettlementListFilter,
+  TokenVolumeRow,
+  RelayerSettlementStats,
+  NetworkSettlementTotals,
+} from "../types/settlement.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -452,6 +459,170 @@ export class OrderbookDB {
       userMaxFeeTaker: row.user_maxfee_taker as number,
       verified: ((row.verified as number) ?? 0) === 1,
       createdAt: row.created_at as number,
+    };
+  }
+
+  /**
+   * Walks a row set once and accumulates token + pair aggregates plus a
+   * couple of running counters. Shared by getRelayerSettlementStats and
+   * getNetworkSettlementTotals so the two endpoints' arithmetic can never
+   * drift. BigInt sums are done in Node because sqlite SUM() over TEXT
+   * columns silently coerces to double — accuracy matters for token
+   * amounts that exceed 2^53.
+   */
+  private aggregateSettlementRows(rows: Record<string, unknown>[]): {
+    tokenAgg: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>;
+    pairAgg: Map<string, { sellToken: string; buyToken: string; count: number }>;
+    txCountVerified: number;
+    lastSettleAt: number | null;
+  } {
+    const tokenAgg = new Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>();
+    const pairAgg = new Map<string, { sellToken: string; buyToken: string; count: number }>();
+    let txCountVerified = 0;
+    let lastSettleAt: number | null = null;
+
+    for (const r of rows) {
+      const verified = ((r.verified as number) ?? 0) === 1;
+      if (verified) txCountVerified++;
+      // Track newest activity preferring block_time, falling back to
+      // created_at so freshly-pushed (unverified) rows still drive the
+      // dashboard's "last settle" display in the pre-2.5b window.
+      const ts = (r.block_time as number | null) ?? (r.created_at as number);
+      if (ts !== null && (lastSettleAt === null || ts > lastSettleAt)) lastSettleAt = ts;
+
+      const sellToken = r.sell_token as string | null;
+      const buyToken = r.buy_token as string | null;
+      const sellAmount = r.sell_amount as string | null;
+      const buyAmount = r.buy_amount as string | null;
+      if (sellToken) {
+        const cur = tokenAgg.get(sellToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (sellAmount) cur.sell += BigInt(sellAmount);
+        cur.sellCount++;
+        tokenAgg.set(sellToken, cur);
+      }
+      if (buyToken) {
+        const cur = tokenAgg.get(buyToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (buyAmount) cur.buy += BigInt(buyAmount);
+        cur.buyCount++;
+        tokenAgg.set(buyToken, cur);
+      }
+      if (sellToken && buyToken) {
+        const key = `${sellToken}-${buyToken}`;
+        const cur = pairAgg.get(key) ?? { sellToken, buyToken, count: 0 };
+        cur.count++;
+        pairAgg.set(key, cur);
+      }
+    }
+    return { tokenAgg, pairAgg, txCountVerified, lastSettleAt };
+  }
+
+  private materialiseTokenVolume(
+    tokenAgg: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>,
+  ): TokenVolumeRow[] {
+    return Array.from(tokenAgg.entries()).map(([token, v]) => ({
+      token,
+      totalSell: v.sell.toString(),
+      totalBuy: v.buy.toString(),
+      sellCount: v.sellCount,
+      buyCount: v.buyCount,
+    }));
+  }
+
+  /**
+   * Per-relayer aggregate stats across all settlements where the relayer
+   * appears as submitter, maker, or taker. Used by GET /api/relayers/:addr/stats.
+   */
+  getRelayerSettlementStats(addr: string, since?: number): RelayerSettlementStats {
+    const a = addr.toLowerCase();
+    const sinceClause = typeof since === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
+    const args = typeof since === "number" ? [a, a, a, since] : [a, a, a];
+    const rows = this.db.prepare(
+      `SELECT * FROM settlements WHERE (submitter = ? OR maker_relayer = ? OR taker_relayer = ?) ${sinceClause}`,
+    ).all(...args) as Record<string, unknown>[];
+
+    const { tokenAgg, pairAgg, txCountVerified, lastSettleAt } = this.aggregateSettlementRows(rows);
+
+    // Mean realised fee bps across both sides of every row the relayer
+    // participated in. Only sides with non-zero buy amount + non-zero cap
+    // contribute (zero buy = degenerate, zero cap = no signed bound to
+    // measure against).
+    let feeBpsNum = 0;
+    let feeBpsDen = 0;
+    const accumulateSide = (feeStr: string | null, buyStr: string | null, capBps: number | null): void => {
+      if (!feeStr || !buyStr || !capBps) return;
+      const buy = BigInt(buyStr);
+      if (buy === 0n) return;
+      feeBpsNum += Number((BigInt(feeStr) * 10_000n) / buy);
+      feeBpsDen += 1;
+    };
+    for (const r of rows) {
+      accumulateSide(r.fee_maker as string | null, r.buy_amount as string | null, (r.user_maxfee_maker as number | null) ?? null);
+      accumulateSide(r.fee_taker as string | null, r.buy_amount as string | null, (r.user_maxfee_taker as number | null) ?? null);
+    }
+
+    return {
+      address: a,
+      txCount: rows.length,
+      txCountVerified,
+      volumeByToken: this.materialiseTokenVolume(tokenAgg),
+      pairs: Array.from(pairAgg.values()).sort((x, y) => y.count - x.count),
+      avgFeeBps: feeBpsDen > 0 ? feeBpsNum / feeBpsDen : null,
+      // Until at least one row is verified, the ratio is unknown — return
+      // null rather than a misleading 0 so the dashboard can render
+      // "pending verification" instead of "0% success".
+      successRate: txCountVerified > 0 ? txCountVerified / rows.length : null,
+      lastSettleAt,
+    };
+  }
+
+  /**
+   * Network-wide totals across all settlements. The cheap counters are
+   * pushed into SQL (COUNT, COUNT-DISTINCT, MAX) so we don't ship every
+   * row to Node just to count it; only the volume aggregation needs JS
+   * (BigInt sums on TEXT columns).
+   */
+  getNetworkSettlementTotals(since?: number): NetworkSettlementTotals {
+    const where = typeof since === "number" ? "WHERE COALESCE(block_time, created_at) >= ?" : "";
+    const args: unknown[] = typeof since === "number" ? [since] : [];
+
+    const counters = this.db.prepare(
+      `SELECT
+         COUNT(*) AS tx_count,
+         COUNT(*) FILTER (WHERE verified = 1) AS tx_count_verified,
+         MAX(COALESCE(block_time, created_at)) AS last_settle_at,
+         COUNT(DISTINCT sell_token || '-' || buy_token) AS active_pairs,
+         COUNT(DISTINCT submitter) AS distinct_submitters
+       FROM settlements ${where}`,
+    ).get(...args) as Record<string, unknown>;
+
+    // activeRelayers: a relayer can appear as submitter / maker / taker.
+    // UNION across the three columns and DISTINCT-count, all in one query
+    // rather than pulling every row to Node. The taker branch keeps NULLs
+    // out via an additional predicate so they don't get DISTINCT-counted
+    // against actual addresses.
+    const takerExtra = where ? "AND taker_relayer IS NOT NULL" : "WHERE taker_relayer IS NOT NULL";
+    const relayerCount = this.db.prepare(
+      `SELECT COUNT(DISTINCT addr) AS c FROM (
+         SELECT submitter AS addr FROM settlements ${where}
+         UNION SELECT maker_relayer FROM settlements ${where}
+         UNION SELECT taker_relayer FROM settlements ${where} ${takerExtra}
+       )`,
+    ).get(...args, ...args, ...args) as { c: number };
+
+    // Volume-by-token still walks rows for accurate BigInt sums, but only
+    // the four columns we need are loaded.
+    const rows = this.db.prepare(
+      `SELECT sell_token, buy_token, sell_amount, buy_amount, verified, block_time, created_at FROM settlements ${where}`,
+    ).all(...args) as Record<string, unknown>[];
+    const { tokenAgg } = this.aggregateSettlementRows(rows);
+
+    return {
+      txCount: counters.tx_count as number,
+      txCountVerified: counters.tx_count_verified as number,
+      volumeByToken: this.materialiseTokenVolume(tokenAgg),
+      activePairs: counters.active_pairs as number,
+      activeRelayers: relayerCount.c,
+      lastSettleAt: (counters.last_settle_at as number | null) ?? null,
     };
   }
 

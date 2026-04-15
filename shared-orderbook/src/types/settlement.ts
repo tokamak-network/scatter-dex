@@ -46,6 +46,54 @@ export interface SettlementListFilter {
   offset?: number;
 }
 
+/** Per-token totals — same shape used by per-relayer + network read APIs. */
+export interface TokenVolumeRow {
+  token: string;       // 0x-prefixed lowercase address
+  totalSell: string;   // sum of sell_amount as a decimal string (BigInt-summed)
+  totalBuy: string;    // sum of buy_amount
+  sellCount: number;   // rows where this token appears as sellToken
+  buyCount: number;    // rows where this token appears as buyToken
+}
+
+export interface RelayerSettlementStats {
+  address: string;          // lowercased input
+  txCount: number;          // total settlements where the relayer is submitter, maker, or taker
+  txCountVerified: number;  // subset with verified=1
+  volumeByToken: TokenVolumeRow[];
+  pairs: Array<{ sellToken: string; buyToken: string; count: number }>;
+  /**
+   * Mean effective fee in bps (fee_token_amount × 10000 / buy_amount),
+   * averaged across every side the relayer participated in. Both sides
+   * of every row contribute. `null` when no rows have a non-zero buy.
+   *
+   * NB: this is the realised fee rate, not the design-doc "take ratio
+   * over the user-signed cap". A separate metric for cap-utilisation can
+   * be added in 3a/3b once the leaderboard view defines what it wants.
+   */
+  avgFeeBps: number | null;
+  /**
+   * Verified-fraction of all rows. `null` until at least one row is
+   * verified — pre-2.5b that's the entire window, so the dashboard
+   * shouldn't render a misleading "0%".
+   */
+  successRate: number | null;
+  /**
+   * Newest activity timestamp, preferring verified `block_time` and
+   * falling back to `COALESCE(block_time, created_at)` from any row so
+   * the field is useful pre-2.5b. `null` only when no rows exist.
+   */
+  lastSettleAt: number | null;
+}
+
+export interface NetworkSettlementTotals {
+  txCount: number;
+  txCountVerified: number;
+  volumeByToken: TokenVolumeRow[];
+  activePairs: number;
+  activeRelayers: number;
+  lastSettleAt: number | null;
+}
+
 const HEX_BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL_RE = /^\d+$/;

@@ -10,7 +10,7 @@ import { createOrderRoutes } from "./routes/orders.js";
 import { createRelayerRoutes } from "./routes/relayers.js";
 import { createStatsRoutes } from "./routes/stats.js";
 import { createPeerRoutes } from "./routes/peer.js";
-import { createSettlementRoutes } from "./routes/settlements.js";
+import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
 
 async function main() {
   const db = new OrderbookDB();
@@ -69,7 +69,10 @@ async function main() {
   app.use("/api/relayers", createRelayerRoutes(orderbook, broadcaster, writeLimiter, readLimiter, relayerWriteLimiter));
   app.use("/api/stats", createStatsRoutes(orderbook, readLimiter));
   app.use("/api/peers", createPeerRoutes(orderbook, readLimiter));
-  app.use("/api/settlements", createSettlementRoutes(db, writeLimiter, relayerWriteLimiter));
+  app.use("/api/settlements", createSettlementRoutes(db, writeLimiter, readLimiter, relayerWriteLimiter));
+  // Per-relayer + network read views from the settlements indexer. Mounted
+  // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
+  app.use("/api", createSettlementStatsRoutes(db, readLimiter));
 
   // Health check
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -111,7 +114,10 @@ async function main() {
     console.log(`  GET    /api/relayers          — list relayers`);
     console.log(`  GET    /api/stats             — orderbook stats`);
     console.log(`  GET    /api/peers             — peer list (P2P fallback)`);
-    console.log(`  POST   /api/settlements       — push settlement record (auth)`);
+    console.log(`  POST   /api/settlements              — push settlement record (auth)`);
+    console.log(`  GET    /api/settlements              — list rows (relayer/pair/since filters)`);
+    console.log(`  GET    /api/relayers/:addr/stats     — per-relayer aggregates`);
+    console.log(`  GET    /api/network/totals           — network-wide totals`);
   });
 
   // Graceful shutdown

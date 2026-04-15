@@ -5,7 +5,7 @@ import cors from "cors";
 import { Wallet } from "ethers";
 import fs from "fs";
 import { OrderbookDB } from "../src/core/db.js";
-import { createSettlementRoutes } from "../src/routes/settlements.js";
+import { createSettlementRoutes, createSettlementStatsRoutes } from "../src/routes/settlements.js";
 import type { SettlementInsert } from "../src/types/settlement.js";
 
 const TEST_DB = "/tmp/shared-orderbook-settlements-test.db";
@@ -61,7 +61,8 @@ describe("/api/settlements", () => {
     const app = express();
     app.use(cors());
     app.use(express.json({ limit: "10kb" }));
-    app.use("/api/settlements", createSettlementRoutes(db, noopLimiter));
+    app.use("/api/settlements", createSettlementRoutes(db, noopLimiter, noopLimiter));
+    app.use("/api", createSettlementStatsRoutes(db, noopLimiter));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(PORT, resolve));
   });
@@ -181,5 +182,109 @@ describe("/api/settlements", () => {
 
     const rows = db.listSettlements({ pair: [tA, tB] });
     expect(rows.length).toBe(2);
+  });
+
+  // ─── Phase 2.5c: read APIs ───────────────────────────────────────
+
+  async function get(path: string) {
+    const res = await fetch(`http://localhost:${PORT}${path}`);
+    return { status: res.status, body: await res.json() };
+  }
+
+  it("GET /api/settlements returns rows with relayer + pair + since filters", async () => {
+    const tA = "0x" + "11".repeat(20);
+    const tB = "0x" + "22".repeat(20);
+    await post(basePayload({ txHash: "0x" + "aa".repeat(32), sellToken: tA, buyToken: tB }), makerW);
+    await post(basePayload({ txHash: "0x" + "bb".repeat(32), sellToken: tB, buyToken: tA }), makerW);
+
+    const all = await get("/api/settlements");
+    expect(all.status).toBe(200);
+    expect(all.body.count).toBe(2);
+    expect(all.body.settlements[0].verified).toBe(false);
+
+    const filtered = await get(`/api/settlements?relayer=${makerW.address}&pair=${tA}-${tB}`);
+    expect(filtered.body.count).toBe(2);
+  });
+
+  it("GET /api/settlements rejects bad relayer / pair / since with 400", async () => {
+    expect((await get("/api/settlements?relayer=notanaddress")).status).toBe(400);
+    expect((await get("/api/settlements?pair=foo")).status).toBe(400);
+    expect((await get("/api/settlements?since=-1")).status).toBe(400);
+    expect((await get("/api/settlements?since=12.5")).status).toBe(400);
+  });
+
+  it("GET /api/relayers/:addr/stats aggregates txCount + volumeByToken + pairs + take ratio", async () => {
+    const tA = "0x" + "11".repeat(20);
+    const tB = "0x" + "22".repeat(20);
+    // Three trades by maker A, all on pair (tA, tB), each side fee=100, buy=2000, cap=30
+    await post(basePayload({ txHash: "0x" + "11".repeat(32), sellToken: tA, buyToken: tB }), makerW);
+    await post(basePayload({ txHash: "0x" + "22".repeat(32), sellToken: tA, buyToken: tB }), makerW);
+    await post(basePayload({ txHash: "0x" + "33".repeat(32), sellToken: tB, buyToken: tA }), makerW);
+
+    const r = await get(`/api/relayers/${makerW.address}/stats`);
+    expect(r.status).toBe(200);
+    expect(r.body.address).toBe(makerW.address.toLowerCase());
+    expect(r.body.txCount).toBe(3);
+    expect(r.body.txCountVerified).toBe(0);
+    expect(r.body.volumeByToken.length).toBe(2);
+    // Pair counts: 2× (tA→tB) + 1× (tB→tA) → 2 distinct directional pairs
+    expect(r.body.pairs.length).toBe(2);
+    // Each side contributes fee=100 / buy=2000 = 500 bps; both sides per row,
+    // 3 rows = 6 contributions, average = 500.
+    expect(r.body.avgFeeBps).toBeCloseTo(500, 0);
+    // Pre-2.5b: nothing verified yet, so successRate is null (not 0) so the
+    // dashboard can distinguish "no data" from "0% success".
+    expect(r.body.successRate).toBeNull();
+    // lastSettleAt now falls back to created_at on unverified rows so it's
+    // useful in the pre-verify window — should be a recent unix-seconds value.
+    expect(r.body.lastSettleAt).toBeGreaterThan(0);
+  });
+
+  it("GET /api/relayers/:addr/stats returns zeros for an unknown address", async () => {
+    const r = await get("/api/relayers/0x" + "ff".repeat(20) + "/stats");
+    expect(r.status).toBe(200);
+    expect(r.body.txCount).toBe(0);
+    expect(r.body.volumeByToken).toEqual([]);
+    expect(r.body.pairs).toEqual([]);
+    expect(r.body.avgFeeBps).toBeNull();
+    expect(r.body.successRate).toBeNull();
+  });
+
+  it("GET /api/relayers/:addr/stats rejects bad address with 400", async () => {
+    const r = await get("/api/relayers/notanaddress/stats");
+    expect(r.status).toBe(400);
+  });
+
+  it("GET /api/network/totals counts rows + active pairs + active relayers", async () => {
+    const tA = "0x" + "11".repeat(20);
+    const tB = "0x" + "22".repeat(20);
+    await post(basePayload({ txHash: "0x" + "aa".repeat(32), sellToken: tA, buyToken: tB }), makerW);
+    await post(
+      basePayload({
+        txHash: "0x" + "bb".repeat(32),
+        sellToken: tA,
+        buyToken: tB,
+        makerRelayer: outsiderW.address,
+        takerRelayer: outsiderW.address,
+      }),
+      outsiderW,
+    );
+
+    const r = await get("/api/network/totals");
+    expect(r.status).toBe(200);
+    expect(r.body.txCount).toBe(2);
+    expect(r.body.activePairs).toBe(1); // only (tA, tB)
+    // makerW (submitter+maker), takerW (taker on row 1), outsiderW (all roles on row 2)
+    expect(r.body.activeRelayers).toBe(3);
+    // Falls back to created_at on unverified rows.
+    expect(r.body.lastSettleAt).toBeGreaterThan(0);
+  });
+
+  it("GET /api/network/totals applies since filter", async () => {
+    await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
+    // since far in the future → 0 rows
+    const future = Math.floor(Date.now() / 1000) + 86_400;
+    const r = await get(`/api/network/totals?since=${future}`);
+    expect(r.body.txCount).toBe(0);
   });
 });
