@@ -30,6 +30,8 @@ export interface RelayerEarningsData {
   error: string | null;
 }
 
+export const RECENT_ACTIVITY_LIMIT = 20;
+
 /**
  * Reads accumulated fee vault data for a relayer:
  *   - per-token unclaimed (current `vault.balances(relayer, token)`)
@@ -69,7 +71,6 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
       const tokens = getTokenList().filter((t: TokenInfo) => !t.isNative);
       const fromBlock = await getSafeFromBlock(provider);
 
-      // Parallel: balances per token + event scans.
       const balanceP = Promise.allSettled(
         tokens.map((t) => vault.balances(address, t.address)),
       );
@@ -79,28 +80,48 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
       const [balanceSettled, deposits, claims] = await Promise.all([balanceP, depositP, claimP]);
       if (loadIdRef.current !== myId) return;
 
-      // Aggregate lifetime totals per token.
+      // Lifetime claimed counts the gross amount the relayer's vault
+      // balance was reduced by — `amount + platformFee` (the deposit
+      // minus what was peeled off for the treasury). Matches what
+      // `FeeDeposited` accumulates, so `unclaimed = earned − claimed`.
+      const claimedGross = (e: ethers.EventLog) =>
+        (e.args.amount as bigint) + (e.args.platformFee as bigint);
+
+      const tokensByAddress = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
       const earnedByToken = new Map<string, bigint>();
       const claimedByToken = new Map<string, bigint>();
+      const recent: RelayerEarningsActivity[] = [];
+
+      // Single pass per event stream — aggregates totals AND populates
+      // the recent-activity list so we don't re-iterate or re-add bigints.
       for (const log of deposits) {
         const e = log as ethers.EventLog;
-        const tok = (e.args.token as string).toLowerCase();
-        earnedByToken.set(tok, (earnedByToken.get(tok) ?? 0n) + (e.args.amount as bigint));
+        const tokAddr = e.args.token as string;
+        const tokLc = tokAddr.toLowerCase();
+        const amount = e.args.amount as bigint;
+        earnedByToken.set(tokLc, (earnedByToken.get(tokLc) ?? 0n) + amount);
+        const meta = tokensByAddress.get(tokLc);
+        if (!meta) continue;
+        recent.push({
+          kind: "earned", token: tokAddr, symbol: meta.symbol, amount,
+          blockNumber: e.blockNumber, txHash: e.transactionHash,
+        });
       }
       for (const log of claims) {
         const e = log as ethers.EventLog;
-        const tok = (e.args.token as string).toLowerCase();
-        // Lifetime claimed counts the gross amount the relayer's vault
-        // balance was reduced by, which equals `amount + platformFee`
-        // (the deposit minus what now goes to treasury). Matches the
-        // sum that `FeeDeposited` accumulates so unclaimed = earned − claimed.
-        const gross = (e.args.amount as bigint) + (e.args.platformFee as bigint);
-        claimedByToken.set(tok, (claimedByToken.get(tok) ?? 0n) + gross);
+        const tokAddr = e.args.token as string;
+        const tokLc = tokAddr.toLowerCase();
+        const gross = claimedGross(e);
+        claimedByToken.set(tokLc, (claimedByToken.get(tokLc) ?? 0n) + gross);
+        const meta = tokensByAddress.get(tokLc);
+        if (!meta) continue;
+        recent.push({
+          kind: "claimed", token: tokAddr, symbol: meta.symbol, amount: gross,
+          blockNumber: e.blockNumber, txHash: e.transactionHash,
+        });
       }
 
-      // Build per-token rows in token-list order; only keep rows that have
-      // any activity (unclaimed > 0 OR earned > 0) so the UI doesn't show
-      // a long row of zeros for tokens this relayer never touched.
+      // Skip rows with no activity so the UI stays tight on day 1.
       const rows: RelayerEarningsRow[] = [];
       tokens.forEach((t, i) => {
         const balRes = balanceSettled[i];
@@ -110,53 +131,19 @@ export function useRelayerEarnings(address: string | null): RelayerEarningsData 
         const claimed = claimedByToken.get(tokLc) ?? 0n;
         if (unclaimed > 0n || earned > 0n) {
           rows.push({
-            token: t.address,
-            symbol: t.symbol,
-            decimals: t.decimals,
-            unclaimed,
-            lifetimeEarned: earned,
-            lifetimeClaimed: claimed,
+            token: t.address, symbol: t.symbol, decimals: t.decimals,
+            unclaimed, lifetimeEarned: earned, lifetimeClaimed: claimed,
           });
         }
       });
 
-      // Recent activity: interleave both event streams, sort newest first,
-      // cap at 20. Map token addr → symbol from the token list (skip
-      // unknowns since they wouldn't render meaningfully anyway).
-      const tokenBySymbol = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
-      const recent: RelayerEarningsActivity[] = [];
-      for (const log of deposits) {
-        const e = log as ethers.EventLog;
-        const tok = (e.args.token as string).toLowerCase();
-        const meta = tokenBySymbol.get(tok);
-        if (!meta) continue;
-        recent.push({
-          kind: "earned",
-          token: e.args.token as string,
-          symbol: meta.symbol,
-          amount: e.args.amount as bigint,
-          blockNumber: e.blockNumber,
-          txHash: e.transactionHash,
-        });
-      }
-      for (const log of claims) {
-        const e = log as ethers.EventLog;
-        const tok = (e.args.token as string).toLowerCase();
-        const meta = tokenBySymbol.get(tok);
-        if (!meta) continue;
-        recent.push({
-          kind: "claimed",
-          token: e.args.token as string,
-          symbol: meta.symbol,
-          amount: (e.args.amount as bigint) + (e.args.platformFee as bigint),
-          blockNumber: e.blockNumber,
-          txHash: e.transactionHash,
-        });
-      }
       recent.sort((a, b) => b.blockNumber - a.blockNumber);
 
       if (loadIdRef.current === myId) {
-        setData({ rows, recent: recent.slice(0, 20), loading: false, error: null });
+        setData({
+          rows, recent: recent.slice(0, RECENT_ACTIVITY_LIMIT),
+          loading: false, error: null,
+        });
       }
     } catch (e: unknown) {
       if (loadIdRef.current === myId) {

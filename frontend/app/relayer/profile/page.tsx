@@ -11,9 +11,9 @@ import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
-import { shortenAddress, formatBond, formatDuration } from "../../lib/utils";
+import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
-import { useRelayerEarnings } from "../../lib/useRelayerEarnings";
+import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
 
 interface Badge {
   id: string;
@@ -197,6 +197,10 @@ function RelayerProfileContent() {
   useEffect(() => { loadSettlements(); }, [loadSettlements]);
 
   const earnings = useRelayerEarnings(validAddress);
+  const decimalsByToken = useMemo(
+    () => new Map(earnings.rows.map((r) => [r.token.toLowerCase(), r.decimals])),
+    [earnings.rows],
+  );
 
   const badges = useMemo(
     () => relayer ? computeBadges(relayer, stats) : [],
@@ -392,45 +396,32 @@ function RelayerProfileContent() {
               <span className="text-right">Lifetime earned</span>
               <span className="text-right">Lifetime claimed</span>
             </div>
-            {earnings.rows.map((row) => {
-              const fmt = (v: bigint) => {
-                const s = ethers.formatUnits(v, row.decimals);
-                const [i, d] = s.split(".");
-                return d && d.length > 6 ? `${i}.${d.slice(0, 6)}` : s;
-              };
-              return (
-                <div key={row.token} className="grid grid-cols-[1fr_120px_120px_120px] gap-2 px-3 py-2 text-xs hover:bg-surface-bright/20 rounded transition-colors">
-                  <span className="font-bold text-on-surface">{row.symbol}</span>
-                  <span className="text-right font-mono text-on-surface">{fmt(row.unclaimed)}</span>
-                  <span className="text-right font-mono text-on-surface-variant/70">{fmt(row.lifetimeEarned)}</span>
-                  <span className="text-right font-mono text-on-surface-variant/50">{fmt(row.lifetimeClaimed)}</span>
-                </div>
-              );
-            })}
+            {earnings.rows.map((row) => (
+              <div key={row.token} className="grid grid-cols-[1fr_120px_120px_120px] gap-2 px-3 py-2 text-xs hover:bg-surface-bright/20 rounded transition-colors">
+                <span className="font-bold text-on-surface">{row.symbol}</span>
+                <span className="text-right font-mono text-on-surface">{formatTokenAmount(row.unclaimed, row.decimals)}</span>
+                <span className="text-right font-mono text-on-surface-variant/70">{formatTokenAmount(row.lifetimeEarned, row.decimals)}</span>
+                <span className="text-right font-mono text-on-surface-variant/50">{formatTokenAmount(row.lifetimeClaimed, row.decimals)}</span>
+              </div>
+            ))}
           </div>
         )}
 
         {earnings.recent.length > 0 && (
-          <details className="mt-4 group">
-            <summary className="cursor-pointer text-[11px] text-on-surface-variant/50 hover:text-on-surface-variant select-none">
-              Recent activity ({earnings.recent.length})
+          <details className="mt-4">
+            <summary className="cursor-pointer text-[11px] text-on-surface-variant/50 hover:text-on-surface-variant select-none rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50 px-1 -mx-1 py-0.5">
+              Recent activity (last {RECENT_ACTIVITY_LIMIT})
             </summary>
             <div className="mt-2 space-y-1">
               {earnings.recent.map((a) => {
-                const row = earnings.rows.find((r) => r.token.toLowerCase() === a.token.toLowerCase());
-                const dec = row?.decimals ?? 18;
-                const fmt = (v: bigint) => {
-                  const s = ethers.formatUnits(v, dec);
-                  const [i, d] = s.split(".");
-                  return d && d.length > 6 ? `${i}.${d.slice(0, 6)}` : s;
-                };
+                const dec = decimalsByToken.get(a.token.toLowerCase()) ?? 18;
                 return (
                   <div key={`${a.txHash}-${a.kind}`} className="grid grid-cols-[80px_1fr_120px_80px] gap-2 px-3 py-1.5 text-[11px] hover:bg-surface-bright/20 rounded transition-colors">
                     <span className={a.kind === "earned" ? "text-emerald-400" : "text-amber-400 inline-flex items-center gap-1"}>
                       {a.kind === "earned" ? "+ earned" : <><ArrowDownToLine className="w-3 h-3" /> claimed</>}
                     </span>
                     <span className="font-mono text-primary truncate">{a.txHash}</span>
-                    <span className="text-right font-mono text-on-surface">{fmt(a.amount)} {a.symbol}</span>
+                    <span className="text-right font-mono text-on-surface">{formatTokenAmount(a.amount, dec)} {a.symbol}</span>
                     <span className="text-right text-on-surface-variant/40 font-mono">#{a.blockNumber}</span>
                   </div>
                 );
