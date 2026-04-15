@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Activity, RefreshCw, Circle, Wifi, WifiOff, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
+import { getTokenList } from "../../lib/tokens";
 import { shortenAddress, formatDuration } from "../../lib/utils";
+import FeeVaultPanel from "../../components/FeeVaultPanel";
 
 interface HealthData {
   status: "healthy" | "degraded";
@@ -149,6 +151,8 @@ export default function OpsMonitorPage() {
     if (intervalRef.current) clearInterval(intervalRef.current);
   }, [autoRefresh, pollAll, onlineRelayers.length]);
 
+  const tokens = useMemo(() => getTokenList(), []);
+
   const healthyCount = statuses.filter((s) => s.health?.status === "healthy").length;
   const degradedCount = statuses.filter((s) => s.health?.status === "degraded" || s.fetchError).length;
   const totalOrders = statuses.reduce((sum, s) => sum + (s.stats?.totalOrders ?? 0), 0);
@@ -189,6 +193,14 @@ export default function OpsMonitorPage() {
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* Operator's own FeeVault claim — only renders when wallet is connected
+           and has accumulated balance. Lives on /relayer/ops because it's an
+           operator action; the public /relayer dashboard never showed other
+           operators' balances. */}
+      <div className="mb-6">
+        <FeeVaultPanel tokens={tokens} />
       </div>
 
       {/* Summary Cards */}
