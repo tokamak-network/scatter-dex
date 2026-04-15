@@ -307,7 +307,9 @@ export default function RelayersPage() {
     return [...relayers].sort((a, b) => {
       let primary = 0;
       switch (sortKey) {
-        case "status":     primary = a.online === b.online ? 0 : a.online ? -1 : 1; break;
+        // Treat online > offline so dirMul applies uniformly: status desc
+        // (default) puts online first; status asc puts offline first.
+        case "status":     primary = a.online === b.online ? 0 : a.online ? 1 : -1; break;
         case "fee":        primary = a.fee - b.fee; break;
         case "pending":    primary = relayerOrderCount(a) - relayerOrderCount(b); break;
         case "bond":       primary = a.bond > b.bond ? 1 : a.bond < b.bond ? -1 : 0; break;
@@ -482,10 +484,16 @@ export default function RelayersPage() {
               <div className="flex items-center gap-4 px-4 py-3 bg-surface-container rounded-xl border border-outline-variant/10 text-xs">
                 <Circle className={`w-2.5 h-2.5 fill-current flex-shrink-0 ${selected.online ? "text-primary" : "text-error/40"}`} />
                 <span className="font-mono text-on-surface">{selected.address}</span>
-                <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
-                  className="text-primary hover:underline flex items-center gap-1">
-                  API <ExternalLink className="w-3 h-3" />
-                </a>
+                {selected.online && selected.url ? (
+                  <a href={`${selected.url}/api/info`} target="_blank" rel="noreferrer"
+                    className="text-primary hover:underline flex items-center gap-1">
+                    API <ExternalLink className="w-3 h-3" />
+                  </a>
+                ) : (
+                  <span className="text-on-surface-variant/40 flex items-center gap-1" title="Relayer is offline or has no URL registered">
+                    API <ExternalLink className="w-3 h-3" />
+                  </span>
+                )}
                 {selected.api && (
                   <span className="text-on-surface-variant/50 ml-auto">
                     {selected.api.name} v{selected.api.version}
