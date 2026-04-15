@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { RefreshCw, AlertCircle, Loader2, Activity, Zap, ArrowLeftRight } from "lucide-react";
 import { useRecentSettlements, type SettlementPath, type SettlementRow } from "../../lib/useRecentSettlements";
 import { getTokenMap } from "../../lib/tokens";
-import { shortenAddress, formatTokenAmount, timeAgo } from "../../lib/utils";
+import { formatTokenAmount, timeAgo } from "../../lib/utils";
+import ExplorerLink from "../../components/ExplorerLink";
 
 const PATH_FILTERS: { id: "all" | SettlementPath; label: string }[] = [
   { id: "all", label: "All" },
@@ -117,7 +118,7 @@ export default function SettlementsPage() {
       </div>
 
       <p className="text-xs text-on-surface-variant/50 mt-3">
-        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Copy the tx hash into a block explorer to see full details.
+        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Click the tx hash (or copy it into your preferred block explorer) to view full details.
       </p>
     </div>
   );
@@ -155,11 +156,11 @@ function SettlementTableRow({ row, tokenMap }: { row: SettlementRow; tokenMap: R
           <span className="text-on-surface-variant/50">—</span>
         )}
       </td>
-      <td className="px-4 py-3 align-top font-mono text-xs text-on-surface-variant" title={row.participant}>
-        {shortenAddress(row.participant)}
+      <td className="px-4 py-3 align-top text-on-surface-variant">
+        <ExplorerLink kind="address" value={row.participant} />
       </td>
-      <td className="px-4 py-3 align-top font-mono text-xs text-primary" title={row.txHash}>
-        {shortenAddress(row.txHash)}
+      <td className="px-4 py-3 align-top text-primary">
+        <ExplorerLink kind="tx" value={row.txHash} />
       </td>
     </tr>
   );

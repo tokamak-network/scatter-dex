@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
-import { shortenAddress } from "../../lib/utils";
+import ExplorerLink from "../../components/ExplorerLink";
 import { extractMessage } from "../../lib/error-messages";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
 import {
@@ -636,13 +636,13 @@ export default function PrivateHistoryPage() {
             {selectedOrder.relayerAddress && (
               <div>
                 <span className="text-on-surface-variant/60">Relayer:</span>{" "}
-                <span className="font-mono">{shortenAddress(selectedOrder.relayerAddress)}</span>
+                <ExplorerLink kind="address" value={selectedOrder.relayerAddress} size="sm" />
               </div>
             )}
             {selectedOrder.settleTxHash && (
               <div>
                 <span className="text-on-surface-variant/60">Settle Tx:</span>{" "}
-                <span className="font-mono">{shortenAddress(selectedOrder.settleTxHash)}</span>
+                <ExplorerLink kind="tx" value={selectedOrder.settleTxHash} size="sm" />
               </div>
             )}
             {selectedOrder.order.type === "market" && selectedOrder.onchainAmountOut && (() => {
@@ -780,7 +780,7 @@ export default function PrivateHistoryPage() {
                     {cs?.txHash && (
                       <div className="text-xs mt-1">
                         <span className="text-on-surface-variant/40">Claim Tx: </span>
-                        <span className="font-mono text-primary break-all">{cs.txHash}</span>
+                        <ExplorerLink kind="tx" value={cs.txHash} className="text-primary" />
                       </div>
                     )}
                     {!isClaimed && (
