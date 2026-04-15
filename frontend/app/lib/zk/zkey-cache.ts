@@ -39,7 +39,12 @@ function openDb(): Promise<IDBDatabase | null> {
     }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE, { keyPath: "url" });
+      // Guarded so a future version bump that adds a new store won't
+      // throw `ConstraintError` here for profiles where `blobs` already
+      // exists from a prior version.
+      if (!req.result.objectStoreNames.contains(STORE)) {
+        req.result.createObjectStore(STORE, { keyPath: "url" });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
@@ -153,20 +158,18 @@ export async function prefetchAssets(urls: readonly string[]): Promise<void> {
 }
 
 // Resolve wasm + zkey to Blob URLs (or fall back to canonical), hand
-// them to `run`, and revoke when `run` settles.
+// them to `run`, and revoke when `run` settles. `resolveAsset` always
+// fulfils (errors fall back to the canonical URL with a no-op revoke),
+// so a plain `Promise.all` is equivalent to and clearer than
+// `Promise.allSettled` here.
 export async function withCachedAssets<T>(
   paths: { wasm: string; zkey: string },
   run: (urls: { wasm: string; zkey: string }) => Promise<T>,
 ): Promise<T> {
-  // Resolve in parallel but track each independently so a mid-Promise.all
-  // throw on one side still lets us revoke the other.
-  const results = await Promise.allSettled([
+  const [wasm, zkey] = await Promise.all([
     resolveAsset(paths.wasm),
     resolveAsset(paths.zkey),
   ]);
-  const settled = results.map((r) => (r.status === "fulfilled" ? r.value : null));
-  const wasm = settled[0] ?? { url: paths.wasm, revoke: () => {} };
-  const zkey = settled[1] ?? { url: paths.zkey, revoke: () => {} };
   try {
     return await run({ wasm: wasm.url, zkey: zkey.url });
   } finally {
