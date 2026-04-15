@@ -34,6 +34,7 @@ import { signEdDSA } from "./eddsa";
 import { wipeBytes } from "./secure-wipe";
 import { TAG_COMMITMENT_V2 } from "./tags";
 import { COMMIT_TREE_DEPTH } from "./constants";
+import { timeProve } from "./prove-timer";
 
 const WASM_PATH = "/zk/cancel.wasm";
 const ZKEY_PATH = "/zk/cancel_final.zkey";
@@ -184,10 +185,8 @@ export async function generateCancelProof(
   };
 
   // ── 6. Generate Groth16 proof ──
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    WASM_PATH,
-    ZKEY_PATH,
+  const { proof, publicSignals } = await timeProve("cancel", () =>
+    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
   );
 
   return {

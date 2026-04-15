@@ -9,6 +9,7 @@
  */
 
 import { computeCommitment, type CommitmentNote } from "./commitment";
+import { timeProve } from "./prove-timer";
 
 const WASM_PATH = "/zk/deposit.wasm";
 const ZKEY_PATH = "/zk/deposit_final.zkey";
@@ -59,10 +60,8 @@ export async function generateDepositProof(
     pubKeyAy: note.pubKeyAy.toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    WASM_PATH,
-    ZKEY_PATH,
+  const { proof, publicSignals } = await timeProve("deposit", () =>
+    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
   );
 
   // Sanity-check that the prover-emitted public signal matches the

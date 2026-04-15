@@ -14,7 +14,7 @@
  */
 
 // This file runs inside a Web Worker context — `self` is the worker global.
- 
+
 const ctx = self as unknown as Worker;
 
 // Pre-warm the prover import while the user fills in the form — saves
@@ -23,6 +23,12 @@ const ctx = self as unknown as Worker;
 // subsequent `onmessage` calls get it instantly.
 const proverPromise = import("./authorize-prover");
 const wipePromise = import("./secure-wipe");
+
+// Relay prove timings back to the main thread — workers don't have
+// `window`, so the default reporter would silently drop them.
+import("./prove-timer").then(({ setProveReporter }) => {
+  setProveReporter((timing) => ctx.postMessage({ type: "perf", timing }));
+});
 
 ctx.onmessage = async (event: MessageEvent) => {
   let eddsaKey: Uint8Array | null = null;

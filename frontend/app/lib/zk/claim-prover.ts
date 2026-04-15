@@ -9,6 +9,7 @@
  */
 
 import { poseidonHash, buildMerkleTree, getMerkleProof, computeClaimNullifier } from "./commitment";
+import { timeProve } from "./prove-timer";
 
 const CLAIMS_TREE_DEPTH = 4;
 
@@ -85,10 +86,8 @@ export async function generateClaimProof(
   };
 
   // Generate proof
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    WASM_PATH,
-    ZKEY_PATH,
+  const { proof, publicSignals } = await timeProve("claim", () =>
+    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
   );
 
   return {

@@ -34,3 +34,4 @@ declare module "snarkjs" {
     ): Promise<void>;
   };
 }
+
