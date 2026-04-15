@@ -118,6 +118,7 @@ async function main() {
     console.log(`  GET    /api/settlements              — list rows (relayer/pair/since filters)`);
     console.log(`  GET    /api/relayers/:addr/stats     — per-relayer aggregates`);
     console.log(`  GET    /api/network/totals           — network-wide totals`);
+    console.log(`  GET    /api/leaderboard              — top relayers by metric`);
   });
 
   // Graceful shutdown

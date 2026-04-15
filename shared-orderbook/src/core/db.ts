@@ -8,6 +8,8 @@ import type {
   TokenVolumeRow,
   RelayerSettlementStats,
   NetworkSettlementTotals,
+  LeaderboardRow,
+  LeaderboardMetric,
 } from "../types/settlement.js";
 
 export class OrderbookDB {
@@ -645,6 +647,71 @@ export class OrderbookDB {
       activeRelayers: relayerCount.c,
       lastSettleAt: (counters.last_settle_at as number | null) ?? null,
     };
+  }
+
+  /**
+   * Top-N relayers ranked by `metric`, computed entirely in SQL so no row
+   * data is materialised in Node. UNION ALL across submitter / maker /
+   * taker (a relayer counts once per role per row), then GROUP BY +
+   * ORDER BY metric DESC + LIMIT.
+   *
+   * Available metrics:
+   *   - "count"          → total tx_count (any role; deduped per tx_hash per addr)
+   *   - "verifiedCount"  → subset where verified=1
+   *   - "successRate"    → verifiedCount / txCount; ties broken by txCount
+   *                        and only relayers with at least one verified tx
+   *                        appear (a relayer with 0 settlements has no rate)
+   */
+  getLeaderboard(
+    metric: LeaderboardMetric = "count",
+    sinceSec?: number,
+    limit = 50,
+  ): LeaderboardRow[] {
+    const where = typeof sinceSec === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
+    const args: unknown[] = typeof sinceSec === "number" ? [sinceSec, sinceSec, sinceSec] : [];
+    const cappedLimit = Math.min(Math.max(limit, 1), 500);
+
+    const orderBy = metric === "verifiedCount"
+      ? "tx_count_verified DESC, tx_count DESC"
+      : metric === "successRate"
+      ? "(CAST(tx_count_verified AS REAL) / tx_count) DESC, tx_count DESC"
+      : "tx_count DESC";
+    const havingForRate = metric === "successRate" ? "HAVING tx_count_verified > 0" : "";
+
+    // UNION ALL — per-addr DISTINCT(tx_hash) below makes a relayer in
+    // two roles on the same tx still count once. Each branch anchors on
+    // its NOT-NULL role column (submitter / maker_relayer are NOT NULL
+    // by schema; taker_relayer is nullable so its branch already filters)
+    // — using a real anchor predicate avoids the `WHERE 1=1` hack.
+    const sql = `
+      WITH appearances AS (
+        SELECT submitter AS addr, tx_hash, verified, COALESCE(block_time, created_at) AS ts
+          FROM settlements WHERE submitter IS NOT NULL ${where}
+        UNION ALL
+        SELECT maker_relayer AS addr, tx_hash, verified, COALESCE(block_time, created_at) AS ts
+          FROM settlements WHERE maker_relayer IS NOT NULL ${where}
+        UNION ALL
+        SELECT taker_relayer AS addr, tx_hash, verified, COALESCE(block_time, created_at) AS ts
+          FROM settlements WHERE taker_relayer IS NOT NULL ${where}
+      )
+      SELECT
+        addr,
+        COUNT(DISTINCT tx_hash) AS tx_count,
+        COUNT(DISTINCT CASE WHEN verified = 1 THEN tx_hash END) AS tx_count_verified,
+        MAX(ts) AS last_settle_at
+      FROM appearances
+      GROUP BY addr
+      ${havingForRate}
+      ORDER BY ${orderBy}
+      LIMIT ?
+    `;
+    const rows = this.db.prepare(sql).all(...args, cappedLimit) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      address: r.addr as string,
+      txCount: r.tx_count as number,
+      txCountVerified: r.tx_count_verified as number,
+      lastSettleAt: (r.last_settle_at as number | null) ?? null,
+    }));
   }
 
   /** Truncate the settlements table — for tests only. Faster than dropping
