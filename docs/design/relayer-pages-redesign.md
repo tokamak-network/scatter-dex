@@ -25,7 +25,7 @@ description / logo).
 | Page                              | Lines | Audience            | State                                                                          |
 |-----------------------------------|-------|---------------------|--------------------------------------------------------------------------------|
 | `/relayer`                        | 649   | trader + operator   | overloaded — list + orderbook + FeeVault claim + per-relayer ops monitoring    |
-| `/relayer/profile/[address]`      | 406   | trader              | ok; `PrivateSettledAuth` indexed only by `makerRelayer` so taker side missing  |
+| `/relayer/profile?address=0x...`      | 406   | trader              | ok; `PrivateSettledAuth` indexed only by `makerRelayer` so taker side missing  |
 | `/relayer/ops`                    | 350   | operator            | clean and focused                                                              |
 | `/relayer/register`               | 303   | new operator        | onboarding only — no bond unstake / fee change / name edit                     |
 
@@ -85,7 +85,7 @@ relayer's stated fee.
     Existing
 ```
 
-Existing `/relayer/profile/[address]` collapses into `/relayer/[address]`.
+Existing `/relayer/profile?address=0x...` collapses into `/relayer/[address]`.
 
 ## 4. Dashboard (`/relayer`) — sortable comparison table
 
@@ -173,28 +173,35 @@ and stores the OrderSummary objects we need to join with each settlement.
 
 ```sql
 CREATE TABLE settlements (
-  tx_hash         TEXT PRIMARY KEY,
-  block_number    INTEGER,
-  block_time      INTEGER,
-  submitter       TEXT,                          -- relayer that sent the tx
-  maker_relayer   TEXT,
-  taker_relayer   TEXT,
-  maker_order_id  TEXT REFERENCES orders(id),
-  taker_order_id  TEXT REFERENCES orders(id),
-  -- joined from orders for fast queries:
-  sell_token      TEXT, buy_token TEXT,          -- maker side
-  sell_amount     TEXT, buy_amount TEXT,
-  fee_maker       TEXT, fee_taker TEXT,
+  tx_hash          TEXT PRIMARY KEY,
+  block_number     INTEGER,
+  block_time       INTEGER,
+  submitter        TEXT,                         -- relayer that sent the tx
+  maker_relayer    TEXT,
+  taker_relayer    TEXT,
+  maker_order_id   TEXT,                         -- soft reference to orders(id) — no FK
+  taker_order_id   TEXT,                         -- so matched orders can be pruned
+  -- nullifiers required for matching the verify job to the on-chain
+  -- `PrivateSettledAuth` event (which keys trades by nullifier, not order id)
+  -- and for keeping the row linkable after order pruning:
+  maker_nullifier  TEXT,
+  taker_nullifier  TEXT,
+  -- joined from orders for fast queries (snapshotted at push time):
+  sell_token       TEXT, buy_token TEXT,         -- maker side
+  sell_amount      TEXT, buy_amount TEXT,
+  fee_maker        TEXT, fee_taker TEXT,
   user_maxfee_maker  INTEGER,                    -- bps, for take-ratio
   user_maxfee_taker  INTEGER,
-  verified        INTEGER DEFAULT 0,             -- on-chain receipt confirmed
-  created_at      INTEGER
+  verified         INTEGER DEFAULT 0,            -- on-chain receipt confirmed
+  created_at       INTEGER
 );
 
-CREATE INDEX idx_settle_relayer_m ON settlements(maker_relayer, block_time);
-CREATE INDEX idx_settle_relayer_t ON settlements(taker_relayer, block_time);
-CREATE INDEX idx_settle_pair      ON settlements(sell_token, buy_token, block_time);
-CREATE INDEX idx_settle_block     ON settlements(block_number);
+CREATE INDEX idx_settle_relayer_m   ON settlements(maker_relayer, block_time);
+CREATE INDEX idx_settle_relayer_t   ON settlements(taker_relayer, block_time);
+CREATE INDEX idx_settle_pair        ON settlements(sell_token, buy_token, block_time);
+CREATE INDEX idx_settle_block       ON settlements(block_number);
+CREATE INDEX idx_settle_nullifier_m ON settlements(maker_nullifier);
+CREATE INDEX idx_settle_nullifier_t ON settlements(taker_nullifier);
 ```
 
 ### 7.2 Write paths
@@ -202,8 +209,16 @@ CREATE INDEX idx_settle_block     ON settlements(block_number);
 1. **Push (relayer self-report).** Right after a successful `settleAuth` /
    `scatterDirectAuth` / `settleWithDex` tx, the relayer posts
    `POST /api/settlements` with `{ txHash, blockNumber, makerOrderId,
-   takerOrderId, feeTokenMaker, feeTokenTaker }` signed with its registered
-   key. Shared OB joins with stored OrderSummary records, writes a row with
+   takerOrderId, makerNullifier, takerNullifier, userMaxFeeMaker,
+   userMaxFeeTaker, feeTokenMaker, feeTokenTaker }` signed with its
+   registered key. Nullifiers are required so the verify job can link the
+   row to the on-chain `PrivateSettledAuth` event (keyed by nullifier, not
+   order id) and so the row stays linkable even after the matched
+   OrderSummary rows are pruned. The user-signed `maxFee` values are
+   carried in the payload — not derived later — so the take-ratio
+   calculation (`fee_bps / user_maxfee_bps`) is always available without a
+   separate join. Shared OB does a best-effort join with still-present
+   OrderSummary records to snapshot token / amount, writes a row with
    `verified=0`.
 
 2. **Verify (background job).** Every N seconds the shared OB picks the
@@ -278,7 +293,10 @@ Three layers:
 
 - Length: name ≤ 64, description ≤ 280, urls ≤ 256.
 - Plain-text rendering on the frontend (no HTML / script).
-- `logoUrl` allowlist: `https://` + `ipfs://` only, served via `<img>` with
+- `logoUrl` allowlist: `https://` + `ipfs://` only. Browsers don't load
+  `ipfs://` natively in `<img>`, so the frontend rewrites it to a configured
+  HTTPS gateway (default `https://ipfs.io/ipfs/<cid>`, overridable via
+  `NEXT_PUBLIC_IPFS_GATEWAY`) before render. Tagged with
   `loading="lazy" referrerPolicy="no-referrer"`.
 - No uniqueness enforcement on name — always show address alongside.
 
