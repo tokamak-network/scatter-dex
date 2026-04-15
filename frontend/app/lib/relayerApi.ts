@@ -42,14 +42,6 @@ export interface OrderData {
   claims: { claimHash: string; amount: string; releaseDelay: number }[];
 }
 
-export interface OrderbookEntry {
-  maker: string;
-  sellAmount: string;
-  buyAmount: string;
-  nonce: string;
-  expiry: number;
-}
-
 export class RelayerClient {
   constructor(private baseUrl: string) {}
 
@@ -105,9 +97,4 @@ export class RelayerClient {
     }
   }
 
-  async getOrderbook(pair: string): Promise<{ pair: string; sells: OrderbookEntry[]; buys: OrderbookEntry[] }> {
-    const res = await fetch(`${this.baseUrl}/api/private-orderbook/${pair}`);
-    if (!res.ok) throw new Error(`Failed to get orderbook: ${res.statusText}`);
-    return res.json();
-  }
 }
