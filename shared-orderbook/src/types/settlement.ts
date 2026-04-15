@@ -87,6 +87,28 @@ export interface RelayerSettlementStats {
   lastSettleAt: number | null;
 }
 
+/**
+ * One row of the leaderboard. Compact on purpose — the frontend joins
+ * with the on-chain RelayerRegistry (and the cosmetic profile from
+ * /api/info) to display name + logo + bond. The shared OB only knows
+ * about settlement activity.
+ */
+export interface LeaderboardRow {
+  address: string;          // lowercased
+  txCount: number;          // total rows the relayer appears in (any role)
+  txCountVerified: number;
+  lastSettleAt: number | null;
+}
+
+/**
+ * Metric keys the leaderboard can rank by. Derived from the `as const`
+ * tuple below so the runtime allowlist + the type stay in sync — the
+ * route handler can `.includes()` the tuple as a type guard and avoid
+ * the cast-to-narrow pattern.
+ */
+export const LEADERBOARD_METRICS = ["count", "verifiedCount", "successRate"] as const;
+export type LeaderboardMetric = typeof LEADERBOARD_METRICS[number];
+
 export interface NetworkSettlementTotals {
   txCount: number;
   txCountVerified: number;

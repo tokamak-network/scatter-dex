@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { RequestHandler } from "express";
 import type { OrderbookDB } from "../core/db.js";
-import { parseSettlementInsert } from "../types/settlement.js";
+import { parseSettlementInsert, LEADERBOARD_METRICS, type LeaderboardMetric } from "../types/settlement.js";
 import { isValidPair } from "../types/order.js";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 
@@ -152,5 +152,36 @@ export function createSettlementStatsRoutes(
     }
   });
 
+  // Phase 3a — leaderboard. Ranking computed in SQL so the frontend
+  // doesn't N+1 over /api/relayers/:addr/stats.
+  router.get("/leaderboard", readLimiter, (req, res) => {
+    const metric: LeaderboardMetric = isLeaderboardMetric(req.query.metric) ? req.query.metric : "count";
+    if (req.query.metric !== undefined && !isLeaderboardMetric(req.query.metric)) {
+      res.status(400).json({ error: `metric: must be one of ${LEADERBOARD_METRICS.join("|")}` });
+      return;
+    }
+    const since = parseSinceQuery(req.query.since);
+    if (since instanceof Error) { res.status(400).json({ error: since.message }); return; }
+    let limit = 50;
+    if (req.query.limit !== undefined) {
+      const n = Number(req.query.limit);
+      if (!Number.isSafeInteger(n) || n < 1 || n > MAX_LIMIT) {
+        res.status(400).json({ error: `limit: must be an integer in [1, ${MAX_LIMIT}]` });
+        return;
+      }
+      limit = n;
+    }
+    try {
+      const rows = db.getLeaderboard(metric, since, limit);
+      res.json({ metric, since: since ?? null, count: rows.length, rows });
+    } catch (err: unknown) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "leaderboard failed" });
+    }
+  });
+
   return router;
+}
+
+function isLeaderboardMetric(v: unknown): v is LeaderboardMetric {
+  return typeof v === "string" && (LEADERBOARD_METRICS as readonly string[]).includes(v);
 }
