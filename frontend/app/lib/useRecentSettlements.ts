@@ -15,8 +15,9 @@ export interface SettlementRow {
   /** Position of the tx within the block; used for stable ordering
    *  when multiple settlements land in the same block. */
   transactionIndex: number;
-  /** Position of the log within the tx; needed as a React key and as
-   *  a secondary sort key when a tx emits multiple settlement logs. */
+  /** Position of the log within the block (JSON-RPC `logIndex`, exposed
+   *  as `EventLog.index` in ethers v6); needed as a React key and as a
+   *  secondary sort key when a tx emits multiple settlement logs. */
   logIndex: number;
   /** seconds since epoch; undefined until the block header is fetched */
   timestamp?: number;
@@ -143,12 +144,20 @@ export function useRecentSettlements(limit: number = 100): UseRecentSettlementsR
         if (runId === loadIdRef.current) {
           console.error("useRecentSettlements: failed to fetch events:", e);
           const err = e as { shortMessage?: string; reason?: string; message?: string };
-          setError(err?.shortMessage || err?.reason || err?.message || "Failed to load settlements");
+          // Fallback must not echo the banner's own prefix
+          // ("Failed to load settlements: …") — use a neutral word.
+          const msg = err?.shortMessage || err?.reason || err?.message
+            || (typeof e === "string" ? e : "Unknown error");
+          setError(msg);
         }
       } finally {
         if (runId === loadIdRef.current) setLoading(false);
       }
     })();
+
+    // Invalidate this run on unmount / next dep-change firing so a pending
+    // async load that outlives the component can't commit state after.
+    return () => { loadIdRef.current++; };
   }, [limit, tick]);
 
   return { rows, loading, error, refresh };
