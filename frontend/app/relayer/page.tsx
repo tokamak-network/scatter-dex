@@ -210,22 +210,34 @@ export default function RelayersPage() {
       allOrders = await getOrders(500);
     } catch { /* shared OB unreachable — leave books empty */ }
 
+    // Pre-group orders by `(relayer, sellToken-buyToken)` in one pass so
+    // the (relayer × pair) loop below is O(R·P) lookups instead of
+    // R·P·2 linear scans of `allOrders`. `maker` carries the EdDSA
+    // pubKeyAx (per-trader identifier) — the wallet address never
+    // appears in shared OB summaries.
+    type Entry = { maker: string; sellAmount: string; buyAmount: string };
+    const ordersByRelayerAndPair = new Map<string, Map<string, Entry[]>>();
+    for (const o of allOrders) {
+      const relayerKey = o.relayer.toLowerCase();
+      const pairKey = `${o.sellToken.toLowerCase()}-${o.buyToken.toLowerCase()}`;
+      let pairMap = ordersByRelayerAndPair.get(relayerKey);
+      if (!pairMap) {
+        pairMap = new Map();
+        ordersByRelayerAndPair.set(relayerKey, pairMap);
+      }
+      const list = pairMap.get(pairKey);
+      const entry = { maker: o.pubKeyAx, sellAmount: o.sellAmount, buyAmount: o.buyAmount };
+      if (list) list.push(entry); else pairMap.set(pairKey, [entry]);
+    }
+
     const results = new Map<string, Map<string, RelayerOrderbook>>();
     for (const r of targets) {
       const pairResults = new Map<string, RelayerOrderbook>();
-      const relayerOrders = allOrders.filter(
-        (o) => o.relayer.toLowerCase() === r.address.toLowerCase()
-      );
-      // `maker` carries the EdDSA pubKeyAx (per-trader identifier) — the
-      // wallet address never appears in shared OB summaries.
+      const relayerPairOrders = ordersByRelayerAndPair.get(r.address.toLowerCase());
       for (const p of pairOptions) {
         const [tA, tB] = p.value.split("-").map((s) => s.toLowerCase());
-        const sells = relayerOrders
-          .filter((o) => o.sellToken.toLowerCase() === tA && o.buyToken.toLowerCase() === tB)
-          .map((o) => ({ maker: o.pubKeyAx, sellAmount: o.sellAmount, buyAmount: o.buyAmount }));
-        const buys = relayerOrders
-          .filter((o) => o.sellToken.toLowerCase() === tB && o.buyToken.toLowerCase() === tA)
-          .map((o) => ({ maker: o.pubKeyAx, sellAmount: o.sellAmount, buyAmount: o.buyAmount }));
+        const sells = relayerPairOrders?.get(`${tA}-${tB}`) ?? [];
+        const buys = relayerPairOrders?.get(`${tB}-${tA}`) ?? [];
         pairResults.set(p.value, { pair: p.value, sells, buys });
       }
       results.set(r.address, pairResults);
