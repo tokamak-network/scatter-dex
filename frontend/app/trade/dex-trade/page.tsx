@@ -182,7 +182,14 @@ function DexTradePageInner() {
       (sell * marketPrice).toFixed(Math.min(buyToken.decimals, 18)),
       buyToken.decimals,
     );
-    const minReceiveWei = grossWei * BigInt(10000 - slip) / 10000n;
+    // Floor at 1 wei so a very small sell doesn't round to 0 and trip
+    // the downstream `parsedBuy === 0n` gate (which surfaces
+    // "isn't a valid amount" and blocks submit). If grossWei itself is
+    // 0 the sell is genuinely below one wei of buy value — that's
+    // unbounded-slippage territory and the user should raise their
+    // input rather than having us fabricate a floor.
+    const scaled = grossWei * BigInt(10000 - slip) / 10000n;
+    const minReceiveWei = grossWei > 0n && scaled === 0n ? 1n : scaled;
     setBuyAmount(ethers.formatUnits(minReceiveWei, buyToken.decimals));
   }, [marketPrice, sellAmount, slippageBps, buyToken?.decimals]);
 
@@ -524,13 +531,15 @@ function DexTradePageInner() {
 
   if (!account) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] text-on-surface-variant/60">
-        <Zap className="w-12 h-12 mb-4 opacity-40" />
-        <p className="text-lg font-medium mb-4">Connect wallet to execute DEX trades</p>
-        <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
-          Connect Wallet
-        </button>
-      </div>
+      <EmptyState
+        icon={Zap}
+        title="Connect wallet to execute DEX trades"
+        action={
+          <button onClick={() => connect()} className="gradient-btn text-on-primary-fixed px-6 py-2.5 rounded-md font-bold text-sm">
+            Connect Wallet
+          </button>
+        }
+      />
     );
   }
 
