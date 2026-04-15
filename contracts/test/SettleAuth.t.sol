@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
@@ -414,6 +415,66 @@ contract SettleAuthTest is Test {
         vm.prank(makerRelayer);
         vm.expectRevert(SettleVerifyLib.FeeExceedsMax.selector);
         settlement.settleAuth(p);
+    }
+
+    /// @notice Regression: a single-pair settlement that drains most of a
+    ///         token's pool balance used to revert with `FeeExceedsMax`
+    ///         from the old `CommitmentPool.transferFee` post-drain 10% cap.
+    ///         The cap was removed (order-level `SettleVerifyLib` fee bound
+    ///         is authoritative). See `chore/remove-settle-private` follow-up.
+    function test_settleAuth_singlePairDrainsMostOfPool_succeeds() public {
+        // Fresh pool with JUST ONE matched pair of liquidity — mirrors the
+        // "1 WETH ↔ 2000 USDC, no other depositors" E2E scenario.
+        CommitmentPool thinPool = new CommitmentPool(
+            address(withdrawVerifier), address(depositVerifier), 20, 30
+        );
+        thinPool.setTokenWhitelist(address(weth), true);
+        thinPool.setTokenWhitelist(address(usdc), true);
+
+        MockAuthorizeVerifier thinAuthVerifier = new MockAuthorizeVerifier();
+        PrivateSettlement thinSettlement = new PrivateSettlement(
+            address(thinPool), address(claimVerifier), address(weth)
+        );
+        thinSettlement.setTokenWhitelist(address(weth), true);
+        thinSettlement.setTokenWhitelist(address(usdc), true);
+        thinSettlement.setAuthorizeVerifier(address(thinAuthVerifier));
+        thinPool.setAuthorizedSettlement(address(thinSettlement));
+
+        // Fund exactly enough for one trade.
+        vm.deal(address(this), 1 ether);
+        weth.deposit{value: 1 ether}();
+        weth.transfer(address(thinPool), 1 ether);
+        usdc.mint(address(thinPool), 2_000e18);
+
+        // Build a pair where totalLocked takes 99.7% of each token and fee is
+        // the remaining 0.3% — used to trip the old post-drain 10% cap.
+        SettleVerifyLib.AuthorizeProof memory maker = _defaultMaker();
+        SettleVerifyLib.AuthorizeProof memory taker = _defaultTaker();
+        maker.commitmentRoot = thinPool.getLastRoot();
+        taker.commitmentRoot = thinPool.getLastRoot();
+        maker.sellAmount = uint128(2_000e18);  // 2000 USDC
+        maker.buyAmount = uint128(1 ether);
+        maker.sellToken = address(usdc);
+        maker.buyToken = address(weth);
+        maker.totalLocked = uint128(0.997 ether);
+        taker.sellAmount = uint128(1 ether);
+        taker.buyAmount = uint128(2_000e18);
+        taker.sellToken = address(weth);
+        taker.buyToken = address(usdc);
+        taker.totalLocked = uint128(1_994e18);
+        PrivateSettlement.SettleAuthParams memory p = PrivateSettlement.SettleAuthParams({
+            maker: maker,
+            taker: taker,
+            feeTokenMaker: uint96(0.003 ether),  // 30 bps of 1 WETH
+            feeTokenTaker: uint96(6e18)          // 30 bps of 2000 USDC
+        });
+
+        vm.prank(makerRelayer);
+        thinSettlement.settleAuth(p);
+
+        // Pool fully drained of both tokens; fees paid out cleanly.
+        assertEq(IERC20(address(weth)).balanceOf(address(thinPool)), 0);
+        assertEq(IERC20(address(usdc)).balanceOf(address(thinPool)), 0);
     }
 
     // ────────────────────────────────────────────────────────────
