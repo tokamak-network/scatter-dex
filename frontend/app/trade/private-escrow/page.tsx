@@ -34,7 +34,7 @@ import {
   saveEdDSAKeyToFolder,
   type StoredNote,
 } from "../../lib/zk/note-storage";
-import { generateDepositProof } from "../../lib/zk/deposit-prover";
+import { generateDepositProofInWorker } from "../../lib/zk/deposit-worker-client";
 import {
   deriveEdDSAKey,
   DERIVE_MESSAGE,
@@ -341,7 +341,7 @@ export default function PrivateEscrowPage() {
       // Falls back-to-back compatible: the legacy sequential path below
       // reuses the same proof rather than regenerating it.
       setTxState("depositing");
-      const depositProof = await generateDepositProof(note);
+      const depositProof = await generateDepositProofInWorker(note);
 
       const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, signer);
       const depositCallData = pool.interface.encodeFunctionData("deposit", [
