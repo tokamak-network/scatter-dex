@@ -273,17 +273,39 @@ function RelayerProfileContent() {
               </p>
               {(relayer.api?.profile?.website || relayer.api?.profile?.socialX || relayer.api?.profile?.contact) && (
                 <div className="flex flex-wrap items-center gap-3 mt-2 text-xs">
-                  {relayer.api.profile.website && (
-                    <a href={relayer.api.profile.website} target="_blank" rel="noreferrer"
+                  {/* useRelayers.sanitizeProfile already filters out non-http(s)/ipfs
+                      schemes, but we re-check here as defense in depth so a future
+                      caller bypassing that helper can never inject javascript:/data: */}
+                  {relayer.api.profile.website && /^https?:\/\//i.test(relayer.api.profile.website) && (
+                    <a href={relayer.api.profile.website} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-primary hover:underline">
                       <Globe className="w-3 h-3" /> Website
                     </a>
                   )}
-                  {relayer.api.profile.socialX && (
-                    <span className="text-on-surface-variant/60">@{relayer.api.profile.socialX.replace(/^@/, "")}</span>
-                  )}
+                  {typeof relayer.api.profile.socialX === "string" && relayer.api.profile.socialX && (() => {
+                    const handle = relayer.api.profile.socialX.replace(/^@/, "");
+                    return (
+                      <a
+                        href={`https://x.com/${encodeURIComponent(handle)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-on-surface-variant/60 hover:text-primary transition-colors"
+                      >
+                        @{handle}
+                      </a>
+                    );
+                  })()}
                   {relayer.api.profile.contact && (
-                    <span className="text-on-surface-variant/60 truncate max-w-[200px]">{relayer.api.profile.contact}</span>
+                    relayer.api.profile.contact.includes("@") ? (
+                      <a
+                        href={`mailto:${encodeURIComponent(relayer.api.profile.contact)}`}
+                        className="text-on-surface-variant/60 hover:text-primary transition-colors truncate max-w-[200px]"
+                      >
+                        {relayer.api.profile.contact}
+                      </a>
+                    ) : (
+                      <span className="text-on-surface-variant/60 truncate max-w-[200px]">{relayer.api.profile.contact}</span>
+                    )
                   )}
                 </div>
               )}

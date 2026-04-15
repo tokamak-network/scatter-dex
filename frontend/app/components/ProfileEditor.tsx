@@ -21,7 +21,21 @@ export default function ProfileEditor() {
   const [busy, setBusy] = useState<"idle" | "loading" | "saving">("idle");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const baseUrl = url.replace(/\/+$/, "");
+  const baseUrl = url.trim().replace(/\/+$/, "");
+
+  // Load/save calls go to operator-supplied URLs that may hang; bound them
+  // so the UI never gets stuck. Also defensively parse the response body so
+  // a non-JSON 5xx page surfaces as a user-friendly message instead of an
+  // opaque SyntaxError.
+  const REQUEST_TIMEOUT_MS = 8000;
+
+  async function readJsonSafe(res: Response): Promise<unknown> {
+    try { return await res.json(); }
+    catch (e) {
+      console.error("[ProfileEditor] non-JSON response", e);
+      return null;
+    }
+  }
 
   const load = async () => {
     if (!baseUrl || !adminKey) {
@@ -30,17 +44,25 @@ export default function ProfileEditor() {
     }
     setBusy("loading");
     setMsg(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(`${baseUrl}/api/admin/profile`, {
         headers: { "x-admin-key": adminKey },
+        signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: RelayerProfile = await res.json();
-      setProfile(data);
+      const body = await readJsonSafe(res);
+      if (!res.ok) {
+        const msg = body && typeof body === "object" && "error" in body ? String((body as { error: unknown }).error) : `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      setProfile((body ?? {}) as RelayerProfile);
       setMsg({ kind: "ok", text: "Loaded current profile" });
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Load failed" });
+      const text = controller.signal.aborted ? `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s` : (e instanceof Error ? e.message : "Load failed");
+      setMsg({ kind: "err", text });
     } finally {
+      clearTimeout(timeout);
       setBusy("idle");
     }
   };
@@ -52,6 +74,8 @@ export default function ProfileEditor() {
     }
     setBusy("saving");
     setMsg(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       // Server sets updatedAt; strip the cached one so the client never
       // overrides it.
@@ -61,14 +85,20 @@ export default function ProfileEditor() {
         method: "PATCH",
         headers: { "x-admin-key": adminKey, "content-type": "application/json" },
         body: JSON.stringify(patch),
+        signal: controller.signal,
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      setProfile(body);
+      const body = await readJsonSafe(res);
+      if (!res.ok) {
+        const msg = body && typeof body === "object" && "error" in body ? String((body as { error: unknown }).error) : `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      setProfile((body ?? {}) as RelayerProfile);
       setMsg({ kind: "ok", text: "Saved" });
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Save failed" });
+      const text = controller.signal.aborted ? `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s` : (e instanceof Error ? e.message : "Save failed");
+      setMsg({ kind: "err", text });
     } finally {
+      clearTimeout(timeout);
       setBusy("idle");
     }
   };

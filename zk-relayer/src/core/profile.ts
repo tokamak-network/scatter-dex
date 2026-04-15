@@ -32,7 +32,14 @@ export const PROFILE_LIMITS = {
   website: 256,
 } as const;
 
+const URL_FIELDS: ReadonlyArray<keyof typeof PROFILE_LIMITS> = ["logoUrl", "website"];
 const URL_ALLOWED_SCHEMES = ["https:", "http:", "ipfs:"] as const;
+
+function isAllowedUrl(v: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(v); } catch { return false; }
+  return (URL_ALLOWED_SCHEMES as readonly string[]).includes(parsed.protocol);
+}
 
 /** Shape-check + length-trim + scheme-allowlist. Returns the sanitised
  *  profile; throws with a human-readable message on invalid input. */
@@ -47,19 +54,18 @@ export function validateProfile(input: unknown): RelayerProfile {
     const v = raw[field];
     if (v === undefined || v === null) return undefined;
     if (typeof v !== "string") throw new Error(`${field}: must be a string`);
-    if (v.length > PROFILE_LIMITS[field]) {
+    // Trim so all-whitespace input clears the field (matches updateProfile
+    // empty-string semantics) and accidental padding is never persisted.
+    const trimmed = v.trim();
+    if (trimmed.length > PROFILE_LIMITS[field]) {
       throw new Error(`${field}: exceeds ${PROFILE_LIMITS[field]} chars`);
     }
-    return v;
+    return trimmed;
   };
   const pickUrl = (field: "logoUrl" | "website"): string | undefined => {
     const v = pickString(field);
     if (!v) return v;
-    let parsed: URL;
-    try { parsed = new URL(v); } catch { throw new Error(`${field}: invalid URL`); }
-    if (!(URL_ALLOWED_SCHEMES as readonly string[]).includes(parsed.protocol)) {
-      throw new Error(`${field}: scheme must be https/http/ipfs`);
-    }
+    if (!isAllowedUrl(v)) throw new Error(`${field}: scheme must be https/http/ipfs`);
     return v;
   };
 
@@ -81,21 +87,48 @@ export function validateProfile(input: unknown): RelayerProfile {
 
 const META_KEY = "profile";
 
-// Module-local cache — /api/info reads the profile on every request, so we
-// avoid re-parsing the JSON blob each time. Invalidated on write.
-let cached: RelayerProfile | null = null;
+// Cache /api/info reads (hot path). Keyed per-DB so multiple instances in
+// the same process — notably vitest workers sharing a module — never leak
+// state across tests.
+const cache = new WeakMap<PrivateOrderDB, RelayerProfile>();
+
+// Defensive read-side validator for stored blobs. Same allowlist as
+// validateProfile but never throws — corrupt fields are dropped, not the
+// whole profile. Keeps malformed legacy/manually-edited data from ever
+// reaching the API surface (and from breaking the frontend with non-string
+// values it would call .replace/.includes on).
+function sanitizeStored(parsed: unknown): RelayerProfile {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const raw = parsed as Record<string, unknown>;
+  const out: RelayerProfile = {};
+  for (const k of Object.keys(PROFILE_LIMITS) as Array<keyof typeof PROFILE_LIMITS>) {
+    const v = raw[k];
+    if (typeof v !== "string") continue;
+    if (v.length > PROFILE_LIMITS[k]) continue;
+    if (URL_FIELDS.includes(k) && !isAllowedUrl(v)) continue;
+    out[k] = v;
+  }
+  if (typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt)) {
+    out.updatedAt = raw.updatedAt;
+  }
+  return out;
+}
 
 export function getProfile(db: PrivateOrderDB): RelayerProfile {
-  if (cached) return cached;
+  const hit = cache.get(db);
+  if (hit) return hit;
   const raw = db.getMeta(META_KEY);
-  if (!raw) return (cached = {});
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return (cached = parsed as RelayerProfile);
-  } catch {
-    /* fall through to empty profile if the stored blob got corrupted */
+  if (!raw) {
+    const empty: RelayerProfile = {};
+    cache.set(db, empty);
+    return empty;
   }
-  return (cached = {});
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch { parsed = null; }
+  const sanitized = sanitizeStored(parsed);
+  cache.set(db, sanitized);
+  return sanitized;
 }
 
 /** Merge `patch` onto the existing profile and persist. Fields passed as
@@ -110,6 +143,6 @@ export function updateProfile(db: PrivateOrderDB, patch: RelayerProfile): Relaye
   }
   merged.updatedAt = Math.floor(Date.now() / 1000);
   db.setMeta(META_KEY, JSON.stringify(merged));
-  cached = merged;
+  cache.set(db, merged);
   return merged;
 }

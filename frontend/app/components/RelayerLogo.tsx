@@ -31,7 +31,7 @@ export default function RelayerLogo({ logoUrl, size, className = "" }: Props) {
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={logoUrl}
-          alt=""
+          alt="Relayer logo"
           width={size}
           height={size}
           className="object-cover"
