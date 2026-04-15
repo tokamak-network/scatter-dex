@@ -23,6 +23,29 @@ export interface PeerInfo {
 // Re-export OrderSummary from types for backward compatibility
 export type { OrderSummary } from "../types/order.js";
 
+// Mirrors shared-orderbook/src/types/settlement.ts SettlementInsert. Kept
+// inline (not imported) so this client stays a leaf module — the
+// shared-OB schema is the source of truth for field shape.
+export interface SettlementPushPayload {
+  txHash: string;
+  blockNumber: number;
+  blockTime?: number;
+  makerRelayer: string;
+  takerRelayer?: string;
+  makerOrderId?: string;
+  takerOrderId?: string;
+  makerNullifier: string;
+  takerNullifier: string;
+  feeMaker: string;
+  feeTaker: string;
+  userMaxFeeMaker: number;
+  userMaxFeeTaker: number;
+  sellToken?: string;
+  buyToken?: string;
+  sellAmount?: string;
+  buyAmount?: string;
+}
+
 export interface SharedOrderbookConfig {
   serverUrl: string;          // e.g. "http://localhost:4000"
   relayerWallet: Wallet;
@@ -242,6 +265,41 @@ export class SharedOrderbookClient {
       this.serverOnline = false;
       console.warn(`[shared-orderbook] postOrder server unreachable, falling back to P2P:`, err instanceof Error ? err.message : err);
       return this.postOrderToPeers(order);
+    }
+  }
+
+  /**
+   * Push a completed settlement to the shared OB (Phase 2.5a). Fire-and-forget
+   * — settlement bookkeeping must not block the on-chain settle path. Returns
+   * true if the server stored the row (or already had it), false on failure.
+   * Failures are logged but never thrown; the verify job (Phase 2.5b) and
+   * the on-chain backfill scan are designed to recover any rows the push
+   * misses.
+   */
+  async pushSettlement(payload: SettlementPushPayload): Promise<boolean> {
+    if (!this.serverOnline) return false;
+    try {
+      const headers = await this.authHeaders("POST", "/api/settlements");
+      const res = await fetch(`${this.serverUrl}/api/settlements`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        // Bound the call so a hung shared-OB doesn't leak file descriptors —
+        // matches the timeout posture of postOrderToPeers / broadcastCancel.
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.warn(`[shared-orderbook] pushSettlement HTTP ${res.status}: ${text.slice(0, 200)}`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn(
+        "[shared-orderbook] pushSettlement failed:",
+        err instanceof Error ? err.message : "unknown",
+      );
+      return false;
     }
   }
 

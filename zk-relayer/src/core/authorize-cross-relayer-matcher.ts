@@ -243,7 +243,12 @@ export class AuthorizeCrossRelayerMatchService {
       };
       const match: AuthorizeMatch = { maker: makerStored, taker: takerStored };
 
-      const txHash = await this.submitter.submitAuthSettle(match, relayerFee);
+      // Surface taker's relayer + offer ids to the indexer push so the
+      // settlement row is attributed to both sides.
+      const txHash = await this.submitter.submitAuthSettle(match, relayerFee, {
+        makerOrderId: nullifierToOfferHandle(mapKey),
+        takerRelayer: senderAddress.toLowerCase(),
+      });
 
       makerStored.status = "settled";
       makerStored.settleTxHash = txHash;

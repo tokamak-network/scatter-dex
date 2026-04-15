@@ -16,6 +16,7 @@ import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
 } from "../types/authorize-order.js";
+import { publicSignalToAddress } from "../types/authorize-order.js";
 
 // AuthorizeProof tuple — shared between maker and taker in settleAuth
 // Must match contracts/src/zk/SettleVerifyLib.sol AuthorizeProof struct exactly.
@@ -73,6 +74,32 @@ export type CancelEventCallback = (
   relayer: string,
 ) => void;
 
+/**
+ * Phase 2.5a — settlement push hook. Invoked fire-and-forget after a
+ * successful settleAuth tx so the shared OB indexer learns about the trade.
+ * Receives the on-chain context (txHash, block) plus everything needed to
+ * build the row server-side.
+ */
+export interface SettlePushContext {
+  txHash: string;
+  blockNumber: number;
+  blockTime?: number;
+  makerOrderId?: string;
+  takerOrderId?: string;
+  makerNullifier: string;
+  takerNullifier: string;
+  feeMaker: string;
+  feeTaker: string;
+  userMaxFeeMaker: number;
+  userMaxFeeTaker: number;
+  takerRelayer?: string;
+  sellToken?: string;
+  buyToken?: string;
+  sellAmount?: string;
+  buyAmount?: string;
+}
+export type SettlementPusher = (ctx: SettlePushContext) => void | Promise<unknown>;
+
 export class AuthorizeSubmitter {
   private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
@@ -80,10 +107,35 @@ export class AuthorizeSubmitter {
   private txMutex: Promise<void> = Promise.resolve();
   private cancelListeners: CancelEventCallback[] = [];
   private db: PrivateOrderDB | null = null;
+  private settlementPusher: SettlementPusher | null = null;
 
   /** Attach DB for pending TX tracking. */
   setDB(db: PrivateOrderDB): void {
     this.db = db;
+  }
+
+  /** Attach a settlement-push callback. Optional — when unset, settles
+   *  proceed without indexer notification (the on-chain backfill scan in
+   *  Phase 2.5b would still pick them up). */
+  setSettlementPusher(fn: SettlementPusher | null): void {
+    this.settlementPusher = fn;
+  }
+
+  private firePush(ctx: SettlePushContext): void {
+    const fn = this.settlementPusher;
+    if (!fn) return;
+    // Fire-and-forget. The Promise.resolve wrapper converts a synchronous
+    // throw inside `fn` into a rejection, so the .catch covers both
+    // sync-throw and async-reject — without it a buggy pusher could crash
+    // the settle path even though the on-chain tx already succeeded.
+    Promise.resolve()
+      .then(() => fn(ctx))
+      .catch((err) => {
+        console.warn(
+          "[authorize-submitter] settlementPusher threw:",
+          err instanceof Error ? err.message : "unknown",
+        );
+      });
   }
 
   constructor() {
@@ -151,6 +203,7 @@ export class AuthorizeSubmitter {
   async submitAuthSettle(
     match: AuthorizeMatch,
     feeBps: bigint = 0n,
+    pushExtras?: Pick<SettlePushContext, "makerOrderId" | "takerOrderId" | "takerRelayer">,
   ): Promise<string> {
     const makerPs = match.maker.order.publicSignals;
     const takerPs = match.taker.order.publicSignals;
@@ -180,7 +233,7 @@ export class AuthorizeSubmitter {
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
       const authSettleStart = Date.now();
-      const { txHash } = await sendAndWait(
+      const { txHash, receipt } = await sendAndWait(
         () => this.settlement.settleAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
         {
@@ -201,6 +254,31 @@ export class AuthorizeSubmitter {
       this.persistSettledClaimsRoot(params.maker.claimsRoot, "settleAuth maker", txHash);
       this.persistSettledClaimsRoot(params.taker.claimsRoot, "settleAuth taker", txHash);
       console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
+
+      // Best-effort push to the shared-OB indexer. Reuses the receipt we
+      // already have from sendAndWait (no extra RPC). Skipped entirely
+      // when no pusher is configured so an indexer-less deployment pays
+      // nothing for this hook.
+      if (this.settlementPusher) {
+        this.firePush({
+          txHash,
+          blockNumber: receipt.blockNumber,
+          makerNullifier: makerPs.nullifier,
+          takerNullifier: takerPs.nullifier,
+          feeMaker: feeTokenMaker.toString(),
+          feeTaker: feeTokenTaker.toString(),
+          userMaxFeeMaker: Number(makerPs.maxFee),
+          userMaxFeeTaker: Number(takerPs.maxFee),
+          sellToken: publicSignalToAddress(makerPs.sellToken),
+          buyToken: publicSignalToAddress(makerPs.buyToken),
+          sellAmount: makerPs.sellAmount,
+          buyAmount: makerPs.buyAmount,
+          makerOrderId: pushExtras?.makerOrderId,
+          takerOrderId: pushExtras?.takerOrderId,
+          takerRelayer: pushExtras?.takerRelayer,
+        });
+      }
+
       return txHash;
     });
   }

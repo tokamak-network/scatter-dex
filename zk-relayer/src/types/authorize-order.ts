@@ -116,6 +116,16 @@ export interface AuthorizeMatch {
 
 // ─── Helpers ────────────────────────────────────────────────────
 
+/**
+ * Convert a public-signal field that encodes a uint160 as a decimal string
+ * (e.g. `sellToken`, `buyToken`, `relayer`) into a 0x-prefixed 20-byte
+ * hex address. Lowercase, no checksum — pass through `ethers.getAddress`
+ * separately when checksumming is desired.
+ */
+export function publicSignalToAddress(decimalStr: string): string {
+  return "0x" + BigInt(decimalStr).toString(16).padStart(40, "0");
+}
+
 /** Extract the pair key from an authorize order's public signals. */
 export function authorizePairKey(ps: AuthorizePublicSignals): string {
   return pairKey(BigInt(ps.sellToken), BigInt(ps.buyToken));
@@ -222,7 +232,7 @@ export function validateAuthorizeOrder(
   }
 
   // Relayer binding: the proof must be bound to this relayer
-  const proofRelayer = "0x" + BigInt(ps.relayer).toString(16).padStart(40, "0");
+  const proofRelayer = publicSignalToAddress(ps.relayer);
   if (proofRelayer.toLowerCase() !== relayerAddress.toLowerCase()) {
     return `Proof bound to relayer ${proofRelayer}, expected ${relayerAddress}`;
   }
