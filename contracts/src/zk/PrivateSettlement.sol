@@ -340,14 +340,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // Fee model: each side's `maxFee` (in basis points) is bound into its
     // EdDSA-signed `orderHash` inside the circuit. The relayer chooses the
     // actual fee (`feeTokenMaker` / `feeTokenTaker`) at submission time and
-    // this contract enforces the per-side bound:
-    //   feeTokenMaker * 10000 ≤ taker.sellAmount * taker.maxFee
-    //   feeTokenTaker * 10000 ≤ maker.sellAmount * maker.maxFee
+    // this contract enforces the per-side bound (each side's fee capped
+    // against that side's OWN `buyAmount`, matching the 2026-04-14
+    // fee-semantics redesign):
+    //   feeTokenMaker * 10000 ≤ maker.buyAmount * maker.maxFee
+    //   feeTokenTaker * 10000 ≤ taker.buyAmount * taker.maxFee
     // Naming: `feeTokenMaker` is denominated in
-    // `tokenMaker = maker.buyToken = taker.sellToken` and is paid by the
-    // taker → goes to `taker.relayer`. `feeTokenTaker` is denominated in
-    // `tokenTaker = taker.buyToken = maker.sellToken` and is paid by the
-    // maker → goes to `maker.relayer`.
+    // `tokenMaker = maker.buyToken = taker.sellToken` — it is the
+    // maker-side fee (drawn from what the maker receives) and goes to
+    // `maker.relayer`. `feeTokenTaker` is denominated in
+    // `tokenTaker = taker.buyToken = maker.sellToken` — it is the
+    // taker-side fee and goes to `taker.relayer`.
 
     struct SettleAuthParams {
         SettleVerifyLib.AuthorizeProof maker;

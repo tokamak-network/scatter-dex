@@ -387,7 +387,7 @@ Every received message is validated in this order, and rejected on first failure
 
 1. **Decode** — valid protobuf under the declared `MessageType`
 2. **Protocol version** — within the receiving relayer's supported range
-3. **Timestamp skew** — `|now - timestamp_ms| ≤ MAX_CLOCK_SKEW` (5 min, aligned with the `authorize.circom` expiry window checked against `block.timestamp` in `settleAuth`)
+3. **Timestamp skew** — `|now - timestamp_ms| ≤ MAX_CLOCK_SKEW` (5 min, to tolerate normal relayer clock drift and bound message freshness; this is a relayer-to-relayer message guard and is separate from the strict per-order on-chain `expiry` check enforced by `settleAuth`)
 4. **Signature** — EIP-712 recover matches `sender_relayer_id`
 5. **Sender liveness** — `sender_relayer_id` is an active relayer in `RelayerRegistry`
 6. **Type-specific validation** — e.g., `COMMIT.reveal_deadline > commit_time`, `ORDER_ANNOUNCE.expiry > now`
@@ -909,7 +909,7 @@ Can a relayer operate as a "solo" node, receiving only its own users' orders and
 
 | Parameter | Default | Where used | Notes |
 |---|---|---|---|
-| `MAX_CLOCK_SKEW` | 5 min | Message timestamp validation | Aligned with the `authorize.circom` `expiry` window validated by `settleAuth` against `block.timestamp` (5 min tolerance) |
+| `MAX_CLOCK_SKEW` | 5 min | Message timestamp validation | Off-chain tolerance for relayer-to-relayer message timestamps / clock drift. Independent of per-order `expiry`, which `settleAuth` checks strictly (`block.timestamp > expiry` reverts with no grace period). |
 | `HEARTBEAT_INTERVAL` | 30 s | Relayer liveness | Absence of 3 intervals = offline |
 | `MATCHING_SLOT_DURATION` | 5 s | Deterministic sharding | Trade-off: latency vs. liveness |
 | `MATCH_PROPOSE_TIMEOUT` | 10 s | Accept/reject window | Short — keep the protocol snappy |

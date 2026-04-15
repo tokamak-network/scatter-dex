@@ -232,11 +232,14 @@ async function buildAndSubmitOrder(
   leafByIndex: bigint[],
 ): Promise<OrderArtifacts> {
   // Claim recipient + secret — single claim sized to (buyAmount − fee).
-  // settleAuth enforces `totalLocked + feeToken ≤ counterpartySell`,
-  // and `feeToken = floor(buyAmount × maxFee / 10000)`. Since our orders
-  // use sellAmount === counterparty.buyAmount, packing `claimAmount =
-  // buyAmount` would trip ClaimsCapExceeded the moment the relayer adds
-  // any fee. Reserve the cap for the fee.
+  // settleAuth enforces `totalLocked + feeToken ≤ counterpartySell`, and
+  // separately `feeToken * 10000 ≤ buyAmount * maxFee` — i.e. the fee is
+  // only *bounded* by `floor(buyAmount × maxFee / 10000)`; the relayer
+  // picks the actual amount at or below that ceiling. This test uses
+  // `fee = floor(buyAmount × maxFee / 10000)` as its chosen value. Since
+  // our orders use sellAmount === counterparty.buyAmount, packing
+  // `claimAmount = buyAmount` would trip ClaimsCapExceeded the moment
+  // the relayer adds any fee — reserve the cap for the fee.
   const claimSecret = randomFieldElement();
   const releaseTime = BigInt(Math.floor(Date.now() / 1000)) + RELEASE_DELAY_SEC;
   const expectedFee = (user.buyAmount * ORDER_MAX_FEE_BPS) / 10_000n;
@@ -374,8 +377,9 @@ async function waitForSettlement(
   while (Date.now() - start < SETTLE_TIMEOUT_MS) {
     // `nullifiers(...)` alone would also flip on a cancel — guard with
     // `claimsGroups[root].totalLocked > 0` since registerClaimsGroup is
-    // only called by settleAuth / settleWithDex / scatterDirect(Auth),
-    // never by cancel.
+    // only called by `settleAuth`, `settleWithDex`, and
+    // `scatterDirectAuth`, never by `cancelPrivate`. (The legacy
+    // `scatterDirect` path does not register a claims group.)
     const [aSpent, bSpent, aGroup, bGroup] = await Promise.all([
       settlement.nullifiers(aHex),
       settlement.nullifiers(bHex),

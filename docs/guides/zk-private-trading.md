@@ -223,7 +223,7 @@ npm run dev
 | 온체인 이벤트 조회 | `cast logs --address <Pool> --from-block 0` |
 | zk-relayer 매칭 안 됨 | `curl http://localhost:3002/api/info` 로 상태 확인 |
 | settleAuth 실패 | zk-relayer 로그 확인 (`.dev-logs/zk-relayer.log`) |
-| TimestampOutOfRange | anvil block timestamp와 시스템 시간 차이 확인 |
+| OrderExpired / DeadlineExpired | 주문 `expiry` / DEX `deadline` 이 지났는지, anvil block timestamp와 시스템 시간 차이 확인 |
 | claim proof 실패 | claim JSON의 `allLeaves` (프론트엔드에서 `allClaimLeaves`로 사용)가 16개인지, leafIndex 범위 확인 |
 | claims cap 실패 | `totalLocked + fee > 상대방의 sellAmount` → claims 금액을 상대방 sell에서 fee 차감 후로 조정 |
 | InsufficientPoolBalance | CommitmentPool에 충분한 토큰이 있는지 확인 (deposit 선행 필요) |
