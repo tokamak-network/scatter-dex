@@ -12,10 +12,9 @@ import {
   getMerkleProof,
   randomFieldElement,
 } from "./commitment";
+import { CIRCUIT_ASSETS } from "./constants";
 import { timeProve } from "./prove-timer";
-
-const WASM_PATH = "/zk/withdraw.wasm";
-const ZKEY_PATH = "/zk/withdraw_final.zkey";
+import { withCachedAssets } from "./zkey-cache";
 
 export interface WithdrawProofInput {
   note: CommitmentNote;
@@ -112,8 +111,10 @@ export async function generateWithdrawProof(
   };
 
   // Generate proof
-  const { proof, publicSignals } = await timeProve("withdraw", () =>
-    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
+  const { proof, publicSignals } = await withCachedAssets(
+    CIRCUIT_ASSETS.withdraw,
+    ({ wasm, zkey }) =>
+      timeProve("withdraw", () => snarkjs.groth16.fullProve(circuitInput, wasm, zkey)),
   );
 
   return {

@@ -9,12 +9,11 @@
  */
 
 import { poseidonHash, buildMerkleTree, getMerkleProof, computeClaimNullifier } from "./commitment";
+import { CIRCUIT_ASSETS } from "./constants";
 import { timeProve } from "./prove-timer";
+import { withCachedAssets } from "./zkey-cache";
 
 const CLAIMS_TREE_DEPTH = 4;
-
-const WASM_PATH = "/zk/claim.wasm";
-const ZKEY_PATH = "/zk/claim_final.zkey";
 
 export interface ClaimProofInput {
   secret: bigint;
@@ -86,8 +85,10 @@ export async function generateClaimProof(
   };
 
   // Generate proof
-  const { proof, publicSignals } = await timeProve("claim", () =>
-    snarkjs.groth16.fullProve(circuitInput, WASM_PATH, ZKEY_PATH),
+  const { proof, publicSignals } = await withCachedAssets(
+    CIRCUIT_ASSETS.claim,
+    ({ wasm, zkey }) =>
+      timeProve("claim", () => snarkjs.groth16.fullProve(circuitInput, wasm, zkey)),
   );
 
   return {

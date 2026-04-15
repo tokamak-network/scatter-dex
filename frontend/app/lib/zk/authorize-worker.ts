@@ -21,13 +21,12 @@ setupProverWorker({
     const rawKey = (raw as unknown as SerializedAuthorizeInput).eddsaPrivateKey;
     if (rawKey instanceof Uint8Array) wipeBytes(rawKey);
   },
-  // Pre-warm the heavy deps the prover lazy-imports so the first proof
-  // (~2-5s desktop, ~10-15s mobile — the most expensive of all circuits)
-  // doesn't pay snarkjs module evaluation + ~50-150ms Poseidon round-
-  // constant table build. `warmupPoseidon` populates the same module
-  // cache `getPoseidon()` reads on first hash, so the prover reuses it.
+  // Pre-warm snarkjs + Poseidon table + IDB-cached assets so the first
+  // proof (~2-5s desktop, ~10-15s mobile — the most expensive circuit)
+  // doesn't pay any of those costs on the user's hot path.
   preload: async () => {
-    const { warmupPoseidon } = await import("./commitment");
-    await Promise.all([import("snarkjs"), warmupPoseidon()]);
+    const { warmProverAssets } = await import("./zkey-cache");
+    const { CIRCUIT_ASSETS } = await import("./constants");
+    await warmProverAssets(CIRCUIT_ASSETS.authorize);
   },
 });
