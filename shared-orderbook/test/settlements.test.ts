@@ -213,7 +213,7 @@ describe("/api/settlements", () => {
     expect((await get("/api/settlements?since=12.5")).status).toBe(400);
   });
 
-  it("GET /api/relayers/:addr/stats aggregates txCount + volumeByToken + pairs + take ratio", async () => {
+  it("GET /api/relayers/:addr/stats aggregates txCount + volumeByToken + pairs + avgFeeBps", async () => {
     const tA = "0x" + "11".repeat(20);
     const tB = "0x" + "22".repeat(20);
     // Three trades by maker A, all on pair (tA, tB), each side fee=100, buy=2000, cap=30
@@ -273,6 +273,9 @@ describe("/api/settlements", () => {
     const r = await get("/api/network/totals");
     expect(r.status).toBe(200);
     expect(r.body.txCount).toBe(2);
+    // activePairs uses MIN/MAX normalisation so both (A→B) and (B→A)
+    // collapse onto a single pair, matching the unordered semantics on
+    // the read filter side.
     expect(r.body.activePairs).toBe(1); // only (tA, tB)
     // makerW (submitter+maker), takerW (taker on row 1), outsiderW (all roles on row 2)
     expect(r.body.activeRelayers).toBe(3);

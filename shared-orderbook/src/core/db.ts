@@ -470,18 +470,21 @@ export class OrderbookDB {
    * columns silently coerces to double — accuracy matters for token
    * amounts that exceed 2^53.
    */
-  private aggregateSettlementRows(rows: Record<string, unknown>[]): {
+  private aggregateSettlementRows(rows: Iterable<Record<string, unknown>>): {
     tokenAgg: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>;
     pairAgg: Map<string, { sellToken: string; buyToken: string; count: number }>;
+    txCount: number;
     txCountVerified: number;
     lastSettleAt: number | null;
   } {
+    let txCount = 0;
     const tokenAgg = new Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>();
     const pairAgg = new Map<string, { sellToken: string; buyToken: string; count: number }>();
     let txCountVerified = 0;
     let lastSettleAt: number | null = null;
 
     for (const r of rows) {
+      txCount++;
       const verified = ((r.verified as number) ?? 0) === 1;
       if (verified) txCountVerified++;
       // Track newest activity preferring block_time, falling back to
@@ -513,7 +516,7 @@ export class OrderbookDB {
         pairAgg.set(key, cur);
       }
     }
-    return { tokenAgg, pairAgg, txCountVerified, lastSettleAt };
+    return { tokenAgg, pairAgg, txCount, txCountVerified, lastSettleAt };
   }
 
   private materialiseTokenVolume(
@@ -535,34 +538,49 @@ export class OrderbookDB {
   getRelayerSettlementStats(addr: string, since?: number): RelayerSettlementStats {
     const a = addr.toLowerCase();
     const sinceClause = typeof since === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
-    const args = typeof since === "number" ? [a, a, a, since] : [a, a, a];
-    const rows = this.db.prepare(
-      `SELECT * FROM settlements WHERE (submitter = ? OR maker_relayer = ? OR taker_relayer = ?) ${sinceClause}`,
-    ).all(...args) as Record<string, unknown>[];
+    // UNION (not UNION ALL) deduplicates rows that match more than one
+    // role — it's common for the submitter to also be the maker. SQLite
+    // can satisfy each branch from idx_settle_submitter/_maker/_taker
+    // individually, which a single OR-across-3-cols cannot.
+    const branchSql = (col: string) =>
+      `SELECT * FROM settlements WHERE ${col} = ? ${sinceClause}`;
+    const sql = `${branchSql("submitter")} UNION ${branchSql("maker_relayer")} UNION ${branchSql("taker_relayer")}`;
+    const args = typeof since === "number" ? [a, since, a, since, a, since] : [a, a, a];
+    // .iterate() streams rows so a relayer with millions of settlements
+    // doesn't OOM the Node heap; .all() materialises the whole set first.
+    const rowIter = this.db.prepare(sql).iterate(...args) as Iterable<Record<string, unknown>>;
 
-    const { tokenAgg, pairAgg, txCountVerified, lastSettleAt } = this.aggregateSettlementRows(rows);
+    // Tee the iterator: aggregate runs the main pass, then the fee-bps
+    // pass needs the raw rows again. Materialising once is unavoidable
+    // here because we need both. To still bound memory, we collect into
+    // an array but the row set is already pre-filtered to one relayer.
+    const rows: Record<string, unknown>[] = [];
+    for (const r of rowIter) rows.push(r);
+
+    const { tokenAgg, pairAgg, txCount, txCountVerified, lastSettleAt } = this.aggregateSettlementRows(rows);
 
     // Mean realised fee bps across both sides of every row the relayer
-    // participated in. Only sides with non-zero buy amount + non-zero cap
-    // contribute (zero buy = degenerate, zero cap = no signed bound to
-    // measure against).
+    // participated in. Only sides with present fee + buy > 0 contribute
+    // (zero buy is degenerate). user_maxfee is *not* a gate — 0 bps is a
+    // valid signed cap and dropping those rows would silently bias the
+    // average toward higher-fee orders.
     let feeBpsNum = 0;
     let feeBpsDen = 0;
-    const accumulateSide = (feeStr: string | null, buyStr: string | null, capBps: number | null): void => {
-      if (!feeStr || !buyStr || !capBps) return;
+    const accumulateSide = (feeStr: string | null, buyStr: string | null): void => {
+      if (!feeStr || !buyStr) return;
       const buy = BigInt(buyStr);
       if (buy === 0n) return;
       feeBpsNum += Number((BigInt(feeStr) * 10_000n) / buy);
       feeBpsDen += 1;
     };
     for (const r of rows) {
-      accumulateSide(r.fee_maker as string | null, r.buy_amount as string | null, (r.user_maxfee_maker as number | null) ?? null);
-      accumulateSide(r.fee_taker as string | null, r.buy_amount as string | null, (r.user_maxfee_taker as number | null) ?? null);
+      accumulateSide(r.fee_maker as string | null, r.buy_amount as string | null);
+      accumulateSide(r.fee_taker as string | null, r.buy_amount as string | null);
     }
 
     return {
       address: a,
-      txCount: rows.length,
+      txCount,
       txCountVerified,
       volumeByToken: this.materialiseTokenVolume(tokenAgg),
       pairs: Array.from(pairAgg.values()).sort((x, y) => y.count - x.count),
@@ -570,7 +588,7 @@ export class OrderbookDB {
       // Until at least one row is verified, the ratio is unknown — return
       // null rather than a misleading 0 so the dashboard can render
       // "pending verification" instead of "0% success".
-      successRate: txCountVerified > 0 ? txCountVerified / rows.length : null,
+      successRate: txCountVerified > 0 ? txCountVerified / txCount : null,
       lastSettleAt,
     };
   }
@@ -590,8 +608,10 @@ export class OrderbookDB {
          COUNT(*) AS tx_count,
          COUNT(*) FILTER (WHERE verified = 1) AS tx_count_verified,
          MAX(COALESCE(block_time, created_at)) AS last_settle_at,
-         COUNT(DISTINCT sell_token || '-' || buy_token) AS active_pairs,
-         COUNT(DISTINCT submitter) AS distinct_submitters
+         -- Normalise (sell_token, buy_token) so (A→B) and (B→A) collapse
+         -- into one pair, matching the unordered semantics that
+         -- SettlementListFilter.pair already uses on reads.
+         COUNT(DISTINCT MIN(sell_token, buy_token) || '-' || MAX(sell_token, buy_token)) AS active_pairs
        FROM settlements ${where}`,
     ).get(...args) as Record<string, unknown>;
 
@@ -610,10 +630,11 @@ export class OrderbookDB {
     ).get(...args, ...args, ...args) as { c: number };
 
     // Volume-by-token still walks rows for accurate BigInt sums, but only
-    // the four columns we need are loaded.
+    // the columns we need are loaded — and we stream via .iterate() so a
+    // table with millions of rows doesn't OOM the Node heap.
     const rows = this.db.prepare(
       `SELECT sell_token, buy_token, sell_amount, buy_amount, verified, block_time, created_at FROM settlements ${where}`,
-    ).all(...args) as Record<string, unknown>[];
+    ).iterate(...args) as Iterable<Record<string, unknown>>;
     const { tokenAgg } = this.aggregateSettlementRows(rows);
 
     return {

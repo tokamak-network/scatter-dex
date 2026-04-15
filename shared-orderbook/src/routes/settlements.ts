@@ -9,8 +9,13 @@ const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAX_LIMIT = 500;
 
 function parseLimitOffset(q: Record<string, unknown>): { limit: number; offset: number } {
-  const limit = Math.min(Math.max(Number(q.limit) || 100, 1), MAX_LIMIT);
-  const offset = Math.max(Number(q.offset) || 0, 0);
+  // Distinguish absent from explicit 0/NaN — `Number(undefined) || 100`
+  // would silently turn `?limit=0` into 100, which is misleading. With
+  // an explicit absence check, `?limit=0` clamps up to 1 (the min).
+  const parsedLimit = q.limit === undefined ? 100 : Number(q.limit);
+  const parsedOffset = q.offset === undefined ? 0 : Number(q.offset);
+  const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 100, 1), MAX_LIMIT);
+  const offset = Math.max(Number.isFinite(parsedOffset) ? parsedOffset : 0, 0);
   return { limit, offset };
 }
 
@@ -128,13 +133,23 @@ export function createSettlementStatsRoutes(
     }
     const since = parseSinceQuery(req.query.since);
     if (since instanceof Error) { res.status(400).json({ error: since.message }); return; }
-    res.json(db.getRelayerSettlementStats(addr, since));
+    try {
+      res.json(db.getRelayerSettlementStats(addr, since));
+    } catch (err: unknown) {
+      // DB locked / corrupt / unexpected aggregation error — return JSON
+      // 500 like other DB-backed routes instead of Express's HTML default.
+      res.status(500).json({ error: err instanceof Error ? err.message : "stats failed" });
+    }
   });
 
   router.get("/network/totals", readLimiter, (req, res) => {
     const since = parseSinceQuery(req.query.since);
     if (since instanceof Error) { res.status(400).json({ error: since.message }); return; }
-    res.json(db.getNetworkSettlementTotals(since));
+    try {
+      res.json(db.getNetworkSettlementTotals(since));
+    } catch (err: unknown) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "totals failed" });
+    }
   });
 
   return router;

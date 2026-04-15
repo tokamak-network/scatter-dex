@@ -78,9 +78,11 @@ export interface RelayerSettlementStats {
    */
   successRate: number | null;
   /**
-   * Newest activity timestamp, preferring verified `block_time` and
-   * falling back to `COALESCE(block_time, created_at)` from any row so
-   * the field is useful pre-2.5b. `null` only when no rows exist.
+   * Newest activity timestamp using `COALESCE(block_time, created_at)`
+   * from the newest matching row. `block_time` is used whenever present
+   * regardless of `verified` (so the field works pre-2.5b), falling back
+   * to the server-clock `created_at` for rows without a block time yet.
+   * `null` only when no rows exist.
    */
   lastSettleAt: number | null;
 }
