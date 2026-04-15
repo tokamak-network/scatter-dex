@@ -118,7 +118,7 @@ export default function SettlementsPage() {
       </div>
 
       <p className="text-xs text-on-surface-variant/50 mt-3">
-        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Click the tx hash to view full details on the block explorer.
+        P2P rows don&apos;t include the token pair or amount — those live in the tx calldata, not the event. Click the tx hash (or copy it into your preferred block explorer) to view full details.
       </p>
     </div>
   );

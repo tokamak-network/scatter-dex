@@ -1,10 +1,9 @@
 import { EXPECTED_CHAIN_ID, EXPLORER_BASES } from "./config";
 
+// Deliberately defaults to EXPECTED_CHAIN_ID so disconnected users get
+// working links and wrong-chain users don't get explorer 404s. The
+// data we render is always for the deployment chain.
 function resolveBase(chainId: number | null | undefined): string | null {
-  // Fall back to the deployment's configured chain so the explorer link
-  // works for disconnected users and survives the user being connected
-  // to a wrong network — the events / tx hashes shown are always from
-  // the deployment chain, not the wallet's.
   const id = chainId ?? EXPECTED_CHAIN_ID;
   return EXPLORER_BASES[id] ?? null;
 }
