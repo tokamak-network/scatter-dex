@@ -46,3 +46,10 @@ export function getTokenMap(): Record<string, TokenInfo> {
   }
   return map;
 }
+
+/** Tokens tradable through zkScatter — strips the ETH alias (which is
+ *  only a display affordance for the native-wrapped WETH entry). Used
+ *  by every page that populates a token-pair selector. */
+export function getTradableTokens(): TokenInfo[] {
+  return getTokenList().filter((t) => !t.isNative);
+}
