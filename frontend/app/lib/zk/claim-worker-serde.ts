@@ -7,7 +7,9 @@ export interface SerializedClaimInput {
   amount: string;
   releaseTime: string;
   leafIndex: number;
-  allClaimLeaves: string[];
+  // Native bigint[] — structuredClone fast-path, avoids ~16 toString +
+  // BigInt round-trips per claim.
+  allClaimLeaves: bigint[];
 }
 
 export interface SerializedClaimOutput {
@@ -25,7 +27,7 @@ export function serializeClaimInput(input: ClaimProofInput): SerializedClaimInpu
     amount: input.amount.toString(),
     releaseTime: input.releaseTime.toString(),
     leafIndex: input.leafIndex,
-    allClaimLeaves: input.allClaimLeaves.map((l) => l.toString()),
+    allClaimLeaves: input.allClaimLeaves,
   };
 }
 
@@ -37,7 +39,7 @@ export function deserializeClaimInput(raw: SerializedClaimInput): ClaimProofInpu
     amount: BigInt(raw.amount),
     releaseTime: BigInt(raw.releaseTime),
     leafIndex: raw.leafIndex,
-    allClaimLeaves: raw.allClaimLeaves.map(BigInt),
+    allClaimLeaves: raw.allClaimLeaves,
   };
 }
 

@@ -18,7 +18,8 @@ export interface SerializedCancelInput {
   merkleProof?: SerializedMerkleProof;
   nonce: string;
   relayer: string;
-  eddsaPrivateKey: number[];
+  // Native Uint8Array — structuredClone fast-path, zero-copy in V8.
+  eddsaPrivateKey: Uint8Array;
 }
 
 export interface SerializedCancelOutput {
@@ -37,7 +38,7 @@ export function serializeCancelInput(input: CancelProofInput): SerializedCancelI
     leafIndex: input.leafIndex,
     nonce: input.nonce.toString(),
     relayer: input.relayer,
-    eddsaPrivateKey: Array.from(input.eddsaPrivateKey),
+    eddsaPrivateKey: input.eddsaPrivateKey,
   };
   if (input.allLeaves) {
     result.allLeaves = input.allLeaves.map((l) => l.toString());
@@ -66,7 +67,7 @@ export function deserializeCancelInput(raw: SerializedCancelInput): CancelProofI
       : undefined,
     nonce: BigInt(raw.nonce),
     relayer: raw.relayer,
-    eddsaPrivateKey: new Uint8Array(raw.eddsaPrivateKey),
+    eddsaPrivateKey: raw.eddsaPrivateKey,
   };
 }
 

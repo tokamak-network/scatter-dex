@@ -24,6 +24,9 @@ export function createProverWorkerClient<I, O>(
   let worker: Worker | null = null;
   let workerFailed = false;
   let inFlight: Promise<O> | null = null;
+  // Captured so `terminate` can settle the active promise instead of
+  // leaving callers — and the single-flight queue — hung indefinitely.
+  let activeReject: ((err: Error) => void) | null = null;
 
   function getWorker(): Worker | null {
     if (workerFailed) return null;
@@ -63,26 +66,36 @@ export function createProverWorkerClient<I, O>(
     if (!w) return handlers.fallbackProve(input);
 
     return new Promise<O>((resolve, reject) => {
+      activeReject = reject;
+      const settle = () => {
+        w.removeEventListener("message", onMessage);
+        w.removeEventListener("error", onError);
+        if (activeReject === reject) activeReject = null;
+      };
+
       const onMessage = (event: MessageEvent) => {
-        if (event.data?.type === "perf") {
-          const timing = event.data.timing as ProveTiming;
+        const data = event.data;
+        if (data?.type === "perf") {
+          const timing = data.timing as ProveTiming;
           window.dispatchEvent(
             new CustomEvent<ProveTiming>("zk-perf:prove", { detail: timing }),
           );
           return;
         }
-        w.removeEventListener("message", onMessage);
-        w.removeEventListener("error", onError);
-        if (event.data.type === "error") {
-          reject(new Error(event.data.message));
+        settle();
+        if (data?.type === "error") {
+          reject(new Error(data.message));
           return;
         }
-        resolve(handlers.deserializeOutput(event.data.data));
+        if (data?.type === "result") {
+          resolve(handlers.deserializeOutput(data.data));
+          return;
+        }
+        reject(new Error(`[${handlers.label}] Unexpected worker message format`));
       };
 
       const onError = (err: ErrorEvent) => {
-        w.removeEventListener("message", onMessage);
-        w.removeEventListener("error", onError);
+        settle();
         // Worker-level crash (OOM, module load failure, missing feature).
         // Burn the worker so all subsequent calls fall back to main thread.
         console.warn(
@@ -97,15 +110,29 @@ export function createProverWorkerClient<I, O>(
 
       w.addEventListener("message", onMessage);
       w.addEventListener("error", onError);
-      const serialized = handlers.serializeInput(input);
-      w.postMessage(serialized);
-      handlers.wipeSerialized?.(serialized);
+
+      // Serialize/postMessage can throw (e.g., DataCloneError on a value
+      // that structuredClone can't carry). Settle and reject so the
+      // listeners we just attached don't leak.
+      try {
+        const serialized = handlers.serializeInput(input);
+        w.postMessage(serialized);
+        handlers.wipeSerialized?.(serialized);
+      } catch (err: unknown) {
+        settle();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
   function terminate(): void {
     worker?.terminate();
     worker = null;
+    if (activeReject) {
+      const reject = activeReject;
+      activeReject = null;
+      reject(new Error(`[${handlers.label}] Worker terminated mid-proof`));
+    }
   }
 
   return { prove, terminate };

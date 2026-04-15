@@ -16,12 +16,20 @@ export function setupProverWorker<I, O>(handlers: WorkerHandlers<I, O>): void {
 
   // Workers have no `window`, so the default `prove-timer` reporter
   // would silently drop CustomEvents. Relay timings via postMessage; the
-  // client re-dispatches them on `window`.
-  void import("./prove-timer").then(({ setProveReporter }) => {
-    setProveReporter((timing) => ctx.postMessage({ type: "perf", timing }));
-  });
+  // client re-dispatches them on `window`. Catch import failure so it
+  // doesn't surface as an unhandled rejection (which can terminate the
+  // worker in strict environments).
+  void import("./prove-timer")
+    .then(({ setProveReporter }) => {
+      setProveReporter((timing) => ctx.postMessage({ type: "perf", timing }));
+    })
+    .catch((err: unknown) => {
+      console.warn("[prover-worker] prove-timer init failed:", err);
+    });
 
-  void handlers.preload?.();
+  void handlers.preload?.().catch((err: unknown) => {
+    console.warn("[prover-worker] preload failed:", err);
+  });
 
   ctx.onmessage = async (event: MessageEvent) => {
     let input: I | undefined;

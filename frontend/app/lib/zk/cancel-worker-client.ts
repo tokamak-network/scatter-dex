@@ -6,7 +6,7 @@ import {
   type SerializedCancelInput,
   type SerializedCancelOutput,
 } from "./cancel-worker-serde";
-import { wipeArray } from "./secure-wipe";
+import { wipeBytes } from "./secure-wipe";
 
 const client = createProverWorkerClient<CancelProofInput, CancelProofResult>({
   workerUrl: new URL("./cancel-worker.ts", import.meta.url),
@@ -21,10 +21,10 @@ const client = createProverWorkerClient<CancelProofInput, CancelProofResult>({
   },
   // [S-M12] structuredClone has already taken its copy by the time this
   // runs, so wiping here cannot affect the worker's payload — but it does
-  // shorten the lifetime of the EdDSA key array in the main-thread heap.
+  // shorten the lifetime of the EdDSA key in the main-thread heap.
   wipeSerialized: (serialized) => {
     const key = (serialized as unknown as SerializedCancelInput).eddsaPrivateKey;
-    if (Array.isArray(key)) wipeArray(key);
+    if (key instanceof Uint8Array) wipeBytes(key);
   },
 });
 
