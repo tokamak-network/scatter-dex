@@ -61,7 +61,7 @@ function DexTradeLoading() {
 function DexTradePageInner() {
   const { account, signer, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
-  const tokens = getTokenList().filter((t) => !t.isNative);
+  const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
 
   const zkRelayers = useMemo(() =>
     relayers.filter((r) => r.online && r.api?.name?.includes("ZK")),
@@ -97,6 +97,21 @@ function DexTradePageInner() {
   const [claims, setClaims] = useState<ClaimRow[]>([
     { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
+
+  // Cached on mount / chainId change so submit doesn't pay an RPC round-trip
+  // before the DEX route fetch.
+  const [platformFeeBps, setPlatformFeeBps] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = new ethers.Contract(getPrivateSettlementAddress(), PRIVATE_SETTLEMENT_ABI, getReadProvider());
+        const v = Number(await c.dexPlatformFeeBps?.() ?? 0n);
+        if (!cancelled) setPlatformFeeBps(v);
+      } catch { if (!cancelled) setPlatformFeeBps(0); }
+    })();
+    return () => { cancelled = true; };
+  }, [chainId]);
 
   const sellToken = tokens[sellTokenIdx] as TokenInfo | undefined;
   const buyToken = tokens[buyTokenIdx] as TokenInfo | undefined;
@@ -281,10 +296,8 @@ function DexTradePageInner() {
     return ethers.formatUnits(claimTotalWei, buyTokenDecimals);
   }, [claimTotalWei, buyTokenDecimals]);
 
-  // DEX path has no relayer fee — claims must cover the full buyAmount.
-  // Previously this subtracted effectiveFeeBps, matching a call that passed
-  // maxFee=0 on-chain, so the circuit asserted totalLocked >= buyAmount and
-  // failed when claims summed to buyAmount × (1 − fee). See Authorize_409:439.
+  // DEX path passes maxFee=0; circuit asserts totalLocked >= buyAmount,
+  // so claims must cover the full buyAmount with no fee subtraction.
   const claimShortfall = useMemo((): bigint | null => {
     if (buyTokenDecimals == null || !buyAmount) return null;
     try {
@@ -390,11 +403,11 @@ function DexTradePageInner() {
       const settlementAddr = getPrivateSettlementAddress();
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
 
-      const readProvider = getReadProvider();
-      const settlementRead = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, readProvider);
-      const platformFeeBps = Number(await settlementRead.dexPlatformFeeBps?.() ?? 0n);
-      const swapAmountIn = platformFeeBps > 0
-        ? parsedSell - (parsedSell * BigInt(platformFeeBps) / 10000n)
+      const platformFee = platformFeeBps ?? Number(
+        await new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, getReadProvider()).dexPlatformFeeBps?.() ?? 0n
+      );
+      const swapAmountIn = platformFee > 0
+        ? parsedSell - (parsedSell * BigInt(platformFee) / 10000n)
         : parsedSell;
 
       const { getBestSwapRoute } = await import("../../lib/dex-aggregator");
@@ -505,7 +518,7 @@ function DexTradePageInner() {
       setSigningProgress("");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, dexPrices, zkRelayers, selectedRelayerIdx, chainId, slippageBps]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, dexPrices, zkRelayers, selectedRelayerIdx, chainId, slippageBps, platformFeeBps]);
 
   if (!account) {
     return (

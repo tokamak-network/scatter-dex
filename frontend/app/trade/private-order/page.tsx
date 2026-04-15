@@ -82,7 +82,7 @@ function PrivateOrderLoading() {
 function PrivateOrderPageInner() {
   const { account, signer, readProvider, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
-  const tokens = getTokenList().filter((t) => !t.isNative);
+  const tokens = useMemo(() => getTokenList().filter((t) => !t.isNative), []);
 
   // ZK relayers (filter by name containing "ZK")
   const zkRelayers = useMemo(() =>
@@ -287,7 +287,6 @@ function PrivateOrderPageInner() {
   };
 
   const buyTokenDecimals = buyToken?.decimals;
-  const buyTokenSymbol = buyToken?.symbol;
 
   // Sum claim amounts as BigInt wei, tolerating rows the user is still
   // typing into. Shared between the shortfall check (gates submit), the
@@ -314,7 +313,6 @@ function PrivateOrderPageInner() {
   }, [claimTotalWei, buyTokenDecimals]);
 
   const feeBps = parseInt(maxFeeBps) || 0;
-  const feePercent = feeBps / 100;
 
   // Gas-inclusive minimum fee
   const { ethPerToken } = useTokenEthPrice(buyToken?.address, buyToken?.decimals, chainId ?? undefined, readProvider);
@@ -395,7 +393,7 @@ function PrivateOrderPageInner() {
   //   - Scatter mode: clamp to `sellAmount - fee` so the scatter-excess
   //     gate (which compares the buyAmount field against the cap) doesn't
   //     fire just because the price=1 path produced sellAmount × 1 wei.
-  const recomputeBuyAmount = useCallback((sell: string, p: string, _bps: number) => {
+  const recomputeBuyAmount = useCallback((sell: string, p: string) => {
     if (isScatterMode && sellTokenDecimals != null) {
       try {
         const sellWei = ethers.parseUnits(sell, sellTokenDecimals);
@@ -421,12 +419,12 @@ function PrivateOrderPageInner() {
   const handlePriceSelect = useCallback((p: string) => {
     setPrice(p);
     userEditedBuyRef.current = false;
-    if (sellAmount) recomputeBuyAmount(sellAmount, p, effectiveFeeBps);
-  }, [sellAmount, effectiveFeeBps, recomputeBuyAmount]);
+    if (sellAmount) recomputeBuyAmount(sellAmount, p);
+  }, [sellAmount, recomputeBuyAmount]);
 
   useEffect(() => {
     if (userEditedBuyRef.current) return;
-    if (sellAmount && price) recomputeBuyAmount(sellAmount, price, effectiveFeeBps);
+    if (sellAmount && price) recomputeBuyAmount(sellAmount, price);
   }, [effectiveFeeBps, sellAmount, price, recomputeBuyAmount]);
 
   // Net amount after relay fee — this is the distributable pot for claims.
@@ -734,7 +732,7 @@ function PrivateOrderPageInner() {
 
               {availableNotes.length > 0 ? (
                 <div className="space-y-1.5">
-                  {availableNotes.map((n, i) => (
+                  {availableNotes.map((n) => (
                     <button
                       key={n.commitment}
                       onClick={() => setSelectedCommitment(n.commitment)}
@@ -845,7 +843,7 @@ function PrivateOrderPageInner() {
                     setSellAmount(e.target.value);
                     if (price && e.target.value) {
                       userEditedBuyRef.current = false;
-                      recomputeBuyAmount(e.target.value, price, effectiveFeeBps);
+                      recomputeBuyAmount(e.target.value, price);
                     }
                   }}
                   className="w-full bg-surface-container-low border-none focus:ring-1 focus:ring-primary text-on-surface rounded-md font-mono py-2.5 px-3"

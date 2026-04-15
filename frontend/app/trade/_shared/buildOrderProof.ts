@@ -1,9 +1,11 @@
 import { ethers } from "ethers";
 import type { TokenInfo } from "../../lib/tokens";
 import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
-import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment } from "../../lib/zk/commitment";
+import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment, getMerkleProof } from "../../lib/zk/commitment";
 import type { StoredNote } from "../../lib/zk/note-storage";
-import { getReadProvider } from "../../lib/provider";
+import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
+import { getCommitmentPoolAddress } from "../../lib/config";
+import { COMMITMENT_POOL_ABI } from "../../lib/contracts";
 
 export type RecipientMode = "standard" | "stealth";
 
@@ -110,14 +112,12 @@ export async function buildOrderProof(params: BuildOrderParams) {
   } catch {
     report("Fetching commitment Merkle proof from chain (slower)...");
     const provider = getReadProvider();
-    const poolAddr = (await import("../../lib/config")).getCommitmentPoolAddress();
-    const poolContract = new ethers.Contract(poolAddr, (await import("../../lib/contracts")).COMMITMENT_POOL_ABI, provider);
-    const fromBlock = (await import("../../lib/provider")).getSafeFromBlock(provider);
-    const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await fromBlock);
+    const poolContract = new ethers.Contract(getCommitmentPoolAddress(), COMMITMENT_POOL_ABI, provider);
+    const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await getSafeFromBlock(provider));
     const leaves: bigint[] = [];
     for (const ev of events) { const e = ev as ethers.EventLog; const idx = Number(e.args.leafIndex); while (leaves.length <= idx) leaves.push(0n); leaves[idx] = BigInt(e.args.commitment); }
     const tree = await buildMerkleTree(leaves, 20);
-    const proof = await import("../../lib/zk/commitment").then(m => m.getMerkleProof(tree.layers, selectedNote.leafIndex));
+    const proof = getMerkleProof(tree.layers, selectedNote.leafIndex);
     merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };
   }
 
