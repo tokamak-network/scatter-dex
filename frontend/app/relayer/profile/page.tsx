@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import {
   User, Shield, ShieldCheck, Zap, Clock, Award, Globe, Activity, Timer,
-  Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft,
+  Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft, Wallet, ArrowDownToLine,
 } from "lucide-react";
 import Link from "next/link";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
@@ -13,6 +13,7 @@ import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
 import { shortenAddress, formatBond, formatDuration } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
+import { useRelayerEarnings } from "../../lib/useRelayerEarnings";
 
 interface Badge {
   id: string;
@@ -195,6 +196,8 @@ function RelayerProfileContent() {
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadSettlements(); }, [loadSettlements]);
 
+  const earnings = useRelayerEarnings(validAddress);
+
   const badges = useMemo(
     () => relayer ? computeBadges(relayer, stats) : [],
     [relayer, stats],
@@ -362,6 +365,78 @@ function RelayerProfileContent() {
           </div>
         ) : (
           <p className="text-xs text-on-surface-variant/40">No stats available (relayer offline).</p>
+        )}
+      </div>
+
+      {/* Earnings (FeeVault) */}
+      <div className="glass-card rounded-xl p-6 border border-outline-variant/10">
+        <h2 className="text-sm font-bold text-on-surface mb-4 flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-tertiary" /> Earnings
+        </h2>
+
+        {earnings.loading ? (
+          <div className="flex items-center gap-2 py-6 justify-center text-on-surface-variant/50 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading earnings...
+          </div>
+        ) : earnings.error ? (
+          <div className="flex items-center gap-2 text-sm text-on-surface-variant/40">
+            <AlertCircle className="w-4 h-4" /> {earnings.error}
+          </div>
+        ) : earnings.rows.length === 0 ? (
+          <p className="text-xs text-on-surface-variant/40">No fees earned yet.</p>
+        ) : (
+          <div className="space-y-1">
+            <div className="grid grid-cols-[1fr_120px_120px_120px] gap-2 text-[10px] text-on-surface-variant/30 uppercase tracking-wider px-3 py-1">
+              <span>Token</span>
+              <span className="text-right">Unclaimed</span>
+              <span className="text-right">Lifetime earned</span>
+              <span className="text-right">Lifetime claimed</span>
+            </div>
+            {earnings.rows.map((row) => {
+              const fmt = (v: bigint) => {
+                const s = ethers.formatUnits(v, row.decimals);
+                const [i, d] = s.split(".");
+                return d && d.length > 6 ? `${i}.${d.slice(0, 6)}` : s;
+              };
+              return (
+                <div key={row.token} className="grid grid-cols-[1fr_120px_120px_120px] gap-2 px-3 py-2 text-xs hover:bg-surface-bright/20 rounded transition-colors">
+                  <span className="font-bold text-on-surface">{row.symbol}</span>
+                  <span className="text-right font-mono text-on-surface">{fmt(row.unclaimed)}</span>
+                  <span className="text-right font-mono text-on-surface-variant/70">{fmt(row.lifetimeEarned)}</span>
+                  <span className="text-right font-mono text-on-surface-variant/50">{fmt(row.lifetimeClaimed)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {earnings.recent.length > 0 && (
+          <details className="mt-4 group">
+            <summary className="cursor-pointer text-[11px] text-on-surface-variant/50 hover:text-on-surface-variant select-none">
+              Recent activity ({earnings.recent.length})
+            </summary>
+            <div className="mt-2 space-y-1">
+              {earnings.recent.map((a) => {
+                const row = earnings.rows.find((r) => r.token.toLowerCase() === a.token.toLowerCase());
+                const dec = row?.decimals ?? 18;
+                const fmt = (v: bigint) => {
+                  const s = ethers.formatUnits(v, dec);
+                  const [i, d] = s.split(".");
+                  return d && d.length > 6 ? `${i}.${d.slice(0, 6)}` : s;
+                };
+                return (
+                  <div key={`${a.txHash}-${a.kind}`} className="grid grid-cols-[80px_1fr_120px_80px] gap-2 px-3 py-1.5 text-[11px] hover:bg-surface-bright/20 rounded transition-colors">
+                    <span className={a.kind === "earned" ? "text-emerald-400" : "text-amber-400 inline-flex items-center gap-1"}>
+                      {a.kind === "earned" ? "+ earned" : <><ArrowDownToLine className="w-3 h-3" /> claimed</>}
+                    </span>
+                    <span className="font-mono text-primary truncate">{a.txHash}</span>
+                    <span className="text-right font-mono text-on-surface">{fmt(a.amount)} {a.symbol}</span>
+                    <span className="text-right text-on-surface-variant/40 font-mono">#{a.blockNumber}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </details>
         )}
       </div>
 

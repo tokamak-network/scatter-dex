@@ -63,6 +63,9 @@ export const FEE_VAULT_ABI = [
   "function platformFeeBps() view returns (uint256)",
   "function treasury() view returns (address)",
   "function totalTracked(address token) view returns (uint256)",
+  "function platformRevenue(address token) view returns (uint256)",
+  "event FeeDeposited(address indexed relayer, address indexed token, uint256 amount)",
+  "event FeeClaimed(address indexed relayer, address indexed token, uint256 amount, uint256 platformFee)",
 ];
 
 // Pre-parsed interfaces — avoids re-parsing ABI on every render cycle
