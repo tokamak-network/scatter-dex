@@ -290,4 +290,56 @@ describe("/api/settlements", () => {
     const r = await get(`/api/network/totals?since=${future}`);
     expect(r.body.txCount).toBe(0);
   });
+
+  // ─── Phase 3a: leaderboard ───────────────────────────────────────
+
+  it("GET /api/leaderboard ranks by count, deduplicates roles, includes both sides", async () => {
+    // makerW appears as submitter+makerRelayer in 2 rows; takerW appears
+    // as takerRelayer in those same 2 rows; outsider posts 1 self-trade.
+    await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
+    await post(basePayload({ txHash: "0x" + "22".repeat(32) }), makerW);
+    await post(
+      basePayload({
+        txHash: "0x" + "33".repeat(32),
+        makerRelayer: outsiderW.address,
+        takerRelayer: outsiderW.address,
+      }),
+      outsiderW,
+    );
+
+    const r = await get("/api/leaderboard");
+    expect(r.status).toBe(200);
+    expect(r.body.metric).toBe("count");
+    expect(r.body.count).toBe(3);
+    // makerW = 2 rows, takerW = 2 rows, outsiderW = 1 row.
+    // makerW or takerW first (both 2), outsider last.
+    expect(r.body.rows[2].address).toBe(outsiderW.address.toLowerCase());
+    expect(r.body.rows[2].txCount).toBe(1);
+    const top = r.body.rows.find((x: { address: string }) => x.address === makerW.address.toLowerCase());
+    expect(top.txCount).toBe(2);
+    // A relayer in two roles on the same tx counts once (DISTINCT tx_hash).
+  });
+
+  it("GET /api/leaderboard ?metric=successRate filters to relayers with at least one verified tx", async () => {
+    await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
+    // Pre-2.5b nothing is verified yet, so successRate ranking returns 0 rows.
+    const r = await get("/api/leaderboard?metric=successRate");
+    expect(r.status).toBe(200);
+    expect(r.body.count).toBe(0);
+  });
+
+  it("GET /api/leaderboard rejects out-of-range ?limit with 400", async () => {
+    await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
+    const ok = await get("/api/leaderboard?limit=2");
+    expect(ok.status).toBe(200);
+    const tooBig = await get("/api/leaderboard?limit=99999");
+    expect(tooBig.status).toBe(400);
+    const zero = await get("/api/leaderboard?limit=0");
+    expect(zero.status).toBe(400);
+  });
+
+  it("GET /api/leaderboard rejects unknown metric with 400", async () => {
+    const r = await get("/api/leaderboard?metric=foobar");
+    expect(r.status).toBe(400);
+  });
 });
