@@ -114,8 +114,9 @@ export async function buildOrderProof(params: BuildOrderParams) {
     const provider = getReadProvider();
     const poolContract = new ethers.Contract(getCommitmentPoolAddress(), COMMITMENT_POOL_ABI, provider);
     const events = await poolContract.queryFilter(poolContract.filters.CommitmentInserted(), await getSafeFromBlock(provider));
-    const leaves: bigint[] = [];
-    for (const ev of events) { const e = ev as ethers.EventLog; const idx = Number(e.args.leafIndex); while (leaves.length <= idx) leaves.push(0n); leaves[idx] = BigInt(e.args.commitment); }
+    const maxIdx = events.reduce((m, ev) => Math.max(m, Number((ev as ethers.EventLog).args.leafIndex)), -1);
+    const leaves: bigint[] = new Array(maxIdx + 1).fill(0n);
+    for (const ev of events) { const e = ev as ethers.EventLog; leaves[Number(e.args.leafIndex)] = BigInt(e.args.commitment); }
     const tree = await buildMerkleTree(leaves, 20);
     const proof = getMerkleProof(tree.layers, selectedNote.leafIndex);
     merkleProof = { root: tree.root, pathElements: proof.pathElements, pathIndices: proof.pathIndices };

@@ -499,7 +499,7 @@ function DexTradePageInner() {
       };
       const bundleJson = JSON.stringify(bundle, null, 2);
       const claimsFilename = `zkscatter-market-claims-${Date.now()}.json`;
-      try { await saveFileToFolder(claimsFilename, bundleJson); } catch { /* */ }
+      try { await saveFileToFolder(claimsFilename, bundleJson); } catch (e) { console.error("Failed to save claims bundle to folder:", e); }
       const blob = new Blob([bundleJson], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = claimsFilename; a.click();
@@ -510,7 +510,7 @@ function DexTradePageInner() {
           await saveNote({ note: { ownerSecret: selectedNote.note.ownerSecret, token: selectedNote.note.token, amount: change, salt: changeSalt, pubKeyAx: selectedNote.note.pubKeyAx, pubKeyAy: selectedNote.note.pubKeyAy },
             commitment: toBytes32Hex(expectedChangeCommitment), tokenSymbol: sellToken.symbol, tokenAddress: sellToken.address,
             amount: ethers.formatUnits(change, sellToken.decimals), leafIndex: -1, txHash: tx.hash, createdAt: Date.now() });
-        } catch { /* */ }
+        } catch (e) { console.error("Failed to save change note locally — the tx succeeded but the local record is missing:", e); }
       }
 
       setSigningProgress("");
