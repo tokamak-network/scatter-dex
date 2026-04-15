@@ -99,7 +99,7 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @notice Credit the platform's cut of a `settleWithDex` sellAmount
     ///         (the configured `dexPlatformFeeBps`). Caller must have
     ///         already transferred `amount` of `token` to this contract.
-    function recordDexFee(address token, uint256 amount) external nonReentrant {
+    function accrueDexFee(address token, uint256 amount) external nonReentrant {
         _accruePlatformRevenue(token, amount);
         if (amount > 0) emit PlatformFeeFromDex(token, amount);
     }
@@ -107,11 +107,15 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @notice Credit positive DEX slippage (returned more than minOut) on a
     ///         `settleWithDex` trade. Caller must have already transferred
     ///         `amount` of `token` to this contract.
-    function recordDexSurplus(address token, uint256 amount) external nonReentrant {
+    function accrueDexSurplus(address token, uint256 amount) external nonReentrant {
         _accruePlatformRevenue(token, amount);
         if (amount > 0) emit PlatformSurplusFromDex(token, amount);
     }
 
+    /// @dev Shared body for the platform-revenue accrual paths: enforces
+    ///      the depositor allowlist + balance-backed invariant, and
+    ///      short-circuits zero-amount calls. Public wrappers must call
+    ///      this BEFORE emitting their per-source event.
     function _accruePlatformRevenue(address token, uint256 amount) internal {
         if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
         if (token == address(0)) revert ZeroAddress();

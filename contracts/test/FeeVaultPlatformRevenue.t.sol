@@ -49,9 +49,9 @@ contract FeeVaultPlatformRevenueTest is Test {
         vault.setAuthorizedDepositor(depositor, true);
     }
 
-    // ─── recordDexSurplus / recordDexFee: happy path ────────────
+    // ─── accrueDexSurplus / accrueDexFee: happy path ────────────
 
-    function test_recordDexSurplus_credits_bucket_and_emits() public {
+    function test_accrueDexSurplus_credits_bucket_and_emits() public {
         token.mint(address(vault), 100 ether);
 
         // PlatformSurplusFromDex indexes `token` (topic1); `amount` is data.
@@ -59,7 +59,7 @@ contract FeeVaultPlatformRevenueTest is Test {
         emit FeeVault.PlatformSurplusFromDex(address(token), 100 ether);
 
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 100 ether);
+        vault.accrueDexSurplus(address(token), 100 ether);
 
         assertEq(vault.platformRevenue(address(token)), 100 ether);
         // Relayer balances are unaffected — platformRevenue is a separate ledger.
@@ -67,14 +67,14 @@ contract FeeVaultPlatformRevenueTest is Test {
         assertEq(vault.totalTracked(address(token)), 0);
     }
 
-    function test_recordDexFee_credits_bucket_and_emits() public {
+    function test_accrueDexFee_credits_bucket_and_emits() public {
         token.mint(address(vault), 25 ether);
 
         vm.expectEmit(true, false, false, true);
         emit FeeVault.PlatformFeeFromDex(address(token), 25 ether);
 
         vm.prank(depositor);
-        vault.recordDexFee(address(token), 25 ether);
+        vault.accrueDexFee(address(token), 25 ether);
 
         assertEq(vault.platformRevenue(address(token)), 25 ether);
     }
@@ -83,62 +83,76 @@ contract FeeVaultPlatformRevenueTest is Test {
         token.mint(address(vault), 30 ether);
 
         vm.startPrank(depositor);
-        vault.recordDexFee(address(token), 10 ether);
-        vault.recordDexSurplus(address(token), 20 ether);
+        vault.accrueDexFee(address(token), 10 ether);
+        vault.accrueDexSurplus(address(token), 20 ether);
         vm.stopPrank();
 
         assertEq(vault.platformRevenue(address(token)), 30 ether);
     }
 
-    function test_recordDexSurplus_zero_amount_is_noop() public {
+    function test_accrueDexSurplus_zero_amount_is_noop() public {
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 0);
+        vault.accrueDexSurplus(address(token), 0);
         assertEq(vault.platformRevenue(address(token)), 0);
     }
 
-    function test_recordDexFee_zero_amount_is_noop() public {
+    function test_accrueDexFee_zero_amount_is_noop() public {
         vm.prank(depositor);
-        vault.recordDexFee(address(token), 0);
+        vault.accrueDexFee(address(token), 0);
         assertEq(vault.platformRevenue(address(token)), 0);
     }
 
     // ─── authorization ──────────────────────────────────────────
 
-    function test_recordDexSurplus_reverts_if_unauthorized() public {
+    function test_accrueDexSurplus_reverts_if_unauthorized() public {
         token.mint(address(vault), 1 ether);
         vm.prank(outsider);
         vm.expectRevert(FeeVault.NotAuthorized.selector);
-        vault.recordDexSurplus(address(token), 1 ether);
+        vault.accrueDexSurplus(address(token), 1 ether);
     }
 
-    function test_recordDexFee_reverts_if_unauthorized() public {
+    function test_accrueDexFee_reverts_if_unauthorized() public {
         token.mint(address(vault), 1 ether);
         vm.prank(outsider);
         vm.expectRevert(FeeVault.NotAuthorized.selector);
-        vault.recordDexFee(address(token), 1 ether);
+        vault.accrueDexFee(address(token), 1 ether);
     }
 
-    function test_recordDexSurplus_reverts_if_deauthorized() public {
+    function test_accrueDexSurplus_reverts_if_deauthorized() public {
         vault.setAuthorizedDepositor(depositor, false);
         token.mint(address(vault), 1 ether);
         vm.prank(depositor);
         vm.expectRevert(FeeVault.NotAuthorized.selector);
-        vault.recordDexSurplus(address(token), 1 ether);
+        vault.accrueDexSurplus(address(token), 1 ether);
     }
 
-    function test_recordDexSurplus_reverts_if_zero_token() public {
+    function test_accrueDexFee_reverts_if_deauthorized() public {
+        vault.setAuthorizedDepositor(depositor, false);
+        token.mint(address(vault), 1 ether);
+        vm.prank(depositor);
+        vm.expectRevert(FeeVault.NotAuthorized.selector);
+        vault.accrueDexFee(address(token), 1 ether);
+    }
+
+    function test_accrueDexSurplus_reverts_if_zero_token() public {
         vm.prank(depositor);
         vm.expectRevert(FeeVault.ZeroAddress.selector);
-        vault.recordDexSurplus(address(0), 1 ether);
+        vault.accrueDexSurplus(address(0), 1 ether);
+    }
+
+    function test_accrueDexFee_reverts_if_zero_token() public {
+        vm.prank(depositor);
+        vm.expectRevert(FeeVault.ZeroAddress.selector);
+        vault.accrueDexFee(address(0), 1 ether);
     }
 
     // ─── balance invariant ──────────────────────────────────────
 
-    function test_recordDexSurplus_reverts_when_vault_underfunded() public {
+    function test_accrueDexSurplus_reverts_when_vault_underfunded() public {
         // No mint — vault holds 0 tokens. Crediting 1 ether should revert.
         vm.prank(depositor);
         vm.expectRevert(FeeVault.InsufficientTokenBalance.selector);
-        vault.recordDexSurplus(address(token), 1 ether);
+        vault.accrueDexSurplus(address(token), 1 ether);
     }
 
     function test_platformRevenue_invariant_couples_with_relayer_balances() public {
@@ -149,12 +163,12 @@ contract FeeVaultPlatformRevenueTest is Test {
         vault.deposit(relayer, address(token), 60 ether);
 
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 40 ether);
+        vault.accrueDexSurplus(address(token), 40 ether);
         assertEq(vault.platformRevenue(address(token)), 40 ether);
 
         vm.prank(depositor);
         vm.expectRevert(FeeVault.InsufficientTokenBalance.selector);
-        vault.recordDexSurplus(address(token), 1);
+        vault.accrueDexSurplus(address(token), 1);
     }
 
     function test_deposit_relayer_invariant_couples_with_platform_revenue() public {
@@ -163,7 +177,7 @@ contract FeeVaultPlatformRevenueTest is Test {
         token.mint(address(vault), 100 ether);
 
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 40 ether);
+        vault.accrueDexSurplus(address(token), 40 ether);
 
         vm.prank(depositor);
         vault.deposit(relayer, address(token), 60 ether);
@@ -179,7 +193,7 @@ contract FeeVaultPlatformRevenueTest is Test {
     function test_withdrawPlatformRevenue_moves_tokens_to_treasury() public {
         token.mint(address(vault), 100 ether);
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 100 ether);
+        vault.accrueDexSurplus(address(token), 100 ether);
 
         vm.expectEmit(true, true, false, true);
         emit FeeVault.PlatformRevenueWithdrawn(address(token), 100 ether, treasury);
@@ -196,7 +210,7 @@ contract FeeVaultPlatformRevenueTest is Test {
         // Owner acts as operational fallback in case treasury key is unavailable.
         token.mint(address(vault), 50 ether);
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 50 ether);
+        vault.accrueDexSurplus(address(token), 50 ether);
 
         // Owner is the deployer (this contract); it still sends to treasury,
         // never to msg.sender.
@@ -208,7 +222,7 @@ contract FeeVaultPlatformRevenueTest is Test {
     function test_withdrawPlatformRevenue_reverts_if_unauthorized() public {
         token.mint(address(vault), 10 ether);
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 10 ether);
+        vault.accrueDexSurplus(address(token), 10 ether);
 
         vm.prank(outsider);
         vm.expectRevert(FeeVault.NotAuthorized.selector);
@@ -232,7 +246,7 @@ contract FeeVaultPlatformRevenueTest is Test {
     function test_withdrawPlatformRevenue_follows_treasury_rotation() public {
         token.mint(address(vault), 10 ether);
         vm.prank(depositor);
-        vault.recordDexSurplus(address(token), 10 ether);
+        vault.accrueDexSurplus(address(token), 10 ether);
 
         address newTreasury = address(0xBABE);
         vault.setTreasury(newTreasury);
@@ -257,8 +271,8 @@ contract FeeVaultPlatformRevenueTest is Test {
         tokenB.mint(address(vault), 7 ether);
 
         vm.startPrank(depositor);
-        vault.recordDexSurplus(address(token), 10 ether);
-        vault.recordDexFee(address(tokenB), 7 ether);
+        vault.accrueDexSurplus(address(token), 10 ether);
+        vault.accrueDexFee(address(tokenB), 7 ether);
         vm.stopPrank();
 
         assertEq(vault.platformRevenue(address(token)), 10 ether);
@@ -281,7 +295,7 @@ contract FeeVaultPlatformRevenueTest is Test {
         rt.mint(address(vault), 5 ether);
 
         vm.prank(depositor);
-        vault.recordDexSurplus(address(rt), 5 ether);
+        vault.accrueDexSurplus(address(rt), 5 ether);
 
         // Hook re-enters `withdrawPlatformRevenue` mid-transfer; the outer
         // call reverts because OZ ReentrancyGuard flags the nested entry.
@@ -298,7 +312,7 @@ contract FeeVaultPlatformRevenueTest is Test {
         token.mint(address(vault), 100 ether);
         vm.startPrank(depositor);
         vault.deposit(relayer, address(token), 40 ether);
-        vault.recordDexSurplus(address(token), 60 ether);
+        vault.accrueDexSurplus(address(token), 60 ether);
         vm.stopPrank();
 
         // Relayer claims 40 — 5% platform fee = 2 ether to treasury,

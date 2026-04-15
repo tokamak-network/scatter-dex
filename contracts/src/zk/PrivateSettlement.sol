@@ -667,7 +667,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
                 swapAmount = sellAmountU256 - platformFee;
                 if (platformFee > 0 && address(_feeVault) != address(0)) {
                     IERC20(proof.sellToken).safeTransfer(address(_feeVault), platformFee);
-                    _feeVault.recordDexFee(proof.sellToken, platformFee);
+                    _feeVault.accrueDexFee(proof.sellToken, platformFee);
                     emit DexPlatformFeeCollected(proof.nullifier, proof.sellToken, platformFee, address(_feeVault));
                 }
             }
@@ -707,7 +707,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             uint256 surplus = amountOut - proof.totalLocked;
             if (address(_feeVault) != address(0)) {
                 IERC20(proof.buyToken).safeTransfer(address(_feeVault), surplus);
-                _feeVault.recordDexSurplus(proof.buyToken, surplus);
+                _feeVault.accrueDexSurplus(proof.buyToken, surplus);
                 emit DexSurplusCollected(proof.nullifier, proof.buyToken, surplus, address(_feeVault));
             }
         }
