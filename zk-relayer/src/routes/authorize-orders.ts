@@ -156,6 +156,12 @@ export function createAuthorizeOrderRoutes(
           settleTxHash: row.settleTx ?? undefined,
         });
         indexAuthorizeOrder(row.nullifier, orderObj);
+        // Rebuild the per-pubKey pending counter so MAX_ORDERS_PER_PUBKEY
+        // can't be bypassed by restarting the relayer. Only pending orders
+        // count — settled/cancelled rows already had their slot released.
+        if (row.status === "pending" && row.pubKeyAx && row.pubKeyAy) {
+          incPubKeyCount(row.pubKeyAx, row.pubKeyAy);
+        }
         restored++;
       } catch (err) {
         console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
