@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useCallback } from "react";
 import { Copy, Check } from "lucide-react";
 import { getExplorerTxUrl, getExplorerAddressUrl } from "../lib/explorer";
@@ -21,14 +23,18 @@ interface Props {
 function CopyButton({ value, size }: { value: string; size: "xs" | "sm" }) {
   const [copied, setCopied] = useState(false);
   const copy = useCallback(() => {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(value)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => { /* permission denied or insecure context — silent */ });
   }, [value]);
   const iconSize = size === "xs" ? "w-3 h-3" : "w-3.5 h-3.5";
   return (
     <button
+      type="button"
       onClick={copy}
       className="inline-flex items-center ml-1 text-on-surface-variant/40 hover:text-on-surface-variant/80 transition-colors"
       title="Copy to clipboard"

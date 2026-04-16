@@ -29,12 +29,21 @@ const NOTES_PREFIX = "zkscatter-note-";
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
-function openHandleDB(): Promise<IDBDatabase> {
+function openHandleDB(recursed = false): Promise<IDBDatabase> {
   if (_dbPromise) {
     return _dbPromise.then((db) => {
-      if (db.objectStoreNames.contains("handles")) return db;
+      try {
+        if (db.objectStoreNames.contains("handles")) return db;
+      } catch {
+        // Accessing objectStoreNames on a closed connection throws
+        // InvalidStateError; fall through to reopen.
+      }
+      try { db.close(); } catch { /* already closed */ }
       _dbPromise = null;
-      return openHandleDB();
+      if (recursed) {
+        return Promise.reject(new Error("IDB store 'handles' missing after reopen"));
+      }
+      return openHandleDB(true);
     });
   }
   _dbPromise = new Promise((resolve, reject) => {
