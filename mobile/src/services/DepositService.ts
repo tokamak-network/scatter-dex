@@ -15,6 +15,7 @@ import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { TokenInfo } from './TokenService';
 import {
   COMMITMENT_POOL_ABI,
@@ -71,6 +72,15 @@ export const DepositService = {
     const parsedAmount = ethers.parseUnits(amount, token.decimals);
 
     try {
+      // Per-transaction biometric gate. Prompts with the operation
+      // description so the OS dialog is meaningful; returns true when
+      // the biometric toggle is off. Throws on user cancel so the flow
+      // aborts before any on-chain side effects (approve/wrap).
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Deposit ${amount} ${token.symbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+
       onProgress({ step: 'checking' });
       const sanctionsAddr = await ProviderService.getSanctionsListAddress();
       if (sanctionsAddr && sanctionsAddr !== ethers.ZeroAddress) {

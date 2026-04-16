@@ -15,6 +15,7 @@ import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import { TAG_COMMITMENT_V2, TAG_ESCROW_NULL, TAG_NONCE_NULL } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -61,6 +62,13 @@ export const CancelService = {
       if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
+
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Cancel order for ${input.note.tokenSymbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication was cancelled.');
 
       onProgress({ step: 'preparing' });
 

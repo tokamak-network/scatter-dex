@@ -16,6 +16,7 @@ import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import type { SwapRoute } from '../lib/dex-aggregator';
@@ -91,6 +92,14 @@ export const MarketOrderService = {
     const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryHours * 3600);
 
     try {
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel so we never reach
+      // `settleWithDex` with an unauthorized signer.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Market sell ${input.sellAmount} ${note.tokenSymbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+
       // ─── Step 1: Sanctions + EdDSA key ────────────────
       onProgress({ step: 'checking' });
 
