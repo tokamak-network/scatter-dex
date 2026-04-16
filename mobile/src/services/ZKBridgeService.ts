@@ -42,13 +42,36 @@ class ZKBridgeServiceImpl {
   /**
    * Resolves with `{status: 'ready'}` once the WebView reports successful
    * snarkjs/circomlibjs init, or with `{status: 'failed', error}` when the
-   * init handshake reports failure. Callers (e.g. `App.tsx`) can branch on
-   * the status to gate the proving UI rather than silently rendering a
-   * broken-prover state — historically `waitReady` resolved void on both
-   * paths, leaving callers unable to distinguish.
+   * init handshake reports failure or `timeoutMs` elapses first. Callers
+   * (e.g. `App.tsx`) branch on the status to gate the proving UI rather
+   * than silently rendering a broken-prover state — historically
+   * `waitReady` resolved void on both paths, leaving callers unable to
+   * distinguish.
+   *
+   * The timeout is the important safety net: if the WebView never posts
+   * `__init__` at all (asset load failure, JS crash before the handler
+   * registers, content process killed mid-boot), the ready promise would
+   * otherwise hang forever and App.tsx's init spinner would be stuck.
+   * When the timeout fires we mark the bridge failed so `isReady()` stays
+   * false and callers can surface a retryable error.
    */
-  waitReady(): Promise<ZKReadyStatus> {
-    return this.readyPromise;
+  waitReady(timeoutMs: number = 30000): Promise<ZKReadyStatus> {
+    if (this.ready || this.initError) return this.readyPromise;
+
+    return Promise.race([
+      this.readyPromise,
+      new Promise<ZKReadyStatus>((resolve) => {
+        setTimeout(() => {
+          // If the real handshake landed between the race setup and here,
+          // honor that result instead of overwriting it with a timeout.
+          if (this.ready || this.initError) return;
+          const errMsg = `ZK engine init did not complete within ${timeoutMs}ms`;
+          this.initError = errMsg;
+          this.readyResolve({ status: 'failed', error: errMsg });
+          resolve({ status: 'failed', error: errMsg });
+        }, timeoutMs);
+      }),
+    ]);
   }
 
   /** Last init failure reason, if any. Useful for diagnostics screens. */
