@@ -46,7 +46,7 @@ export const layout = {
   sectionGap: 24,
   contentTop: 8,
   contentBottom: 96,
-  headerPV: 16,
+  headerPV: 4,
   card: { padding: 24, radius: 24, borderWidth: 1 },
 } as const;
 
@@ -68,6 +68,17 @@ export const shadowSubtle = {
 export const shadowTab = {
   ...shadowSubtle,
   shadowOpacity: 0.05,
+} as const;
+
+// Absolute-positioned 0x0 container for mounting offscreen primitives
+// (e.g. the ZK engine WebView). Passing `position:'absolute'` directly on
+// a `<WebView>` `style` is silently dropped by react-native-webview — it
+// renders its own layout wrapper — so the workaround is to wrap it in a
+// parent View with this style.
+export const hiddenOffscreen = {
+  position: 'absolute',
+  width: 0,
+  height: 0,
 } as const;
 
 export const shared = StyleSheet.create({
