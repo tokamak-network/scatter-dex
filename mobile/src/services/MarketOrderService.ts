@@ -98,7 +98,7 @@ export const MarketOrderService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Market sell ${input.sellAmount} ${note.tokenSymbol}`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       // ─── Step 1: Sanctions + EdDSA key ────────────────
       onProgress({ step: 'checking' });

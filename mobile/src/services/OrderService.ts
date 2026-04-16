@@ -75,7 +75,7 @@ export const OrderService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Limit order: sell ${input.sellAmount} ${note.tokenSymbol}`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       // Resolve sell/buy decimals dynamically — hardcoding 18 silently
       // misbuilds amounts for tokens like USDC (6).

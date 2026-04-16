@@ -79,7 +79,7 @@ export const DepositService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Deposit ${amount} ${token.symbol}`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'checking' });
       const sanctionsAddr = await ProviderService.getSanctionsListAddress();

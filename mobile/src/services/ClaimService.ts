@@ -175,7 +175,7 @@ export const ClaimService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Claim ${claimData.amount} tokens`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'checking_status' });
       const { claimed } = await this.checkClaimStatus(claimData, readProvider);
@@ -231,7 +231,7 @@ export const ClaimService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Claim ${claims.length} payouts`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'checking_status' });
       // Fail fast on releaseTime before the expensive proof gen: the circuit
@@ -338,7 +338,7 @@ export const ClaimService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Claim (gasless) ${claimData.amount} tokens`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'checking_status' });
       const { claimed } = await this.checkClaimStatus(claimData, readProvider);

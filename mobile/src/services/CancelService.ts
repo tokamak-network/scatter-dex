@@ -68,7 +68,7 @@ export const CancelService = {
       const authorized = await KeySecurityService.authorizeTransaction(
         `Cancel order for ${input.note.tokenSymbol}`,
       );
-      if (!authorized) throw new Error('Biometric authentication was cancelled.');
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'preparing' });
 
