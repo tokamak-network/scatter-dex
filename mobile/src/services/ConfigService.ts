@@ -19,7 +19,23 @@ export const ConfigService = {
   getWethAddress: () => getEnv('WETH_ADDRESS'),
   getFeeVaultAddress: () => getEnv('FEE_VAULT_ADDRESS'),
   getRelayerUrl: () => getEnv('RELAYER_URL') || 'http://localhost:4000',
-  getDeployBlock: () => Number(getEnv('DEPLOY_BLOCK') || '0'),
+  // Commitment-pool deploy block. Callers that scan full commitment
+  // history (Cancel, MarketOrder, useRecentActivity) must use this as
+  // the lower bound. We validate here rather than at each call site:
+  // if `DEPLOY_BLOCK` is set to a non-numeric value, `Number(...)`
+  // returns NaN, and an `|| 0` fallback at the caller would silently
+  // scan from genesis — that's expensive *and* hides the misconfig.
+  // An unset env resolves to `'0'` which is a legitimate value.
+  getDeployBlock: (): number => {
+    const raw = getEnv('DEPLOY_BLOCK') || '0';
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error(
+        `Invalid DEPLOY_BLOCK configuration: ${JSON.stringify(raw)} — must be a non-negative integer`,
+      );
+    }
+    return n;
+  },
   getWalletConnectProjectId: () => getEnv('WALLETCONNECT_PROJECT_ID') || '',
   getUniswapRouterAddress: () => getEnv('UNISWAP_ROUTER_ADDRESS') || '',
   getBuyTokenSymbol: () => getEnv('BUY_TOKEN_SYMBOL') || 'WETH',

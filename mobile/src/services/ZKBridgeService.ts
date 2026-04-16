@@ -23,6 +23,12 @@ class ZKBridgeServiceImpl {
   private initError: string | null = null;
   private readyPromise: Promise<ZKReadyStatus>;
   private readyResolve!: (status: ZKReadyStatus) => void;
+  // Tracks the live `waitReady` timer so `__init__` and `reload()` can
+  // clear it. Without this, a timer armed for attempt N could fire
+  // after `reload()` has already produced attempt N+1 with a fresh
+  // `readyPromise` / `readyResolve`, incorrectly marking the *new*
+  // attempt as timed out.
+  private readyTimer: ReturnType<typeof setTimeout> | null = null;
   private requestCounter = 0;
 
   constructor() {
@@ -42,13 +48,54 @@ class ZKBridgeServiceImpl {
   /**
    * Resolves with `{status: 'ready'}` once the WebView reports successful
    * snarkjs/circomlibjs init, or with `{status: 'failed', error}` when the
-   * init handshake reports failure. Callers (e.g. `App.tsx`) can branch on
-   * the status to gate the proving UI rather than silently rendering a
-   * broken-prover state — historically `waitReady` resolved void on both
-   * paths, leaving callers unable to distinguish.
+   * init handshake reports failure or `timeoutMs` elapses first. Callers
+   * (e.g. `App.tsx`) branch on the status to gate the proving UI rather
+   * than silently rendering a broken-prover state — historically
+   * `waitReady` resolved void on both paths, leaving callers unable to
+   * distinguish.
+   *
+   * The timeout is the important safety net: if the WebView never posts
+   * `__init__` at all (asset load failure, JS crash before the handler
+   * registers, content process killed mid-boot), the ready promise would
+   * otherwise hang forever and App.tsx's init spinner would be stuck.
+   * When the timeout fires we mark the bridge failed so `isReady()` stays
+   * false and callers can surface a retryable error.
    */
-  waitReady(): Promise<ZKReadyStatus> {
+  waitReady(timeoutMs: number = 30000): Promise<ZKReadyStatus> {
+    if (this.ready || this.initError) return this.readyPromise;
+    // A concurrent waitReady call is fine — we only need one timer
+    // guarding the single shared readyPromise, so reuse the one we've
+    // already armed.
+    if (this.readyTimer) return this.readyPromise;
+
+    // Snapshot the resolver so a `reload()` that swaps `readyResolve`
+    // before the timer fires can't make this timer resolve the *next*
+    // attempt's promise. The snapshot still resolves the original
+    // promise (a no-op if `reload()` already rejected its pending
+    // commands and moved on).
+    const resolveForThisAttempt = this.readyResolve;
+
+    this.readyTimer = setTimeout(() => {
+      this.readyTimer = null;
+      // If the real handshake landed between the race setup and here,
+      // honor that result instead of overwriting it with a timeout.
+      if (this.ready || this.initError) return;
+      const errMsg = `ZK engine init did not complete within ${timeoutMs}ms`;
+      this.initError = errMsg;
+      resolveForThisAttempt({ status: 'failed', error: errMsg });
+    }, timeoutMs);
+
     return this.readyPromise;
+  }
+
+  /** Internal: cancel the init timeout armed by `waitReady`. Called on
+   *  every `__init__` handshake and inside `reload()` so a stale timer
+   *  can't stomp on a later init attempt. */
+  private clearReadyTimer(): void {
+    if (this.readyTimer) {
+      clearTimeout(this.readyTimer);
+      this.readyTimer = null;
+    }
   }
 
   /** Last init failure reason, if any. Useful for diagnostics screens. */
@@ -65,6 +112,10 @@ class ZKBridgeServiceImpl {
   reload(): void {
     this.ready = false;
     this.initError = null;
+    // Cancel any in-flight init timer before we swap in the new
+    // readyPromise — otherwise the old timer would race with the
+    // fresh init handshake and could resolve the new promise as failed.
+    this.clearReadyTimer();
     // Reject any in-flight bridge commands so callers don't hang.
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
@@ -99,6 +150,10 @@ class ZKBridgeServiceImpl {
 
     // 초기화 완료 메시지
     if (requestId === '__init__') {
+      // Cancel the pending init timeout the moment we hear back, so a
+      // slow handshake that lands just before the deadline doesn't still
+      // allow the timer to fire and flip us to `failed` afterwards.
+      this.clearReadyTimer();
       console.log('ZKBridge __init__:', status, JSON.stringify(result));
       if (status === 'success') {
         this.ready = true;

@@ -7,6 +7,38 @@ import { WebView } from 'react-native-webview';
 import { Asset } from 'expo-asset';
 import { ZKBridgeService } from '../services/ZKBridgeService';
 
+// Debug probes (console logs + `__debug__` postMessage payloads) are
+// noisy and can leak internal engine state into device logs in
+// production. Gate them behind React Native's `__DEV__` flag so they
+// only run in development builds. Errors (`onError`,
+// `onContentProcessDidTerminate`, asset load failure) are still
+// logged unconditionally since they're rare and actionable.
+const DEBUG_PROBES = __DEV__;
+
+const DEBUG_INJECTED_JS = DEBUG_PROBES
+  ? `
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            requestId: '__debug__',
+            status: 'success',
+            result: {
+              hasEngine: typeof window._zkEngine !== 'undefined',
+              hasReady: typeof window._zkEngineReady !== 'undefined',
+              engineError: window._zkEngineError || null,
+              snarkjsType: typeof snarkjs,
+            }
+          }));
+        } catch(e) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            requestId: '__debug__',
+            status: 'error',
+            error: e.message
+          }));
+        }
+        true;
+      `
+  : undefined;
+
 export default function HiddenWebView() {
   const webViewRef = useRef<WebView>(null);
   const [htmlUri, setHtmlUri] = useState<string | null>(null);
@@ -16,7 +48,7 @@ export default function HiddenWebView() {
       try {
         const asset = Asset.fromModule(require('../../assets/zk-webview.html'));
         await asset.downloadAsync();
-        console.log('HiddenWebView: localUri =', asset.localUri);
+        if (DEBUG_PROBES) console.log('HiddenWebView: localUri =', asset.localUri);
         if (asset.localUri) {
           setHtmlUri(asset.localUri);
         }
@@ -54,13 +86,14 @@ export default function HiddenWebView() {
         // why the explicit `originWhitelist` below is the real lockdown
         // there. Anything else (data:, http(s), other file://) is denied.
         if (req.url === allowedUri) return true;
-        console.warn('HiddenWebView: blocked navigation to', req.url);
+        if (DEBUG_PROBES) console.warn('HiddenWebView: blocked navigation to', req.url);
         return false;
       }}
-      onLoad={() => console.log('HiddenWebView: onLoad fired')}
-      onLoadEnd={() => {
+      onLoad={DEBUG_PROBES ? () => console.log('HiddenWebView: onLoad fired') : undefined}
+      onLoadEnd={DEBUG_PROBES ? () => {
         console.log('HiddenWebView: onLoadEnd fired');
-        // Probe WebView JS state after load
+        // Probe WebView JS state after load — dev builds only so the
+        // `__debug__` payload never lands in production device logs.
         webViewRef.current?.injectJavaScript(`
           try {
             window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -82,44 +115,25 @@ export default function HiddenWebView() {
           }
           true;
         `);
-      }}
+      } : undefined}
       onError={(e) => console.error('HiddenWebView: onError', e.nativeEvent.description)}
       onContentProcessDidTerminate={() => {
         console.error('HiddenWebView: content process terminated — reloading');
         webViewRef.current?.reload();
       }}
-      injectedJavaScript={`
-        try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            requestId: '__debug__',
-            status: 'success',
-            result: {
-              hasEngine: typeof window._zkEngine !== 'undefined',
-              hasReady: typeof window._zkEngineReady !== 'undefined',
-              engineError: window._zkEngineError || null,
-              snarkjsType: typeof snarkjs,
-            }
-          }));
-        } catch(e) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            requestId: '__debug__',
-            status: 'error',
-            error: e.message
-          }));
-        }
-        true;
-      `}
+      injectedJavaScript={DEBUG_INJECTED_JS}
       javaScriptEnabled
       // `allowFileAccess` is needed to load the bundled `file://` URI at all.
-      // `allowFileAccessFromFileURLs` lets the page `fetch()` its sibling
-      // wasm/zkey assets (snarkjs needs this).
-      // `allowUniversalAccessFromFileURLs` is intentionally NOT set —
-      // it would let this file:// page read other file:// URIs in the
-      // sandbox (logs, SecureStore-adjacent files, etc.). The bundle is
+      // Proving assets (wasm/zkey) are passed as base64 via the bridge,
+      // so the page does not need to `fetch()` sibling file:// resources
+      // — `allowFileAccessFromFileURLs` is intentionally omitted to reduce
+      // blast radius if the bundled page were ever compromised.
+      // `allowUniversalAccessFromFileURLs` is likewise NOT set: it would
+      // let this file:// page read other file:// URIs in the sandbox
+      // (logs, SecureStore-adjacent files, etc.). The bundle is
       // self-contained (snarkjs + circomlibjs are inlined per
       // build-zk-webview.mjs) so cross-origin file access isn't required.
       allowFileAccess
-      allowFileAccessFromFileURLs
       // The exact bundled URI plus a coarse `file://*` fallback for
       // Android — RN-WebView's origin matching can normalize file URIs
       // inconsistently across platforms; the navigation guard above is

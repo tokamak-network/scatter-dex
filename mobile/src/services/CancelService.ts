@@ -15,6 +15,7 @@ import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import { TAG_COMMITMENT_V2, TAG_ESCROW_NULL, TAG_NONCE_NULL } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -62,6 +63,13 @@ export const CancelService = {
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
 
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Cancel order for ${input.note.tokenSymbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
+
       onProgress({ step: 'preparing' });
 
       const { note } = input;
@@ -76,7 +84,7 @@ export const CancelService = {
       // the reconstructed leaf array would be short and `note.leafIndex`
       // would index into the wrong slot (failing the membership check or,
       // worse, rotating the wrong note).
-      const fromBlock = ConfigService.getDeployBlock() || 0;
+      const fromBlock = ConfigService.getDeployBlock();
       const insertEvents = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
       const allLeaves = insertEvents.map((e) => {
         const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });

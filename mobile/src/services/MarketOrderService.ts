@@ -16,6 +16,7 @@ import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import type { SwapRoute } from '../lib/dex-aggregator';
@@ -91,6 +92,14 @@ export const MarketOrderService = {
     const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryHours * 3600);
 
     try {
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel so we never reach
+      // `settleWithDex` with an unauthorized signer.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Market sell ${input.sellAmount} ${note.tokenSymbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
+
       // ─── Step 1: Sanctions + EdDSA key ────────────────
       onProgress({ step: 'checking' });
 
@@ -160,7 +169,14 @@ export const MarketOrderService = {
 
       // Commitment Merkle proof — fetch all commitments and build tree
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      const fromBlock = await ProviderService.getEarliestBlock();
+      // Scan the pool's **full** commitment history from the deploy block —
+      // not `ProviderService.getEarliestBlock()`, which is cached to the
+      // user's first-deposit block. If the pool had commitments before that
+      // block, the reconstructed leaf array would be short and
+      // `note.leafIndex` would index into the wrong slot (failing the
+      // membership check or settling against the wrong leaf). Mirrors the
+      // same fix in CancelService.
+      const fromBlock = ConfigService.getDeployBlock();
 
       const insertEvents = await pool.queryFilter(
         pool.filters.CommitmentInserted(),

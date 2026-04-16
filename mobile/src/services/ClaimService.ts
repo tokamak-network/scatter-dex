@@ -10,6 +10,7 @@
 import { ethers } from 'ethers';
 import { ZKBridgeService } from './ZKBridgeService';
 import { ConfigService } from './ConfigService';
+import { KeySecurityService } from './KeySecurityService';
 import { RelayerApiService } from './RelayerApiService';
 import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
 import { TAG_CLAIM_NULL } from '../lib/zk/tags';
@@ -168,6 +169,14 @@ export const ClaimService = {
     onProgress: (progress: ClaimProgress) => void,
   ): Promise<string | null> {
     try {
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel so the signer never
+      // submits `claimWithProof` without explicit approval.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Claim ${claimData.amount} tokens`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
+
       onProgress({ step: 'checking_status' });
       const { claimed } = await this.checkClaimStatus(claimData, readProvider);
       if (claimed) throw new Error('This claim has already been processed.');
@@ -215,6 +224,14 @@ export const ClaimService = {
     let committedCount = 0;
     try {
       if (claims.length === 0) throw new Error('No claims to submit.');
+
+      // Per-transaction biometric gate for the whole batch. Single
+      // prompt for the full set so users aren't interrupted between
+      // chunks once they've authorized the action.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Claim ${claims.length} payouts`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
 
       onProgress({ step: 'checking_status' });
       // Fail fast on releaseTime before the expensive proof gen: the circuit
@@ -316,6 +333,13 @@ export const ClaimService = {
     onProgress: (progress: ClaimProgress) => void,
   ): Promise<string | null> {
     try {
+      // Biometric gate even on the gasless path — the claim secret is
+      // still used to build the proof, so this is a privileged op.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Claim (gasless) ${claimData.amount} tokens`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
+
       onProgress({ step: 'checking_status' });
       const { claimed } = await this.checkClaimStatus(claimData, readProvider);
       if (claimed) throw new Error('This claim has already been processed.');

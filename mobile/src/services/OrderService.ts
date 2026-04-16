@@ -18,6 +18,7 @@ import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
 import { ProviderService } from './ProviderService';
+import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -68,6 +69,14 @@ export const OrderService = {
   ): Promise<string | null> {
     try {
       const { note, buyToken, maxFeeBps, expiryHours, claims } = input;
+      // Per-transaction biometric gate. No-ops when the biometric
+      // toggle is off; throws on user cancel so we never reach the
+      // relayer submit step with a partially signed order.
+      const authorized = await KeySecurityService.authorizeTransaction(
+        `Limit order: sell ${input.sellAmount} ${note.tokenSymbol}`,
+      );
+      if (!authorized) throw new Error('Biometric authentication failed or was cancelled.');
+
       // Resolve sell/buy decimals dynamically — hardcoding 18 silently
       // misbuilds amounts for tokens like USDC (6).
       const readProvider = ProviderService.getReadProvider();
