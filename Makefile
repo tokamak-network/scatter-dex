@@ -12,7 +12,7 @@ endif
 up: circuits
 	docker compose --profile mock up -d
 	@echo ""
-	@echo "ScatterDEX is running (mock mode)"
+	@echo "zkScatterDEX is running (mock mode)"
 	@echo "  Frontend:         http://localhost:3000"
 	@echo "  ZK Relayer A:     http://localhost:3002"
 	@echo "  Shared Orderbook: http://localhost:4000"
@@ -26,7 +26,7 @@ up: circuits
 up-multi: circuits
 	docker compose --profile mock --profile multi-relayer up -d
 	@echo ""
-	@echo "ScatterDEX is running (multi-relayer mode)"
+	@echo "zkScatterDEX is running (multi-relayer mode)"
 	@echo "  Frontend:         http://localhost:3000"
 	@echo "  ZK Relayer A:     http://localhost:3002"
 	@echo "  ZK Relayer B:     http://localhost:3003"
@@ -50,7 +50,7 @@ endif
 	NEXT_PUBLIC_RPC_URL=http://localhost:8545 \
 	docker compose up -d
 	@echo ""
-	@echo "ScatterDEX is running (integration mode)"
+	@echo "zkScatterDEX is running (integration mode)"
 	@echo "  Frontend:         http://localhost:3000"
 	@echo "  ZK Relayer A:     http://localhost:3002"
 	@echo "  Shared Orderbook: http://localhost:4000"

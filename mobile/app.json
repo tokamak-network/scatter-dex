@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "ScatterDEX",
+    "name": "zkScatterDEX",
     "slug": "scatter-dex-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "scheme": "scatterdex",
+    "scheme": "zkscatterdex",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -15,13 +15,13 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.scatterdex.mobile",
+      "bundleIdentifier": "io.zkscatterdex.mobile",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Authenticate to access your private keys"
       }
     },
     "android": {
-      "package": "io.scatterdex.mobile",
+      "package": "io.zkscatterdex.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"

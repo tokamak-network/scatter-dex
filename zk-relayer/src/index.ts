@@ -291,7 +291,7 @@ async function main() {
   }, 60_000);
 
   const server = app.listen(config.port, () => {
-    console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
+    console.log(`zkScatterDEX ZK Relayer running on port ${config.port}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
     console.log(`CommitmentPool: ${config.commitmentPoolAddress}`);
     console.log(`PrivateSettlement: ${config.privateSettlementAddress}`);

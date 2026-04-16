@@ -12,7 +12,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { generateMetaAddress, MetaAddress } from '../lib/stealth';
 
-const STORAGE_KEY = 'scatterdex_stealth_identity_v1';
+const STORAGE_KEY = 'zkscatterdex_stealth_identity_v1';
 
 const persist = (identity: MetaAddress) =>
   SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(identity), {

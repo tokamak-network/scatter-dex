@@ -38,13 +38,13 @@ export const ProviderService = {
   },
 
   async getEarliestBlock(): Promise<number> {
-    const cached = await AsyncStorage.getItem('scatterdex_earliest_block');
+    const cached = await AsyncStorage.getItem('zkscatterdex_earliest_block');
     if (cached) return Number(cached);
     return ConfigService.getDeployBlock();
   },
 
   async cacheEarliestBlock(block: number): Promise<void> {
-    await AsyncStorage.setItem('scatterdex_earliest_block', String(block));
+    await AsyncStorage.setItem('zkscatterdex_earliest_block', String(block));
   },
 
   /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit.

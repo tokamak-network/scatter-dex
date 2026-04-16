@@ -9,8 +9,8 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { fetchWithTimeout, TIMEOUT_READ_MS } from '../lib/http';
 
-const NETWORKS_KEY = 'scatterdex_custom_networks';
-const SELECTED_KEY = 'scatterdex_selected_network';
+const NETWORKS_KEY = 'zkscatterdex_custom_networks';
+const SELECTED_KEY = 'zkscatterdex_selected_network';
 
 export interface NetworkConfig {
   id: string;

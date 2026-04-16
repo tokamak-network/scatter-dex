@@ -119,7 +119,7 @@ export default function HomeScreen() {
           </View>
         ) : (
           <View style={s.connectCard}>
-            <Text style={s.connectTitle}>ScatterDEX</Text>
+            <Text style={s.connectTitle}>zkScatterDEX</Text>
             <Text style={s.connectSub}>Privacy-Preserving DEX</Text>
             <TouchableOpacity
               style={[s.connectBtn, isConnecting && s.btnDisabled]}

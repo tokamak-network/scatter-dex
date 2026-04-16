@@ -141,10 +141,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         chains: [targetChainId],
         showQrModal: false,
         metadata: {
-          name: 'ScatterDEX',
+          name: 'zkScatterDEX',
           description: 'Privacy-Preserving DEX',
-          url: 'https://scatterdex.io',
-          icons: ['https://scatterdex.io/icon.png'],
+          url: 'https://zkscatterdex.io',
+          icons: ['https://zkscatterdex.io/icon.png'],
         },
       });
       console.log('WC: init done, calling connect...');

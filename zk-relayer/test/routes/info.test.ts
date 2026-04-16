@@ -11,7 +11,7 @@ describe("/api/info", () => {
     );
     const res = await request(app).get("/api/info");
     expect(res.status).toBe(200);
-    expect(res.body.name).toBe("ScatterDEX ZK Relayer");
+    expect(res.body.name).toBe("zkScatterDEX ZK Relayer");
     expect(res.body.orderCount).toBe(7);
     expect(res.body.address).toMatch(/^0x/);
   });

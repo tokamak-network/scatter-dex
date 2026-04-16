@@ -102,7 +102,7 @@ ensure_circuits_built() {
   echo "  Circuits built."
 }
 
-echo "=== ScatterDEX Local Dev Environment ==="
+echo "=== zkScatterDEX Local Dev Environment ==="
 echo ""
 
 if [ "$MOCK_MODE" = true ]; then

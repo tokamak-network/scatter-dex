@@ -15,10 +15,10 @@ import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ethers } from 'ethers';
 
-const WALLET_KEY = 'scatterdex_wallet_pk';
-const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';
-const ADDRESS_KEY = 'scatterdex_wallet_address';
-const AUTH_ENABLED_KEY = 'scatterdex_biometric_enabled';
+const WALLET_KEY = 'zkscatterdex_wallet_pk';
+const MNEMONIC_KEY = 'zkscatterdex_wallet_mnemonic';
+const ADDRESS_KEY = 'zkscatterdex_wallet_address';
+const AUTH_ENABLED_KEY = 'zkscatterdex_biometric_enabled';
 
 export const KeySecurityService = {
   // ─── 생체인증 ──────────────────────────────────────

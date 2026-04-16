@@ -15,7 +15,7 @@ import { ZKBridgeService } from './ZKBridgeService';
 const DERIVE_MESSAGE =
   'Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.';
 
-const EDDSA_KEY_PREFIX = 'scatterdex_eddsa_';
+const EDDSA_KEY_PREFIX = 'zkscatterdex_eddsa_';
 
 export interface EdDSAKeyPair {
   /**
