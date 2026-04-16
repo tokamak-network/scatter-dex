@@ -160,7 +160,14 @@ export const MarketOrderService = {
 
       // Commitment Merkle proof — fetch all commitments and build tree
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      const fromBlock = await ProviderService.getEarliestBlock();
+      // Scan the pool's **full** commitment history from the deploy block —
+      // not `ProviderService.getEarliestBlock()`, which is cached to the
+      // user's first-deposit block. If the pool had commitments before that
+      // block, the reconstructed leaf array would be short and
+      // `note.leafIndex` would index into the wrong slot (failing the
+      // membership check or settling against the wrong leaf). Mirrors the
+      // same fix in CancelService.
+      const fromBlock = ConfigService.getDeployBlock() || 0;
 
       const insertEvents = await pool.queryFilter(
         pool.filters.CommitmentInserted(),
