@@ -13,6 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
+import { APP_NAME } from '../constants';
 import { StealthIdentityService } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
@@ -534,7 +535,7 @@ export default function ClaimScreen() {
           title: 'Share stealth private key?',
           body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
           message: stealthPrivkeyReveal
-            ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
+            ? `${APP_NAME} stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
             : '',
         }}
       />

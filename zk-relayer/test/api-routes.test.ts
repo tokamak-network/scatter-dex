@@ -117,7 +117,7 @@ describe("GET /api/info", () => {
   it("returns 200 with relayer metadata", async () => {
     const res = await request(app).get("/api/info");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("name", "ScatterDEX ZK Relayer");
+    expect(res.body).toHaveProperty("name", "zkScatterDEX ZK Relayer");
     expect(res.body).toHaveProperty("version");
     expect(res.body).toHaveProperty("address");
     expect(res.body).toHaveProperty("fee", 30);

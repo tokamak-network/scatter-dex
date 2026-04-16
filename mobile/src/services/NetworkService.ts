@@ -8,9 +8,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { fetchWithTimeout, TIMEOUT_READ_MS } from '../lib/http';
+import { STORAGE_NS } from '../constants';
 
-const NETWORKS_KEY = 'scatterdex_custom_networks';
-const SELECTED_KEY = 'scatterdex_selected_network';
+const NETWORKS_KEY = `${STORAGE_NS}_custom_networks`;
+const SELECTED_KEY = `${STORAGE_NS}_selected_network`;
 
 export interface NetworkConfig {
   id: string;

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== ScatterDEX Full E2E Test ==="
+echo "=== zkScatterDEX Full E2E Test ==="
 echo ""
 
 # Default addresses from DeployLocal.s.sol on anvil

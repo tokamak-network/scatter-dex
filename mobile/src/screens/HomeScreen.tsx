@@ -13,6 +13,7 @@ import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { ethers } from 'ethers';
+import { APP_NAME } from '../constants';
 import { formatBalance, formatRelativeTime, shortAddr } from '../lib/format';
 import { colors, layout, shadowSubtle, HIT_SLOP_SM } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
@@ -119,7 +120,7 @@ export default function HomeScreen() {
           </View>
         ) : (
           <View style={s.connectCard}>
-            <Text style={s.connectTitle}>ScatterDEX</Text>
+            <Text style={s.connectTitle}>{APP_NAME}</Text>
             <Text style={s.connectSub}>Privacy-Preserving DEX</Text>
             <TouchableOpacity
               style={[s.connectBtn, isConnecting && s.btnDisabled]}

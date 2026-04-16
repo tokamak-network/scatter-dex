@@ -112,7 +112,7 @@ ensure_circuits_built() {
   echo "  Circuits built."
 }
 
-echo "=== ScatterDEX Local Dev Environment (FORK) ==="
+echo "=== zkScatterDEX Local Dev Environment (FORK) ==="
 echo "  Fork URL:      $FORK_URL"
 [ -n "$FORK_BLOCK" ] && echo "  Fork block:    $FORK_BLOCK"
 echo "  Chain ID:      $FORK_CHAIN_ID"

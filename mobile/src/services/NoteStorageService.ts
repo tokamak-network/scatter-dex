@@ -10,9 +10,10 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_NS } from '../constants';
 
-const NOTE_INDEX_KEY = 'scatterdex_note_index';
-const NOTE_PREFIX = 'scatterdex_note_';
+const NOTE_INDEX_KEY = `${STORAGE_NS}_note_index`;
+const NOTE_PREFIX = `${STORAGE_NS}_note_`;
 
 // Serialize index read-modify-write across all mutating methods so a
 // deposit's `saveNote` can't race a Settings `saveNotesBulk` restore

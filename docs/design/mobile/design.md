@@ -1,4 +1,4 @@
-# ScatterDEX 모바일 앱 설계 문서
+# zkScatterDEX 모바일 앱 설계 문서
 
 > **상태**: 분석/설계 (2026-04-10)
 > **범위**: Android + iOS 앱, WalletConnect 기반 지갑 연동
@@ -109,7 +109,7 @@
 │         │                │               │       │
 │  ┌──────▼────────────────▼───────────────▼─────┐ │
 │  │            React Native Screens             │ │
-│  │  (tokamon 패턴 기반, ScatterDEX 비즈니스)     │ │
+│  │  (tokamon 패턴 기반, zkScatterDEX 비즈니스)     │ │
 │  └─────────────────────────────────────────────┘ │
 │                                                  │
 │  ┌─────────────────────────────────────────────┐ │
@@ -258,7 +258,7 @@ export function getProvider() { return provider; }
 ### 4.3 모바일 UX 흐름
 
 ```
-[ScatterDEX 앱]                   [지갑 앱 (Rainbow 등)]
+[zkScatterDEX 앱]                   [지갑 앱 (Rainbow 등)]
      │                                    │
      │── "Connect Wallet" 탭              │
      │── WalletConnect 모달 표시           │
@@ -357,7 +357,7 @@ node build-webview-html.mjs  # → zk-webview.html (4.6 MB)
 
 ### 6.2 tokamon에서 패턴 재사용
 
-| tokamon 패턴 | ScatterDEX 적용 |
+| tokamon 패턴 | zkScatterDEX 적용 |
 |-------------|----------------|
 | `services/wallet.js` (리스너 패턴) | WalletConnect 래퍼에 동일 패턴 |
 | `services/contract.js` (ethers 래퍼) | PrivateSettlement/CommitmentPool 호출 |
@@ -548,7 +548,7 @@ SE (P-256)                    Software
 
 ## 부록 C — tokamon 코드 재사용 매핑
 
-| tokamon 파일 | ScatterDEX 모바일 대응 |
+| tokamon 파일 | zkScatterDEX 모바일 대응 |
 |-------------|---------------------|
 | `app/App.js` | `mobile/App.js` (전역 상태 + Navigator) |
 | `app/src/services/wallet.js` | `mobile/src/services/wallet.js` (WC로 교체) |

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy ScatterDEX ZK contracts and write addresses to shared volume.
+# Deploy zkScatterDEX ZK contracts and write addresses to shared volume.
 # Used by docker-compose deployer service.
 set -euo pipefail
 

@@ -12,6 +12,7 @@ import TabNavigator from './src/navigation/TabNavigator';
 import { WalletProvider, useWallet } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
 import { NetworkService } from './src/services/NetworkService';
+import { ensureRenameMigration } from './src/lib/storage-migration';
 import LockedScreen from './src/screens/LockedScreen';
 
 // `phase: 'loading'` is the only sentinel App.tsx adds on top of the
@@ -66,7 +67,18 @@ export default function App() {
   const [zkBoot, setZkBoot] = useState<ZkBootState>({ phase: 'loading' });
 
   useEffect(() => {
-    NetworkService.restoreSavedNetwork().catch(() => {});
+    // Migration must complete before any service reads storage — otherwise
+    // restoreSavedNetwork() (and similar) can miss the user's saved settings
+    // or write defaults into the new keys before legacy data is copied over.
+    ensureRenameMigration()
+      .catch((err) => {
+        console.error('storage rename migration failed at startup', err);
+      })
+      .finally(() => {
+        NetworkService.restoreSavedNetwork().catch((err) => {
+          console.error('restoreSavedNetwork failed at startup', err);
+        });
+      });
     ZKBridgeService.waitReady().then((status) => {
       if (status.status === 'ready') {
         setZkBoot({ phase: 'ready' });

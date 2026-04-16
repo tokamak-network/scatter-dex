@@ -20,7 +20,7 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 
 /// @title PrivateSettlement
-/// @notice ZK-based private settlement for ScatterDEX.
+/// @notice ZK-based private settlement for zkScatterDEX.
 ///         settle: ZK proof hides maker/taker, amounts, and claims structure.
 ///         claim: ZK proof proves membership in claimsRoot without revealing which settle.
 contract PrivateSettlement is ReentrancyGuard, Ownable2Step {

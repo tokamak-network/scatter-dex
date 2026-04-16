@@ -11,7 +11,7 @@ export function createInfoRoutes(
 
   router.get("/", (_req: Request, res: Response) => {
     res.json({
-      name: "ScatterDEX ZK Relayer",
+      name: "zkScatterDEX ZK Relayer",
       version: "0.1.0",
       address: submitter.getAddress(),
       fee: config.relayerFee,

@@ -1,5 +1,5 @@
 /**
- * Stealth Address implementation for ScatterDEX claims.
+ * Stealth Address implementation for zkScatterDEX claims.
  *
  * Based on EIP-5564 cryptography (secp256k1).
  * Recipient publishes a meta-address once; sender generates a one-time

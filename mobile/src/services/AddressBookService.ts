@@ -8,7 +8,7 @@
  * On mobile we don't have the File System Access API the web uses, and
  * the entries are not sensitive (labels + 0x addresses, no secrets), so
  * AsyncStorage is the right home — single JSON blob keyed by
- * `scatterdex_wallet_book_v1`. Mutations are serialized through a
+ * `${STORAGE_NS}_wallet_book_v1`. Mutations are serialized through a
  * promise chain so concurrent in-process callers can't race on
  * read-modify-write. Note this is in-process only: a backgrounded app
  * killed mid-write can still lose an entry on the next launch's first
@@ -21,8 +21,9 @@ import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ethers } from 'ethers';
 import { isMetaAddress } from '../lib/stealth';
+import { STORAGE_NS } from '../constants';
 
-const STORAGE_KEY = 'scatterdex_wallet_book_v1';
+const STORAGE_KEY = `${STORAGE_NS}_wallet_book_v1`;
 
 export class WalletBookCorruptError extends Error {
   constructor(message: string) {

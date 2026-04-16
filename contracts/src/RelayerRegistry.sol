@@ -6,7 +6,7 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
-/// @notice On-chain registry for ScatterDEX relayers.
+/// @notice On-chain registry for zkScatterDEX relayers.
 /// @dev Relayers may optionally stake a bond to register (minBond configurable by owner, default 0).
 ///      Bond is returned after a cooldown on exit.
 ///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
