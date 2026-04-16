@@ -67,8 +67,18 @@ export default function App() {
   const [zkBoot, setZkBoot] = useState<ZkBootState>({ phase: 'loading' });
 
   useEffect(() => {
-    ensureRenameMigration().catch(() => {});
-    NetworkService.restoreSavedNetwork().catch(() => {});
+    // Migration must complete before any service reads storage — otherwise
+    // restoreSavedNetwork() (and similar) can miss the user's saved settings
+    // or write defaults into the new keys before legacy data is copied over.
+    ensureRenameMigration()
+      .catch((err) => {
+        console.error('storage rename migration failed at startup', err);
+      })
+      .finally(() => {
+        NetworkService.restoreSavedNetwork().catch((err) => {
+          console.error('restoreSavedNetwork failed at startup', err);
+        });
+      });
     ZKBridgeService.waitReady().then((status) => {
       if (status.status === 'ready') {
         setZkBoot({ phase: 'ready' });

@@ -7,7 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "scheme": "zkscatterdex",
+    "scheme": "scatterdex",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -15,13 +15,13 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.zkscatterdex.mobile",
+      "bundleIdentifier": "io.scatterdex.mobile",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Authenticate to access your private keys"
       }
     },
     "android": {
-      "package": "io.zkscatterdex.mobile",
+      "package": "io.scatterdex.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"

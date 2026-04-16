@@ -1,55 +1,97 @@
 /**
  * One-time storage key migration: scatterdex_* → zkscatterdex_*
  *
- * Each service calls `migrateKeys` on first access. The migration is
- * idempotent — once the marker is set, subsequent calls are a no-op.
+ * Runs on first launch after the rename. Each mapping is parallelised
+ * per-key; per-mapping failures propagate so the `MIGRATION_DONE_KEY`
+ * marker is only set if *all* mappings succeeded. On partial failure
+ * the next launch re-runs the migration.
+ *
+ * Each SecureStore mapping carries the same `keychainAccessible` flag
+ * the owning service uses on its own writes — mirroring the per-service
+ * semantics (WHEN_UNLOCKED_THIS_DEVICE_ONLY for wallet/secret data,
+ * default for non-sensitive metadata) so migration never accidentally
+ * tightens or relaxes access.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { STORAGE_NS } from '../constants';
 
-const MIGRATION_DONE_KEY = 'zkscatterdex_rename_migration_done';
+const LEGACY_NS = 'scatterdex';
+const MIGRATION_DONE_KEY = `${STORAGE_NS}_rename_migration_done`;
 
 let migrationPromise: Promise<void> | null = null;
+
+type StoreKind = 'async' | 'secure';
 
 interface KeyMapping {
   oldKey: string;
   newKey: string;
-  store: 'async' | 'secure';
+  store: StoreKind;
+  /** SecureStore only — mirrors the owning service's write option. */
+  keychainAccessible?: SecureStore.KeychainAccessibilityConstant;
+}
+
+/** Helper to build parallel mapping pairs from a shared suffix. */
+function pair(
+  suffix: string,
+  store: StoreKind,
+  keychainAccessible?: SecureStore.KeychainAccessibilityConstant,
+): KeyMapping {
+  return {
+    oldKey: `${LEGACY_NS}_${suffix}`,
+    newKey: `${STORAGE_NS}_${suffix}`,
+    store,
+    keychainAccessible,
+  };
 }
 
 /**
- * Migrate a list of old→new key pairs. Reads from old, writes to new,
- * deletes old. Skips keys where old is absent or new already exists.
+ * Migrate a single old→new pair. Skips if old is absent or new already
+ * exists. Throws on unexpected read/write failure so the caller can
+ * decide whether to mark the migration complete.
  */
-async function migrateKeyPairs(mappings: KeyMapping[]): Promise<void> {
-  await Promise.all(mappings.map(async ({ oldKey, newKey, store }) => {
+async function migrateOne(mapping: KeyMapping): Promise<void> {
+  const { oldKey, newKey, store, keychainAccessible } = mapping;
+  if (store === 'secure') {
+    const existing = await SecureStore.getItemAsync(newKey);
+    if (existing !== null) return;
+    const value = await SecureStore.getItemAsync(oldKey);
+    if (value === null) return;
+    const opts = keychainAccessible ? { keychainAccessible } : undefined;
+    await SecureStore.setItemAsync(newKey, value, opts);
+    await SecureStore.deleteItemAsync(oldKey);
+  } else {
+    const existing = await AsyncStorage.getItem(newKey);
+    if (existing !== null) return;
+    const value = await AsyncStorage.getItem(oldKey);
+    if (value === null) return;
+    await AsyncStorage.setItem(newKey, value);
+    await AsyncStorage.removeItem(oldKey);
+  }
+}
+
+/**
+ * Run all mappings in parallel. Returns true only if every mapping
+ * succeeded — so the caller can skip the done-marker on partial failure
+ * and retry next launch.
+ */
+async function migrateAll(mappings: KeyMapping[]): Promise<boolean> {
+  const results = await Promise.all(mappings.map(async (m) => {
     try {
-      if (store === 'secure') {
-        const existing = await SecureStore.getItemAsync(newKey);
-        if (existing !== null) return; // already migrated
-        const value = await SecureStore.getItemAsync(oldKey);
-        if (value === null) return; // nothing to migrate
-        await SecureStore.setItemAsync(newKey, value, {
-          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        });
-        await SecureStore.deleteItemAsync(oldKey);
-      } else {
-        const existing = await AsyncStorage.getItem(newKey);
-        if (existing !== null) return;
-        const value = await AsyncStorage.getItem(oldKey);
-        if (value === null) return;
-        await AsyncStorage.setItem(newKey, value);
-        await AsyncStorage.removeItem(oldKey);
-      }
+      await migrateOne(m);
+      return true;
     } catch (err) {
-      console.warn(`storage-migration: failed to migrate ${oldKey} → ${newKey}`, err);
+      console.warn(`storage-migration: ${m.oldKey} → ${m.newKey} failed`, err);
+      return false;
     }
   }));
+  return results.every(Boolean);
 }
 
 /**
- * Run the full rename migration for all services. Called once at app startup.
- * Safe to call multiple times — deduped via promise cache.
+ * Run the full rename migration for all services. Safe to call
+ * multiple times — deduped via promise cache, and a success marker
+ * short-circuits future launches.
  */
 export function ensureRenameMigration(): Promise<void> {
   if (migrationPromise) return migrationPromise;
@@ -58,40 +100,49 @@ export function ensureRenameMigration(): Promise<void> {
     const done = await AsyncStorage.getItem(MIGRATION_DONE_KEY);
     if (done === '1') return;
 
-    await migrateKeyPairs([
+    // Mirror each service's own write options so migration doesn't
+    // silently change keychain accessibility. See file header.
+    const UNLOCKED_THIS_DEVICE = SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY;
+
+    const mappings: KeyMapping[] = [
       // KeySecurityService
-      { oldKey: 'scatterdex_wallet_pk', newKey: 'zkscatterdex_wallet_pk', store: 'secure' },
-      { oldKey: 'scatterdex_wallet_mnemonic', newKey: 'zkscatterdex_wallet_mnemonic', store: 'secure' },
-      { oldKey: 'scatterdex_wallet_address', newKey: 'zkscatterdex_wallet_address', store: 'secure' },
-      { oldKey: 'scatterdex_biometric_enabled', newKey: 'zkscatterdex_biometric_enabled', store: 'secure' },
+      pair('wallet_pk', 'secure', UNLOCKED_THIS_DEVICE),
+      pair('wallet_mnemonic', 'secure', UNLOCKED_THIS_DEVICE),
+      pair('wallet_address', 'secure'), // no options in original writer
+      pair('biometric_enabled', 'secure'),
 
       // StealthIdentityService
-      { oldKey: 'scatterdex_stealth_identity_v1', newKey: 'zkscatterdex_stealth_identity_v1', store: 'secure' },
+      pair('stealth_identity_v1', 'secure', UNLOCKED_THIS_DEVICE),
 
-      // NoteStorageService (index in AsyncStorage, notes in SecureStore — notes are per-id, handled below)
-      { oldKey: 'scatterdex_note_index', newKey: 'zkscatterdex_note_index', store: 'async' },
+      // NoteStorageService (notes are per-id, handled below after index move)
+      pair('note_index', 'async'),
 
       // PendingClaimsStorage
-      { oldKey: 'scatterdex_pending_claim_ids', newKey: 'zkscatterdex_pending_claim_ids', store: 'async' },
-      { oldKey: 'scatterdex_pending_claims', newKey: 'zkscatterdex_pending_claims', store: 'async' },
-      { oldKey: 'scatterdex_pending_claims_migrated_v1', newKey: 'zkscatterdex_pending_claims_migrated_v1', store: 'async' },
+      pair('pending_claim_ids', 'async'),
+      pair('pending_claims', 'async'),
+      pair('pending_claims_migrated_v1', 'async'),
 
       // AddressBookService
-      { oldKey: 'scatterdex_wallet_book_v1', newKey: 'zkscatterdex_wallet_book_v1', store: 'async' },
+      pair('wallet_book_v1', 'async'),
 
       // NetworkService
-      { oldKey: 'scatterdex_custom_networks', newKey: 'zkscatterdex_custom_networks', store: 'async' },
-      { oldKey: 'scatterdex_selected_network', newKey: 'zkscatterdex_selected_network', store: 'async' },
+      pair('custom_networks', 'async'),
+      pair('selected_network', 'async'),
 
       // ProviderService
-      { oldKey: 'scatterdex_earliest_block', newKey: 'zkscatterdex_earliest_block', store: 'async' },
-    ]);
+      pair('earliest_block', 'async'),
+    ];
 
-    // Per-id keys: NoteStorageService notes, PendingClaimsStorage meta/secrets, EdDSAKeyService
-    // These use dynamic suffixes so we migrate via the index.
-    await migrateIndexedKeys();
+    const baseOk = await migrateAll(mappings);
 
-    await AsyncStorage.setItem(MIGRATION_DONE_KEY, '1');
+    // Per-id keys need the migrated indexes above to discover ids.
+    const indexedOk = await migrateIndexedKeys();
+
+    if (baseOk && indexedOk) {
+      await AsyncStorage.setItem(MIGRATION_DONE_KEY, '1');
+    } else {
+      console.warn('storage-migration: partial failure — will retry next launch');
+    }
   })().catch((err) => {
     migrationPromise = null;
     throw err;
@@ -101,81 +152,76 @@ export function ensureRenameMigration(): Promise<void> {
 }
 
 /**
- * Migrate per-id keys that use a prefix + dynamic suffix.
- * Reads the (already-migrated) index to discover all IDs.
+ * Per-id keys that use prefix + dynamic suffix. Reads the (already-
+ * migrated) index to discover ids, then migrates each one.
  */
-async function migrateIndexedKeys(): Promise<void> {
-  // --- NoteStorageService: scatterdex_note_<id> → zkscatterdex_note_<id> ---
-  const noteIndexRaw = await AsyncStorage.getItem('zkscatterdex_note_index');
+async function migrateIndexedKeys(): Promise<boolean> {
+  const tasks: Array<Promise<boolean>> = [];
+
+  // NoteStorageService — notes use SecureStore without explicit
+  // keychainAccessible, so we preserve the default.
+  const noteIndexRaw = await AsyncStorage.getItem(`${STORAGE_NS}_note_index`);
   if (noteIndexRaw) {
     try {
       const noteIds: string[] = JSON.parse(noteIndexRaw);
-      await Promise.all(noteIds.map(async (id) => {
-        const oldKey = `scatterdex_note_${id}`;
-        const newKey = `zkscatterdex_note_${id}`;
-        const existing = await SecureStore.getItemAsync(newKey);
-        if (existing !== null) return;
-        const value = await SecureStore.getItemAsync(oldKey);
-        if (value === null) return;
-        await SecureStore.setItemAsync(newKey, value, {
-          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        });
-        await SecureStore.deleteItemAsync(oldKey);
-      }));
-    } catch { /* index parse failed — skip note migration */ }
+      for (const id of noteIds) {
+        tasks.push(runOne({
+          oldKey: `${LEGACY_NS}_note_${id}`,
+          newKey: `${STORAGE_NS}_note_${id}`,
+          store: 'secure',
+        }));
+      }
+    } catch (err) {
+      console.warn('storage-migration: note index parse failed', err);
+      return false;
+    }
   }
 
-  // --- PendingClaimsStorage: per-id meta + secrets ---
-  const claimIdsRaw = await AsyncStorage.getItem('zkscatterdex_pending_claim_ids');
+  // PendingClaimsStorage — per-id meta (AsyncStorage) + secret (SecureStore)
+  const claimIdsRaw = await AsyncStorage.getItem(`${STORAGE_NS}_pending_claim_ids`);
   if (claimIdsRaw) {
     try {
       const claimIds: string[] = JSON.parse(claimIdsRaw);
-      await Promise.all(claimIds.map(async (id) => {
-        // meta (AsyncStorage)
-        const oldMeta = `scatterdex_pending_claim_meta_${id}`;
-        const newMeta = `zkscatterdex_pending_claim_meta_${id}`;
-        const existingMeta = await AsyncStorage.getItem(newMeta);
-        if (existingMeta === null) {
-          const value = await AsyncStorage.getItem(oldMeta);
-          if (value !== null) {
-            await AsyncStorage.setItem(newMeta, value);
-            await AsyncStorage.removeItem(oldMeta);
-          }
-        }
-        // secret (SecureStore)
-        const oldSecret = `scatterdex_pending_claim_secret_${id}`;
-        const newSecret = `zkscatterdex_pending_claim_secret_${id}`;
-        const existingSecret = await SecureStore.getItemAsync(newSecret);
-        if (existingSecret === null) {
-          const value = await SecureStore.getItemAsync(oldSecret);
-          if (value !== null) {
-            await SecureStore.setItemAsync(newSecret, value, {
-              keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-            });
-            await SecureStore.deleteItemAsync(oldSecret);
-          }
-        }
-      }));
-    } catch { /* parse failed — skip claims migration */ }
+      for (const id of claimIds) {
+        tasks.push(runOne({
+          oldKey: `${LEGACY_NS}_pending_claim_meta_${id}`,
+          newKey: `${STORAGE_NS}_pending_claim_meta_${id}`,
+          store: 'async',
+        }));
+        tasks.push(runOne({
+          oldKey: `${LEGACY_NS}_pending_claim_secret_${id}`,
+          newKey: `${STORAGE_NS}_pending_claim_secret_${id}`,
+          store: 'secure',
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        }));
+      }
+    } catch (err) {
+      console.warn('storage-migration: claim index parse failed', err);
+      return false;
+    }
   }
 
-  // --- EdDSAKeyService: scatterdex_eddsa_<account> → zkscatterdex_eddsa_<account> ---
-  // EdDSA keys are per-account and there's no index. We check the wallet
-  // address (already migrated) to discover the account.
-  const walletAddr = await SecureStore.getItemAsync('zkscatterdex_wallet_address');
+  // EdDSAKeyService — keyed by wallet account; discover via migrated address.
+  const walletAddr = await SecureStore.getItemAsync(`${STORAGE_NS}_wallet_address`);
   if (walletAddr) {
     const account = walletAddr.toLowerCase();
-    const oldKey = `scatterdex_eddsa_${account}`;
-    const newKey = `zkscatterdex_eddsa_${account}`;
-    const existing = await SecureStore.getItemAsync(newKey);
-    if (existing === null) {
-      const value = await SecureStore.getItemAsync(oldKey);
-      if (value !== null) {
-        await SecureStore.setItemAsync(newKey, value, {
-          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        });
-        await SecureStore.deleteItemAsync(oldKey);
-      }
-    }
+    tasks.push(runOne({
+      oldKey: `${LEGACY_NS}_eddsa_${account}`,
+      newKey: `${STORAGE_NS}_eddsa_${account}`,
+      store: 'secure', // original writer passes no options
+    }));
+  }
+
+  const results = await Promise.all(tasks);
+  return results.every(Boolean);
+}
+
+async function runOne(mapping: KeyMapping): Promise<boolean> {
+  try {
+    await migrateOne(mapping);
+    return true;
+  } catch (err) {
+    console.warn(`storage-migration: ${mapping.oldKey} → ${mapping.newKey} failed`, err);
+    return false;
   }
 }
