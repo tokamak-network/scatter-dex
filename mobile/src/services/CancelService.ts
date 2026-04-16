@@ -84,7 +84,7 @@ export const CancelService = {
       // the reconstructed leaf array would be short and `note.leafIndex`
       // would index into the wrong slot (failing the membership check or,
       // worse, rotating the wrong note).
-      const fromBlock = ConfigService.getDeployBlock() || 0;
+      const fromBlock = ConfigService.getDeployBlock();
       const insertEvents = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
       const allLeaves = insertEvents.map((e) => {
         const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });

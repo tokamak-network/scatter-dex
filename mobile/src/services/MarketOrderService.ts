@@ -176,7 +176,7 @@ export const MarketOrderService = {
       // `note.leafIndex` would index into the wrong slot (failing the
       // membership check or settling against the wrong leaf). Mirrors the
       // same fix in CancelService.
-      const fromBlock = ConfigService.getDeployBlock() || 0;
+      const fromBlock = ConfigService.getDeployBlock();
 
       const insertEvents = await pool.queryFilter(
         pool.filters.CommitmentInserted(),
