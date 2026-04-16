@@ -4,6 +4,7 @@
 import { ethers } from 'ethers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from './ConfigService';
+import { STORAGE_NS } from '../constants';
 
 let readProvider: ethers.JsonRpcProvider | null = null;
 // Cache the *promise* rather than the resolved value so N concurrent
@@ -38,13 +39,13 @@ export const ProviderService = {
   },
 
   async getEarliestBlock(): Promise<number> {
-    const cached = await AsyncStorage.getItem('zkscatterdex_earliest_block');
+    const cached = await AsyncStorage.getItem(`${STORAGE_NS}_earliest_block`);
     if (cached) return Number(cached);
     return ConfigService.getDeployBlock();
   },
 
   async cacheEarliestBlock(block: number): Promise<void> {
-    await AsyncStorage.setItem('zkscatterdex_earliest_block', String(block));
+    await AsyncStorage.setItem(`${STORAGE_NS}_earliest_block`, String(block));
   },
 
   /** Cached sanctions list address from CommitmentPool — avoids RPC on every deposit.

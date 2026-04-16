@@ -11,11 +11,12 @@
 import { ethers } from 'ethers';
 import * as SecureStore from 'expo-secure-store';
 import { ZKBridgeService } from './ZKBridgeService';
+import { STORAGE_NS } from '../constants';
 
 const DERIVE_MESSAGE =
   'Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.';
 
-const EDDSA_KEY_PREFIX = 'zkscatterdex_eddsa_';
+const EDDSA_KEY_PREFIX = `${STORAGE_NS}_eddsa_`;
 
 export interface EdDSAKeyPair {
   /**

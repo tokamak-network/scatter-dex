@@ -12,6 +12,7 @@ import TabNavigator from './src/navigation/TabNavigator';
 import { WalletProvider, useWallet } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
 import { NetworkService } from './src/services/NetworkService';
+import { ensureRenameMigration } from './src/lib/storage-migration';
 import LockedScreen from './src/screens/LockedScreen';
 
 // `phase: 'loading'` is the only sentinel App.tsx adds on top of the
@@ -66,6 +67,7 @@ export default function App() {
   const [zkBoot, setZkBoot] = useState<ZkBootState>({ phase: 'loading' });
 
   useEffect(() => {
+    ensureRenameMigration().catch(() => {});
     NetworkService.restoreSavedNetwork().catch(() => {});
     ZKBridgeService.waitReady().then((status) => {
       if (status.status === 'ready') {

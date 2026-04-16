@@ -126,7 +126,7 @@ export const OrderService = {
         throw new Error('relayerAddress is required and must be a valid address');
       }
       // Checksum-normalize so two callers that differ only in casing produce
-      // the same orderHash (and the same `scatterdex_pending_claims` entry).
+      // the same orderHash (and the same `zkscatterdex_pending_claims` entry).
       const relayerChecksummed = ethers.getAddress(input.relayerAddress);
       const relayerAddress = BigInt(relayerChecksummed).toString();
 

@@ -13,6 +13,7 @@ import { ProviderService } from '../services/ProviderService';
 import BaseModal from '../components/BaseModal';
 import { colors } from '../styles/theme';
 import EthereumProvider from '@walletconnect/ethereum-provider';
+import { APP_NAME } from '../constants';
 import { KeySecurityService } from '../services/KeySecurityService';
 
 interface WalletState {
@@ -141,7 +142,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         chains: [targetChainId],
         showQrModal: false,
         metadata: {
-          name: 'zkScatterDEX',
+          name: APP_NAME,
           description: 'Privacy-Preserving DEX',
           url: 'https://zkscatterdex.io',
           icons: ['https://zkscatterdex.io/icon.png'],

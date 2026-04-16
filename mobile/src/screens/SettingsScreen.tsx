@@ -12,6 +12,7 @@ import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { KeySecurityService } from '../services/KeySecurityService';
+import { APP_NAME } from '../constants';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
@@ -594,7 +595,7 @@ export default function SettingsScreen() {
           title: 'Share stealth keys?',
           body: 'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
           message: stealthKeysReveal
-            ? `zkScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
+            ? `${APP_NAME} stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
             : '',
         }}
       />

@@ -13,6 +13,7 @@ import {
   View, Text, TouchableOpacity, TextInput, ActivityIndicator,
   Alert, Share, StyleSheet,
 } from 'react-native';
+import { APP_NAME } from '../constants';
 import { colors } from '../styles/theme';
 import { BackupService, BackupBundle, RestoreSummary } from '../services/BackupService';
 import BaseModal from './BaseModal';
@@ -84,7 +85,7 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await Share.share({ message: exportJson, title: 'zkScatterDEX Backup' });
+              await Share.share({ message: exportJson, title: `${APP_NAME} Backup` });
             } catch (err: any) {
               Alert.alert('Share failed', err?.message || 'Could not open share sheet');
             }

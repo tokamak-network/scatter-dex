@@ -14,11 +14,12 @@
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ethers } from 'ethers';
+import { STORAGE_NS } from '../constants';
 
-const WALLET_KEY = 'zkscatterdex_wallet_pk';
-const MNEMONIC_KEY = 'zkscatterdex_wallet_mnemonic';
-const ADDRESS_KEY = 'zkscatterdex_wallet_address';
-const AUTH_ENABLED_KEY = 'zkscatterdex_biometric_enabled';
+const WALLET_KEY = `${STORAGE_NS}_wallet_pk`;
+const MNEMONIC_KEY = `${STORAGE_NS}_wallet_mnemonic`;
+const ADDRESS_KEY = `${STORAGE_NS}_wallet_address`;
+const AUTH_ENABLED_KEY = `${STORAGE_NS}_biometric_enabled`;
 
 export const KeySecurityService = {
   // ─── 생체인증 ──────────────────────────────────────

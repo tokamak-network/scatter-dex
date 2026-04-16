@@ -12,13 +12,13 @@
  * (~2 KB on Android) wouldn't fit `allLeaves` comfortably anyway.
  *
  * Storage layout:
- *   zkscatterdex_pending_claim_ids:          AsyncStorage — JSON `string[]`
- *   zkscatterdex_pending_claim_meta_<id>:    AsyncStorage — JSON `MetaRow`
- *   zkscatterdex_pending_claim_secret_<id>:  SecureStore  — raw secret string
- *   zkscatterdex_pending_claims_migrated_v1: AsyncStorage — `'1'` once the
+ *   ${STORAGE_NS}_pending_claim_ids:          AsyncStorage — JSON `string[]`
+ *   ${STORAGE_NS}_pending_claim_meta_<id>:    AsyncStorage — JSON `MetaRow`
+ *   ${STORAGE_NS}_pending_claim_secret_<id>:  SecureStore  — raw secret string
+ *   ${STORAGE_NS}_pending_claims_migrated_v1: AsyncStorage — `'1'` once the
  *     legacy blob has been split (idempotency marker — see `migrateLegacy`).
  *
- * First load also migrates the legacy `zkscatterdex_pending_claims` blob
+ * First load also migrates the legacy `${STORAGE_NS}_pending_claims` blob
  * (unencrypted array that held `secret` + meta together) into the split
  * shape, then deletes it. Existing users keep their claims without a
  * manual re-import step.
@@ -29,12 +29,13 @@
 import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { STORAGE_NS } from '../constants';
 
-const IDS_KEY = 'zkscatterdex_pending_claim_ids';
-const META_PREFIX = 'zkscatterdex_pending_claim_meta_';
-const SECRET_PREFIX = 'zkscatterdex_pending_claim_secret_';
-const LEGACY_KEY = 'zkscatterdex_pending_claims';
-const MIGRATION_MARKER = 'zkscatterdex_pending_claims_migrated_v1';
+const IDS_KEY = `${STORAGE_NS}_pending_claim_ids`;
+const META_PREFIX = `${STORAGE_NS}_pending_claim_meta_`;
+const SECRET_PREFIX = `${STORAGE_NS}_pending_claim_secret_`;
+const LEGACY_KEY = `${STORAGE_NS}_pending_claims`;
+const MIGRATION_MARKER = `${STORAGE_NS}_pending_claims_migrated_v1`;
 
 export interface PendingClaim {
   id: string;              // stable, locally-generated
