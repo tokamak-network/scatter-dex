@@ -9,7 +9,7 @@ import {
 import { wipeBytes } from "./secure-wipe";
 
 const client = createProverWorkerClient<CancelProofInput, CancelProofResult>({
-  workerUrl: new URL("./cancel-worker.ts", import.meta.url),
+  createWorker: () => new Worker(new URL("./cancel-worker.ts", import.meta.url), { type: "module" }),
   label: "cancel-worker-client",
   serializeInput: (input) => serializeCancelInput(input) as unknown as Record<string, unknown>,
   deserializeOutput: (raw) => deserializeCancelOutput(raw as unknown as SerializedCancelOutput),

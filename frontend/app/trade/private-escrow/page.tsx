@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { Lock, Loader2, AlertCircle, Download, ShieldCheck, FolderOpen, Coins } from "lucide-react";
+import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
 import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
@@ -285,7 +285,7 @@ export default function PrivateEscrowPage() {
   const handleDeposit = useCallback(async () => {
     if (!signer || !account || !selectedToken || !depositAmount || !poolAddress) return;
     if (!hasFolderSelected()) {
-      setTxError("Please select a notes folder first");
+      setTxError("Please open your Vault first");
       return;
     }
     setTxError(null);
@@ -626,7 +626,7 @@ export default function PrivateEscrowPage() {
             zkScatter does not store any personal data on its servers. Your commitment notes
             (containing secret keys needed to withdraw or trade) are saved as local files
             that only you control. <strong>If you lose these files, your deposited funds
-            cannot be recovered.</strong> Please back up your notes folder regularly.
+            cannot be recovered.</strong> Please back up your Vault folder regularly.
           </p>
         </div>
       </div>
@@ -635,17 +635,17 @@ export default function PrivateEscrowPage() {
       {fsAvailable && !folderReady && (
         <div className="bg-surface-container rounded-xl p-6 flex items-center justify-between">
           <div>
-            <h3 className="font-semibold text-on-surface">Select Notes Folder</h3>
+            <h3 className="font-semibold text-on-surface">Open Vault</h3>
             <p className="text-xs text-on-surface-variant/60 mt-1">
-              Choose a local folder to store your private notes. Notes are saved as JSON files — you control the backup.
+              Choose a local folder for your Vault. Notes are saved as JSON files — you control the backup.
             </p>
           </div>
           <button
             onClick={handleSelectFolder}
             className="flex items-center gap-2 px-4 py-2.5 rounded-md gradient-btn text-on-primary-fixed font-bold text-sm"
           >
-            <FolderOpen className="w-4 h-4" />
-            Select Folder
+            <Lock className="w-4 h-4" />
+            Open Vault
           </button>
         </div>
       )}
@@ -668,7 +668,7 @@ export default function PrivateEscrowPage() {
               <div className="flex items-center gap-3">
                 {folderReady && (
                   <span className="text-xs text-emerald-400 flex items-center gap-1">
-                    <FolderOpen className="w-3.5 h-3.5" /> {folderName ?? "Folder connected"}
+                    <Lock className="w-3.5 h-3.5" /> {folderName ?? "Vault connected"}
                   </span>
                 )}
                 {hiddenInFolderCount > 0 && (
@@ -686,7 +686,7 @@ export default function PrivateEscrowPage() {
                     onClick={handleManualRefresh}
                     disabled={isRefreshing}
                     className="text-xs text-on-surface-variant/70 hover:text-on-surface transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                    title="Re-read notes folder and re-check on-chain status"
+                    title="Re-read Vault and re-check on-chain status"
                   >
                     {isRefreshing && <Loader2 className="w-3 h-3 animate-spin" />}
                     Refresh
@@ -704,8 +704,8 @@ export default function PrivateEscrowPage() {
 
             {!folderReady ? (
               <div className="px-6 py-16 text-center text-on-surface-variant/50">
-                <FolderOpen className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p>Select a folder to view and manage your private notes.</p>
+                <Lock className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p>Open your Vault to view and manage your private notes.</p>
               </div>
             ) : notes.length === 0 ? (
               <div className="px-6 py-16 text-center text-on-surface-variant/50">
@@ -1038,7 +1038,7 @@ export default function PrivateEscrowPage() {
                 disabled={isBusy || !depositAmount || !folderReady}
                 className="w-full gradient-btn text-on-primary-fixed py-4 rounded-md font-bold text-sm uppercase tracking-widest hover:scale-[0.99] active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
               >
-                {!folderReady ? "Select Folder First" : isBusy ? "Processing..." : "Deposit Privately"}
+                {!folderReady ? "Open Vault First" : isBusy ? "Processing..." : "Deposit Privately"}
               </button>
 
               <div className="text-xs text-on-surface-variant/40 text-center">

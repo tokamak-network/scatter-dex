@@ -12,7 +12,7 @@ import {
 import { wipeBytes } from "./secure-wipe";
 
 const client = createProverWorkerClient<AuthorizeProofInput, AuthorizeProofResult>({
-  workerUrl: new URL("./authorize-worker.ts", import.meta.url),
+  createWorker: () => new Worker(new URL("./authorize-worker.ts", import.meta.url), { type: "module" }),
   label: "authorize-worker-client",
   serializeInput: (input) => serializeAuthorizeInput(input) as unknown as Record<string, unknown>,
   deserializeOutput: (raw) => deserializeAuthorizeOutput(raw as unknown as SerializedAuthorizeOutput),

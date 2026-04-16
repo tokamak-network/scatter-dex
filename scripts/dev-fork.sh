@@ -119,10 +119,12 @@ echo "  Chain ID:      $FORK_CHAIN_ID"
 echo ""
 
 check_port 8545 "anvil"
-check_port 3002 "zk-relayer"
+check_port 4000 "shared-orderbook"
+check_port 3002 "zk-relayer-a"
+check_port 3003 "zk-relayer-b"
 check_port 3000 "frontend"
 
-echo "[1/4] Starting anvil (fork, hardfork=prague)..."
+echo "[1/7] Starting anvil (fork, hardfork=prague)..."
 ANVIL_ARGS=(
   --silent
   --hardfork prague
@@ -142,7 +144,7 @@ fi
 echo "  anvil running on $RPC_URL (PID $last_pid)"
 
 echo ""
-echo "[2/4] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
+echo "[2/7] Deploying contracts (MockIdentityRegistry on forked chain, real WETH/USDC)..."
 ensure_circuits_built
 cd "$ROOT_DIR/contracts"
 set +e
@@ -260,7 +262,20 @@ wait "$USDC_PID" 2>/dev/null || true
 
 # ── 3. Start zk-relayer ─────────────────────────────────────
 echo ""
-echo "[3/4] Starting zk-relayer..."
+echo "[3/7] Starting shared orderbook (port 4000)..."
+cd "$ROOT_DIR/shared-orderbook"
+PORT=4000 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:4000/health" "shared-orderbook" 30; then
+  echo "  Last 20 lines of shared-orderbook log:"
+  tail -20 "$LOG_DIR/shared-orderbook.log" 2>/dev/null
+  exit 1
+fi
+echo "  shared orderbook running on http://localhost:4000 (PID $last_pid)"
+
+echo ""
+echo "[4/7] Starting zk-relayer A (port 3002)..."
 ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
 # Capture the post-deploy block number so the relayer skips pre-fork history
 # when scanning commitment events (upstream RPCs reject large ranges).
@@ -276,6 +291,9 @@ ADMIN_API_KEY=$ADMIN_KEY
 RELAYER_FEE=30
 PORT=3002
 INDEX_FROM_BLOCK=$INDEX_FROM
+SHARED_ORDERBOOK_URL=http://localhost:4000
+RELAYER_PUBLIC_URL=http://localhost:3002
+RELAYER_NAME=Relayer-A
 EOF
 echo "  INDEX_FROM_BLOCK:    $INDEX_FROM"
 echo "  Admin API key: $ADMIN_KEY"
@@ -289,11 +307,56 @@ if ! wait_for "http://localhost:3002/api/info" "zk-relayer" 30; then
   tail -20 "$LOG_DIR/zk-relayer.log" 2>/dev/null
   exit 1
 fi
-echo "  zk-relayer running on http://localhost:3002 (PID $last_pid)"
+echo "  Relayer A running on http://localhost:3002 (PID $last_pid)"
 
-# ── 4. Start frontend ──────────────────────────────────────
+# ── 5. Start Relayer B ─────────────────────────────────────
 echo ""
-echo "[4/4] Starting frontend..."
+echo "[5/7] Starting Relayer B (port 3003)..."
+ZK_RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+
+cd "$ROOT_DIR/zk-relayer"
+RPC_URL="$RPC_URL" \
+RELAYER_PRIVATE_KEY="$ZK_RELAYER_B_KEY" \
+COMMITMENT_POOL_ADDRESS="$COMMITMENT_POOL" \
+PRIVATE_SETTLEMENT_ADDRESS="$PRIVATE_SETTLEMENT" \
+FEE_VAULT_ADDRESS="$FEE_VAULT" \
+TOKEN_LIST="$TOKEN_LIST" \
+PORT=3003 \
+RELAYER_FEE=30 \
+DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
+SHARED_ORDERBOOK_URL="http://localhost:4000" \
+RELAYER_PUBLIC_URL="http://localhost:3003" \
+RELAYER_NAME="Relayer-B" \
+INDEX_FROM_BLOCK="$INDEX_FROM" \
+npm run dev > "$LOG_DIR/zk-relayer-b.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:3003/api/info" "zk-relayer-b" 30; then
+  echo "  Last 20 lines of zk-relayer-b log:"
+  tail -20 "$LOG_DIR/zk-relayer-b.log" 2>/dev/null
+  exit 1
+fi
+echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
+
+# ── 6. Register Relayer B on-chain ─────────────────────────
+echo ""
+echo "[6/7] Registering Relayer B on RelayerRegistry..."
+ALREADY=$(cast call "$RELAYER_REGISTRY" "relayers(address)(string,uint256,uint256,uint256,uint256,bool)" \
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC --rpc-url "$RPC_URL" 2>/dev/null | head -1)
+if echo "$ALREADY" | grep -q "http://localhost:3003"; then
+  echo "  Already registered"
+else
+  if cast send "$RELAYER_REGISTRY" "register(string,uint256)" "http://localhost:3003" 30 \
+    --private-key "$ZK_RELAYER_B_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+    echo "  Relayer B registered (url=http://localhost:3003, fee=30 bps)"
+  else
+    echo "  WARNING: Registration failed — frontend may only list Relayer A"
+  fi
+fi
+
+# ── 7. Start frontend ──────────────────────────────────────
+echo ""
+echo "[7/7] Starting frontend..."
 TOKENS="$TOKEN_LIST"
 
 # Preserve developer-owned secrets (not regenerated from the deployment)
@@ -318,6 +381,7 @@ NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
+ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 EOF
 
 if [ -n "$PRESERVED_ENV" ]; then
@@ -352,9 +416,11 @@ echo "  Mode:        FORK (mock identity on forked mainnet state)"
 echo "  Fork URL:    $FORK_URL"
 echo "  Chain ID:    $FORK_CHAIN_ID"
 echo ""
-echo "  Frontend:    http://localhost:3000"
-echo "  ZK Relayer:  http://localhost:3002"
-echo "  Anvil:       $RPC_URL"
+echo "  Frontend:         http://localhost:3000"
+echo "  Relayer A:        http://localhost:3002"
+echo "  Relayer B:        http://localhost:3003"
+echo "  Shared Orderbook: http://localhost:4000"
+echo "  Anvil:            $RPC_URL"
 echo ""
 echo "  MetaMask: add a custom network with RPC=$RPC_URL, Chain ID=$FORK_CHAIN_ID"
 echo "  Test account (anvil #0): 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
