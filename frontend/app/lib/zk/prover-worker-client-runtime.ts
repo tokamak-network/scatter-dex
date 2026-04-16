@@ -1,7 +1,7 @@
 import type { ProveTiming } from "./prove-timer";
 
 export interface ClientHandlers<I, O> {
-  workerUrl: URL;
+  createWorker: () => Worker;
   label: string;
   serializeInput: (input: I) => Record<string, unknown>;
   deserializeOutput: (raw: Record<string, unknown>) => O;
@@ -39,7 +39,7 @@ export function createProverWorkerClient<I, O>(
     if (workerFailed) return null;
     if (worker) return worker;
     try {
-      worker = new Worker(handlers.workerUrl, { type: "module" });
+      worker = handlers.createWorker();
       return worker;
     } catch {
       console.warn(

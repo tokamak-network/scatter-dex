@@ -27,7 +27,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob:",
               "font-src 'self' https://fonts.gstatic.com",
-              `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com${extraConnectSrc ? " " + extraConnectSrc : ""}`,
+              `connect-src 'self' blob:${isDev ? " http://localhost:* ws://localhost:*" : ""} https://*.1inch.dev https://*.infura.io https://*.alchemy.com wss://*.infura.io wss://*.alchemy.com${extraConnectSrc ? " " + extraConnectSrc : ""}`,
               "worker-src 'self' blob:",
               "frame-ancestors 'none'",
             ].join("; "),

@@ -62,6 +62,7 @@ async function main() {
       const addr = (req as unknown as Record<string, unknown>).relayerAddress as string | undefined;
       return addr ? `relayer:${addr}` : (req.ip ?? "unknown");
     },
+    validate: { keyGeneratorIpFallback: false },
   });
 
   // Routes

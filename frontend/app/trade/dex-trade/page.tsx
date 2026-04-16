@@ -4,7 +4,7 @@ import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "rea
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, FolderOpen, Wallet, Zap, ArrowLeftRight } from "lucide-react";
+import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, Lock, Wallet, Zap, ArrowLeftRight } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { terminateAuthorizeWorker } from "../../lib/zk/authorize-worker-client";
@@ -360,7 +360,7 @@ function DexTradePageInner() {
   const handleDeriveKey = useCallback(async () => {
     if (!signer || !account) return;
     if (!hasFolderSelected()) {
-      setError("Select a notes folder first");
+      setError("Open your Vault first");
       return;
     }
     setKeyLoading(true);
@@ -583,8 +583,8 @@ function DexTradePageInner() {
                     onClick={handleOpenFolder}
                     className="flex items-center gap-1 text-xs text-primary hover:text-primary-container font-bold"
                   >
-                    <FolderOpen className="w-3.5 h-3.5" />
-                    {folderName ? `${folderName}` : "Open Notes Folder"}
+                    <Lock className="w-3.5 h-3.5" />
+                    {folderName ? `${folderName}` : "Open Vault"}
                   </button>
                   {folderName && (
                     <button
@@ -629,7 +629,7 @@ function DexTradePageInner() {
                 </div>
               ) : (
                 <div className="text-xs text-on-surface-variant/60 text-center py-4">
-                  Open your notes folder to select an escrow commitment.
+                  Open your Vault to select an escrow commitment.
                 </div>
               )}
 

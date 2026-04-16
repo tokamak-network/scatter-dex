@@ -1,3 +1,7 @@
+"use client";
+
+import { useState, useCallback } from "react";
+import { Copy, Check } from "lucide-react";
 import { getExplorerTxUrl, getExplorerAddressUrl } from "../lib/explorer";
 import { shortenAddress } from "../lib/utils";
 
@@ -16,6 +20,31 @@ interface Props {
   className?: string;
 }
 
+function CopyButton({ value, size }: { value: string; size: "xs" | "sm" }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(value)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => { /* permission denied or insecure context — silent */ });
+  }, [value]);
+  const iconSize = size === "xs" ? "w-3 h-3" : "w-3.5 h-3.5";
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="inline-flex items-center ml-1 text-on-surface-variant/40 hover:text-on-surface-variant/80 transition-colors"
+      title="Copy to clipboard"
+      aria-label={`Copy ${value}`}
+    >
+      {copied ? <Check className={`${iconSize} text-emerald-400`} /> : <Copy className={iconSize} />}
+    </button>
+  );
+}
+
 /** Renders a tx hash / address as an explorer link; plain text when the
  *  chain has no configured explorer. */
 export default function ExplorerLink({ kind, value, chainId, size = "xs", className }: Props) {
@@ -27,18 +56,26 @@ export default function ExplorerLink({ kind, value, chainId, size = "xs", classN
   const aria = `View ${kind === "tx" ? "transaction" : "address"} ${value} on block explorer`;
 
   if (!url) {
-    return <span className={base} title={value} aria-label={value}>{display}</span>;
+    return (
+      <span className={`inline-flex items-center ${base}`}>
+        <span title={value} aria-label={value}>{display}</span>
+        <CopyButton value={value} size={size} />
+      </span>
+    );
   }
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`${base} hover:underline`}
-      title={value}
-      aria-label={aria}
-    >
-      {display}
-    </a>
+    <span className="inline-flex items-center">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`${base} hover:underline`}
+        title={value}
+        aria-label={aria}
+      >
+        {display}
+      </a>
+      <CopyButton value={value} size={size} />
+    </span>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
-import { ClipboardList, Loader2, RefreshCw, Key, Shield, FolderOpen, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
+import { ClipboardList, Loader2, RefreshCw, Key, Shield, Lock, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import ExplorerLink from "../../components/ExplorerLink";
@@ -509,14 +509,14 @@ export default function PrivateHistoryPage() {
       {/* Step 1: Folder selection */}
       {!folderName && (
         <div className="glass-card rounded-xl p-8 border border-outline-variant/10 text-center space-y-4">
-          <FolderOpen className="w-12 h-12 text-primary mx-auto" />
-          <p className="text-sm text-on-surface-variant">Select your notes folder to load order history.</p>
+          <Lock className="w-12 h-12 text-primary mx-auto" />
+          <p className="text-sm text-on-surface-variant">Open your Vault to load order history.</p>
           <button
             onClick={handleSelectFolder}
             disabled={!isFileSystemAvailable()}
             className="gradient-btn text-on-primary-fixed px-6 py-3 rounded-md font-bold text-sm disabled:opacity-50"
           >
-            Select Folder
+            Open Vault
           </button>
         </div>
       )}

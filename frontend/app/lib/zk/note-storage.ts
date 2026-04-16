@@ -5,6 +5,7 @@
  */
 
 import type { CommitmentNote } from "./commitment";
+import { EXPECTED_CHAIN_ID } from "../config";
 
 export interface StoredNote {
   note: CommitmentNote;
@@ -15,6 +16,7 @@ export interface StoredNote {
   leafIndex: number;
   txHash: string;
   createdAt: number;
+  chainId?: number;
 }
 
 const DIR_HANDLE_KEY = "zkscatter_dir_handle";
@@ -25,18 +27,31 @@ const NOTES_PREFIX = "zkscatter-note-";
 // into IndexedDB via the structured clone algorithm, allowing it
 // to survive page reloads and browser restarts.
 
-// Lazy singleton — one IDB connection for the lifetime of the page.
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
-function openHandleDB(): Promise<IDBDatabase> {
-  if (!_dbPromise) {
-    _dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open("zkscatter-fs", 1);
-      req.onupgradeneeded = () => req.result.createObjectStore("handles");
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => { _dbPromise = null; reject(req.error); };
+function openHandleDB(recursed = false): Promise<IDBDatabase> {
+  if (_dbPromise) {
+    return _dbPromise.then((db) => {
+      try {
+        if (db.objectStoreNames.contains("handles")) return db;
+      } catch {
+        // Accessing objectStoreNames on a closed connection throws
+        // InvalidStateError; fall through to reopen.
+      }
+      try { db.close(); } catch { /* already closed */ }
+      _dbPromise = null;
+      if (recursed) {
+        return Promise.reject(new Error("IDB store 'handles' missing after reopen"));
+      }
+      return openHandleDB(true);
     });
   }
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open("zkscatter-fs", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("handles");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { _dbPromise = null; reject(req.error); };
+  });
   return _dbPromise;
 }
 
@@ -346,6 +361,7 @@ export async function saveConfigToFolder(key: string, value: unknown): Promise<v
 function serializeForFile(note: StoredNote) {
   return {
     commitment: note.commitment,
+    chainId: note.chainId ?? EXPECTED_CHAIN_ID,
     tokenSymbol: note.tokenSymbol,
     tokenAddress: note.tokenAddress,
     amount: note.amount,
@@ -370,6 +386,7 @@ function serializeForFile(note: StoredNote) {
 function deserializeFromFile(parsed: any): StoredNote {
   return {
     commitment: parsed.commitment,
+    chainId: typeof parsed.chainId === "number" ? parsed.chainId : undefined,
     tokenSymbol: parsed.tokenSymbol,
     tokenAddress: parsed.tokenAddress,
     amount: parsed.amount,

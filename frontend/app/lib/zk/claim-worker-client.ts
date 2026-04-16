@@ -7,7 +7,7 @@ import {
 } from "./claim-worker-serde";
 
 const client = createProverWorkerClient<ClaimProofInput, ClaimProofResult>({
-  workerUrl: new URL("./claim-worker.ts", import.meta.url),
+  createWorker: () => new Worker(new URL("./claim-worker.ts", import.meta.url), { type: "module" }),
   label: "claim-worker-client",
   serializeInput: (input) => serializeClaimInput(input) as unknown as Record<string, unknown>,
   deserializeOutput: (raw) => deserializeClaimOutput(raw as unknown as SerializedClaimOutput),

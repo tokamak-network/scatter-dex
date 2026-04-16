@@ -8,7 +8,7 @@ import {
 } from "./deposit-worker-serde";
 
 const client = createProverWorkerClient<CommitmentNote, DepositProofResult>({
-  workerUrl: new URL("./deposit-worker.ts", import.meta.url),
+  createWorker: () => new Worker(new URL("./deposit-worker.ts", import.meta.url), { type: "module" }),
   label: "deposit-worker-client",
   serializeInput: (note) => serializeDepositInput(note) as unknown as Record<string, unknown>,
   deserializeOutput: (raw) => deserializeDepositOutput(raw as unknown as SerializedDepositOutput),

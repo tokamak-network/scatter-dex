@@ -1,13 +1,8 @@
 "use client";
 
-import { FolderOpen, AlertTriangle } from "lucide-react";
+import { Lock, AlertTriangle } from "lucide-react";
 import { useNotesFolder } from "../lib/zk/useNotesFolder";
 
-/**
- * Gate UI for any page that needs the File System Access API notes
- * folder. Shows an error banner when the API is unavailable, a select-
- * folder card when no folder is ready, otherwise renders children.
- */
 export function FolderGate({ children }: { children: React.ReactNode }) {
   const { fsAvailable, folderReady, restoring, handleSelectFolder } = useNotesFolder();
 
@@ -23,16 +18,16 @@ export function FolderGate({ children }: { children: React.ReactNode }) {
   if (!folderReady) {
     return (
       <div className="rounded-2xl border border-outline-variant/10 bg-surface-container p-8 text-center space-y-4">
-        <FolderOpen className="w-12 h-12 text-primary mx-auto" />
+        <Lock className="w-12 h-12 text-primary mx-auto" />
         <p className="text-sm text-on-surface-variant">
-          Select your notes folder to continue.
+          Open your Vault to continue.
         </p>
         <button
           onClick={handleSelectFolder}
           disabled={restoring}
           className="gradient-btn text-on-primary-fixed px-6 py-3 rounded-md font-bold text-sm disabled:opacity-50"
         >
-          {restoring ? "Restoring…" : "Select Folder"}
+          {restoring ? "Restoring\u2026" : "Open Vault"}
         </button>
       </div>
     );
