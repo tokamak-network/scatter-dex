@@ -37,7 +37,11 @@ export default function TabNavigator() {
       <Tab.Screen name="Deposit" component={DepositScreen} options={{ tabBarIcon: icon('↓'), tabBarLabel: 'Deposit' }} />
       <Tab.Screen name="Claim" component={ClaimScreen} options={{ tabBarIcon: icon('💰'), tabBarLabel: 'Claim' }} />
       <Tab.Screen name="History" component={HistoryScreen} options={{ tabBarIcon: icon('📋'), tabBarLabel: 'Activity' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarIcon: icon('👤'), tabBarLabel: 'Profile' }} />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ tabBarButton: () => null }}
+      />
     </Tab.Navigator>
   );
 }
