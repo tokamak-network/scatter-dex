@@ -215,6 +215,14 @@ export const DepositService = {
       // ─── Step 7: 노트 저장 ────────────────────────────
       onProgress({ step: 'saving_note' });
 
+      // If we couldn't parse a CommitmentInserted event out of the
+      // receipt, `leafIndex` stays at the -1 sentinel. Saving such a
+      // note as `active` would make it unprovable (trade/cancel flows
+      // index `allLeaves[note.leafIndex]` against the live tree), so
+      // persist it as `pending` instead. A later index-backfill path
+      // can promote it to `active` once the leaf position is known.
+      const status: StoredNote['status'] = leafIndex >= 0 ? 'active' : 'pending';
+
       const storedNote: StoredNote = {
         id: commitment,
         commitment,
@@ -227,7 +235,7 @@ export const DepositService = {
         amount: parsedAmount.toString(),
         leafIndex,
         txHash: tx.hash,
-        status: 'active',
+        status,
         createdAt: Date.now(),
       };
 
