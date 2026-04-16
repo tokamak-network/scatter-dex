@@ -111,15 +111,16 @@ export default function HiddenWebView() {
       `}
       javaScriptEnabled
       // `allowFileAccess` is needed to load the bundled `file://` URI at all.
-      // `allowFileAccessFromFileURLs` lets the page `fetch()` its sibling
-      // wasm/zkey assets (snarkjs needs this).
-      // `allowUniversalAccessFromFileURLs` is intentionally NOT set —
-      // it would let this file:// page read other file:// URIs in the
-      // sandbox (logs, SecureStore-adjacent files, etc.). The bundle is
+      // Proving assets (wasm/zkey) are passed as base64 via the bridge,
+      // so the page does not need to `fetch()` sibling file:// resources
+      // — `allowFileAccessFromFileURLs` is intentionally omitted to reduce
+      // blast radius if the bundled page were ever compromised.
+      // `allowUniversalAccessFromFileURLs` is likewise NOT set: it would
+      // let this file:// page read other file:// URIs in the sandbox
+      // (logs, SecureStore-adjacent files, etc.). The bundle is
       // self-contained (snarkjs + circomlibjs are inlined per
       // build-zk-webview.mjs) so cross-origin file access isn't required.
       allowFileAccess
-      allowFileAccessFromFileURLs
       // The exact bundled URI plus a coarse `file://*` fallback for
       // Android — RN-WebView's origin matching can normalize file URIs
       // inconsistently across platforms; the navigation guard above is
