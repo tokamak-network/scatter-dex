@@ -25,14 +25,31 @@ function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Field elements here (`id`, `commitment`, `secret`, `salt`,
+ * `pubKeyAx`, `pubKeyAy`) are stored as **base-10 decimal strings**,
+ * matching what the WebView bridge returns (`F.toString(hash, 10)`
+ * in `build-zk-webview.mjs`). This is the canonical on-device form;
+ * convert to 0x-bytes32 via `toBytes32Hex` only at contract-call
+ * boundaries. Previous revisions of this type labeled these "hex",
+ * which was misleading — callers that assumed 0x-prefixed ids would
+ * silently produce the wrong preimages.
+ */
 export interface StoredNote {
-  id: string;              // commitment hex (unique identifier)
-  commitment: string;      // Poseidon hash hex
-  secret: string;          // owner secret
-  salt: string;            // random salt
-  pubKeyAx: string;        // EdDSA BabyJub pubkey x
-  pubKeyAy: string;        // EdDSA BabyJub pubkey y
-  token: string;           // token address
+  /** commitment as decimal string — unique identifier */
+  id: string;
+  /** Poseidon hash as decimal string — same value as `id` */
+  commitment: string;
+  /** owner secret as decimal field element string */
+  secret: string;
+  /** random salt as decimal field element string */
+  salt: string;
+  /** EdDSA BabyJub pubkey x as decimal string */
+  pubKeyAx: string;
+  /** EdDSA BabyJub pubkey y as decimal string */
+  pubKeyAy: string;
+  /** token address (0x-prefixed checksummed hex) */
+  token: string;
   tokenSymbol: string;     // e.g., "WETH"
   amount: string;          // wei string
   leafIndex: number;       // Merkle tree position (-1 = pending)
