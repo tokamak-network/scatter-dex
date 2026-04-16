@@ -1,9 +1,17 @@
 /**
  * TokenService — 토큰 목록 및 잔액 조회
  *
- * 웹 frontend의 tokens.ts 패턴을 모바일에 맞게 포팅.
- * ConfigService에서 환경변수로 토큰 목록을 가져오고,
- * ETH(native) + WETH 자동 분리를 처리한다.
+ * The built-in list is intentionally minimal: ETH (native) + WETH,
+ * both derived from `ConfigService.getWethAddress()`. A full
+ * env-driven token list (mirroring the web frontend's `tokens.ts`)
+ * is a future enhancement — until it lands, only WETH is surfaced
+ * in `getTokenList()` and `getAllBalances()`.
+ *
+ * Arbitrary ERC-20s are still usable elsewhere in the app: any
+ * caller holding a valid token address can resolve its decimals via
+ * `getDecimals()` (hits the built-in list first, then on-chain
+ * `decimals()` with caching) and fetch balances via `getBalance()`
+ * with a constructed `TokenInfo`.
  */
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
