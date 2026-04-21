@@ -815,7 +815,7 @@ export default function TradeScreen() {
           </View>
           {activeNotes.length === 0 ? (
             <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 16 }}>
-              {loading ? 'Loading notes...' : 'No active notes found. Deposit first to trade.'}
+              {loading ? 'Loading notes...' : 'No active notes found. Fund Escrow first to trade.'}
             </Text>
           ) : (
             activeNotes.map((note) => (

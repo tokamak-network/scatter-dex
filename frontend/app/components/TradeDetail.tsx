@@ -3,6 +3,7 @@
 import { ethers } from "ethers";
 import { ArrowRight, Clock, Shield, Coins, CheckCircle2 } from "lucide-react";
 import { getTokenList, type TokenInfo } from "../lib/tokens";
+import { eqAddr } from "../lib/address";
 import { toAddressHex } from "../lib/zk/commitment";
 import { useClaimStatuses } from "../lib/zk/useClaimStatuses";
 import MarketOrderFeeBreakdown from "./MarketOrderFeeBreakdown";
@@ -55,7 +56,7 @@ export interface TradeData {
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
   try {
     const hex = address.startsWith("0x") ? address : "0x" + BigInt(address).toString(16).padStart(40, "0");
-    const t = tokens.find((tk) => tk.address.toLowerCase() === hex.toLowerCase());
+    const t = tokens.find((tk) => eqAddr(tk.address, hex));
     return t ? { symbol: t.symbol, decimals: t.decimals } : { symbol: hex.slice(0, 10) + "...", decimals: 18 };
   } catch {
     return { symbol: address.slice(0, 10) + "...", decimals: 18 };
@@ -93,7 +94,7 @@ export function TradeDetail({ trade, compact }: { trade: TradeData; compact?: bo
   // rows account for where the difference goes.
   const isSameToken = (() => {
     try { return BigInt(trade.order.sellToken) === BigInt(trade.order.buyToken); }
-    catch { return trade.order.sellToken.toLowerCase() === trade.order.buyToken.toLowerCase(); }
+    catch { return eqAddr(trade.order.sellToken, trade.order.buyToken); }
   })();
   const headerBuyAmount = isSameToken ? trade.order.sellAmount : trade.order.buyAmount;
 

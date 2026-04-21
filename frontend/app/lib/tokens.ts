@@ -1,4 +1,5 @@
 import { getEnv } from "./config";
+import { eqAddr } from "./address";
 
 export interface TokenInfo {
   address: string;       // on-chain token address (WETH address for native ETH)
@@ -20,7 +21,7 @@ export function getTokenList(): TokenInfo[] {
   const wethAddr = getEnv("NEXT_PUBLIC_WETH_ADDRESS");
   if (wethAddr) {
     const wethIdx = tokens.findIndex(
-      (t) => t.address.toLowerCase() === wethAddr.toLowerCase()
+      (t) => eqAddr(t.address, wethAddr)
     );
     if (wethIdx !== -1) {
       // Insert ETH before WETH, pointing to the same contract address

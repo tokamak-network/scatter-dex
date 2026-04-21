@@ -1,6 +1,7 @@
 import { Wallet } from "ethers";
 import WebSocket from "ws";
 import type { OrderSummary } from "../types/order.js";
+import { eqAddr } from "../lib/address.js";
 
 /**
  * Shared Orderbook Client — connects relayer to the shared orderbook server.
@@ -186,7 +187,7 @@ export class SharedOrderbookClient {
           if (data.type === "order:new" && data.order) {
             const order = data.order as OrderSummary;
             // Skip own orders
-            if (order.relayer.toLowerCase() !== this.wallet.address.toLowerCase()) {
+            if (!eqAddr(order.relayer, this.wallet.address)) {
               // De-dup against the snapshot path: if syncOpenOrders already
               // fired the callback for this id (common on reconnect), don't
               // invoke it again. Downstream matcher guards would catch the
@@ -333,10 +334,9 @@ export class SharedOrderbookClient {
       const res = await fetch(`${this.serverUrl}/api/orders`);
       if (!res.ok) return;
       const data = await res.json() as { orders: OrderSummary[] };
-      const myAddr = this.wallet.address.toLowerCase();
       let added = 0;
       for (const order of data.orders) {
-        if (order.relayer.toLowerCase() === myAddr) continue;
+        if (eqAddr(order.relayer, this.wallet.address)) continue;
         if (this.remoteOrders.has(order.id)) continue;
         this.remoteOrders.set(order.id, order);
         this.onOrderCallback?.(order);
@@ -364,7 +364,7 @@ export class SharedOrderbookClient {
         if (res.ok) {
           const data = await res.json() as { orders: OrderSummary[] };
           for (const order of data.orders) {
-            if (order.relayer.toLowerCase() !== this.wallet.address.toLowerCase()) {
+            if (!eqAddr(order.relayer, this.wallet.address)) {
               this.remoteOrders.set(order.id, order);
             }
           }

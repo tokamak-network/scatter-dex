@@ -12,6 +12,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
+import { TokenService } from '../services/TokenService';
 import { ethers } from 'ethers';
 import { formatBalance, formatRelativeTime, shortAddr } from '../lib/format';
 import { colors, layout, shadowSubtle, HIT_SLOP_SM } from '../styles/theme';
@@ -34,13 +35,14 @@ type BalanceScope = 'active' | 'all';
 
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
-  const { account, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error, wallets } = useWallet();
+  const { account, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error, wallets, readProvider } = useWallet();
   const { balances, refresh: refreshBal } = useBalances();
   const { activities, loading: actLoading, refresh: refreshAct } = useRecentActivity();
 
   const [showBalance, setShowBalance] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [privateTotal, setPrivateTotal] = useState('0');
+  const [allPublicTotal, setAllPublicTotal] = useState('0');
   const [balanceScope, setBalanceScope] = useState<BalanceScope>('active');
   const isMounted = useRef(true);
 
@@ -73,6 +75,31 @@ export default function HomeScreen() {
       });
   }, [account, balanceScope, wallets]);
 
+  // Public-balance aggregation for 'all' mode. useBalances already polls
+  // the active wallet every 15s for the 'active' view, so we only pay
+  // the fan-out cost (N wallets × M tokens RPC calls) when the user
+  // actually flips the toggle. allSettled isolates per-wallet failures
+  // so one unreachable account can't zero the card.
+  useEffect(() => {
+    if (balanceScope !== 'all' || wallets.length === 0) { setAllPublicTotal('0'); return; }
+    const tokens = TokenService.getTokenList();
+    const addrs = wallets.map((w) => w.address);
+    const fetches = addrs.flatMap((addr) =>
+      tokens.map(async (t) => {
+        try { return await TokenService.getBalance(readProvider, addr, t); }
+        catch { return '0'; }
+      }),
+    );
+    Promise.allSettled(fetches).then((results) => {
+      if (!isMounted.current) return;
+      let sum = 0;
+      for (const r of results) {
+        if (r.status === 'fulfilled') sum += parseFloat(r.value || '0');
+      }
+      setAllPublicTotal(sum.toFixed(6));
+    });
+  }, [balanceScope, wallets, readProvider]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await Promise.all([refreshBal(), refreshAct()]);
@@ -80,14 +107,14 @@ export default function HomeScreen() {
   };
 
   const walletTotal = balances.reduce((sum, b) => sum + parseFloat(b.balance || '0'), 0);
-  // In 'all' mode only private is aggregated — showing public alongside
-  // would mix an active-wallet number with an all-wallet number and
-  // mislead the user. Label changes so the number is self-describing.
+  // 'all' mode now aggregates both public (per-wallet × per-token RPC
+  // fan-out in the useEffect above) and private (note storage). 'active'
+  // mode keeps the original useBalances + active-address private total.
   const totalDisplay = balanceScope === 'all'
-    ? parseFloat(privateTotal).toFixed(4)
+    ? (parseFloat(allPublicTotal) + parseFloat(privateTotal)).toFixed(4)
     : (walletTotal + parseFloat(privateTotal)).toFixed(4);
   const balanceLabel = balanceScope === 'all'
-    ? 'Private Balance · All Wallets'
+    ? 'Total Balance · All Wallets'
     : 'Total Balance (Public + Private)';
   const showScopeToggle = wallets.length >= 2;
 

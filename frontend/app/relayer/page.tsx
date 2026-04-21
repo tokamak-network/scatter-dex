@@ -10,6 +10,7 @@ import { shortenAddress, formatBond, timeAgo } from "../lib/utils";
 import RelayerLogo from "../components/RelayerLogo";
 import SharedOrderbookStatus from "../components/SharedOrderbookStatus";
 import { getOrders, type SharedRelayer, type SharedOrder } from "../lib/sharedOrderbook";
+import { eqAddr } from "../lib/address";
 
 function feeBps(fee: number): string {
   return `${(fee / 100).toFixed(2)}%`;
@@ -71,7 +72,7 @@ function aggregateOrderbook(
   tokens: TokenInfo[],
   pair: string,
 ): { asks: PriceLevel[]; bids: PriceLevel[] } {
-  const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
+  const findToken = (addr: string) => tokens.find((t) => eqAddr(t.address, addr));
   const pts = pair.split("-");
   const tA = findToken(pts[0]);
   const tB = findToken(pts[1]);
@@ -211,7 +212,7 @@ export default function RelayersPage() {
 
   const tokens = useMemo(() => getTokenList(), []);
   const pairOptions = useMemo(() => buildPairOptions(tokens), [tokens]);
-  const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
+  const findToken = (addr: string) => tokens.find((t) => eqAddr(t.address, addr));
 
   const onlineRelayers = useMemo(() => relayers.filter((r) => r.online), [relayers]);
   // Lowercase comparison matches the rest of the file (sharedRelayerMap,
@@ -219,7 +220,7 @@ export default function RelayersPage() {
   // `?selected=0xABC...` work regardless of input casing.
   const selected = useMemo(
     () => selectedAddress
-      ? relayers.find((r) => r.address.toLowerCase() === selectedAddress.toLowerCase()) ?? null
+      ? relayers.find((r) => eqAddr(r.address, selectedAddress)) ?? null
       : null,
     [selectedAddress, relayers],
   );
@@ -418,7 +419,7 @@ export default function RelayersPage() {
               <tbody>
                 {sortedRelayers.map((r) => {
                   const shared = sharedRelayerMap.get(r.address.toLowerCase());
-                  const isSelected = selectedAddress?.toLowerCase() === r.address.toLowerCase();
+                  const isSelected = eqAddr(selectedAddress, r.address);
                   return (
                     <tr
                       key={r.address}
