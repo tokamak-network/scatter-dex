@@ -121,15 +121,14 @@ export default function HomeScreen() {
   };
 
   const walletTotal = balances.reduce((sum, b) => sum + parseFloat(b.balance || '0'), 0);
-  // 'all' mode now aggregates both public (per-wallet × per-token RPC
-  // fan-out in the useEffect above) and private (note storage). 'active'
-  // mode keeps the original useBalances + active-address private total.
-  const totalDisplay = balanceScope === 'all'
-    ? (parseFloat(allPublicTotal) + parseFloat(privateTotal)).toFixed(4)
-    : (walletTotal + parseFloat(privateTotal)).toFixed(4);
-  const balanceLabel = balanceScope === 'all'
-    ? 'Total Balance · All Wallets'
-    : 'Total Balance (Public + Private)';
+  // Display 보유금 (public on-chain) and 에스크로 예치금 (private notes)
+  // as two separate numbers instead of one combined total — users were
+  // confusing the summed figure with native balance and losing track of
+  // what was actually wallet-held vs CommitmentPool-locked.
+  const publicDisplay = balanceScope === 'all'
+    ? parseFloat(allPublicTotal).toFixed(4)
+    : walletTotal.toFixed(4);
+  const privateDisplay = parseFloat(privateTotal).toFixed(4);
   const showScopeToggle = wallets.length >= 2;
 
   const handleConnect = async () => {
@@ -178,14 +177,22 @@ export default function HomeScreen() {
               )}
               <View style={s.balanceTop}>
                 <View style={s.balanceLeft}>
-                  <Text style={s.balanceLabel}>{balanceLabel}</Text>
                   <View style={s.balanceRow}>
-                    <Text style={s.balanceAmount}>
-                      {showBalance ? totalDisplay : '••••••'}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.balanceLabel}>보유금 (Wallet)</Text>
+                      <Text style={s.balanceAmount}>
+                        {showBalance ? publicDisplay : '••••••'}
+                      </Text>
+                    </View>
                     <TouchableOpacity onPress={() => setShowBalance(!showBalance)} hitSlop={HIT_SLOP_SM}>
                       <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
                     </TouchableOpacity>
+                  </View>
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={s.balanceLabel}>에스크로 예치금 (Private)</Text>
+                    <Text style={[s.balanceAmount, { fontSize: 22, color: colors.primaryDark }]}>
+                      {showBalance ? privateDisplay : '••••••'}
+                    </Text>
                   </View>
                 </View>
                 <View style={s.balanceRight}>
