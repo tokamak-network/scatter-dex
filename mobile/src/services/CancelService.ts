@@ -223,7 +223,7 @@ export const CancelService = {
       }
 
       // Mark old note as spent (rotated) and persist the rotated one as active.
-      await NoteStorageService.updateNoteStatus(note.id, 'spent');
+      await NoteStorageService.updateNoteStatus(account, note.id, 'spent');
       const rotated: StoredNote = {
         id: newCommitment,
         commitment: newCommitment,
@@ -239,7 +239,7 @@ export const CancelService = {
         status: 'active',
         createdAt: Date.now(),
       };
-      await NoteStorageService.saveNote(rotated);
+      await NoteStorageService.saveNote(account, rotated);
 
       onProgress({ step: 'success', txHash: tx.hash });
       return tx.hash;

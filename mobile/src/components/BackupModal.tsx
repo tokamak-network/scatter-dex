@@ -20,12 +20,11 @@ import BaseModal from './BaseModal';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  /** Active wallet address. Backups are per-wallet: pending claims are
-   *  scoped to this address only. Notes and the address book are still
-   *  global (they become per-wallet in follow-up PRs). If absent (no
-   *  wallet connected), the modal disables export/import and prompts
-   *  the user to connect first rather than silently snapshotting an
-   *  empty pending-claims list. */
+  /** Active wallet address. Backups are per-wallet: notes and pending
+   *  claims are scoped to this address only (address book becomes
+   *  per-wallet in Phase 2.5 Part 3). If absent (no wallet connected),
+   *  the modal disables export/import and prompts the user to connect
+   *  first rather than silently snapshotting empty lists. */
   address: string | null;
   /** Called after a successful import so the caller can refresh stale
    *  in-memory state (e.g. SettingsScreen / TradeScreen lists). */

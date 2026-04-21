@@ -50,7 +50,10 @@ export const BackupService = {
   /**
    * Snapshot every locally-stored row into a single JSON-serializable
    * bundle. Caller is responsible for transport (Share sheet, clipboard,
-   * etc.).
+   * etc.). Notes and pending claims are scoped to `address`; the
+   * address book is still global here and becomes per-wallet in
+   * Phase 2.5 Part 3 — the `address` parameter will route through
+   * without a public signature change at that point.
    */
   async exportAll(address: string): Promise<BackupBundle> {
     // Don't swallow address-book errors: silently substituting an empty
@@ -58,7 +61,7 @@ export const BackupService = {
     // is actually missing labels. Wrap with context so the UI can name
     // which section failed.
     const [notes, pendingClaims, addressBook] = await Promise.all([
-      NoteStorageService.getAllNotes(),
+      NoteStorageService.getAllNotes(address),
       PendingClaimsStorage.list(address),
       AddressBookService.list(address).catch((err: unknown) => {
         const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
@@ -127,7 +130,7 @@ export const BackupService = {
     // we only need the ids for the dedup check, and `getAllNotes` would
     // otherwise pay for N parallel SecureStore reads to hydrate full note
     // bodies we immediately discard.
-    const seenNoteIds = new Set(await NoteStorageService.getNoteIds());
+    const seenNoteIds = new Set(await NoteStorageService.getNoteIds(address));
     const notesToSave: StoredNote[] = [];
     for (const note of bundle.notes) {
       if (seenNoteIds.has(note.id)) {
@@ -138,7 +141,7 @@ export const BackupService = {
       notesToSave.push(note);
     }
     if (notesToSave.length > 0) {
-      const results = await NoteStorageService.saveNotesBulk(notesToSave);
+      const results = await NoteStorageService.saveNotesBulk(address, notesToSave);
       for (const r of results) {
         if (r.ok) summary.notes.added++;
         else summary.notes.skipped++;

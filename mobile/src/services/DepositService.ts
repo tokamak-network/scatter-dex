@@ -239,7 +239,7 @@ export const DepositService = {
         createdAt: Date.now(),
       };
 
-      await NoteStorageService.saveNote(storedNote);
+      await NoteStorageService.saveNote(account, storedNote);
 
       onProgress({ step: 'success', txHash: tx.hash });
       return storedNote;

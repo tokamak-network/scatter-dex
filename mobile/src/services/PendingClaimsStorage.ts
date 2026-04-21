@@ -143,11 +143,31 @@ async function readMeta(address: string, id: string): Promise<MetaRow | null> {
 
 // ─── Migration ─────────────────────────────────────────────────────
 
+// Module-level latch so concurrent callers (different wallet addresses
+// calling list/append around the same time) can't each enter
+// `migrateV0ToV1` in parallel and clobber each other's V1_IDS_KEY
+// read-modify-write — last-write-wins there would orphan migrated
+// meta/secret rows, i.e. permanent claim-secret loss. Shared across
+// all addresses because the v0→v1 migration reads/writes global keys,
+// not per-address ones. Reset on failure so a transient SecureStore
+// hiccup can retry.
+let v0ToV1Promise: Promise<void> | null = null;
+function ensureV0ToV1(): Promise<void> {
+  if (!v0ToV1Promise) {
+    v0ToV1Promise = migrateV0ToV1().catch((err) => {
+      v0ToV1Promise = null;
+      throw err;
+    });
+  }
+  return v0ToV1Promise;
+}
+
 /**
  * v0 → v1 migration (reused unchanged from the pre-multi-wallet revision).
  * Splits the legacy `scatterdex_pending_claims` blob into the v1 split
  * shape (secret in SecureStore, meta in AsyncStorage, id index). Runs
- * once per install, then the marker prevents re-entry.
+ * once per install, then the marker prevents re-entry. Callers must go
+ * through `ensureV0ToV1()` to honor the concurrency latch.
  */
 async function migrateV0ToV1(): Promise<void> {
   if ((await AsyncStorage.getItem(V1_MIGRATION_MARKER)) === '1') {
@@ -221,7 +241,10 @@ async function migrateV1ToV2IfNeeded(address: string): Promise<void> {
 
   // v1 must be in place before we can rekey it. If v0→v1 hasn't run
   // yet (pre-mobile-app install in the wild), this is the moment.
-  await migrateV0ToV1();
+  // Routed through the module-level latch so two addresses entering
+  // v1→v2 concurrently share a single v0→v1 attempt instead of racing
+  // on the global V1_IDS_KEY read-modify-write.
+  await ensureV0ToV1();
 
   const v1RawIds = await AsyncStorage.getItem(V1_IDS_KEY);
   const legacyBuiltinAddress = await SecureStore.getItemAsync(LEGACY_BUILTIN_ADDRESS_KEY);

@@ -101,10 +101,17 @@ export default function HistoryScreen() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!account) {
+        setAllNotes([]);
+        setOrderStatuses(new Map());
+        setPendingOrders([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
-        const notes = await NoteStorageService.getAllNotes();
+        const notes = await NoteStorageService.getAllNotes(account);
         if (cancelled) return;
         setAllNotes(notes);
 
@@ -192,7 +199,7 @@ export default function HistoryScreen() {
               if (txHash) {
                 Alert.alert('Order Cancelled', `Tx: ${txHash.slice(0, 10)}…`);
                 // Pull fresh notes from storage — CancelService rotated them.
-                const fresh = await NoteStorageService.getAllNotes();
+                const fresh = await NoteStorageService.getAllNotes(account);
                 setAllNotes(fresh);
                 setPendingOrders((prev) => prev.filter((o) => o.nonce !== nonce));
               }
