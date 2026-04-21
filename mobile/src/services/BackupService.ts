@@ -11,12 +11,11 @@
  * leak surface for no recovery benefit.
  *
  * Scope: **per-wallet** (Option A). Callers pass the active wallet
- * `address`; pending claims are drawn from that address's namespace
- * only, so each wallet backs up independently. Notes and the address
- * book stay global for now — they'll become per-wallet in their own
- * rekey PRs (Phase 2 and Phase 2.5 Part 3) and the `address` parameter
- * here will route to their per-address APIs at that point without a
- * public signature change.
+ * `address`; pending claims and the address book are drawn from that
+ * address's namespace only, so each wallet backs up independently.
+ * Notes are still global here — they become per-wallet in Phase 2's
+ * own rekey PR and the `address` parameter routes to the per-address
+ * API at that point without a public signature change.
  *
  * Restore policy is *additive*: existing entries with the same id /
  * commitment / address are kept, never overwritten. The same backup
@@ -61,7 +60,7 @@ export const BackupService = {
     const [notes, pendingClaims, addressBook] = await Promise.all([
       NoteStorageService.getAllNotes(),
       PendingClaimsStorage.list(address),
-      AddressBookService.list().catch((err: unknown) => {
+      AddressBookService.list(address).catch((err: unknown) => {
         const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
         throw new Error(`Failed to read address book for backup${detail}`);
       }),
@@ -214,6 +213,7 @@ export const BackupService = {
     // re-wrote the whole book under its own lock.
     if (bundle.addressBook.length > 0) {
       const results = await AddressBookService.addMany(
+        address,
         bundle.addressBook.map((entry) => ({
           label: entry.label,
           address: entry.address,

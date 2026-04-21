@@ -572,6 +572,7 @@ export default function SettingsScreen() {
       <AddressBookModal
         visible={addressBookVisible}
         mode="manage"
+        ownerAddress={account}
         onClose={() => setAddressBookVisible(false)}
       />
 
