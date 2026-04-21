@@ -1,19 +1,21 @@
 /**
  * DepositScreen — converted from web design prototype Deposit.tsx
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { ProviderService } from '../services/ProviderService';
 import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
+import BaseModal from '../components/BaseModal';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
-import { formatBalance } from '../lib/format';
+import { formatBalance, shortAddr } from '../lib/format';
 import { ethers } from 'ethers';
 import { friendlyError } from '../lib/error-messages';
 
@@ -31,7 +33,7 @@ const STEP_PROGRESS: Record<DepositStep, number> = {
 
 export default function DepositScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, readProvider } = useWallet();
+  const { account, signer, readProvider, wallets, activeWalletId, switchWallet, connectionMode } = useWallet();
 
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
@@ -47,6 +49,10 @@ export default function DepositScreen() {
   const [escrows, setEscrows] = useState<StoredNote[]>([]);
   const [escrowsLoading, setEscrowsLoading] = useState(false);
   const [escrowFilter, setEscrowFilter] = useState<'active' | 'spent'>('active');
+  // Wallet selection uses a dedicated BaseModal list, not Alert.alert —
+  // Alert supports at most 3 buttons on both iOS and Android, so users
+  // with 3+ built-in wallets could not select the later ones.
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
 
   // Token selection
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
@@ -55,12 +61,33 @@ export default function DepositScreen() {
   const [balance, setBalance] = useState<string | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
 
-  // Load token list
-  useEffect(() => {
+  // Re-read the token list on every focus AND on provider resets. The
+  // cached list can be built before ConfigService finishes restoring
+  // the saved chainId (a fresh app launch hits getTokenList once while
+  // the chainId default still points at Thanos Sepolia, so per-chain
+  // extras like anvil USDC get omitted). Reloading on focus + on
+  // ProviderService reset catches both the post-restore case and any
+  // later network switch.
+  const reloadTokens = useCallback(() => {
     const list = TokenService.getTokenList();
     setTokens(list);
-    if (list.length > 0) setSelectedToken(list[0]);
+    setSelectedToken((prev) => {
+      // Preserve the user's current selection if it still exists on
+      // the new chain (matched by address); otherwise fall back to the
+      // first token so the form doesn't render an empty selector.
+      if (prev && list.some((t) => t.address === prev.address && t.isNative === prev.isNative)) {
+        return prev;
+      }
+      return list[0] ?? null;
+    });
   }, []);
+
+  useFocusEffect(useCallback(() => { reloadTokens(); }, [reloadTokens]));
+
+  useEffect(() => {
+    const unsubscribe = ProviderService.subscribeReset(() => reloadTokens());
+    return unsubscribe;
+  }, [reloadTokens]);
 
   // Reload escrow list when active wallet or filter changes. The "Active"
   // filter surfaces anything NOT yet spent — both `status === 'active'`
@@ -84,6 +111,19 @@ export default function DepositScreen() {
   }, [account, escrowFilter]);
 
   useEffect(() => { reloadEscrows(); }, [reloadEscrows]);
+
+  // Eagerly clear escrow + form state on wallet switch/disconnect so the
+  // UI does not momentarily render the previous wallet's notes under
+  // the new wallet's picker label while the `[account]` effect above
+  // is still running. Mirrors the pattern used in Trade/History/Claim.
+  useEffect(() => {
+    const unsubscribe = NoteStorageService.subscribeWalletSwitch(() => {
+      setEscrows([]);
+      setEscrowsLoading(false);
+      setDepositError(null);
+    });
+    return unsubscribe;
+  }, []);
 
   // Land on 'new' tab automatically on *first mount* if the wallet has
   // nothing in NoteStorage at all. Using a ref so that later filter
@@ -166,7 +206,11 @@ export default function DepositScreen() {
           }
           if (p.step === 'error') {
             setIsGenerating(false);
-            setDepositError(p.error || 'Escrow failed');
+            // DepositService forwards the raw ethers/RPC `err.message` here;
+            // run it through friendlyError so the user sees a one-line
+            // summary ("Insufficient funds…") instead of a 400-char
+            // JSON-RPC dump.
+            setDepositError(friendlyError(p.error || 'Escrow failed'));
           }
         };
 
@@ -180,6 +224,48 @@ export default function DepositScreen() {
 
   const displayBalance = loadingBalance ? '...' : (balance ? `${formatBalance(balance)} ${selectedToken?.symbol || ''}` : '—');
 
+  // Summary aggregates by token *address* (not symbol) so two tokens
+  // with the same symbol on different chains — or collisions between
+  // built-in and custom registries — don't merge. Decimals resolve per
+  // token via the active-chain list; fallback to 18 only if unknown.
+  // Memoised so we don't recompute on every render (was triggered by
+  // Gemini + Copilot review on #379).
+  const escrowSummary = useMemo(() => {
+    type Row = { address: string; symbol: string; total: bigint; decimals: number };
+    const byAddress = new Map<string, Row>();
+    for (const n of escrows) {
+      const addr = (n.token ?? '').toLowerCase();
+      const key = addr || n.tokenSymbol; // fall back for pre-token-addr notes
+      const existing = byAddress.get(key);
+      let amt: bigint;
+      try { amt = BigInt(n.amount || '0'); }
+      catch { continue; }
+      if (existing) {
+        existing.total += amt;
+      } else {
+        const t = tokens.find((x) => x.address.toLowerCase() === addr);
+        byAddress.set(key, {
+          address: addr,
+          symbol: n.tokenSymbol,
+          total: amt,
+          decimals: t?.decimals ?? 18,
+        });
+      }
+    }
+    return Array.from(byAddress.values());
+  }, [escrows, tokens]);
+
+  // Guard Confirm Escrow against amount > balance. parseFloat is
+  // adequate here since `balance` is already formatUnits-applied and
+  // `amount` is a decimal-pad string; the send path will still
+  // INSUFFICIENT_FUNDS on gas-shortfall edges, but the obvious
+  // "5 ETH from a 1 ETH wallet" case blocks at the button.
+  const amountNum = parseFloat(amount);
+  const balanceNum = balance ? parseFloat(balance) : NaN;
+  const insufficientBalance =
+    Number.isFinite(amountNum) && amountNum > 0 &&
+    Number.isFinite(balanceNum) && amountNum > balanceNum;
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.container}>
@@ -188,6 +274,36 @@ export default function DepositScreen() {
           variant="surface"
           onBack={() => navigation.goBack()}
         />
+
+        {/* Unified wallet picker — driven by activeWalletId so both tabs
+            always show the same wallet, matching Home's active selection.
+            Hidden on WalletConnect or when only one wallet exists. */}
+        {connectionMode === 'builtin' && wallets.length >= 2 && (
+          <View style={s.walletPickerWrap}>
+            <TouchableOpacity
+              style={s.tokenSelector}
+              activeOpacity={0.7}
+              onPress={() => setWalletPickerOpen(true)}
+            >
+              <View style={s.tokenLeft}>
+                <View style={s.tokenDot} />
+                <Text style={s.tokenText}>
+                  {(() => {
+                    const w = wallets.find((x) => x.id === activeWalletId);
+                    if (!w) return account ? shortAddr(account) : 'No wallet';
+                    // Duplicating shortAddr on both sides of the separator
+                    // when the wallet has no nickname was redundant and
+                    // looked unintended — show only the address then.
+                    return w.nickname
+                      ? `${w.nickname} · ${shortAddr(w.address)}`
+                      : shortAddr(w.address);
+                  })()}
+                </Text>
+              </View>
+              <Text style={s.chevron}>▾</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Tab header — My Escrows (commitment list) vs New Escrow (form).
             Landing tab is 'escrows' per UX guidance; the reload effect
@@ -212,6 +328,25 @@ export default function DepositScreen() {
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
           {tabMode === 'escrows' ? (
             <View style={s.card}>
+              {/* Per-wallet summary — totals the currently-filtered notes
+                  grouped by token symbol so the user can see "how much of
+                  each token do I have locked as private escrow". Not
+                  confused with native balance because the amounts here
+                  came out of the user's public wallet at deposit time
+                  and are now in the CommitmentPool. */}
+              {escrows.length > 0 && (
+                <View style={s.escrowSummary}>
+                  <Text style={s.escrowSummaryLabel}>
+                    {escrowFilter === 'spent' ? 'Total spent' : 'Total active'}
+                    {account ? ` · ${shortAddr(account)}` : ''}
+                  </Text>
+                  {escrowSummary.map((row) => (
+                    <Text key={row.address || row.symbol} style={s.escrowSummaryAmount}>
+                      {formatBalance(ethers.formatUnits(row.total, row.decimals))} {row.symbol}
+                    </Text>
+                  ))}
+                </View>
+              )}
               <View style={s.escrowFilterRow}>
                 <TouchableOpacity
                   style={[s.escrowFilterBtn, escrowFilter === 'active' && s.escrowFilterBtnActive]}
@@ -340,7 +475,9 @@ export default function DepositScreen() {
                   <Text style={s.maxText}>MAX</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={s.fieldHint}>Available: {displayBalance}</Text>
+              <Text style={[s.fieldHint, insufficientBalance && { color: colors.danger }]}>
+                {insufficientBalance ? `Exceeds balance (${displayBalance})` : `Available: ${displayBalance}`}
+              </Text>
             </View>
           </View>
           )}
@@ -392,23 +529,92 @@ export default function DepositScreen() {
             above this button instead of being masked behind it. */}
         {tabMode === 'new' && (
           <View style={s.bottomAction}>
-            <TouchableOpacity
-              style={[s.actionBtn, isGenerating && s.actionBtnDisabled]}
-              onPress={handleConfirm}
-              disabled={isGenerating}
-              activeOpacity={0.8}
-            >
-              <Text style={s.actionBtnText}>
-                {depositError
-                  ? 'Try Again'
-                  : isGenerating
+            {depositError ? (
+              // Error state: give the user both Try Again and Cancel.
+              // Without Cancel the only path off Step 2 was to keep
+              // retrying — e.g. the INSUFFICIENT_FUNDS flow had no way
+              // back to the form to pick a wallet with balance or edit
+              // the amount.
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={[s.actionBtn, s.actionBtnSecondary, { flex: 1 }]}
+                  onPress={() => {
+                    setDepositError(null);
+                    setStep(1);
+                    setProgress(0);
+                    setIsGenerating(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.actionBtnSecondaryText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.actionBtn, { flex: 1 }]}
+                  onPress={handleConfirm}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.actionBtnText}>Try Again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[s.actionBtn, (isGenerating || insufficientBalance) && s.actionBtnDisabled]}
+                onPress={handleConfirm}
+                disabled={isGenerating || insufficientBalance}
+                activeOpacity={0.8}
+              >
+                <Text style={s.actionBtnText}>
+                  {isGenerating
                     ? (progress < 50 ? 'Preparing…' : progress < 75 ? 'Generating Proof…' : progress < 90 ? 'Submitting…' : 'Finalizing…')
-                    : 'Confirm Escrow'}
-              </Text>
-            </TouchableOpacity>
+                    : insufficientBalance
+                      ? 'Insufficient Balance'
+                      : 'Confirm Escrow'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
+
+      <BaseModal
+        visible={walletPickerOpen}
+        onClose={() => setWalletPickerOpen(false)}
+        title="Select Wallet"
+      >
+        <View style={{ gap: 8 }}>
+          {wallets.map((w) => {
+            const isActive = w.id === activeWalletId;
+            return (
+              <TouchableOpacity
+                key={w.id}
+                style={[s.walletRow, isActive && s.walletRowActive]}
+                onPress={() => {
+                  setWalletPickerOpen(false);
+                  if (!isActive) {
+                    switchWallet(w.id).catch((err: any) =>
+                      Alert.alert('Error', err?.message || 'Failed to switch wallet'),
+                    );
+                  }
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={s.walletRowTitle}>
+                    {w.nickname || shortAddr(w.address)}
+                  </Text>
+                  {w.nickname && (
+                    <Text style={s.walletRowSub}>{shortAddr(w.address)}</Text>
+                  )}
+                </View>
+                {isActive && (
+                  <View style={s.walletRowBadge}>
+                    <Text style={s.walletRowBadgeText}>Active</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </BaseModal>
     </SafeAreaView>
   );
 }
@@ -438,6 +644,19 @@ const s = StyleSheet.create({
   },
   cardDisabled: { opacity: 0.5 },
   cardTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
+
+  walletPickerWrap: { marginHorizontal: layout.screenHZ, marginTop: 12 },
+  walletRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+    backgroundColor: colors.bgSecondary,
+    borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight,
+  },
+  walletRowActive: { borderColor: colors.primary, backgroundColor: colors.primaryLight },
+  walletRowTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  walletRowSub: { fontSize: 11, color: colors.textMuted, fontFamily: 'monospace', marginTop: 2 },
+  walletRowBadge: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 },
+  walletRowBadgeText: { fontSize: 10, fontWeight: '700', color: colors.successDark },
 
   // Tab header (My Escrows / New Escrow)
   tabBar: {
@@ -470,6 +689,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.bgSecondary,
     borderWidth: 1, borderColor: colors.borderLight,
   },
+  escrowSummary: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10,
+    backgroundColor: colors.primaryLight, gap: 2,
+  },
+  escrowSummaryLabel: { fontSize: 11, fontWeight: '600', color: colors.primary },
+  escrowSummaryAmount: { fontSize: 18, fontWeight: '800', color: colors.primaryDark },
   escrowTokenText: { fontSize: 14, fontWeight: '700', color: colors.text },
   escrowSubText: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontFamily: 'monospace' },
   escrowCommitText: { fontSize: 10, color: colors.textDim, marginTop: 2, fontFamily: 'monospace' },
@@ -526,4 +751,6 @@ const s = StyleSheet.create({
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
+  actionBtnSecondary: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderMedium, shadowOpacity: 0 },
+  actionBtnSecondaryText: { color: colors.textSecondary, fontSize: 16, fontWeight: '700' },
 });

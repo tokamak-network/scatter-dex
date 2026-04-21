@@ -1,1 +1,17 @@
-{}
+{
+  "31337": {
+    "rpcUrl": "http://localhost:8545",
+    "weth": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+    "commitmentPool": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+    "privateSettlement": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+    "identityGate": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "relayerRegistry": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+    "feeVault": "0x322813Fd9A801c5507c9de605d63CEA4f2CE6c44",
+    "batchExecutor": "0x09635F643e140090A9A8Dcd712eD6285858ceBef",
+    "relayerUrl": "http://localhost:3002",
+    "sharedOrderbookUrl": "http://localhost:4000",
+    "tokens": [
+      { "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6", "symbol": "USDC", "decimals": 18 }
+    ]
+  }
+}

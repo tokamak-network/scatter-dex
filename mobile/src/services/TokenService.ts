@@ -42,11 +42,35 @@ ProviderService.subscribeReset(() => {
 
 function buildDefaultTokens(): TokenInfo[] {
   const wethAddr = ConfigService.getWethAddress();
-  if (!wethAddr) return [];
-  return [
-    { address: wethAddr, symbol: 'ETH', decimals: 18, isNative: true },
-    { address: wethAddr, symbol: 'WETH', decimals: 18, isNative: false },
-  ];
+  const tokens: TokenInfo[] = [];
+  if (wethAddr) {
+    tokens.push(
+      { address: wethAddr, symbol: 'ETH', decimals: 18, isNative: true },
+      { address: wethAddr, symbol: 'WETH', decimals: 18, isNative: false },
+    );
+  } else {
+    // Native ETH still queryable via provider.getBalance even without a
+    // configured WETH contract — surface it so Home's balance card isn't
+    // empty on chains without a deployed WETH.
+    tokens.push({ address: ethers.ZeroAddress, symbol: 'ETH', decimals: 18, isNative: true });
+  }
+  // Per-chain extras (USDC on anvil, USDT on fork, etc.) registered in
+  // fork-contracts.json's `tokens` array. Dedup by lowercase address so
+  // repeated entries (WETH listed there on top of the default pair)
+  // don't show up twice in the picker.
+  const seen = new Set(tokens.map((t) => t.address.toLowerCase()));
+  for (const extra of ConfigService.getExtraTokens()) {
+    const key = extra.address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tokens.push({
+      address: extra.address,
+      symbol: extra.symbol,
+      decimals: extra.decimals,
+      isNative: false,
+    });
+  }
+  return tokens;
 }
 
 export const TokenService = {
