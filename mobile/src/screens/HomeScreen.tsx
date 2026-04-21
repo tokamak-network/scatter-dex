@@ -22,32 +22,56 @@ const ACT_ICONS: Record<ActivityType, string> = {
 };
 const FALLBACK_ACT_ICON = '•';
 
+// Balance scope: 'active' shows (public + private) for the active wallet
+// — the default, because mixing multiple wallets' balances in a single
+// number is a privacy leak on a glance (shoulder-surf, screenshots).
+// 'all' aggregates private balances across every built-in wallet; the
+// public balance stays active-only since `useBalances` is tied to the
+// connected signer and fanning it out per-address would spam RPC on
+// every mount. The label switches accordingly so the user always knows
+// which number they're reading.
+type BalanceScope = 'active' | 'all';
+
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
-  const { account, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error } = useWallet();
+  const { account, connectionMode, isConnecting, connect, connectBuiltin, disconnect, error, wallets } = useWallet();
   const { balances, refresh: refreshBal } = useBalances();
   const { activities, loading: actLoading, refresh: refreshAct } = useRecentActivity();
 
   const [showBalance, setShowBalance] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [privateTotal, setPrivateTotal] = useState('0');
+  const [balanceScope, setBalanceScope] = useState<BalanceScope>('active');
   const isMounted = useRef(true);
 
   useEffect(() => {
     return () => { isMounted.current = false; };
   }, []);
 
+  // Private-balance fetch, re-fired on scope or active-account change.
+  // Keep the scope switch cheap — a WalletConnect-only session (no
+  // built-in wallets in `wallets`) falls through the 'all' branch
+  // with an empty total instead of hanging on an empty Promise.all.
   useEffect(() => {
-    if (!account) { setPrivateTotal('0'); return; }
-    NoteStorageService.getPrivateBalances(account).then((map) => {
-      if (!isMounted.current) return;
-      let total = 0n;
-      for (const [, v] of map) total += v.total;
-      setPrivateTotal(ethers.formatEther(total));
-    }).catch(() => {
-      // Ignore errors when component is unmounted
-    });
-  }, [account]);
+    const scopeWallets = balanceScope === 'all'
+      ? wallets.map((w) => w.address)
+      : (account ? [account] : []);
+
+    if (scopeWallets.length === 0) { setPrivateTotal('0'); return; }
+
+    Promise.all(scopeWallets.map((addr) => NoteStorageService.getPrivateBalances(addr)))
+      .then((maps) => {
+        if (!isMounted.current) return;
+        let total = 0n;
+        for (const map of maps) for (const [, v] of map) total += v.total;
+        setPrivateTotal(ethers.formatEther(total));
+      })
+      .catch(() => {
+        // SecureStore/AsyncStorage hiccups shouldn't crash the Home
+        // card — a stale total is better than a red box. Error surface
+        // is the per-wallet screens' job anyway.
+      });
+  }, [account, balanceScope, wallets]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -56,7 +80,16 @@ export default function HomeScreen() {
   };
 
   const walletTotal = balances.reduce((sum, b) => sum + parseFloat(b.balance || '0'), 0);
-  const totalDisplay = (walletTotal + parseFloat(privateTotal)).toFixed(4);
+  // In 'all' mode only private is aggregated — showing public alongside
+  // would mix an active-wallet number with an all-wallet number and
+  // mislead the user. Label changes so the number is self-describing.
+  const totalDisplay = balanceScope === 'all'
+    ? parseFloat(privateTotal).toFixed(4)
+    : (walletTotal + parseFloat(privateTotal)).toFixed(4);
+  const balanceLabel = balanceScope === 'all'
+    ? 'Private Balance · All Wallets'
+    : 'Total Balance (Public + Private)';
+  const showScopeToggle = wallets.length >= 2;
 
   const handleConnect = async () => {
     try { await connectBuiltin(); }
@@ -84,9 +117,27 @@ export default function HomeScreen() {
           <View style={s.balanceCard}>
             <View style={s.balanceCardBg} />
             <View style={s.balanceContent}>
+              {showScopeToggle && (
+                <View style={s.scopeToggleRow}>
+                  <TouchableOpacity
+                    style={[s.scopeToggle, balanceScope === 'active' && s.scopeToggleActive]}
+                    onPress={() => setBalanceScope('active')}
+                    hitSlop={HIT_SLOP_SM}
+                  >
+                    <Text style={[s.scopeToggleText, balanceScope === 'active' && s.scopeToggleTextActive]}>Active</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.scopeToggle, balanceScope === 'all' && s.scopeToggleActive]}
+                    onPress={() => setBalanceScope('all')}
+                    hitSlop={HIT_SLOP_SM}
+                  >
+                    <Text style={[s.scopeToggleText, balanceScope === 'all' && s.scopeToggleTextActive]}>All wallets</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               <View style={s.balanceTop}>
                 <View style={s.balanceLeft}>
-                  <Text style={s.balanceLabel}>Total Balance (Public + Private)</Text>
+                  <Text style={s.balanceLabel}>{balanceLabel}</Text>
                   <View style={s.balanceRow}>
                     <Text style={s.balanceAmount}>
                       {showBalance ? totalDisplay : '••••••'}
@@ -272,4 +323,17 @@ const s = StyleSheet.create({
   actSub: { fontSize: 12, color: colors.textMuted, fontWeight: '500', marginTop: 2 },
 
   emptyText: { fontSize: 14, color: colors.textMuted, textAlign: 'center', paddingVertical: 20 },
+
+  scopeToggleRow: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.bgSecondary,
+    borderRadius: 99,
+    padding: 2,
+    marginBottom: 10,
+  },
+  scopeToggle: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99 },
+  scopeToggleActive: { backgroundColor: colors.card, ...shadowSubtle },
+  scopeToggleText: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
+  scopeToggleTextActive: { color: colors.text },
 });
