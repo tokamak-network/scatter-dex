@@ -148,6 +148,7 @@ async function addWalletInternal(
   mnemonic: string | undefined,
   source: WalletSource,
   nickname: string | undefined,
+  seedInfo?: { seedId: string; derivationIndex: number },
 ): Promise<WalletMeta> {
   await ensureMigrated();
   const checksummed = ethers.getAddress(address);
@@ -163,6 +164,7 @@ async function addWalletInternal(
     nickname: nickname ?? `Wallet ${list.length + 1}`,
     source,
     createdAt: Date.now(),
+    ...(seedInfo ? { seedId: seedInfo.seedId, derivationIndex: seedInfo.derivationIndex } : {}),
   };
   const secret: WalletSecret = mnemonic
     ? { privateKey, mnemonic }
@@ -244,27 +246,86 @@ export const KeySecurityService = {
 
   // ─── Wallet create / import ───────────────────────
 
-  async createWallet(nickname?: string): Promise<{ id: string; address: string; mnemonic: string }> {
+  /**
+   * Create a new wallet. When an existing seed-backed wallet (source
+   * 'created' or 'mnemonic') is already stored, we reuse its mnemonic and
+   * derive the next BIP-44 account index from it — the user only ever has
+   * one recovery phrase to back up, not one per button press. Only when the
+   * index is empty (or only holds privateKey-imported wallets) do we mint
+   * a fresh mnemonic.
+   *
+   * Returned `mnemonic` may therefore be the same seed the caller has
+   * already been shown in a prior create; the alert copy should say so.
+   */
+  async createWallet(nickname?: string): Promise<{ id: string; address: string; mnemonic: string; reusedSeed: boolean }> {
+    await ensureMigrated();
+    const list = await readIndex();
+
+    // Look for an existing seed we can derive a new account from. Prefer
+    // wallets that already have a seedId (new-format) before falling back
+    // to pre-HD legacy wallets that were created one-seed-per-account.
+    const hosted = list.find(w => w.seedId !== undefined && (w.source === 'created' || w.source === 'mnemonic'))
+      ?? list.find(w => (w.source === 'created' || w.source === 'mnemonic'));
+
+    if (hosted) {
+      if (!(await this._biometricGate('Authenticate to derive a new account'))) {
+        throw new Error('Authentication cancelled');
+      }
+      const secret = await readSecret(hosted.id);
+      if (!secret?.mnemonic) {
+        // Host wallet lost its mnemonic (corrupt install) — fall through
+        // and mint a fresh seed rather than failing the create outright.
+      } else {
+        const seedId = hosted.seedId ?? hosted.id; // legacy wallets adopt their own id as seedId
+        const indexes = list
+          .filter(w => (w.seedId ?? w.id) === seedId)
+          .map(w => w.derivationIndex ?? 0);
+        const nextIndex = indexes.length === 0 ? 0 : Math.max(...indexes) + 1;
+        const derived = ethers.HDNodeWallet.fromPhrase(
+          secret.mnemonic,
+          undefined,
+          `m/44'/60'/0'/0/${nextIndex}`,
+        );
+        const meta = await addWalletInternal(
+          derived.privateKey,
+          derived.address,
+          secret.mnemonic,
+          'created',
+          nickname,
+          { seedId, derivationIndex: nextIndex },
+        );
+        return { id: meta.id, address: meta.address, mnemonic: secret.mnemonic, reusedSeed: true };
+      }
+    }
+
+    // No reusable seed — mint a fresh mnemonic and anchor it with a new
+    // seedId. Subsequent creates will derive additional accounts from
+    // this one.
     const hdWallet = ethers.Wallet.createRandom();
     const mnemonic = hdWallet.mnemonic!.phrase;
+    const seedId = generateWalletId();
     const meta = await addWalletInternal(
       hdWallet.privateKey,
       hdWallet.address,
       mnemonic,
       'created',
       nickname,
+      { seedId, derivationIndex: 0 },
     );
-    return { id: meta.id, address: meta.address, mnemonic };
+    return { id: meta.id, address: meta.address, mnemonic, reusedSeed: false };
   },
 
   async importFromMnemonic(mnemonic: string, nickname?: string): Promise<string> {
-    const hdWallet = ethers.Wallet.fromPhrase(mnemonic.trim());
+    const trimmed = mnemonic.trim();
+    const hdWallet = ethers.Wallet.fromPhrase(trimmed);
+    const seedId = generateWalletId();
     const meta = await addWalletInternal(
       hdWallet.privateKey,
       hdWallet.address,
-      mnemonic.trim(),
+      trimmed,
       'mnemonic',
       nickname,
+      { seedId, derivationIndex: 0 },
     );
     return meta.address;
   },

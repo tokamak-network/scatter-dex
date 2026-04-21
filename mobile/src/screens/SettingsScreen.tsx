@@ -367,10 +367,12 @@ export default function SettingsScreen() {
   const handleCreateWallet = useCallback(async () => {
     setWalletLoading(true);
     try {
-      const { mnemonic, address } = await KeySecurityService.createWallet();
+      const { mnemonic, address, reusedSeed } = await KeySecurityService.createWallet();
       Alert.alert(
         'Wallet Created',
-        `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        reusedSeed
+          ? `Address: ${shortAddr(address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
+          : `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
         [{
           text: 'I have saved it',
           onPress: async () => {
