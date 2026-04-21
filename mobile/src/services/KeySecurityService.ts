@@ -105,7 +105,12 @@ async function runMigration(): Promise<void> {
 }
 
 function ensureMigrated(): Promise<void> {
-  if (!migrationPromise) migrationPromise = runMigration();
+  if (!migrationPromise) {
+    migrationPromise = runMigration().catch(err => {
+      migrationPromise = null;
+      throw err;
+    });
+  }
   return migrationPromise;
 }
 
@@ -219,7 +224,6 @@ export const KeySecurityService = {
     return SecureStore.getItemAsync(ACTIVE_WALLET_ID_KEY);
   },
 
-
   async setActiveWalletId(id: string): Promise<void> {
     await ensureMigrated();
     const [list, secret] = await Promise.all([readIndex(), readSecret(id)]);
@@ -311,10 +315,12 @@ export const KeySecurityService = {
     await ensureMigrated();
     const activeId = await SecureStore.getItemAsync(ACTIVE_WALLET_ID_KEY);
     if (!activeId) return null;
-    const secret = await readSecret(activeId);
-    if (!secret?.mnemonic) return null;
+    const list = await readIndex();
+    const meta = list.find(w => w.id === activeId);
+    if (!meta || meta.source === 'privateKey') return null;
     if (!(await this.authenticate('Authenticate to view recovery phrase'))) return null;
-    return secret.mnemonic;
+    const secret = await readSecret(activeId);
+    return secret?.mnemonic ?? null;
   },
 
   async authorizeTransaction(description: string): Promise<boolean> {
@@ -325,8 +331,11 @@ export const KeySecurityService = {
 
   /**
    * No-arg deletes the active wallet (legacy single-wallet UX).
-   * With `id`, deletes that specific wallet; if it was active, the next wallet
-   * is promoted, otherwise legacy keys are wiped.
+   * With `id`, deletes that specific wallet. When the deleted wallet was
+   * active, the next remaining wallet is promoted; if none remains (or its
+   * secret is unreadable), legacy mirror keys are wiped so callers cannot
+   * keep operating on a stale address. Non-active deletes leave the mirror
+   * untouched.
    */
   async deleteWallet(id?: string): Promise<void> {
     await ensureMigrated();
@@ -337,6 +346,7 @@ export const KeySecurityService = {
     const targetId = id ?? activeId;
     if (!targetId) {
       await Promise.all([
+        ...list.map(w => deleteSecret(w.id)),
         SecureStore.deleteItemAsync(WALLETS_INDEX_KEY),
         clearLegacy(),
       ]);
@@ -350,10 +360,10 @@ export const KeySecurityService = {
     if (targetId !== activeId) return;
 
     const next = remaining[0];
-    if (next) {
-      const secret = await readSecret(next.id);
+    const nextSecret = next ? await readSecret(next.id) : null;
+    if (next && nextSecret) {
       await SecureStore.setItemAsync(ACTIVE_WALLET_ID_KEY, next.id);
-      if (secret) await mirrorLegacyFromSecret(secret, next.address);
+      await mirrorLegacyFromSecret(nextSecret, next.address);
     } else {
       await Promise.all([
         SecureStore.deleteItemAsync(ACTIVE_WALLET_ID_KEY),
