@@ -29,6 +29,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { ethers } from 'ethers';
 import { isMetaAddress } from '../lib/stealth';
+import { eqAddr } from '../lib/address';
 
 const BASE_KEY = 'scatterdex_wallet_book_v1';
 const V2_MIGRATION_MARKER = 'scatterdex_wallet_book_migrated_v2';
@@ -207,7 +208,7 @@ async function migrateLegacyIfNeeded(address: string): Promise<void> {
   }
 
   const legacyBuiltinAddress = await SecureStore.getItemAsync(LEGACY_BUILTIN_ADDRESS_KEY);
-  if (!legacyBuiltinAddress || legacyBuiltinAddress.toLowerCase() !== address.toLowerCase()) {
+  if (!eqAddr(legacyBuiltinAddress, address)) {
     // Defer migration — the blob stays in place until the correct
     // wallet connects. No marker set: retry on the next matching call.
     return;
