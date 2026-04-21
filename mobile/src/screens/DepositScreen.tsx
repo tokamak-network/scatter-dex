@@ -109,7 +109,7 @@ export default function DepositScreen() {
           }
           if (p.step === 'error') {
             setIsGenerating(false);
-            setDepositError(p.error || 'Deposit failed');
+            setDepositError(p.error || 'Escrow failed');
           }
         };
 
@@ -133,7 +133,7 @@ export default function DepositScreen() {
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.container}>
         <ScreenHeader
-          title="Private Deposit"
+          title="Private Escrow"
           variant="surface"
           onBack={() => navigation.goBack()}
         />
@@ -243,7 +243,7 @@ export default function DepositScreen() {
                   ? 'Confirm Deposit'
                   : progress < 100
                     ? 'Generating Proof...'
-                    : 'Complete Deposit'}
+                    : 'Fund Escrow'}
             </Text>
           </TouchableOpacity>
         </View>
