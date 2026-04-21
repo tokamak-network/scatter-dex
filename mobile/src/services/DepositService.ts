@@ -50,6 +50,7 @@ const WETH_ABI = [
   'function deposit() external payable',
   'function approve(address spender, uint256 amount) external returns (bool)',
   'function allowance(address owner, address spender) external view returns (uint256)',
+  'function balanceOf(address owner) external view returns (uint256)',
 ];
 
 
@@ -66,10 +67,22 @@ export const DepositService = {
   ): Promise<StoredNote | null> {
     const poolAddress = ConfigService.getCommitmentPoolAddress();
     const wethAddress = ConfigService.getWethAddress();
+    const chainId = ConfigService.getChainId();
     if (!poolAddress) throw new Error('CommitmentPool address not configured');
     if (token.isNative && !wethAddress) throw new Error('WETH address not configured for native token deposit');
 
     const parsedAmount = ethers.parseUnits(amount, token.decimals);
+    console.log('[DepositService] starting', {
+      chainId,
+      poolAddress,
+      wethAddress,
+      tokenSymbol: token.symbol,
+      tokenIsNative: token.isNative,
+      tokenAddress: token.address,
+      amount,
+      parsedAmount: parsedAmount.toString(),
+      account,
+    });
 
     try {
       // Per-transaction biometric gate. Prompts with the operation
@@ -116,12 +129,20 @@ export const DepositService = {
       const commitTokenAddr = token.isNative ? wethAddress : token.address;
 
       if (token.isNative && wethAddress) {
-        // ETH → WETH wrap
         const weth = new ethers.Contract(wethAddress, WETH_ABI, signer);
-        const wrapTx = await weth.deposit({ value: parsedAmount });
-        await wrapTx.wait();
 
-        // approve
+        // Only wrap the shortfall — a previous deposit attempt that
+        // reverted at the pool step leaves WETH in the user's wallet.
+        // Wrapping another full `parsedAmount` would double-spend ETH
+        // on every retry until the pool accepts the proof.
+        const wethBalRaw = await weth.balanceOf(account);
+        const wethBal: bigint = wethBalRaw; // ethers v6 returns bigint
+        if (wethBal < parsedAmount) {
+          const shortfall = parsedAmount - wethBal;
+          const wrapTx = await weth.deposit({ value: shortfall });
+          await wrapTx.wait();
+        }
+
         const allowance = await weth.allowance(account, poolAddress);
         if (allowance < parsedAmount) {
           const approveTx = await weth.approve(poolAddress, ethers.MaxUint256);
@@ -175,20 +196,47 @@ export const DepositService = {
       );
 
       const proof = formatProofForSolidity(proofResult.proof);
+      console.log('[DepositService] proof generated', {
+        commitment: commitment.toString(),
+        commitTokenAddr,
+        parsedAmount: parsedAmount.toString(),
+      });
 
       // ─── Step 5: CommitmentPool.deposit() ──────────────
       onProgress({ step: 'depositing' });
 
       const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, signer);
-      const tx = await pool.deposit(
-        proof.a,
-        proof.b,
-        proof.c,
-        commitment,
-        commitTokenAddr,
-        parsedAmount,
-      );
+
+      // Match the frontend — skip the pre-flight staticCall. On anvil fork
+      // setups (archive-limited RPCs like publicnode), eth_call touching
+      // the BN254 precompiles fails with "historical state is not
+      // available" even when the actual send executes cleanly, so the
+      // simulation is net-harmful. If the real send reverts, the catch
+      // below extracts whatever reason the node returns.
+      let tx: ethers.TransactionResponse;
+      try {
+        tx = await pool.deposit(
+          proof.a,
+          proof.b,
+          proof.c,
+          commitment,
+          commitTokenAddr,
+          parsedAmount,
+        );
+      } catch (sendErr: any) {
+        const reason = sendErr?.reason
+          || sendErr?.shortMessage
+          || sendErr?.info?.error?.message
+          || sendErr?.data
+          || sendErr?.message
+          || 'deposit rejected (no reason returned)';
+        console.log('[DepositService] deposit send error:', reason, sendErr);
+        throw new Error(`CommitmentPool.deposit failed: ${reason}`);
+      }
       const receipt = await tx.wait();
+      if (!receipt || receipt.status === 0) {
+        throw new Error('CommitmentPool.deposit reverted on-chain (receipt.status=0)');
+      }
 
       onProgress({ step: 'depositing', txHash: tx.hash });
 
