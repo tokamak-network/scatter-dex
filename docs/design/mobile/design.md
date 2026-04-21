@@ -1,565 +1,475 @@
-# ScatterDEX 모바일 앱 설계 문서
+# ScatterDEX 모바일 앱 — 구현 문서
 
-> ⚠️ **이 문서는 2026-04-10 설계/분석 스냅샷** 입니다.
-> **현재 구현 상태·시스템 구성·보안 계층·멀티월렛 아키텍처는 [`implementation.md`](./implementation.md) 를 참조하세요.** 두 문서가 충돌하면 `implementation.md` 가 source of truth 입니다.
->
-> 아래 원본 설계 메모는 기술 결정 기록(Capacitor→Expo/RN 피벗, WebView 하이브리드 ZK, NFC/SE Phase 2 계획 등)을 보존하기 위해 남겨둡니다. 특히 §2 (접근법 결정), §5 (ZK 전략), §7 (NFC/SE 확장 계획) 는 여전히 유효한 참조 자료입니다.
->
-> **원본 상태**: 분석/설계 (2026-04-10)
-> **범위**: Android + iOS 앱, WalletConnect 기반 지갑 연동
-> **프레임워크**: Expo + React Native
-> **관련 문서**:
-> - [`implementation.md`](./implementation.md) — **현재 구현 상태 (main 기준)**
-> - [../../frontend/](../../frontend/) — 현재 웹 프론트엔드
-> - [../architecture-v2.md](../../architecture/architecture-v2.md) — 전체 아키텍처
-> - **tokamon** 앱 참고 (Expo/RN 구조 레퍼런스)
+> **스냅샷**: 2026-04-21, `main` 기준
+> **플랫폼**: Android + iOS, Expo 54 + React Native 0.81 + Hermes + 숨김 WebView(ZK)
+> **단일 source of truth** — 드리프트 막기 위해 이 파일만 유지. 새 설계 메모를 별도로 만들지 마세요.
 
 ---
 
 ## 목차
 
-1. [현재 상태 분석](#1-현재-상태-분석)
-2. [접근법 결정](#2-접근법-결정)
-3. [아키텍처 설계](#3-아키텍처-설계)
-4. [WalletConnect 통합 설계](#4-walletconnect-통합-설계)
-5. [ZK Proof 모바일 전략](#5-zk-proof-모바일-전략)
-6. [코드 재사용 분석](#6-코드-재사용-분석)
-7. [NFC & SE 확장 계획 (Phase 2)](#7-nfc--se-확장-계획-phase-2)
-8. [구현 단계](#8-구현-단계)
-9. [미해결 질문](#9-미해결-질문)
+1. [플랫폼 보안 스택 — 모바일 고유 요소](#1-플랫폼-보안-스택--모바일-고유-요소)
+2. [시큐어 공간에 저장/읽기](#2-시큐어-공간에-저장읽기)
+3. [생체 인증 게이트](#3-생체-인증-게이트)
+4. [시스템 구성 — 서비스 인벤토리](#4-시스템-구성--서비스-인벤토리)
+5. [서비스별 저장소 스키마](#5-서비스별-저장소-스키마)
+6. [멀티월렛 아키텍처](#6-멀티월렛-아키텍처)
+7. [Per-address 네임스페이싱과 레거시 마이그레이션](#7-per-address-네임스페이싱과-레거시-마이그레이션)
+8. [스텔스 주소 (EIP-5564) 수신 흐름](#8-스텔스-주소-eip-5564-수신-흐름)
+9. [ZK 하이브리드 아키텍처](#9-zk-하이브리드-아키텍처)
+10. [WalletConnect 흐름](#10-walletconnect-흐름)
+11. [기여자 가이드라인](#11-기여자-가이드라인)
+12. [부록 — 파일 구조](#12-부록--파일-구조)
 
 ---
 
-## 1. 현재 상태 분석
+## 1. 플랫폼 보안 스택 — 모바일 고유 요소
 
-### 1.1 웹 프론트엔드 스택
+웹 프론트엔드에 대응되는 개념이 없는 영역입니다. 앱은 OS가 제공하는 두 저장소와 생체 인증에 의존합니다.
 
-| 구성 요소 | 현재 구현 |
-|-----------|----------|
-| 프레임워크 | Next.js 16.2.1 + React 19.2.4 |
-| 지갑 연동 | `window.ethereum` (EIP-1193 injected provider) 직접 접근, injected wallet 의존 |
-| 블록체인 | ethers 6.16.0 |
-| ZK Proof | snarkjs 0.7.6 Groth16, WASM + Web Worker |
-| 암호학 | circomlibjs (Poseidon), @noble/curves (EdDSA BabyJub) |
-| 스타일링 | Tailwind CSS 4 |
-| 상태 관리 | React Context (WalletProvider) + useState |
-| 노트 저장 | File System Access API (`showDirectoryPicker`) + `localStorage` fallback |
+### 1.1 두 저장소의 차이
 
-### 1.2 tokamon 앱 스택 (기존 경험)
+| 구분 | `expo-secure-store` | `@react-native-async-storage/async-storage` |
+|------|---------------------|----------------------------------------------|
+| **iOS 구현** | **Keychain** — OS 암호화 키 저장소. 디바이스 passcode/생체 기반 Secure Enclave 접근 | `NSUserDefaults` → 파일 시스템에 평문 plist |
+| **Android 구현** | **AndroidKeyStore** 기반 **EncryptedSharedPreferences** — 하드웨어 키(TEE/StrongBox) AES-GCM 암호화 | **SQLite** 파일, 앱 샌드박스에만 있는 평문 |
+| **암호화** | ✅ OS 수준 (하드웨어 키 파생) | ❌ 없음 (앱 샌드박스 격리만) |
+| **기기 바인딩** | `WHEN_UNLOCKED_THIS_DEVICE_ONLY` 플래그 시 **다른 기기 복원 불가** | 일반 백업에 포함되어 다른 기기로 복원 가능 |
+| **잠금 상태 접근** | 기기 잠금 해제 후에만 읽기 가능(부팅 직후 첫 unlock 전 차단) | 앱 실행 중 언제든 접근 |
+| **크기 제한** | iOS 무제한 / **Android ~2KB 권장** (초과 시 크래시) | 실질 무제한 (수 MB도 가능) |
+| **API 형식** | 모두 async(`setItemAsync` 등) | 모두 async(`setItem` 등) + multi 지원 |
+| **루팅/탈옥 기기 노출** | 공격 난이도 높음(하드웨어 키 필요) | **평문 노출 가능** |
 
-| 구성 요소 | tokamon |
-|-----------|---------|
-| 프레임워크 | Expo 54 + React Native 0.81.5 + React 19.1.0 |
-| 지갑 | ethers 6.16.0 직접 (프라이빗 키 임포트) |
-| 상태 관리 | React Context + AsyncStorage |
-| 빌드 | EAS Build |
-| 저장소 | expo-secure-store, AsyncStorage |
-| 네이티브 기능 | GPS, 지도, FCM 푸시, Device Attestation |
-| 네비게이션 | React Navigation (Bottom Tabs) |
+**사용 규칙 (이 앱에서)**:
+- **secret/key/mnemonic** 은 **무조건** `expo-secure-store`
+- **공개 메타데이터/인덱스/네트워크 구성** 은 `AsyncStorage`
+- **혼합 페이로드** (예: 클레임 = secret + 큰 메타데이터 + allLeaves 배열) 는 **분할 저장** — secret만 SecureStore, 나머지는 AsyncStorage. Android 2KB 제한이 이 분할의 실질적 이유이기도 함.
 
-### 1.3 모바일 핵심 제약
+### 1.2 SecureStore 접근성 플래그
 
-1. **지갑 접근**: `window.ethereum` 없음 — WalletConnect 필수
-2. **ZK 성능**: snarkjs WASM — RN에서 동작 검증 필요
-3. **파일 저장**: FileSystem API 없음 — expo-secure-store / expo-file-system으로 대체
-4. **향후 NFC**: 네이티브 접근 필요 — Expo dev build에서 지원
+민감 blob 저장 시 항상 이 플래그를 지정합니다:
 
----
+```ts
+import * as SecureStore from 'expo-secure-store';
 
-## 2. 접근법 결정
-
-### 2.1 후보 비교
-
-| 기준 | Capacitor | Expo/RN |
-|------|-----------|---------|
-| 코드 재사용 (웹) | 90%+ | 30~40% (UI 재작성) |
-| 코드 재사용 (tokamon) | 0% | 60~70% (구조/패턴 재사용) |
-| NFC 지원 | 플러그인 제한적 | react-native-nfc-manager (풀 지원) |
-| SE 접근 | 불가 | react-native-keychain (SE-backed P-256) |
-| 앱스토어 | O | O |
-| ZK WASM | WebView에서 확실 | RN에서 검증 필요 |
-| 네이티브 기능 확장 | 제한적 | 무제한 |
-| 기존 경험 | 없음 | tokamon에서 검증됨 |
-| 개발 시간 (초기) | 1주 | 2~3주 |
-| 개발 시간 (NFC 추가 시) | 전체 재작성 | 라이브러리 추가 |
-
-### 2.2 결정: Expo + React Native
-
-**이유:**
-
-1. **NFC & SE 확장성**: 나중에 NFC 기능이 필요할 가능성 있음. Capacitor로 시작하면 전체 재작성 필요. Expo/RN이면 라이브러리 추가만으로 해결.
-
-2. **tokamon 경험 활용**: Expo 54 + React Navigation + ethers 6 + AsyncStorage + expo-secure-store — 동일한 스택과 패턴을 재사용 가능.
-
-3. **장기적 유지보수**: 네이티브 앱이 WebView 래핑보다 성능/UX 모두 우수. DEX 특성상 장기 운영이 목적이므로 기반을 탄탄하게 가는 것이 맞음.
-
-**트레이드오프 인지:**
-- UI 코드는 재작성 필요 (React DOM → React Native 컴포넌트)
-- snarkjs WASM의 RN 동작 검증 필요 (Phase 1에서 PoC)
-
----
-
-## 3. 아키텍처 설계
-
-### 3.1 전체 구조
-
-```
-┌──────────────────────────────────────────────────┐
-│               Expo + React Native                │
-│                                                  │
-│  ┌────────────┐  ┌──────────────┐  ┌──────────┐ │
-│  │ WalletConnect│  │ ZK Proof    │  │ Secure   │ │
-│  │ (RN SDK)    │  │ Engine      │  │ Storage  │ │
-│  │ + Web3Modal │  │ (snarkjs)   │  │ (SE-enc) │ │
-│  └──────┬──────┘  └──────┬──────┘  └────┬─────┘ │
-│         │                │               │       │
-│  ┌──────▼────────────────▼───────────────▼─────┐ │
-│  │            React Native Screens             │ │
-│  │  (tokamon 패턴 기반, ScatterDEX 비즈니스)     │ │
-│  └─────────────────────────────────────────────┘ │
-│                                                  │
-│  ┌─────────────────────────────────────────────┐ │
-│  │          Phase 2 (향후 확장)                  │ │
-│  │  - react-native-nfc-manager (NFC)           │ │
-│  │  - react-native-keychain (SE-backed keys)   │ │
-│  │  - HCE (Android contactless)                │ │
-│  └─────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────┘
-         │                        │
-    WalletConnect v2          JSON-RPC
-         │                        │
-    ┌────▼────┐            ┌──────▼──────┐
-    │ 지갑 앱  │            │  Titan L2   │
-    │ (Rainbow,│            │  / Sepolia  │
-    │  Trust)  │            └─────────────┘
-    └─────────┘
+await SecureStore.setItemAsync(
+  'scatterdex_wallet_secret_<id>',
+  JSON.stringify({ privateKey, mnemonic }),
+  { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
+);
 ```
 
-### 3.2 프로젝트 구조
+의미:
+- **기기 바인딩**: 다른 기기로 OS 백업을 복원해도 이 blob은 따라가지 않음.
+- **잠금 상태**: 기기가 잠금 해제 된 상태에서만 읽기/쓰기 가능. 부팅 직후 passcode 입력 전에는 Keychain이 잠겨 있음.
 
-```
-scatter-dex/
-├── frontend/                    (기존 웹 — 유지)
-├── mobile/                      (신규 — Expo 앱)
-│   ├── App.tsx                  # 루트 (tokamon 패턴)
-│   ├── app.config.js            # Expo 설정
-│   ├── eas.json                 # EAS Build 설정
-│   ├── package.json
-│   ├── src/
-│   │   ├── screens/             # 화면 (React Navigation)
-│   │   │   ├── HomeScreen.tsx       # 대시보드 (잔액, 최근 거래)
-│   │   │   ├── DepositScreen.tsx    # 입금 (ZK proof 생성)
-│   │   │   ├── OrderScreen.tsx      # 주문 생성 (authorize proof)
-│   │   │   ├── ClaimScreen.tsx      # 클레임
-│   │   │   ├── HistoryScreen.tsx    # 거래 내역
-│   │   │   └── SettingsScreen.tsx   # 설정
-│   │   ├── components/          # 공유 UI 컴포넌트
-│   │   │   ├── WalletButton.tsx     # WalletConnect 연결 버튼
-│   │   │   ├── ProofProgress.tsx    # ZK proof 진행률
-│   │   │   ├── TokenSelector.tsx    # 토큰 선택
-│   │   │   └── TxStatus.tsx         # 트랜잭션 상태
-│   │   ├── services/            # 비즈니스 로직 (tokamon 패턴)
-│   │   │   ├── wallet.ts           # WalletConnect 래퍼
-│   │   │   ├── contract.ts         # ethers 컨트랙트 호출
-│   │   │   ├── relayerApi.ts       # 릴레이어 API
-│   │   │   └── noteStorage.ts      # 노트 암호화 저장
-│   │   ├── zk/                  # ZK 관련 (웹에서 포팅)
-│   │   │   ├── prover.ts           # snarkjs 래퍼
-│   │   │   ├── commitment.ts       # Poseidon 해싱
-│   │   │   ├── eddsa.ts            # EdDSA 서명
-│   │   │   └── tags.ts             # 도메인 분리 상수
-│   │   ├── utils/
-│   │   │   ├── constants.ts        # ABI, 주소, 설정
-│   │   │   └── config.ts           # 환경변수
-│   │   └── hooks/
-│   │       ├── useProof.ts         # proof 생성 상태 관리
-│   │       └── useBalance.ts       # 잔액 조회
-│   ├── android/                 # Expo prebuild (자동 생성)
-│   └── ios/                     # Expo prebuild (자동 생성)
-│
-└── shared/                      (신규 — 웹/모바일 공유 코드)
-    ├── zk/                      # ZK 순수 로직 (React 무관)
-    │   ├── commitment.ts
-    │   ├── eddsa.ts
-    │   ├── tags.ts
-    │   └── constants.ts
-    ├── contracts/               # ABI + 주소
-    │   └── abis.ts
-    └── types/                   # 공유 타입 (기존 packages/types 확장)
-```
+공개 데이터(예: 지갑 주소)는 플래그 없이 저장 가능:
 
-### 3.3 웹 vs 모바일 분리 원칙
-
-```
-공유 (shared/)          웹 전용 (frontend/)      모바일 전용 (mobile/)
-─────────────          ─────────────────        ──────────────────
-ZK 로직 (Poseidon,     React DOM 컴포넌트       React Native 화면
- EdDSA, tags)          Next.js 라우팅            React Navigation
-ABI + 컨트랙트 주소     window.ethereum          WalletConnect RN SDK
-타입 정의              Tailwind CSS              RN StyleSheet
-상수                   Web Worker                expo-secure-store
-                       IndexedDB                 AsyncStorage
+```ts
+await SecureStore.setItemAsync('scatterdex_wallet_address', address);
+// 플래그 없으면 기본값 AFTER_FIRST_UNLOCK (부팅 후 1회 unlock 이후 항상 접근)
 ```
 
 ---
 
-## 4. WalletConnect 통합 설계
+## 2. 시큐어 공간에 저장/읽기
 
-### 4.1 RN 전용 패키지
+### 2.1 SecureStore — 전형적 패턴
 
-```json
-{
-  "@walletconnect/modal-react-native": "^1.x",
-  "@walletconnect/ethereum-provider": "^2.x"
+**쓰기**:
+```ts
+import * as SecureStore from 'expo-secure-store';
+
+const SECURE_OPTS = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+} as const;
+
+async function writeSecret(id: string, secret: WalletSecret): Promise<void> {
+  await SecureStore.setItemAsync(
+    `scatterdex_wallet_secret_${id}`,
+    JSON.stringify(secret),
+    SECURE_OPTS,
+  );
 }
 ```
 
-WalletConnect 공식 React Native SDK가 있음. 웹의 Web3Modal과 동일한 역할이지만 RN 네이티브 모달 UI 제공.
-
-### 4.2 wallet.js 설계 (tokamon 패턴 차용)
-
-```javascript
-// mobile/src/services/wallet.js
-// tokamon의 wallet.js 패턴 + WalletConnect 적용
-
-import { WalletConnectModal } from '@walletconnect/modal-react-native';
-import { ethers } from 'ethers';
-
-let provider = null;
-let signer = null;
-let account = null;
-const listeners = [];
-
-// tokamon 패턴: 이벤트 리스너 기반
-export function onWalletChange(callback) {
-  listeners.push(callback);
-  return () => listeners.splice(listeners.indexOf(callback), 1);
+**읽기**:
+```ts
+async function readSecret(id: string): Promise<WalletSecret | null> {
+  const raw = await SecureStore.getItemAsync(`scatterdex_wallet_secret_${id}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as WalletSecret;
+  } catch {
+    return null; // 손상된 entry는 null 반환 (상위에서 delete 후 재유도 처리)
+  }
 }
+```
 
-export async function connect() {
-  // WalletConnect 세션 시작 → 지갑 앱 딥링크
-  const wcProvider = await WalletConnectModal.open({
-    projectId: WALLETCONNECT_PROJECT_ID,
-    chains: [TARGET_CHAIN_ID],
+**삭제**:
+```ts
+await SecureStore.deleteItemAsync(`scatterdex_wallet_secret_${id}`);
+```
+
+**병렬 I/O**:
+```ts
+// 서로 독립적인 여러 키를 동시에 처리 — Promise.all 로 round-trip 절약.
+// SecureStore는 내부적으로 직렬화되므로 CPU 병렬성은 없지만
+// JS 쪽 오버헤드와 await chain 숏닝으로 체감 지연 감소.
+const [addr, pk, mnemonic] = await Promise.all([
+  SecureStore.getItemAsync(ADDRESS_KEY),
+  SecureStore.getItemAsync(WALLET_KEY),
+  SecureStore.getItemAsync(MNEMONIC_KEY),
+]);
+```
+
+### 2.2 AsyncStorage — 전형적 패턴
+
+**쓰기/읽기**:
+```ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// 쓰기
+await AsyncStorage.setItem(
+  `scatterdex_note_index_${address.toLowerCase()}`,
+  JSON.stringify(noteIds),
+);
+
+// 읽기
+const raw = await AsyncStorage.getItem(`scatterdex_note_index_${address.toLowerCase()}`);
+const ids = raw ? JSON.parse(raw) as string[] : [];
+
+// 삭제
+await AsyncStorage.removeItem(`scatterdex_note_index_${address.toLowerCase()}`);
+```
+
+**배치 I/O**:
+```ts
+// 여러 키를 한 번에 읽기/쓰기
+const entries = await AsyncStorage.multiGet([key1, key2, key3]);
+await AsyncStorage.multiSet([[key1, val1], [key2, val2]]);
+```
+
+### 2.3 분할 저장 패턴 — 대용량 + 민감 데이터
+
+클레임(`PendingClaimsStorage`)은 전형적 분할 예:
+
+```ts
+// 민감: secret 문자열만 SecureStore
+await SecureStore.setItemAsync(
+  `scatterdex_pending_claim_secret_${address.toLowerCase()}_${id}`,
+  secret,
+  SECURE_OPTS,
+);
+
+// 메타: allLeaves 배열 등 큰 페이로드는 AsyncStorage
+await AsyncStorage.setItem(
+  `scatterdex_pending_claim_meta_${address.toLowerCase()}_${id}`,
+  JSON.stringify({ recipient, token, amount, releaseTime, leafIndex, allLeaves, txHash }),
+);
+
+// 인덱스: id 배열 (작고 비민감) AsyncStorage
+await AsyncStorage.setItem(
+  `scatterdex_pending_claim_ids_${address.toLowerCase()}`,
+  JSON.stringify([...existingIds, id]),
+);
+```
+
+근거:
+- Android SecureStore entry당 ~2KB 제한으로 `allLeaves` 같은 배열은 비정상 크래시 유발.
+- `secret`이 유일한 spend 권한 → 분리된 SecureStore blob으로 최소 공격 표면 유지.
+- 인덱스 조회는 빈번하므로 Async 평문 OK.
+
+### 2.4 에러 처리 관례
+
+- **JSON.parse 실패**: 손상된 entry는 `null` 반환 + 해당 키 best-effort 삭제 → 다음 호출이 정상 경로(재유도)로 감. `EdDSAKeyService.loadKey`, `KeySecurityService.readSecret` 등이 표준 예.
+- **일시적 Keychain 오류**: 마이그레이션의 module-level promise latch는 실패 시 latch 리셋 → 다음 호출이 재시도.
+
+---
+
+## 3. 생체 인증 게이트
+
+`expo-local-authentication` + `KeySecurityService` 로 중앙화.
+
+```ts
+// 사용자가 Settings 토글로 on/off. 토글 off 면 게이트는 no-op.
+async _biometricGate(reason: string): Promise<boolean> {
+  if (!(await this.isBiometricEnabled())) return true;
+  return this.authenticate(reason);
+},
+
+async authenticate(reason: string): Promise<boolean> {
+  const result = await LocalAuthentication.authenticateAsync({
+    promptMessage: reason,                  // OS 시트에 표시될 "무엇을 승인"
+    fallbackLabel: 'Use passcode',          // 생체 미등록 사용자 대응
+    disableDeviceFallback: false,
   });
-  provider = new ethers.BrowserProvider(wcProvider);
-  signer = await provider.getSigner();
-  account = await signer.getAddress();
-  listeners.forEach(cb => cb({ account, provider, signer }));
-}
-
-export async function disconnect() {
-  // 1. WalletConnect 세션 종료 (서버 릴레이에 disconnect 전파)
-  if (provider?.disconnect) await provider.disconnect();
-  // 2. 로컬 상태 초기화
-  account = null; signer = null; provider = null;
-  listeners.forEach(cb => cb({ account: null }));
-}
-
-export function getAccount() { return account; }
-export function getSigner() { return signer; }
-export function getProvider() { return provider; }
+  return result.success;
+},
 ```
 
-### 4.3 모바일 UX 흐름
+**게이트 적용 지점**:
+- 개인키 노출 (`getPrivateKey`)
+- 시드 구문 노출 (`getMnemonic`)
+- Signer 인스턴스화 (`getSigner*`)
+- 모든 쓰기 서비스(Order/Market/Cancel/Deposit/Claim/Stealth)의 `authorizeTransaction(description)`
 
+**프롬프트 메시지 규칙**: 항상 사람이 읽을 수 있는 `reason` — 예: `Approve: Submit order`, `Authenticate to view recovery phrase`. "Authenticate" 같은 일반 문구는 사용자가 맹목적으로 통과하도록 훈련시키므로 금지.
+
+---
+
+## 4. 시스템 구성 — 서비스 인벤토리
+
+`mobile/src/services/` 하위 **18개 서비스 + `WalletContext`**.
+
+### 4.1 지갑 + 키 재료
+
+- **`KeySecurityService`** — 멀티월렛 스토리지 레이어. `wallets_index` / `wallets_active_id` / `wallet_secret_<id>` 스키마 + 생체 게이트. API: `listWallets / getActiveWalletId / setActiveWalletId / getActiveAddress / getSignerForWallet / createWallet / importFromMnemonic / importFromPrivateKey / deleteWallet` + 레거시 호환(`getAddress / getPrivateKey / getSigner / getMnemonic / hasWallet`).
+- **`WalletContext`** (`src/contexts/WalletContext.tsx`) — 유일한 React 진입점. `wallets / activeWalletId / connectionMode / account / signer / readProvider` + `switchWallet / addWalletFromCreate / addWalletFromMnemonic / addWalletFromPrivateKey / removeWallet / refreshWallets / disconnect / connectBuiltin`. `notifyWalletSwitch(newAddr)` 로 per-address 캐시 재구독 신호 발신.
+- **`EdDSAKeyService`** — 회로 서명용 BabyJub EdDSA 키 유도/저장, per wallet address. `deriveKey`는 stateless(Signer → 키), `getOrDeriveKey`는 SecureStore 조회 후 없으면 유도-저장.
+- **`StealthIdentityService`** — EIP-5564 meta-address 생성/저장, per wallet address. spending + viewing 키를 보관(앱에서 가장 민감한 blob).
+
+### 4.2 저장소 / 데이터
+
+- **`NoteStorageService`** — per-wallet 노트 인덱스 + per-note SecureStore blob. 노트는 `secret + salt` 포함.
+- **`PendingClaimsStorage`** — per-wallet pending-claim 인덱스, 분할 저장(메타 Async, secret Secure), 2단 마이그레이션(v0 → v1 → v2), 동시호출 latch.
+- **`AddressBookService`** — per-wallet 라벨드 수신자(AsyncStorage, 비민감). EOA와 스텔스 meta-address 모두 지원.
+- **`EscrowHiddenStorage`** — DepositScreen에서 사용자가 숨긴 escrow commitment 리스트, per wallet.
+- **`BackupService`** — SecureStore + AsyncStorage 슬라이스를 묶어 export/restore. 사용자 비밀번호 기반 PBKDF2 → AES-GCM.
+
+### 4.3 트랜잭션 흐름
+
+- **`OrderService`** — Private 지정가 주문: authorize proof → relayer 제출 → 노트 spent 처리 전에 per-claim secret을 `PendingClaimsStorage.append`.
+- **`MarketOrderService`** — 시장가: authorize proof + 온체인 `settleWithDex`. 모든 proof-검증 필드를 public signals(`ps[]`)에서 직접 소싱하여 로컬/서명 드리프트 방지.
+- **`CancelService`** — cancel proof 발행으로 escrow 노트 취소. 커밋먼트 rotate.
+- **`ClaimService`** — 정산 후 클레임. `PendingClaimsStorage`에서 secret 조회 + claim proof 빌드.
+- **`DepositService`** — 입금 흐름(ETH는 wrap, 커밋먼트 생성, 풀로 deposit).
+
+### 4.4 인프라
+
+- **`NetworkService`** — 내장 + 커스텀 네트워크 레지스트리. Settings → Add Custom Network 모달이 `addCustomNetwork / removeCustomNetwork / testConnection`.
+- **`TokenService`** — 토큰 리스트 + 온체인 `decimals()` 조회(Promise 캐시로 동시 호출 dedupe). `ProviderService.subscribeReset`에 캐시 wipe 구독.
+- **`ConfigService`** — env 기반 구성(컨트랙트 주소, RPC, WETH). `NetworkService` 위 단일 표면.
+- **`ProviderService`** — `ethers.JsonRpcProvider` 풀(RPC URL 키), reset 이벤트 방송.
+- **`RelayerApiService`** — relayer discovery + capability 폴링 + 주문 제출 HTTP 클라이언트.
+
+### 4.5 오프로드된 ZK
+
+- **`ZKBridgeService`** — Hermes ↔ 숨김 WebView 브리지. `waitReady(timeoutMs)` 는 `ZKReadyStatus`(ready/failed/timeout) 반환. `deriveEdDSAKey / sign_eddsa / groth16_fullProve / verify` 등 노출. 모든 회로 prover가 여기로 흐름.
+
+---
+
+## 5. 서비스별 저장소 스키마
+
+Address-민감 키는 모두 `<prefix>_<addr>`(소문자) 네임스페이스.
+
+| 서비스 | 키 | 저장소 |
+|--------|-----|--------|
+| `KeySecurityService` | `scatterdex_wallets_index` | Async (JSON `WalletMeta[]`) |
+|  | `scatterdex_wallets_active_id` | Async |
+|  | `scatterdex_wallet_secret_<id>` | **Secure** + 생체 게이트 |
+|  | `scatterdex_biometric_enabled` | Secure |
+|  | `scatterdex_wallet_pk` / `_mnemonic` / `_address` (레거시 미러) | Secure (pk/mnemonic) / Secure (address) |
+| `EdDSAKeyService` | `scatterdex_eddsa_<addr>` | Secure |
+| `StealthIdentityService` | `scatterdex_stealth_identity_v1_<addr>` | Secure |
+|  | `scatterdex_stealth_migrated_v2` | Secure |
+| `PendingClaimsStorage` | `scatterdex_pending_claim_ids_<addr>` | Async |
+|  | `scatterdex_pending_claim_meta_<addr>_<id>` | Async |
+|  | `scatterdex_pending_claim_secret_<addr>_<id>` | **Secure** |
+|  | `scatterdex_pending_claims_migrated_v1` / `_v2` | Async |
+| `NoteStorageService` | `scatterdex_note_index_<addr>` | Async |
+|  | `scatterdex_note_<addr>_<id>` | **Secure** (노트에 secret+salt) |
+|  | `scatterdex_migrated_notes_v2` | Async |
+| `AddressBookService` | `scatterdex_wallet_book_v1_<addr>` | Async |
+|  | `scatterdex_wallet_book_migrated_v2` | Async |
+| `EscrowHiddenStorage` | `scatterdex_escrow_hidden_<addr>` | Async |
+| `NetworkService` | `scatterdex_networks_custom` / `_selected` | Async |
+
+---
+
+## 6. 멀티월렛 아키텍처
+
+### 6.1 데이터 모델
+
+```
+SecureStore (기기 바인딩, 생체 게이트 가능):
+  scatterdex_wallets_index        → JSON WalletMeta[]
+  scatterdex_wallets_active_id    → 활성 wallet id (uuid)
+  scatterdex_wallet_secret_<id>   → JSON { privateKey, mnemonic? }
+  scatterdex_biometric_enabled    → 'true' | 'false'
+
+  -- 레거시 미러 (다른 서비스의 per-address 마이그레이션 가드용):
+  scatterdex_wallet_pk / _mnemonic / _address
+```
+
+```ts
+type WalletSource = 'mnemonic' | 'privateKey' | 'created';
+
+interface WalletMeta {
+  id: string;           // uuid
+  address: string;      // 체크섬 0x…
+  nickname?: string;    // 기본 'Wallet N'
+  source: WalletSource;
+  createdAt: number;    // unix ms
+}
+
+interface WalletSecret {
+  privateKey: string;
+  mnemonic?: string;
+}
+```
+
+### 6.2 불변식
+
+1. **입력은 체크섬, 저장 키 suffix는 소문자.** `WalletMeta.address`는 `ethers.getAddress` 적용. 저장 키 suffix는 `address.toLowerCase()`. `lib/address.ts → eqAddr(a, b)` 가 case-insensitive 비교를 중앙화.
+2. **단일 mnemonic 불변식.** 이미 mnemonic을 관리하는 기기는 **다른** mnemonic을 import 불가. `importFromMnemonic`은 BIP-44 경로로 다음 account를 유도하고 `reusedSeed: true` 반환. 다른 mnemonic은 거부.
+3. **레거시 미러는 활성 지갑을 반영.** 모든 `setActiveWalletId` / 삭제-후-승계 시 활성 지갑의 `{ pk, mnemonic?, address }` 를 레거시 키에 기록.
+4. **파괴적 no-arg 가드.** `deleteWallet()` 에 id 없고 active id도 없을 때, `wallets_index`가 비어있지 않으면 거부.
+
+### 6.3 지갑 전환 파이프라인
+
+```
+사용자가 wallet row 탭
+  ├─ SettingsScreen.handleSwitchWallet(id)
+  │    └─ 가드: same id ? / walletLoading ? → bail
+  ├─ WalletContext.switchWallet(id)
+  │    ├─ KeySecurityService.setActiveWalletId(id)
+  │    │    ├─ meta + secret 읽기
+  │    │    ├─ ACTIVE_WALLET_ID_KEY 쓰기
+  │    │    └─ mirrorLegacyFromSecret(secret, meta.address)
+  │    ├─ React state(account, signer, wallets) 재수화
+  │    └─ notifySubscribers(newAddr)  ← subscribeWalletSwitch 훅
+  └─ 훅 구독한 화면은 무효화/재조회:
+       NoteStorage, Stealth, AddressBook, PendingClaims, EscrowHidden,
+       Settings/History의 EdDSA in-memory 캐시
+```
+
+---
+
+## 7. Per-address 네임스페이싱과 레거시 마이그레이션
+
+`NoteStorageService`, `PendingClaimsStorage`, `StealthIdentityService`, `AddressBookService`, `EscrowHiddenStorage` 가 공유.
+
+**저장 shape**:
+- v2 (현재): `<prefix>_<소문자-addr>[_<id>]`
+- v1 (레거시): `<prefix>[_<id>]` — 단일 내장 지갑용
+- 마이그레이션 마커 (Async): `<prefix>_migrated_v2`
+
+**알고리즘 (install별 첫 호출 시 lazy 실행)**:
+
+1. 마커 설정됨 → return.
+2. v1 blob 없음 → 마커 설정 + return.
+3. `scatterdex_wallet_address` 읽기(레거시 소유자).
+4. 이 주소가 caller 주소와 `eqAddr` 아니면 → v1 blob 그대로 두고 **마커 설정 안함**. 나중에 일치하는 호출이 claim.
+5. 일치하면: v1 → v2 복제 → 마커를 **v1 삭제 전에** 설정(crash-safety) → v1 best-effort 삭제.
+
+`NoteStorageService` 는 rekey 청크 병렬화(`REKEY_CONCURRENCY=32`) + 모듈 레벨 promise latch로 동시 첫 호출이 각각 rekey 루프를 걷는 것 방지.
+
+---
+
+## 8. 스텔스 주소 (EIP-5564) 수신 흐름
+
+수신자 기기에서만 동작. 발신자는 온체인 stealth announcer 컨트랙트 사용.
+
+1. **정체성 생성** — `StealthIdentityService.generate(addr)` 가 BabyJub + secp256k1 파생으로 `{ spendingKey, viewingKey, metaAddress }` 생성, `scatterdex_stealth_identity_v1_<addr>`(Secure)에 저장.
+2. **공개** — `metaAddress` 는 공개 가능. Settings에서 Share 시트 제공.
+3. **클레임 수신** — 발신자가 일회용 stealth 주소로 claim 발행 → `ClaimService` 가 spending 키로 per-stealth-address 개인키 파생 → claim proof → settle.
+4. **정체성 재생성** — `regenerate` 가 키 교체. **파괴적**: 기존 키 기반 stealth 주소들은 spend 불가(사전 Reveal Keys 백업한 경우 예외). UI에서 이중 확인 필수.
+
+**전환 안전성**: 키는 per wallet address → 활성 지갑 전환 시 stealth 서브시스템이 자연스럽게 다른 meta-address를 가리킴.
+
+---
+
+## 9. ZK 하이브리드 아키텍처
+
+```
+Hermes (RN)                        WebView (숨김)
+  ethers 6                            snarkjs (Groth16 WASM)
+  WalletConnect / built-in            circomlibjs (Poseidon)
+  UI + 상태                           BabyJub EdDSA
+      │                                   │
+      └───── postMessage 브리지 ──────────┘
+               (ZKBridgeService)
+```
+
+- **브리지 로드**: 숨김 `WebView`가 `zk-webview.html`(~4.6MB)을 `expo-asset` 로컬 파일 URI로 로드(inline 금지 — Android에서 OOM).
+- **리스너 등록**: WebView 브리지는 `window`와 `document` **양쪽**에 메시지 핸들러 등록. Android는 `document`, iOS는 `window`로 전달. 한쪽만 등록하면 다른 플랫폼에서 조용히 실패.
+- **Worker fallback**: 무거운 회로(authorize ~22K constraints)는 single-thread로 실행, UI는 진행 표시로 대기 처리.
+- **zkey 관리**: 작은 zkey는 앱 번들에 포함, 큰 zkey는 첫 실행 시 다운로드 + `expo-file-system` 캐시.
+- **`waitReady` 상태**: `Promise<ZKReadyStatus>` — callers는 ready/failed/timeout을 구분해 UI gating 가능.
+
+**ZK 엔진 번들 빌드** (`mobile/scripts/build-zk-webview.mjs`):
+
+1. circomlibjs 브라우저 번들 (esbuild + 폴리필: `Buffer` / `process` / `Worker` stub / `crypto` / `stream`).
+2. snarkjs + zk-engine을 HTML에 인라인 → `zk-webview.html`.
+
+---
+
+## 10. WalletConnect 흐름
+
+내장 지갑이 기본, WalletConnect는 보조.
+
+**패키지**: `@walletconnect/ethereum-provider`, `@walletconnect/modal-react-native`.
+
+**연결 흐름**:
 ```
 [ScatterDEX 앱]                   [지갑 앱 (Rainbow 등)]
-     │                                    │
      │── "Connect Wallet" 탭              │
-     │── WalletConnect 모달 표시           │
-     │── 지갑 선택 → 딥링크 전환 ─────────>│
+     │── WalletConnect 모달                │
+     │── 지갑 선택 → 딥링크 ─────────────>│
      │                                    │── 연결 승인
-     │<── WC v2 session 수립 ─────────────│
-     │── 연결 완료, 잔액 표시              │
-     │                                    │
-     │── Deposit 실행                      │
-     │── ZK proof 생성 (3~5초)             │
-     │── 서명 요청 → 딥링크 전환 ─────────>│
+     │<── WC v2 session ──────────────────│
+     │── 잔액 표시                         │
+     │── ZK proof 생성 (Worker fallback)  │
+     │── 서명 요청 → 딥링크 ─────────────>│
      │                                    │── 사용자 서명
      │<── signed tx ──────────────────────│
      │── tx 전송 + 확인                    │
 ```
 
----
-
-## 5. ZK Proof 모바일 전략
-
-### 5.1 PoC 검증 결과 (2026-04-10 확정)
-
-> **PoC 코드**: `scatter-dex-mobile-poc/` (scatter-dex 레포 인접 디렉토리)
-
-| 환경 | 테스트 | 결과 |
-|------|--------|------|
-| Hermes (직접) | ethers 6 (지갑 생성 + RPC) | **PASS** |
-| Hermes (직접) | snarkjs, circomlibjs | **FAIL** — WASM/Node.js 의존성 |
-| WebView (숨김) | circomlibjs Poseidon | **PASS** |
-| WebView (숨김) | circomlibjs BabyJub EdDSA | **PASS** (sign+verify=true) |
-| WebView (숨김) | snarkjs groth16.fullProve() | **PASS** (실제 proof 생성+검증) |
-
-### 5.2 확정 아키텍처: Hermes + WebView 하이브리드
-
-```
-┌─ Hermes (RN 엔진) ────────┐    ┌─ WebView (숨김, ZK 엔진) ─┐
-│ ethers 6                   │    │ snarkjs (Groth16 WASM)    │
-│ WalletConnect              │    │ circomlibjs (Poseidon)    │
-│ UI 렌더링                   │◄──►│ BabyJub EdDSA             │
-│ 상태 관리                   │ post│ proof 생성 + 검증         │
-│ 네비게이션                  │ Msg │                           │
-└────────────────────────────┘    └───────────────────────────┘
-```
-
-**Hermes에서 직접 실행 불가한 이유:**
-- snarkjs: Node.js `readline` 의존
-- circomlibjs/ffjavascript: `Worker`, `Buffer`, `process`, `crypto` 등 Node.js 글로벌 의존
-- esbuild로 브라우저 번들링 + 폴리필 후 WebView에서 정상 동작
-
-**WebView ZK 엔진 번들 빌드:**
-```bash
-# 1. circomlibjs 브라우저 번들 (esbuild)
-npx esbuild zk-engine-src.js --bundle --platform=browser --format=iife --minify \
-  --alias:stream=stream-browserify --alias:crypto=crypto-browserify \
-  --define:global=globalThis --outfile=zk-engine.min.js
-
-# 2. snarkjs + zk-engine을 HTML에 인라인
-node build-webview-html.mjs  # → zk-webview.html (4.6 MB)
-```
-
-**필수 폴리필 (zk-engine-src.js 내):**
-- `Buffer` (buffer 패키지)
-- `process` (process/browser)
-- `Worker` (빈 구현 — single-threaded fallback, 아래 성능 주의 참고)
-- `crypto` (crypto-browserify)
-- `stream` (stream-browserify)
-
-> **Worker fallback 성능 주의**: ffjavascript는 Worker 멀티스레딩으로 증명 성능을 최적화한다. 빈 Worker stub은 single-threaded fallback이므로 대형 회로(authorize ~22K constraints)에서 성능 저하 가능. 프로덕션에서는 (1) WebView 환경에서 실제 Worker를 지원하는 HTML 구조 (file:// 대신 localhost 서빙 등) 검토, (2) proof 생성 중 프로그레스 UI로 대기 시간 처리, (3) Phase 2에서 네이티브 rapidsnark 모듈 검토.
-
-> **WebView HTML 로딩 방식**: zk-webview.html (4.6 MB)을 `source={{ html }}` 인라인 대신 `expo-asset`으로 로컬 파일 URI를 얻어 `source={{ uri }}` 로 로드해야 한다. 인라인 HTML은 메모리 이슈를 유발할 수 있음.
-
-### 5.3 zkey 파일 관리
-
-| 전략 | 설명 |
-|------|------|
-| 앱 번들 포함 | 앱 크기 +25MB, 다운로드 없음 |
-| 첫 실행 다운로드 | 앱 크기 최소, 초기 대기 필요 |
-| **권장: 하이브리드** | 가장 작은 zkey만 번들, 나머지 온디맨드 다운로드 + expo-file-system 캐시 |
+**accountsChanged / chainChanged**: WalletConnect 세션에서 계정/체인 변경 이벤트 수신 시 세션을 끊지 않고 내부 state만 갱신 → 네트워크 전환 시 세션 churn 제거.
 
 ---
 
-## 6. 코드 재사용 분석
+## 11. 기여자 가이드라인
 
-### 6.1 웹에서 직접 포팅 가능 (변경 최소)
-
-| 파일 | 내용 | 재사용률 |
-|------|------|---------|
-| `lib/zk/commitment.ts` | Poseidon 해싱, Merkle tree | 95% |
-| `lib/zk/eddsa.ts` | BabyJub EdDSA | 95% |
-| `lib/zk/tags.ts` | 도메인 분리 상수 | 100% |
-| `lib/zk/constants.ts` | ZK 상수 | 100% |
-| `lib/contracts.ts` | ABI 정의 | 100% |
-| `lib/config.ts` | 환경변수 | 80% (RN 환경변수 방식 차이) |
-| `lib/relayerApi.ts` | 릴레이어 API 호출 | 90% (fetch → 동일) |
-| `packages/types/` | 공유 타입 | 100% |
-
-### 6.2 tokamon에서 패턴 재사용
-
-| tokamon 패턴 | ScatterDEX 적용 |
-|-------------|----------------|
-| `services/wallet.js` (리스너 패턴) | WalletConnect 래퍼에 동일 패턴 |
-| `services/contract.js` (ethers 래퍼) | PrivateSettlement/CommitmentPool 호출 |
-| `App.js` (전역 상태 + TabNavigator) | 동일 구조 |
-| `utils/constants.js` (ABI + 주소) | 동일 |
-| AsyncStorage 활용 패턴 | 네트워크 설정, 언어 등 |
-| expo-secure-store 활용 | 노트 암호화 저장 |
-| EAS Build 설정 | 동일 |
-| React Navigation (Bottom Tabs) | 동일 |
-
-### 6.3 재작성 필요 (UI 레이어)
-
-| 웹 | 모바일 대응 |
-|----|-----------|
-| `<div>` + Tailwind | `<View>` + StyleSheet |
-| `<input>` | `<TextInput>` |
-| `<button>` | `<TouchableOpacity>` / `<Pressable>` |
-| CSS Grid/Flexbox | RN Flexbox (세로 기본) |
-| 라우팅 (Next.js App Router) | React Navigation |
-| localStorage / IndexedDB | AsyncStorage / expo-secure-store |
+- **`WalletSecret`을 절대 AsyncStorage로 `JSON.stringify` 하지 말 것** — secret은 SecureStore에만. `PendingClaimsStorage` 가 분할 패턴의 canonical 예시.
+- **주소를 `===` 로 비교하지 말 것** — `lib/address.ts → eqAddr(a, b)` 사용. 양쪽 inline 소문자화는 `eqAddr` 가 방지하려는 바로 그 footgun.
+- **모든 생체 프롬프트에 사람이 읽을 `reason` 지정** — OS 시트가 최후 방어선.
+- **모든 사용자 데이터는 per-address 네임스페이스** — 신규 저장은 `<prefix>_<addr>` 형태, 레거시 데이터 있으면 §7 패턴의 마이그레이션 가드 작성.
+- **`account` 키 기반 in-memory 캐시는 `notifyWalletSwitch` 구독** — 안 그러면 전환 후 한 렌더 동안 이전 지갑 데이터 노출.
+- **SecureStore 쓰기 시 `WHEN_UNLOCKED_THIS_DEVICE_ONLY` 명시** — 민감 blob은 기기 바인딩 필수. 공개 데이터는 플래그 생략.
+- **Android 2KB 제한 의식** — SecureStore entry가 클 것 같으면 바로 분할 패턴 적용.
 
 ---
 
-## 7. NFC & SE 확장 계획 (Phase 2)
+## 12. 부록 — 파일 구조
 
-> 현재는 구현하지 않음. Expo/RN 선택으로 향후 확장이 가능하도록 기반을 마련.
-
-### 7.1 NFC 활용 시나리오
-
-#### 시나리오 A: NFC 카드 기반 하드웨어 서명
 ```
-[사용자 폰]          [NFC 카드 (Keycard 등)]
-     │── 거래 해시 전송 ──>│
-     │                     │── 카드 내부 서명
-     │<── 서명 반환 ───────│
-     │── tx 전송
+mobile/
+├── App.tsx
+├── src/
+│   ├── screens/
+│   │   HomeScreen / TradeScreen / DepositScreen / ClaimScreen
+│   │   HistoryScreen / SettingsScreen
+│   ├── components/
+│   │   ScreenHeader / BaseModal / BackupModal / AddressBookModal
+│   │   SecretRevealModal / HiddenWebView / RelayerLogo / …
+│   ├── contexts/
+│   │   WalletContext.tsx
+│   ├── services/          ← §4 인벤토리
+│   ├── zk-engine/         ← 회로별 prover (authorize / claim / deposit / cancel)
+│   ├── hooks/
+│   │   useBalances / useClaimStatuses / useTerminateWorkerOnUnmount / …
+│   ├── lib/
+│   │   address.ts (eqAddr) / format.ts / error-messages.ts / stealth.ts
+│   │   merkleTree.ts / proofFormat.ts / contracts.ts (ABI)
+│   ├── navigation/
+│   │   TabNavigator.tsx (Settings slot 숨김)
+│   ├── shims/
+│   │   브리지 앞단 폴리필
+│   └── types/
+│       wallet.ts (WalletMeta / WalletSource / WalletSecret)
+└── scripts/
+    build-zk-webview.mjs  ← ZK 엔진 번들러
 ```
-- JavaCard 기반 NFC 카드 (Keycard, Tangem)
-- `react-native-nfc-manager`의 APDU 통신
-- 프라이빗 키가 카드에만 존재 — 폰에 노출 안 됨
-
-#### 시나리오 B: NFC 태그로 결제 링크
-```
-[매장 NFC 태그]       [사용자 폰]
-     │── NDEF URL ────>│── 앱 딥링크 열림
-                       │── 결제 화면 표시
-                       │── 사용자 승인 → tx 전송
-```
-
-#### 시나리오 C: HCE 기반 오프라인 결제 (Android only)
-```
-[사용자 Android 폰]    [매장 NFC 리더]
-     │<── APDU 통신 ──>│
-     │── 결제 증명 전송 ─>│── 검증 후 완료
-```
-
-### 7.2 SE (Secure Element) 활용
-
-**BabyJub 키는 SE에 직접 저장 불가** (SE는 P-256만 지원).
-
-**대안 패턴:**
-```
-SE (P-256)                    Software
-┌──────────────┐              ┌───────────────────┐
-│ P-256 마스터 키│──── 암호화 ──>│ BabyJub 키 (암호문)│
-│ (절대 노출 안됨)│              │ (expo-secure-store)│
-└──────────────┘              └───────────────────┘
-                                       │
-                              복호화 (proof 생성 시에만)
-                                       │
-                              ┌────────▼────────┐
-                              │ BabyJub 키 (평문)│
-                              │ (메모리에만 존재) │
-                              └─────────────────┘
-```
-
-- P-256 마스터 키를 SE에 생성 (react-native-keychain, SE-backed)
-- BabyJub 프라이빗 키를 P-256으로 암호화하여 저장
-- proof 생성 시에만 복호화 → 메모리에서 사용 → 즉시 삭제
-- 생체인증 (Face ID / 지문)으로 SE 접근 게이팅
-
-### 7.3 필요 패키지 (Phase 2에서 추가)
-
-```json
-{
-  "react-native-nfc-manager": "^3.17.2",
-  "react-native-keychain": "^10.0.0"
-}
-```
-
-둘 다 Expo config plugin 지원 → dev build에서 바로 동작.
-
----
-
-## 8. 구현 단계
-
-### Phase 1: 기반 + PoC (1주)
-
-| 작업 | 설명 | 예상 |
-|------|------|------|
-| 1-1 | Expo 프로젝트 생성 (`mobile/`) | 0.5일 |
-| 1-2 | snarkjs RN 동작 PoC (Hermes → fallback WebView) | 1일 |
-| 1-3 | WalletConnect RN SDK 연동 + wallet.js | 1일 |
-| 1-4 | ZK 공유 코드 추출 (`shared/zk/`) | 0.5일 |
-| 1-5 | ethers + 컨트랙트 호출 검증 | 0.5일 |
-
-### Phase 2: 핵심 화면 (1~2주)
-
-| 작업 | 설명 | 예상 |
-|------|------|------|
-| 2-1 | HomeScreen (잔액, 최근 거래) | 1일 |
-| 2-2 | DepositScreen (deposit proof + tx) | 2일 |
-| 2-3 | OrderScreen (authorize proof + 릴레이어 제출) | 2일 |
-| 2-4 | ClaimScreen (claim proof + tx) | 1일 |
-| 2-5 | HistoryScreen (거래 내역) | 1일 |
-| 2-6 | SettingsScreen (네트워크, 노트 백업) | 0.5일 |
-
-### Phase 3: 마무리 (0.5~1주)
-
-| 작업 | 설명 | 예상 |
-|------|------|------|
-| 3-1 | 노트 저장 (expo-secure-store 암호화) | 1일 |
-| 3-2 | 에러 핸들링 + 엣지 케이스 | 1일 |
-| 3-3 | EAS Build 설정 + 테스트 빌드 | 0.5일 |
-| 3-4 | 앱스토어 메타데이터 (아이콘, 스크린샷) | 0.5일 |
-
-### Phase 4: NFC & SE (향후)
-
-| 작업 | 설명 |
-|------|------|
-| 4-1 | react-native-nfc-manager 통합 |
-| 4-2 | react-native-keychain SE-backed 키 관리 |
-| 4-3 | NFC 카드 APDU 통신 프로토콜 |
-| 4-4 | HCE 구현 (Android) |
-
----
-
-## 9. 미해결 질문
-
-### OQ-1. snarkjs + Hermes WASM 호환성 — 부분 해결
-- PoC에서 Hermes 직접 실행 실패 확인 — 원인은 Node API 의존성 (readline, Worker, Buffer, process, crypto)
-- **Hermes WASM 자체의 제약 여부**는 아직 미확인 (Node API를 전부 폴리필한 상태에서의 재테스트 필요)
-- 현재 결정: WebView 하이브리드로 확정, Hermes 직접 실행은 Phase 2 최적화 시 재검토
-
-### OQ-2. WalletConnect projectId 관리
-- cloud.walletconnect.com에서 발급 필요
-- 무료 티어: 월 100,000 relay 메시지
-
-### OQ-3. 노트 동기화
-- 웹에서 만든 노트를 모바일에서 사용 가능해야 함
-- 내보내기/가져오기 (QR? 파일?) vs 클라우드 동기화
-- 보안: 노트에 secret + salt 포함 — 암호화 필수
-
-### OQ-4. 웹과 모바일의 WalletConnect 통합
-- 웹도 WalletConnect로 전환하면 wallet.tsx 변경 필요
-- 웹/모바일 동시 전환 vs 모바일만 먼저?
-
-### OQ-5. Mono-repo 구조
-- `shared/` 패키지를 어떻게 관리?
-- 기존 `packages/types/` 확장 vs 새 workspace?
-
-### OQ-6. 앱스토어 심사 (DEX)
-- 자체 커스터디(non-custodial) → 금융 라이선스 불필요할 가능성
-- Apple의 crypto app 가이드라인 확인 필요
-
----
-
-## 부록 A — 기술 의사결정 기록
-
-| 날짜 | 결정 | 이유 |
-|------|------|------|
-| 2026-04-10 | Capacitor → Expo/RN 변경 | NFC & SE 향후 확장 가능성, tokamon 경험 재활용 |
-| 2026-04-10 | WalletConnect v2 + Web3Modal RN | MetaMask 의존 탈피, 모바일 필수 |
-| 2026-04-10 | 웹/모바일 ZK 코드 공유 (`shared/`) | 중복 제거, 단일 소스 |
-| 2026-04-10 | ZK는 WebView 하이브리드 | PoC에서 Hermes 직접 실행 시 snarkjs/circomlibjs의 Node API 의존성(readline, Worker, Buffer, process, crypto)으로 불가 확인. Hermes WASM 자체 제약 여부는 별도 확인 필요. WebView에서 fullProve+verify ALL PASS |
-| 2026-04-10 | esbuild + 폴리필 번들 | circomlibjs 브라우저 빌드 부재 + Node 런타임 의존성 대응을 위한 번들링 전략 |
-
-## 부록 B — WalletConnect 지원 지갑 (주요)
-
-| 지갑 | Android | iOS | 딥링크 |
-|------|---------|-----|--------|
-| MetaMask | O | O | metamask:// |
-| Rainbow | O | O | rainbow:// |
-| Trust Wallet | O | O | trust:// |
-| Coinbase Wallet | O | O | cbwallet:// |
-| Zerion | O | O | zerion:// |
-| 1inch Wallet | O | O | oneinch:// |
-
-## 부록 C — tokamon 코드 재사용 매핑
-
-| tokamon 파일 | ScatterDEX 모바일 대응 |
-|-------------|---------------------|
-| `app/App.js` | `mobile/App.js` (전역 상태 + Navigator) |
-| `app/src/services/wallet.js` | `mobile/src/services/wallet.js` (WC로 교체) |
-| `app/src/services/contract.js` | `mobile/src/services/contract.js` |
-| `app/src/utils/constants.js` | `shared/contracts/abis.ts` |
-| `app/src/screens/*` | `mobile/src/screens/*` |
-| `app/app.config.js` | `mobile/app.config.js` |
-| `app/eas.json` | `mobile/eas.json` |
