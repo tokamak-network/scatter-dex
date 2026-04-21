@@ -158,6 +158,12 @@ async function writeBook(ownerAddress: string, entries: WalletEntry[]): Promise<
 // the same wallet can't read-modify-write against stale entries. Different
 // wallets get separate queues — they write to disjoint keys, so serializing
 // across wallets would only add latency without preventing any race.
+//
+// Entries are deleted once the queued task settles AND no later task has
+// chained onto it (guarded by the `tail === queued` identity check). Without
+// this, long-running sessions — especially WalletConnect hopping between
+// accounts — would accumulate one queue entry per distinct address ever
+// seen and leak memory indefinitely.
 const _mutationQueues = new Map<string, Promise<unknown>>();
 function withLock<T>(ownerAddress: string, task: () => Promise<T>): Promise<T> {
   const key = ownerAddress.toLowerCase();
@@ -165,7 +171,16 @@ function withLock<T>(ownerAddress: string, task: () => Promise<T>): Promise<T> {
   // `.catch(() => {})` first so a failed task can't wedge the queue;
   // then the next task always sees a settled chain.
   const run = prev.catch(() => {}).then(task);
-  _mutationQueues.set(key, run.catch(() => {}));
+  const tail = run.catch(() => {});
+  _mutationQueues.set(key, tail);
+  tail.finally(() => {
+    // Only evict if no later task has chained onto this one — otherwise
+    // we'd drop a still-running queue and allow a concurrent task to
+    // race against it.
+    if (_mutationQueues.get(key) === tail) {
+      _mutationQueues.delete(key);
+    }
+  });
   return run;
 }
 

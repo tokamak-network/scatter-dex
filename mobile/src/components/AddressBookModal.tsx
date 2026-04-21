@@ -10,7 +10,7 @@
  * — entries are loaded once on open, and mutations re-load from the
  * `AddressBookService` so concurrent edits stay consistent.
  */
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
@@ -65,8 +65,15 @@ export default function AddressBookModal(props: Props) {
   const [formMemo, setFormMemo] = useState('');
   const [showForm, setShowForm] = useState(false);
 
+  // Monotonic request id so a wallet switch mid-reload can ignore the
+  // stale promise's setState — otherwise the older wallet's entries
+  // briefly render under the new wallet, exactly the cross-wallet leak
+  // this PR is supposed to prevent.
+  const reloadReqIdRef = useRef(0);
   const reload = useCallback(async () => {
+    const reqId = ++reloadReqIdRef.current;
     if (!ownerAddress) {
+      if (reqId !== reloadReqIdRef.current) return;
       setEntries([]);
       setError('Connect your wallet — the address book is scoped per wallet.');
       setIsCorrupt(false);
@@ -78,8 +85,10 @@ export default function AddressBookModal(props: Props) {
     setIsCorrupt(false);
     try {
       const list = await AddressBookService.list(ownerAddress);
+      if (reqId !== reloadReqIdRef.current) return;
       setEntries(list);
     } catch (err: any) {
+      if (reqId !== reloadReqIdRef.current) return;
       // Corruption is recoverable — surface the option but don't auto-wipe.
       if (err instanceof WalletBookCorruptError) {
         setIsCorrupt(true);
@@ -88,7 +97,7 @@ export default function AddressBookModal(props: Props) {
         setError(err?.message || 'Failed to load address book');
       }
     } finally {
-      setLoading(false);
+      if (reqId === reloadReqIdRef.current) setLoading(false);
     }
   }, [ownerAddress]);
 
