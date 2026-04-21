@@ -179,7 +179,7 @@ export default function HomeScreen() {
                 <View style={s.balanceLeft}>
                   <View style={s.balanceRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.balanceLabel}>보유금 (Wallet)</Text>
+                      <Text style={s.balanceLabel}>Wallet Balance</Text>
                       <Text style={s.balanceAmount}>
                         {showBalance ? publicDisplay : '••••••'}
                       </Text>
@@ -189,7 +189,7 @@ export default function HomeScreen() {
                     </TouchableOpacity>
                   </View>
                   <View style={{ marginTop: 12 }}>
-                    <Text style={s.balanceLabel}>에스크로 예치금 (Private)</Text>
+                    <Text style={s.balanceLabel}>Escrow Balance</Text>
                     <Text style={[s.balanceAmount, { fontSize: 22, color: colors.primaryDark }]}>
                       {showBalance ? privateDisplay : '••••••'}
                     </Text>
