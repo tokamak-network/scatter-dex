@@ -71,10 +71,15 @@ export default function ClaimScreen() {
   // the SecureStore split are migrated transparently on first call.
   useEffect(() => {
     let cancelled = false;
+    if (!account) {
+      setPendingClaims([]);
+      setLoadingClaims(false);
+      return;
+    }
     const load = async () => {
       setLoadingClaims(true);
       try {
-        const claims = await PendingClaimsStorage.list();
+        const claims = await PendingClaimsStorage.list(account);
         if (!cancelled) setPendingClaims(claims);
       } catch {
         if (!cancelled) setPendingClaims([]);
@@ -84,7 +89,7 @@ export default function ClaimScreen() {
     };
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [account]);
 
   // Parse JSON input
   const handleParseJson = useCallback(() => {
@@ -305,7 +310,9 @@ export default function ClaimScreen() {
           const updated = pendingClaims.filter((_, i) => !committedIdxSet.has(i));
           setPendingClaims(updated);
           setSelectedIndices(new Set());
-          await PendingClaimsStorage.removeByIds(removedIds);
+          if (account) {
+            await PendingClaimsStorage.removeByIds(account, removedIds);
+          }
         }
       } else {
         // onProgress already set the error; make sure the UI reflects it.
@@ -315,7 +322,7 @@ export default function ClaimScreen() {
       setClaiming(false);
       setClaimError(friendlyError(err));
     }
-  }, [signer, readProvider, claimTab, parsedJsonClaim, selectedIndices, pendingClaims, submitMode, relayers, claimError]);
+  }, [account, signer, readProvider, claimTab, parsedJsonClaim, selectedIndices, pendingClaims, submitMode, relayers, claimError]);
 
   const progressLabel = (() => {
     if (claimError) return claimError;

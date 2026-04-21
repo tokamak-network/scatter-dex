@@ -223,6 +223,7 @@ export const OrderService = {
       // ...)` which expect Solidity `address` — so persist the original
       // 0x-prefixed hex forms instead of the decimal strings.
       await PendingClaimsStorage.append(
+        account,
         claims.map((c, idx) => ({
           secret: claimsData[idx].secret,
           recipient: c.recipient,

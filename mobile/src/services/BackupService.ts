@@ -1,14 +1,22 @@
 /**
- * BackupService — single-file export / import of all locally-stored
- * user state (notes, pending claims, address book).
+ * BackupService — single-file export / import of locally-stored user
+ * state (notes, pending claims, address book).
  *
  * Mobile has no File System Access API like the web's notes-folder, so
- * we collapse the same data into a single JSON blob the user can save
- * via the Share sheet (Files app, AirDrop, email, …) and re-import by
+ * we collapse the data into a single JSON blob the user can save via
+ * the Share sheet (Files app, AirDrop, email, …) and re-import by
  * pasting back. EdDSA keys and the wallet itself are intentionally
  * excluded — both are recoverable from the underlying wallet signature
  * or recovery phrase, so doubling them in the backup increases the
  * leak surface for no recovery benefit.
+ *
+ * Scope: **per-wallet** (Option A). Callers pass the active wallet
+ * `address`; pending claims are drawn from that address's namespace
+ * only, so each wallet backs up independently. Notes and the address
+ * book stay global for now — they'll become per-wallet in their own
+ * rekey PRs (Phase 2 and Phase 2.5 Part 3) and the `address` parameter
+ * here will route to their per-address APIs at that point without a
+ * public signature change.
  *
  * Restore policy is *additive*: existing entries with the same id /
  * commitment / address are kept, never overwritten. The same backup
@@ -45,14 +53,14 @@ export const BackupService = {
    * bundle. Caller is responsible for transport (Share sheet, clipboard,
    * etc.).
    */
-  async exportAll(): Promise<BackupBundle> {
+  async exportAll(address: string): Promise<BackupBundle> {
     // Don't swallow address-book errors: silently substituting an empty
     // array would produce a backup file the user thinks is complete but
     // is actually missing labels. Wrap with context so the UI can name
     // which section failed.
     const [notes, pendingClaims, addressBook] = await Promise.all([
       NoteStorageService.getAllNotes(),
-      PendingClaimsStorage.list(),
+      PendingClaimsStorage.list(address),
       AddressBookService.list().catch((err: unknown) => {
         const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
         throw new Error(`Failed to read address book for backup${detail}`);
@@ -102,7 +110,7 @@ export const BackupService = {
    * stored are skipped — the user can re-import the same file safely.
    * Returns per-category counts so the UI can report what changed.
    */
-  async restore(bundle: BackupBundle): Promise<RestoreSummary> {
+  async restore(address: string, bundle: BackupBundle): Promise<RestoreSummary> {
     const summary: RestoreSummary = {
       notes: { added: 0, skipped: 0 },
       pendingClaims: { added: 0, skipped: 0 },
@@ -148,7 +156,7 @@ export const BackupService = {
     // row shape up front so a malformed entry can't cause `append` to
     // throw mid-write — that would leave orphan secrets/meta after some
     // have already landed.
-    const existingClaims = await PendingClaimsStorage.list();
+    const existingClaims = await PendingClaimsStorage.list(address);
     const claimKey = (c: { orderId?: string; txHash: string; leafIndex: number; amount: string }): string =>
       `${c.orderId || c.txHash}#${c.leafIndex}#${c.amount}`;
     const existingClaimKey = new Set(existingClaims.map(claimKey));
@@ -196,7 +204,7 @@ export const BackupService = {
       });
     }
     if (claimsToAdd.length > 0) {
-      await PendingClaimsStorage.append(claimsToAdd);
+      await PendingClaimsStorage.append(address, claimsToAdd);
       summary.pendingClaims.added = claimsToAdd.length;
     }
 

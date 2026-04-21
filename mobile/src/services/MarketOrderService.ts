@@ -349,7 +349,7 @@ export const MarketOrderService = {
       // Route through PendingClaimsStorage so a future SecureStore migration
       // for the `secret` field touches a single module (#233 follow-up).
       const { PendingClaimsStorage } = await import('./PendingClaimsStorage');
-      await PendingClaimsStorage.append([{
+      await PendingClaimsStorage.append(account, [{
         secret: claimSecret,
         recipient: claimRecipient,
         token: buyToken,
