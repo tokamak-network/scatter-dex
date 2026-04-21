@@ -388,19 +388,23 @@ export default function SettingsScreen() {
     setCreateNickname('');
     setWalletLoading(true);
     try {
-      const { mnemonic, address, reusedSeed } = await addWalletFromCreate(nickname);
+      const { id, mnemonic, address, reusedSeed } = await addWalletFromCreate(nickname);
       Alert.alert(
         'Wallet Created',
         reusedSeed
           ? `Address: ${shortAddr(address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
           : `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        [{
+          text: 'OK',
+          onPress: () => { switchWallet(id).catch(() => { /* non-fatal: caller stays on previous active */ }); },
+        }],
       );
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to create wallet');
     } finally {
       setWalletLoading(false);
     }
-  }, [createNickname, addWalletFromCreate]);
+  }, [createNickname, addWalletFromCreate, switchWallet]);
 
   const handleImportWallet = useCallback(() => {
     setImportSecret('');
@@ -438,7 +442,7 @@ export default function SettingsScreen() {
   }, [importSecret, importMode, importNickname, addWalletFromMnemonic, addWalletFromPrivateKey]);
 
   const handleSwitchWallet = useCallback(async (id: string) => {
-    if (id === activeWalletId) return;
+    if (id === activeWalletId || walletLoading) return;
     setWalletLoading(true);
     try {
       await switchWallet(id);
@@ -534,9 +538,10 @@ export default function SettingsScreen() {
                       <TouchableOpacity
                         onPress={() => handleDeleteWalletById(w)}
                         hitSlop={8}
+                        disabled={walletLoading}
                         accessibilityLabel={`Delete ${w.nickname || shortAddr(w.address)}`}
                       >
-                        <Text style={{ fontSize: 16, color: colors.danger }}>🗑</Text>
+                        <Text style={{ fontSize: 16, color: colors.danger, opacity: walletLoading ? 0.4 : 1 }}>🗑</Text>
                       </TouchableOpacity>
                     </View>
                   </TouchableOpacity>
@@ -566,6 +571,7 @@ export default function SettingsScreen() {
                   </View>
                   <Text style={[s.linkLabel, { color: colors.primary }]}>Import Wallet</Text>
                 </View>
+                {walletLoading && <ActivityIndicator size="small" />}
               </TouchableOpacity>
             </View>
           )}
