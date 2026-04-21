@@ -21,6 +21,8 @@
  *      (settleAuth), frontend/app/lib/zk/authorize-prover.ts
  */
 
+import { eqAddr } from "../lib/address.js";
+
 /**
  * Sorted "lo-hi" hex address pair — stable key for the unordered
  * (sellToken, buyToken) pair. Lives here (not in `./order.js`) because
@@ -233,7 +235,7 @@ export function validateAuthorizeOrder(
 
   // Relayer binding: the proof must be bound to this relayer
   const proofRelayer = publicSignalToAddress(ps.relayer);
-  if (proofRelayer.toLowerCase() !== relayerAddress.toLowerCase()) {
+  if (!eqAddr(proofRelayer, relayerAddress)) {
     return `Proof bound to relayer ${proofRelayer}, expected ${relayerAddress}`;
   }
 

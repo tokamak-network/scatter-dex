@@ -11,6 +11,7 @@ import {
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
+import { eqAddr } from "../lib/address.js";
 
 /**
  * Cross-relayer trade-offer for the authorize (half-proof) path.
@@ -68,7 +69,7 @@ export class AuthorizeCrossRelayerMatchService {
 
   async onRemoteOrderArrived(summary: OrderSummary): Promise<void> {
     // Skip self-posted orders (shared OB echoes our own publishes back to us).
-    if (summary.relayer.toLowerCase() === this.ownRelayerAddress.toLowerCase()) return;
+    if (eqAddr(summary.relayer, this.ownRelayerAddress)) return;
 
     const now = BigInt(Math.floor(Date.now() / 1000));
     if (BigInt(summary.expiry) <= now) return;

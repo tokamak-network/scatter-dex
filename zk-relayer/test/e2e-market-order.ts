@@ -26,6 +26,7 @@ import { fileURLToPath } from "url";
 
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
+import { eqAddr } from "../src/lib/address.js";
 import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
 
 // @ts-ignore — JS module
@@ -415,7 +416,7 @@ async function main() {
   assert(nonceSpent, "Nonce nullifier spent");
 
   const group = await settlement.claimsGroups(toHex(claimsRootValue, 32));
-  assert(group.token.toLowerCase() === buyTokenAddr.toLowerCase(), `Claims group token: USDC`);
+  assert(eqAddr(group.token, buyTokenAddr), `Claims group token: USDC`);
   assert(group.totalLocked === totalLocked, `Claims group locked: ${ethers.formatEther(group.totalLocked)} USDC`);
 
   // ─── Step 7: Verify platform fee ───────────────────────────
@@ -434,7 +435,7 @@ async function main() {
         const parsed = settleIface.parseLog({ topics: log.topics as string[], data: log.data });
         if (parsed?.name === "DexPlatformFeeCollected") {
           assert(parsed.args.amount === feeAmount, `Fee event amount: ${ethers.formatEther(parsed.args.amount)} WETH`);
-          assert(parsed.args.treasury.toLowerCase() === treasury.toLowerCase(), "Fee sent to treasury");
+          assert(eqAddr(parsed.args.treasury, treasury), "Fee sent to treasury");
           feeEventFound = true;
         }
       } catch { /* skip */ }
