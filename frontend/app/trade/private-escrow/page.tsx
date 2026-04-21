@@ -9,6 +9,7 @@ import { useWallet } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
 import { getReadProvider, getEarliestBlock, cacheEarliestBlock } from "../../lib/provider";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { eqAddr } from "../../lib/address";
 import {
   generateNote,
   computeCommitment,
@@ -83,14 +84,14 @@ export default function PrivateEscrowPage() {
   // a wallet switch mid-session from silently binding new deposits to
   // the previous account's pubkey.
   const [cachedKey, setCachedKey] = useState<{ account: string; keyPair: EdDSAKeyPair } | null>(null);
-  const keyPair = cachedKey && account && cachedKey.account.toLowerCase() === account.toLowerCase()
-    ? cachedKey.keyPair
+  const keyPair = eqAddr(cachedKey?.account, account)
+    ? cachedKey!.keyPair
     : null;
   useEffect(() => {
     // Drop stale cache when the connected account changes (covers wallet
     // switches and disconnects). The in-memory keyPair would otherwise
     // still satisfy the "is cached" check inside handleDeposit.
-    if (cachedKey && account && cachedKey.account.toLowerCase() !== account.toLowerCase()) {
+    if (cachedKey && account && !eqAddr(cachedKey.account, account)) {
       setCachedKey(null);
     }
   }, [account, cachedKey]);
