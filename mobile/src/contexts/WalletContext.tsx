@@ -69,7 +69,10 @@ interface WalletContextValue extends WalletState {
    *  The wallet is persisted before returning so a crash between the
    *  call and the caller surfacing the mnemonic cannot silently stash
    *  funds at an unrecoverable address. */
-  addWalletFromCreate: (nickname?: string) => Promise<{ id: string; address: string; mnemonic: string; reusedSeed: boolean }>;
+  addWalletFromCreate: (nickname?: string) => Promise<
+    | { id: string; address: string; mnemonic: string; reusedSeed: false }
+    | { id: string; address: string; reusedSeed: true }
+  >;
   /** Import a BIP-39 mnemonic. If the device already manages the same
    *  mnemonic, the next BIP-44 account index is derived (reusedSeed=true);
    *  if it manages a *different* mnemonic, the call rejects — the caller
@@ -159,6 +162,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
       setState(INITIAL_STATE);
       setConnectionMode('none');
+      // Matches the manual `disconnect()` / `removeWallet()` teardown
+      // paths — screens subscribing to `NoteStorageService` (TradeScreen /
+      // ClaimScreen / HistoryScreen / HomeScreen) need this signal to
+      // eagerly clear note-keyed state before their `[account]` effects
+      // run. Without it the UI briefly paints the old wallet's notes
+      // while `account` is still transitioning to null.
+      NoteStorageService.notifyWalletSwitch(null);
       return;
     }
 

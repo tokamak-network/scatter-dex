@@ -247,17 +247,33 @@ export const KeySecurityService = {
   // ─── Wallet create / import ───────────────────────
 
   /**
-   * Create a new wallet. When an existing seed-backed wallet (source
-   * 'created' or 'mnemonic') is already stored, we reuse its mnemonic and
-   * derive the next BIP-44 account index from it — the user only ever has
-   * one recovery phrase to back up, not one per button press. Only when the
-   * index is empty (or only holds privateKey-imported wallets) do we mint
-   * a fresh mnemonic.
+   * Create a new wallet.
    *
-   * Returned `mnemonic` may therefore be the same seed the caller has
-   * already been shown in a prior create; the alert copy should say so.
+   * Happy path — a seed-backed wallet (source 'created' or 'mnemonic') is
+   * already on the device: reuse its mnemonic and derive the next BIP-44
+   * account index. The user keeps a single recovery phrase to back up
+   * instead of one per button press. Returns `reusedSeed: true` and
+   * omits `mnemonic` from the result so the caller never re-surfaces a
+   * phrase the user has already saved (and so the value isn't held in JS
+   * memory longer than necessary — cuts the exposure surface via crash
+   * reports / accidental logs).
+   *
+   * Fresh-seed paths — mint a new mnemonic and anchor a new seedId when:
+   *   1. the index is empty, or
+   *   2. the only existing wallets are privateKey imports (no seed), or
+   *   3. a seed-backed wallet exists but its secret is missing its
+   *      `mnemonic` field (corrupt install). We fall back to mint rather
+   *      than fail so the user isn't bricked out of creating accounts.
+   *
+   * The reused-seed branch goes through `authenticate()` rather than
+   * `_biometricGate()` so the full recovery-phrase prompt always fires —
+   * matching `getMnemonic()`'s guard and stopping an attacker from
+   * harvesting a mnemonic when the biometric toggle is off.
    */
-  async createWallet(nickname?: string): Promise<{ id: string; address: string; mnemonic: string; reusedSeed: boolean }> {
+  async createWallet(nickname?: string): Promise<
+    | { id: string; address: string; mnemonic: string; reusedSeed: false }
+    | { id: string; address: string; reusedSeed: true }
+  > {
     await ensureMigrated();
     const list = await readIndex();
 
@@ -271,7 +287,13 @@ export const KeySecurityService = {
       ?? list.find(w => w.source === 'created' || w.source === 'mnemonic');
 
     if (hosted) {
-      if (!(await this._biometricGate('Authenticate to derive a new account'))) {
+      // `authenticate()` — not `_biometricGate()` — because reading an
+      // existing recovery phrase is the same security level as
+      // `getMnemonic()`. The gate variant turns into a no-op when the
+      // biometric toggle is off, which would let an attacker who has
+      // briefly unlocked the phone extract the mnemonic by tapping
+      // "Create New Wallet".
+      if (!(await this.authenticate('Authenticate to derive a new account'))) {
         throw new Error('Authentication cancelled');
       }
       const secret = await readSecret(hosted.id);
@@ -297,7 +319,7 @@ export const KeySecurityService = {
           nickname,
           { seedId, derivationIndex: nextIndex },
         );
-        return { id: meta.id, address: meta.address, mnemonic: secret.mnemonic, reusedSeed: true };
+        return { id: meta.id, address: meta.address, reusedSeed: true };
       }
     }
 
