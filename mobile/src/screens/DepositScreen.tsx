@@ -20,6 +20,7 @@ import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EscrowHiddenStorage } from '../services/EscrowHiddenStorage';
+import { EscrowNullifierSync } from '../services/EscrowNullifierSync';
 import { formatBalance, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { ethers } from 'ethers';
@@ -76,6 +77,15 @@ export default function DepositScreen() {
     }
     setEscrowLoading(true);
     try {
+      // Reconcile local `active` status with on-chain nullifiers FIRST
+      // so the subsequent getAllNotes read picks up any freshly-flipped
+      // rows. The sync is read-only and self-bounded (O(active notes))
+      // — cheap enough to do on every reload. Failure is silently
+      // non-fatal: we still render whatever local state holds.
+      if (readProvider) {
+        try { await EscrowNullifierSync.sync(account, readProvider); }
+        catch { /* keep local view on sync failure */ }
+      }
       const [all, hidden] = await Promise.all([
         NoteStorageService.getAllNotes(account),
         EscrowHiddenStorage.get(account),
@@ -91,7 +101,7 @@ export default function DepositScreen() {
     } finally {
       setEscrowLoading(false);
     }
-  }, [account]);
+  }, [account, readProvider]);
 
   useEffect(() => { void reloadEscrow(); }, [reloadEscrow]);
 
