@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
+import { eqAddr } from "./address";
 
 // ── Mainnet price lookup by token symbol ────────────────────────────
 
@@ -162,7 +163,7 @@ export function useMainnetPrice(
       return;
     }
 
-    if (sell.address.toLowerCase() === buy.address.toLowerCase()) {
+    if (eqAddr(sell.address, buy.address)) {
       setPrices(sourceNames.map((s) => ({ source: s, price: 1, netPrice: 1, fee: "0%", loading: false })));
       return;
     }

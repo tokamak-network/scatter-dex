@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { getEnv } from "./config";
+import { eqAddr } from "./address";
 
 // Uniswap V3 QuoterV2 — raw eth_call to avoid ethers v6 ENS resolution issues
 const QUOTER_V2_IFACE = new ethers.Interface([
@@ -59,7 +60,7 @@ export function useTokenEthPrice(
     const configWeth = getEnv("NEXT_PUBLIC_WETH_ADDRESS");
     const chainWeth = WETH_ADDRESSES[chainId];
     const wethAddr = configWeth || chainWeth;
-    if (wethAddr && tokenAddress.toLowerCase() === wethAddr.toLowerCase()) {
+    if (eqAddr(tokenAddress, wethAddr)) {
       setEthPerToken(1);
       setLoading(false);
       return;

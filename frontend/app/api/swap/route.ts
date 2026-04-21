@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIp } from "../../lib/rate-limit";
+import { eqAddr } from "../../lib/address";
 
 // 30 requests per minute per IP (swap quotes)
 const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
@@ -107,7 +108,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Validate: router address must be the known 1inch router
-    if (data.tx.to.toLowerCase() !== ONEINCH_ROUTER.toLowerCase()) {
+    if (!eqAddr(data.tx.to, ONEINCH_ROUTER)) {
       return NextResponse.json(
         { error: `Unexpected router address: ${data.tx.to}` },
         { status: 502 },

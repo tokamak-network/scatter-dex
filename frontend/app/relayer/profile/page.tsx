@@ -13,6 +13,7 @@ import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
 import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from "../../lib/utils";
 import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
+import { eqAddr } from "../../lib/address";
 import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
 import RelayerLogo from "../../components/RelayerLogo";
 import RelayerTradeStats from "../../components/RelayerTradeStats";
@@ -137,7 +138,7 @@ function RelayerProfileContent() {
   const validAddress = address && ethers.isAddress(address) ? address : null;
 
   const relayer = useMemo(
-    () => relayers.find((r) => r.address.toLowerCase() === validAddress?.toLowerCase()),
+    () => relayers.find((r) => eqAddr(r.address, validAddress)),
     [relayers, validAddress],
   );
 
