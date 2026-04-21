@@ -336,6 +336,10 @@ export const KeySecurityService = {
    * secret is unreadable), legacy mirror keys are wiped so callers cannot
    * keep operating on a stale address. Non-active deletes leave the mirror
    * untouched.
+   *
+   * Guard: a no-arg call with no active id but a non-empty wallet index
+   * indicates storage corruption, not an intent to wipe everything. We
+   * refuse rather than mass-delete; callers must pass an explicit id.
    */
   async deleteWallet(id?: string): Promise<void> {
     await ensureMigrated();
@@ -345,9 +349,14 @@ export const KeySecurityService = {
     ]);
     const targetId = id ?? activeId;
     if (!targetId) {
+      if (list.length > 0) {
+        throw new Error(
+          'deleteWallet() called with no id and no active wallet, but the wallet index is non-empty. Pass an explicit id to delete a specific wallet.',
+        );
+      }
       await Promise.all([
-        ...list.map(w => deleteSecret(w.id)),
         SecureStore.deleteItemAsync(WALLETS_INDEX_KEY),
+        SecureStore.deleteItemAsync(ACTIVE_WALLET_ID_KEY),
         clearLegacy(),
       ]);
       return;
