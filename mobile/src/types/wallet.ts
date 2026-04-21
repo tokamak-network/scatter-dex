@@ -5,7 +5,7 @@ export interface WalletMeta {
   address: string;
   nickname?: string;
   source: WalletSource;
-  createdAt: number;
+  createdAt: number; // unix ms
 }
 
 export interface WalletSecret {
