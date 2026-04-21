@@ -17,7 +17,7 @@ import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import AddressBookModal from '../components/AddressBookModal';
 import BaseModal from '../components/BaseModal';
-import { StealthIdentityService } from '../services/StealthIdentityService';
+import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
 import { Share } from 'react-native';
 import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
@@ -131,7 +131,11 @@ export default function SettingsScreen() {
   }, [toggles]);
 
   const handleStealthManagement = useCallback(async () => {
-    const existing = await StealthIdentityService.load();
+    if (!account) {
+      Alert.alert(STEALTH_WALLET_REQUIRED_ALERT.title, STEALTH_WALLET_REQUIRED_ALERT.body);
+      return;
+    }
+    const existing = await StealthIdentityService.load(account);
 
     if (!existing) {
       Alert.alert(
@@ -143,7 +147,7 @@ export default function SettingsScreen() {
             text: 'Generate',
             onPress: async () => {
               try {
-                const created = await StealthIdentityService.generate();
+                const created = await StealthIdentityService.generate(account);
                 Alert.alert('Stealth Meta-Address', created.metaAddress);
               } catch (err: any) {
                 Alert.alert('Error', err?.message || 'Failed to generate identity');
@@ -187,7 +191,7 @@ export default function SettingsScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     try {
-                      const fresh = await StealthIdentityService.regenerate();
+                      const fresh = await StealthIdentityService.regenerate(account);
                       Alert.alert('New Meta-Address', fresh.metaAddress);
                     } catch (err: any) {
                       Alert.alert('Error', err?.message || 'Failed to regenerate');
@@ -200,7 +204,7 @@ export default function SettingsScreen() {
         },
       ],
     );
-  }, []);
+  }, [account]);
 
   const handleManagementPress = useCallback(async (id: string) => {
     if (id === 'addressbook') {

@@ -13,7 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
-import { StealthIdentityService } from '../services/StealthIdentityService';
+import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
@@ -122,7 +122,11 @@ export default function ClaimScreen() {
   const [stealthPrivkeyReveal, setStealthPrivkeyReveal] = useState<{ privKey: string; stealthAddress: string } | null>(null);
 
   const handleRevealStealthKey = useCallback(async (ephemeralPubKey: string, stealthAddress: string) => {
-    const identity = await StealthIdentityService.load();
+    if (!account) {
+      Alert.alert(STEALTH_WALLET_REQUIRED_ALERT.title, STEALTH_WALLET_REQUIRED_ALERT.body);
+      return;
+    }
+    const identity = await StealthIdentityService.load(account);
     if (!identity) {
       Alert.alert(
         'No Stealth Identity',
@@ -156,7 +160,7 @@ export default function ClaimScreen() {
       return;
     }
     setStealthPrivkeyReveal({ privKey, stealthAddress });
-  }, []);
+  }, [account]);
 
   const toPendingClaimData = (pc: PendingClaim): ClaimData => ({
     secret: pc.secret,

@@ -249,7 +249,7 @@ export const OrderService = {
       );
 
       // Mark original note as spent (in trading)
-      await NoteStorageService.updateNoteStatus(note.id, 'spent');
+      await NoteStorageService.updateNoteStatus(account, note.id, 'spent');
 
       // Save change note if applicable
       if (changeAmount > 0n) {
@@ -268,7 +268,7 @@ export const OrderService = {
           status: 'pending',
           createdAt: Date.now(),
         };
-        await NoteStorageService.saveNote(changeNote);
+        await NoteStorageService.saveNote(account, changeNote);
       }
 
       onProgress({ step: 'success', orderId: response.orderId });
