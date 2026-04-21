@@ -57,12 +57,29 @@ const legacyNoteKeyFor = (id: string): string =>
 // Serialize index read-modify-write PER-ADDRESS so concurrent mutations
 // on one wallet can't race each other, but two different wallets don't
 // contend on a single queue.
+//
+// Entries are deleted once the queued task settles AND no later task
+// has chained onto it (guarded by the `tail === queued` identity
+// check). Without this, long-running sessions — especially
+// WalletConnect hopping between accounts — would accumulate one entry
+// per distinct address ever seen and leak memory indefinitely.
 const _indexMutationQueues = new Map<string, Promise<unknown>>();
 function withIndexLock<T>(address: string, task: () => Promise<T>): Promise<T> {
   const key = address.toLowerCase();
   const prev = _indexMutationQueues.get(key) ?? Promise.resolve();
+  // `.catch(() => {})` first so a failed task can't wedge the queue;
+  // then the next task always sees a settled chain.
   const run = prev.catch(() => {}).then(task);
-  _indexMutationQueues.set(key, run.catch(() => {}));
+  const tail = run.catch(() => {});
+  _indexMutationQueues.set(key, tail);
+  tail.finally(() => {
+    // Only evict if no later task has chained onto this one — otherwise
+    // we'd drop a still-running queue and allow a concurrent task to
+    // race against it.
+    if (_indexMutationQueues.get(key) === tail) {
+      _indexMutationQueues.delete(key);
+    }
+  });
   return run;
 }
 
@@ -94,8 +111,24 @@ async function readIndex(address: string): Promise<string[]> {
  * left in place so a later matching call can claim it. The marker is
  * set only after an actual migration (or when there was nothing to
  * migrate), so deferred cases retry correctly.
+ *
+ * Concurrent callers share a module-level latch so two parallel first
+ * calls (e.g. Home balance load + Trade active-notes load racing on
+ * startup) don't both walk the rekey loop — the second caller awaits
+ * the first's promise and sees the marker set. Matches the pattern
+ * Copilot landed on PendingClaimsStorage's v0→v1 migration (ab44423).
  */
+const _migrationLatch = new Map<string, Promise<void>>();
 async function migrateLegacyIfNeeded(address: string): Promise<void> {
+  const key = address.toLowerCase();
+  const existing = _migrationLatch.get(key);
+  if (existing) return existing;
+  const run = _runMigration(address);
+  _migrationLatch.set(key, run);
+  try { await run; } finally { _migrationLatch.delete(key); }
+}
+
+async function _runMigration(address: string): Promise<void> {
   const marker = await AsyncStorage.getItem(MIGRATION_MARKER);
   if (marker) return;
 
