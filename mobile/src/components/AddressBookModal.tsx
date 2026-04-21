@@ -10,7 +10,7 @@
  * — entries are loaded once on open, and mutations re-load from the
  * `AddressBookService` so concurrent edits stay consistent.
  */
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
@@ -27,7 +27,15 @@ import BaseModal from './BaseModal';
 // Without this, a misconfigured callsite can silently no-op when the user
 // taps an entry in pick mode.
 type Props =
-  & { visible: boolean; onClose: () => void }
+  & {
+    visible: boolean;
+    onClose: () => void;
+    /** Active wallet address — the address book is scoped per owning
+     *  wallet, so all reads/mutations go into `ownerAddress`'s namespace.
+     *  When null (no wallet connected), the modal shows an empty-state
+     *  hint instead of trying to load or mutate. */
+    ownerAddress: string | null;
+  }
   & (
     | { mode: 'manage' }
     | { mode: 'pick'; kindFilter?: WalletEntryKind; onPick: (address: string) => void }
@@ -39,7 +47,7 @@ function shortMeta(meta: string): string {
 }
 
 export default function AddressBookModal(props: Props) {
-  const { visible, mode, onClose } = props;
+  const { visible, mode, onClose, ownerAddress } = props;
   const [entries, setEntries] = useState<WalletEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,14 +65,30 @@ export default function AddressBookModal(props: Props) {
   const [formMemo, setFormMemo] = useState('');
   const [showForm, setShowForm] = useState(false);
 
+  // Monotonic request id so a wallet switch mid-reload can ignore the
+  // stale promise's setState — otherwise the older wallet's entries
+  // briefly render under the new wallet, exactly the cross-wallet leak
+  // this PR is supposed to prevent.
+  const reloadReqIdRef = useRef(0);
   const reload = useCallback(async () => {
+    const reqId = ++reloadReqIdRef.current;
+    if (!ownerAddress) {
+      if (reqId !== reloadReqIdRef.current) return;
+      setEntries([]);
+      setError('Connect your wallet — the address book is scoped per wallet.');
+      setIsCorrupt(false);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     setIsCorrupt(false);
     try {
-      const list = await AddressBookService.list();
+      const list = await AddressBookService.list(ownerAddress);
+      if (reqId !== reloadReqIdRef.current) return;
       setEntries(list);
     } catch (err: any) {
+      if (reqId !== reloadReqIdRef.current) return;
       // Corruption is recoverable — surface the option but don't auto-wipe.
       if (err instanceof WalletBookCorruptError) {
         setIsCorrupt(true);
@@ -73,9 +97,9 @@ export default function AddressBookModal(props: Props) {
         setError(err?.message || 'Failed to load address book');
       }
     } finally {
-      setLoading(false);
+      if (reqId === reloadReqIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [ownerAddress]);
 
   useEffect(() => {
     if (visible) reload();
@@ -110,14 +134,18 @@ export default function AddressBookModal(props: Props) {
   };
 
   const handleSave = async () => {
+    if (!ownerAddress) {
+      Alert.alert('Wallet not connected', 'Connect a wallet first — the address book is scoped per wallet.');
+      return;
+    }
     try {
       if (editingId) {
-        await AddressBookService.update(editingId, {
+        await AddressBookService.update(ownerAddress, editingId, {
           label: formLabel,
           memo: formMemo,
         });
       } else {
-        await AddressBookService.add({
+        await AddressBookService.add(ownerAddress, {
           label: formLabel,
           address: formAddress,
           kind: formKind,
@@ -142,8 +170,12 @@ export default function AddressBookModal(props: Props) {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (!ownerAddress) {
+              Alert.alert('Wallet not connected', 'Connect a wallet first.');
+              return;
+            }
             try {
-              await AddressBookService.remove(entry.id);
+              await AddressBookService.remove(ownerAddress, entry.id);
               await reload();
             } catch (err: any) {
               Alert.alert('Delete failed', err?.message || 'Could not remove entry');
@@ -164,8 +196,12 @@ export default function AddressBookModal(props: Props) {
           text: 'Reset',
           style: 'destructive',
           onPress: async () => {
+            if (!ownerAddress) {
+              Alert.alert('Wallet not connected', 'Connect a wallet first.');
+              return;
+            }
             try {
-              await AddressBookService.wipe();
+              await AddressBookService.wipe(ownerAddress);
               await reload();
             } catch (err: any) {
               Alert.alert('Reset failed', err?.message || 'Could not reset');

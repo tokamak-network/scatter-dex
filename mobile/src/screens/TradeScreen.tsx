@@ -123,6 +123,19 @@ export default function TradeScreen() {
     return () => { cancelled = true; };
   }, [account]);
 
+  // Eager clear on wallet switch. The `[account]` effect above already
+  // re-fetches, but its setState lands one tick behind the switch — so
+  // for the brief window between `notifyWalletSwitch` firing and the
+  // new account's notes arriving, the previous wallet's notes would
+  // still render. Clearing synchronously from the subscriber avoids
+  // that flash.
+  useEffect(() => {
+    return NoteStorageService.subscribeWalletSwitch(() => {
+      setActiveNotes([]);
+      setSelectedNote(null);
+    });
+  }, []);
+
   // Compute USDC equivalent
   const usdcAmount = (() => {
     const a = parseFloat(amount);
@@ -828,6 +841,7 @@ export default function TradeScreen() {
       <AddressBookModal
         visible={pickerForRow !== null}
         mode="pick"
+        ownerAddress={account}
         kindFilter={
           pickerForRow !== null
             ? (claimRows.find((r) => r.id === pickerForRow)?.mode ?? 'standard')

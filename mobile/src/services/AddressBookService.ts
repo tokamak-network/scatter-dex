@@ -1,28 +1,48 @@
 /**
- * AddressBookService — labelled recipient addresses for the trade flow.
+ * AddressBookService — labelled recipient addresses for the trade flow,
+ * scoped per owning wallet address.
  *
- * Mirrors the web `wallet-book.ts` (`frontend/app/lib/wallet-book.ts`) one-
- * for-one in shape (`{id, label, address, memo?, createdAt}`) and lock
- * semantics so the two stores can be cross-referenced in the future.
+ * Mirrors the web `wallet-book.ts` (`frontend/app/lib/wallet-book.ts`)
+ * one-for-one in shape (`{id, label, address, memo?, createdAt}`) and
+ * lock semantics so the two stores can be cross-referenced in the future.
  *
- * On mobile we don't have the File System Access API the web uses, and
- * the entries are not sensitive (labels + 0x addresses, no secrets), so
- * AsyncStorage is the right home — single JSON blob keyed by
- * `scatterdex_wallet_book_v1`. Mutations are serialized through a
- * promise chain so concurrent in-process callers can't race on
- * read-modify-write. Note this is in-process only: a backgrounded app
- * killed mid-write can still lose an entry on the next launch's first
- * write — acceptable for a single-device address book.
+ * Entries are not sensitive (labels + 0x addresses, no secrets) so
+ * AsyncStorage is the right home. Each wallet gets its own blob —
+ * `scatterdex_wallet_book_v1_<ownerAddr>` — so switching wallets in
+ * the multi-wallet UI can't cross-leak the user's recipient labels.
+ * Mutations for a given wallet are serialized through a promise chain
+ * keyed on owner address so concurrent in-process callers on the same
+ * wallet can't race on read-modify-write; different wallets run in
+ * parallel since they touch disjoint keys.
+ *
+ * Legacy (`scatterdex_wallet_book_v1`, no owner suffix) is migrated on
+ * first call by the pre-upgrade built-in wallet owner only — verified
+ * against the hardcoded `scatterdex_wallet_address` SecureStore value
+ * (the legacy `KeySecurityService.ADDRESS_KEY`). A non-owner caller
+ * gets a no-op and the legacy blob stays put for a later matching call.
  */
 // Self-import the polyfill so AddressBookService is safe to import from
 // non-App entry points (tests, headless tasks). The package is idempotent
 // — App.tsx already imports it and the second import is a no-op.
 import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { ethers } from 'ethers';
 import { isMetaAddress } from '../lib/stealth';
 
-const STORAGE_KEY = 'scatterdex_wallet_book_v1';
+const BASE_KEY = 'scatterdex_wallet_book_v1';
+const V2_MIGRATION_MARKER = 'scatterdex_wallet_book_migrated_v2';
+
+/**
+ * SecureStore key the legacy single-wallet KeySecurityService wrote the
+ * wallet address to. Hardcoded rather than imported from KeySecurityService
+ * so a future Phase 1 refactor can't silently change the value we gate on.
+ */
+const LEGACY_BUILTIN_ADDRESS_KEY = 'scatterdex_wallet_address';
+
+function keyFor(address: string): string {
+  return `${BASE_KEY}_${address.toLowerCase()}`;
+}
 
 export class WalletBookCorruptError extends Error {
   constructor(message: string) {
@@ -92,8 +112,8 @@ function isValidEntry(e: unknown): e is WalletEntry {
   // doesn't trip WalletBookCorruptError.
 }
 
-async function readBook(): Promise<WalletEntry[]> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+async function readRawBook(storageKey: string): Promise<WalletEntry[]> {
+  const raw = await AsyncStorage.getItem(storageKey);
   if (!raw) return [];
   let parsed: unknown;
   try {
@@ -121,23 +141,89 @@ async function readBook(): Promise<WalletEntry[]> {
   }));
 }
 
-async function writeBook(entries: WalletEntry[]): Promise<void> {
+async function readBook(ownerAddress: string): Promise<WalletEntry[]> {
+  await migrateLegacyIfNeeded(ownerAddress);
+  return readRawBook(keyFor(ownerAddress));
+}
+
+async function writeBook(ownerAddress: string, entries: WalletEntry[]): Promise<void> {
   const payload: WalletBookFile = { version: 1, entries };
   // Compact JSON — the file is machine-read; pretty-print wastes ~20% of
   // the AsyncStorage round-trip for a payload that grows linearly with
   // entry count.
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  await AsyncStorage.setItem(keyFor(ownerAddress), JSON.stringify(payload));
 }
 
-// Serialize mutations so two rapid taps from the UI can't read-modify-write
-// against stale entries.
-let _mutationQueue: Promise<unknown> = Promise.resolve();
-function withLock<T>(task: () => Promise<T>): Promise<T> {
+// Serialize mutations per owning wallet so two rapid taps from the UI on
+// the same wallet can't read-modify-write against stale entries. Different
+// wallets get separate queues — they write to disjoint keys, so serializing
+// across wallets would only add latency without preventing any race.
+//
+// Entries are deleted once the queued task settles AND no later task has
+// chained onto it (guarded by the `tail === queued` identity check). Without
+// this, long-running sessions — especially WalletConnect hopping between
+// accounts — would accumulate one queue entry per distinct address ever
+// seen and leak memory indefinitely.
+const _mutationQueues = new Map<string, Promise<unknown>>();
+function withLock<T>(ownerAddress: string, task: () => Promise<T>): Promise<T> {
+  const key = ownerAddress.toLowerCase();
+  const prev = _mutationQueues.get(key) ?? Promise.resolve();
   // `.catch(() => {})` first so a failed task can't wedge the queue;
   // then the next task always sees a settled chain.
-  const run = _mutationQueue.catch(() => {}).then(task);
-  _mutationQueue = run.catch(() => {});
+  const run = prev.catch(() => {}).then(task);
+  const tail = run.catch(() => {});
+  _mutationQueues.set(key, tail);
+  tail.finally(() => {
+    // Only evict if no later task has chained onto this one — otherwise
+    // we'd drop a still-running queue and allow a concurrent task to
+    // race against it.
+    if (_mutationQueues.get(key) === tail) {
+      _mutationQueues.delete(key);
+    }
+  });
   return run;
+}
+
+// ─── Legacy (v1 single-wallet) → v2 per-wallet migration ──────────
+
+/**
+ * One-shot legacy-blob migration. Runs on first `list()`/mutation for
+ * the wallet that owns the v1 data. The owner is identified by the
+ * hardcoded `scatterdex_wallet_address` SecureStore value (the legacy
+ * `KeySecurityService.ADDRESS_KEY`) — any other caller gets a no-op so
+ * a WalletConnect-first caller can't silently adopt someone else's
+ * address book. The marker is set before the legacy delete so a crash
+ * between them turns the next run into a flag-check no-op.
+ */
+async function migrateLegacyIfNeeded(address: string): Promise<void> {
+  const marker = await AsyncStorage.getItem(V2_MIGRATION_MARKER);
+  if (marker === '1') return;
+
+  const legacyRaw = await AsyncStorage.getItem(BASE_KEY);
+  if (legacyRaw === null) {
+    // Nothing to migrate — set marker so subsequent calls skip the check.
+    await AsyncStorage.setItem(V2_MIGRATION_MARKER, '1');
+    return;
+  }
+
+  const legacyBuiltinAddress = await SecureStore.getItemAsync(LEGACY_BUILTIN_ADDRESS_KEY);
+  if (!legacyBuiltinAddress || legacyBuiltinAddress.toLowerCase() !== address.toLowerCase()) {
+    // Defer migration — the blob stays in place until the correct
+    // wallet connects. No marker set: retry on the next matching call.
+    return;
+  }
+
+  const targetKey = keyFor(address);
+  const existingTarget = await AsyncStorage.getItem(targetKey);
+  if (existingTarget === null) {
+    await AsyncStorage.setItem(targetKey, legacyRaw);
+  }
+
+  await AsyncStorage.setItem(V2_MIGRATION_MARKER, '1');
+
+  // Legacy delete is best-effort — the flag prevents re-migration even
+  // if this fails.
+  try { await AsyncStorage.removeItem(BASE_KEY); } catch { /* best-effort */ }
 }
 
 /**
@@ -185,11 +271,14 @@ function prepareEntry(input: {
 
 export const AddressBookService = {
   /** Throws WalletBookCorruptError if the stored blob is unreadable. */
-  async list(): Promise<WalletEntry[]> {
-    return readBook();
+  async list(ownerAddress: string): Promise<WalletEntry[]> {
+    return readBook(ownerAddress);
   },
 
-  async add(input: { label: string; address: string; kind?: WalletEntryKind; memo?: string }): Promise<WalletEntry> {
+  async add(
+    ownerAddress: string,
+    input: { label: string; address: string; kind?: WalletEntryKind; memo?: string },
+  ): Promise<WalletEntry> {
     const prepared = prepareEntry(input);
     if (!prepared.ok) {
       throw new Error(prepared.reason === 'invalid-address'
@@ -197,12 +286,12 @@ export const AddressBookService = {
         : 'Label is required');
     }
 
-    return withLock(async () => {
-      const entries = await readBook();
+    return withLock(ownerAddress, async () => {
+      const entries = await readBook(ownerAddress);
       if (entries.some((e) => e.address === prepared.entry.address)) {
         throw new Error('Address already in book');
       }
-      await writeBook([...entries, prepared.entry]);
+      await writeBook(ownerAddress, [...entries, prepared.entry]);
       return prepared.entry;
     });
   },
@@ -216,14 +305,15 @@ export const AddressBookService = {
    * for validation failure / duplicate.
    */
   async addMany(
+    ownerAddress: string,
     inputs: Array<{ label: string; address: string; kind?: WalletEntryKind; memo?: string }>,
   ): Promise<Array<
     | { ok: true; entry: WalletEntry }
     | { ok: false; reason: 'invalid' | 'duplicate' }
   >> {
     if (inputs.length === 0) return [];
-    return withLock(async () => {
-      const entries = await readBook();
+    return withLock(ownerAddress, async () => {
+      const entries = await readBook(ownerAddress);
       const taken = new Set(entries.map((e) => e.address));
       const out: Array<
         | { ok: true; entry: WalletEntry }
@@ -245,18 +335,22 @@ export const AddressBookService = {
         out.push({ ok: true, entry: prepared.entry });
       }
       if (toAppend.length > 0) {
-        await writeBook([...entries, ...toAppend]);
+        await writeBook(ownerAddress, [...entries, ...toAppend]);
       }
       return out;
     });
   },
 
-  async update(id: string, patch: Partial<Pick<WalletEntry, 'label' | 'memo'>>): Promise<void> {
+  async update(
+    ownerAddress: string,
+    id: string,
+    patch: Partial<Pick<WalletEntry, 'label' | 'memo'>>,
+  ): Promise<void> {
     if (patch.label !== undefined && !patch.label.trim()) {
       throw new Error('Label is required');
     }
-    return withLock(async () => {
-      const entries = await readBook();
+    return withLock(ownerAddress, async () => {
+      const entries = await readBook(ownerAddress);
       const idx = entries.findIndex((e) => e.id === id);
       // Throw on missing id — falling through would silently rewrite the
       // same blob (wasted I/O) and the caller would think the patch landed.
@@ -267,24 +361,25 @@ export const AddressBookService = {
         label: patch.label !== undefined ? patch.label.trim() : next[idx].label,
         memo: patch.memo !== undefined ? (patch.memo.trim() || undefined) : next[idx].memo,
       };
-      await writeBook(next);
+      await writeBook(ownerAddress, next);
     });
   },
 
-  async remove(id: string): Promise<void> {
-    return withLock(async () => {
-      const entries = await readBook();
-      await writeBook(entries.filter((e) => e.id !== id));
+  async remove(ownerAddress: string, id: string): Promise<void> {
+    return withLock(ownerAddress, async () => {
+      const entries = await readBook(ownerAddress);
+      await writeBook(ownerAddress, entries.filter((e) => e.id !== id));
     });
   },
 
-  /** Recover from corruption by wiping. The user will lose labels but not
-   *  any sensitive data — addresses are recoverable from on-chain history.
-   *  Goes through `withLock` so a concurrent `add`/`update`/`remove` queued
-   *  before the reset can't re-create entries on top of the wiped store. */
-  async wipe(): Promise<void> {
-    return withLock(async () => {
-      await AsyncStorage.removeItem(STORAGE_KEY);
+  /** Recover from corruption by wiping this wallet's book. The user loses
+   *  labels but not any sensitive data — addresses are recoverable from
+   *  on-chain history. Goes through `withLock` so a concurrent mutation
+   *  queued before the reset can't re-create entries on top of the wiped
+   *  store. Does not touch other wallets' books. */
+  async wipe(ownerAddress: string): Promise<void> {
+    return withLock(ownerAddress, async () => {
+      await AsyncStorage.removeItem(keyFor(ownerAddress));
     });
   },
 };

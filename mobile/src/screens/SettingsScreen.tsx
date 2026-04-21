@@ -388,10 +388,12 @@ export default function SettingsScreen() {
     setCreateNickname('');
     setWalletLoading(true);
     try {
-      const { mnemonic, address } = await addWalletFromCreate(nickname);
+      const { mnemonic, address, reusedSeed } = await addWalletFromCreate(nickname);
       Alert.alert(
         'Wallet Created',
-        `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        reusedSeed
+          ? `Address: ${shortAddr(address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
+          : `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
       );
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to create wallet');
@@ -416,10 +418,18 @@ export default function SettingsScreen() {
     setImportNickname('');
     setWalletLoading(true);
     try {
-      const address = importMode === 'mnemonic'
-        ? await addWalletFromMnemonic(secret, nickname)
-        : await addWalletFromPrivateKey(secret, nickname);
-      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      if (importMode === 'mnemonic') {
+        const { address, reusedSeed } = await addWalletFromMnemonic(secret, nickname);
+        Alert.alert(
+          'Wallet Imported',
+          reusedSeed
+            ? `Address: ${shortAddr(address)}\n\nDerived from the recovery phrase already on this device.`
+            : `Address: ${shortAddr(address)}`,
+        );
+      } else {
+        const address = await addWalletFromPrivateKey(secret, nickname);
+        Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      }
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to import wallet');
     } finally {
@@ -731,6 +741,7 @@ export default function SettingsScreen() {
       <AddressBookModal
         visible={addressBookVisible}
         mode="manage"
+        ownerAddress={account}
         onClose={() => setAddressBookVisible(false)}
       />
 

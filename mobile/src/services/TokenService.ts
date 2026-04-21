@@ -17,6 +17,7 @@ import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { ERC20_ABI } from '../lib/contracts';
+import { eqAddr } from '../lib/address';
 
 export interface TokenInfo {
   address: string;       // on-chain token address (WETH address for native ETH)
@@ -113,7 +114,7 @@ export const TokenService = {
     // resolution rather than each firing their own RPC.
     const fetchPromise = (async (): Promise<number> => {
       for (const t of this.getTokenList()) {
-        if (t.address.toLowerCase() === key) return t.decimals;
+        if (eqAddr(t.address, address)) return t.decimals;
       }
 
       // Construct the contract inside the try so a malformed-but-isAddress

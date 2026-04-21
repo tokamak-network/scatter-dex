@@ -145,6 +145,18 @@ export default function HistoryScreen() {
     return () => { cancelled = true; };
   }, [account, signer]);
 
+  // Eager clear on wallet switch — matches TradeScreen / ClaimScreen.
+  // Without this, the previous wallet's note history briefly renders
+  // under the new wallet's header between `notifyWalletSwitch` firing
+  // and the `[account, signer]` effect above repopulating.
+  useEffect(() => {
+    return NoteStorageService.subscribeWalletSwitch(() => {
+      setAllNotes([]);
+      setOrderStatuses(new Map());
+      setPendingOrders([]);
+    });
+  }, []);
+
   const handleCancel = useCallback(async (noteId: string) => {
     if (!signer || !account) {
       Alert.alert('Wallet not connected', 'Connect your wallet to cancel an order.');
