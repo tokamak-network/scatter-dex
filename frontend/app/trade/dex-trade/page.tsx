@@ -13,6 +13,7 @@ import { getTradableTokens } from "../../lib/tokens";
 import EmptyState from "../../components/EmptyState";
 import { useTokenPair } from "../../lib/useTokenPair";
 import { AddressPicker } from "../../components/AddressPicker";
+import { eqAddr } from "../../lib/address";
 import {
   deriveEdDSAKey,
   serializeKeyPairEncrypted,
@@ -124,7 +125,7 @@ function DexTradePageInner() {
     if (zkRelayers.length === 0) return;
     const want = searchParams.get("relayer");
     if (!want) return;
-    const idx = zkRelayers.findIndex((r) => r.address.toLowerCase() === want.toLowerCase());
+    const idx = zkRelayers.findIndex((r) => eqAddr(r.address, want));
     if (idx >= 0) setSelectedRelayerIdx(idx);
     didPrefillRelayerRef.current = true;
   }, [zkRelayers, searchParams]);
@@ -223,7 +224,7 @@ function DexTradePageInner() {
   const availableNotes = useMemo(() => {
     if (!sellToken) return [];
     return notes.filter((n) =>
-      n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase() &&
+      eqAddr(n.tokenAddress, sellToken.address) &&
       n.leafIndex >= 0 &&
       !spentNotes.has(n.commitment)
     );

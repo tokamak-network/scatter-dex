@@ -13,6 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
+import { NoteStorageService } from '../services/NoteStorageService';
 import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount } from '../lib/format';
@@ -73,6 +74,7 @@ export default function ClaimScreen() {
     let cancelled = false;
     if (!account) {
       setPendingClaims([]);
+      setSelectedIndices(new Set());
       setLoadingClaims(false);
       return;
     }
@@ -90,6 +92,18 @@ export default function ClaimScreen() {
     load();
     return () => { cancelled = true; };
   }, [account]);
+
+  // Eager clear on wallet switch. NoteStorageService's switch hook
+  // fires synchronously before the `[account]` effect above repopulates,
+  // so the previous wallet's pending-claim rows won't briefly render
+  // under the new wallet's header. `setSelectedIndices` reset is safe
+  // because the indices refer to the list we're about to throw away.
+  useEffect(() => {
+    return NoteStorageService.subscribeWalletSwitch(() => {
+      setPendingClaims([]);
+      setSelectedIndices(new Set());
+    });
+  }, []);
 
   // Parse JSON input
   const handleParseJson = useCallback(() => {

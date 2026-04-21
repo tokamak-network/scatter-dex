@@ -13,6 +13,7 @@ import { getTradableTokens } from "../../lib/tokens";
 import EmptyState from "../../components/EmptyState";
 import { useTokenPair } from "../../lib/useTokenPair";
 import { applyFeeBig } from "../../lib/fee";
+import { eqAddr } from "../../lib/address";
 import { AddressPicker } from "../../components/AddressPicker";
 import {
   deriveEdDSAKey,
@@ -143,7 +144,7 @@ function PrivateOrderPageInner() {
   // validateScatterAuth), so the signed `buyAmount` (= distributed total)
   // is capped at `sellAmount − fee`. `buyAmount` is reinterpreted as
   // "amount distributed to recipients" in this mode.
-  const isScatterMode = !!sellToken && !!buyToken && sellToken.address.toLowerCase() === buyToken.address.toLowerCase();
+  const isScatterMode = !!sellToken && !!buyToken && eqAddr(sellToken.address, buyToken.address);
 
   // Scatter mode has no price ratio — sell and buy are the same token.
   // Pin `price` to "1" while scatter is active so the gas-estimate
@@ -159,7 +160,7 @@ function PrivateOrderPageInner() {
     if (zkRelayers.length === 0) return;
     const want = searchParams.get("relayer");
     if (!want) return;
-    const idx = zkRelayers.findIndex((r) => r.address.toLowerCase() === want.toLowerCase());
+    const idx = zkRelayers.findIndex((r) => eqAddr(r.address, want));
     if (idx >= 0) setSelectedRelayerIdx(idx);
     didPrefillRelayerRef.current = true;
   }, [zkRelayers, searchParams]);
@@ -216,7 +217,7 @@ function PrivateOrderPageInner() {
   const availableNotes = useMemo(() => {
     if (!sellToken) return [];
     return notes.filter((n) =>
-      n.tokenAddress.toLowerCase() === sellToken.address.toLowerCase() &&
+      eqAddr(n.tokenAddress, sellToken.address) &&
       n.leafIndex >= 0 &&
       !spentNotes.has(n.commitment)
     );

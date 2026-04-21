@@ -9,6 +9,7 @@ import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
 import { getReadProvider } from "../lib/provider";
 import { extractMessage } from "../lib/error-messages";
+import { eqAddr } from "../lib/address";
 
 interface VaultBalance {
   token: string;
@@ -35,7 +36,7 @@ export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
 
-  const findToken = (addr: string) => tokens.find((t) => t.address.toLowerCase() === addr.toLowerCase());
+  const findToken = (addr: string) => tokens.find((t) => eqAddr(t.address, addr));
 
   // Bumped on every loadBalances call; in-flight responses that come back
   // with a stale id are ignored, preventing late RPCs from overwriting the

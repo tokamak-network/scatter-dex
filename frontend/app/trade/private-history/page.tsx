@@ -8,6 +8,7 @@ import { useRelayers } from "../../lib/useRelayers";
 import ExplorerLink from "../../components/ExplorerLink";
 import { extractMessage } from "../../lib/error-messages";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
+import { eqAddr } from "../../lib/address";
 import {
   deriveEdDSAKey,
   deserializeKeyPairEncrypted,
@@ -107,7 +108,7 @@ const CANCEL_STEP_LABEL: Record<string, string> = {
 function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; decimals: number } {
   try {
     const hex = address.startsWith("0x") ? address : "0x" + BigInt(address).toString(16).padStart(40, "0");
-    const t = tokens.find((tk) => tk.address.toLowerCase() === hex.toLowerCase());
+    const t = tokens.find((tk) => eqAddr(tk.address, hex));
     return t ? { symbol: t.symbol, decimals: t.decimals } : { symbol: hex.slice(0, 10) + "...", decimals: 18 };
   } catch {
     return { symbol: address.slice(0, 10) + "...", decimals: 18 };
@@ -432,9 +433,8 @@ export default function PrivateHistoryPage() {
 
       // Extract newLeafIndex — filter by pool address to avoid matching unrelated logs
       let newLeafIndex = -1;
-      const poolAddrLower = poolAddr.toLowerCase();
       for (const log of receipt.logs) {
-        if (log.address.toLowerCase() !== poolAddrLower) continue;
+        if (!eqAddr(log.address, poolAddr)) continue;
         try {
           const parsed = COMMITMENT_POOL_IFACE.parseLog({ topics: [...log.topics], data: log.data });
           if (parsed?.name === "CommitmentInserted") {
