@@ -828,6 +828,7 @@ export default function TradeScreen() {
       <AddressBookModal
         visible={pickerForRow !== null}
         mode="pick"
+        ownerAddress={account}
         kindFilter={
           pickerForRow !== null
             ? (claimRows.find((r) => r.id === pickerForRow)?.mode ?? 'standard')
