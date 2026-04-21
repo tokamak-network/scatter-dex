@@ -194,11 +194,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       wcProvider.on('accountsChanged', async (accounts: string[]) => {
         if (accounts.length === 0) {
           setState((s) => ({ ...s, account: null, signer: null }));
+          setActiveWalletId(null);
           NoteStorageService.notifyWalletSwitch(null);
         } else {
           const ethersProvider = new ethers.BrowserProvider(wcProvider);
           const signer = await ethersProvider.getSigner();
           setState((s) => ({ ...s, account: accounts[0], signer, provider: ethersProvider }));
+          // A WC session has no built-in wallet id — leaving an old
+          // built-in `activeWalletId` in context would contradict the
+          // "null when on WalletConnect" contract and confuse UI that
+          // keys off it.
+          setActiveWalletId(null);
           // WC session switched accounts — note-keyed screens read from
           // per-address storage, so they need to reload for the new account.
           NoteStorageService.notifyWalletSwitch(accounts[0]);
@@ -225,6 +231,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.log('WC: connected! setting up provider...');
       setQrUri(null);
       await setupFromWcProvider(wcProvider);
+      // WC has no built-in wallet identity — clear any leftover id
+      // from a previous built-in session so `activeWalletId`
+      // honours its "null when on WC" contract.
+      setActiveWalletId(null);
       setConnectionMode('walletconnect');
     } catch (err: any) {
       setQrUri(null);
@@ -417,16 +427,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       KeySecurityService.getActiveWalletId(),
     ]);
     setWallets(list);
-    setActiveWalletId(activeId);
-  }, []);
+    // The storage active-id reflects the built-in wallet state. When
+    // the user is currently on a WalletConnect session, the context
+    // contract says `activeWalletId` is null — don't let a refresh
+    // overwrite that with the stale built-in id.
+    setActiveWalletId(connectionMode === 'builtin' ? activeId : null);
+  }, [connectionMode]);
 
   const switchWallet = useCallback(async (id: string) => {
     const list = await KeySecurityService.listWallets();
     if (!list.some((w) => w.id === id)) {
       throw new Error(`Wallet id not found: ${id}`);
     }
-    await KeySecurityService.setActiveWalletId(id);
+    // Hydrate (biometric + signer) BEFORE persisting the new active
+    // id. If the user cancels the biometric prompt or auth throws,
+    // stored state stays on the previous wallet so the next
+    // connectBuiltin doesn't resume into an un-hydrated session.
+    // `getSignerForWallet` works from the id directly, so the write
+    // ordering doesn't constrain it.
     await hydrateBuiltinSession(id);
+    await KeySecurityService.setActiveWalletId(id);
     setWallets(list);
   }, [hydrateBuiltinSession]);
 
