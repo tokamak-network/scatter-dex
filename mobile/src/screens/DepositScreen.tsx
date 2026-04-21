@@ -13,7 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
-import { formatBalance } from '../lib/format';
+import { formatBalance, shortAddr } from '../lib/format';
 import { ethers } from 'ethers';
 import { friendlyError } from '../lib/error-messages';
 
@@ -31,7 +31,7 @@ const STEP_PROGRESS: Record<DepositStep, number> = {
 
 export default function DepositScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, readProvider } = useWallet();
+  const { account, signer, readProvider, wallets, activeWalletId, switchWallet, connectionMode } = useWallet();
 
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
@@ -212,6 +212,36 @@ export default function DepositScreen() {
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
           {tabMode === 'escrows' ? (
             <View style={s.card}>
+              {/* Per-wallet summary — totals the currently-filtered notes
+                  grouped by token symbol so the user can see "how much of
+                  each token do I have locked as private escrow". Not
+                  confused with native balance because the amounts here
+                  came out of the user's public wallet at deposit time
+                  and are now in the CommitmentPool. */}
+              {escrows.length > 0 && (
+                <View style={s.escrowSummary}>
+                  <Text style={s.escrowSummaryLabel}>
+                    {escrowFilter === 'spent' ? 'Total spent' : 'Total active'}
+                    {account ? ` · ${shortAddr(account)}` : ''}
+                  </Text>
+                  {(() => {
+                    const bySymbol = new Map<string, bigint>();
+                    for (const n of escrows) {
+                      const prev = bySymbol.get(n.tokenSymbol) ?? 0n;
+                      try { bySymbol.set(n.tokenSymbol, prev + BigInt(n.amount || '0')); }
+                      catch { /* malformed amount — skip */ }
+                    }
+                    return Array.from(bySymbol.entries()).map(([sym, total]) => {
+                      const dec = tokens.find((t) => t.symbol === sym)?.decimals ?? 18;
+                      return (
+                        <Text key={sym} style={s.escrowSummaryAmount}>
+                          {formatBalance(ethers.formatUnits(total, dec))} {sym}
+                        </Text>
+                      );
+                    });
+                  })()}
+                </View>
+              )}
               <View style={s.escrowFilterRow}>
                 <TouchableOpacity
                   style={[s.escrowFilterBtn, escrowFilter === 'active' && s.escrowFilterBtnActive]}
@@ -287,6 +317,49 @@ export default function DepositScreen() {
           {!(isGenerating || progress > 0 || depositError) && (
           <View style={s.card}>
             <Text style={s.cardTitle}>Step 1: Escrow Details</Text>
+
+            {/* From Wallet — surfaces the active built-in wallet and lets
+                the user swap it without leaving the screen. Hidden on
+                WalletConnect (the external app owns account selection)
+                and when only one built-in wallet exists. */}
+            {connectionMode === 'builtin' && wallets.length >= 2 && (
+              <View style={s.fieldGroup}>
+                <Text style={s.fieldLabel}>From Wallet</Text>
+                <TouchableOpacity
+                  style={s.tokenSelector}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const buttons = wallets.map((w) => ({
+                      text: `${w.nickname || shortAddr(w.address)}${w.id === activeWalletId ? ' ✓' : ''}`,
+                      onPress: () => {
+                        if (w.id !== activeWalletId) {
+                          switchWallet(w.id).catch((err: any) =>
+                            Alert.alert('Error', err?.message || 'Failed to switch wallet'),
+                          );
+                        }
+                      },
+                    }));
+                    Alert.alert('Select wallet', undefined, [
+                      ...buttons,
+                      { text: 'Cancel', style: 'cancel' as const },
+                    ]);
+                  }}
+                >
+                  <View style={s.tokenLeft}>
+                    <View style={s.tokenDot} />
+                    <Text style={s.tokenText}>
+                      {(() => {
+                        const w = wallets.find((x) => x.id === activeWalletId);
+                        return w
+                          ? `${w.nickname || shortAddr(w.address)} · ${shortAddr(w.address)}`
+                          : (account ? shortAddr(account) : 'No wallet');
+                      })()}
+                    </Text>
+                  </View>
+                  <Text style={s.chevron}>▾</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Select Token */}
             <View style={s.fieldGroup}>
@@ -470,6 +543,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.bgSecondary,
     borderWidth: 1, borderColor: colors.borderLight,
   },
+  escrowSummary: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10,
+    backgroundColor: colors.primaryLight, gap: 2,
+  },
+  escrowSummaryLabel: { fontSize: 11, fontWeight: '600', color: colors.primary },
+  escrowSummaryAmount: { fontSize: 18, fontWeight: '800', color: colors.primaryDark },
   escrowTokenText: { fontSize: 14, fontWeight: '700', color: colors.text },
   escrowSubText: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontFamily: 'monospace' },
   escrowCommitText: { fontSize: 10, color: colors.textDim, marginTop: 2, fontFamily: 'monospace' },
