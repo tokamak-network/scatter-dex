@@ -1,12 +1,24 @@
 /**
- * EdDSAKeyService — 모바일용 EdDSA 키 관리
+ * EdDSAKeyService — mobile EdDSA key management, wallet-scoped.
  *
- * WalletConnect signer로 서명 → keccak256 → BabyJub private key 유도.
- * ZKBridgeService를 통해 WebView에서 EdDSA 연산 수행.
- * expo-secure-store에 암호화 저장.
+ * WalletConnect / built-in signer로 서명 → keccak256 → BabyJub private
+ * key 유도. ZKBridgeService를 통해 WebView에서 EdDSA 연산 수행. Storage
+ * is SecureStore, keyed by `${EDDSA_KEY_PREFIX}${account.toLowerCase()}`
+ * so every wallet on the device gets its own key blob.
  *
  * 웹 프론트엔드의 eddsa.ts와 동일한 유도 로직이지만,
  * circomlibjs는 WebView에서만 실행 가능하므로 Bridge를 통해 호출한다.
+ *
+ * **Multi-wallet safety** — this service holds no in-memory cache. Every
+ * public method (`loadKey`, `saveKey`, `getOrDeriveKey`, `deleteKey`)
+ * reads SecureStore directly with the caller's `account`, so switching
+ * the active wallet in `WalletContext` requires no explicit
+ * invalidation: the next call picks up the new wallet's key blob (or
+ * derives one) automatically. Callers that memoise the returned
+ * `EdDSAKeyPair` in React state must re-fire on `[account]` — see
+ * `SettingsScreen` / `HistoryScreen` for the pattern. Services that
+ * call `getOrDeriveKey` per-operation (Order/Market/Cancel/Deposit)
+ * are inherently switch-safe.
  */
 import { ethers } from 'ethers';
 import * as SecureStore from 'expo-secure-store';
