@@ -13,6 +13,7 @@ import { useBalances } from '../hooks/useBalances';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { TokenService } from '../services/TokenService';
+import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { ethers } from 'ethers';
 import { formatBalance, formatRelativeTime, shortAddr } from '../lib/format';
 import { colors, layout, shadowSubtle, HIT_SLOP_SM } from '../styles/theme';
@@ -41,6 +42,22 @@ export default function HomeScreen() {
 
   const [showBalance, setShowBalance] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Current network — rendered as a pill above the balance card so users
+  // can see which chain the balances below came from without opening
+  // Settings. Re-loaded on mount and whenever ProviderService resets
+  // (network switch); a simple polling useEffect would work but the
+  // mount + subscribe pattern stays in sync without busy work.
+  const [currentNetwork, setCurrentNetwork] = useState<NetworkConfig | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      NetworkService.getSelectedNetwork()
+        .then((n) => { if (!cancelled) setCurrentNetwork(n); })
+        .catch(() => {});
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
   const [privateTotal, setPrivateTotal] = useState('0');
   const [allPublicTotal, setAllPublicTotal] = useState('0');
   const [balanceScope, setBalanceScope] = useState<BalanceScope>('active');
@@ -177,10 +194,17 @@ export default function HomeScreen() {
               )}
               <View style={s.balanceTop}>
                 <View style={s.balanceLeft}>
+                  {currentNetwork && (
+                    <View style={s.networkPill}>
+                      <Text style={s.networkPillText} numberOfLines={1}>
+                        🌐 {currentNetwork.name} · {currentNetwork.chainId}
+                      </Text>
+                    </View>
+                  )}
                   <View style={s.balanceRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={s.balanceLabel}>Wallet Balance</Text>
-                      <Text style={s.balanceAmount}>
+                      <Text style={s.balanceAmountCompact}>
                         {showBalance ? publicDisplay : '••••••'}
                       </Text>
                     </View>
@@ -188,9 +212,9 @@ export default function HomeScreen() {
                       <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
                     </TouchableOpacity>
                   </View>
-                  <View style={{ marginTop: 12 }}>
+                  <View style={{ marginTop: 10 }}>
                     <Text style={s.balanceLabel}>Escrow Balance</Text>
-                    <Text style={[s.balanceAmount, { fontSize: 22, color: colors.primaryDark }]}>
+                    <Text style={[s.balanceAmountCompact, { color: colors.primaryDark }]}>
                       {showBalance ? privateDisplay : '••••••'}
                     </Text>
                   </View>
@@ -337,7 +361,15 @@ const s = StyleSheet.create({
   balanceContent: { position: 'relative', zIndex: 10 },
   balanceTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   balanceLeft: { flexDirection: 'column', gap: 4 },
-  balanceLabel: { fontSize: 14, color: colors.gray500, fontWeight: '500' },
+  balanceLabel: { fontSize: 11, color: colors.gray500, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
+  balanceAmountCompact: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, color: colors.text, marginTop: 2 },
+  networkPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: colors.primaryLight, borderRadius: 99,
+    marginBottom: 8,
+  },
+  networkPillText: { fontSize: 11, fontWeight: '700', color: colors.primaryDark },
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   balanceAmount: { fontSize: 30, fontWeight: '700', letterSpacing: -0.5, color: colors.text },
   eyeIcon: { fontSize: 18, color: colors.textMuted },
