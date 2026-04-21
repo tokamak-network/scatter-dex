@@ -84,14 +84,14 @@ export default function PrivateEscrowPage() {
   // a wallet switch mid-session from silently binding new deposits to
   // the previous account's pubkey.
   const [cachedKey, setCachedKey] = useState<{ account: string; keyPair: EdDSAKeyPair } | null>(null);
-  const keyPair = eqAddr(cachedKey?.account, account)
-    ? cachedKey!.keyPair
+  const keyPair = cachedKey && eqAddr(cachedKey.account, account)
+    ? cachedKey.keyPair
     : null;
   useEffect(() => {
     // Drop stale cache when the connected account changes (covers wallet
     // switches and disconnects). The in-memory keyPair would otherwise
     // still satisfy the "is cached" check inside handleDeposit.
-    if (cachedKey && account && !eqAddr(cachedKey.account, account)) {
+    if (cachedKey && !eqAddr(cachedKey.account, account)) {
       setCachedKey(null);
     }
   }, [account, cachedKey]);
