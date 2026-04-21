@@ -41,12 +41,20 @@ ProviderService.subscribeReset(() => {
 });
 
 function buildDefaultTokens(): TokenInfo[] {
+  // Native ETH balance queries don't need a WETH address — they hit
+  // `provider.getBalance(account)` directly. Returning `[]` when
+  // WETH_ADDRESS is empty (e.g. on chains we haven't configured a
+  // contracts block for) silenced the entire Home balance card, so
+  // expose ETH unconditionally and only skip the WETH ERC20 row when
+  // its address is missing.
   const wethAddr = ConfigService.getWethAddress();
-  if (!wethAddr) return [];
-  return [
-    { address: wethAddr, symbol: 'ETH', decimals: 18, isNative: true },
-    { address: wethAddr, symbol: 'WETH', decimals: 18, isNative: false },
+  const tokens: TokenInfo[] = [
+    { address: wethAddr || ethers.ZeroAddress, symbol: 'ETH', decimals: 18, isNative: true },
   ];
+  if (wethAddr) {
+    tokens.push({ address: wethAddr, symbol: 'WETH', decimals: 18, isNative: false });
+  }
+  return tokens;
 }
 
 export const TokenService = {
