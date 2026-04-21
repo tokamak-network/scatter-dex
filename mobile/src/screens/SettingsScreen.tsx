@@ -1,7 +1,7 @@
 /**
  * SettingsScreen — converted from web design prototype Settings.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
   TextInput,
@@ -70,6 +70,10 @@ export default function SettingsScreen() {
   const [importSecret, setImportSecret] = useState('');
 
   // Add-custom-network modal state
+  // Monotonic counter — handleTestNetwork's async resolver compares against
+  // this before writing state, so a late response from a previous test can't
+  // clobber fields after the modal was closed or a newer test was kicked off.
+  const netTestReqIdRef = useRef(0);
   const [addNetVisible, setAddNetVisible] = useState(false);
   const [netName, setNetName] = useState('');
   const [netRpc, setNetRpc] = useState('');
@@ -264,6 +268,8 @@ export default function SettingsScreen() {
   }, [account]);
 
   const resetAddNetForm = useCallback(() => {
+    // Bump the request id so any in-flight test's resolver becomes a no-op.
+    netTestReqIdRef.current += 1;
     setNetName(''); setNetRpc(''); setNetChainId('');
     setNetSymbol('ETH'); setNetExplorer('');
     setNetTesting(false); setNetTestResult(null);
@@ -272,9 +278,11 @@ export default function SettingsScreen() {
   const handleTestNetwork = useCallback(async () => {
     const rpc = netRpc.trim();
     if (!rpc) { setNetTestResult('Enter RPC URL first'); return; }
+    const reqId = ++netTestReqIdRef.current;
     setNetTesting(true); setNetTestResult(null);
     try {
       const res = await NetworkService.testConnection(rpc);
+      if (reqId !== netTestReqIdRef.current) return;
       if (res.ok) {
         setNetTestResult(`OK — chainId ${res.chainId}, block ${res.blockNumber}`);
         if (!netChainId.trim() && res.chainId !== undefined) setNetChainId(String(res.chainId));
@@ -282,20 +290,27 @@ export default function SettingsScreen() {
         setNetTestResult(`Failed: ${res.error || 'unknown error'}`);
       }
     } catch (err: any) {
+      if (reqId !== netTestReqIdRef.current) return;
       setNetTestResult(`Failed: ${err?.message || 'unknown error'}`);
     } finally {
-      setNetTesting(false);
+      if (reqId === netTestReqIdRef.current) setNetTesting(false);
     }
   }, [netRpc, netChainId]);
 
   const handleSaveNetwork = useCallback(async () => {
     const name = netName.trim();
     const rpcUrl = netRpc.trim();
-    const chainId = Number(netChainId.trim());
+    const chainIdInput = netChainId.trim();
     const symbol = netSymbol.trim() || 'ETH';
     const blockExplorer = netExplorer.trim() || undefined;
-    if (!name || !rpcUrl || !Number.isFinite(chainId) || chainId <= 0) {
-      Alert.alert('Invalid', 'Name, RPC URL, and a positive Chain ID are required.');
+    // Chain IDs are integers. Reject decimals, scientific notation,
+    // non-numeric input, and values outside Number.MAX_SAFE_INTEGER —
+    // anything a strict `parseInt` followed by re-serialisation would
+    // lose precision on.
+    const chainId = Number(chainIdInput);
+    if (!name || !rpcUrl || !Number.isSafeInteger(chainId) || chainId <= 0
+        || String(chainId) !== chainIdInput) {
+      Alert.alert('Invalid', 'Name, RPC URL, and a positive integer Chain ID are required.');
       return;
     }
     try {
@@ -317,12 +332,17 @@ export default function SettingsScreen() {
       { text: 'Delete', style: 'destructive', onPress: async () => {
         try {
           await NetworkService.removeCustomNetwork(net.id);
+          if (selectedNetworkId === net.id) {
+            // removeCustomNetwork leaves SELECTED_KEY pointing at the
+            // deleted id; selectNetwork rewrites storage *and* re-applies
+            // the override to ConfigService/ProviderService so the session
+            // stops using the stale RPC.
+            const fallback = await NetworkService.getSelectedNetwork();
+            await NetworkService.selectNetwork(fallback.id);
+            setSelectedNetworkId(fallback.id);
+          }
           const all = await NetworkService.getAllNetworks();
           setNetworks(all);
-          if (selectedNetworkId === net.id) {
-            const selected = await NetworkService.getSelectedNetwork();
-            setSelectedNetworkId(selected.id);
-          }
         } catch (err: any) {
           Alert.alert('Error', err?.message || 'Failed to delete network');
         }
