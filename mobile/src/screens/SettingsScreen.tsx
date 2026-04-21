@@ -402,10 +402,18 @@ export default function SettingsScreen() {
     setImportSecret('');
     setWalletLoading(true);
     try {
-      const address = importMode === 'mnemonic'
-        ? await KeySecurityService.importFromMnemonic(secret)
-        : await KeySecurityService.importFromPrivateKey(secret);
-      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      if (importMode === 'mnemonic') {
+        const { address, reusedSeed } = await KeySecurityService.importFromMnemonic(secret);
+        Alert.alert(
+          'Wallet Imported',
+          reusedSeed
+            ? `Address: ${shortAddr(address)}\n\nDerived from the recovery phrase already on this device.`
+            : `Address: ${shortAddr(address)}`,
+        );
+      } else {
+        const address = await KeySecurityService.importFromPrivateKey(secret);
+        Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      }
       try {
         await connectBuiltin();
       } catch { /* NO_WALLET handled in context */ }

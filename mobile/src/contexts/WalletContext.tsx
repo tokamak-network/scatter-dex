@@ -70,7 +70,12 @@ interface WalletContextValue extends WalletState {
    *  call and the caller surfacing the mnemonic cannot silently stash
    *  funds at an unrecoverable address. */
   addWalletFromCreate: (nickname?: string) => Promise<{ id: string; address: string; mnemonic: string; reusedSeed: boolean }>;
-  addWalletFromMnemonic: (mnemonic: string, nickname?: string) => Promise<string>;
+  /** Import a BIP-39 mnemonic. If the device already manages the same
+   *  mnemonic, the next BIP-44 account index is derived (reusedSeed=true);
+   *  if it manages a *different* mnemonic, the call rejects — the caller
+   *  should delete existing seed-backed wallets first. Returns the newly
+   *  created wallet's address. */
+  addWalletFromMnemonic: (mnemonic: string, nickname?: string) => Promise<{ address: string; reusedSeed: boolean }>;
   addWalletFromPrivateKey: (privateKey: string, nickname?: string) => Promise<string>;
   /** Delete a built-in wallet. If it was active, the next remaining
    *  wallet is promoted; if none remains, disconnects. */
