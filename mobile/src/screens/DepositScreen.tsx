@@ -13,7 +13,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
-import { formatBalance, shortAddr } from '../lib/format';
+import { formatBalance } from '../lib/format';
 import { ethers } from 'ethers';
 import { friendlyError } from '../lib/error-messages';
 
@@ -62,17 +62,21 @@ export default function DepositScreen() {
     if (list.length > 0) setSelectedToken(list[0]);
   }, []);
 
-  // Reload escrow list when active wallet or filter changes.
+  // Reload escrow list when active wallet or filter changes. The "Active"
+  // filter surfaces anything NOT yet spent — both `status === 'active'`
+  // (finalized on-chain) and `status === 'pending'` (tx mined but note
+  // still catching up). Hiding pending would make freshly-deposited
+  // notes disappear for the window between saveNote() and the next
+  // Merkle-tree sync, which is confusing; the row already renders a
+  // "Pending" badge so the state is legible to the user.
   const reloadEscrows = useCallback(async () => {
     if (!account) { setEscrows([]); return; }
     setEscrowsLoading(true);
     try {
-      const list = escrowFilter === 'active'
-        ? await NoteStorageService.getActiveNotes(account)
-        : await NoteStorageService.getAllNotes(account);
+      const list = await NoteStorageService.getAllNotes(account);
       const filtered = escrowFilter === 'spent'
         ? list.filter((n) => n.status === 'spent')
-        : list;
+        : list.filter((n) => n.status !== 'spent');
       filtered.sort((a, b) => b.createdAt - a.createdAt);
       setEscrows(filtered);
     } catch { /* ignore */ }
@@ -241,7 +245,15 @@ export default function DepositScreen() {
               ) : (
                 <View style={{ gap: 8 }}>
                   {escrows.map((n) => {
-                    const amt = ethers.formatUnits(n.amount ?? '0', 18);
+                    // Resolve decimals from the active-chain token list —
+                    // a per-chain token (e.g. anvil's USDC at 18) is
+                    // different from the mainnet USDC at 6, so a hard-
+                    // coded 18 would mis-render either. Fallback to 18
+                    // is safe for ETH/WETH, which is the vast majority.
+                    const tokenDecimals = tokens.find((t) =>
+                      t.address.toLowerCase() === (n.token ?? '').toLowerCase(),
+                    )?.decimals ?? 18;
+                    const amt = ethers.formatUnits(n.amount ?? '0', tokenDecimals);
                     const dateStr = new Date(n.createdAt).toLocaleString(undefined, {
                       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                     });

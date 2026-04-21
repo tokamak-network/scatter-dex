@@ -48,6 +48,9 @@ assets/zk-webview.html
 assets/zk/*.wasm
 assets/zk/*.zkey
 
-# Per-chain contract addresses written by scripts/dev.sh and
-# scripts/dev-fork.sh — deployment-specific, must not be committed.
-src/config/fork-contracts.json
+# `src/config/fork-contracts.json` is tracked with a default-empty `{}`
+# so Metro's static `require()` resolves in a fresh clone. scripts/dev.sh
+# and scripts/dev-fork.sh overwrite it on each deploy; do NOT commit
+# deployment-specific addresses back — the file's diff should stay as
+# `{}` on feature branches. (`git update-index --skip-worktree` on the
+# file is a useful local guard.)
