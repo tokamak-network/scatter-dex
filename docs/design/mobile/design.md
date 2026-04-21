@@ -14,12 +14,13 @@
 4. [시스템 구성 — 서비스 인벤토리](#4-시스템-구성--서비스-인벤토리)
 5. [서비스별 저장소 스키마](#5-서비스별-저장소-스키마)
 6. [멀티월렛 아키텍처](#6-멀티월렛-아키텍처)
-7. [Per-address 네임스페이싱과 레거시 마이그레이션](#7-per-address-네임스페이싱과-레거시-마이그레이션)
-8. [스텔스 주소 (EIP-5564) 수신 흐름](#8-스텔스-주소-eip-5564-수신-흐름)
-9. [ZK 하이브리드 아키텍처](#9-zk-하이브리드-아키텍처)
-10. [WalletConnect 흐름](#10-walletconnect-흐름)
-11. [기여자 가이드라인](#11-기여자-가이드라인)
-12. [부록 — 파일 구조](#12-부록--파일-구조)
+7. [지갑 생성/복구 로직 (모바일 고유)](#7-지갑-생성복구-로직-모바일-고유)
+8. [Per-address 네임스페이싱과 레거시 마이그레이션](#8-per-address-네임스페이싱과-레거시-마이그레이션)
+9. [스텔스 주소 (EIP-5564) 수신 흐름](#9-스텔스-주소-eip-5564-수신-흐름)
+10. [ZK 하이브리드 아키텍처](#10-zk-하이브리드-아키텍처)
+11. [WalletConnect 흐름](#11-walletconnect-흐름)
+12. [기여자 가이드라인](#12-기여자-가이드라인)
+13. [부록 — 파일 구조](#13-부록--파일-구조)
 
 ---
 
@@ -346,7 +347,145 @@ interface WalletSecret {
 
 ---
 
-## 7. Per-address 네임스페이싱과 레거시 마이그레이션
+## 7. 지갑 생성/복구 로직 (모바일 고유)
+
+웹 프론트엔드에는 존재하지 않는 기능입니다(웹은 외부 지갑 `window.ethereum`에 의존). 모바일은 앱이 **시드와 개인키를 직접 관리**하므로 생성/복구 정책이 중요합니다.
+
+### 7.1 핵심 원칙: "한 기기에 하나의 mnemonic"
+
+- **사용자가 백업해야 할 recovery phrase는 단 하나**. Created / Imported-from-mnemonic 지갑을 몇 개 만들든 모두 같은 BIP-39 seed에서 파생.
+- **BIP-44 경로**: `m/44'/60'/0'/0/<derivationIndex>` (Ethereum mainnet coin type 60). 같은 seed에서 `derivationIndex` 만 증가시켜 새 account 생성.
+- **`privateKey` import 는 예외** — 원본 mnemonic 없이 들어온 키는 standalone entry (seedId 없음).
+
+### 7.2 `WalletMeta` HD 필드
+
+```ts
+interface WalletMeta {
+  id: string;
+  address: string;
+  nickname?: string;
+  source: 'mnemonic' | 'privateKey' | 'created';
+  createdAt: number;
+
+  // HD derivation 그룹핑 (선택적)
+  seedId?: string;          // 같은 mnemonic 에서 파생된 wallet 들이 공유하는 그룹 id
+  derivationIndex?: number; // 그 seed 안에서의 BIP-44 account index
+}
+```
+
+- **legacy 호환**: Phase 1 이전에 생성된 단일 지갑은 `seedId` / `derivationIndex` 가 `undefined`. Caller 는 이를 "standalone seed, index 0"으로 해석. 첫 reuse 시 자신의 `id` 를 `seedId` 로 채택.
+
+### 7.3 `createWallet(nickname?)` — 세 가지 분기
+
+입력: 선택적 nickname. 반환: `{ id, address, reusedSeed: true }` (phrase 감춤) 또는 `{ id, address, mnemonic, reusedSeed: false }` (새 phrase 노출).
+
+**분기 A — reuse (happy path)**: 이미 seed-backed 지갑(`source === 'created' || 'mnemonic'`)이 있을 때.
+
+```
+1. ensureMigrated() + readIndex() → candidates 수집
+   (새 포맷 seedId 있는 것 우선, 그 다음 legacy)
+2. authenticate('Authenticate to derive a new account')
+   ← _biometricGate 가 아님. getMnemonic 과 같은 수준(생체 OFF 이어도 프롬프트).
+   실패 시 throw.
+3. 후보 루프: readSecret(hosted.id).mnemonic 을 찾을 때까지
+   - 실패하면 console.warn 로그 남기고 다음 후보
+4. 찾은 mnemonic + seedId + 기존 derivationIndex 최대치+1 로
+   HDNodeWallet.fromPhrase(mnemonic, undefined,
+     `m/44'/60'/0'/0/${nextIndex}`)
+5. addWalletInternal( pk, address, mnemonic, 'created', nickname,
+                      { seedId, derivationIndex: nextIndex } )
+6. 반환: { id, address, reusedSeed: true } ← mnemonic 노출 안 함
+```
+
+`mnemonic` 을 반환값에서 **의도적으로 생략** — 사용자가 이미 저장한 phrase 를 다시 보여줄 이유가 없고, JS 메모리 체류 시간도 최소화(크래시 리포트/로그 노출 표면 축소).
+
+**분기 B — 모든 후보 부패**: candidates 있는데 모두 mnemonic 읽기 실패.
+
+```
+1. 루프가 끝까지 돌면서 매번 console.warn
+2. 소실 로그 후 아래 분기 C 로 fall-through (fresh mint)
+```
+
+corruption 시나리오: iOS Keychain ACL 변경, 전원 중단 마이그레이션, SecureStore 쓰기 실패 등. 실패가 **첫 후보에서 멈추지 않음** — 같은 seed 에서 파생된 형제 entry 가 멀쩡할 수 있으므로 전부 시도.
+
+**분기 C — fresh mint**: 기존 seed 없음 (빈 index, 또는 privateKey-import 뿐, 또는 분기 B 까지 도달).
+
+```
+1. ethers.Wallet.createRandom() → 새 mnemonic + 새 HD root
+2. seedId = generateWalletId() (uuid)
+3. addWalletInternal( pk, address, mnemonic, 'created', nickname,
+                      { seedId, derivationIndex: 0 } )
+4. 반환: { id, address, mnemonic, reusedSeed: false } ← phrase 노출
+```
+
+이 경로는 "진짜 첫 지갑" 또는 seed 복구 불가 상황. UI 가 반환된 `mnemonic` 을 반드시 저장 안내 alert 에 표시.
+
+### 7.4 `importFromMnemonic(mnemonic, nickname?)` — 세 가지 케이스
+
+입력: BIP-39 phrase + 선택적 nickname. 반환: `{ address, reusedSeed: boolean }`.
+
+| 상황 | 동작 | reusedSeed |
+|------|------|-----------|
+| seed-backed 지갑 없음 | phrase 를 기기 seed 로 anchor, index 0 | `false` |
+| **같은** mnemonic 이 이미 있음 | 그 seed 에서 다음 free BIP-44 index 파생 (Create 와 동일) | `true` |
+| **다른** mnemonic 이 이미 있음 | **거부** — `Error('This device already manages a recovery phrase...')` | — |
+
+세 번째 케이스가 **단일-mnemonic 불변식**을 보장. 사용자가 다른 phrase 를 복구하려면 먼저 기존 seed-backed 지갑을 모두 삭제해야 함.
+
+```
+1. ensureMigrated() + readIndex()
+2. hosted = 새 포맷 seeded wallet ?? legacy seeded wallet
+3. hosted 있음:
+   3a. _biometricGate('Authenticate to import recovery phrase')
+   3b. readSecret(hosted.id).mnemonic 과 입력 trim 비교
+   3c. 동일 → 다음 derivationIndex 로 새 account 파생 (reusedSeed: true)
+   3d. 다름 → throw (위의 안내 문구)
+4. hosted 없음:
+   4a. ethers.Wallet.fromPhrase(trimmed) — phrase 검증 겸 첫 account 파생
+   4b. seedId = generateWalletId(), derivationIndex = 0
+   4c. reusedSeed: false
+```
+
+### 7.5 `importFromPrivateKey(privateKey, nickname?)`
+
+```ts
+// 1. '0x' prefix 정규화
+// 2. ethers.Wallet(pk) 로 주소 파생
+// 3. addWalletInternal(..., { seedId: undefined, derivationIndex: undefined })
+// 4. 반환: address (string)
+```
+
+- standalone 엔트리. seedId 없음 → `createWallet` 의 candidates 풀에 포함되지 않음.
+- 사용자가 이 지갑으로 Create 를 눌러도 **새 mnemonic이 mint** 됨 (이 키는 phrase 로 복원 불가이므로).
+
+### 7.6 `deleteWallet(id?)` 와 mnemonic 수명
+
+- `deleteWallet(id)` 는 해당 entry 의 `wallet_secret_<id>` 를 삭제.
+- 같은 `seedId` 를 공유하는 다른 wallet 이 남아 있으면 mnemonic 은 기기에 **계속 존재** (그쪽 entry 의 SecureStore 에).
+- 마지막 seed-backed 지갑이 삭제되면 mnemonic 도 함께 제거 — 기기에서 그 phrase 가 사라짐.
+- `deleteWallet()` no-arg + empty index → 레거시 키(`scatterdex_wallet_pk/_mnemonic/_address`) 만 wipe. index 가 비어있지 않은 상태에서 no-arg 는 **거부** (§6.2 invariant 4).
+
+### 7.7 생체 게이트 정책 (`authenticate` vs `_biometricGate`)
+
+- `createWallet` 의 reuse 분기 → **항상 `authenticate`** (생체 토글 OFF 여도 프롬프트).
+- `importFromMnemonic` 의 reuse-or-reject 분기 → **`_biometricGate`** (토글 OFF 면 no-op).
+- `getMnemonic` (phrase 조회) → **`authenticate`**.
+
+**근거**: `createWallet` 의 reuse 분기는 내부적으로 mnemonic 을 메모리에 꺼낸 뒤 `HDNodeWallet.fromPhrase` 로 파생. `getMnemonic` 과 동일한 민감도이므로 같은 보안 등급 유지. 사용자가 biometric 을 끈 상태에서 잠시 잠금 해제된 폰을 두고 간 사이 "Create New Wallet" 탭 한 번으로 phrase 가 메모리에 재진입하는 것을 차단.
+
+### 7.8 UI 표면 (SettingsScreen)
+
+- Create Wallet row → `addWalletFromCreate(nickname?)` → `KeySecurityService.createWallet` → 분기 결과를 Alert 으로 표시
+  - `reusedSeed: false` → phrase 표시 + "I have saved it" 버튼 → `switchWallet(newId)` auto-activation
+  - `reusedSeed: true` → "Derived from your existing recovery phrase" 짧은 안내
+- Import Wallet row → 모달에서 mnemonic / privateKey 토글 + nickname 입력
+  - `addWalletFromMnemonic` / `addWalletFromPrivateKey` 호출
+  - 거부 시 (서로 다른 mnemonic) Alert 메시지로 delete-first 안내
+- Delete trash icon → `removeWallet(id)` + 생체 게이트
+
+---
+
+## 8. Per-address 네임스페이싱과 레거시 마이그레이션
 
 `NoteStorageService`, `PendingClaimsStorage`, `StealthIdentityService`, `AddressBookService`, `EscrowHiddenStorage` 가 공유.
 
@@ -367,7 +506,7 @@ interface WalletSecret {
 
 ---
 
-## 8. 스텔스 주소 (EIP-5564) 수신 흐름
+## 9. 스텔스 주소 (EIP-5564) 수신 흐름
 
 수신자 기기에서만 동작. 발신자는 온체인 stealth announcer 컨트랙트 사용.
 
@@ -380,7 +519,7 @@ interface WalletSecret {
 
 ---
 
-## 9. ZK 하이브리드 아키텍처
+## 10. ZK 하이브리드 아키텍처
 
 ```
 Hermes (RN)                        WebView (숨김)
@@ -405,7 +544,7 @@ Hermes (RN)                        WebView (숨김)
 
 ---
 
-## 10. WalletConnect 흐름
+## 11. WalletConnect 흐름
 
 내장 지갑이 기본, WalletConnect는 보조.
 
@@ -431,7 +570,7 @@ Hermes (RN)                        WebView (숨김)
 
 ---
 
-## 11. 기여자 가이드라인
+## 12. 기여자 가이드라인
 
 - **`WalletSecret`을 절대 AsyncStorage로 `JSON.stringify` 하지 말 것** — secret은 SecureStore에만. `PendingClaimsStorage` 가 분할 패턴의 canonical 예시.
 - **주소를 `===` 로 비교하지 말 것** — `lib/address.ts → eqAddr(a, b)` 사용. 양쪽 inline 소문자화는 `eqAddr` 가 방지하려는 바로 그 footgun.
@@ -443,7 +582,7 @@ Hermes (RN)                        WebView (숨김)
 
 ---
 
-## 12. 부록 — 파일 구조
+## 13. 부록 — 파일 구조
 
 ```
 mobile/
