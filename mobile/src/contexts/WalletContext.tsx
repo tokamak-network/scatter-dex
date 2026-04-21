@@ -430,26 +430,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setWallets(list);
   }, [hydrateBuiltinSession]);
 
-  const addWalletFromCreate = useCallback(async (nickname?: string) => {
-    const result = await KeySecurityService.createWallet(nickname);
+  // Shared tail for every add-* path: persist the new wallet via the
+  // provided service call, then re-sync the cached list. Collapses the
+  // three identical post-add dances into one site.
+  const addAndRefreshList = useCallback(async <T,>(addFn: () => Promise<T>): Promise<T> => {
+    const result = await addFn();
     const list = await KeySecurityService.listWallets();
     setWallets(list);
     return result;
   }, []);
 
-  const addWalletFromMnemonic = useCallback(async (mnemonic: string, nickname?: string) => {
-    const address = await KeySecurityService.importFromMnemonic(mnemonic, nickname);
-    const list = await KeySecurityService.listWallets();
-    setWallets(list);
-    return address;
-  }, []);
+  const addWalletFromCreate = useCallback((nickname?: string) =>
+    addAndRefreshList(() => KeySecurityService.createWallet(nickname)),
+  [addAndRefreshList]);
 
-  const addWalletFromPrivateKey = useCallback(async (privateKey: string, nickname?: string) => {
-    const address = await KeySecurityService.importFromPrivateKey(privateKey, nickname);
-    const list = await KeySecurityService.listWallets();
-    setWallets(list);
-    return address;
-  }, []);
+  const addWalletFromMnemonic = useCallback((mnemonic: string, nickname?: string) =>
+    addAndRefreshList(() => KeySecurityService.importFromMnemonic(mnemonic, nickname)),
+  [addAndRefreshList]);
+
+  const addWalletFromPrivateKey = useCallback((privateKey: string, nickname?: string) =>
+    addAndRefreshList(() => KeySecurityService.importFromPrivateKey(privateKey, nickname)),
+  [addAndRefreshList]);
 
   const removeWallet = useCallback(async (id: string) => {
     // Read active-id from storage rather than React state so a
