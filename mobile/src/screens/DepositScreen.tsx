@@ -1,7 +1,13 @@
 /**
- * DepositScreen — converted from web design prototype Deposit.tsx
+ * DepositScreen — private deposit flow + per-wallet escrow commitment list.
+ *
+ * The upper half is the two-step deposit flow (token select → ZK proof).
+ * The lower half is the user's escrow list for the active wallet — notes
+ * grouped by status (active / trading / spent / hidden) with tap-expand
+ * details. Matches the frontend `private-escrow/page.tsx` UX on a mobile
+ * surface.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert,
 } from 'react-native';
@@ -12,8 +18,19 @@ import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
-import { formatBalance } from '../lib/format';
+import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
+import { EscrowHiddenStorage } from '../services/EscrowHiddenStorage';
+import { formatBalance, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
+import { ethers } from 'ethers';
+
+type EscrowTab = 'active' | 'trading' | 'spent' | 'hidden';
+const ESCROW_TABS: Array<{ id: EscrowTab; label: string }> = [
+  { id: 'active', label: 'Active' },
+  { id: 'trading', label: 'Trading' },
+  { id: 'spent', label: 'Spent' },
+  { id: 'hidden', label: 'Hidden' },
+];
 
 const STEP_PROGRESS: Record<DepositStep, number> = {
   idle: 0,
@@ -43,6 +60,83 @@ export default function DepositScreen() {
   const [tokenPickerOpen, setTokenPickerOpen] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+
+  // Escrow commitment list (per active wallet)
+  const [escrowNotes, setEscrowNotes] = useState<StoredNote[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [escrowTab, setEscrowTab] = useState<EscrowTab>('active');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [escrowLoading, setEscrowLoading] = useState(false);
+
+  const reloadEscrow = useCallback(async () => {
+    if (!account) {
+      setEscrowNotes([]);
+      setHiddenIds(new Set());
+      return;
+    }
+    setEscrowLoading(true);
+    try {
+      const [all, hidden] = await Promise.all([
+        NoteStorageService.getAllNotes(account),
+        EscrowHiddenStorage.get(account),
+      ]);
+      setEscrowNotes(all);
+      setHiddenIds(new Set(hidden));
+    } catch {
+      // Silent fallback — escrow list is secondary to the deposit flow,
+      // a transient storage hiccup shouldn't block a user from making
+      // a fresh deposit above.
+      setEscrowNotes([]);
+      setHiddenIds(new Set());
+    } finally {
+      setEscrowLoading(false);
+    }
+  }, [account]);
+
+  useEffect(() => { void reloadEscrow(); }, [reloadEscrow]);
+
+  // Eager clear on wallet switch — matches the pattern A4 landed for
+  // TradeScreen / ClaimScreen / HistoryScreen (#370). Without this, the
+  // previous wallet's escrow rows briefly render under the new wallet's
+  // header between `notifyWalletSwitch` firing and the account-dep
+  // effect repopulating.
+  useEffect(() => {
+    return NoteStorageService.subscribeWalletSwitch(() => {
+      setEscrowNotes([]);
+      setHiddenIds(new Set());
+      setExpandedId(null);
+    });
+  }, []);
+
+  const visibleEscrow = useMemo(() => {
+    return escrowNotes.filter((n) => {
+      const isHidden = hiddenIds.has(n.id);
+      if (escrowTab === 'hidden') return isHidden;
+      if (isHidden) return false;
+      if (escrowTab === 'active') return n.status === 'active';
+      if (escrowTab === 'trading') return n.status === 'pending';
+      if (escrowTab === 'spent') return n.status === 'spent';
+      return false;
+    });
+  }, [escrowNotes, hiddenIds, escrowTab]);
+
+  const handleToggleHide = useCallback(async (noteId: string) => {
+    if (!account) return;
+    const isHidden = hiddenIds.has(noteId);
+    try {
+      if (isHidden) await EscrowHiddenStorage.unhide(account, noteId);
+      else await EscrowHiddenStorage.hide(account, noteId);
+      // Optimistic local update avoids the round-trip reload flash.
+      setHiddenIds((prev) => {
+        const next = new Set(prev);
+        if (isHidden) next.delete(noteId);
+        else next.add(noteId);
+        return next;
+      });
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update hidden state');
+    }
+  }, [account, hiddenIds]);
 
   // Load token list
   useEffect(() => {
@@ -106,6 +200,10 @@ export default function DepositScreen() {
           if (p.step === 'success') {
             setIsGenerating(false);
             setProgress(100);
+            // Pull the new note into the escrow list so the user sees
+            // their fresh deposit right below the form without having
+            // to navigate away and back.
+            void reloadEscrow();
           }
           if (p.step === 'error') {
             setIsGenerating(false);
@@ -125,7 +223,7 @@ export default function DepositScreen() {
       setProgress(0);
       setDepositError(null);
     }
-  }, [step, account, signer, selectedToken, amount, progress, isGenerating, depositError]);
+  }, [step, account, signer, selectedToken, amount, progress, isGenerating, depositError, reloadEscrow]);
 
   const displayBalance = loadingBalance ? '...' : (balance ? `${formatBalance(balance)} ${selectedToken?.symbol || ''}` : '—');
 
@@ -226,6 +324,99 @@ export default function DepositScreen() {
             </View>
           </View>
 
+          {/* Escrow Commitments */}
+          {account && (
+            <View style={s.card}>
+              <View style={s.escrowHeader}>
+                <Text style={s.cardTitle}>Escrow Commitments</Text>
+                <TouchableOpacity onPress={reloadEscrow} hitSlop={8} disabled={escrowLoading}>
+                  <Text style={s.escrowRefresh}>{escrowLoading ? '…' : '↻'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={s.escrowTabsRow}>
+                {ESCROW_TABS.map((t) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[s.escrowTab, escrowTab === t.id && s.escrowTabActive]}
+                    onPress={() => { setEscrowTab(t.id); setExpandedId(null); }}
+                  >
+                    <Text style={[s.escrowTabText, escrowTab === t.id && s.escrowTabTextActive]}>
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {visibleEscrow.length === 0 ? (
+                <Text style={s.escrowEmpty}>
+                  {escrowTab === 'hidden'
+                    ? 'No hidden commitments.'
+                    : escrowTab === 'trading'
+                      ? 'No commitments currently in trades.'
+                      : escrowTab === 'spent'
+                        ? 'No spent commitments yet.'
+                        : 'Your deposits will appear here.'}
+                </Text>
+              ) : (
+                visibleEscrow.map((n) => {
+                  const isExpanded = expandedId === n.id;
+                  const isHidden = hiddenIds.has(n.id);
+                  // Display amount — commitments persist wei-string; format
+                  // to a short decimal so dust notes don't hog the row.
+                  let display = n.amount;
+                  try { display = formatBalance(ethers.formatEther(n.amount)); } catch { /* leave raw */ }
+                  return (
+                    <TouchableOpacity
+                      key={n.id}
+                      style={s.escrowRow}
+                      activeOpacity={0.7}
+                      onPress={() => setExpandedId(isExpanded ? null : n.id)}
+                    >
+                      <View style={s.escrowRowTop}>
+                        <View style={s.escrowRowLeft}>
+                          <Text style={s.escrowAmount}>{display} {n.tokenSymbol}</Text>
+                          <Text style={s.escrowSub}>
+                            {n.leafIndex >= 0 ? `leaf #${n.leafIndex}` : 'pending commit'} · {new Date(n.createdAt).toLocaleDateString()}
+                          </Text>
+                        </View>
+                        <View style={[s.escrowBadge, s[`escrowBadge_${n.status}` as keyof typeof s] as any]}>
+                          <Text style={s.escrowBadgeText}>
+                            {n.status === 'pending' ? 'trading' : n.status}
+                          </Text>
+                        </View>
+                      </View>
+                      {isExpanded && (
+                        <View style={s.escrowDetails}>
+                          <Text style={s.escrowDetailLabel}>Commitment</Text>
+                          <Text style={s.escrowDetailValue} numberOfLines={1}>
+                            {shortAddr(n.commitment, 10, 8)}
+                          </Text>
+                          <Text style={s.escrowDetailLabel}>Token</Text>
+                          <Text style={s.escrowDetailValue} numberOfLines={1}>
+                            {shortAddr(n.token)} ({n.tokenSymbol})
+                          </Text>
+                          <Text style={s.escrowDetailLabel}>Tx hash</Text>
+                          <Text style={s.escrowDetailValue} numberOfLines={1}>
+                            {n.txHash ? shortAddr(n.txHash, 10, 8) : '—'}
+                          </Text>
+                          <TouchableOpacity
+                            style={s.escrowHideBtn}
+                            onPress={() => handleToggleHide(n.id)}
+                          >
+                            <Text style={s.escrowHideBtnText}>
+                              {isHidden ? 'Unhide' : 'Hide'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </View>
+          )}
+
         </ScrollView>
 
         {/* Fixed Bottom Action */}
@@ -307,4 +498,29 @@ const s = StyleSheet.create({
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
+
+  // Escrow commitment list
+  escrowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  escrowRefresh: { fontSize: 18, color: colors.textSecondary, paddingHorizontal: 4 },
+  escrowTabsRow: { flexDirection: 'row', backgroundColor: colors.bgSecondary, borderRadius: 12, padding: 3 },
+  escrowTab: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  escrowTabActive: { backgroundColor: colors.card, ...shadowSubtle },
+  escrowTabText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
+  escrowTabTextActive: { color: colors.text },
+  escrowEmpty: { fontSize: 13, color: colors.textMuted, textAlign: 'center', paddingVertical: 20 },
+  escrowRow: { backgroundColor: colors.bgSecondary, borderRadius: 12, padding: 12, gap: 8, borderWidth: 1, borderColor: colors.borderLight },
+  escrowRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  escrowRowLeft: { flexShrink: 1, gap: 2 },
+  escrowAmount: { fontSize: 15, fontWeight: '700', color: colors.text },
+  escrowSub: { fontSize: 11, color: colors.textMuted, fontWeight: '500' },
+  escrowBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: colors.bgSecondary },
+  escrowBadgeText: { fontSize: 10, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase' },
+  escrowBadge_active: { backgroundColor: colors.successLight },
+  escrowBadge_pending: { backgroundColor: colors.primaryLight },
+  escrowBadge_spent: { backgroundColor: colors.borderLight },
+  escrowDetails: { gap: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.borderLight },
+  escrowDetailLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', marginTop: 4 },
+  escrowDetailValue: { fontSize: 12, fontWeight: '500', color: colors.text, fontVariant: ['tabular-nums'] },
+  escrowHideBtn: { alignSelf: 'flex-end', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primaryLight, borderRadius: 8, marginTop: 4 },
+  escrowHideBtnText: { fontSize: 12, fontWeight: '700', color: colors.primaryDark },
 });
