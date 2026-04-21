@@ -59,12 +59,18 @@ interface WalletContextValue extends WalletState {
    *  notifies NoteStorageService subscribers so note-keyed screens
    *  reload. Throws if the id is not in the list. */
   switchWallet: (id: string) => Promise<void>;
-  /** Create a new app-generated wallet. When an existing seed-backed
-   *  wallet is already stored, the new wallet is derived from the same
-   *  BIP-39 mnemonic at the next BIP-44 account index — `reusedSeed` is
-   *  true and the returned `mnemonic` is the one the user has already
-   *  seen. When no seed exists yet, a fresh mnemonic is minted and
-   *  `reusedSeed` is false.
+  /** Create a new app-generated wallet. The return is a discriminated
+   *  union so the caller cannot accidentally re-surface a recovery
+   *  phrase the user already saved:
+   *
+   *  - `reusedSeed: true` — derived from an existing seed-backed wallet
+   *    at the next BIP-44 account index. `mnemonic` is intentionally
+   *    omitted from the result (not held in JS memory), because the
+   *    user has already been shown that phrase on the first create /
+   *    first import.
+   *  - `reusedSeed: false` — a fresh mnemonic was minted (empty vault,
+   *    or only privateKey-imports previously). `mnemonic` is present
+   *    and should be surfaced to the user so they can back it up.
    *
    *  The wallet is persisted before returning so a crash between the
    *  call and the caller surfacing the mnemonic cannot silently stash
