@@ -336,6 +336,16 @@ fi
 # the same deployment in one shot. Expo's Fast Refresh picks the JSON
 # up on the next import without a rebuild.
 mkdir -p "$ROOT_DIR/mobile/src/config"
+# Emit the tokens array only when we actually have a USDC address.
+# Integration mode explicitly clears USDC/WETH (and other addresses),
+# so emitting `{"address":"","symbol":"USDC",…}` unconditionally would
+# plant a malformed entry in fork-contracts.json that breaks
+# ConfigService.getExtraTokens() consumers.
+if [ -n "$USDC" ]; then
+  MOBILE_TOKENS_LINE=$'    "tokens": [\n      { "address": "'"$USDC"$'", "symbol": "USDC", "decimals": 18 }\n    ],\n'
+else
+  MOBILE_TOKENS_LINE=""
+fi
 cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
 {
   "31337": {
@@ -347,11 +357,8 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "relayerRegistry": "$RELAYER_REGISTRY",
     "feeVault": "$FEE_VAULT",
     "batchExecutor": "$BATCH_EXECUTOR",
-    "relayerUrl": "http://localhost:3002",
-    "sharedOrderbookUrl": "http://localhost:4000",
-    "tokens": [
-      { "address": "$USDC", "symbol": "USDC", "decimals": 18 }
-    ]
+${MOBILE_TOKENS_LINE}    "relayerUrl": "http://localhost:3002",
+    "sharedOrderbookUrl": "http://localhost:4000"
   }
 }
 EOF

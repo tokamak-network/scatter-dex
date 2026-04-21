@@ -417,9 +417,15 @@ mkdir -p "$ROOT_DIR/mobile/src/config"
 # deploy emitted. Mainnet-fork USDC/USDT are 6 decimals; mock USDC on
 # dev.sh is 18 — we default to 6 here because dev-fork always uses real
 # mainnet tokens (USE_REAL_TOKENS=true). WTON is 27 when it shows up.
-MOBILE_TOKENS="{ \"address\": \"$USDC\", \"symbol\": \"USDC\", \"decimals\": 6 }"
-[ -n "$USDT" ] && MOBILE_TOKENS="$MOBILE_TOKENS,\n      { \"address\": \"$USDT\", \"symbol\": \"USDT\", \"decimals\": 6 }"
-[ -n "$WTON" ] && MOBILE_TOKENS="$MOBILE_TOKENS,\n      { \"address\": \"$WTON\", \"symbol\": \"WTON\", \"decimals\": 27 }"
+# Render the tokens[] body ahead of the heredoc and substitute as a
+# plain variable. Previously we used `$(printf %b ...)` inline inside
+# the JSON, which relies on unquoted command substitution splitting
+# rules — fragile and hard to read.
+MOBILE_TOKENS_BODY="      { \"address\": \"$USDC\", \"symbol\": \"USDC\", \"decimals\": 6 }"
+[ -n "$USDT" ] && MOBILE_TOKENS_BODY="${MOBILE_TOKENS_BODY},
+      { \"address\": \"$USDT\", \"symbol\": \"USDT\", \"decimals\": 6 }"
+[ -n "$WTON" ] && MOBILE_TOKENS_BODY="${MOBILE_TOKENS_BODY},
+      { \"address\": \"$WTON\", \"symbol\": \"WTON\", \"decimals\": 27 }"
 
 cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
 {
@@ -435,7 +441,7 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "relayerUrl": "http://localhost:3002",
     "sharedOrderbookUrl": "http://localhost:4000",
     "tokens": [
-      $(printf "%b" "$MOBILE_TOKENS")
+${MOBILE_TOKENS_BODY}
     ]
   }
 }

@@ -50,6 +50,27 @@ export const layout = {
   card: { padding: 24, radius: 24, borderWidth: 1 },
 } as const;
 
+// Shared type scale. Screens pick from this instead of declaring ad-hoc
+// fontSize numbers so a balance on Home and an amount on Escrow read
+// the same weight. Previously every screen defined its own
+// balanceAmount / cardTitle / fieldLabel sizes and they drifted.
+export const typography = {
+  // Screen header / card title
+  title: { fontSize: 18, fontWeight: '700' as const, color: colors.text },
+  // Prominent numeric readouts (Home balances, escrow totals, Trade amount)
+  amountLarge: { fontSize: 22, fontWeight: '700' as const, letterSpacing: -0.3, color: colors.text },
+  // Secondary numeric readouts (row totals, per-token breakdown)
+  amountMedium: { fontSize: 16, fontWeight: '700' as const, color: colors.text },
+  // Field / section labels ("Select Token", "Amount", "WALLET BALANCE")
+  label: { fontSize: 11, fontWeight: '600' as const, color: colors.gray500, textTransform: 'uppercase' as const, letterSpacing: 0.4 },
+  // Body / form input hint
+  body: { fontSize: 14, fontWeight: '500' as const, color: colors.text },
+  // Small muted hint
+  hint: { fontSize: 12, fontWeight: '500' as const, color: colors.textMuted },
+  // Monospace secondary (leaf #, commit hash, short address)
+  mono: { fontSize: 11, fontFamily: 'monospace' as const, color: colors.textMuted },
+} as const;
+
 // Small hitSlop tuple — default for icon buttons (back, gear, eye …).
 export const HIT_SLOP_SM = { top: 8, bottom: 8, left: 8, right: 8 } as const;
 
