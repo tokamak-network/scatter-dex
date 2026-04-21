@@ -154,6 +154,12 @@ export default function HistoryScreen() {
       setAllNotes([]);
       setOrderStatuses(new Map());
       setPendingOrders([]);
+      // Wallet-scoped UI state — otherwise a stale error, loading
+      // spinner, or in-flight cancel row from the previous wallet
+      // would flash under the new wallet until the refetch effect runs.
+      setError(null);
+      setLoading(false);
+      setCancellingNoteId(null);
     });
   }, []);
 
