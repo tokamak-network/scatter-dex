@@ -1,14 +1,22 @@
 /**
- * BackupService — single-file export / import of all locally-stored
- * user state (notes, pending claims, address book).
+ * BackupService — single-file export / import of locally-stored user
+ * state (notes, pending claims, address book).
  *
  * Mobile has no File System Access API like the web's notes-folder, so
- * we collapse the same data into a single JSON blob the user can save
- * via the Share sheet (Files app, AirDrop, email, …) and re-import by
+ * we collapse the data into a single JSON blob the user can save via
+ * the Share sheet (Files app, AirDrop, email, …) and re-import by
  * pasting back. EdDSA keys and the wallet itself are intentionally
  * excluded — both are recoverable from the underlying wallet signature
  * or recovery phrase, so doubling them in the backup increases the
  * leak surface for no recovery benefit.
+ *
+ * Scope: **per-wallet** (Option A). Callers pass the active wallet
+ * `address`; pending claims are drawn from that address's namespace
+ * only, so each wallet backs up independently. Notes and the address
+ * book stay global for now — they'll become per-wallet in their own
+ * rekey PRs (Phase 2 and Phase 2.5 Part 3) and the `address` parameter
+ * here will route to their per-address APIs at that point without a
+ * public signature change.
  *
  * Restore policy is *additive*: existing entries with the same id /
  * commitment / address are kept, never overwritten. The same backup
@@ -43,13 +51,10 @@ export const BackupService = {
   /**
    * Snapshot every locally-stored row into a single JSON-serializable
    * bundle. Caller is responsible for transport (Share sheet, clipboard,
-   * etc.).
-   */
-  /**
-   * Notes are scoped to `address` (this PR). Pending claims and the
-   * address book are still global until A4's #358 / Phase 2.5 Part 3
-   * land; the `address` parameter will route to their per-wallet APIs
-   * at that point without a public signature change.
+   * etc.). Notes and pending claims are scoped to `address`; the
+   * address book is still global here and becomes per-wallet in
+   * Phase 2.5 Part 3 — the `address` parameter will route through
+   * without a public signature change at that point.
    */
   async exportAll(address: string): Promise<BackupBundle> {
     // Don't swallow address-book errors: silently substituting an empty
@@ -58,7 +63,7 @@ export const BackupService = {
     // which section failed.
     const [notes, pendingClaims, addressBook] = await Promise.all([
       NoteStorageService.getAllNotes(address),
-      PendingClaimsStorage.list(),
+      PendingClaimsStorage.list(address),
       AddressBookService.list().catch((err: unknown) => {
         const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
         throw new Error(`Failed to read address book for backup${detail}`);
@@ -154,7 +159,7 @@ export const BackupService = {
     // row shape up front so a malformed entry can't cause `append` to
     // throw mid-write — that would leave orphan secrets/meta after some
     // have already landed.
-    const existingClaims = await PendingClaimsStorage.list();
+    const existingClaims = await PendingClaimsStorage.list(address);
     const claimKey = (c: { orderId?: string; txHash: string; leafIndex: number; amount: string }): string =>
       `${c.orderId || c.txHash}#${c.leafIndex}#${c.amount}`;
     const existingClaimKey = new Set(existingClaims.map(claimKey));
@@ -202,7 +207,7 @@ export const BackupService = {
       });
     }
     if (claimsToAdd.length > 0) {
-      await PendingClaimsStorage.append(claimsToAdd);
+      await PendingClaimsStorage.append(address, claimsToAdd);
       summary.pendingClaims.added = claimsToAdd.length;
     }
 
