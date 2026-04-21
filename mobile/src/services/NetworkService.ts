@@ -5,9 +5,22 @@
  * 선택된 네트워크는 AsyncStorage에 저장되어 앱 재시작 시 유지.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { fetchWithTimeout, TIMEOUT_READ_MS } from '../lib/http';
+
+/**
+ * Host that an emulator / simulator uses to reach the dev machine's
+ * loopback. iOS simulator shares the host's loopback directly, so
+ * `localhost` works. Android emulator routes to the host via the
+ * `10.0.2.2` bridge — a hardcoded kernel mapping that only exists in
+ * the emulator. On a real Android device on the same LAN neither
+ * resolves, and the user has to register a Custom Network with the
+ * host's LAN IP anyway. Default branch covers iOS + web + any future
+ * platform without a special-case entry.
+ */
+const LOCAL_RPC_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 
 const NETWORKS_KEY = 'scatterdex_custom_networks';
 const SELECTED_KEY = 'scatterdex_selected_network';
@@ -61,13 +74,12 @@ export const PRESET_NETWORKS: NetworkConfig[] = [
     isCustom: false,
   },
   {
-    // iOS simulator shares the host's loopback so `localhost` resolves
-    // directly to the machine running anvil / hardhat. Android emulators
-    // need the `10.0.2.2` bridge instead — users on Android must add a
-    // Custom Network with that address via Settings.
+    // Resolves to `localhost` on iOS / web and `10.0.2.2` on Android
+    // emulators — see `LOCAL_RPC_HOST` above. Real devices on the LAN
+    // still need a Custom Network with the host's LAN IP.
     id: 'localhost',
     name: 'Local Node (Hardhat/Anvil)',
-    rpcUrl: 'http://localhost:8545',
+    rpcUrl: `http://${LOCAL_RPC_HOST}:8545`,
     chainId: 31337,
     symbol: 'ETH',
     isCustom: false,
@@ -75,10 +87,10 @@ export const PRESET_NETWORKS: NetworkConfig[] = [
   {
     // dev-fork.sh anvil default — mainnet fork on chain id 31338. Surfaced
     // as its own preset so fork users don't have to hand-register a custom
-    // network every time.
+    // network every time. Same host resolution as the localhost preset.
     id: 'anvil-fork',
     name: 'Anvil Fork (Mainnet)',
-    rpcUrl: 'http://localhost:8545',
+    rpcUrl: `http://${LOCAL_RPC_HOST}:8545`,
     chainId: 31338,
     symbol: 'ETH',
     isCustom: false,
