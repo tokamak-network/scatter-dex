@@ -261,9 +261,13 @@ export const KeySecurityService = {
    * Fresh-seed paths — mint a new mnemonic and anchor a new seedId when:
    *   1. the index is empty, or
    *   2. the only existing wallets are privateKey imports (no seed), or
-   *   3. a seed-backed wallet exists but its secret is missing its
-   *      `mnemonic` field (corrupt install). We fall back to mint rather
-   *      than fail so the user isn't bricked out of creating accounts.
+   *   3. every seed-backed wallet in the index has a missing mnemonic in
+   *      SecureStore (full corrupt install). We walk all candidates —
+   *      not just the first — and only mint a fresh seed after every
+   *      one has failed its SecureStore read. Each failure is logged so
+   *      the fallback isn't silent. This keeps Create working when one
+   *      row was corrupted mid-migration but a sibling row derived from
+   *      the same seed is still healthy.
    *
    * The reused-seed branch goes through `authenticate()` rather than
    * `_biometricGate()` so the full recovery-phrase prompt always fires —
@@ -283,10 +287,14 @@ export const KeySecurityService = {
     // subsequent Create derives a new BIP-44 account from it. Only
     // privateKey-imported wallets are excluded (they have no seed). That
     // way the user only ever has one recovery phrase to back up.
-    const hosted = list.find(w => (w.source === 'created' || w.source === 'mnemonic') && w.seedId !== undefined)
-      ?? list.find(w => w.source === 'created' || w.source === 'mnemonic');
+    // All seed-backed candidates, new-format rows first so a healthy
+    // `seedId`-tagged entry is preferred over a pre-HD legacy wallet.
+    const candidates = [
+      ...list.filter(w => (w.source === 'created' || w.source === 'mnemonic') && w.seedId !== undefined),
+      ...list.filter(w => (w.source === 'created' || w.source === 'mnemonic') && w.seedId === undefined),
+    ];
 
-    if (hosted) {
+    if (candidates.length > 0) {
       // `authenticate()` — not `_biometricGate()` — because reading an
       // existing recovery phrase is the same security level as
       // `getMnemonic()`. The gate variant turns into a no-op when the
@@ -296,11 +304,35 @@ export const KeySecurityService = {
       if (!(await this.authenticate('Authenticate to derive a new account'))) {
         throw new Error('Authentication cancelled');
       }
-      const secret = await readSecret(hosted.id);
-      if (!secret?.mnemonic) {
-        // Host wallet lost its mnemonic (corrupt install) — fall through
-        // and mint a fresh seed rather than failing the create outright.
-      } else {
+
+      // Walk every candidate rather than failing on the first corrupt
+      // row — an install can have one row whose SecureStore secret lost
+      // its `mnemonic` (interrupted migration, power-cycle during write,
+      // iOS Keychain ACL change) while a sibling row derived from the
+      // same seed is still healthy. Picking the first healthy row keeps
+      // Create working instead of silently minting a second unrelated
+      // mnemonic the user would have to back up separately.
+      for (const hosted of candidates) {
+        let secret;
+        try {
+          secret = await readSecret(hosted.id);
+        } catch (err) {
+          // A SecureStore read failure here is telling — log it so the
+          // fall-through to minting a fresh seed below is at least
+          // diagnosable in the Metro console.
+          console.warn(
+            `[KeySecurityService] readSecret(${hosted.id}) failed while searching for a reusable seed; falling back`,
+            err,
+          );
+          continue;
+        }
+        if (!secret?.mnemonic) {
+          console.warn(
+            `[KeySecurityService] wallet ${hosted.id} has no mnemonic in SecureStore (corrupt install?); trying next candidate`,
+          );
+          continue;
+        }
+
         const seedId = hosted.seedId ?? hosted.id; // legacy wallets adopt their own id as seedId
         const indexes = list
           .filter(w => (w.seedId ?? w.id) === seedId)
@@ -321,6 +353,12 @@ export const KeySecurityService = {
         );
         return { id: meta.id, address: meta.address, reusedSeed: true };
       }
+
+      // Every candidate was corrupt. Log the surrender before falling
+      // through to mint a fresh seed so the user at least isn't stuck.
+      console.warn(
+        `[KeySecurityService] all ${candidates.length} seed-backed wallets failed the mnemonic read; minting a fresh seed`,
+      );
     }
 
     // No reusable seed — mint a fresh mnemonic and anchor it with a new
