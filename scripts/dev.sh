@@ -348,7 +348,10 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "feeVault": "$FEE_VAULT",
     "batchExecutor": "$BATCH_EXECUTOR",
     "relayerUrl": "http://localhost:3002",
-    "sharedOrderbookUrl": "http://localhost:4000"
+    "sharedOrderbookUrl": "http://localhost:4000",
+    "tokens": [
+      { "address": "$USDC", "symbol": "USDC", "decimals": 18 }
+    ]
   }
 }
 EOF

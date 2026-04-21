@@ -413,6 +413,14 @@ EOF
 # dev-fork.sh gives both clients the same deployment in one shot. Expo's
 # Fast Refresh picks the JSON up on the next import without a rebuild.
 mkdir -p "$ROOT_DIR/mobile/src/config"
+# Build the mobile tokens[] array dynamically from whichever ERC-20s the
+# deploy emitted. Mainnet-fork USDC/USDT are 6 decimals; mock USDC on
+# dev.sh is 18 — we default to 6 here because dev-fork always uses real
+# mainnet tokens (USE_REAL_TOKENS=true). WTON is 27 when it shows up.
+MOBILE_TOKENS="{ \"address\": \"$USDC\", \"symbol\": \"USDC\", \"decimals\": 6 }"
+[ -n "$USDT" ] && MOBILE_TOKENS="$MOBILE_TOKENS,\n      { \"address\": \"$USDT\", \"symbol\": \"USDT\", \"decimals\": 6 }"
+[ -n "$WTON" ] && MOBILE_TOKENS="$MOBILE_TOKENS,\n      { \"address\": \"$WTON\", \"symbol\": \"WTON\", \"decimals\": 27 }"
+
 cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
 {
   "$FORK_CHAIN_ID": {
@@ -425,7 +433,10 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "feeVault": "$FEE_VAULT",
     "batchExecutor": "$BATCH_EXECUTOR",
     "relayerUrl": "http://localhost:3002",
-    "sharedOrderbookUrl": "http://localhost:4000"
+    "sharedOrderbookUrl": "http://localhost:4000",
+    "tokens": [
+      $(printf "%b" "$MOBILE_TOKENS")
+    ]
   }
 }
 EOF
