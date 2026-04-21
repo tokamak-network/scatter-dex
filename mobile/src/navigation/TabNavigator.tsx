@@ -40,7 +40,10 @@ export default function TabNavigator() {
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{ tabBarItemStyle: { display: 'none' } }}
+        options={{
+          tabBarItemStyle: { display: 'none' },
+          tabBarButton: () => null,
+        }}
       />
     </Tab.Navigator>
   );
