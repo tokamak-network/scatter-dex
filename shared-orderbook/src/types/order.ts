@@ -14,6 +14,8 @@ export {
   isValidPair,
 } from "@scatter-dex/types";
 
+import { eqAddr } from "../lib/address";
+
 export type { ServerMatchResult as MatchResult } from "@scatter-dex/types";
 
 export interface MatchNotification {
@@ -48,7 +50,7 @@ export function parseOrderSummary(
 
   if (!ETH_ADDRESS_RE.test(sellToken)) throw new Error("invalid sellToken address");
   if (!ETH_ADDRESS_RE.test(buyToken)) throw new Error("invalid buyToken address");
-  if (sellToken.toLowerCase() === buyToken.toLowerCase()) throw new Error("sellToken == buyToken");
+  if (eqAddr(sellToken, buyToken)) throw new Error("sellToken == buyToken");
 
   if (!sellAmount || BigInt(sellAmount) <= 0n) throw new Error("sellAmount must be > 0");
   if (!buyAmount || BigInt(buyAmount) <= 0n) throw new Error("buyAmount must be > 0");

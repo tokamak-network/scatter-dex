@@ -1,5 +1,6 @@
 import { verifyMessage } from "ethers";
 import type { Request, Response, NextFunction } from "express";
+import { eqAddr } from "../lib/address";
 
 /**
  * EIP-191 relayer authentication middleware.
@@ -44,7 +45,7 @@ export function relayerAuth(req: Request, res: Response, next: NextFunction): vo
   const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
   try {
     const recovered = verifyMessage(message, signature);
-    if (recovered.toLowerCase() !== address.toLowerCase()) {
+    if (!eqAddr(recovered, address)) {
       res.status(401).json({ error: "signature mismatch" });
       return;
     }

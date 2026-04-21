@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { verifyMessage } from "ethers";
 import type { OrderSummary } from "../types/order.js";
+import { eqAddr } from "../lib/address.js";
 import type {
   AuthorizeTradeOfferRequest,
   AuthorizeTradeOfferResponse,
@@ -49,7 +50,7 @@ export function createP2PRoutes(
       const relayerUrl = (req.headers["x-relayer-url"] as string) || "";
       const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
       const recovered = verifyMessage(message, signature);
-      return recovered.toLowerCase() === address.toLowerCase();
+      return eqAddr(recovered, address);
     } catch {
       return false;
     }
@@ -83,8 +84,8 @@ export function createP2PRoutes(
         }
       }
       // Verify the order's relayer matches the authenticated peer
-      const peerAddress = (req.headers["x-relayer-address"] as string).toLowerCase();
-      if (raw.relayer?.toLowerCase() !== peerAddress) {
+      const peerAddress = req.headers["x-relayer-address"] as string;
+      if (!eqAddr(raw.relayer, peerAddress)) {
         res.status(403).json({ error: "order relayer does not match peer identity" });
         return;
       }
