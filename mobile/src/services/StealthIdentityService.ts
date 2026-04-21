@@ -30,6 +30,7 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { generateMetaAddress, MetaAddress } from '../lib/stealth';
+import { eqAddr } from '../lib/address';
 
 const BASE_KEY = 'scatterdex_stealth_identity_v1';
 const MIGRATION_MARKER = 'scatterdex_stealth_migrated_v2';
@@ -87,7 +88,7 @@ async function migrateLegacyIfNeeded(address: string): Promise<void> {
   }
 
   const legacyBuiltinAddress = await SecureStore.getItemAsync(LEGACY_BUILTIN_ADDRESS_KEY);
-  if (!legacyBuiltinAddress || legacyBuiltinAddress.toLowerCase() !== address.toLowerCase()) {
+  if (!eqAddr(legacyBuiltinAddress, address)) {
     // The caller is not the owner of the legacy blob (or the owner is
     // unknown because the built-in wallet record is missing). Leave the
     // blob in place — migration will retry on a later load() call that

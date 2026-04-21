@@ -40,6 +40,7 @@
 import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { eqAddr } from '../lib/address';
 
 const V1_IDS_KEY = 'scatterdex_pending_claim_ids';
 const V1_META_PREFIX = 'scatterdex_pending_claim_meta_';
@@ -264,7 +265,7 @@ async function migrateV1ToV2IfNeeded(address: string): Promise<void> {
     return;
   }
 
-  if (!legacyBuiltinAddress || legacyBuiltinAddress.toLowerCase() !== address.toLowerCase()) {
+  if (!eqAddr(legacyBuiltinAddress, address)) {
     // Caller is not the owner of the v1 data (or the owner is unknown
     // because the built-in wallet record is missing). Leave the v1
     // blob in place — a later matching load() call will claim it.

@@ -28,6 +28,7 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { eqAddr } from '../lib/address';
 
 const NOTE_INDEX_PREFIX = 'scatterdex_note_index_';
 const NOTE_KEY_PREFIX = 'scatterdex_note_';
@@ -141,10 +142,7 @@ async function _runMigration(address: string): Promise<void> {
   }
 
   const legacyBuiltinAddress = await SecureStore.getItemAsync(LEGACY_BUILTIN_ADDRESS_KEY);
-  if (
-    !legacyBuiltinAddress
-    || legacyBuiltinAddress.toLowerCase() !== address.toLowerCase()
-  ) {
+  if (!eqAddr(legacyBuiltinAddress, address)) {
     // Caller is not the owner of the legacy blob (or the built-in
     // wallet record is missing). Leave the blob in place — a later
     // call with the matching wallet will pick it up.
@@ -410,7 +408,7 @@ export const NoteStorageService = {
 
   async getActiveNotesByToken(address: string, tokenAddress: string): Promise<StoredNote[]> {
     return (await this.getActiveNotes(address)).filter(
-      (n) => n.token.toLowerCase() === tokenAddress.toLowerCase(),
+      (n) => eqAddr(n.token, tokenAddress),
     );
   },
 
