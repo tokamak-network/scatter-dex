@@ -33,8 +33,8 @@ export default function TabNavigator() {
       }}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: icon('🏠') }} />
+      <Tab.Screen name="Deposit" component={DepositScreen} options={{ tabBarIcon: icon('↓'), tabBarLabel: 'Escrow' }} />
       <Tab.Screen name="Trade" component={TradeScreen} options={{ tabBarIcon: icon('⇄') }} />
-      <Tab.Screen name="Deposit" component={DepositScreen} options={{ tabBarIcon: icon('↓'), tabBarLabel: 'Deposit' }} />
       <Tab.Screen name="Claim" component={ClaimScreen} options={{ tabBarIcon: icon('💰'), tabBarLabel: 'Claim' }} />
       <Tab.Screen name="History" component={HistoryScreen} options={{ tabBarIcon: icon('📋'), tabBarLabel: 'Activity' }} />
       <Tab.Screen

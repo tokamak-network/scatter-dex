@@ -543,7 +543,7 @@ export default function TradeScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <ScreenHeader
-        title="Private Trade"
+        title="Trade"
         variant="surface"
         onBack={() => navigation.goBack()}
       />
@@ -554,13 +554,13 @@ export default function TradeScreen() {
               style={[s.tab, tradeType === 'limit' && s.tabActive]}
               onPress={() => setTradeType('limit')}
             >
-              <Text style={[s.tabText, tradeType === 'limit' && s.tabTextActive]}>Limit</Text>
+              <Text style={[s.tabText, tradeType === 'limit' && s.tabTextActive]}>Private Trade</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.tab, tradeType === 'market' && s.tabActive]}
               onPress={() => setTradeType('market')}
             >
-              <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>Market</Text>
+              <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>DEX Trade</Text>
             </TouchableOpacity>
           </View>
         </View>

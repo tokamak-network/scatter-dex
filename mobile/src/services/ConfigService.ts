@@ -14,6 +14,11 @@ interface ChainContracts {
   relayerRegistry?: string;
   feeVault?: string;
   relayerUrl?: string;
+  // Extra ERC-20 tokens surfaced alongside the auto-generated ETH/WETH
+  // pair in the Escrow/Trade token picker. Keyed per-chain because
+  // testnet USDC on anvil (31337) is a completely different address
+  // than USDC on Thanos Sepolia.
+  tokens?: Array<{ address: string; symbol: string; decimals: number }>;
 }
 
 // Per-chain contract overrides. Loaded from `src/config/fork-contracts.json`
@@ -53,6 +58,11 @@ export const ConfigService = {
   getWethAddress: () => chainContracts().weth || getEnv('WETH_ADDRESS'),
   getFeeVaultAddress: () => chainContracts().feeVault || getEnv('FEE_VAULT_ADDRESS'),
   getRelayerUrl: () => chainContracts().relayerUrl || getEnv('RELAYER_URL') || 'http://localhost:4000',
+  /** Extra ERC-20 tokens registered for the active chain (beyond the
+   *  auto-generated ETH / WETH pair). Returns an empty array when the
+   *  current network has no contracts block. */
+  getExtraTokens: (): Array<{ address: string; symbol: string; decimals: number }> =>
+    chainContracts().tokens ?? [],
   // Commitment-pool deploy block. Callers that scan full commitment
   // history (Cancel, MarketOrder, useRecentActivity) must use this as
   // the lower bound. We validate here rather than at each call site:
