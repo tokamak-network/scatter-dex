@@ -388,15 +388,15 @@ export default function SettingsScreen() {
     setCreateNickname('');
     setWalletLoading(true);
     try {
-      const { id, mnemonic, address, reusedSeed } = await addWalletFromCreate(nickname);
+      const result = await addWalletFromCreate(nickname);
       Alert.alert(
         'Wallet Created',
-        reusedSeed
-          ? `Address: ${shortAddr(address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
-          : `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        result.reusedSeed
+          ? `Address: ${shortAddr(result.address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
+          : `Address: ${shortAddr(result.address)}\n\nSave your recovery phrase:\n${result.mnemonic}`,
         [{
           text: 'OK',
-          onPress: () => { switchWallet(id).catch(() => { /* non-fatal: caller stays on previous active */ }); },
+          onPress: () => { switchWallet(result.id).catch(() => { /* non-fatal: caller stays on previous active */ }); },
         }],
       );
     } catch (err: any) {
