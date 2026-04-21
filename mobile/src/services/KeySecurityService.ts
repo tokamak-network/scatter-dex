@@ -348,6 +348,7 @@ export const KeySecurityService = {
       await Promise.all([
         ...list.map(w => deleteSecret(w.id)),
         SecureStore.deleteItemAsync(WALLETS_INDEX_KEY),
+        SecureStore.deleteItemAsync(ACTIVE_WALLET_ID_KEY),
         clearLegacy(),
       ]);
       return;
