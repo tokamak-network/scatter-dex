@@ -61,10 +61,25 @@ export const PRESET_NETWORKS: NetworkConfig[] = [
     isCustom: false,
   },
   {
+    // iOS simulator shares the host's loopback so `localhost` resolves
+    // directly to the machine running anvil / hardhat. Android emulators
+    // need the `10.0.2.2` bridge instead — users on Android must add a
+    // Custom Network with that address via Settings.
     id: 'localhost',
     name: 'Local Node (Hardhat/Anvil)',
-    rpcUrl: 'http://10.0.2.2:8545', // Android emulator → host machine
+    rpcUrl: 'http://localhost:8545',
     chainId: 31337,
+    symbol: 'ETH',
+    isCustom: false,
+  },
+  {
+    // dev-fork.sh anvil default — mainnet fork on chain id 31338. Surfaced
+    // as its own preset so fork users don't have to hand-register a custom
+    // network every time.
+    id: 'anvil-fork',
+    name: 'Anvil Fork (Mainnet)',
+    rpcUrl: 'http://localhost:8545',
+    chainId: 31338,
     symbol: 'ETH',
     isCustom: false,
   },

@@ -59,12 +59,23 @@ interface WalletContextValue extends WalletState {
    *  notifies NoteStorageService subscribers so note-keyed screens
    *  reload. Throws if the id is not in the list. */
   switchWallet: (id: string) => Promise<void>;
-  /** Create a new app-generated wallet (BIP-39 mnemonic). Returns the
-   *  new wallet's id + address + mnemonic (the caller should surface the
-   *  mnemonic to the user immediately — the wallet is persisted first
-   *  so a crash before the user records it cannot stash it elsewhere). */
-  addWalletFromCreate: (nickname?: string) => Promise<{ id: string; address: string; mnemonic: string }>;
-  addWalletFromMnemonic: (mnemonic: string, nickname?: string) => Promise<string>;
+  /** Create a new app-generated wallet. When an existing seed-backed
+   *  wallet is already stored, the new wallet is derived from the same
+   *  BIP-39 mnemonic at the next BIP-44 account index — `reusedSeed` is
+   *  true and the returned `mnemonic` is the one the user has already
+   *  seen. When no seed exists yet, a fresh mnemonic is minted and
+   *  `reusedSeed` is false.
+   *
+   *  The wallet is persisted before returning so a crash between the
+   *  call and the caller surfacing the mnemonic cannot silently stash
+   *  funds at an unrecoverable address. */
+  addWalletFromCreate: (nickname?: string) => Promise<{ id: string; address: string; mnemonic: string; reusedSeed: boolean }>;
+  /** Import a BIP-39 mnemonic. If the device already manages the same
+   *  mnemonic, the next BIP-44 account index is derived (reusedSeed=true);
+   *  if it manages a *different* mnemonic, the call rejects — the caller
+   *  should delete existing seed-backed wallets first. Returns the newly
+   *  created wallet's address. */
+  addWalletFromMnemonic: (mnemonic: string, nickname?: string) => Promise<{ address: string; reusedSeed: boolean }>;
   addWalletFromPrivateKey: (privateKey: string, nickname?: string) => Promise<string>;
   /** Delete a built-in wallet. If it was active, the next remaining
    *  wallet is promoted; if none remains, disconnects. */

@@ -23,6 +23,7 @@ import BackupModal from '../components/BackupModal';
 import { shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import SecretRevealModal from '../components/SecretRevealModal';
+import type { WalletMeta } from '../types/wallet';
 
 interface ToggleItem {
   id: string;
@@ -52,7 +53,12 @@ const managementItems: ManagementItem[] = [
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, connectBuiltin, disconnect, connectionMode } = useWallet();
+  const {
+    account, signer, connectBuiltin, disconnect, connectionMode,
+    wallets, activeWalletId, switchWallet,
+    addWalletFromCreate, addWalletFromMnemonic, addWalletFromPrivateKey,
+    removeWallet,
+  } = useWallet();
 
   const [toggles, setToggles] = useState<Record<string, boolean>>(
     Object.fromEntries(securityItems.map(item => [item.id, item.defaultValue]))
@@ -68,6 +74,11 @@ export default function SettingsScreen() {
   const [backupVisible, setBackupVisible] = useState(false);
   const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [importSecret, setImportSecret] = useState('');
+  const [importNickname, setImportNickname] = useState('');
+
+  // Create-wallet modal — asks for an optional nickname before generating.
+  const [createVisible, setCreateVisible] = useState(false);
+  const [createNickname, setCreateNickname] = useState('');
 
   // Add-custom-network modal state
   // Monotonic counter — handleTestNetwork's async resolver compares against
@@ -364,20 +375,28 @@ export default function SettingsScreen() {
     }
   }, []);
 
-  const handleCreateWallet = useCallback(async () => {
+  // Open the create modal; generation defers to handleCreateConfirm so the
+  // user can choose a nickname first.
+  const handleCreateWallet = useCallback(() => {
+    setCreateNickname('');
+    setCreateVisible(true);
+  }, []);
+
+  const handleCreateConfirm = useCallback(async () => {
+    const nickname = createNickname.trim() || undefined;
+    setCreateVisible(false);
+    setCreateNickname('');
     setWalletLoading(true);
     try {
-      const { mnemonic, address } = await KeySecurityService.createWallet();
+      const { id, mnemonic, address, reusedSeed } = await addWalletFromCreate(nickname);
       Alert.alert(
         'Wallet Created',
-        `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
+        reusedSeed
+          ? `Address: ${shortAddr(address)}\n\nDerived from the existing recovery phrase — the same seed you already saved covers this account too.`
+          : `Address: ${shortAddr(address)}\n\nSave your recovery phrase:\n${mnemonic}`,
         [{
-          text: 'I have saved it',
-          onPress: async () => {
-            try {
-              await connectBuiltin();
-            } catch { /* NO_WALLET handled in context */ }
-          },
+          text: 'OK',
+          onPress: () => { switchWallet(id).catch(() => { /* non-fatal: caller stays on previous active */ }); },
         }],
       );
     } catch (err: any) {
@@ -385,10 +404,11 @@ export default function SettingsScreen() {
     } finally {
       setWalletLoading(false);
     }
-  }, [connectBuiltin]);
+  }, [createNickname, addWalletFromCreate, switchWallet]);
 
   const handleImportWallet = useCallback(() => {
     setImportSecret('');
+    setImportNickname('');
     setImportMode('mnemonic');
     setImportModalVisible(true);
   }, []);
@@ -396,51 +416,62 @@ export default function SettingsScreen() {
   const handleImportConfirm = useCallback(async () => {
     const secret = importSecret.trim();
     if (!secret) return;
+    const nickname = importNickname.trim() || undefined;
     setImportModalVisible(false);
     setImportSecret('');
+    setImportNickname('');
     setWalletLoading(true);
     try {
-      const address = importMode === 'mnemonic'
-        ? await KeySecurityService.importFromMnemonic(secret)
-        : await KeySecurityService.importFromPrivateKey(secret);
-      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
-      try {
-        await connectBuiltin();
-      } catch { /* NO_WALLET handled in context */ }
+      if (importMode === 'mnemonic') {
+        const { address, reusedSeed } = await addWalletFromMnemonic(secret, nickname);
+        Alert.alert(
+          'Wallet Imported',
+          reusedSeed
+            ? `Address: ${shortAddr(address)}\n\nDerived from the recovery phrase already on this device.`
+            : `Address: ${shortAddr(address)}`,
+        );
+      } else {
+        const address = await addWalletFromPrivateKey(secret, nickname);
+        Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
+      }
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to import wallet');
     } finally {
       setWalletLoading(false);
     }
-  }, [importSecret, importMode, connectBuiltin]);
+  }, [importSecret, importMode, importNickname, addWalletFromMnemonic, addWalletFromPrivateKey]);
 
-  const handleDeleteWallet = useCallback(() => {
+  const handleSwitchWallet = useCallback(async (id: string) => {
+    if (id === activeWalletId || walletLoading) return;
+    setWalletLoading(true);
+    try {
+      await switchWallet(id);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to switch wallet');
+    } finally {
+      setWalletLoading(false);
+    }
+  }, [activeWalletId, switchWallet]);
+
+  const handleDeleteWalletById = useCallback((w: WalletMeta) => {
     Alert.alert(
-      'Delete Wallet',
-      'This permanently removes your wallet from this device. Make sure you have saved your recovery phrase or private key — without it, funds cannot be recovered.',
+      `Delete ${w.nickname || shortAddr(w.address)}?`,
+      `Address: ${w.address}\n\nPermanently removes this wallet from the device. Back up the recovery phrase or private key first — otherwise funds at this address cannot be recovered from this device.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const accountToWipe = account;
-            try {
-              if (accountToWipe) {
-                // Delete EdDSA key before disconnect clears `account` from context.
-                await EdDSAKeyService.deleteKey(accountToWipe).catch(() => { /* not fatal */ });
-              }
-              await disconnect();
-              await KeySecurityService.deleteWallet();
-              Alert.alert('Wallet Deleted', 'The wallet has been removed from this device.');
-            } catch (err: any) {
-              Alert.alert('Error', friendlyError(err));
-            }
-          },
-        },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+          setWalletLoading(true);
+          try {
+            await removeWallet(w.id);
+          } catch (err: any) {
+            Alert.alert('Error', friendlyError(err));
+          } finally {
+            setWalletLoading(false);
+          }
+        }},
       ],
     );
-  }, [disconnect, account]);
+  }, [removeWallet]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -453,77 +484,94 @@ export default function SettingsScreen() {
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent}>
         {/* Wallet Section */}
         <View style={s.sectionGroup}>
-          <Text style={s.sectionTitle}>Wallet</Text>
-          {account ? (
-            <View style={{ gap: 8 }}>
-              <View style={s.toggleRow}>
-                <View style={s.toggleLeft}>
-                  <View style={s.toggleIcon}>
-                    <Text style={s.toggleIconText}>👛</Text>
-                  </View>
-                  <View>
-                    <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
-                    <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
-                      {connectionMode === 'builtin' ? 'Built-in Wallet' : 'WalletConnect'}
-                    </Text>
-                  </View>
+          <Text style={s.sectionTitle}>Wallets</Text>
+          {connectionMode === 'walletconnect' && account ? (
+            // External wallet holds the account — show its session + disconnect.
+            <View style={s.toggleRow}>
+              <View style={s.toggleLeft}>
+                <View style={s.toggleIcon}><Text style={s.toggleIconText}>🔗</Text></View>
+                <View>
+                  <Text style={s.toggleLabel}>{shortAddr(account)}</Text>
+                  <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>WalletConnect</Text>
                 </View>
-                <TouchableOpacity
-                  style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.dangerLight, borderRadius: 8 }}
-                  onPress={() => {
-                    Alert.alert('Disconnect', 'Are you sure?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Disconnect', style: 'destructive', onPress: disconnect },
-                    ]);
-                  }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.danger }}>Disconnect</Text>
-                </TouchableOpacity>
               </View>
-              {connectionMode === 'builtin' && (
-                <TouchableOpacity style={s.linkRow} onPress={handleDeleteWallet}>
-                  <View style={s.linkLeft}>
-                    <View style={[s.linkIcon, s.linkIconDanger]}>
-                      <Text style={s.linkIconText}>🗑</Text>
-                    </View>
-                    <View>
-                      <Text style={[s.linkLabel, { color: colors.danger }]}>Delete Wallet</Text>
-                      <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
-                        Permanently remove from this device
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={s.chevron}>›</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.dangerLight, borderRadius: 8 }}
+                onPress={() => {
+                  Alert.alert('Disconnect', 'Are you sure?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Disconnect', style: 'destructive', onPress: disconnect },
+                  ]);
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.danger }}>Disconnect</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={{ gap: 8 }}>
+              {wallets.map((w) => {
+                const isActive = w.id === activeWalletId;
+                return (
+                  <TouchableOpacity
+                    key={w.id}
+                    style={s.toggleRow}
+                    onPress={() => handleSwitchWallet(w.id)}
+                    disabled={walletLoading}
+                  >
+                    <View style={s.toggleLeft}>
+                      <View style={s.toggleIcon}><Text style={s.toggleIconText}>👛</Text></View>
+                      <View style={{ flexShrink: 1 }}>
+                        <Text style={s.toggleLabel} numberOfLines={1}>
+                          {w.nickname || shortAddr(w.address)}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+                          {shortAddr(w.address)} · {w.source === 'mnemonic' ? 'Seed' : w.source === 'privateKey' ? 'Priv. key' : 'Created'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {isActive && (
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                        </View>
+                      )}
+                      <TouchableOpacity
+                        onPress={() => handleDeleteWalletById(w)}
+                        hitSlop={8}
+                        disabled={walletLoading}
+                        accessibilityLabel={`Delete ${w.nickname || shortAddr(w.address)}`}
+                      >
+                        <Text style={{ fontSize: 16, color: colors.danger, opacity: walletLoading ? 0.4 : 1 }}>🗑</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
               <TouchableOpacity
-                style={s.linkRow}
+                style={[s.toggleRow, { borderStyle: 'dashed' }]}
                 onPress={handleCreateWallet}
                 disabled={walletLoading}
               >
-                <View style={s.linkLeft}>
+                <View style={s.toggleLeft}>
                   <View style={[s.linkIcon, s.linkIconPrimary]}>
                     <Text style={s.linkIconText}>➕</Text>
                   </View>
-                  <Text style={s.linkLabel}>Create New Wallet</Text>
+                  <Text style={[s.linkLabel, { color: colors.primary }]}>Create New Wallet</Text>
                 </View>
-                {walletLoading ? <ActivityIndicator size="small" /> : <Text style={s.chevron}>›</Text>}
+                {walletLoading && <ActivityIndicator size="small" />}
               </TouchableOpacity>
               <TouchableOpacity
-                style={s.linkRow}
+                style={[s.toggleRow, { borderStyle: 'dashed' }]}
                 onPress={handleImportWallet}
                 disabled={walletLoading}
               >
-                <View style={s.linkLeft}>
+                <View style={s.toggleLeft}>
                   <View style={[s.linkIcon, s.linkIconPrimary]}>
                     <Text style={s.linkIconText}>📥</Text>
                   </View>
-                  <Text style={s.linkLabel}>Import Wallet</Text>
+                  <Text style={[s.linkLabel, { color: colors.primary }]}>Import Wallet</Text>
                 </View>
-                <Text style={s.chevron}>›</Text>
+                {walletLoading && <ActivityIndicator size="small" />}
               </TouchableOpacity>
             </View>
           )}
@@ -657,6 +705,15 @@ export default function SettingsScreen() {
                 : 'Enter your private key (with or without 0x prefix):'}
             </Text>
             <TextInput
+              style={[s.modalInput, { minHeight: 40 }]}
+              placeholder="Nickname (optional)"
+              placeholderTextColor="#9CA3AF"
+              value={importNickname}
+              onChangeText={setImportNickname}
+              autoCapitalize="words"
+              autoCorrect={false}
+            />
+            <TextInput
               style={s.modalInput}
               placeholder={importMode === 'mnemonic' ? 'word1 word2 word3 ...' : '0x...'}
               placeholderTextColor="#9CA3AF"
@@ -699,6 +756,39 @@ export default function SettingsScreen() {
         onClose={() => setBackupVisible(false)}
         address={account}
       />
+
+      <BaseModal
+        visible={createVisible}
+        onClose={() => { setCreateVisible(false); setCreateNickname(''); }}
+        title="Create New Wallet"
+      >
+        <Text style={s.modalSubtitle}>Optional nickname — leave blank to use the address.</Text>
+        <TextInput
+          style={[s.modalInput, { minHeight: 40 }]}
+          placeholder="Nickname (e.g. Main)"
+          placeholderTextColor="#9CA3AF"
+          value={createNickname}
+          onChangeText={setCreateNickname}
+          autoFocus
+          autoCapitalize="words"
+          autoCorrect={false}
+        />
+        <View style={s.modalButtons}>
+          <TouchableOpacity
+            style={s.modalBtnCancel}
+            onPress={() => { setCreateVisible(false); setCreateNickname(''); }}
+          >
+            <Text style={s.modalBtnCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.modalBtnConfirm, walletLoading && { opacity: 0.4 }]}
+            onPress={handleCreateConfirm}
+            disabled={walletLoading}
+          >
+            <Text style={s.modalBtnConfirmText}>{walletLoading ? 'Creating…' : 'Create'}</Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
 
       <BaseModal
         visible={addNetVisible}
