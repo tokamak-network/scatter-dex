@@ -307,11 +307,15 @@ SecureStore (기기 바인딩, 생체 게이트 가능):
 type WalletSource = 'mnemonic' | 'privateKey' | 'created';
 
 interface WalletMeta {
-  id: string;           // uuid
-  address: string;      // 체크섬 0x…
-  nickname?: string;    // 기본 'Wallet N'
+  id: string;              // uuid — 각 account 고유
+  address: string;         // 체크섬 0x…
+  nickname?: string;       // 기본 'Wallet N'
   source: WalletSource;
-  createdAt: number;    // unix ms
+  createdAt: number;       // unix ms
+
+  // HD derivation 그룹핑 (선택적 — 상세는 §7.2)
+  seedId?: string;         // 같은 mnemonic 에서 파생된 entry 공유 그룹 id
+  derivationIndex?: number; // 그 seed 안에서의 BIP-44 account index
 }
 
 interface WalletSecret {
@@ -323,7 +327,7 @@ interface WalletSecret {
 ### 6.2 불변식
 
 1. **입력은 체크섬, 저장 키 suffix는 소문자.** `WalletMeta.address`는 `ethers.getAddress` 적용. 저장 키 suffix는 `address.toLowerCase()`. `lib/address.ts → eqAddr(a, b)` 가 case-insensitive 비교를 중앙화.
-2. **단일 mnemonic 불변식.** 이미 mnemonic을 관리하는 기기는 **다른** mnemonic을 import 불가. `importFromMnemonic`은 BIP-44 경로로 다음 account를 유도하고 `reusedSeed: true` 반환. 다른 mnemonic은 거부.
+2. **단일 mnemonic 불변식.** 이미 mnemonic을 관리하는 기기는 **다른** mnemonic을 import 불가. `importFromMnemonic`은 BIP-44 경로로 다음 account를 유도하고 `reusedSeed: true` 반환. 다른 mnemonic은 거부. 상세 케이스 분석은 §7.3–§7.4.
 3. **레거시 미러는 활성 지갑을 반영.** 모든 `setActiveWalletId` / 삭제-후-승계 시 활성 지갑의 `{ pk, mnemonic?, address }` 를 레거시 키에 기록.
 4. **파괴적 no-arg 가드.** `deleteWallet()` 에 id 없고 active id도 없을 때, `wallets_index`가 비어있지 않으면 거부.
 
@@ -359,21 +363,12 @@ interface WalletSecret {
 
 ### 7.2 `WalletMeta` HD 필드
 
-```ts
-interface WalletMeta {
-  id: string;
-  address: string;
-  nickname?: string;
-  source: 'mnemonic' | 'privateKey' | 'created';
-  createdAt: number;
+전체 타입 정의는 §6.1 참조. HD 관련 두 필드:
 
-  // HD derivation 그룹핑 (선택적)
-  seedId?: string;          // 같은 mnemonic 에서 파생된 wallet 들이 공유하는 그룹 id
-  derivationIndex?: number; // 그 seed 안에서의 BIP-44 account index
-}
-```
+- **`seedId?: string`** — 같은 BIP-39 mnemonic 에서 파생된 entry 들이 공유하는 그룹 id. 같은 seedId 를 가진 모든 wallet 은 같은 recovery phrase 로 복원 가능.
+- **`derivationIndex?: number`** — 그 seed 안에서의 BIP-44 account index. 경로는 `m/44'/60'/0'/0/<derivationIndex>`.
 
-- **legacy 호환**: Phase 1 이전에 생성된 단일 지갑은 `seedId` / `derivationIndex` 가 `undefined`. Caller 는 이를 "standalone seed, index 0"으로 해석. 첫 reuse 시 자신의 `id` 를 `seedId` 로 채택.
+**legacy 호환**: Phase 1 이전에 생성된 단일 지갑은 `seedId` / `derivationIndex` 가 `undefined`. Caller 는 이를 "standalone seed, index 0"으로 해석. 첫 reuse 시 자신의 `id` 를 `seedId` 로 채택.
 
 ### 7.3 `createWallet(nickname?)` — 세 가지 분기
 
@@ -575,7 +570,7 @@ Hermes (RN)                        WebView (숨김)
 - **`WalletSecret`을 절대 AsyncStorage로 `JSON.stringify` 하지 말 것** — secret은 SecureStore에만. `PendingClaimsStorage` 가 분할 패턴의 canonical 예시.
 - **주소를 `===` 로 비교하지 말 것** — `lib/address.ts → eqAddr(a, b)` 사용. 양쪽 inline 소문자화는 `eqAddr` 가 방지하려는 바로 그 footgun.
 - **모든 생체 프롬프트에 사람이 읽을 `reason` 지정** — OS 시트가 최후 방어선.
-- **모든 사용자 데이터는 per-address 네임스페이스** — 신규 저장은 `<prefix>_<addr>` 형태, 레거시 데이터 있으면 §7 패턴의 마이그레이션 가드 작성.
+- **모든 사용자 데이터는 per-address 네임스페이스** — 신규 저장은 `<prefix>_<addr>` 형태, 레거시 데이터 있으면 §8 패턴의 마이그레이션 가드 작성.
 - **`account` 키 기반 in-memory 캐시는 `notifyWalletSwitch` 구독** — 안 그러면 전환 후 한 렌더 동안 이전 지갑 데이터 노출.
 - **SecureStore 쓰기 시 `WHEN_UNLOCKED_THIS_DEVICE_ONLY` 명시** — 민감 blob은 기기 바인딩 필수. 공개 데이터는 플래그 생략.
 - **Android 2KB 제한 의식** — SecureStore entry가 클 것 같으면 바로 분할 패턴 적용.
