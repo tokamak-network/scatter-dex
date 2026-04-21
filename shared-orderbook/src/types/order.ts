@@ -14,7 +14,7 @@ export {
   isValidPair,
 } from "@scatter-dex/types";
 
-import { eqAddr } from "../lib/address";
+import { eqAddr } from "../lib/address.js";
 
 export type { ServerMatchResult as MatchResult } from "@scatter-dex/types";
 

@@ -1,6 +1,6 @@
 import { verifyMessage } from "ethers";
 import type { Request, Response, NextFunction } from "express";
-import { eqAddr } from "../lib/address";
+import { eqAddr } from "../lib/address.js";
 
 /**
  * EIP-191 relayer authentication middleware.
