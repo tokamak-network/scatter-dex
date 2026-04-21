@@ -166,21 +166,33 @@ async function _runMigration(address: string): Promise<void> {
   }
 
   const lowerAddr = address.toLowerCase();
-  const rekeyedLegacyIds: string[] = [];
 
-  for (const id of legacyIds) {
-    const legacyBlob = await SecureStore.getItemAsync(legacyNoteKeyFor(id));
-    if (!legacyBlob) continue;
-    // Only copy if the target slot is empty — a concurrent saveNote on
-    // a fresh install could have already written per-address data,
-    // and overwriting would destroy the user's newer note.
-    const targetKey = noteKeyFor(lowerAddr, id);
-    const existing = await SecureStore.getItemAsync(targetKey);
-    if (!existing) {
-      await SecureStore.setItemAsync(targetKey, legacyBlob);
-    }
-    rekeyedLegacyIds.push(id);
+  // Rekey in parallel chunks. SecureStore dispatches serially on iOS
+  // under the hood, so CONCURRENCY=32 (the saveNotesBulk cap) hits the
+  // knee of the curve without pinning the JS bridge. Sequential reads
+  // here would make a large pre-upgrade note set block the first
+  // user-facing call for seconds — the migration is hot-path the
+  // first time HomeScreen or TradeScreen queries notes after upgrade.
+  const REKEY_CONCURRENCY = 32;
+  const rekeyResults: Array<string | null> = new Array(legacyIds.length);
+  for (let off = 0; off < legacyIds.length; off += REKEY_CONCURRENCY) {
+    const slice = legacyIds.slice(off, off + REKEY_CONCURRENCY);
+    const chunk = await Promise.all(slice.map(async (id) => {
+      const legacyBlob = await SecureStore.getItemAsync(legacyNoteKeyFor(id));
+      if (!legacyBlob) return null;
+      // Only copy if the target slot is empty — a concurrent saveNote
+      // on a fresh install could have already written per-address
+      // data, and overwriting would destroy the user's newer note.
+      const targetKey = noteKeyFor(lowerAddr, id);
+      const existing = await SecureStore.getItemAsync(targetKey);
+      if (!existing) {
+        await SecureStore.setItemAsync(targetKey, legacyBlob);
+      }
+      return id;
+    }));
+    for (let i = 0; i < chunk.length; i++) rekeyResults[off + i] = chunk[i];
   }
+  const rekeyedLegacyIds = rekeyResults.filter((id): id is string => id !== null);
 
   // Merge the legacy ids into the per-address index **through the same
   // lock** that saveNote / saveNotesBulk use — a blind `setItem` here
@@ -201,9 +213,14 @@ async function _runMigration(address: string): Promise<void> {
   // Set the marker BEFORE the legacy deletes so a crash between rekey
   // and delete turns re-runs into a no-op via the flag check.
   await AsyncStorage.setItem(MIGRATION_MARKER, 'done');
-  for (const id of rekeyedLegacyIds) {
-    await SecureStore.deleteItemAsync(legacyNoteKeyFor(id)).catch(() => {});
-  }
+  // Delete in parallel — marker is already set so concurrency here
+  // can't race the flag check, and the deletes are best-effort anyway
+  // (failure is non-fatal, the flag prevents re-migration).
+  await Promise.all(
+    rekeyedLegacyIds.map((id) =>
+      SecureStore.deleteItemAsync(legacyNoteKeyFor(id)).catch(() => {}),
+    ),
+  );
   await AsyncStorage.removeItem(LEGACY_NOTE_INDEX_KEY).catch(() => {});
 }
 
@@ -277,6 +294,7 @@ export const NoteStorageService = {
 
   async getNote(address: string, id: string): Promise<StoredNote | null> {
     requireAddress(address);
+    await migrateLegacyIfNeeded(address);
     const raw = await SecureStore.getItemAsync(noteKeyFor(address, id));
     if (!raw) return null;
     try {
@@ -364,6 +382,7 @@ export const NoteStorageService = {
 
   async updateNoteStatus(address: string, id: string, status: StoredNote['status']): Promise<void> {
     requireAddress(address);
+    await migrateLegacyIfNeeded(address);
     const note = await this.getNote(address, id);
     if (!note) return;
     note.status = status;
@@ -375,6 +394,7 @@ export const NoteStorageService = {
 
   async deleteNote(address: string, id: string): Promise<void> {
     requireAddress(address);
+    await migrateLegacyIfNeeded(address);
     await SecureStore.deleteItemAsync(noteKeyFor(address, id));
     await withIndexLock(address, async () => {
       const ids = await readIndex(address);

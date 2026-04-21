@@ -45,6 +45,12 @@ export const BackupService = {
    * bundle. Caller is responsible for transport (Share sheet, clipboard,
    * etc.).
    */
+  /**
+   * Notes are scoped to `address` (this PR). Pending claims and the
+   * address book are still global until A4's #358 / Phase 2.5 Part 3
+   * land; the `address` parameter will route to their per-wallet APIs
+   * at that point without a public signature change.
+   */
   async exportAll(address: string): Promise<BackupBundle> {
     // Don't swallow address-book errors: silently substituting an empty
     // array would produce a backup file the user thinks is complete but
