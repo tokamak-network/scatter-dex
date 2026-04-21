@@ -14,6 +14,8 @@ import BaseModal from '../components/BaseModal';
 import { colors } from '../styles/theme';
 import EthereumProvider from '@walletconnect/ethereum-provider';
 import { KeySecurityService } from '../services/KeySecurityService';
+import { NoteStorageService } from '../services/NoteStorageService';
+import { WalletMeta } from '../types/wallet';
 
 interface WalletState {
   account: string | null;
@@ -41,6 +43,32 @@ interface WalletContextValue extends WalletState {
    *  auth via `KeySecurityService.getSigner` and repopulates state. */
   unlock: () => Promise<void>;
   readProvider: ethers.JsonRpcProvider;
+  // ─── Multi-wallet (built-in only) ─────────────────────────────
+  /** All locally-stored built-in wallets, ordered by creation time. WalletConnect
+   *  sessions are NOT represented here — the external app owns their identity. */
+  wallets: WalletMeta[];
+  /** The stable `WalletMeta.id` of the built-in wallet currently signing,
+   *  or null when the user is on WalletConnect / disconnected / no wallet
+   *  has been created yet. */
+  activeWalletId: string | null;
+  /** Re-read the wallet list from storage (e.g. after SettingsScreen adds
+   *  or removes a wallet externally). */
+  refreshWallets: () => Promise<void>;
+  /** Switch the active built-in wallet. Re-runs biometric auth for the
+   *  new wallet's signer, re-hydrates `account/signer/provider`, and
+   *  notifies NoteStorageService subscribers so note-keyed screens
+   *  reload. Throws if the id is not in the list. */
+  switchWallet: (id: string) => Promise<void>;
+  /** Create a new app-generated wallet (BIP-39 mnemonic). Returns the
+   *  new wallet's id + address + mnemonic (the caller should surface the
+   *  mnemonic to the user immediately — the wallet is persisted first
+   *  so a crash before the user records it cannot stash it elsewhere). */
+  addWalletFromCreate: (nickname?: string) => Promise<{ id: string; address: string; mnemonic: string }>;
+  addWalletFromMnemonic: (mnemonic: string, nickname?: string) => Promise<string>;
+  addWalletFromPrivateKey: (privateKey: string, nickname?: string) => Promise<string>;
+  /** Delete a built-in wallet. If it was active, the next remaining
+   *  wallet is promoted; if none remains, disconnects. */
+  removeWallet: (id: string) => Promise<void>;
 }
 
 // Grace window for backgrounded built-in sessions. A shorter value trips on
@@ -66,6 +94,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<WalletState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>('none');
   const [qrUri, setQrUri] = useState<string | null>(null);
+  const [wallets, setWallets] = useState<WalletMeta[]>([]);
+  const [activeWalletId, setActiveWalletId] = useState<string | null>(null);
 
   const wcProviderRef = useRef<any>(null);
 
@@ -164,10 +194,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       wcProvider.on('accountsChanged', async (accounts: string[]) => {
         if (accounts.length === 0) {
           setState((s) => ({ ...s, account: null, signer: null }));
+          NoteStorageService.notifyWalletSwitch(null);
         } else {
           const ethersProvider = new ethers.BrowserProvider(wcProvider);
           const signer = await ethersProvider.getSigner();
           setState((s) => ({ ...s, account: accounts[0], signer, provider: ethersProvider }));
+          // WC session switched accounts — note-keyed screens read from
+          // per-address storage, so they need to reload for the new account.
+          NoteStorageService.notifyWalletSwitch(accounts[0]);
         }
       });
 
@@ -202,12 +236,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [targetChainId, setupFromWcProvider]);
 
-  // Shared by `connectBuiltin` and `unlock` — both need to re-run the
-  // biometric prompt and pin the resulting signer into state. Spreading
-  // `INITIAL_STATE` ensures every new field (e.g. `isLocked`) gets
-  // reset without each call site having to remember to clear it.
-  const hydrateBuiltinSession = useCallback(async () => {
-    const signer = await KeySecurityService.getSigner(readProvider);
+  // Shared by `connectBuiltin`, `unlock`, and `switchWallet` — all need
+  // to re-run the biometric prompt for a specific wallet id and pin the
+  // resulting signer into state. Spreading `INITIAL_STATE` ensures
+  // every new field (e.g. `isLocked`) gets reset without each call site
+  // having to remember to clear it. Passing `id` explicitly rather than
+  // re-reading `activeWalletId` avoids a race when switchWallet sets
+  // the id and hydrates in the same tick.
+  const hydrateBuiltinSession = useCallback(async (id: string) => {
+    const signer = await KeySecurityService.getSignerForWallet(id, readProvider);
     if (!signer) throw new Error('Authentication failed');
     const address = await signer.getAddress();
     const network = await readProvider.getNetwork();
@@ -217,8 +254,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       chainId: Number(network.chainId),
       signer,
     });
+    setActiveWalletId(id);
     setConnectionMode('builtin');
+    // Subscribers must use the emitted `address`, not re-read
+    // `useWallet().account` — the setState above is async so the
+    // context value lags one tick behind this emit.
+    NoteStorageService.notifyWalletSwitch(address);
   }, [readProvider]);
+
+  // Resolve the id to hydrate when connecting the built-in wallet:
+  // prefer the explicit `activeWalletId` the service tracks, else fall
+  // back to the oldest wallet (first in the index). Keeps a fresh
+  // install that hasn't called `setActiveWalletId` yet from failing
+  // the connect.
+  const resolveTargetWalletId = useCallback(async (): Promise<string | null> => {
+    const activeId = await KeySecurityService.getActiveWalletId();
+    if (activeId) return activeId;
+    const list = await KeySecurityService.listWallets();
+    return list[0]?.id ?? null;
+  }, []);
 
   // ─── 앱 내장 지갑 연결 ──────────────────────────────
   const connectBuiltin = useCallback(async () => {
@@ -230,12 +284,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         wcProviderRef.current = null;
       }
 
-      const hasWallet = await KeySecurityService.hasWallet();
-      if (!hasWallet) {
+      const targetId = await resolveTargetWalletId();
+      if (!targetId) {
         throw new Error('NO_WALLET');
       }
 
-      await hydrateBuiltinSession();
+      await hydrateBuiltinSession(targetId);
+      const list = await KeySecurityService.listWallets();
+      setWallets(list);
     } catch (err: any) {
       setState((s) => ({
         ...s,
@@ -247,7 +303,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw err; // 호출자가 처리
       }
     }
-  }, [hydrateBuiltinSession]);
+  }, [hydrateBuiltinSession, resolveTargetWalletId]);
 
   // Background-reauth: clear the cached signer if the app was backgrounded
   // for longer than `BG_LOCK_MS`. Only applies to the built-in wallet mode
@@ -327,6 +383,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     setState(INITIAL_STATE);
     setConnectionMode('none');
+    setActiveWalletId(null);
+    NoteStorageService.notifyWalletSwitch(null);
   }, []);
 
   // Unlock from the `isLocked` state — re-runs the biometric prompt and
@@ -338,13 +396,82 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const unlock = useCallback(async () => {
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
-      await hydrateBuiltinSession();
+      const targetId = await resolveTargetWalletId();
+      if (!targetId) throw new Error('NO_WALLET');
+      await hydrateBuiltinSession(targetId);
+      const list = await KeySecurityService.listWallets();
+      setWallets(list);
     } catch (err: any) {
       setState((s) => ({
         ...s,
         isConnecting: false,
         error: err?.message || 'Unlock failed',
       }));
+    }
+  }, [hydrateBuiltinSession, resolveTargetWalletId]);
+
+  // ─── Multi-wallet methods ─────────────────────────────────────
+  const refreshWallets = useCallback(async () => {
+    const [list, activeId] = await Promise.all([
+      KeySecurityService.listWallets(),
+      KeySecurityService.getActiveWalletId(),
+    ]);
+    setWallets(list);
+    setActiveWalletId(activeId);
+  }, []);
+
+  const switchWallet = useCallback(async (id: string) => {
+    const list = await KeySecurityService.listWallets();
+    if (!list.some((w) => w.id === id)) {
+      throw new Error(`Wallet id not found: ${id}`);
+    }
+    await KeySecurityService.setActiveWalletId(id);
+    await hydrateBuiltinSession(id);
+    setWallets(list);
+  }, [hydrateBuiltinSession]);
+
+  const addWalletFromCreate = useCallback(async (nickname?: string) => {
+    const result = await KeySecurityService.createWallet(nickname);
+    const list = await KeySecurityService.listWallets();
+    setWallets(list);
+    return result;
+  }, []);
+
+  const addWalletFromMnemonic = useCallback(async (mnemonic: string, nickname?: string) => {
+    const address = await KeySecurityService.importFromMnemonic(mnemonic, nickname);
+    const list = await KeySecurityService.listWallets();
+    setWallets(list);
+    return address;
+  }, []);
+
+  const addWalletFromPrivateKey = useCallback(async (privateKey: string, nickname?: string) => {
+    const address = await KeySecurityService.importFromPrivateKey(privateKey, nickname);
+    const list = await KeySecurityService.listWallets();
+    setWallets(list);
+    return address;
+  }, []);
+
+  const removeWallet = useCallback(async (id: string) => {
+    // Read active-id from storage rather than React state so a
+    // concurrent switchWallet whose setState hasn't flushed yet can't
+    // trick us into the non-active branch.
+    const activeBefore = await KeySecurityService.getActiveWalletId();
+    const wasActive = id === activeBefore;
+    await KeySecurityService.deleteWallet(id);
+    const list = await KeySecurityService.listWallets();
+    setWallets(list);
+    if (!wasActive) return;
+    // Active wallet removed — KeySecurityService has already promoted
+    // the next wallet (or cleared the mirror). Re-hydrate so state
+    // matches storage, or disconnect if nothing remains.
+    const nextActiveId = await KeySecurityService.getActiveWalletId();
+    if (nextActiveId) {
+      await hydrateBuiltinSession(nextActiveId);
+    } else {
+      setState(INITIAL_STATE);
+      setConnectionMode('none');
+      setActiveWalletId(null);
+      NoteStorageService.notifyWalletSwitch(null);
     }
   }, [hydrateBuiltinSession]);
 
@@ -353,8 +480,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // that reads from `useWallet()`, even when nothing they care about
   // actually changed.
   const ctxValue = useMemo<WalletContextValue>(
-    () => ({ ...state, connectionMode, connect, connectBuiltin, disconnect, unlock, readProvider }),
-    [state, connectionMode, connect, connectBuiltin, disconnect, unlock, readProvider],
+    () => ({
+      ...state,
+      connectionMode,
+      connect,
+      connectBuiltin,
+      disconnect,
+      unlock,
+      readProvider,
+      wallets,
+      activeWalletId,
+      refreshWallets,
+      switchWallet,
+      addWalletFromCreate,
+      addWalletFromMnemonic,
+      addWalletFromPrivateKey,
+      removeWallet,
+    }),
+    [
+      state, connectionMode, connect, connectBuiltin, disconnect, unlock, readProvider,
+      wallets, activeWalletId, refreshWallets, switchWallet,
+      addWalletFromCreate, addWalletFromMnemonic, addWalletFromPrivateKey, removeWallet,
+    ],
   );
 
   return (
