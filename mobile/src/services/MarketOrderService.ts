@@ -325,10 +325,10 @@ export const MarketOrderService = {
       // ─── Step 4: Save change note + mark original spent ─
       onProgress({ step: 'saving', txHash: tx.hash });
 
-      await NoteStorageService.updateNoteStatus(note.id, 'spent');
+      await NoteStorageService.updateNoteStatus(account, note.id, 'spent');
 
       if (changeAmount > 0n) {
-        await NoteStorageService.saveNote({
+        await NoteStorageService.saveNote(account, {
           id: newCommitment,
           commitment: newCommitment,
           secret: note.secret,

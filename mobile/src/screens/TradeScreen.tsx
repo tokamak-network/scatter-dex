@@ -100,9 +100,13 @@ export default function TradeScreen() {
   useEffect(() => {
     let cancelled = false;
     const loadNotes = async () => {
+      if (!account) {
+        if (!cancelled) { setActiveNotes([]); setSelectedNote(null); setLoading(false); }
+        return;
+      }
       setLoading(true);
       try {
-        const notes = await NoteStorageService.getActiveNotes();
+        const notes = await NoteStorageService.getActiveNotes(account);
         if (!cancelled) {
           setActiveNotes(notes);
           if (notes.length > 0 && !selectedNote) {
@@ -117,7 +121,7 @@ export default function TradeScreen() {
     };
     loadNotes();
     return () => { cancelled = true; };
-  }, []);
+  }, [account]);
 
   // Compute USDC equivalent
   const usdcAmount = (() => {
