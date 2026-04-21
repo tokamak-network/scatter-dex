@@ -578,6 +578,7 @@ export default function SettingsScreen() {
       <BackupModal
         visible={backupVisible}
         onClose={() => setBackupVisible(false)}
+        address={account}
       />
 
       <SecretRevealModal

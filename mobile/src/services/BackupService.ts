@@ -45,13 +45,19 @@ export const BackupService = {
    * bundle. Caller is responsible for transport (Share sheet, clipboard,
    * etc.).
    */
-  async exportAll(): Promise<BackupBundle> {
+  /**
+   * Notes are scoped to `address` (this PR). Pending claims and the
+   * address book are still global until A4's #358 / Phase 2.5 Part 3
+   * land; the `address` parameter will route to their per-wallet APIs
+   * at that point without a public signature change.
+   */
+  async exportAll(address: string): Promise<BackupBundle> {
     // Don't swallow address-book errors: silently substituting an empty
     // array would produce a backup file the user thinks is complete but
     // is actually missing labels. Wrap with context so the UI can name
     // which section failed.
     const [notes, pendingClaims, addressBook] = await Promise.all([
-      NoteStorageService.getAllNotes(),
+      NoteStorageService.getAllNotes(address),
       PendingClaimsStorage.list(),
       AddressBookService.list().catch((err: unknown) => {
         const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
@@ -102,7 +108,7 @@ export const BackupService = {
    * stored are skipped — the user can re-import the same file safely.
    * Returns per-category counts so the UI can report what changed.
    */
-  async restore(bundle: BackupBundle): Promise<RestoreSummary> {
+  async restore(address: string, bundle: BackupBundle): Promise<RestoreSummary> {
     const summary: RestoreSummary = {
       notes: { added: 0, skipped: 0 },
       pendingClaims: { added: 0, skipped: 0 },
@@ -120,7 +126,7 @@ export const BackupService = {
     // we only need the ids for the dedup check, and `getAllNotes` would
     // otherwise pay for N parallel SecureStore reads to hydrate full note
     // bodies we immediately discard.
-    const seenNoteIds = new Set(await NoteStorageService.getNoteIds());
+    const seenNoteIds = new Set(await NoteStorageService.getNoteIds(address));
     const notesToSave: StoredNote[] = [];
     for (const note of bundle.notes) {
       if (seenNoteIds.has(note.id)) {
@@ -131,7 +137,7 @@ export const BackupService = {
       notesToSave.push(note);
     }
     if (notesToSave.length > 0) {
-      const results = await NoteStorageService.saveNotesBulk(notesToSave);
+      const results = await NoteStorageService.saveNotesBulk(address, notesToSave);
       for (const r of results) {
         if (r.ok) summary.notes.added++;
         else summary.notes.skipped++;

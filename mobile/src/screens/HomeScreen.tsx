@@ -39,7 +39,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!account) { setPrivateTotal('0'); return; }
-    NoteStorageService.getPrivateBalances().then((map) => {
+    NoteStorageService.getPrivateBalances(account).then((map) => {
       if (!isMounted.current) return;
       let total = 0n;
       for (const [, v] of map) total += v.total;

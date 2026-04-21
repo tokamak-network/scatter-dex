@@ -20,6 +20,13 @@ import BaseModal from './BaseModal';
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** Active wallet address. Notes are scoped to this address (this PR).
+   *  Pending claims become per-wallet in #358 and the address book in
+   *  Phase 2.5 Part 3 — until those land, they're global and this prop
+   *  is ignored for them. If absent (no wallet connected), the modal
+   *  disables export/import and prompts the user to connect first
+   *  rather than silently snapshotting empty lists. */
+  address: string | null;
   /** Called after a successful import so the caller can refresh stale
    *  in-memory state (e.g. SettingsScreen / TradeScreen lists). */
   onRestored?: () => void;
@@ -27,7 +34,7 @@ interface Props {
 
 type Tab = 'export' | 'import';
 
-export default function BackupModal({ visible, onClose, onRestored }: Props) {
+export default function BackupModal({ visible, onClose, address, onRestored }: Props) {
   const [tab, setTab] = useState<Tab>('export');
 
   // Export state
@@ -58,16 +65,20 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
   );
 
   const handleExport = useCallback(async () => {
+    if (!address) {
+      Alert.alert('Wallet not connected', 'Connect your wallet first — backups are scoped per wallet.');
+      return;
+    }
     setExporting(true);
     try {
-      const b = await BackupService.exportAll();
+      const b = await BackupService.exportAll(address);
       setBundle(b);
     } catch (err: any) {
       Alert.alert('Export failed', err?.message || 'Could not snapshot local state');
     } finally {
       setExporting(false);
     }
-  }, []);
+  }, [address]);
 
   const handleShare = useCallback(async () => {
     if (!exportJson) return;
@@ -95,11 +106,15 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
   }, [exportJson]);
 
   const handleImport = useCallback(async () => {
+    if (!address) {
+      Alert.alert('Wallet not connected', 'Connect your wallet first — backups are scoped per wallet.');
+      return;
+    }
     setImporting(true);
     setRestoreSummary(null);
     try {
       const parsed = BackupService.parse(importText);
-      const summary = await BackupService.restore(parsed);
+      const summary = await BackupService.restore(address, parsed);
       setRestoreSummary(summary);
       onRestored?.();
     } catch (err: any) {
@@ -107,7 +122,7 @@ export default function BackupModal({ visible, onClose, onRestored }: Props) {
     } finally {
       setImporting(false);
     }
-  }, [importText, onRestored]);
+  }, [address, importText, onRestored]);
 
   const counts = bundle
     ? `${bundle.notes.length} notes · ${bundle.pendingClaims.length} pending claims · ${bundle.addressBook.length} addresses`
