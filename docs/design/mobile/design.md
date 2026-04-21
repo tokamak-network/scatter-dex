@@ -1,9 +1,15 @@
 # ScatterDEX 모바일 앱 설계 문서
 
-> **상태**: 분석/설계 (2026-04-10)
+> ⚠️ **이 문서는 2026-04-10 설계/분석 스냅샷** 입니다.
+> **현재 구현 상태·시스템 구성·보안 계층·멀티월렛 아키텍처는 [`implementation.md`](./implementation.md) 를 참조하세요.** 두 문서가 충돌하면 `implementation.md` 가 source of truth 입니다.
+>
+> 아래 원본 설계 메모는 기술 결정 기록(Capacitor→Expo/RN 피벗, WebView 하이브리드 ZK, NFC/SE Phase 2 계획 등)을 보존하기 위해 남겨둡니다. 특히 §2 (접근법 결정), §5 (ZK 전략), §7 (NFC/SE 확장 계획) 는 여전히 유효한 참조 자료입니다.
+>
+> **원본 상태**: 분석/설계 (2026-04-10)
 > **범위**: Android + iOS 앱, WalletConnect 기반 지갑 연동
 > **프레임워크**: Expo + React Native
 > **관련 문서**:
+> - [`implementation.md`](./implementation.md) — **현재 구현 상태 (main 기준)**
 > - [../../frontend/](../../frontend/) — 현재 웹 프론트엔드
 > - [../architecture-v2.md](../../architecture/architecture-v2.md) — 전체 아키텍처
 > - **tokamon** 앱 참고 (Expo/RN 구조 레퍼런스)
