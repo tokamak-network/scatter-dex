@@ -7,3 +7,8 @@ export interface WalletMeta {
   source: WalletSource;
   createdAt: number; // unix ms
 }
+
+export interface WalletSecret {
+  privateKey: string;
+  mnemonic?: string;
+}
