@@ -69,6 +69,16 @@ export default function SettingsScreen() {
   const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [importSecret, setImportSecret] = useState('');
 
+  // Add-custom-network modal state
+  const [addNetVisible, setAddNetVisible] = useState(false);
+  const [netName, setNetName] = useState('');
+  const [netRpc, setNetRpc] = useState('');
+  const [netChainId, setNetChainId] = useState('');
+  const [netSymbol, setNetSymbol] = useState('ETH');
+  const [netExplorer, setNetExplorer] = useState('');
+  const [netTesting, setNetTesting] = useState(false);
+  const [netTestResult, setNetTestResult] = useState<string | null>(null);
+
   // Load biometric setting on mount
   useEffect(() => {
     let cancelled = false;
@@ -252,6 +262,73 @@ export default function SettingsScreen() {
       }
     }
   }, [account]);
+
+  const resetAddNetForm = useCallback(() => {
+    setNetName(''); setNetRpc(''); setNetChainId('');
+    setNetSymbol('ETH'); setNetExplorer('');
+    setNetTesting(false); setNetTestResult(null);
+  }, []);
+
+  const handleTestNetwork = useCallback(async () => {
+    const rpc = netRpc.trim();
+    if (!rpc) { setNetTestResult('Enter RPC URL first'); return; }
+    setNetTesting(true); setNetTestResult(null);
+    try {
+      const res = await NetworkService.testConnection(rpc);
+      if (res.ok) {
+        setNetTestResult(`OK — chainId ${res.chainId}, block ${res.blockNumber}`);
+        if (!netChainId.trim() && res.chainId !== undefined) setNetChainId(String(res.chainId));
+      } else {
+        setNetTestResult(`Failed: ${res.error || 'unknown error'}`);
+      }
+    } catch (err: any) {
+      setNetTestResult(`Failed: ${err?.message || 'unknown error'}`);
+    } finally {
+      setNetTesting(false);
+    }
+  }, [netRpc, netChainId]);
+
+  const handleSaveNetwork = useCallback(async () => {
+    const name = netName.trim();
+    const rpcUrl = netRpc.trim();
+    const chainId = Number(netChainId.trim());
+    const symbol = netSymbol.trim() || 'ETH';
+    const blockExplorer = netExplorer.trim() || undefined;
+    if (!name || !rpcUrl || !Number.isFinite(chainId) || chainId <= 0) {
+      Alert.alert('Invalid', 'Name, RPC URL, and a positive Chain ID are required.');
+      return;
+    }
+    try {
+      const added = await NetworkService.addCustomNetwork({ name, rpcUrl, chainId, symbol, blockExplorer });
+      const all = await NetworkService.getAllNetworks();
+      setNetworks(all);
+      setAddNetVisible(false);
+      resetAddNetForm();
+      Alert.alert('Network Added', `Saved "${added.name}". Tap it in the list to switch.`);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to save network');
+    }
+  }, [netName, netRpc, netChainId, netSymbol, netExplorer, resetAddNetForm]);
+
+  const handleDeleteNetwork = useCallback((net: NetworkConfig) => {
+    if (!net.isCustom) return;
+    Alert.alert('Delete Network', `Remove "${net.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try {
+          await NetworkService.removeCustomNetwork(net.id);
+          const all = await NetworkService.getAllNetworks();
+          setNetworks(all);
+          if (selectedNetworkId === net.id) {
+            const selected = await NetworkService.getSelectedNetwork();
+            setSelectedNetworkId(selected.id);
+          }
+        } catch (err: any) {
+          Alert.alert('Error', err?.message || 'Failed to delete network');
+        }
+      }},
+    ]);
+  }, [selectedNetworkId]);
 
   const handleNetworkSelect = useCallback(async (networkId: string) => {
     try {
@@ -498,13 +575,30 @@ export default function SettingsScreen() {
                   </Text>
                 </View>
               </View>
-              {selectedNetworkId === net.id && (
-                <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
-                </View>
-              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {selectedNetworkId === net.id && (
+                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                  </View>
+                )}
+                {net.isCustom && (
+                  <TouchableOpacity
+                    onPress={() => handleDeleteNetwork(net)}
+                    hitSlop={8}
+                    accessibilityLabel={`Delete ${net.name}`}
+                  >
+                    <Text style={{ fontSize: 16, color: colors.danger }}>🗑</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity
+            style={[s.toggleRow, { borderStyle: 'dashed', justifyContent: 'center' }]}
+            onPress={() => { resetAddNetForm(); setAddNetVisible(true); }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.primary }}>+ Add Custom Network</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={{ height: 96 }} />
@@ -579,6 +673,74 @@ export default function SettingsScreen() {
         visible={backupVisible}
         onClose={() => setBackupVisible(false)}
       />
+
+      <BaseModal
+        visible={addNetVisible}
+        onClose={() => { setAddNetVisible(false); resetAddNetForm(); }}
+        title="Add Custom Network"
+      >
+        <Text style={s.modalSubtitle}>Register an RPC endpoint. Chain ID auto-fills if you Test Connection first.</Text>
+        <TextInput
+          style={[s.modalInput, { minHeight: 40 }]}
+          placeholder="Name (e.g. Anvil Fork)"
+          placeholderTextColor="#9CA3AF"
+          value={netName} onChangeText={setNetName}
+          autoCapitalize="words" autoCorrect={false}
+        />
+        <TextInput
+          style={[s.modalInput, { minHeight: 40 }]}
+          placeholder="RPC URL (http://localhost:8545)"
+          placeholderTextColor="#9CA3AF"
+          value={netRpc} onChangeText={setNetRpc}
+          autoCapitalize="none" autoCorrect={false}
+          keyboardType="url"
+        />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TextInput
+            style={[s.modalInput, { minHeight: 40, flex: 1 }]}
+            placeholder="Chain ID"
+            placeholderTextColor="#9CA3AF"
+            value={netChainId} onChangeText={setNetChainId}
+            keyboardType="number-pad"
+          />
+          <TextInput
+            style={[s.modalInput, { minHeight: 40, flex: 1 }]}
+            placeholder="Symbol (ETH)"
+            placeholderTextColor="#9CA3AF"
+            value={netSymbol} onChangeText={setNetSymbol}
+            autoCapitalize="characters" autoCorrect={false}
+          />
+        </View>
+        <TextInput
+          style={[s.modalInput, { minHeight: 40 }]}
+          placeholder="Block Explorer URL (optional)"
+          placeholderTextColor="#9CA3AF"
+          value={netExplorer} onChangeText={setNetExplorer}
+          autoCapitalize="none" autoCorrect={false}
+          keyboardType="url"
+        />
+        {netTestResult && (
+          <Text style={{ fontSize: 12, color: netTestResult.startsWith('OK') ? '#16A34A' : colors.danger }}>
+            {netTestResult}
+          </Text>
+        )}
+        <View style={s.modalButtons}>
+          <TouchableOpacity
+            style={[s.modalBtnCancel, netTesting && { opacity: 0.4 }]}
+            onPress={handleTestNetwork}
+            disabled={netTesting}
+          >
+            <Text style={s.modalBtnCancelText}>{netTesting ? 'Testing…' : 'Test Connection'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.modalBtnConfirm, (!netName.trim() || !netRpc.trim() || !netChainId.trim()) && { opacity: 0.4 }]}
+            onPress={handleSaveNetwork}
+            disabled={!netName.trim() || !netRpc.trim() || !netChainId.trim()}
+          >
+            <Text style={s.modalBtnConfirmText}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
 
       <SecretRevealModal
         visible={stealthKeysReveal !== null}
