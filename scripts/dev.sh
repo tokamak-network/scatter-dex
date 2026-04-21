@@ -330,6 +330,39 @@ if [ -n "$PRESERVED_ENV" ]; then
   echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
 fi
 
+# Mobile reads its per-chain contract map from
+# mobile/src/config/fork-contracts.json (gitignored). Regenerate it
+# alongside the frontend env so either dev script gives both clients
+# the same deployment in one shot. Expo's Fast Refresh picks the JSON
+# up on the next import without a rebuild.
+mkdir -p "$ROOT_DIR/mobile/src/config"
+cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
+{
+  "31337": {
+    "rpcUrl": "$RPC_URL",
+    "weth": "$WETH",
+    "commitmentPool": "$COMMITMENT_POOL",
+    "privateSettlement": "$PRIVATE_SETTLEMENT",
+    "identityGate": "$IDENTITY_GATE",
+    "relayerRegistry": "$RELAYER_REGISTRY",
+    "feeVault": "$FEE_VAULT",
+    "batchExecutor": "$BATCH_EXECUTOR",
+    "relayerUrl": "http://localhost:3002",
+    "sharedOrderbookUrl": "http://localhost:4000"
+  }
+}
+EOF
+echo "  Wrote mobile contracts to mobile/src/config/fork-contracts.json (chain 31337)"
+
+# Mobile's ZK circuit artifacts (mobile/assets/zk/*.zkey|wasm) must match
+# the verifiers the just-deployed contracts reference. `copy:circuits`
+# is idempotent and skips unchanged files.
+if [ -d "$ROOT_DIR/mobile" ]; then
+  (cd "$ROOT_DIR/mobile" && npm run copy:circuits) \
+    && echo "  Synced mobile ZK assets from circuits/build/" \
+    || echo "  WARN: failed to copy mobile ZK assets (proofs may fail to verify)"
+fi
+
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
 last_pid=$!

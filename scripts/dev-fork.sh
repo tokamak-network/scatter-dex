@@ -431,6 +431,15 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
 EOF
 echo "  Wrote mobile contracts to mobile/src/config/fork-contracts.json"
 
+# Mobile's ZK circuit artifacts (mobile/assets/zk/*.zkey|wasm) must match
+# the verifiers the just-deployed contracts reference. `copy:circuits`
+# is idempotent and skips unchanged files.
+if [ -d "$ROOT_DIR/mobile" ]; then
+  (cd "$ROOT_DIR/mobile" && npm run copy:circuits) \
+    && echo "  Synced mobile ZK assets from circuits/build/" \
+    || echo "  WARN: failed to copy mobile ZK assets (proofs may fail to verify)"
+fi
+
 if [ -n "$PRESERVED_ENV" ]; then
   echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
   if [ "${NEXT_PUBLIC_DISABLE_AGGREGATOR:-true}" = "true" ]; then
