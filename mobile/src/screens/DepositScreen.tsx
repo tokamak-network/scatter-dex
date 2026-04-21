@@ -12,7 +12,7 @@ import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { DepositService, DepositProgress, DepositStep } from '../services/DepositService';
-import { formatBalance } from '../lib/format';
+import { formatBalance, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 
 const STEP_PROGRESS: Record<DepositStep, number> = {
@@ -29,7 +29,7 @@ const STEP_PROGRESS: Record<DepositStep, number> = {
 
 export default function DepositScreen() {
   const navigation = useNavigation<any>();
-  const { account, signer, readProvider } = useWallet();
+  const { account, signer, readProvider, wallets, activeWalletId, switchWallet, connectionMode } = useWallet();
 
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
@@ -142,6 +142,48 @@ export default function DepositScreen() {
           {/* Step 1: Deposit Details */}
           <View style={s.card}>
             <Text style={s.cardTitle}>Step 1: Deposit Details</Text>
+
+            {/* Select Wallet — only when multiple built-in wallets exist.
+                Tapping switches the active wallet; balance fetch + signer
+                update follow automatically via WalletContext's
+                `switchWallet`. WalletConnect sessions (external wallet)
+                are pinned so we hide this row. */}
+            {connectionMode === 'builtin' && wallets.length >= 2 && (
+              <View style={s.fieldGroup}>
+                <Text style={s.fieldLabel}>From Wallet</Text>
+                <TouchableOpacity
+                  style={s.tokenSelector}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const buttons = wallets.map((w) => ({
+                      text: `${w.nickname || shortAddr(w.address)}${w.id === activeWalletId ? ' ✓' : ''}`,
+                      onPress: () => {
+                        if (w.id !== activeWalletId) {
+                          switchWallet(w.id).catch((err: any) =>
+                            Alert.alert('Error', err?.message || 'Failed to switch wallet'),
+                          );
+                        }
+                      },
+                    }));
+                    Alert.alert('Select wallet', undefined, [
+                      ...buttons,
+                      { text: 'Cancel', style: 'cancel' as const },
+                    ]);
+                  }}
+                >
+                  <View style={s.tokenLeft}>
+                    <View style={s.tokenDot} />
+                    <Text style={s.tokenText}>
+                      {(() => {
+                        const w = wallets.find((x) => x.id === activeWalletId);
+                        return w ? `${w.nickname || shortAddr(w.address)} · ${shortAddr(w.address)}` : (account ? shortAddr(account) : 'No wallet');
+                      })()}
+                    </Text>
+                  </View>
+                  <Text style={s.chevron}>▾</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Select Token */}
             <View style={s.fieldGroup}>

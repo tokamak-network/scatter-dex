@@ -408,6 +408,29 @@ NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 EOF
 
+# Mobile reads its chain-specific contract map from src/config/fork-contracts.json
+# (gitignored). Regenerate it alongside the frontend env so running
+# dev-fork.sh gives both clients the same deployment in one shot. Expo's
+# Fast Refresh picks the JSON up on the next import without a rebuild.
+mkdir -p "$ROOT_DIR/mobile/src/config"
+cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
+{
+  "$FORK_CHAIN_ID": {
+    "rpcUrl": "$RPC_URL",
+    "weth": "$WETH",
+    "commitmentPool": "$COMMITMENT_POOL",
+    "privateSettlement": "$PRIVATE_SETTLEMENT",
+    "identityGate": "$IDENTITY_GATE",
+    "relayerRegistry": "$RELAYER_REGISTRY",
+    "feeVault": "$FEE_VAULT",
+    "batchExecutor": "$BATCH_EXECUTOR",
+    "relayerUrl": "http://localhost:3002",
+    "sharedOrderbookUrl": "http://localhost:4000"
+  }
+}
+EOF
+echo "  Wrote mobile contracts to mobile/src/config/fork-contracts.json"
+
 if [ -n "$PRESERVED_ENV" ]; then
   echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
   if [ "${NEXT_PUBLIC_DISABLE_AGGREGATOR:-true}" = "true" ]; then
