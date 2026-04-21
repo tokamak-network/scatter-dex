@@ -54,7 +54,7 @@ const managementItems: ManagementItem[] = [
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
   const {
-    account, signer, connectBuiltin, disconnect, connectionMode,
+    account, disconnect, connectionMode,
     wallets, activeWalletId, switchWallet,
     addWalletFromCreate, addWalletFromMnemonic, addWalletFromPrivateKey,
     removeWallet,

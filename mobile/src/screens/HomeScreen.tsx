@@ -45,15 +45,27 @@ export default function HomeScreen() {
   const [allPublicTotal, setAllPublicTotal] = useState('0');
   const [balanceScope, setBalanceScope] = useState<BalanceScope>('active');
   const isMounted = useRef(true);
+  const privateReqIdRef = useRef(0);
+  const publicReqIdRef = useRef(0);
 
   useEffect(() => {
     return () => { isMounted.current = false; };
   }, []);
 
+  // If a user deletes wallets down to <2, the toggle disappears but the
+  // scope would otherwise stay stuck on 'all', leaving Home showing
+  // private-only totals under an "All Wallets" label with no way back.
+  useEffect(() => {
+    if (wallets.length < 2 && balanceScope !== 'active') setBalanceScope('active');
+  }, [wallets, balanceScope]);
+
   // Private-balance fetch, re-fired on scope or active-account change.
-  // Keep the scope switch cheap — a WalletConnect-only session (no
-  // built-in wallets in `wallets`) falls through the 'all' branch
-  // with an empty total instead of hanging on an empty Promise.all.
+  // Per-effect request id guards against out-of-order resolutions —
+  // switching wallets or flipping the toggle rapidly can otherwise let
+  // a slower earlier run overwrite `privateTotal` with stale data.
+  // The empty-scope branch short-circuits so a WalletConnect-only
+  // session (no built-in wallets) lands on '0' without an unnecessary
+  // Promise.all microtask.
   useEffect(() => {
     const scopeWallets = balanceScope === 'all'
       ? wallets.map((w) => w.address)
@@ -61,9 +73,10 @@ export default function HomeScreen() {
 
     if (scopeWallets.length === 0) { setPrivateTotal('0'); return; }
 
+    const reqId = ++privateReqIdRef.current;
     Promise.all(scopeWallets.map((addr) => NoteStorageService.getPrivateBalances(addr)))
       .then((maps) => {
-        if (!isMounted.current) return;
+        if (!isMounted.current || reqId !== privateReqIdRef.current) return;
         let total = 0n;
         for (const map of maps) for (const [, v] of map) total += v.total;
         setPrivateTotal(ethers.formatEther(total));
@@ -90,8 +103,9 @@ export default function HomeScreen() {
         catch { return '0'; }
       }),
     );
+    const reqId = ++publicReqIdRef.current;
     Promise.allSettled(fetches).then((results) => {
-      if (!isMounted.current) return;
+      if (!isMounted.current || reqId !== publicReqIdRef.current) return;
       let sum = 0;
       for (const r of results) {
         if (r.status === 'fulfilled') sum += parseFloat(r.value || '0');

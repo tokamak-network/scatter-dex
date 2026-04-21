@@ -133,6 +133,11 @@ export default function TradeScreen() {
     return NoteStorageService.subscribeWalletSwitch(() => {
       setActiveNotes([]);
       setSelectedNote(null);
+      // Wallet-scoped UI state — a stale "Order failed" error or a
+      // spinning submit indicator from the previous wallet would flash
+      // under the new wallet header until the next user action.
+      setError(null);
+      setSubmitting(false);
     });
   }, []);
 

@@ -10,15 +10,19 @@
  * circomlibjs는 WebView에서만 실행 가능하므로 Bridge를 통해 호출한다.
  *
  * **Multi-wallet safety** — this service holds no in-memory cache. Every
- * public method (`loadKey`, `saveKey`, `getOrDeriveKey`, `deleteKey`)
- * reads SecureStore directly with the caller's `account`, so switching
- * the active wallet in `WalletContext` requires no explicit
- * invalidation: the next call picks up the new wallet's key blob (or
- * derives one) automatically. Callers that memoise the returned
- * `EdDSAKeyPair` in React state must re-fire on `[account]` — see
- * `SettingsScreen` / `HistoryScreen` for the pattern. Services that
- * call `getOrDeriveKey` per-operation (Order/Market/Cancel/Deposit)
- * are inherently switch-safe.
+ * method that accesses stored keys (`loadKey`, `saveKey`,
+ * `getOrDeriveKey`, `deleteKey`) reads SecureStore directly with the
+ * caller's `account`, so switching the active wallet in
+ * `WalletContext` requires no explicit invalidation: the next call
+ * picks up the new wallet's key blob (or derives one) automatically.
+ * `deriveKey` is also public but stateless — it derives from a
+ * `Signer` without touching SecureStore, so switch-safety is the
+ * caller's responsibility (pass the signer that matches the intended
+ * wallet). Callers that memoise the returned `EdDSAKeyPair` in React
+ * state must re-fire on `[account]` — see `SettingsScreen` /
+ * `HistoryScreen` for the pattern. Services that call
+ * `getOrDeriveKey` per-operation (Order/Market/Cancel/Deposit) are
+ * inherently switch-safe.
  */
 import { ethers } from 'ethers';
 import * as SecureStore from 'expo-secure-store';
