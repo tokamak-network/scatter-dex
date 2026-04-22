@@ -85,6 +85,10 @@ export default function TradeScreen() {
   // are declared below.
   const [relayerIdx, setRelayerIdx] = useState(0);
   const [hasTradingKey, setHasTradingKey] = useState<boolean>(false);
+  // Commitment-picker expand state. Default collapsed so the section is
+  // compact when the user has many notes — the selected note is always
+  // visible; tapping "+ N more" reveals the rest inline.
+  const [notesExpanded, setNotesExpanded] = useState<boolean>(false);
 
   // Real data
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -352,8 +356,12 @@ export default function TradeScreen() {
     const n = parseFloat(r.amount);
     return sum + (Number.isFinite(n) ? n : 0);
   }, 0);
-  const claimRemainder = Math.max(0, buyAmountHuman - claimTotal);
-  const claimsOverflow = buyAmountHuman > 0 && claimTotal > buyAmountHuman + 1e-6;
+  // Recipients only ever receive (buyAmount − maxFee). The relayer pockets
+  // maxFeeBps as its cut at settle time, so the claim total has to fit in
+  // the post-fee envelope; otherwise the circuit/contract reject the order.
+  const netBuyAmount = Math.max(0, buyAmountHuman * (1 - maxFeeBps / 10000));
+  const claimRemainder = Math.max(0, netBuyAmount - claimTotal);
+  const claimsOverflow = netBuyAmount > 0 && claimTotal > netBuyAmount + 1e-6;
 
   const updateClaim = useCallback((id: number, patch: Partial<ClaimRow>) => {
     setClaimRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -655,28 +663,52 @@ export default function TradeScreen() {
             </Text>
           ) : (
             <View style={{ gap: 8 }}>
-              {activeNotes.map((note) => {
-                const isSel = selectedNote?.id === note.id;
+              {(() => {
+                // Always render the selected note first; hide the rest
+                // behind "+ N more" unless the user asks to expand.
+                const sel = selectedNote && activeNotes.find((n) => n.id === selectedNote.id);
+                const others = activeNotes.filter((n) => n.id !== selectedNote?.id);
+                const visible = notesExpanded ? [sel, ...others].filter(Boolean) as StoredNote[]
+                  : sel ? [sel] : activeNotes.slice(0, 1);
+                const hiddenCount = activeNotes.length - visible.length;
                 return (
-                  <TouchableOpacity
-                    key={note.id}
-                    style={[s.noteCard, isSel && s.noteCardActive]}
-                    onPress={() => setSelectedNote(note)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.noteCardAmount, isSel && { color: colors.primaryDark }]}>
-                        {formatAmount(note.amount)} {note.tokenSymbol}
-                      </Text>
-                      <Text style={s.noteCardSub}>
-                        leaf #{note.leafIndex ?? '—'}
-                        {note.txHash ? ` · tx ${note.txHash.slice(0, 8)}…` : ''}
-                      </Text>
-                    </View>
-                    {isSel && <Text style={s.noteCardCheck}>✓</Text>}
-                  </TouchableOpacity>
+                  <>
+                    {visible.map((note) => {
+                      const isSel = selectedNote?.id === note.id;
+                      return (
+                        <TouchableOpacity
+                          key={note.id}
+                          style={[s.noteCard, isSel && s.noteCardActive]}
+                          onPress={() => setSelectedNote(note)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={[s.noteCardAmount, isSel && { color: colors.primaryDark }]}>
+                              {formatAmount(note.amount)} {note.tokenSymbol}
+                            </Text>
+                            <Text style={s.noteCardSub}>
+                              leaf #{note.leafIndex ?? '—'}
+                              {note.txHash ? ` · tx ${note.txHash.slice(0, 8)}…` : ''}
+                            </Text>
+                          </View>
+                          {isSel && <Text style={s.noteCardCheck}>✓</Text>}
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {(hiddenCount > 0 || notesExpanded) && (
+                      <TouchableOpacity
+                        style={s.expandBtn}
+                        onPress={() => setNotesExpanded((v) => !v)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={s.expandBtnText}>
+                          {notesExpanded ? '▲ Hide extras' : `▼ + ${hiddenCount} more note${hiddenCount > 1 ? 's' : ''}`}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
                 );
-              })}
+              })()}
               {selectedNote && (() => {
                 const sell = parseFloat(amount);
                 if (!Number.isFinite(sell) || sell <= 0) return null;
@@ -912,7 +944,8 @@ export default function TradeScreen() {
               <Text style={s.sectionSub}>
                 {claimTotal.toLocaleString('en-US', { maximumFractionDigits: 4 })}
                 {' / '}
-                {buyAmountHuman > 0 ? buyAmountHuman.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '—'} {buyTokenSymbol}
+                {netBuyAmount > 0 ? netBuyAmount.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '—'} {buyTokenSymbol}
+                {' (net)'}
               </Text>
             </View>
             {claimRows.map((row, idx) => (
@@ -1011,7 +1044,7 @@ export default function TradeScreen() {
             )}
             {claimsOverflow && (
               <Text style={s.claimWarn}>
-                Total exceeds buy amount by {(claimTotal - buyAmountHuman).toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}
+                Total exceeds net buy amount (after fee) by {(claimTotal - netBuyAmount).toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}
               </Text>
             )}
           </View>
@@ -1136,6 +1169,8 @@ const s = StyleSheet.create({
   changeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, paddingHorizontal: 4, marginTop: 2, borderTopWidth: 1, borderTopColor: colors.borderLight },
   changeLabel: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
   changeValue: { fontSize: 12, fontWeight: '700', color: colors.text },
+  expandBtn: { paddingVertical: 8, alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, borderStyle: 'dashed', backgroundColor: colors.bgSecondary },
+  expandBtnText: { fontSize: 11, fontWeight: '700', color: colors.primaryDark },
   tokenSubLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontWeight: '500' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 99, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.bgSecondary },

@@ -15,19 +15,30 @@ import { ethers } from 'ethers';
 import { ZKBridgeService } from './ZKBridgeService';
 import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
-import { RelayerApiService, PrivateOrderRequest } from './RelayerApiService';
+import { RelayerApiService } from './RelayerApiService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
 import { ProviderService } from './ProviderService';
 import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
+import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
-import { buildPoseidonMerkleTree } from '../lib/merkleTree';
+import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
+import { COMMITMENT_POOL_ABI } from '../lib/contracts';
+import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { formatProofForSolidity } from '../lib/proofFormat';
+
+// authorize.circom tree depths (must match circuits/authorize.circom).
+const COMMIT_TREE_DEPTH = 20;
+const MAX_CLAIMS_PER_SIDE = 16;
+const CLAIMS_TREE_DEPTH = 4;
 
 export type OrderStep =
   | 'idle'
   | 'deriving_key'
+  | 'building_tree'
   | 'signing_order'
+  | 'generating_proof'
   | 'submitting'
   | 'saving_change'
   | 'success'
@@ -175,39 +186,180 @@ export const OrderService = {
         });
       }
 
-      // ─── Step 5: 릴레이어 제출 ─────────────────────────
-      onProgress({ step: 'submitting' });
+      // ─── Step 5: Fetch commitment leaves + build Merkle proof ─────
+      // Mirrors MarketOrderService: relayer now requires a client-generated
+      // authorize.circom proof (endpoint /api/private-orders was deprecated,
+      // returns 410 with a migration hint). We rebuild the tree from the
+      // pool's CommitmentInserted events rather than fetching from the
+      // relayer — matches the slow-but-simple path the frontend also falls
+      // back to when /api/info/merkle-proof is unavailable.
+      onProgress({ step: 'building_tree' });
+      const poolAddr = ConfigService.getCommitmentPoolAddress();
+      if (!poolAddr) throw new Error('CommitmentPool address not configured');
+      const settlementAddr = ConfigService.getPrivateSettlementAddress();
+      if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
 
-      const orderReq: PrivateOrderRequest = {
-        sellToken: note.token,
-        buyToken,
+      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
+      const fromBlock = ConfigService.getDeployBlock();
+      const insertEvents = await pool.queryFilter(
+        pool.filters.CommitmentInserted(),
+        fromBlock,
+      );
+      const allLeaves = insertEvents.map((e) => {
+        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
+        return parsed!.args.commitment.toString();
+      });
+
+      // Verify the stored note still matches the on-chain leaf at its
+      // recorded index. A mismatch here means the note was spent/rotated
+      // elsewhere and re-using it would produce an invalid proof.
+      const noteCommitment = await ZKBridgeService.computeCommitment({
+        tag: TAG_COMMITMENT_V2.toString(),
+        secret: note.secret,
+        token: BigInt(note.token).toString(),
+        balance: note.amount,
+        salt: note.salt,
+        pubKeyAx: keyPair.pubKeyAx,
+        pubKeyAy: keyPair.pubKeyAy,
+      });
+      if (note.leafIndex < 0 || allLeaves[note.leafIndex] !== noteCommitment) {
+        throw new Error(
+          'Note commitment is no longer in the on-chain tree (spent or rotated).',
+        );
+      }
+
+      const commitTree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+      const commitmentRoot = commitTree.root;
+      const { pathElements, pathIndices } = getMerkleProofFromTree(
+        commitTree,
+        note.leafIndex,
+      );
+
+      // Nullifiers — tags 0 (escrow) / 1 (nonce) match cancel-prover and
+      // MarketOrderService.
+      const nullifier = await ZKBridgeService.computeNullifier(
+        '0',
+        note.secret,
+        note.salt,
+      );
+      const nonceNullifier = await ZKBridgeService.computeNullifier(
+        '1',
+        note.secret,
+        nonce.toString(),
+      );
+
+      // ─── Step 6: Assemble circuit witness ──────────────
+      onProgress({ step: 'generating_proof' });
+      const totalLocked = claimsData.reduce((a, c) => a + BigInt(c.amount), 0n);
+      // Pad claim arrays to MAX_CLAIMS_PER_SIDE — circuit expects fixed
+      // width; unused entries are zero and ignored via claimCount.
+      const pad = (arr: string[]): string[] => [
+        ...arr,
+        ...Array(MAX_CLAIMS_PER_SIDE - arr.length).fill('0'),
+      ];
+      const claimSecrets = pad(claimsData.map((c) => c.secret));
+      const claimRecipients = pad(claimsData.map((c) => c.recipient));
+      const claimTokens = pad(claimsData.map((c) => c.token));
+      const claimAmounts = pad(claimsData.map((c) => c.amount));
+      const claimReleaseTimes = pad(claimsData.map((c) => c.releaseTime));
+
+      const circuitInputs: Record<string, string | string[]> = {
+        commitmentRoot,
+        nullifier,
+        nonceNullifier,
+        newCommitment: expectedChangeCommitment,
+        sellToken: BigInt(note.token).toString(),
+        buyToken: BigInt(buyToken).toString(),
         sellAmount: sellAmount.toString(),
         buyAmount: buyAmount.toString(),
         maxFee: maxFeeBps.toString(),
         expiry: expiry.toString(),
+        claimsRoot,
+        totalLocked: totalLocked.toString(),
+        relayer: relayerAddress,
+        orderHash,
+        secret: note.secret,
+        balance: note.amount,
+        salt: note.salt,
+        path: pathElements,
+        pathIdx: pathIndices,
         nonce: nonce.toString(),
+        newSalt,
         pubKeyAx: keyPair.pubKeyAx,
         pubKeyAy: keyPair.pubKeyAy,
         sigS: sig.S,
         sigR8x: sig.R8x,
         sigR8y: sig.R8y,
-        ownerSecret: note.secret,
-        balance: note.amount,
-        salt: note.salt,
-        leafIndex: note.leafIndex,
-        newSalt,
-        expectedChangeCommitment,
-        claims: claimsData,
+        claimSecrets,
+        claimRecipients,
+        claimTokens,
+        claimAmounts,
+        claimReleaseTimes,
+        claimCount: claimsData.length.toString(),
       };
 
-      const response = await RelayerApiService.submitPrivateOrder(
-        orderReq,
+      let wasmB64: string;
+      let zkeyB64: string;
+      try {
+        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
+        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
+      } catch {
+        throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
+      }
+
+      const proofResult = await ZKBridgeService.generateProof(
+        circuitInputs,
+        wasmB64,
+        zkeyB64,
+      );
+      const solidityProof = formatProofForSolidity(proofResult.proof);
+
+      // ─── Step 7: Submit to /api/authorize-orders ──────
+      onProgress({ step: 'submitting' });
+      // publicSignals layout (authorize.circom outputs):
+      //   [0]  pubKeyBind (circuit output)
+      //   [1]  commitmentRoot
+      //   [2]  nullifier
+      //   [3]  nonceNullifier
+      //   [4]  newCommitment
+      //   [5]  sellToken
+      //   [6]  buyToken
+      //   [7]  sellAmount
+      //   [8]  buyAmount
+      //   [9]  maxFee
+      //   [10] expiry
+      //   [11] claimsRoot
+      //   [12] totalLocked
+      //   [13] relayer
+      //   [14] orderHash
+      const ps = proofResult.publicSignals;
+      const namedSignals: Record<string, string> = {
+        pubKeyBind: ps[0],
+        commitmentRoot: ps[1],
+        nullifier: ps[2],
+        nonceNullifier: ps[3],
+        newCommitment: ps[4],
+        sellToken: ps[5],
+        buyToken: ps[6],
+        sellAmount: ps[7],
+        buyAmount: ps[8],
+        maxFee: ps[9],
+        expiry: ps[10],
+        claimsRoot: ps[11],
+        totalLocked: ps[12],
+        relayer: ps[13],
+        orderHash: ps[14],
+      };
+      const response = await RelayerApiService.submitAuthorizeOrder(
+        {
+          proof: solidityProof,
+          publicSignals: namedSignals,
+          publicSignalsArray: ps,
+          pubKeyAx: keyPair.pubKeyAx,
+          pubKeyAy: keyPair.pubKeyAy,
+        },
         input.relayerUrl,
       );
-
-      if (response.status === 'rejected') {
-        throw new Error(response.reason || 'Order rejected by relayer');
-      }
 
       // ─── Step 6: Persist claim secrets + change note + mark spent ─
       onProgress({ step: 'saving_change' });
@@ -272,7 +424,7 @@ export const OrderService = {
       }
 
       onProgress({ step: 'success', orderId: response.orderId });
-      return response.orderId;
+      return response.orderId ?? null;
     } catch (err: any) {
       onProgress({ step: 'error', error: err?.message || 'Order failed' });
       return null;

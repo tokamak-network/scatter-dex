@@ -119,6 +119,36 @@ export const RelayerApiService = {
     return res.json();
   },
 
+  /**
+   * Submit a client-generated authorize.circom proof to the relayer.
+   * Mirrors frontend/app/trade/private-order/page.tsx's POST shape exactly
+   * so the relayer can validate the proof, pubKey binding, and public
+   * signals (named + array) in one request.
+   */
+  async submitAuthorizeOrder(
+    body: {
+      proof: { a: [string, string]; b: [[string, string], [string, string]]; c: [string, string] } | any;
+      publicSignals: Record<string, string>;
+      publicSignalsArray: string[];
+      pubKeyAx: string;
+      pubKeyAy: string;
+    },
+    relayerUrl?: string,
+  ): Promise<{ orderId?: string; [k: string]: any }> {
+    const url = `${relayerUrl || this.getBaseUrl()}/api/authorize-orders`;
+    const res = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      timeoutMs: TIMEOUT_SUBMIT_MS,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Relayer rejected order: ${res.status} ${text}`);
+    }
+    return res.json();
+  },
+
   async getOrderStatus(pubKeyAx: string, relayerUrl?: string): Promise<OrderStatus[]> {
     return relayerGetJson(
       `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`,
