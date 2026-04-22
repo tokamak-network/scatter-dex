@@ -100,12 +100,28 @@ async function scanNewRange(
       to,
     );
     for (const e of events) {
-      const parsed = contract.interface.parseLog({ topics: e.topics as string[], data: e.data });
-      leaves.push(parsed!.args.commitment.toString());
+      // `parseLog` returns `null` when the log doesn't match the ABI —
+      // can happen if the pool upgrade introduces a new event and the
+      // mobile bundle still ships the old ABI. Skip instead of crashing
+      // the whole scan; the missing leaf will be picked up on the next
+      // release that bundles the matching ABI.
+      const parsed = contract.interface.parseLog({
+        topics: e.topics as string[],
+        data: e.data,
+      });
+      if (!parsed) continue;
+      leaves.push(parsed.args.commitment.toString());
     }
     from = to + 1;
   }
   return leaves;
+}
+
+/** `arr.push(...src)` can overflow the argument-count limit on very
+ *  large arrays (~100 k on some engines). Iterate instead — a few μs
+ *  slower, but stable. */
+function pushAll<T>(dst: T[], src: readonly T[]): void {
+  for (let i = 0; i < src.length; i++) dst.push(src[i]);
 }
 
 /**
@@ -122,7 +138,7 @@ export async function getCommitmentLeaves(
   const key = `${chainId}:${poolAddr.toLowerCase()}`;
 
   const cached = memCache.get(key);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.state.leaves;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.state.leaves.slice();
 
   const existing = inFlight.get(key);
   if (existing) return existing;
@@ -132,35 +148,54 @@ export async function getCommitmentLeaves(
       const persisted = await loadState(chainId, poolAddr);
       const deployBlock = ConfigService.getDeployBlock();
       const latest = await readProvider.getBlockNumber();
+
+      // Lagging-RPC guard: if `latest` is behind what we've already
+      // persisted, the node is serving an older view of the chain.
+      // Re-scanning `(confirmed, latest]` would fetch blocks we've
+      // already counted and emit duplicates at the returned-array
+      // boundary. Return the persisted snapshot verbatim (defensive
+      // copy below) and skip this pass — the next tick catches up
+      // once the endpoint advances.
+      if (persisted && latest < persisted.lastBlock) {
+        const stale = { lastBlock: persisted.lastBlock, leaves: persisted.leaves };
+        memCache.set(key, { at: Date.now(), state: stale });
+        return stale.leaves.slice();
+      }
+
       // Checkpoint only through `latest − CONFIRMATIONS`. Anything newer
       // is re-scanned each call (cheap — bounded by CONFIRMATIONS blocks)
       // so a shallow reorg inside the buffer self-heals on the next run
       // instead of permanently miscounting leaves.
       const confirmed = Math.max(deployBlock - 1, latest - CONFIRMATIONS);
       const persistedStart = persisted ? persisted.lastBlock + 1 : deployBlock;
-      const confirmedLeaves = persisted ? [...persisted.leaves] : [];
+      const confirmedLeaves: string[] = [];
+      if (persisted) pushAll(confirmedLeaves, persisted.leaves);
 
       const contract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
 
       // 1) Persist-able delta: [persistedStart, confirmed]
       if (persistedStart <= confirmed) {
         const newConfirmed = await scanNewRange(contract, persistedStart, confirmed);
-        confirmedLeaves.push(...newConfirmed);
+        pushAll(confirmedLeaves, newConfirmed);
         await saveState(chainId, poolAddr, { lastBlock: confirmed, leaves: confirmedLeaves });
       }
 
       // 2) Unconfirmed tail: (confirmed, latest] — always re-scanned,
       //    never persisted, stacked on top of the confirmed snapshot.
-      const tail = confirmed < latest
-        ? await scanNewRange(contract, confirmed + 1, latest)
-        : [];
-      const state: ScanState = {
-        lastBlock: latest,
-        leaves: tail.length ? [...confirmedLeaves, ...tail] : confirmedLeaves,
-      };
+      let leaves: string[] = confirmedLeaves;
+      if (confirmed < latest) {
+        const tail = await scanNewRange(contract, confirmed + 1, latest);
+        if (tail.length) {
+          leaves = confirmedLeaves.slice();
+          pushAll(leaves, tail);
+        }
+      }
 
+      const state: ScanState = { lastBlock: latest, leaves };
       memCache.set(key, { at: Date.now(), state });
-      return state.leaves;
+      // Return a defensive copy so caller-side mutation can't corrupt
+      // the cached snapshot for the next within-TTL reader.
+      return leaves.slice();
     } finally {
       inFlight.delete(key);
     }
