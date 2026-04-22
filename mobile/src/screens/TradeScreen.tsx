@@ -71,12 +71,27 @@ export default function TradeScreen() {
   // their historical default. When the user picks a buy token identical
   // to the sell note's token, the form enters scatter mode (same-token
   // direct distribution — see frontend/app/trade/private-order/page.tsx).
-  const tokenList = useMemo(() => TokenService.getTokenList(), []);
+  // Re-derive on walletChainId change: TokenService.getTokenList() is cached
+  // but that cache is cleared on ProviderService network resets, so a stale
+  // memo here would pin the buy chips to the previous network's addresses.
+  const tokenList = useMemo(() => TokenService.getTokenList(), [walletChainId]);
   const defaultBuy = useMemo<TokenInfo>(() => {
     const sym = ConfigService.getBuyTokenSymbol();
     return tokenList.find((t) => t.symbol === sym && !t.isNative) || tokenList[0];
   }, [tokenList]);
   const [buyToken, setBuyToken] = useState<TokenInfo>(defaultBuy);
+  // When the token list refreshes (network switch), keep the user's current
+  // pick if the same token exists on the new chain; otherwise fall back to
+  // same-symbol, then to the configured default. Avoids silently pointing a
+  // stale address at the new chain's contracts.
+  useEffect(() => {
+    setBuyToken((prev) => {
+      const byAddr = tokenList.find((t) => eqAddr(t.address, prev.address));
+      if (byAddr) return byAddr;
+      const bySym = tokenList.find((t) => t.symbol === prev.symbol);
+      return bySym || defaultBuy;
+    });
+  }, [tokenList, defaultBuy]);
   const buyTokenSymbol = buyToken.symbol;
 
   // Fee + expiry picks (limit only). Defaults match the previously
