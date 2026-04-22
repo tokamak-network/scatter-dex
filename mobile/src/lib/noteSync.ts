@@ -28,13 +28,24 @@ const inFlight = new Map<string, Promise<number>>();
 const leafFetch = new Map<string, Promise<string[]>>();
 const leafCache = new Map<string, { at: number; leaves: string[] }>();
 
-function fetchLeaves(
+/**
+ * Fetch every `CommitmentInserted` leaf for the pool, dedupe'd across
+ * concurrent callers and briefly cached. Exported so `OrderService`'s
+ * Merkle-proof fallback path can share the same cache as `syncPending*`
+ * — a sync that just ran on screen focus won't re-scan when the user
+ * immediately submits an order.
+ */
+export function fetchCommitmentLeaves(
   poolAddr: string,
   readProvider: ethers.JsonRpcProvider,
 ): Promise<string[]> {
-  const cached = leafCache.get(poolAddr);
+  // Normalize casing so checksummed vs lowercase callers share one cache
+  // entry — an unnormalized key would bypass dedupe and fire a redundant
+  // full-range queryFilter for the same pool.
+  const key = poolAddr.toLowerCase();
+  const cached = leafCache.get(key);
   if (cached && Date.now() - cached.at < TTL_MS) return Promise.resolve(cached.leaves);
-  const existing = leafFetch.get(poolAddr);
+  const existing = leafFetch.get(key);
   if (existing) return existing;
 
   const run = (async () => {
@@ -46,14 +57,14 @@ function fetchLeaves(
         const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
         return parsed!.args.commitment.toString();
       });
-      leafCache.set(poolAddr, { at: Date.now(), leaves });
+      leafCache.set(key, { at: Date.now(), leaves });
       return leaves;
     } finally {
-      leafFetch.delete(poolAddr);
+      leafFetch.delete(key);
     }
   })();
 
-  leafFetch.set(poolAddr, run);
+  leafFetch.set(key, run);
   return run;
 }
 
@@ -70,7 +81,7 @@ export async function syncPendingNotesForAccount(
   const run = (async () => {
     try {
       return await NoteStorageService.syncPendingNotes(address, null, () =>
-        fetchLeaves(poolAddr, readProvider),
+        fetchCommitmentLeaves(poolAddr, readProvider),
       );
     } finally {
       inFlight.delete(key);
