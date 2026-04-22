@@ -9,6 +9,7 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { fetchWithTimeout, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
+import { COMMIT_TREE_DEPTH } from '../lib/zk/constants';
 
 export interface RelayerInfo {
   address: string;
@@ -296,14 +297,22 @@ async function relayerGetJson<T>(url: string, label: string): Promise<T> {
   return res.json();
 }
 
+function isBigIntString(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length === 0) return false;
+  try { BigInt(v); return true; } catch { return false; }
+}
+
 function isMerkleProofResponse(x: unknown): x is MerkleProofResponse {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
-  return (
-    typeof o.root === 'string' &&
-    Array.isArray(o.pathElements) &&
-    o.pathElements.every((e) => typeof e === 'string') &&
-    Array.isArray(o.pathIndices) &&
-    o.pathIndices.every((i) => typeof i === 'number')
-  );
+  if (!isBigIntString(o.root)) return false;
+  // Exact-depth check — the circuit is hard-wired to COMMIT_TREE_DEPTH, and
+  // a mismatched length would only surface as a witness-generation failure
+  // after we've already committed to the relayer path. Reject here so the
+  // local fallback runs.
+  if (!Array.isArray(o.pathElements) || o.pathElements.length !== COMMIT_TREE_DEPTH) return false;
+  if (!o.pathElements.every(isBigIntString)) return false;
+  if (!Array.isArray(o.pathIndices) || o.pathIndices.length !== COMMIT_TREE_DEPTH) return false;
+  if (!o.pathIndices.every((i) => i === 0 || i === 1)) return false;
+  return true;
 }

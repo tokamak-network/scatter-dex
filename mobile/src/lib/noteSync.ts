@@ -39,9 +39,13 @@ export function fetchCommitmentLeaves(
   poolAddr: string,
   readProvider: ethers.JsonRpcProvider,
 ): Promise<string[]> {
-  const cached = leafCache.get(poolAddr);
+  // Normalize casing so checksummed vs lowercase callers share one cache
+  // entry — an unnormalized key would bypass dedupe and fire a redundant
+  // full-range queryFilter for the same pool.
+  const key = poolAddr.toLowerCase();
+  const cached = leafCache.get(key);
   if (cached && Date.now() - cached.at < TTL_MS) return Promise.resolve(cached.leaves);
-  const existing = leafFetch.get(poolAddr);
+  const existing = leafFetch.get(key);
   if (existing) return existing;
 
   const run = (async () => {
@@ -53,14 +57,14 @@ export function fetchCommitmentLeaves(
         const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
         return parsed!.args.commitment.toString();
       });
-      leafCache.set(poolAddr, { at: Date.now(), leaves });
+      leafCache.set(key, { at: Date.now(), leaves });
       return leaves;
     } finally {
-      leafFetch.delete(poolAddr);
+      leafFetch.delete(key);
     }
   })();
 
-  leafFetch.set(poolAddr, run);
+  leafFetch.set(key, run);
   return run;
 }
 

@@ -200,8 +200,12 @@ export const OrderService = {
       onProgress({ step: 'building_tree' });
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
-      const settlementAddr = ConfigService.getPrivateSettlementAddress();
-      if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
+      // Settlement address isn't read here, but it's a hard prerequisite for
+      // the order to succeed on-chain — surfacing the misconfiguration now
+      // beats a cryptic relayer rejection later.
+      if (!ConfigService.getPrivateSettlementAddress()) {
+        throw new Error('PrivateSettlement address not configured');
+      }
       if (note.leafIndex < 0) {
         throw new Error('Note has no on-chain leaf index (pending commitment).');
       }
