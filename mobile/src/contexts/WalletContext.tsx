@@ -494,6 +494,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setActiveWalletId(connectionMode === 'builtin' ? activeId : null);
   }, [connectionMode]);
 
+  // Hydrate the wallets list on mount so Home can render the correct
+  // connect card (Connect Wallet vs Create New Wallet) before the user
+  // first taps anything. Without this, a returning user with wallets
+  // already in Keychain briefly sees the "no wallet" prompt.
+  useEffect(() => { refreshWallets().catch(() => {}); }, [refreshWallets]);
+
   const switchWallet = useCallback(async (id: string) => {
     const list = await KeySecurityService.listWallets();
     if (!list.some((w) => w.id === id)) {

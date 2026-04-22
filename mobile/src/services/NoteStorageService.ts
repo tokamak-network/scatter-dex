@@ -301,6 +301,12 @@ export const NoteStorageService = {
     return () => { _notesChangedListeners.delete(listener); };
   },
 
+  /** Broadcast a notes-changed event from outside the note mutators —
+   *  used by flows that don't touch StoredNote directly but still want
+   *  subscribers to refresh (e.g. a successful claim burns gas but
+   *  doesn't rewrite any note, yet Home's balance read needs to retick). */
+  emitNotesChanged(address: string): void { fireNotesChanged(address); },
+
   async getNoteIds(address: string): Promise<string[]> {
     requireAddress(address);
     await migrateLegacyIfNeeded(address);

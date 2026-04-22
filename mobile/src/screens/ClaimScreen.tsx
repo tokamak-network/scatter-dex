@@ -1,7 +1,7 @@
 /**
  * ClaimScreen — converted from web design prototype Claim.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
@@ -69,7 +69,27 @@ export default function ClaimScreen() {
   const [currentStep, setCurrentStep] = useState<ClaimStep>('idle');
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const hasSelection = claimTab === 'json' ? !!parsedJsonClaim : selectedIndices.size > 0;
-  const submitDisabled = claiming || !hasSelection || (submitMode === 'wallet' && !walletHasGas);
+  // Block submit when any selected claim's releaseTime hasn't landed —
+  // the contract would revert on a Locked() error and burn the user's
+  // gas / proof-gen time with nothing to show for it.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const selectedNotReleased = useMemo(() => {
+    const isLocked = (rt: string | number) => Number(rt) > nowSec;
+    if (claimTab === 'json') return !!(parsedJsonClaim && isLocked(parsedJsonClaim.releaseTime));
+    for (const i of selectedIndices) {
+      const c = pendingClaims[i];
+      if (c && isLocked(c.releaseTime)) return true;
+    }
+    return false;
+  }, [claimTab, parsedJsonClaim, selectedIndices, pendingClaims, nowSec]);
+  const submitDisabled = claiming
+    || !hasSelection
+    || selectedNotReleased
+    || (submitMode === 'wallet' && !walletHasGas);
 
   const STEP_PROGRESS: Record<ClaimStep, number> = {
     idle: 0,
@@ -328,6 +348,10 @@ export default function ClaimScreen() {
       if (ok && submittedCount > 0) {
         setProgress(100);
         setBatchStatus(null);
+        // Refresh Home/Trade balances and own ETH balance — a successful
+        // wallet-mode claim burns gas and moves tokens; gasless still
+        // moves tokens but not gas.
+        if (account) NoteStorageService.emitNotesChanged(account);
         const allDone = submittedCount === claimDataList.length;
         Alert.alert(
           allDone ? 'Claim Successful' : 'Partial Claim Success',
@@ -431,9 +455,17 @@ export default function ClaimScreen() {
                           <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
                         </View>
                       </View>
-                      <View style={s.statusBadge}>
-                        <Text style={s.statusText}>Ready to Claim</Text>
-                      </View>
+                      {Number(parsedJsonClaim.releaseTime) > nowSec ? (
+                        <View style={[s.statusBadge, { backgroundColor: colors.warningLight }]}>
+                          <Text style={[s.statusText, { color: colors.warning }]}>
+                            Locked · {new Date(Number(parsedJsonClaim.releaseTime) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={s.statusBadge}>
+                          <Text style={s.statusText}>Ready to Claim</Text>
+                        </View>
+                      )}
                     </View>
                     {parsedJsonEphemeralPubKey && (
                       <TouchableOpacity
@@ -488,9 +520,17 @@ export default function ClaimScreen() {
                           </View>
                         </View>
                         <View style={s.itemRight}>
-                          <View style={s.statusBadge}>
-                            <Text style={s.statusText}>Ready to Claim</Text>
-                          </View>
+                          {Number(item.releaseTime) > nowSec ? (
+                            <View style={[s.statusBadge, { backgroundColor: colors.warningLight }]}>
+                              <Text style={[s.statusText, { color: colors.warning }]}>
+                                Locked · {new Date(Number(item.releaseTime) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </Text>
+                            </View>
+                          ) : (
+                            <View style={s.statusBadge}>
+                              <Text style={s.statusText}>Ready to Claim</Text>
+                            </View>
+                          )}
                           <TouchableOpacity
                             onPress={() =>
                               setExpandedClaimIdx((prev) => (prev === index ? null : index))
@@ -595,6 +635,11 @@ export default function ClaimScreen() {
             </TouchableOpacity>
           </View>
 
+          {hasSelection && selectedNotReleased && (
+            <Text style={s.activeWalletWarn}>
+              Selected claim is still locked — wait until its release time to submit.
+            </Text>
+          )}
           {submitMode === 'wallet' && account && (
             <View style={s.activeWalletRow}>
               <Text style={s.activeWalletLabel}>

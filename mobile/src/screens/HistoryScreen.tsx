@@ -427,10 +427,22 @@ export default function HistoryScreen() {
                               {ethers.formatUnits(tradeRec.changeAmount, 18)} {tradeRec.sellTokenSymbol}
                             </Text>
                           </View>
-                          <View style={s.detailRow}>
-                            <Text style={s.detailLabel}>Max fee</Text>
-                            <Text style={s.detailValue}>{tradeRec.maxFeeBps} bps</Text>
-                          </View>
+                          {(() => {
+                            // Relayer fee the contract pays out at settle time.
+                            // Same formula the circuit uses: buyAmount × bps / 10000.
+                            const buyAmt = BigInt(tradeRec.buyAmount);
+                            const feeWei = (buyAmt * BigInt(tradeRec.maxFeeBps)) / 10_000n;
+                            return (
+                              <View style={s.detailRow}>
+                                <Text style={s.detailLabel}>Relay fee</Text>
+                                <Text style={s.detailValue}>
+                                  {ethers.formatUnits(feeWei, 18)} {tradeRec.buyTokenSymbol}
+                                  {'  '}
+                                  <Text style={[s.detailValue, { color: colors.textMuted, fontWeight: '500' }]}>({tradeRec.maxFeeBps} bps)</Text>
+                                </Text>
+                              </View>
+                            );
+                          })()}
                           <View style={s.detailRow}>
                             <Text style={s.detailLabel}>Relayer</Text>
                             <Text style={s.detailValueMono}>{shortAddr(tradeRec.relayerAddress)}</Text>

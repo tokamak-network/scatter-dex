@@ -232,19 +232,15 @@ export default function TradeScreen() {
     if (isScatterMode && price !== '1') setPrice('1');
   }, [isScatterMode, price]);
 
-  // Estimated "buy amount" shown in the right-hand field. For scatter
-  // mode we display net-of-fee (sellAmount × (1 − maxFee)) so the
-  // value matches what recipients actually receive; for cross-token
-  // limit we display gross (sellAmount × price) since the fee is
-  // settled in the buy token separately on the relayer. Widened to
-  // 6 decimals so small sells like 0.009 WETH don't round up to 0.01.
+  // Right-hand "buy amount" is the gross exchange value (sellAmount ×
+  // price). In scatter mode price is pinned to 1 so it equals sellAmount;
+  // relay fee is shown separately in the Fee Summary section below.
+  // Widened to 6 decimals so small sells like 0.009 don't round up.
   const usdcAmount = (() => {
     const a = parseFloat(amount);
     const p = parseHumanNumber(price);
     if (isNaN(a) || isNaN(p)) return '—';
-    const gross = a * p;
-    const value = isScatterMode ? gross * (1 - maxFeeBps / 10000) : gross;
-    return value.toLocaleString('en-US', { maximumFractionDigits: 6 });
+    return (a * p).toLocaleString('en-US', { maximumFractionDigits: 6 });
   })();
   const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
   useEffect(() => {
@@ -851,7 +847,9 @@ export default function TradeScreen() {
               />
             </View>
             <Text style={s.inputHint}>
-              {isScatterMode ? 'Net (sellAmount − fee) distributed to recipients' : 'Estimated from limit price'}
+              {isScatterMode
+                ? 'Gross exchange value (relay fee deducted at settlement)'
+                : 'Estimated from limit price'}
             </Text>
           </View>
         </View>
