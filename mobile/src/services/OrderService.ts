@@ -187,48 +187,65 @@ export const OrderService = {
         });
       }
 
-      // ─── Step 5: Fetch commitment leaves + build Merkle proof ─────
-      // Relayer requires a client-generated authorize.circom proof
-      // (endpoint /api/private-orders was deprecated, returns 410 with
-      // a migration hint). Leaves come from the shared checkpointed
-      // scanner so we only query the delta since the last session, not
-      // the full range from deploy on every order.
+      // ─── Step 5: Merkle proof — fetch from relayer, fall back to local ─
+      // Fast path: the relayer keeps the commitment tree in memory and
+      // serves GET /api/info/merkle-proof?leafIndex=N with {root, pathElements,
+      // pathIndices} directly usable as circuit inputs.
+      //
+      // Slow fallback: if the relayer is unreachable, rebuild the tree from
+      // the shared checkpointed scanner (chunked queryFilter + persistent
+      // AsyncStorage checkpoint) so we only fetch the delta since the last
+      // session, never the full range from deploy on every order.
       onProgress({ step: 'building_tree' });
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
-      const settlementAddr = ConfigService.getPrivateSettlementAddress();
-      if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
-
-      const allLeaves = await getCommitmentLeaves(
-        poolAddr,
-        readProvider,
-        ConfigService.getChainId(),
-      );
-
-      // Verify the stored note still matches the on-chain leaf at its
-      // recorded index. A mismatch here means the note was spent/rotated
-      // elsewhere and re-using it would produce an invalid proof.
-      const noteCommitment = await ZKBridgeService.computeCommitment({
-        tag: TAG_COMMITMENT_V2.toString(),
-        secret: note.secret,
-        token: BigInt(note.token).toString(),
-        balance: note.amount,
-        salt: note.salt,
-        pubKeyAx: keyPair.pubKeyAx,
-        pubKeyAy: keyPair.pubKeyAy,
-      });
-      if (note.leafIndex < 0 || allLeaves[note.leafIndex] !== noteCommitment) {
-        throw new Error(
-          'Note commitment is no longer in the on-chain tree (spent or rotated).',
-        );
+      if (!ConfigService.getPrivateSettlementAddress()) {
+        throw new Error('PrivateSettlement address not configured');
+      }
+      if (note.leafIndex < 0) {
+        throw new Error('Note has no on-chain leaf index (pending commitment).');
       }
 
-      const commitTree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
-      const commitmentRoot = commitTree.root;
-      const { pathElements, pathIndices } = getMerkleProofFromTree(
-        commitTree,
-        note.leafIndex,
-      );
+      let commitmentRoot: string;
+      let pathElements: string[];
+      let pathIndices: string[];
+
+      const remote = await RelayerApiService.getMerkleProof(note.leafIndex, input.relayerUrl);
+      if (remote) {
+        commitmentRoot = remote.root;
+        pathElements = remote.pathElements;
+        pathIndices = remote.pathIndices.map(String);
+      } else {
+        const allLeaves = await getCommitmentLeaves(
+          poolAddr,
+          readProvider,
+          ConfigService.getChainId(),
+        );
+
+        // Only worth running the freshness check on this path since we
+        // already paid for the full leaf set. Catches a stale note early
+        // so the user doesn't wait for proof generation only to fail.
+        const noteCommitment = await ZKBridgeService.computeCommitment({
+          tag: TAG_COMMITMENT_V2.toString(),
+          secret: note.secret,
+          token: BigInt(note.token).toString(),
+          balance: note.amount,
+          salt: note.salt,
+          pubKeyAx: keyPair.pubKeyAx,
+          pubKeyAy: keyPair.pubKeyAy,
+        });
+        if (allLeaves[note.leafIndex] !== noteCommitment) {
+          throw new Error(
+            'Note commitment is no longer in the on-chain tree (spent or rotated).',
+          );
+        }
+
+        const commitTree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+        commitmentRoot = commitTree.root;
+        const proof = getMerkleProofFromTree(commitTree, note.leafIndex);
+        pathElements = proof.pathElements;
+        pathIndices = proof.pathIndices;
+      }
 
       // Nullifiers — tags 0 (escrow) / 1 (nonce) match cancel-prover and
       // MarketOrderService.

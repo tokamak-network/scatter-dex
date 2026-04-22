@@ -9,6 +9,7 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { fetchWithTimeout, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
+import { COMMIT_TREE_DEPTH } from '../lib/zk/constants';
 
 export interface RelayerInfo {
   address: string;
@@ -78,6 +79,18 @@ export interface OrderStatus {
   /** Deprecated alias. Present so existing callers that key by `orderId` do not
    *  immediately break; prefer `nonce` for cancellation. */
   orderId?: string;
+}
+
+/**
+ * Response from `GET /api/info/merkle-proof?leafIndex=N`. The relayer
+ * maintains the commitment Merkle tree in memory, so this is the fast
+ * path — mobile can skip the full `CommitmentInserted` event scan and
+ * local tree rebuild on every order submission. Decimal-string fields.
+ */
+export interface MerkleProofResponse {
+  root: string;
+  pathElements: string[];
+  pathIndices: number[];
 }
 
 export interface PrivateClaimRequest {
@@ -154,6 +167,29 @@ export const RelayerApiService = {
       `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`,
       'order status',
     );
+  },
+
+  /**
+   * Fetch a Merkle proof for `leafIndex` from the relayer's in-memory tree.
+   * Returns `null` on any failure (network error, non-2xx, malformed body) —
+   * the caller is expected to fall back to a local event-scan + rebuild.
+   * Validates the response shape so a partial payload can't slip through
+   * and then fail deep inside the circuit input binding.
+   */
+  async getMerkleProof(
+    leafIndex: number,
+    relayerUrl?: string,
+  ): Promise<MerkleProofResponse | null> {
+    const url = `${relayerUrl || this.getBaseUrl()}/api/info/merkle-proof?leafIndex=${leafIndex}`;
+    try {
+      const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
+      if (!res.ok) return null;
+      const data: unknown = await res.json();
+      if (!isMerkleProofResponse(data)) return null;
+      return data;
+    } catch {
+      return null;
+    }
   },
 
   async getOrderbook(pair: string, relayerUrl?: string): Promise<any[]> {
@@ -259,4 +295,24 @@ async function relayerGetJson<T>(url: string, label: string): Promise<T> {
   const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
   if (!res.ok) throw new Error(`Failed to fetch ${label}: ${res.status}`);
   return res.json();
+}
+
+function isBigIntString(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length === 0) return false;
+  try { BigInt(v); return true; } catch { return false; }
+}
+
+function isMerkleProofResponse(x: unknown): x is MerkleProofResponse {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  if (!isBigIntString(o.root)) return false;
+  // Exact-depth check — the circuit is hard-wired to COMMIT_TREE_DEPTH, and
+  // a mismatched length would only surface as a witness-generation failure
+  // after we've already committed to the relayer path. Reject here so the
+  // local fallback runs.
+  if (!Array.isArray(o.pathElements) || o.pathElements.length !== COMMIT_TREE_DEPTH) return false;
+  if (!o.pathElements.every(isBigIntString)) return false;
+  if (!Array.isArray(o.pathIndices) || o.pathIndices.length !== COMMIT_TREE_DEPTH) return false;
+  if (!o.pathIndices.every((i) => i === 0 || i === 1)) return false;
+  return true;
 }
