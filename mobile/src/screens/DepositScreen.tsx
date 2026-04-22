@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
 import { ProviderService } from '../services/ProviderService';
 import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
@@ -110,7 +111,7 @@ export default function DepositScreen() {
     finally { setEscrowsLoading(false); }
   }, [account, escrowFilter]);
 
-  useEffect(() => { reloadEscrows(); }, [reloadEscrows]);
+  useNoteRefresh(reloadEscrows);
 
   // Eagerly clear escrow + form state on wallet switch/disconnect so the
   // UI does not momentarily render the previous wallet's notes under

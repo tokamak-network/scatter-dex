@@ -106,6 +106,15 @@ export function useMarketQuote(
         setState({ route, loading: false, error: null, params });
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
+        // Chains without a deployed Uniswap router (plain local anvil,
+        // chain 31337) can never produce a market quote. That's not a
+        // bug to flag every keystroke — silently clear and let the
+        // Market tab surface the config gap once at submit time.
+        const msg = (err as any)?.message ?? '';
+        if (/Uniswap V3 router not configured/i.test(msg)) {
+          setState({ route: null, loading: false, error: null, params: null });
+          return;
+        }
         // Keep the previously-cached `route`/`params` on transient
         // failure — otherwise a flaky 1inch tick would nuke a perfectly
         // good quote and force the submit path to refetch. The UI still

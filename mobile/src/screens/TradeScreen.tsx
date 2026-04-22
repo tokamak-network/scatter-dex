@@ -7,6 +7,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
+import { syncPendingNotesForAccount } from '../lib/noteSync';
 import { ethers } from 'ethers';
 import { colors, layout, shadowTab } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
@@ -58,7 +60,11 @@ export default function TradeScreen() {
 
   const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
   const [amount, setAmount] = useState('');
-  const [price, setPrice] = useState('1850.25');
+  // Default to "1" — scatter mode pins it to 1 anyway, and a cross-token
+  // limit order with a sensible initial value is less likely when the
+  // user hasn't even picked a note yet. The old "1850.25" ETH/USDC
+  // default was misleading on any non-ETH pair.
+  const [price, setPrice] = useState('1');
 
   // Buy-token selector. Default to the configured "buy token symbol" from
   // the whitelist (falls back to WETH) so existing market-quote flows keep
@@ -85,10 +91,14 @@ export default function TradeScreen() {
   // are declared below.
   const [relayerIdx, setRelayerIdx] = useState(0);
   const [hasTradingKey, setHasTradingKey] = useState<boolean>(false);
-  // Commitment-picker expand state. Default collapsed so the section is
-  // compact when the user has many notes — the selected note is always
-  // visible; tapping "+ N more" reveals the rest inline.
   const [notesExpanded, setNotesExpanded] = useState<boolean>(false);
+
+  // DEX Trade (market) requires a Uniswap router — without one every
+  // quote fails, so we hide the tab and force `tradeType=limit`.
+  const dexAvailable = !!(walletChainId && (walletChainId === 1 || walletChainId === 31338 || ConfigService.getUniswapRouterAddress()));
+  useEffect(() => {
+    if (!dexAvailable && tradeType !== 'limit') setTradeType('limit');
+  }, [dexAvailable, tradeType]);
 
   // Real data
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -153,32 +163,25 @@ export default function TradeScreen() {
   // should land in. `null` = picker closed.
   const [pickerForRow, setPickerForRow] = useState<number | null>(null);
 
-  // Load active notes
-  useEffect(() => {
-    let cancelled = false;
-    const loadNotes = async () => {
-      if (!account) {
-        if (!cancelled) { setActiveNotes([]); setSelectedNote(null); setLoading(false); }
-        return;
-      }
-      setLoading(true);
-      try {
-        const notes = await NoteStorageService.getActiveNotes(account);
-        if (!cancelled) {
-          setActiveNotes(notes);
-          if (notes.length > 0 && !selectedNote) {
-            setSelectedNote(notes[0]);
-          }
-        }
-      } catch {
-        if (!cancelled) setActiveNotes([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    loadNotes();
-    return () => { cancelled = true; };
-  }, [account]);
+  // Load active notes. The sync promotes any pending change UTXOs
+  // (e.g. the jump from Escrow deposit → Trade) before we read.
+  const loadNotes = useCallback(async () => {
+    if (!account) { setActiveNotes([]); setSelectedNote(null); setLoading(false); return; }
+    setLoading(true);
+    try {
+      await syncPendingNotesForAccount(account, readProvider).catch(() => 0);
+      const notes = await NoteStorageService.getActiveNotes(account);
+      setActiveNotes(notes);
+      setSelectedNote((prev) =>
+        prev && notes.some((n) => n.id === prev.id) ? prev : notes[0] ?? null,
+      );
+    } catch {
+      setActiveNotes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [account, readProvider]);
+  useNoteRefresh(loadNotes);
 
   // Eager clear on wallet switch. The `[account]` effect above already
   // re-fetches, but its setState lands one tick behind the switch — so
@@ -197,14 +200,6 @@ export default function TradeScreen() {
       setSubmitting(false);
     });
   }, []);
-
-  // Compute USDC equivalent
-  const usdcAmount = (() => {
-    const a = parseFloat(amount);
-    const p = parseHumanNumber(price);
-    if (isNaN(a) || isNaN(p)) return '—';
-    return (a * p).toLocaleString('en-US', { maximumFractionDigits: 2 });
-  })();
 
   // Private balance for selected note
   const privateBalance = selectedNote
@@ -236,6 +231,21 @@ export default function TradeScreen() {
   useEffect(() => {
     if (isScatterMode && price !== '1') setPrice('1');
   }, [isScatterMode, price]);
+
+  // Estimated "buy amount" shown in the right-hand field. For scatter
+  // mode we display net-of-fee (sellAmount × (1 − maxFee)) so the
+  // value matches what recipients actually receive; for cross-token
+  // limit we display gross (sellAmount × price) since the fee is
+  // settled in the buy token separately on the relayer. Widened to
+  // 6 decimals so small sells like 0.009 WETH don't round up to 0.01.
+  const usdcAmount = (() => {
+    const a = parseFloat(amount);
+    const p = parseHumanNumber(price);
+    if (isNaN(a) || isNaN(p)) return '—';
+    const gross = a * p;
+    const value = isScatterMode ? gross * (1 - maxFeeBps / 10000) : gross;
+    return value.toLocaleString('en-US', { maximumFractionDigits: 6 });
+  })();
   const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
@@ -523,7 +533,25 @@ export default function TradeScreen() {
         await OrderService.execute(signer, account, input, (p: OrderProgress) => {
           if (p.step === 'error') setError(p.error || 'Order failed');
           if (p.step === 'success') {
-            Alert.alert('Order Placed', `Order ID: ${p.orderId || 'submitted'}`);
+            // Route the user to the tab that will actually reflect their
+            // trade: scatter (same-token) settles on-chain immediately →
+            // Spent shows the source note; cross-token waits for a match
+            // → Pending shows the escrow waiting for a counterparty.
+            const initialTab = isScatterMode ? 'spent' : 'pending';
+            Alert.alert(
+              'Order submitted',
+              p.orderId
+                ? `The relayer accepted your order.\nOrder ID: ${p.orderId}`
+                : (isScatterMode
+                  ? 'The relayer accepted your scatter order. It settles on-chain asynchronously — check History → Spent.'
+                  : 'The relayer accepted your order. It will show in History → Pending until a match is found.'),
+              [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.navigate('History', { initialTab }),
+                },
+              ],
+            );
           }
         });
       } else {
@@ -637,12 +665,14 @@ export default function TradeScreen() {
             >
               <Text style={[s.tabText, tradeType === 'limit' && s.tabTextActive]}>Private Trade</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.tab, tradeType === 'market' && s.tabActive]}
-              onPress={() => setTradeType('market')}
-            >
-              <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>DEX Trade</Text>
-            </TouchableOpacity>
+            {dexAvailable && (
+              <TouchableOpacity
+                style={[s.tab, tradeType === 'market' && s.tabActive]}
+                onPress={() => setTradeType('market')}
+              >
+                <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>DEX Trade</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -820,16 +850,19 @@ export default function TradeScreen() {
                 editable={false}
               />
             </View>
-            <Text style={s.inputHint}>Estimated from limit price</Text>
+            <Text style={s.inputHint}>
+              {isScatterMode ? 'Net (sellAmount − fee) distributed to recipients' : 'Estimated from limit price'}
+            </Text>
           </View>
         </View>
 
-        <View style={[s.limitSection, isScatterMode && { opacity: 0.5 }]} pointerEvents={isScatterMode ? 'none' : 'auto'}>
-          <Text style={s.inputLabel}>
-            {isScatterMode
-              ? 'Price (pinned to 1 in scatter mode)'
-              : tradeType === 'limit' ? 'Limit Price' : 'Expected Price (for slippage)'}
-          </Text>
+        {/* Limit price is only meaningful for cross-token limit orders.
+            Scatter (same-token) pins it to 1 and the circuit ignores it;
+            market orders derive from the DEX quote. Hide entirely to
+            avoid the "why is this here?" UX confusion. */}
+        {tradeType === 'limit' && !isScatterMode && (
+        <View style={s.limitSection}>
+          <Text style={s.inputLabel}>Limit Price</Text>
           <View style={s.limitRow}>
             <TextInput
               style={s.limitInput}
@@ -853,6 +886,7 @@ export default function TradeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
         {/* Section 3: Fee + Expiry (limit mode only — market uses gas-paid
             on-chain swap so fee bps isn't meaningful and expiry is fixed). */}

@@ -224,6 +224,18 @@ async function _runMigration(address: string): Promise<void> {
 
 type WalletSwitchListener = (address: string | null) => void;
 const _walletSwitchListeners = new Set<WalletSwitchListener>();
+// Fired whenever a note is created, updated, or promoted from pending
+// to active. Screens that render balances/lists (Home, History) can
+// subscribe so they don't need to rely on useFocusEffect alone —
+// crucial for the Trade → History flow where Home isn't re-focused
+// between submit and the on-chain settle landing.
+type NotesChangedListener = (address: string) => void;
+const _notesChangedListeners = new Set<NotesChangedListener>();
+function fireNotesChanged(address: string) {
+  for (const l of _notesChangedListeners) {
+    try { l(address); } catch { /* keep other listeners healthy */ }
+  }
+}
 
 /**
  * Field elements here (`id`, `commitment`, `secret`, `salt`,
@@ -284,6 +296,11 @@ export const NoteStorageService = {
     }
   },
 
+  subscribeNotesChanged(listener: NotesChangedListener): () => void {
+    _notesChangedListeners.add(listener);
+    return () => { _notesChangedListeners.delete(listener); };
+  },
+
   async getNoteIds(address: string): Promise<string[]> {
     requireAddress(address);
     await migrateLegacyIfNeeded(address);
@@ -323,6 +340,7 @@ export const NoteStorageService = {
         await AsyncStorage.setItem(indexKeyFor(address), JSON.stringify(ids));
       }
     });
+    fireNotesChanged(address);
   },
 
   /**
@@ -388,6 +406,7 @@ export const NoteStorageService = {
       noteKeyFor(address, id),
       JSON.stringify(note),
     );
+    fireNotesChanged(address);
   },
 
   async deleteNote(address: string, id: string): Promise<void> {
@@ -452,6 +471,7 @@ export const NoteStorageService = {
     }
     if (promoted > 0) {
       console.log(`[noteSync] promoted ${promoted} pending note(s) to active for ${address.slice(0, 8)}…`);
+      fireNotesChanged(address);
     }
     return promoted;
   },

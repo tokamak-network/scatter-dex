@@ -6,7 +6,10 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
+import { syncPendingNotesForAccount } from '../lib/noteSync';
+import { ProviderService } from '../services/ProviderService';
 import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
@@ -87,9 +90,17 @@ function noteToActivity(note: StoredNote, orderStatuses: Map<string, OrderStatus
 
 export default function HistoryScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { account, signer } = useWallet();
 
-  const [tab, setTab] = useState<Tab>('active');
+  // Honor `initialTab` from navigation.navigate('History', {initialTab}).
+  // Trade submit uses this to land the user on Spent (same-token scatter,
+  // settles immediately) or Pending (cross-token, waits for a match).
+  const [tab, setTab] = useState<Tab>((route.params?.initialTab as Tab) || 'active');
+  useEffect(() => {
+    const t = route.params?.initialTab as Tab | undefined;
+    if (t) setTab(t);
+  }, [route.params?.initialTab]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,61 +126,47 @@ export default function HistoryScreen() {
     }
   }, [account, expandedNoteId, tradeByNote]);
 
-  // Load notes and order statuses
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      if (!account) {
-        setAllNotes([]);
-        setOrderStatuses(new Map());
-        setPendingOrders([]);
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        // Promote any pending change notes whose on-chain commitment
-        // has landed since the order was submitted, so the Spent tab
-        // actually reflects "Settled" and Active picks up the new UTXO.
-        try {
-          const { ProviderService } = await import('../services/ProviderService');
-          const { syncPendingNotesForAccount } = await import('../lib/noteSync');
-          await syncPendingNotesForAccount(account, ProviderService.getReadProvider());
-        } catch { /* best-effort */ }
-        const notes = await NoteStorageService.getAllNotes(account);
-        if (cancelled) return;
-        setAllNotes(notes);
+  // Load notes + (best-effort) relayer order statuses. `useNoteRefresh`
+  // handles mount/focus/notesChanged; relayer errors are swallowed since
+  // the relayer can be offline without breaking the local view.
+  const loadHistory = useCallback(async () => {
+    if (!account) {
+      setAllNotes([]);
+      setOrderStatuses(new Map());
+      setPendingOrders([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await syncPendingNotesForAccount(account, ProviderService.getReadProvider()).catch(() => 0);
+      const notes = await NoteStorageService.getAllNotes(account);
+      setAllNotes(notes);
 
-        // Try to load order statuses from relayer if we have EdDSA key
-        if (account && signer) {
-          try {
-            const keyPair = await EdDSAKeyService.loadKey(account);
-            if (keyPair) {
-              const statuses = await RelayerApiService.getOrderStatus(keyPair.pubKeyAx);
-              if (!cancelled) {
-                const statusMap = new Map<string, OrderStatus>();
-                for (const s of statuses) {
-                  const key = s.orderId ?? s.nonce ?? '';
-                  if (key) statusMap.set(key, s);
-                }
-                setOrderStatuses(statusMap);
-                setPendingOrders(statuses.filter((s) => s.status === 'pending'));
-              }
+      if (signer) {
+        try {
+          const keyPair = await EdDSAKeyService.loadKey(account);
+          if (keyPair) {
+            const statuses = await RelayerApiService.getOrderStatus(keyPair.pubKeyAx);
+            const statusMap = new Map<string, OrderStatus>();
+            for (const s of statuses) {
+              const key = s.orderId ?? s.nonce ?? '';
+              if (key) statusMap.set(key, s);
             }
-          } catch {
-            // Relayer might be offline, continue with local data only
+            setOrderStatuses(statusMap);
+            setPendingOrders(statuses.filter((s) => s.status === 'pending'));
           }
-        }
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || 'Failed to load history');
-      } finally {
-        if (!cancelled) setLoading(false);
+        } catch { /* relayer offline — local data only */ }
       }
-    };
-    load();
-    return () => { cancelled = true; };
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load history');
+    } finally {
+      setLoading(false);
+    }
   }, [account, signer]);
+
+  useNoteRefresh(loadHistory);
 
   // Eager clear on wallet switch — matches TradeScreen / ClaimScreen.
   // Without this, the previous wallet's note history briefly renders

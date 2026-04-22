@@ -24,6 +24,7 @@ import { NoteStorageService } from '../services/NoteStorageService';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { TokenService, TokenInfo } from '../services/TokenService';
 import { syncPendingNotesForAccount } from '../lib/noteSync';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
 import type { WalletMeta } from '../types/wallet';
 import { ethers } from 'ethers';
 import { formatRelativeTime, shortAddr } from '../lib/format';
@@ -47,6 +48,7 @@ export default function HomeScreen() {
   const {
     account, connectionMode, isConnecting, connect, connectBuiltin, disconnect,
     error, wallets, activeWalletId, switchWallet, readProvider,
+    addWalletFromCreate,
   } = useWallet();
   const { activities, loading: actLoading, refresh: refreshAct } = useRecentActivity();
 
@@ -136,24 +138,17 @@ export default function HomeScreen() {
   useEffect(() => { fetchPublicTotals(); }, [fetchPublicTotals]);
   useEffect(() => { fetchPrivateTotals(); }, [fetchPrivateTotals]);
 
-  // Refetch when Home regains focus — covers the Deposit → back-to-Home
-  // flow where a new note was saved but the `[wallets]` dependency
-  // didn't change, so the totals effects wouldn't re-fire on their own.
-  // Also sync pending change notes: if a trade's scatterDirectAuth
-  // settled while the user was on another screen, promote the local
-  // pending UTXO to `active` before the totals read lands so the
-  // escrow balance reflects the new commitment.
-  useFocusEffect(
-    useCallback(() => {
-      (async () => {
-        await Promise.all(wallets.map((w) =>
-          syncPendingNotesForAccount(w.address, readProvider).catch(() => 0),
-        ));
-        fetchPublicTotals();
-        fetchPrivateTotals();
-      })();
-    }, [fetchPublicTotals, fetchPrivateTotals, wallets, readProvider]),
-  );
+  // Sync pending change notes + refresh totals on focus / note change.
+  // A fresh deposit or trade may have landed while the user was on
+  // another screen, so we promote pending→active before reading totals.
+  const reload = useCallback(async () => {
+    await Promise.all(wallets.map((w) =>
+      syncPendingNotesForAccount(w.address, readProvider).catch(() => 0),
+    ));
+    fetchPublicTotals();
+    fetchPrivateTotals();
+  }, [fetchPublicTotals, fetchPrivateTotals, wallets, readProvider]);
+  useNoteRefresh(reload);
 
   // Page layout: [All] → [Active] → [rest in creation order].
   // Collapses to [Active] when only one wallet exists (no need for a pager).
@@ -225,10 +220,41 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  const handleConnect = async () => {
-    try { await connectBuiltin(); }
-    catch (err: any) { if (err?.message === 'NO_WALLET') navigation.navigate('Settings'); }
-  };
+  const handleCreateWallet = useCallback(async () => {
+    try {
+      const result = await addWalletFromCreate();
+      // Fresh keychain → newly-generated mnemonic returned; surface it
+      // once so the user can record it before any funds arrive.
+      if (result && 'mnemonic' in result && result.mnemonic) {
+        Alert.alert(
+          'Wallet created — back up your recovery phrase',
+          `Write these 12 words down and store them offline. Anyone with them controls this wallet.\n\n${result.mnemonic}\n\nTap OK after you've saved it.`,
+          [{ text: 'OK', onPress: () => { connectBuiltin().catch(() => {}); } }],
+        );
+      } else {
+        await connectBuiltin();
+      }
+    } catch (e: any) {
+      Alert.alert('Create failed', e?.message || 'Could not create wallet');
+    }
+  }, [addWalletFromCreate, connectBuiltin]);
+
+  const handleConnect = useCallback(async () => {
+    try {
+      await connectBuiltin();
+    } catch (err: any) {
+      if (err?.message !== 'NO_WALLET') return;
+      Alert.alert(
+        'No wallet yet',
+        'Generate a new built-in wallet now, or import an existing one?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Import', onPress: () => navigation.navigate('Settings') },
+          { text: 'Create new', style: 'default', onPress: handleCreateWallet },
+        ],
+      );
+    }
+  }, [connectBuiltin, navigation, handleCreateWallet]);
 
   const handleMakeActive = useCallback((id: string) => {
     if (id === activeWalletId) return;
@@ -381,21 +407,38 @@ export default function HomeScreen() {
         {!account ? (
           <View style={s.connectCard}>
             <Text style={s.connectTitle}>zkScatterDEX</Text>
-            <Text style={s.connectSub}>Privacy-Preserving DEX</Text>
-            <TouchableOpacity
-              style={[s.connectBtn, isConnecting && s.btnDisabled]}
-              onPress={handleConnect}
-              disabled={isConnecting}
-            >
-              {isConnecting ? (
-                <ActivityIndicator size="small" color={colors.card} />
-              ) : (
-                <Text style={s.connectBtnText}>Connect Wallet</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={s.wcBtn} onPress={connect} disabled={isConnecting}>
-              <Text style={s.wcBtnText}>WalletConnect</Text>
-            </TouchableOpacity>
+            <Text style={s.connectSub}>
+              {wallets.length === 0
+                ? 'No wallet on this device yet. Create a new built-in wallet or import an existing one.'
+                : 'Privacy-Preserving DEX'}
+            </Text>
+            {(() => {
+              const noWallet = wallets.length === 0;
+              const primary = noWallet
+                ? { label: 'Create New Wallet', onPress: handleCreateWallet }
+                : { label: 'Connect Wallet', onPress: handleConnect };
+              const secondary = noWallet
+                ? { label: 'Import Existing', onPress: () => navigation.navigate('Settings') }
+                : { label: 'WalletConnect', onPress: connect };
+              return (
+                <>
+                  <TouchableOpacity
+                    style={[s.connectBtn, isConnecting && s.btnDisabled]}
+                    onPress={primary.onPress}
+                    disabled={isConnecting}
+                  >
+                    {isConnecting ? (
+                      <ActivityIndicator size="small" color={colors.card} />
+                    ) : (
+                      <Text style={s.connectBtnText}>{primary.label}</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.wcBtn} onPress={secondary.onPress} disabled={isConnecting}>
+                    <Text style={s.wcBtnText}>{secondary.label}</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
             {error ? <Text style={s.errorText}>{error}</Text> : null}
           </View>
         ) : scopes.length > 0 ? (

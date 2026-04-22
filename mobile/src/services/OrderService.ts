@@ -394,7 +394,11 @@ export const OrderService = {
           // `txHash`. Collisions only become possible if BOTH identifiers
           // are missing, which shouldn't happen in practice.
           txHash: '',
-          ...(response.orderId ? { orderId: response.orderId } : {}),
+          // Always persist an order identifier: relayer-returned orderId
+          // when present, otherwise the local orderHash — so the Claim
+          // detail view and BackupService dedup always have something
+          // to key on.
+          orderId: response.orderId || orderHash,
           // Carry the ephemeral pubkey through to storage on stealth
           // claims — the recipient needs it to derive their private key.
           ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
