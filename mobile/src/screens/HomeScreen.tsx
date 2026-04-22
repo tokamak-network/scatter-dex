@@ -93,9 +93,14 @@ export default function HomeScreen() {
     if (wallets.length === 0) { setPublicTotals({}); return; }
     const reqId = ++publicReqIdRef.current;
     const tokens = TokenService.getTokenList();
-    const entries = await Promise.all(wallets.map(async (w) => {
+    // Use allSettled for the outer wallet fan-out and the inner token fan-out
+    // so a single RPC rate-limit / timeout doesn't collapse the entire
+    // refresh (e.g. public-network deployments where per-token calls get
+    // throttled). Per-token failures already fall back to '0' via the inner
+    // catch; allSettled here guards the nested awaits themselves.
+    const settled = await Promise.allSettled(wallets.map(async (w) => {
       const bals: TokenBal[] = [];
-      await Promise.all(tokens.map(async (t) => {
+      await Promise.allSettled(tokens.map(async (t) => {
         try {
           const amount = await TokenService.getBalance(readProvider, w.address, t);
           bals.push({ symbol: t.symbol, amount });
@@ -111,22 +116,33 @@ export default function HomeScreen() {
       return [w.address.toLowerCase(), bals] as const;
     }));
     if (!isMounted.current || reqId !== publicReqIdRef.current) return;
+    const entries = settled
+      .filter((r): r is PromiseFulfilledResult<readonly [string, TokenBal[]]> => r.status === 'fulfilled')
+      .map((r) => r.value);
     setPublicTotals(Object.fromEntries(entries));
   }, [wallets, readProvider]);
 
   const fetchPrivateTotals = useCallback(async () => {
     if (wallets.length === 0) { setPrivateTotals({}); return; }
     const reqId = ++privateReqIdRef.current;
+    const tokens = TokenService.getTokenList();
+    const tokenOrder = (addr: string) => {
+      const i = tokens.findIndex((t) => t.address.toLowerCase() === addr.toLowerCase());
+      // Unknown tokens (whitelist misses) sort after known ones but keep a
+      // stable order among themselves via the original iteration index.
+      return i < 0 ? tokens.length : i;
+    };
     const entries = await Promise.all(wallets.map(async (w) => {
       try {
         const m = await NoteStorageService.getPrivateBalances(w.address);
-        const bals: TokenBal[] = [];
+        const bals: { addr: string; symbol: string; amount: string }[] = [];
         for (const [tokenAddr, v] of m) {
           let decimals = 18;
           try { decimals = await TokenService.getDecimals(readProvider, tokenAddr); } catch {}
-          bals.push({ symbol: v.symbol, amount: ethers.formatUnits(v.total, decimals) });
+          bals.push({ addr: tokenAddr, symbol: v.symbol, amount: ethers.formatUnits(v.total, decimals) });
         }
-        return [w.address.toLowerCase(), bals] as const;
+        bals.sort((a, b) => tokenOrder(a.addr) - tokenOrder(b.addr));
+        return [w.address.toLowerCase(), bals.map(({ symbol, amount }) => ({ symbol, amount }))] as const;
       } catch {
         return [w.address.toLowerCase(), [] as TokenBal[]] as const;
       }
