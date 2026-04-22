@@ -406,6 +406,49 @@ export const NoteStorageService = {
     return all.filter((n) => n.status === 'active');
   },
 
+  /**
+   * Walk through pending notes (status='pending', leafIndex=-1) and
+   * promote them to `active` once their commitment has landed on-chain.
+   * Used after a trade submit: the change UTXO is saved locally before
+   * the relayer's scatterDirectAuth tx settles, so the leafIndex isn't
+   * known yet. Call this from screens that surface pending state (Home,
+   * History) to keep them in sync without forcing the user to reload.
+   *
+   * Accepts the already-fetched `allLeaves` array to dedupe work when a
+   * caller (e.g. trade submit flow) just queried it — otherwise pass
+   * `null` and we query CommitmentInserted ourselves.
+   */
+  async syncPendingNotes(
+    address: string,
+    allLeaves: string[] | null,
+    fetchLeaves?: () => Promise<string[]>,
+  ): Promise<number> {
+    requireAddress(address);
+    const all = await this.getAllNotes(address);
+    const stale = all.filter((n) => n.status === 'pending' && n.leafIndex < 0);
+    if (stale.length === 0) return 0;
+
+    const leaves = allLeaves ?? (fetchLeaves ? await fetchLeaves() : null);
+    if (!leaves) return 0;
+
+    // Build a commitment → leafIndex map so the match is O(n+m) instead
+    // of O(n·m). `note.commitment` is stored as a decimal-string bigint;
+    // event data is decimal too so direct string compare works.
+    const leafByCommit = new Map<string, number>();
+    for (let i = 0; i < leaves.length; i++) leafByCommit.set(leaves[i], i);
+
+    let promoted = 0;
+    for (const n of stale) {
+      const idx = leafByCommit.get(n.commitment);
+      if (idx === undefined) continue;
+      n.leafIndex = idx;
+      n.status = 'active';
+      await SecureStore.setItemAsync(noteKeyFor(address, n.id), JSON.stringify(n));
+      promoted += 1;
+    }
+    return promoted;
+  },
+
   async getActiveNotesByToken(address: string, tokenAddress: string): Promise<StoredNote[]> {
     return (await this.getActiveNotes(address)).filter(
       (n) => eqAddr(n.token, tokenAddress),

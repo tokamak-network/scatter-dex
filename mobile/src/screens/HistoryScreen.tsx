@@ -111,6 +111,14 @@ export default function HistoryScreen() {
       setLoading(true);
       setError(null);
       try {
+        // Promote any pending change notes whose on-chain commitment
+        // has landed since the order was submitted, so the Spent tab
+        // actually reflects "Settled" and Active picks up the new UTXO.
+        try {
+          const { ProviderService } = await import('../services/ProviderService');
+          const { syncPendingNotesForAccount } = await import('../lib/noteSync');
+          await syncPendingNotesForAccount(account, ProviderService.getReadProvider());
+        } catch { /* best-effort */ }
         const notes = await NoteStorageService.getAllNotes(account);
         if (cancelled) return;
         setAllNotes(notes);

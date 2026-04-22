@@ -23,6 +23,7 @@ import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { TokenService, TokenInfo } from '../services/TokenService';
+import { syncPendingNotesForAccount } from '../lib/noteSync';
 import type { WalletMeta } from '../types/wallet';
 import { ethers } from 'ethers';
 import { formatRelativeTime, shortAddr } from '../lib/format';
@@ -138,11 +139,20 @@ export default function HomeScreen() {
   // Refetch when Home regains focus — covers the Deposit → back-to-Home
   // flow where a new note was saved but the `[wallets]` dependency
   // didn't change, so the totals effects wouldn't re-fire on their own.
+  // Also sync pending change notes: if a trade's scatterDirectAuth
+  // settled while the user was on another screen, promote the local
+  // pending UTXO to `active` before the totals read lands so the
+  // escrow balance reflects the new commitment.
   useFocusEffect(
     useCallback(() => {
-      fetchPublicTotals();
-      fetchPrivateTotals();
-    }, [fetchPublicTotals, fetchPrivateTotals]),
+      (async () => {
+        await Promise.all(wallets.map((w) =>
+          syncPendingNotesForAccount(w.address, readProvider).catch(() => 0),
+        ));
+        fetchPublicTotals();
+        fetchPrivateTotals();
+      })();
+    }, [fetchPublicTotals, fetchPrivateTotals, wallets, readProvider]),
   );
 
   // Page layout: [All] → [Active] → [rest in creation order].
