@@ -231,7 +231,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         chains: [targetChainId],
         showQrModal: false,
         metadata: {
-          name: 'ScatterDEX',
+          name: 'zkScatterDEX',
           description: 'Privacy-Preserving DEX',
           url: 'https://scatterdex.io',
           icons: ['https://scatterdex.io/icon.png'],

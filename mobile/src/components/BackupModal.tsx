@@ -94,7 +94,7 @@ export default function BackupModal({ visible, onClose, address, onRestored }: P
           style: 'destructive',
           onPress: async () => {
             try {
-              await Share.share({ message: exportJson, title: 'ScatterDEX Backup' });
+              await Share.share({ message: exportJson, title: 'zkScatterDEX Backup' });
             } catch (err: any) {
               Alert.alert('Share failed', err?.message || 'Could not open share sheet');
             }

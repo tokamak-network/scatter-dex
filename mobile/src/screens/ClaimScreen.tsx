@@ -559,7 +559,7 @@ export default function ClaimScreen() {
           title: 'Share stealth private key?',
           body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
           message: stealthPrivkeyReveal
-            ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
+            ? `zkScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
             : '',
         }}
       />

@@ -4,11 +4,11 @@
  * Balance card is a horizontal pager (built-in + multi-wallet only):
  *   [All Wallets] → [Active Wallet] → [other wallets…]
  *
- * `Wallet Balance` shows native ETH *only* — summing heterogeneous
- * tokens (ETH + USDC + …) as raw floats was meaningless and confused
- * users who compared it against New Escrow's single-token display.
- * `Escrow Balance` sums note amounts in the commitment pool, which
- * are all ETH-denominated by design today.
+ * `Wallet Balance` and `Escrow Balance` show one row per configured
+ * token (ETH + ERC-20s from fork-contracts.json's `tokens`). Summing
+ * heterogeneous-decimal tokens into a single number misreports USDC
+ * (6 decimals) as if it were ETH (18), so they stay split; ordering
+ * follows TokenService.getTokenList() (ETH first).
  */
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
@@ -22,6 +22,7 @@ import { useWallet } from '../contexts/WalletContext';
 import { useRecentActivity, ActivityType } from '../hooks/useRecentActivity';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
+import { TokenService, TokenInfo } from '../services/TokenService';
 import type { WalletMeta } from '../types/wallet';
 import { ethers } from 'ethers';
 import { formatRelativeTime, shortAddr } from '../lib/format';
@@ -37,6 +38,8 @@ type ScopeItem =
   | { kind: 'all' }
   | { kind: 'wallet'; wallet: WalletMeta };
 
+type TokenBal = { symbol: string; amount: string };
+
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const { width: screenW } = useWindowDimensions();
@@ -49,12 +52,13 @@ export default function HomeScreen() {
   const [showBalance, setShowBalance] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentNetwork, setCurrentNetwork] = useState<NetworkConfig | null>(null);
-  // Native ETH balance per wallet (lowercased address -> formatEther string).
-  // Keeping it to ETH sidesteps the cross-decimal summation problem of
-  // the previous multi-token total.
-  const [publicTotals, setPublicTotals] = useState<Record<string, string>>({});
-  // Private escrow totals per wallet (lowercased address -> formatEther).
-  const [privateTotals, setPrivateTotals] = useState<Record<string, string>>({});
+  // Per-token balances per wallet. Key: lowercased wallet address.
+  // Value: array of { symbol, amount } with amount already decimals-aware
+  // (formatUnits). Summing heterogeneous-decimal tokens as a single number
+  // would misreport USDC (6d) as ETH (18d); instead we keep them split and
+  // render one row per token.
+  const [publicTotals, setPublicTotals] = useState<Record<string, TokenBal[]>>({});
+  const [privateTotals, setPrivateTotals] = useState<Record<string, TokenBal[]>>({});
   const [pageIndex, setPageIndex] = useState(0);
 
   const isMounted = useRef(true);
@@ -64,14 +68,18 @@ export default function HomeScreen() {
 
   useEffect(() => () => { isMounted.current = false; }, []);
 
-  // Current network pill — re-loaded on mount.
-  useEffect(() => {
+  // Current network pill — reload on mount AND on focus so Settings →
+  // network switch → back-to-Home reflects the new selection without
+  // requiring an app restart.
+  const reloadNetwork = useCallback(() => {
     let cancelled = false;
     NetworkService.getSelectedNetwork()
       .then((n) => { if (!cancelled) setCurrentNetwork(n); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
+  useEffect(() => reloadNetwork(), [reloadNetwork]);
+  useFocusEffect(useCallback(() => { reloadNetwork(); }, [reloadNetwork]));
 
   // Native ETH + private balance fetchers — extracted so both the mount
   // effect and the focus effect (and pull-to-refresh) share one path.
@@ -81,13 +89,23 @@ export default function HomeScreen() {
   const fetchPublicTotals = useCallback(async () => {
     if (wallets.length === 0) { setPublicTotals({}); return; }
     const reqId = ++publicReqIdRef.current;
+    const tokens = TokenService.getTokenList();
     const entries = await Promise.all(wallets.map(async (w) => {
-      try {
-        const bal = await readProvider.getBalance(w.address);
-        return [w.address.toLowerCase(), ethers.formatEther(bal)] as const;
-      } catch {
-        return [w.address.toLowerCase(), '0'] as const;
-      }
+      const bals: TokenBal[] = [];
+      await Promise.all(tokens.map(async (t) => {
+        try {
+          const amount = await TokenService.getBalance(readProvider, w.address, t);
+          bals.push({ symbol: t.symbol, amount });
+        } catch {
+          bals.push({ symbol: t.symbol, amount: '0' });
+        }
+      }));
+      // Preserve the TokenService ordering so ETH appears first.
+      bals.sort((a, b) =>
+        tokens.findIndex((t) => t.symbol === a.symbol) -
+        tokens.findIndex((t) => t.symbol === b.symbol),
+      );
+      return [w.address.toLowerCase(), bals] as const;
     }));
     if (!isMounted.current || reqId !== publicReqIdRef.current) return;
     setPublicTotals(Object.fromEntries(entries));
@@ -99,16 +117,20 @@ export default function HomeScreen() {
     const entries = await Promise.all(wallets.map(async (w) => {
       try {
         const m = await NoteStorageService.getPrivateBalances(w.address);
-        let total = 0n;
-        for (const [, v] of m) total += v.total;
-        return [w.address.toLowerCase(), ethers.formatEther(total)] as const;
+        const bals: TokenBal[] = [];
+        for (const [tokenAddr, v] of m) {
+          let decimals = 18;
+          try { decimals = await TokenService.getDecimals(readProvider, tokenAddr); } catch {}
+          bals.push({ symbol: v.symbol, amount: ethers.formatUnits(v.total, decimals) });
+        }
+        return [w.address.toLowerCase(), bals] as const;
       } catch {
-        return [w.address.toLowerCase(), '0'] as const;
+        return [w.address.toLowerCase(), [] as TokenBal[]] as const;
       }
     }));
     if (!isMounted.current || reqId !== privateReqIdRef.current) return;
     setPrivateTotals(Object.fromEntries(entries));
-  }, [wallets]);
+  }, [wallets, readProvider]);
 
   useEffect(() => { fetchPublicTotals(); }, [fetchPublicTotals]);
   useEffect(() => { fetchPrivateTotals(); }, [fetchPrivateTotals]);
@@ -149,14 +171,19 @@ export default function HomeScreen() {
 
   const cardW = screenW;
   const fmt = (s: string | undefined) => parseFloat(s || '0').toFixed(4);
-  const sumPublic = useMemo(
-    () => Object.values(publicTotals).reduce((a, s) => a + parseFloat(s || '0'), 0).toFixed(4),
-    [publicTotals],
-  );
-  const sumPrivate = useMemo(
-    () => Object.values(privateTotals).reduce((a, s) => a + parseFloat(s || '0'), 0).toFixed(4),
-    [privateTotals],
-  );
+  // Aggregate per-token across all wallets — symbols are the key, so USDC
+  // and ETH stay in separate buckets (no cross-decimal mixing).
+  const aggregate = useCallback((per: Record<string, TokenBal[]>): TokenBal[] => {
+    const sums = new Map<string, number>();
+    for (const list of Object.values(per)) {
+      for (const b of list) {
+        sums.set(b.symbol, (sums.get(b.symbol) ?? 0) + parseFloat(b.amount || '0'));
+      }
+    }
+    return Array.from(sums, ([symbol, amount]) => ({ symbol, amount: amount.toString() }));
+  }, []);
+  const sumPublic = useMemo(() => aggregate(publicTotals), [aggregate, publicTotals]);
+  const sumPrivate = useMemo(() => aggregate(privateTotals), [aggregate, privateTotals]);
 
   const handleScrollEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const idx = Math.round(e.nativeEvent.contentOffset.x / cardW);
@@ -176,34 +203,8 @@ export default function HomeScreen() {
     privateReqIdRef.current += 1;
     // Manually kick off one more round of fetches + activity reload.
     await Promise.all([
-      (async () => {
-        if (wallets.length === 0) return;
-        const reqId = ++publicReqIdRef.current;
-        const entries = await Promise.all(wallets.map(async (w) => {
-          try {
-            const bal = await readProvider.getBalance(w.address);
-            return [w.address.toLowerCase(), ethers.formatEther(bal)] as const;
-          } catch { return [w.address.toLowerCase(), '0'] as const; }
-        }));
-        if (isMounted.current && reqId === publicReqIdRef.current) {
-          setPublicTotals(Object.fromEntries(entries));
-        }
-      })(),
-      (async () => {
-        if (wallets.length === 0) return;
-        const reqId = ++privateReqIdRef.current;
-        const entries = await Promise.all(wallets.map(async (w) => {
-          try {
-            const m = await NoteStorageService.getPrivateBalances(w.address);
-            let total = 0n;
-            for (const [, v] of m) total += v.total;
-            return [w.address.toLowerCase(), ethers.formatEther(total)] as const;
-          } catch { return [w.address.toLowerCase(), '0'] as const; }
-        }));
-        if (isMounted.current && reqId === privateReqIdRef.current) {
-          setPrivateTotals(Object.fromEntries(entries));
-        }
-      })(),
+      fetchPublicTotals(),
+      fetchPrivateTotals(),
       refreshAct(),
     ]);
     setRefreshing(false);
@@ -232,8 +233,8 @@ export default function HomeScreen() {
     const subtitle = isAll
       ? `${wallets.length} accounts`
       : shortAddr(w!.address);
-    const publicVal = isAll ? sumPublic : fmt(publicTotals[w!.address.toLowerCase()]);
-    const privateVal = isAll ? sumPrivate : fmt(privateTotals[w!.address.toLowerCase()]);
+    const publicList: TokenBal[] = isAll ? sumPublic : (publicTotals[w!.address.toLowerCase()] ?? []);
+    const privateList: TokenBal[] = isAll ? sumPrivate : (privateTotals[w!.address.toLowerCase()] ?? []);
 
     return (
       <View style={{ width: cardW, paddingHorizontal: layout.screenHZ }}>
@@ -275,23 +276,57 @@ export default function HomeScreen() {
               </View>
             )}
 
-            <View style={s.balanceRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.balanceLabel}>Wallet Balance (ETH)</Text>
-                <Text style={s.balanceAmountCompact}>
-                  {showBalance ? publicVal : '••••••'}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowBalance(!showBalance)} hitSlop={HIT_SLOP_SM}>
-                <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ marginTop: 10 }}>
-              <Text style={s.balanceLabel}>Escrow Balance (ETH)</Text>
-              <Text style={[s.balanceAmountCompact, { color: colors.primaryDark }]}>
-                {showBalance ? privateVal : '••••••'}
-              </Text>
-            </View>
+            {(() => {
+              // ETH row always shown, other tokens only when > 0 — keeps
+              // the card compact on clean wallets while still surfacing
+              // funded stablecoins.
+              const pubVisible = publicList.filter(
+                (b) => b.symbol === 'ETH' || parseFloat(b.amount || '0') > 0,
+              );
+              const prvVisible = privateList.filter(
+                (b) => parseFloat(b.amount || '0') > 0,
+              );
+              return (
+                <>
+                  <View style={s.balanceSection}>
+                    <View style={s.balanceRow}>
+                      <View style={{ flex: 1 }}>
+                        <View style={s.balanceLabelRow}>
+                          <Text style={s.balanceIcon}>💼</Text>
+                          <Text style={s.balanceLabel}>Wallet Balance</Text>
+                        </View>
+                        {showBalance ? (
+                          pubVisible.length > 0 ? pubVisible.map((b) => (
+                            <View key={`pub-${b.symbol}`} style={s.tokenRow}>
+                              <Text style={s.balanceAmountCompact}>{fmt(b.amount)}</Text>
+                              <Text style={s.tokenSymbol}>{b.symbol}</Text>
+                            </View>
+                          )) : <Text style={s.balanceAmountCompact}>0</Text>
+                        ) : <Text style={s.balanceAmountCompact}>••••••</Text>}
+                      </View>
+                      <TouchableOpacity onPress={() => setShowBalance(!showBalance)} hitSlop={HIT_SLOP_SM}>
+                        <Text style={s.eyeIcon}>{showBalance ? '👁' : '🙈'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={s.balanceDivider} />
+                  <View style={[s.balanceSection, s.escrowSection]}>
+                    <View style={s.balanceLabelRow}>
+                      <Text style={s.balanceIcon}>🔒</Text>
+                      <Text style={[s.balanceLabel, { color: colors.primaryDark }]}>Escrow Balance</Text>
+                    </View>
+                    {showBalance ? (
+                      prvVisible.length > 0 ? prvVisible.map((b) => (
+                        <View key={`prv-${b.symbol}`} style={s.tokenRow}>
+                          <Text style={[s.balanceAmountCompact, { color: colors.primaryDark }]}>{fmt(b.amount)}</Text>
+                          <Text style={[s.tokenSymbol, { color: colors.primaryDark }]}>{b.symbol}</Text>
+                        </View>
+                      )) : <Text style={[s.balanceAmountCompact, { color: colors.primaryDark }]}>0</Text>
+                    ) : <Text style={[s.balanceAmountCompact, { color: colors.primaryDark }]}>••••••</Text>}
+                  </View>
+                </>
+              );
+            })()}
           </View>
         </View>
       </View>
@@ -330,7 +365,7 @@ export default function HomeScreen() {
 
         {!account ? (
           <View style={s.connectCard}>
-            <Text style={s.connectTitle}>ScatterDEX</Text>
+            <Text style={s.connectTitle}>zkScatterDEX</Text>
             <Text style={s.connectSub}>Privacy-Preserving DEX</Text>
             <TouchableOpacity
               style={[s.connectBtn, isConnecting && s.btnDisabled]}
@@ -439,29 +474,6 @@ export default function HomeScreen() {
         )}
 
         {account && (
-          <View style={s.actionsRow}>
-            <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Deposit')}>
-              <View style={s.actionCircle}>
-                <Text style={[s.actionIconText, { color: colors.primary }]}>↓</Text>
-              </View>
-              <Text style={s.actionLabel}>Deposit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Trade')}>
-              <View style={s.actionCircle}>
-                <Text style={[s.actionIconText, { color: colors.cyan }]}>⇄</Text>
-              </View>
-              <Text style={s.actionLabel}>Trade</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.actionItem} onPress={() => navigation.navigate('Claim')}>
-              <View style={s.actionCircle}>
-                <Text style={[s.actionIconText, { color: colors.indigo }]}>↑</Text>
-              </View>
-              <Text style={s.actionLabel}>Claim</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {account && (
           <View style={s.section}>
             <View style={s.sectionHeader}>
               <Text style={s.sectionTitle}>Recent Activity</Text>
@@ -549,8 +561,15 @@ const s = StyleSheet.create({
   networkPillText: { fontSize: 11, fontWeight: '700', color: colors.primaryDark },
 
   balanceLabel: { fontSize: 11, color: colors.gray500, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
-  balanceAmountCompact: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, color: colors.text, marginTop: 2 },
+  balanceLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  balanceIcon: { fontSize: 12 },
+  balanceSection: { paddingVertical: 4 },
+  escrowSection: { backgroundColor: colors.primaryLight, borderRadius: 12, padding: 12, marginTop: 8 },
+  balanceDivider: { height: 1, backgroundColor: colors.borderLight, marginVertical: 10 },
+  balanceAmountCompact: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2, color: colors.text, marginTop: 2 },
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tokenRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 2 },
+  tokenSymbol: { fontSize: 11, fontWeight: '600', color: colors.textSecondary },
   eyeIcon: { fontSize: 18, color: colors.textMuted },
 
   pagerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: layout.screenHZ, marginTop: 12 },
