@@ -2,50 +2,27 @@
  * commitmentScan — persistent, checkpointed scanner for the
  * CommitmentPool's `CommitmentInserted` events.
  *
- * Motivation: every note-sync and every order execution previously ran
- * `pool.queryFilter(CommitmentInserted(), deployBlock)` — a full-range
- * scan from deploy on. Fine on a local fork, but public RPCs (Alchemy,
- * Infura) cap ranges at 2k–10k blocks and will time out once the pool
- * has a few weeks of history.
- *
- * This module:
- *  - persists the last-scanned block + the accumulated leaves per
- *    (chainId, pool) in AsyncStorage, so a cold app start resumes from
- *    where the previous session stopped instead of rescanning genesis;
- *  - queries new events in fixed-size block chunks (`CHUNK_BLOCKS`) so
- *    no single RPC call exceeds public-provider range caps;
- *  - de-duplicates concurrent in-flight scans per pool (a Home focus
- *    + Trade focus + order submit can all land at once);
- *  - keeps a short in-memory TTL so a burst of listener fan-out in the
- *    same tick reuses one scan.
- *
- * Leaves are returned in insertion order (block, logIndex). This order
- * IS the Merkle-tree leaf index ordering the circuit expects, so
- * callers must not sort.
+ * Leaves are returned in insertion order `(block, logIndex)` — that
+ * ordering IS the Merkle leaf index the circuit expects, so callers
+ * must not re-sort. The module only ever appends.
  */
 import { ethers } from 'ethers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ConfigService } from '../services/ConfigService';
 import { COMMITMENT_POOL_ABI } from './contracts';
 
-// 5000 blocks per chunk is the pragmatic middle: Alchemy's public tier
-// caps `eth_getLogs` at 10k blocks and some free RPCs at 2k, so 5k is
-// safely under the stricter limits while still keeping round-trips
-// modest on an anvil fork (1 chunk covers a fresh session).
+// Under Alchemy (10k), Infura public (10k) and some free RPCs (2k)
+// range caps; leaves room for log-count fallback bisection below.
 const CHUNK_BLOCKS = 5_000;
-
-// Confirmation buffer for the persistent checkpoint. A 1–2-block reorg
-// after we save `lastBlock=latest` would permanently miss (or duplicate)
-// events because the next scan starts at `lastBlock+1`. Persisting
-// `latest − CONFIRMATIONS` instead means the tail always re-scans on
-// the next call, so a reorg within this window self-heals. 5 is the
-// standard public-chain margin; anvil/local forks never reorg but
-// re-scanning a 5-block tail is essentially free.
+// Confirmation buffer: reorgs inside this window self-heal on the next
+// scan because the tail `(confirmed, latest]` is always re-queried.
 const CONFIRMATIONS = 5;
-
-// In-memory TTL — keeps a burst of listeners (Home + Trade + History
-// all firing on one saveNote) from each running their own delta scan.
+// Fan-out TTL — a burst of listener callbacks (Home focus + Trade
+// focus + order submit in the same tick) share one scan.
 const CACHE_TTL_MS = 3_000;
+// Bounded concurrency for the cold-start batch fetch. Sequential chunks
+// across weeks of history would serialize RTTs unnecessarily.
+const MAX_PARALLEL_CHUNKS = 4;
 
 interface ScanState {
   lastBlock: number;
@@ -54,6 +31,10 @@ interface ScanState {
 
 const storageKey = (chainId: number, pool: string) =>
   `scatterdex_commit_scan_v1_${chainId}_${pool.toLowerCase()}`;
+
+// Reuse the persistent key format for the in-memory map so the two
+// can't drift apart across callers.
+const cacheKey = storageKey;
 
 const memCache = new Map<string, { at: number; state: ScanState }>();
 const inFlight = new Map<string, Promise<string[]>>();
@@ -80,8 +61,56 @@ async function saveState(chainId: number, pool: string, state: ScanState): Promi
   try {
     await AsyncStorage.setItem(storageKey(chainId, pool), JSON.stringify(state));
   } catch {
-    // Persistence is a latency optimisation, not correctness — the
-    // in-memory cache keeps this session fast regardless.
+    // Persistence is a latency optimisation, not correctness.
+  }
+}
+
+// Parse one log safely — `parseLog` returns null on ABI drift (e.g.
+// pool upgrade introduces a new event and the mobile bundle ships the
+// old ABI). Skip rather than crash the whole scan.
+function parseLeaf(contract: ethers.Contract, e: ethers.EventLog | ethers.Log): string | null {
+  const parsed = contract.interface.parseLog({ topics: e.topics as string[], data: e.data });
+  return parsed ? parsed.args.commitment.toString() : null;
+}
+
+// `arr.push(...src)` can overflow the argument-count limit on very
+// large arrays (~100k on some engines). Iterate instead.
+function pushAll<T>(dst: T[], src: readonly T[]): void {
+  for (let i = 0; i < src.length; i++) dst.push(src[i]);
+}
+
+function isLogLimitError(err: unknown): boolean {
+  const msg = (err as { message?: string })?.message?.toLowerCase() ?? '';
+  return /(more than|max|too many|limit).*?(result|log)s?/.test(msg);
+}
+
+/** Fetch one chunk with log-count fallback: public RPCs can still
+ *  reject a within-range query when event density is too high. */
+async function fetchChunk(
+  contract: ethers.Contract,
+  from: number,
+  to: number,
+): Promise<string[]> {
+  try {
+    const events = await contract.queryFilter(
+      contract.filters.CommitmentInserted(),
+      from,
+      to,
+    );
+    const out: string[] = [];
+    for (const e of events) {
+      const leaf = parseLeaf(contract, e);
+      if (leaf) out.push(leaf);
+    }
+    return out;
+  } catch (err) {
+    if (!isLogLimitError(err) || from >= to) throw err;
+    const mid = from + Math.floor((to - from) / 2);
+    const [lo, hi] = await Promise.all([
+      fetchChunk(contract, from, mid),
+      fetchChunk(contract, mid + 1, to),
+    ]);
+    return [...lo, ...hi];
   }
 }
 
@@ -90,52 +119,35 @@ async function scanNewRange(
   fromBlock: number,
   toBlock: number,
 ): Promise<string[]> {
-  const leaves: string[] = [];
-  let from = fromBlock;
-  while (from <= toBlock) {
-    const to = Math.min(from + CHUNK_BLOCKS - 1, toBlock);
-    const events = await contract.queryFilter(
-      contract.filters.CommitmentInserted(),
-      from,
-      to,
-    );
-    for (const e of events) {
-      // `parseLog` returns `null` when the log doesn't match the ABI —
-      // can happen if the pool upgrade introduces a new event and the
-      // mobile bundle still ships the old ABI. Skip instead of crashing
-      // the whole scan; the missing leaf will be picked up on the next
-      // release that bundles the matching ABI.
-      const parsed = contract.interface.parseLog({
-        topics: e.topics as string[],
-        data: e.data,
-      });
-      if (!parsed) continue;
-      leaves.push(parsed.args.commitment.toString());
-    }
-    from = to + 1;
+  const ranges: Array<[number, number]> = [];
+  for (let from = fromBlock; from <= toBlock; from = Math.min(from + CHUNK_BLOCKS, toBlock + 1)) {
+    ranges.push([from, Math.min(from + CHUNK_BLOCKS - 1, toBlock)]);
   }
-  return leaves;
-}
-
-/** `arr.push(...src)` can overflow the argument-count limit on very
- *  large arrays (~100 k on some engines). Iterate instead — a few μs
- *  slower, but stable. */
-function pushAll<T>(dst: T[], src: readonly T[]): void {
-  for (let i = 0; i < src.length; i++) dst.push(src[i]);
+  // Run up to MAX_PARALLEL_CHUNKS concurrent queryFilter calls while
+  // preserving ordering (ranges are already ordered; we only concat
+  // each batch's results in index order).
+  const out: string[] = [];
+  for (let i = 0; i < ranges.length; i += MAX_PARALLEL_CHUNKS) {
+    const batch = ranges.slice(i, i + MAX_PARALLEL_CHUNKS);
+    const settled = await Promise.all(batch.map(([f, t]) => fetchChunk(contract, f, t)));
+    for (const chunk of settled) pushAll(out, chunk);
+  }
+  return out;
 }
 
 /**
  * Return the full ordered leaves array for `poolAddr`, scanning only
  * the blocks added since the previous call (or since deploy on the
  * first call). Safe to fan out from many screens — concurrent callers
- * share the same in-flight promise.
+ * share the same in-flight promise, and the returned array is a
+ * defensive copy so caller mutation can't corrupt the cache.
  */
 export async function getCommitmentLeaves(
   poolAddr: string,
   readProvider: ethers.JsonRpcProvider,
   chainId: number,
 ): Promise<string[]> {
-  const key = `${chainId}:${poolAddr.toLowerCase()}`;
+  const key = cacheKey(chainId, poolAddr);
 
   const cached = memCache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.state.leaves.slice();
@@ -149,52 +161,43 @@ export async function getCommitmentLeaves(
       const deployBlock = ConfigService.getDeployBlock();
       const latest = await readProvider.getBlockNumber();
 
-      // Lagging-RPC guard: if `latest` is behind what we've already
-      // persisted, the node is serving an older view of the chain.
-      // Re-scanning `(confirmed, latest]` would fetch blocks we've
-      // already counted and emit duplicates at the returned-array
-      // boundary. Return the persisted snapshot verbatim (defensive
-      // copy below) and skip this pass — the next tick catches up
-      // once the endpoint advances.
+      // Lagging-RPC guard: a node serving an older view than what we've
+      // already persisted would cause `(confirmed, latest]` rescans to
+      // re-emit blocks we've already counted. Serve the snapshot.
       if (persisted && latest < persisted.lastBlock) {
-        const stale = { lastBlock: persisted.lastBlock, leaves: persisted.leaves };
-        memCache.set(key, { at: Date.now(), state: stale });
-        return stale.leaves.slice();
+        memCache.set(key, { at: Date.now(), state: persisted });
+        return persisted.leaves.slice();
       }
 
-      // Checkpoint only through `latest − CONFIRMATIONS`. Anything newer
-      // is re-scanned each call (cheap — bounded by CONFIRMATIONS blocks)
-      // so a shallow reorg inside the buffer self-heals on the next run
-      // instead of permanently miscounting leaves.
       const confirmed = Math.max(deployBlock - 1, latest - CONFIRMATIONS);
       const persistedStart = persisted ? persisted.lastBlock + 1 : deployBlock;
+      const needConfirmedScan = persistedStart <= confirmed;
+      const needTailScan = confirmed < latest;
+
+      // No work to do — seed the in-memory cache from persisted state
+      // so subsequent cold-ish calls within TTL skip the AsyncStorage
+      // round-trip.
+      if (!needConfirmedScan && !needTailScan) {
+        const state: ScanState = persisted ?? { lastBlock: deployBlock - 1, leaves: [] };
+        memCache.set(key, { at: Date.now(), state });
+        return state.leaves.slice();
+      }
+
+      const contract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
       const confirmedLeaves: string[] = [];
       if (persisted) pushAll(confirmedLeaves, persisted.leaves);
 
-      const contract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-
-      // 1) Persist-able delta: [persistedStart, confirmed]
-      if (persistedStart <= confirmed) {
-        const newConfirmed = await scanNewRange(contract, persistedStart, confirmed);
-        pushAll(confirmedLeaves, newConfirmed);
+      if (needConfirmedScan) {
+        pushAll(confirmedLeaves, await scanNewRange(contract, persistedStart, confirmed));
         await saveState(chainId, poolAddr, { lastBlock: confirmed, leaves: confirmedLeaves });
       }
 
-      // 2) Unconfirmed tail: (confirmed, latest] — always re-scanned,
-      //    never persisted, stacked on top of the confirmed snapshot.
-      let leaves: string[] = confirmedLeaves;
-      if (confirmed < latest) {
-        const tail = await scanNewRange(contract, confirmed + 1, latest);
-        if (tail.length) {
-          leaves = confirmedLeaves.slice();
-          pushAll(leaves, tail);
-        }
-      }
-
+      const tail = needTailScan
+        ? await scanNewRange(contract, confirmed + 1, latest)
+        : [];
+      const leaves = tail.length ? [...confirmedLeaves, ...tail] : confirmedLeaves;
       const state: ScanState = { lastBlock: latest, leaves };
       memCache.set(key, { at: Date.now(), state });
-      // Return a defensive copy so caller-side mutation can't corrupt
-      // the cached snapshot for the next within-TTL reader.
       return leaves.slice();
     } finally {
       inFlight.delete(key);
@@ -205,11 +208,10 @@ export async function getCommitmentLeaves(
   return run;
 }
 
-/** Wipe both the in-memory cache and AsyncStorage for a pool — used on
- *  network switch (different chainId → different pool state) and on
- *  a manual "clear local data" debug action. */
+/** Wipe both the in-memory cache and AsyncStorage for a pool — for
+ *  network switches or manual "clear local data" debug actions. */
 export async function resetCommitmentScan(chainId: number, poolAddr: string): Promise<void> {
-  const key = `${chainId}:${poolAddr.toLowerCase()}`;
+  const key = cacheKey(chainId, poolAddr);
   memCache.delete(key);
   inFlight.delete(key);
   try { await AsyncStorage.removeItem(storageKey(chainId, poolAddr)); } catch {}
