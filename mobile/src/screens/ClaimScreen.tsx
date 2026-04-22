@@ -14,6 +14,8 @@ import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
+import ClaimStatusBadge, { isClaimLocked } from '../components/ClaimStatusBadge';
+import { useNowSec } from '../hooks/useNowSec';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
@@ -69,20 +71,20 @@ export default function ClaimScreen() {
   const [currentStep, setCurrentStep] = useState<ClaimStep>('idle');
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const hasSelection = claimTab === 'json' ? !!parsedJsonClaim : selectedIndices.size > 0;
-  // Block submit when any selected claim's releaseTime hasn't landed —
-  // the contract would revert on a Locked() error and burn the user's
-  // gas / proof-gen time with nothing to show for it.
-  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 30_000);
-    return () => clearInterval(id);
-  }, []);
+  // Block submit when any selected claim is still locked — the contract
+  // would revert and waste the user's gas + proof-gen. The clock ticks
+  // only while a lock exists on screen, so unlocked sessions don't eat
+  // a standing 30s setInterval.
+  const anyClaimLocked = useMemo(() => {
+    if (parsedJsonClaim && isClaimLocked(parsedJsonClaim.releaseTime, Math.floor(Date.now() / 1000))) return true;
+    return pendingClaims.some((c) => isClaimLocked(c.releaseTime, Math.floor(Date.now() / 1000)));
+  }, [parsedJsonClaim, pendingClaims]);
+  const nowSec = useNowSec(anyClaimLocked);
   const selectedNotReleased = useMemo(() => {
-    const isLocked = (rt: string | number) => Number(rt) > nowSec;
-    if (claimTab === 'json') return !!(parsedJsonClaim && isLocked(parsedJsonClaim.releaseTime));
+    if (claimTab === 'json') return !!(parsedJsonClaim && isClaimLocked(parsedJsonClaim.releaseTime, nowSec));
     for (const i of selectedIndices) {
       const c = pendingClaims[i];
-      if (c && isLocked(c.releaseTime)) return true;
+      if (c && isClaimLocked(c.releaseTime, nowSec)) return true;
     }
     return false;
   }, [claimTab, parsedJsonClaim, selectedIndices, pendingClaims, nowSec]);
@@ -455,17 +457,7 @@ export default function ClaimScreen() {
                           <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
                         </View>
                       </View>
-                      {Number(parsedJsonClaim.releaseTime) > nowSec ? (
-                        <View style={[s.statusBadge, { backgroundColor: colors.warningLight }]}>
-                          <Text style={[s.statusText, { color: colors.warning }]}>
-                            Locked · {new Date(Number(parsedJsonClaim.releaseTime) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </Text>
-                        </View>
-                      ) : (
-                        <View style={s.statusBadge}>
-                          <Text style={s.statusText}>Ready to Claim</Text>
-                        </View>
-                      )}
+                      <ClaimStatusBadge releaseTime={parsedJsonClaim.releaseTime} nowSec={nowSec} />
                     </View>
                     {parsedJsonEphemeralPubKey && (
                       <TouchableOpacity
@@ -520,17 +512,7 @@ export default function ClaimScreen() {
                           </View>
                         </View>
                         <View style={s.itemRight}>
-                          {Number(item.releaseTime) > nowSec ? (
-                            <View style={[s.statusBadge, { backgroundColor: colors.warningLight }]}>
-                              <Text style={[s.statusText, { color: colors.warning }]}>
-                                Locked · {new Date(Number(item.releaseTime) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </Text>
-                            </View>
-                          ) : (
-                            <View style={s.statusBadge}>
-                              <Text style={s.statusText}>Ready to Claim</Text>
-                            </View>
-                          )}
+                          <ClaimStatusBadge releaseTime={item.releaseTime} nowSec={nowSec} />
                           <TouchableOpacity
                             onPress={() =>
                               setExpandedClaimIdx((prev) => (prev === index ? null : index))
