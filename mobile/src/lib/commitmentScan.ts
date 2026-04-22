@@ -34,6 +34,15 @@ import { COMMITMENT_POOL_ABI } from './contracts';
 // modest on an anvil fork (1 chunk covers a fresh session).
 const CHUNK_BLOCKS = 5_000;
 
+// Confirmation buffer for the persistent checkpoint. A 1–2-block reorg
+// after we save `lastBlock=latest` would permanently miss (or duplicate)
+// events because the next scan starts at `lastBlock+1`. Persisting
+// `latest − CONFIRMATIONS` instead means the tail always re-scans on
+// the next call, so a reorg within this window self-heals. 5 is the
+// standard public-chain margin; anvil/local forks never reorg but
+// re-scanning a 5-block tail is essentially free.
+const CONFIRMATIONS = 5;
+
 // In-memory TTL — keeps a burst of listeners (Home + Trade + History
 // all firing on one saveNote) from each running their own delta scan.
 const CACHE_TTL_MS = 3_000;
@@ -120,22 +129,35 @@ export async function getCommitmentLeaves(
 
   const run = (async () => {
     try {
-      const persisted = cached?.state ?? (await loadState(chainId, poolAddr));
+      const persisted = await loadState(chainId, poolAddr);
       const deployBlock = ConfigService.getDeployBlock();
-      const startFrom = persisted ? persisted.lastBlock + 1 : deployBlock;
       const latest = await readProvider.getBlockNumber();
+      // Checkpoint only through `latest − CONFIRMATIONS`. Anything newer
+      // is re-scanned each call (cheap — bounded by CONFIRMATIONS blocks)
+      // so a shallow reorg inside the buffer self-heals on the next run
+      // instead of permanently miscounting leaves.
+      const confirmed = Math.max(deployBlock - 1, latest - CONFIRMATIONS);
+      const persistedStart = persisted ? persisted.lastBlock + 1 : deployBlock;
+      const confirmedLeaves = persisted ? [...persisted.leaves] : [];
 
-      let state: ScanState = persisted ?? { lastBlock: deployBlock - 1, leaves: [] };
+      const contract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
 
-      if (startFrom <= latest) {
-        const contract = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-        const newLeaves = await scanNewRange(contract, startFrom, latest);
-        state = {
-          lastBlock: latest,
-          leaves: newLeaves.length === 0 ? state.leaves : [...state.leaves, ...newLeaves],
-        };
-        await saveState(chainId, poolAddr, state);
+      // 1) Persist-able delta: [persistedStart, confirmed]
+      if (persistedStart <= confirmed) {
+        const newConfirmed = await scanNewRange(contract, persistedStart, confirmed);
+        confirmedLeaves.push(...newConfirmed);
+        await saveState(chainId, poolAddr, { lastBlock: confirmed, leaves: confirmedLeaves });
       }
+
+      // 2) Unconfirmed tail: (confirmed, latest] — always re-scanned,
+      //    never persisted, stacked on top of the confirmed snapshot.
+      const tail = confirmed < latest
+        ? await scanNewRange(contract, confirmed + 1, latest)
+        : [];
+      const state: ScanState = {
+        lastBlock: latest,
+        leaves: tail.length ? [...confirmedLeaves, ...tail] : confirmedLeaves,
+      };
 
       memCache.set(key, { at: Date.now(), state });
       return state.leaves;
