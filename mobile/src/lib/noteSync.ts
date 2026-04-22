@@ -16,8 +16,46 @@ import { ConfigService } from '../services/ConfigService';
 import { COMMITMENT_POOL_ABI } from './contracts';
 
 const TTL_MS = 3_000;
+// Per-address dedupe for the write path (syncPendingNotes mutates per-wallet
+// storage — two concurrent runs for the same wallet would race on the
+// note-status update).
 const inFlight = new Map<string, Promise<number>>();
+// Per-pool dedupe for the READ path (CommitmentInserted scan is pool-wide,
+// identical across wallets). Caches the in-flight promise itself so a burst
+// of callers for different wallets share one queryFilter instead of each
+// racing their own — the previous per-resolution cache only helped after
+// the first scan returned. Keyed by pool address.
+const leafFetch = new Map<string, Promise<string[]>>();
 const leafCache = new Map<string, { at: number; leaves: string[] }>();
+
+function fetchLeaves(
+  poolAddr: string,
+  readProvider: ethers.JsonRpcProvider,
+): Promise<string[]> {
+  const cached = leafCache.get(poolAddr);
+  if (cached && Date.now() - cached.at < TTL_MS) return Promise.resolve(cached.leaves);
+  const existing = leafFetch.get(poolAddr);
+  if (existing) return existing;
+
+  const run = (async () => {
+    try {
+      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
+      const fromBlock = ConfigService.getDeployBlock();
+      const events = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
+      const leaves = events.map((e) => {
+        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
+        return parsed!.args.commitment.toString();
+      });
+      leafCache.set(poolAddr, { at: Date.now(), leaves });
+      return leaves;
+    } finally {
+      leafFetch.delete(poolAddr);
+    }
+  })();
+
+  leafFetch.set(poolAddr, run);
+  return run;
+}
 
 export async function syncPendingNotesForAccount(
   address: string,
@@ -31,19 +69,9 @@ export async function syncPendingNotesForAccount(
 
   const run = (async () => {
     try {
-      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      return await NoteStorageService.syncPendingNotes(address, null, async () => {
-        const cached = leafCache.get(poolAddr);
-        if (cached && Date.now() - cached.at < TTL_MS) return cached.leaves;
-        const fromBlock = ConfigService.getDeployBlock();
-        const events = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
-        const leaves = events.map((e) => {
-          const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
-          return parsed!.args.commitment.toString();
-        });
-        leafCache.set(poolAddr, { at: Date.now(), leaves });
-        return leaves;
-      });
+      return await NoteStorageService.syncPendingNotes(address, null, () =>
+        fetchLeaves(poolAddr, readProvider),
+      );
     } finally {
       inFlight.delete(key);
     }
