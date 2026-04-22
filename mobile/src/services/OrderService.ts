@@ -25,7 +25,7 @@ import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
-import { fetchCommitmentLeaves } from '../lib/noteSync';
+import { getCommitmentLeaves } from '../lib/commitmentScan';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
 
@@ -190,19 +190,15 @@ export const OrderService = {
       // ─── Step 5: Merkle proof — fetch from relayer, fall back to local ─
       // Fast path: the relayer keeps the commitment tree in memory and
       // serves GET /api/info/merkle-proof?leafIndex=N with {root, pathElements,
-      // pathIndices} directly usable as circuit inputs. This lets mobile skip
-      // the full CommitmentInserted event scan + Poseidon rebuild on every
-      // order submission. Mirrors frontend/app/trade/_shared/buildOrderProof.ts.
+      // pathIndices} directly usable as circuit inputs.
       //
-      // Slow fallback: if the relayer is unreachable or returns a malformed
-      // body, scan CommitmentInserted events and rebuild a sparse tree
-      // locally — guarantees we can still trade when the relayer is down.
+      // Slow fallback: if the relayer is unreachable, rebuild the tree from
+      // the shared checkpointed scanner (chunked queryFilter + persistent
+      // AsyncStorage checkpoint) so we only fetch the delta since the last
+      // session, never the full range from deploy on every order.
       onProgress({ step: 'building_tree' });
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
-      // Settlement address isn't read here, but it's a hard prerequisite for
-      // the order to succeed on-chain — surfacing the misconfiguration now
-      // beats a cryptic relayer rejection later.
       if (!ConfigService.getPrivateSettlementAddress()) {
         throw new Error('PrivateSettlement address not configured');
       }
@@ -216,18 +212,15 @@ export const OrderService = {
 
       const remote = await RelayerApiService.getMerkleProof(note.leafIndex, input.relayerUrl);
       if (remote) {
-        // Relayer already validates leafIndex against tree size and returns a
-        // proof committed to its current root. The circuit re-verifies
-        // Merkle membership with our (secret, salt, pubKey) — a stale /
-        // mismatched leaf would fail proof generation, so no separate
-        // pre-flight against on-chain leaves is needed here.
         commitmentRoot = remote.root;
         pathElements = remote.pathElements;
         pathIndices = remote.pathIndices.map(String);
       } else {
-        // Shared with noteSync — if a recent screen-focus sync just populated
-        // the leaf cache, we reuse it here instead of re-querying.
-        const allLeaves = await fetchCommitmentLeaves(poolAddr, readProvider);
+        const allLeaves = await getCommitmentLeaves(
+          poolAddr,
+          readProvider,
+          ConfigService.getChainId(),
+        );
 
         // Only worth running the freshness check on this path since we
         // already paid for the full leaf set. Catches a stale note early
