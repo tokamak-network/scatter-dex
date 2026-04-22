@@ -135,13 +135,18 @@ async function openAndInit(): Promise<SQLite.SQLiteDatabase> {
       claims TEXT NOT NULL,
       settle_tx_hash TEXT,
       created_at INTEGER NOT NULL,
-      PRIMARY KEY (wallet, id)
+      PRIMARY KEY (wallet, id),
+      -- One spent note produces at most one trade record, so
+      -- getBySourceNoteId's LIMIT 1 is unambiguous by schema, not
+      -- by convention.
+      UNIQUE (wallet, source_note_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_trade_wallet_source_note ON trade_records(wallet, source_note_id);
-    -- order_id index anticipates the SettledScatter backfill path
-    -- (see createdAt doc above) that will look up records by relayer
-    -- orderId to attach settleTxHash.
-    CREATE INDEX IF NOT EXISTS idx_trade_wallet_order ON trade_records(wallet, order_id);
+    -- Partial index on order_id: relayer orderId is nullable (only
+    -- present after a relayer accepts), so a plain index would bloat
+    -- with NULL rows. Anticipates the SettledScatter backfill path.
+    CREATE INDEX IF NOT EXISTS idx_trade_wallet_order
+      ON trade_records(wallet, order_id)
+      WHERE order_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `);
   await migrateFromAsyncStorage(db);
@@ -176,20 +181,32 @@ async function migrateFromAsyncStorage(db: SQLite.SQLiteDatabase): Promise<void>
   }
 
   const pairs = await AsyncStorage.multiGet(keys);
+  const migratedKeys: string[] = [];
   await db.withTransactionAsync(async () => {
     for (const [key, raw] of pairs) {
-      if (!raw) continue;
+      // Empty/null legacy value — no user data to preserve, safe to remove.
+      if (!raw) { migratedKeys.push(key); continue; }
       const wallet = key.slice(LEGACY_PREFIX.length);
-      let records: TradeRecord[] = [];
-      try { records = JSON.parse(raw) as TradeRecord[]; } catch { continue; }
+      let records: TradeRecord[];
+      try { records = JSON.parse(raw) as TradeRecord[]; }
+      catch {
+        // Preserve corrupt blob in AsyncStorage for manual recovery;
+        // silent data loss on upgrade is worse than a dead key.
+        continue;
+      }
       for (const rec of records) {
         await insertRecord(db, wallet, { ...rec, claims: sanitizeClaims(rec.claims) });
       }
+      migratedKeys.push(key);
     }
+    // Set meta unconditionally — if a blob is unparseable now, it'll
+    // still be unparseable next open; re-scanning every launch is wasted
+    // work, and the corrupt key is still there to recover manually.
     await db.runAsync('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)', MIGRATION_KEY, '1');
   });
-  // Drop legacy keys only after the transaction commits.
-  await AsyncStorage.multiRemove(keys);
+  if (migratedKeys.length > 0) {
+    await AsyncStorage.multiRemove(migratedKeys);
+  }
 }
 
 async function insertRecord(db: SQLite.SQLiteDatabase, wallet: string, rec: TradeRecord): Promise<void> {
