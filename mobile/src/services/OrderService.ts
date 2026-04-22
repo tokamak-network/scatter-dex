@@ -417,7 +417,16 @@ export const OrderService = {
         sellToken: note.token,
         sellTokenSymbol: note.tokenSymbol,
         buyToken,
-        buyTokenSymbol: note.tokenSymbol, // scatter: same token; cross-token trades resolve on settle
+        // Resolve buy-token symbol from the token list so cross-token trades
+        // don't mislabel recipients. Falls back to the sell symbol for scatter
+        // (same-token) when the buy address matches, and to '?' otherwise so
+        // History makes the lookup gap visible instead of silently wrong.
+        buyTokenSymbol: (() => {
+          const hit = TokenService.getTokenList().find((t) => t.address.toLowerCase() === buyToken.toLowerCase());
+          if (hit) return hit.symbol;
+          if (buyToken.toLowerCase() === note.token.toLowerCase()) return note.tokenSymbol;
+          return '?';
+        })(),
         sellAmount: sellAmount.toString(),
         buyAmount: buyAmount.toString(),
         changeAmount: changeAmount.toString(),
@@ -425,11 +434,14 @@ export const OrderService = {
         relayerAddress: input.relayerAddress,
         relayerUrl: input.relayerUrl,
         orderId: response.orderId,
+        // Claim `secret` is stored only in PendingClaimsStorage (SecureStore)
+        // — TradeHistoryStorage keeps display metadata in AsyncStorage which
+        // is not encrypted, so leaking claim authority there would undermine
+        // the privacy model.
         claims: claims.map((c, idx) => ({
           recipient: c.recipient,
           amount: claimsData[idx].amount,
           releaseTime: claimsData[idx].releaseTime,
-          secret: claimsData[idx].secret,
           ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
         })),
         createdAt: Date.now(),

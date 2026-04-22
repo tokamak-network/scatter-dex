@@ -20,8 +20,12 @@ export interface TradeClaim {
   recipient: string;      // 0x address (stealth address for stealth mode)
   amount: string;         // wei string (buyToken units)
   releaseTime: string;    // unix seconds
-  secret: string;         // field element (kept locally so the user can claim later)
   ephemeralPubKey?: string;
+  // NOTE: claim `secret` is intentionally NOT stored here. The authoritative
+  // copy lives in PendingClaimsStorage (SecureStore, keychain-backed) —
+  // writing it into TradeHistoryStorage's AsyncStorage blob would leak
+  // claim authority via device backups / rooted-device reads. History is a
+  // display record only; claim authority stays in SecureStore.
 }
 
 export interface TradeRecord {
@@ -60,11 +64,18 @@ async function readAll(address: string): Promise<TradeRecord[]> {
 export const TradeHistoryStorage = {
   async append(address: string, record: TradeRecord): Promise<void> {
     const all = await readAll(address);
-    // Primary key is orderHash — a re-submit of the same order shouldn't
-    // duplicate the record, so overwrite on match.
-    const existing = all.findIndex((r) => r.id === record.id);
-    if (existing >= 0) all[existing] = record;
-    else all.push(record);
+    // Defensive strip: even if a caller passes { secret } on a TradeClaim
+    // (old field signature), we never persist it to AsyncStorage.
+    const sanitized: TradeRecord = {
+      ...record,
+      claims: record.claims.map((c) => {
+        const { secret: _drop, ...rest } = c as TradeClaim & { secret?: string };
+        return rest;
+      }),
+    };
+    const existing = all.findIndex((r) => r.id === sanitized.id);
+    if (existing >= 0) all[existing] = sanitized;
+    else all.push(sanitized);
     await AsyncStorage.setItem(keyFor(address), JSON.stringify(all));
   },
 
