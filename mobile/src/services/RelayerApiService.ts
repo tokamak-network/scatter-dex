@@ -80,6 +80,18 @@ export interface OrderStatus {
   orderId?: string;
 }
 
+/**
+ * Response from `GET /api/info/merkle-proof?leafIndex=N`. The relayer
+ * maintains the commitment Merkle tree in memory, so this is the fast
+ * path — mobile can skip the full `CommitmentInserted` event scan and
+ * local tree rebuild on every order submission. Decimal-string fields.
+ */
+export interface MerkleProofResponse {
+  root: string;
+  pathElements: string[];
+  pathIndices: number[];
+}
+
 export interface PrivateClaimRequest {
   proofA: string[];
   proofB: string[][];
@@ -154,6 +166,29 @@ export const RelayerApiService = {
       `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`,
       'order status',
     );
+  },
+
+  /**
+   * Fetch a Merkle proof for `leafIndex` from the relayer's in-memory tree.
+   * Returns `null` on any failure (network error, non-2xx, malformed body) —
+   * the caller is expected to fall back to a local event-scan + rebuild.
+   * Validates the response shape so a partial payload can't slip through
+   * and then fail deep inside the circuit input binding.
+   */
+  async getMerkleProof(
+    leafIndex: number,
+    relayerUrl?: string,
+  ): Promise<MerkleProofResponse | null> {
+    const url = `${relayerUrl || this.getBaseUrl()}/api/info/merkle-proof?leafIndex=${leafIndex}`;
+    try {
+      const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
+      if (!res.ok) return null;
+      const data: unknown = await res.json();
+      if (!isMerkleProofResponse(data)) return null;
+      return data;
+    } catch {
+      return null;
+    }
   },
 
   async getOrderbook(pair: string, relayerUrl?: string): Promise<any[]> {
@@ -259,4 +294,16 @@ async function relayerGetJson<T>(url: string, label: string): Promise<T> {
   const res = await fetchWithTimeout(url, { timeoutMs: TIMEOUT_READ_MS });
   if (!res.ok) throw new Error(`Failed to fetch ${label}: ${res.status}`);
   return res.json();
+}
+
+function isMerkleProofResponse(x: unknown): x is MerkleProofResponse {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.root === 'string' &&
+    Array.isArray(o.pathElements) &&
+    o.pathElements.every((e) => typeof e === 'string') &&
+    Array.isArray(o.pathIndices) &&
+    o.pathIndices.every((i) => typeof i === 'number')
+  );
 }

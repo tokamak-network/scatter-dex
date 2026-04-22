@@ -25,7 +25,7 @@ import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
-import { COMMITMENT_POOL_ABI } from '../lib/contracts';
+import { fetchCommitmentLeaves } from '../lib/noteSync';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
 
@@ -187,54 +187,68 @@ export const OrderService = {
         });
       }
 
-      // ─── Step 5: Fetch commitment leaves + build Merkle proof ─────
-      // Mirrors MarketOrderService: relayer now requires a client-generated
-      // authorize.circom proof (endpoint /api/private-orders was deprecated,
-      // returns 410 with a migration hint). We rebuild the tree from the
-      // pool's CommitmentInserted events rather than fetching from the
-      // relayer — matches the slow-but-simple path the frontend also falls
-      // back to when /api/info/merkle-proof is unavailable.
+      // ─── Step 5: Merkle proof — fetch from relayer, fall back to local ─
+      // Fast path: the relayer keeps the commitment tree in memory and
+      // serves GET /api/info/merkle-proof?leafIndex=N with {root, pathElements,
+      // pathIndices} directly usable as circuit inputs. This lets mobile skip
+      // the full CommitmentInserted event scan + Poseidon rebuild on every
+      // order submission. Mirrors frontend/app/trade/_shared/buildOrderProof.ts.
+      //
+      // Slow fallback: if the relayer is unreachable or returns a malformed
+      // body, scan CommitmentInserted events and rebuild a sparse tree
+      // locally — guarantees we can still trade when the relayer is down.
       onProgress({ step: 'building_tree' });
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
       const settlementAddr = ConfigService.getPrivateSettlementAddress();
       if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
-
-      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      const fromBlock = ConfigService.getDeployBlock();
-      const insertEvents = await pool.queryFilter(
-        pool.filters.CommitmentInserted(),
-        fromBlock,
-      );
-      const allLeaves = insertEvents.map((e) => {
-        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
-        return parsed!.args.commitment.toString();
-      });
-
-      // Verify the stored note still matches the on-chain leaf at its
-      // recorded index. A mismatch here means the note was spent/rotated
-      // elsewhere and re-using it would produce an invalid proof.
-      const noteCommitment = await ZKBridgeService.computeCommitment({
-        tag: TAG_COMMITMENT_V2.toString(),
-        secret: note.secret,
-        token: BigInt(note.token).toString(),
-        balance: note.amount,
-        salt: note.salt,
-        pubKeyAx: keyPair.pubKeyAx,
-        pubKeyAy: keyPair.pubKeyAy,
-      });
-      if (note.leafIndex < 0 || allLeaves[note.leafIndex] !== noteCommitment) {
-        throw new Error(
-          'Note commitment is no longer in the on-chain tree (spent or rotated).',
-        );
+      if (note.leafIndex < 0) {
+        throw new Error('Note has no on-chain leaf index (pending commitment).');
       }
 
-      const commitTree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
-      const commitmentRoot = commitTree.root;
-      const { pathElements, pathIndices } = getMerkleProofFromTree(
-        commitTree,
-        note.leafIndex,
-      );
+      let commitmentRoot: string;
+      let pathElements: string[];
+      let pathIndices: string[];
+
+      const remote = await RelayerApiService.getMerkleProof(note.leafIndex, input.relayerUrl);
+      if (remote) {
+        // Relayer already validates leafIndex against tree size and returns a
+        // proof committed to its current root. The circuit re-verifies
+        // Merkle membership with our (secret, salt, pubKey) — a stale /
+        // mismatched leaf would fail proof generation, so no separate
+        // pre-flight against on-chain leaves is needed here.
+        commitmentRoot = remote.root;
+        pathElements = remote.pathElements;
+        pathIndices = remote.pathIndices.map(String);
+      } else {
+        // Shared with noteSync — if a recent screen-focus sync just populated
+        // the leaf cache, we reuse it here instead of re-querying.
+        const allLeaves = await fetchCommitmentLeaves(poolAddr, readProvider);
+
+        // Only worth running the freshness check on this path since we
+        // already paid for the full leaf set. Catches a stale note early
+        // so the user doesn't wait for proof generation only to fail.
+        const noteCommitment = await ZKBridgeService.computeCommitment({
+          tag: TAG_COMMITMENT_V2.toString(),
+          secret: note.secret,
+          token: BigInt(note.token).toString(),
+          balance: note.amount,
+          salt: note.salt,
+          pubKeyAx: keyPair.pubKeyAx,
+          pubKeyAy: keyPair.pubKeyAy,
+        });
+        if (allLeaves[note.leafIndex] !== noteCommitment) {
+          throw new Error(
+            'Note commitment is no longer in the on-chain tree (spent or rotated).',
+          );
+        }
+
+        const commitTree = await buildPoseidonMerkleTree(allLeaves, COMMIT_TREE_DEPTH);
+        commitmentRoot = commitTree.root;
+        const proof = getMerkleProofFromTree(commitTree, note.leafIndex);
+        pathElements = proof.pathElements;
+        pathIndices = proof.pathIndices;
+      }
 
       // Nullifiers — tags 0 (escrow) / 1 (nonce) match cancel-prover and
       // MarketOrderService.

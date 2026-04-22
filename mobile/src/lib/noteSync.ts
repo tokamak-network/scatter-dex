@@ -28,7 +28,14 @@ const inFlight = new Map<string, Promise<number>>();
 const leafFetch = new Map<string, Promise<string[]>>();
 const leafCache = new Map<string, { at: number; leaves: string[] }>();
 
-function fetchLeaves(
+/**
+ * Fetch every `CommitmentInserted` leaf for the pool, dedupe'd across
+ * concurrent callers and briefly cached. Exported so `OrderService`'s
+ * Merkle-proof fallback path can share the same cache as `syncPending*`
+ * — a sync that just ran on screen focus won't re-scan when the user
+ * immediately submits an order.
+ */
+export function fetchCommitmentLeaves(
   poolAddr: string,
   readProvider: ethers.JsonRpcProvider,
 ): Promise<string[]> {
@@ -70,7 +77,7 @@ export async function syncPendingNotesForAccount(
   const run = (async () => {
     try {
       return await NoteStorageService.syncPendingNotes(address, null, () =>
-        fetchLeaves(poolAddr, readProvider),
+        fetchCommitmentLeaves(poolAddr, readProvider),
       );
     } finally {
       inFlight.delete(key);
