@@ -56,7 +56,7 @@ export default function SettingsScreen() {
   const {
     account, disconnect, connectionMode,
     wallets, activeWalletId, switchWallet,
-    addWalletFromCreate, addWalletFromMnemonic, addWalletFromPrivateKey,
+    addWalletFromCreate, addWalletFromPrivateKey,
     removeWallet,
   } = useWallet();
 
@@ -72,7 +72,10 @@ export default function SettingsScreen() {
   const [addressBookVisible, setAddressBookVisible] = useState(false);
   const [stealthKeysReveal, setStealthKeysReveal] = useState<{ spendingKey: string; viewingKey: string } | null>(null);
   const [backupVisible, setBackupVisible] = useState(false);
-  const [importMode, setImportMode] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  // Recovery-phrase import is intentionally gone: this device manages
+  // a single on-device mnemonic (Create generates + never surfaces a
+  // second seed), so the only external-import path is a single private
+  // key from another wallet.
   const [importSecret, setImportSecret] = useState('');
   const [importNickname, setImportNickname] = useState('');
 
@@ -409,7 +412,6 @@ export default function SettingsScreen() {
   const handleImportWallet = useCallback(() => {
     setImportSecret('');
     setImportNickname('');
-    setImportMode('mnemonic');
     setImportModalVisible(true);
   }, []);
 
@@ -422,24 +424,14 @@ export default function SettingsScreen() {
     setImportNickname('');
     setWalletLoading(true);
     try {
-      if (importMode === 'mnemonic') {
-        const { address, reusedSeed } = await addWalletFromMnemonic(secret, nickname);
-        Alert.alert(
-          'Wallet Imported',
-          reusedSeed
-            ? `Address: ${shortAddr(address)}\n\nDerived from the recovery phrase already on this device.`
-            : `Address: ${shortAddr(address)}`,
-        );
-      } else {
-        const address = await addWalletFromPrivateKey(secret, nickname);
-        Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
-      }
+      const address = await addWalletFromPrivateKey(secret, nickname);
+      Alert.alert('Wallet Imported', `Address: ${shortAddr(address)}`);
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to import wallet');
     } finally {
       setWalletLoading(false);
     }
-  }, [importSecret, importMode, importNickname, addWalletFromMnemonic, addWalletFromPrivateKey]);
+  }, [importSecret, importNickname, addWalletFromPrivateKey]);
 
   const handleSwitchWallet = useCallback(async (id: string) => {
     if (id === activeWalletId || walletLoading) return;
@@ -681,28 +673,8 @@ export default function SettingsScreen() {
         onClose={() => setImportModalVisible(false)}
         title="Import Wallet"
       >
-        <View style={s.modeTabs}>
-              <TouchableOpacity
-                style={[s.modeTab, importMode === 'mnemonic' && s.modeTabActive]}
-                onPress={() => { setImportMode('mnemonic'); setImportSecret(''); }}
-              >
-                <Text style={[s.modeTabText, importMode === 'mnemonic' && s.modeTabTextActive]}>
-                  Recovery Phrase
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.modeTab, importMode === 'privateKey' && s.modeTabActive]}
-                onPress={() => { setImportMode('privateKey'); setImportSecret(''); }}
-              >
-                <Text style={[s.modeTabText, importMode === 'privateKey' && s.modeTabTextActive]}>
-                  Private Key
-                </Text>
-              </TouchableOpacity>
-            </View>
             <Text style={s.modalSubtitle}>
-              {importMode === 'mnemonic'
-                ? 'Enter your 12 or 24-word recovery phrase:'
-                : 'Enter your private key (with or without 0x prefix):'}
+              Enter your private key (with or without 0x prefix):
             </Text>
             <TextInput
               style={[s.modalInput, { minHeight: 40 }]}
@@ -715,16 +687,14 @@ export default function SettingsScreen() {
             />
             <TextInput
               style={s.modalInput}
-              placeholder={importMode === 'mnemonic' ? 'word1 word2 word3 ...' : '0x...'}
+              placeholder="0x..."
               placeholderTextColor="#9CA3AF"
               value={importSecret}
               onChangeText={setImportSecret}
-              multiline={importMode === 'mnemonic'}
-              numberOfLines={importMode === 'mnemonic' ? 3 : 1}
               autoFocus
               autoCapitalize="none"
               autoCorrect={false}
-              secureTextEntry={importMode === 'privateKey'}
+              secureTextEntry
               textAlignVertical="top"
             />
             <View style={s.modalButtons}>
@@ -872,7 +842,7 @@ export default function SettingsScreen() {
           title: 'Share stealth keys?',
           body: 'These keys give full claiming authority over every stealth address your meta-address ever receives. Anyone with them can drain those funds. Only share to an encrypted store you control.',
           message: stealthKeysReveal
-            ? `ScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
+            ? `zkScatterDEX stealth keys (KEEP SECRET — never email or message)\n\nspending: ${stealthKeysReveal.spendingKey}\nviewing: ${stealthKeysReveal.viewingKey}`
             : '',
         }}
       />

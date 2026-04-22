@@ -231,7 +231,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         chains: [targetChainId],
         showQrModal: false,
         metadata: {
-          name: 'ScatterDEX',
+          name: 'zkScatterDEX',
           description: 'Privacy-Preserving DEX',
           url: 'https://scatterdex.io',
           icons: ['https://scatterdex.io/icon.png'],
@@ -493,6 +493,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // overwrite that with the stale built-in id.
     setActiveWalletId(connectionMode === 'builtin' ? activeId : null);
   }, [connectionMode]);
+
+  // Hydrate the wallets list on mount so Home can render the correct
+  // connect card (Connect Wallet vs Create New Wallet) before the user
+  // first taps anything. Without this, a returning user with wallets
+  // already in Keychain briefly sees the "no wallet" prompt.
+  useEffect(() => { refreshWallets().catch(() => {}); }, [refreshWallets]);
 
   const switchWallet = useCallback(async (id: string) => {
     const list = await KeySecurityService.listWallets();

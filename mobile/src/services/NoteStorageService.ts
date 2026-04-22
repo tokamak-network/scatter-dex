@@ -224,6 +224,18 @@ async function _runMigration(address: string): Promise<void> {
 
 type WalletSwitchListener = (address: string | null) => void;
 const _walletSwitchListeners = new Set<WalletSwitchListener>();
+// Fired whenever a note is created, updated, or promoted from pending
+// to active. Screens that render balances/lists (Home, History) can
+// subscribe so they don't need to rely on useFocusEffect alone —
+// crucial for the Trade → History flow where Home isn't re-focused
+// between submit and the on-chain settle landing.
+type NotesChangedListener = (address: string) => void;
+const _notesChangedListeners = new Set<NotesChangedListener>();
+function fireNotesChanged(address: string) {
+  for (const l of _notesChangedListeners) {
+    try { l(address); } catch { /* keep other listeners healthy */ }
+  }
+}
 
 /**
  * Field elements here (`id`, `commitment`, `secret`, `salt`,
@@ -284,6 +296,17 @@ export const NoteStorageService = {
     }
   },
 
+  subscribeNotesChanged(listener: NotesChangedListener): () => void {
+    _notesChangedListeners.add(listener);
+    return () => { _notesChangedListeners.delete(listener); };
+  },
+
+  /** Broadcast a notes-changed event from outside the note mutators —
+   *  used by flows that don't touch StoredNote directly but still want
+   *  subscribers to refresh (e.g. a successful claim burns gas but
+   *  doesn't rewrite any note, yet Home's balance read needs to retick). */
+  emitNotesChanged(address: string): void { fireNotesChanged(address); },
+
   async getNoteIds(address: string): Promise<string[]> {
     requireAddress(address);
     await migrateLegacyIfNeeded(address);
@@ -323,6 +346,7 @@ export const NoteStorageService = {
         await AsyncStorage.setItem(indexKeyFor(address), JSON.stringify(ids));
       }
     });
+    fireNotesChanged(address);
   },
 
   /**
@@ -388,6 +412,7 @@ export const NoteStorageService = {
       noteKeyFor(address, id),
       JSON.stringify(note),
     );
+    fireNotesChanged(address);
   },
 
   async deleteNote(address: string, id: string): Promise<void> {
@@ -404,6 +429,57 @@ export const NoteStorageService = {
   async getActiveNotes(address: string): Promise<StoredNote[]> {
     const all = await this.getAllNotes(address);
     return all.filter((n) => n.status === 'active');
+  },
+
+  /**
+   * Walk through pending notes (status='pending', leafIndex=-1) and
+   * promote them to `active` once their commitment has landed on-chain.
+   * Used after a trade submit: the change UTXO is saved locally before
+   * the relayer's scatterDirectAuth tx settles, so the leafIndex isn't
+   * known yet. Call this from screens that surface pending state (Home,
+   * History) to keep them in sync without forcing the user to reload.
+   *
+   * Accepts the already-fetched `allLeaves` array to dedupe work when a
+   * caller (e.g. trade submit flow) just queried it — otherwise pass
+   * `null` and we query CommitmentInserted ourselves.
+   */
+  async syncPendingNotes(
+    address: string,
+    allLeaves: string[] | null,
+    fetchLeaves?: () => Promise<string[]>,
+  ): Promise<number> {
+    requireAddress(address);
+    const all = await this.getAllNotes(address);
+    const stale = all.filter((n) => n.status === 'pending' && n.leafIndex < 0);
+    if (stale.length === 0) return 0;
+
+    const leaves = allLeaves ?? (fetchLeaves ? await fetchLeaves() : null);
+    if (!leaves) return 0;
+
+    // Build a commitment → leafIndex map so the match is O(n+m) instead
+    // of O(n·m). Normalise both sides via BigInt.toString() so a
+    // leading-zero or 0x-prefix mismatch between the note blob and
+    // the event payload can't make the lookup miss.
+    const norm = (x: string): string => {
+      try { return BigInt(x).toString(); } catch { return x; }
+    };
+    const leafByCommit = new Map<string, number>();
+    for (let i = 0; i < leaves.length; i++) leafByCommit.set(norm(leaves[i]), i);
+
+    let promoted = 0;
+    for (const n of stale) {
+      const idx = leafByCommit.get(norm(n.commitment));
+      if (idx === undefined) continue;
+      n.leafIndex = idx;
+      n.status = 'active';
+      await SecureStore.setItemAsync(noteKeyFor(address, n.id), JSON.stringify(n));
+      promoted += 1;
+    }
+    if (promoted > 0) {
+      console.log(`[noteSync] promoted ${promoted} pending note(s) to active for ${address.slice(0, 8)}…`);
+      fireNotesChanged(address);
+    }
+    return promoted;
   },
 
   async getActiveNotesByToken(address: string, tokenAddress: string): Promise<StoredNote[]> {

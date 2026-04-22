@@ -59,6 +59,14 @@ export function parseHumanNumber(str: string): number {
 // Pre-built formatter — constructing Intl.DateTimeFormat per call is
 // measurably slow on older Android devices.
 const ABSOLUTE_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const TIME_OF_DAY_FMT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+/** "14:32" — used by Claim row lock badges. Accepts number or decimal
+ *  string (matches StoredClaim.releaseTime which is serialised as a
+ *  string). */
+export function formatTimeOfDay(timestampSec: number | string): string {
+  return TIME_OF_DAY_FMT.format(new Date(Number(timestampSec) * 1000));
+}
 
 /** Relative time for activity feeds: "12m ago", "3h ago", "Yesterday", "Jul 18".
  *  `timestampSec` is Unix seconds (matches block.timestamp). `nowMs` is

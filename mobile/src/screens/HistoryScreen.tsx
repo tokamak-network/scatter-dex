@@ -6,13 +6,20 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
+import { syncPendingNotesForAccount } from '../lib/noteSync';
+import { computeRelayFeeWei } from '../lib/fees';
+import { ProviderService } from '../services/ProviderService';
 import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
+import { TradeHistoryStorage, TradeRecord } from '../services/TradeHistoryStorage';
+import { TokenService } from '../services/TokenService';
+import { ethers } from 'ethers';
 import { CancelService, CancelProgress } from '../services/CancelService';
 import { formatAmount, formatDate, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
@@ -85,9 +92,17 @@ function noteToActivity(note: StoredNote, orderStatuses: Map<string, OrderStatus
 
 export default function HistoryScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { account, signer } = useWallet();
 
-  const [tab, setTab] = useState<Tab>('active');
+  // Honor `initialTab` from navigation.navigate('History', {initialTab}).
+  // Trade submit uses this to land the user on Spent (same-token scatter,
+  // settles immediately) or Pending (cross-token, waits for a match).
+  const [tab, setTab] = useState<Tab>((route.params?.initialTab as Tab) || 'active');
+  useEffect(() => {
+    const t = route.params?.initialTab as Tab | undefined;
+    if (t) setTab(t);
+  }, [route.params?.initialTab]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,54 +111,76 @@ export default function HistoryScreen() {
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatus>>(new Map());
   const [pendingOrders, setPendingOrders] = useState<OrderStatus[]>([]);
   const [cancellingNoteId, setCancellingNoteId] = useState<string | null>(null);
+  // Per-note trade record cache (populated as the user expands rows).
+  // `null` = fetched but no record; `undefined` = not yet loaded.
+  const [tradeByNote, setTradeByNote] = useState<Map<string, TradeRecord | null>>(new Map());
+  // Per-tradeRec token decimals so sell/buy amounts display correctly for
+  // non-18-decimal tokens (e.g. USDC=6). Resolved lazily on expand via
+  // TokenService.getDecimals (whitelist + on-chain fallback).
+  const [decimalsByNote, setDecimalsByNote] = useState<Map<string, { sell: number; buy: number }>>(new Map());
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
 
-  // Load notes and order statuses
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      if (!account) {
-        setAllNotes([]);
-        setOrderStatuses(new Map());
-        setPendingOrders([]);
-        setLoading(false);
-        return;
+  const toggleExpand = useCallback(async (noteId: string) => {
+    if (expandedNoteId === noteId) { setExpandedNoteId(null); return; }
+    setExpandedNoteId(noteId);
+    if (!account || tradeByNote.has(noteId)) return;
+    try {
+      const rec = await TradeHistoryStorage.getBySourceNoteId(account, noteId);
+      setTradeByNote((prev) => new Map(prev).set(noteId, rec));
+      if (rec) {
+        const provider = ProviderService.getReadProvider();
+        const [sell, buy] = await Promise.all([
+          TokenService.getDecimals(provider, rec.sellToken).catch(() => 18),
+          TokenService.getDecimals(provider, rec.buyToken).catch(() => 18),
+        ]);
+        setDecimalsByNote((prev) => new Map(prev).set(noteId, { sell, buy }));
       }
-      setLoading(true);
-      setError(null);
-      try {
-        const notes = await NoteStorageService.getAllNotes(account);
-        if (cancelled) return;
-        setAllNotes(notes);
+    } catch {
+      setTradeByNote((prev) => new Map(prev).set(noteId, null));
+    }
+  }, [account, expandedNoteId, tradeByNote]);
 
-        // Try to load order statuses from relayer if we have EdDSA key
-        if (account && signer) {
-          try {
-            const keyPair = await EdDSAKeyService.loadKey(account);
-            if (keyPair) {
-              const statuses = await RelayerApiService.getOrderStatus(keyPair.pubKeyAx);
-              if (!cancelled) {
-                const statusMap = new Map<string, OrderStatus>();
-                for (const s of statuses) {
-                  const key = s.orderId ?? s.nonce ?? '';
-                  if (key) statusMap.set(key, s);
-                }
-                setOrderStatuses(statusMap);
-                setPendingOrders(statuses.filter((s) => s.status === 'pending'));
-              }
+  // Load notes + (best-effort) relayer order statuses. `useNoteRefresh`
+  // handles mount/focus/notesChanged; relayer errors are swallowed since
+  // the relayer can be offline without breaking the local view.
+  const loadHistory = useCallback(async () => {
+    if (!account) {
+      setAllNotes([]);
+      setOrderStatuses(new Map());
+      setPendingOrders([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await syncPendingNotesForAccount(account, ProviderService.getReadProvider()).catch(() => 0);
+      const notes = await NoteStorageService.getAllNotes(account);
+      setAllNotes(notes);
+
+      if (signer) {
+        try {
+          const keyPair = await EdDSAKeyService.loadKey(account);
+          if (keyPair) {
+            const statuses = await RelayerApiService.getOrderStatus(keyPair.pubKeyAx);
+            const statusMap = new Map<string, OrderStatus>();
+            for (const s of statuses) {
+              const key = s.orderId ?? s.nonce ?? '';
+              if (key) statusMap.set(key, s);
             }
-          } catch {
-            // Relayer might be offline, continue with local data only
+            setOrderStatuses(statusMap);
+            setPendingOrders(statuses.filter((s) => s.status === 'pending'));
           }
-        }
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || 'Failed to load history');
-      } finally {
-        if (!cancelled) setLoading(false);
+        } catch { /* relayer offline — local data only */ }
       }
-    };
-    load();
-    return () => { cancelled = true; };
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load history');
+    } finally {
+      setLoading(false);
+    }
   }, [account, signer]);
+
+  useNoteRefresh(loadHistory);
 
   // Eager clear on wallet switch — matches TradeScreen / ClaimScreen.
   // Without this, the previous wallet's note history briefly renders
@@ -344,9 +381,18 @@ export default function HistoryScreen() {
               // their historical statusType but are not cancellable.
               const isCancellable = cancellableNoteIds.has(item.id);
               const isCancelling = cancellingNoteId === item.id;
+              const isExpanded = expandedNoteId === item.id;
+              const tradeRec = tradeByNote.get(item.id);
+              const decs = decimalsByNote.get(item.id);
+              const sellDec = decs?.sell ?? 18;
+              const buyDec = decs?.buy ?? 18;
               return (
                 <View key={item.id} style={{ gap: 8 }}>
-                  <View style={s.actRow}>
+                  <TouchableOpacity
+                    style={s.actRow}
+                    onPress={() => toggleExpand(item.id)}
+                    activeOpacity={0.8}
+                  >
                     <View style={s.actLeft}>
                       <View style={s.actIcon}>
                         <View style={[s.actDot, { backgroundColor: TYPE_COLORS[item.type] || colors.primary }]} />
@@ -377,7 +423,66 @@ export default function HistoryScreen() {
                         </Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
+                  {isExpanded && (
+                    <View style={s.detailCard}>
+                      {tradeRec === undefined ? (
+                        <Text style={s.detailMuted}>Loading trade details…</Text>
+                      ) : tradeRec === null ? (
+                        <Text style={s.detailMuted}>No trade record for this note.</Text>
+                      ) : (
+                        <>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Sold</Text>
+                            <Text style={s.detailValue}>
+                              {ethers.formatUnits(tradeRec.sellAmount, sellDec)} {tradeRec.sellTokenSymbol}
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Change</Text>
+                            <Text style={s.detailValue}>
+                              {ethers.formatUnits(tradeRec.changeAmount, sellDec)} {tradeRec.sellTokenSymbol}
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Relay fee</Text>
+                            <Text style={s.detailValue}>
+                              {ethers.formatUnits(computeRelayFeeWei(BigInt(tradeRec.buyAmount), tradeRec.maxFeeBps), 18)} {tradeRec.buyTokenSymbol}
+                              {'  '}
+                              <Text style={[s.detailValue, { color: colors.textMuted, fontWeight: '500' }]}>({tradeRec.maxFeeBps} bps)</Text>
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Relayer</Text>
+                            <Text style={s.detailValueMono}>{shortAddr(tradeRec.relayerAddress)}</Text>
+                          </View>
+                          {tradeRec.settleTxHash && (
+                            <View style={s.detailRow}>
+                              <Text style={s.detailLabel}>Settle tx</Text>
+                              <Text style={s.detailValueMono}>{shortAddr(tradeRec.settleTxHash)}</Text>
+                            </View>
+                          )}
+                          <Text style={s.detailSectionHeader}>
+                            Recipients ({tradeRec.claims.length})
+                          </Text>
+                          {tradeRec.claims.map((c, i) => (
+                            <View key={i} style={s.claimRow}>
+                              <Text style={s.claimIdx}>#{i + 1}</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.detailValue}>
+                                  {ethers.formatUnits(c.amount, buyDec)} {tradeRec.buyTokenSymbol}
+                                </Text>
+                                <Text style={s.claimMeta}>
+                                  {shortAddr(c.recipient)} · release{' '}
+                                  {new Date(Number(c.releaseTime) * 1000).toLocaleString()}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </>
+                      )}
+                    </View>
+                  )}
                   {isCancellable && (
                     <TouchableOpacity
                       style={[s.cancelBtn, isCancelling && { opacity: 0.5 }]}
@@ -407,6 +512,17 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
   scrollContent: { gap: layout.sectionGap, paddingBottom: layout.contentBottom },
+
+  detailCard: { padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, gap: 6 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  detailLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
+  detailValue: { fontSize: 12, color: colors.text, fontWeight: '700' },
+  detailValueMono: { fontSize: 11, color: colors.text, fontFamily: 'monospace' },
+  detailMuted: { fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 8 },
+  detailSectionHeader: { fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', marginTop: 6 },
+  claimRow: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: 4 },
+  claimIdx: { fontSize: 11, color: colors.primary, fontWeight: '700', width: 24 },
+  claimMeta: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
 
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.borderLight, alignItems: 'center', justifyContent: 'center' },
   avatarIcon: { fontSize: 20, color: colors.textSecondary },

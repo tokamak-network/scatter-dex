@@ -12,11 +12,11 @@ set -e
 #   FORK_URL                     (default: https://eth.llamarpc.com — drpc is
 #                                 a good alternate when llamarpc shards flap)
 #   FORK_BLOCK                   (default: latest — pin for reproducibility)
-#   FORK_CHAIN_ID                (default: 31338 — avoids MetaMask's mainnet
-#                                 collision; the frontend overrides the 1inch
-#                                 aggregator chainId to 1 via
-#                                 NEXT_PUBLIC_AGGREGATOR_CHAIN_ID so routing
-#                                 keeps using mainnet liquidity data)
+#   FORK_CHAIN_ID                (default: 31338 — distinguishes the mainnet
+#                                 fork env from plain local anvil (31337);
+#                                 the frontend overrides the 1inch aggregator
+#                                 chainId to 1 via NEXT_PUBLIC_AGGREGATOR_CHAIN_ID
+#                                 so routing keeps using mainnet liquidity data)
 #   NEXT_PUBLIC_DISABLE_AGGREGATOR
 #                                (default: true on fork because 1inch's
 #                                 Pathfinder often picks non-Uniswap pools
@@ -39,11 +39,11 @@ RPC_URL="http://localhost:8545"
 RELAYER_FEE_BPS=30
 FORK_URL="${FORK_URL:-https://eth.llamarpc.com}"
 FORK_BLOCK="${FORK_BLOCK:-}"
-# Default to 31338 so MetaMask accepts this as a custom network.
-# Using chain-id 1 would collide with mainnet and MetaMask blocks adding it.
-# The frontend decouples wallet chain id from the aggregator chain id —
-# 1inch is always queried with chainId=1 since the fork mirrors mainnet
-# state (same router / pool addresses).
+# Default to 31338 to distinguish the mainnet-fork env from plain anvil
+# (31337). Using chain-id 1 would collide with mainnet and MetaMask blocks
+# adding it. The frontend decouples wallet chain id from the aggregator
+# chain id — 1inch is always queried with chainId=1 since the fork mirrors
+# mainnet state (same router / pool addresses).
 FORK_CHAIN_ID="${FORK_CHAIN_ID:-31338}"
 PIDS=()
 CLEANED_UP=false

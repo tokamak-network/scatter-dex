@@ -1,22 +1,25 @@
 /**
  * ClaimScreen — converted from web design prototype Claim.tsx
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
 import { colors, layout, shadowSubtle, shadowTab } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { ClaimService, ClaimData, ClaimProgress, ClaimStep, MAX_CLAIM_BATCH_SIZE } from '../services/ClaimService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
 import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsStorage';
+import ClaimStatusBadge, { isClaimLocked } from '../components/ClaimStatusBadge';
+import { useNowSec } from '../hooks/useNowSec';
 import { NoteStorageService } from '../services/NoteStorageService';
 import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
 import { deriveStealthPrivateKey } from '../lib/stealth';
-import { formatAmount } from '../lib/format';
+import { formatAmount, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import SecretRevealModal from '../components/SecretRevealModal';
 import { ethers } from 'ethers';
@@ -38,9 +41,28 @@ export default function ClaimScreen() {
   const [loadingClaims, setLoadingClaims] = useState(false);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
 
+  // Expandable row state — lets a single row reveal recipient, token,
+  // release time, stealth flag, and originating order id without
+  // navigating away. Keyed by row index into `pendingClaims`.
+  const [expandedClaimIdx, setExpandedClaimIdx] = useState<number | null>(null);
+
   // Submission mode
   const [submitMode, setSubmitMode] = useState<'wallet' | 'relayer'>('wallet');
   const [relayers, setRelayers] = useState<RelayerInfo[]>([]);
+
+  // Native ETH balance of the active wallet — used to disable "Claim to
+  // Wallet" when there's nothing to pay gas with. Refreshes on account /
+  // provider change AND when notes mutate (claim success burns gas).
+  const [walletEthBalance, setWalletEthBalance] = useState<bigint | null>(null);
+  const refreshEthBalance = useCallback(() => {
+    if (!account || !readProvider) { setWalletEthBalance(null); return; }
+    readProvider.getBalance(account)
+      .then(setWalletEthBalance)
+      .catch(() => setWalletEthBalance(null));
+  }, [account, readProvider]);
+  useEffect(refreshEthBalance, [refreshEthBalance]);
+  useEffect(() => NoteStorageService.subscribeNotesChanged(refreshEthBalance), [refreshEthBalance]);
+  const walletHasGas = walletEthBalance === null ? true : walletEthBalance > 0n;
 
   // Progress
   const [progress, setProgress] = useState(0);
@@ -48,6 +70,28 @@ export default function ClaimScreen() {
   const [claimError, setClaimError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<ClaimStep>('idle');
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
+  const hasSelection = claimTab === 'json' ? !!parsedJsonClaim : selectedIndices.size > 0;
+  // Block submit when any selected claim is still locked — the contract
+  // would revert and waste the user's gas + proof-gen. The clock ticks
+  // only while a lock exists on screen, so unlocked sessions don't eat
+  // a standing 30s setInterval.
+  const anyClaimLocked = useMemo(() => {
+    if (parsedJsonClaim && isClaimLocked(parsedJsonClaim.releaseTime, Math.floor(Date.now() / 1000))) return true;
+    return pendingClaims.some((c) => isClaimLocked(c.releaseTime, Math.floor(Date.now() / 1000)));
+  }, [parsedJsonClaim, pendingClaims]);
+  const nowSec = useNowSec(anyClaimLocked);
+  const selectedNotReleased = useMemo(() => {
+    if (claimTab === 'json') return !!(parsedJsonClaim && isClaimLocked(parsedJsonClaim.releaseTime, nowSec));
+    for (const i of selectedIndices) {
+      const c = pendingClaims[i];
+      if (c && isClaimLocked(c.releaseTime, nowSec)) return true;
+    }
+    return false;
+  }, [claimTab, parsedJsonClaim, selectedIndices, pendingClaims, nowSec]);
+  const submitDisabled = claiming
+    || !hasSelection
+    || selectedNotReleased
+    || (submitMode === 'wallet' && !walletHasGas);
 
   const STEP_PROGRESS: Record<ClaimStep, number> = {
     idle: 0,
@@ -67,31 +111,26 @@ export default function ClaimScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  // Load pending claims. PendingClaimsStorage pulls each secret from
-  // SecureStore and the rest from AsyncStorage; legacy blobs written before
-  // the SecureStore split are migrated transparently on first call.
-  useEffect(() => {
-    let cancelled = false;
+  // Load pending claims. `useNoteRefresh` wires mount + focus +
+  // notesChanged (order submit writes claims and flips the source
+  // note to 'spent', which fires the shared event).
+  const loadPending = useCallback(async () => {
     if (!account) {
       setPendingClaims([]);
       setSelectedIndices(new Set());
       setLoadingClaims(false);
       return;
     }
-    const load = async () => {
-      setLoadingClaims(true);
-      try {
-        const claims = await PendingClaimsStorage.list(account);
-        if (!cancelled) setPendingClaims(claims);
-      } catch {
-        if (!cancelled) setPendingClaims([]);
-      } finally {
-        if (!cancelled) setLoadingClaims(false);
-      }
-    };
-    load();
-    return () => { cancelled = true; };
+    setLoadingClaims(true);
+    try {
+      setPendingClaims(await PendingClaimsStorage.list(account));
+    } catch {
+      setPendingClaims([]);
+    } finally {
+      setLoadingClaims(false);
+    }
   }, [account]);
+  useNoteRefresh(loadPending);
 
   // Eager clear on wallet switch. NoteStorageService's switch hook
   // fires synchronously before the `[account]` effect above repopulates,
@@ -311,6 +350,10 @@ export default function ClaimScreen() {
       if (ok && submittedCount > 0) {
         setProgress(100);
         setBatchStatus(null);
+        // Refresh Home/Trade balances and own ETH balance — a successful
+        // wallet-mode claim burns gas and moves tokens; gasless still
+        // moves tokens but not gas.
+        if (account) NoteStorageService.emitNotesChanged(account);
         const allDone = submittedCount === claimDataList.length;
         Alert.alert(
           allDone ? 'Claim Successful' : 'Partial Claim Success',
@@ -414,9 +457,7 @@ export default function ClaimScreen() {
                           <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
                         </View>
                       </View>
-                      <View style={s.statusBadge}>
-                        <Text style={s.statusText}>Ready to Claim</Text>
-                      </View>
+                      <ClaimStatusBadge releaseTime={parsedJsonClaim.releaseTime} nowSec={nowSec} />
                     </View>
                     {parsedJsonEphemeralPubKey && (
                       <TouchableOpacity
@@ -457,6 +498,9 @@ export default function ClaimScreen() {
                           selectedIndices.has(index) && { borderColor: colors.primaryDark, borderWidth: 2 },
                         ]}
                         onPress={() => togglePendingSelection(index)}
+                        onLongPress={() =>
+                          setExpandedClaimIdx((prev) => (prev === index ? null : index))
+                        }
                       >
                         <View style={s.itemLeft}>
                           <View style={s.itemIcon}>
@@ -467,10 +511,49 @@ export default function ClaimScreen() {
                             <Text style={s.itemAmount}>{formatAmount(item.amount)} tokens</Text>
                           </View>
                         </View>
-                        <View style={s.statusBadge}>
-                          <Text style={s.statusText}>Ready to Claim</Text>
+                        <View style={s.itemRight}>
+                          <ClaimStatusBadge releaseTime={item.releaseTime} nowSec={nowSec} />
+                          <TouchableOpacity
+                            onPress={() =>
+                              setExpandedClaimIdx((prev) => (prev === index ? null : index))
+                            }
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Text style={s.expandChev}>
+                              {expandedClaimIdx === index ? '▲' : '▼'}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </TouchableOpacity>
+                      {expandedClaimIdx === index && (
+                        <View style={s.detailCard}>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Recipient</Text>
+                            <Text style={s.detailValueMono}>{shortAddr(item.recipient)}</Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Token</Text>
+                            <Text style={s.detailValueMono}>{shortAddr(item.token)}</Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Release</Text>
+                            <Text style={s.detailValue}>
+                              {new Date(Number(item.releaseTime) * 1000).toLocaleString()}
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Order</Text>
+                            <Text style={s.detailValueMono}>
+                              {item.orderId ? `${item.orderId.slice(0, 14)}…` : '—'}
+                            </Text>
+                          </View>
+                          {item.ephemeralPubKey ? (
+                            <Text style={s.detailStealth}>
+                              Stealth claim — reveal key below to derive the recipient's signing key.
+                            </Text>
+                          ) : null}
+                        </View>
+                      )}
                       {item.ephemeralPubKey && (
                         <TouchableOpacity
                           style={s.revealBtn}
@@ -490,19 +573,27 @@ export default function ClaimScreen() {
           <View style={{ height: 200 }} />
         </ScrollView>
 
-        {/* Bottom Proof Panel */}
+        {/* Bottom Proof Panel — idle collapses to just the submit mode
+            toggle + button. Progress + "generating on-device" hint only
+            appear once the user taps Claim and proof generation is live,
+            so the panel doesn't mislead users into thinking work is
+            already happening in the background. */}
         <View style={s.bottomPanel}>
-          <View style={s.proofHeader}>
-            <Text style={s.proofLabel}>ZK Claim Proof Generation</Text>
-            <Text style={s.proofPercent}>{progressLabel}</Text>
-          </View>
-          <View style={s.progressTrack}>
-            <View style={[s.progressFill, { width: `${progress}%` as any }]} />
-          </View>
-          {batchStatus ? (
-            <Text style={s.proofHint}>{batchStatus}</Text>
-          ) : (
-            <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
+          {claiming && (
+            <>
+              <View style={s.proofHeader}>
+                <Text style={s.proofLabel}>ZK Claim Proof Generation</Text>
+                <Text style={s.proofPercent}>{progressLabel}</Text>
+              </View>
+              <View style={s.progressTrack}>
+                <View style={[s.progressFill, { width: `${progress}%` as any }]} />
+              </View>
+              {batchStatus ? (
+                <Text style={s.proofHint}>{batchStatus}</Text>
+              ) : (
+                <Text style={s.proofHint}>Proof is being securely generated on-device.</Text>
+              )}
+            </>
           )}
 
           <View style={s.modeRow}>
@@ -526,11 +617,49 @@ export default function ClaimScreen() {
             </TouchableOpacity>
           </View>
 
+          {hasSelection && selectedNotReleased && (
+            <Text style={s.activeWalletWarn}>
+              Selected claim is still locked — wait until its release time to submit.
+            </Text>
+          )}
+          {submitMode === 'wallet' && account && (
+            <View style={s.activeWalletRow}>
+              <Text style={s.activeWalletLabel}>
+                Submitting from {shortAddr(account)}
+              </Text>
+              <Text style={[
+                s.activeWalletBalance,
+                !walletHasGas && { color: colors.danger },
+              ]}>
+                {walletEthBalance !== null
+                  ? `${parseFloat(ethers.formatEther(walletEthBalance)).toFixed(4)} ETH`
+                  : '…'}
+              </Text>
+            </View>
+          )}
+          {submitMode === 'wallet' && !walletHasGas && (
+            <Text style={s.activeWalletWarn}>
+              Active wallet has no ETH for gas. Switch wallet in Settings or
+              use Gasless (Relayer).
+            </Text>
+          )}
+          {submitMode === 'relayer' && (
+            <View style={s.activeWalletRow}>
+              <Text style={s.activeWalletLabel}>
+                {relayers.length === 0
+                  ? 'No online relayer'
+                  : `Gasless via ${shortAddr(relayers[0].address)}`}
+              </Text>
+              <Text style={s.activeWalletBalance}>
+                {relayers.length === 0 ? '—' : `${relayers[0].fee} bps`}
+              </Text>
+            </View>
+          )}
           <TouchableOpacity
-            style={[s.claimBtn, claiming && { backgroundColor: colors.textMuted }]}
+            style={[s.claimBtn, submitDisabled && { backgroundColor: colors.textMuted }]}
             activeOpacity={0.8}
             onPress={handleClaim}
-            disabled={claiming}
+            disabled={submitDisabled}
           >
             {claiming ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -559,7 +688,7 @@ export default function ClaimScreen() {
           title: 'Share stealth private key?',
           body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
           message: stealthPrivkeyReveal
-            ? `ScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
+            ? `zkScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
             : '',
         }}
       />
@@ -625,4 +754,16 @@ const s = StyleSheet.create({
   modeBtnTextActive: { color: colors.primaryDark },
   claimBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   claimBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
+  activeWalletRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4, paddingVertical: 6, marginBottom: 4 },
+  activeWalletLabel: { fontSize: 11, color: colors.textSecondary, fontFamily: 'monospace' },
+  activeWalletBalance: { fontSize: 11, fontWeight: '700', color: colors.text },
+  activeWalletWarn: { fontSize: 11, color: colors.danger, fontWeight: '600', textAlign: 'center', marginBottom: 6 },
+  itemRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  expandChev: { fontSize: 10, color: colors.textMuted, fontWeight: '700' },
+  detailCard: { padding: 10, backgroundColor: colors.bgSecondary, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, gap: 6 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  detailLabel: { fontSize: 10, color: colors.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
+  detailValue: { fontSize: 11, color: colors.text, fontWeight: '600' },
+  detailValueMono: { fontSize: 10, color: colors.text, fontFamily: 'monospace' },
+  detailStealth: { fontSize: 10, color: colors.warning, fontStyle: 'italic', marginTop: 2 },
 });

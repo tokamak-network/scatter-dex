@@ -7,16 +7,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useNoteRefresh } from '../hooks/useNoteRefresh';
+import { syncPendingNotesForAccount } from '../lib/noteSync';
 import { ethers } from 'ethers';
 import { colors, layout, shadowTab } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { OrderService, OrderInput, OrderProgress } from '../services/OrderService';
+import { EdDSAKeyService } from '../services/EdDSAKeyService';
 import { MarketOrderService, MarketOrderInput, MarketOrderProgress } from '../services/MarketOrderService';
 import { RelayerApiService, RelayerInfo } from '../services/RelayerApiService';
-import { TokenService } from '../services/TokenService';
+import { TokenService, TokenInfo } from '../services/TokenService';
 import { ConfigService } from '../services/ConfigService';
+import { eqAddr } from '../lib/address';
 import AddressBookModal from '../components/AddressBookModal';
 import MarketQuoteCard from '../components/MarketQuoteCard';
 import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
@@ -56,9 +60,60 @@ export default function TradeScreen() {
 
   const [tradeType, setTradeType] = useState<'limit' | 'market'>('limit');
   const [amount, setAmount] = useState('');
-  const [price, setPrice] = useState('1850.25');
-  const [orderTab, setOrderTab] = useState<'book' | 'recent'>('book');
-  const buyTokenSymbol = ConfigService.getBuyTokenSymbol();
+  // Default to "1" — scatter mode pins it to 1 anyway, and a cross-token
+  // limit order with a sensible initial value is less likely when the
+  // user hasn't even picked a note yet. The old "1850.25" ETH/USDC
+  // default was misleading on any non-ETH pair.
+  const [price, setPrice] = useState('1');
+
+  // Buy-token selector. Default to the configured "buy token symbol" from
+  // the whitelist (falls back to WETH) so existing market-quote flows keep
+  // their historical default. When the user picks a buy token identical
+  // to the sell note's token, the form enters scatter mode (same-token
+  // direct distribution — see frontend/app/trade/private-order/page.tsx).
+  // Re-derive on walletChainId change: TokenService.getTokenList() is cached
+  // but that cache is cleared on ProviderService network resets, so a stale
+  // memo here would pin the buy chips to the previous network's addresses.
+  const tokenList = useMemo(() => TokenService.getTokenList(), [walletChainId]);
+  const defaultBuy = useMemo<TokenInfo>(() => {
+    const sym = ConfigService.getBuyTokenSymbol();
+    return tokenList.find((t) => t.symbol === sym && !t.isNative) || tokenList[0];
+  }, [tokenList]);
+  const [buyToken, setBuyToken] = useState<TokenInfo>(defaultBuy);
+  // When the token list refreshes (network switch), keep the user's current
+  // pick if the same token exists on the new chain; otherwise fall back to
+  // same-symbol, then to the configured default. Avoids silently pointing a
+  // stale address at the new chain's contracts.
+  useEffect(() => {
+    setBuyToken((prev) => {
+      const byAddr = tokenList.find((t) => eqAddr(t.address, prev.address));
+      if (byAddr) return byAddr;
+      const bySym = tokenList.find((t) => t.symbol === prev.symbol);
+      return bySym || defaultBuy;
+    });
+  }, [tokenList, defaultBuy]);
+  const buyTokenSymbol = buyToken.symbol;
+
+  // Fee + expiry picks (limit only). Defaults match the previously
+  // hardcoded values so existing order flows behave identically when
+  // the user doesn't touch these controls.
+  const FEE_PRESETS = [10, 30, 50, 100] as const;      // bps
+  const EXPIRY_PRESETS = [1, 6, 24, 168] as const;     // hours (168=7d)
+  const [maxFeeBps, setMaxFeeBps] = useState<number>(50);
+  const [expiryHours, setExpiryHours] = useState<number>(24);
+  // Relayer pick + trading-key status are initialised here; the effects
+  // that depend on `onlineRelayers` / `account` are wired up after those
+  // are declared below.
+  const [relayerIdx, setRelayerIdx] = useState(0);
+  const [hasTradingKey, setHasTradingKey] = useState<boolean>(false);
+  const [notesExpanded, setNotesExpanded] = useState<boolean>(false);
+
+  // DEX Trade (market) requires a Uniswap router — without one every
+  // quote fails, so we hide the tab and force `tradeType=limit`.
+  const dexAvailable = !!(walletChainId && (walletChainId === 1 || walletChainId === 31338 || ConfigService.getUniswapRouterAddress()));
+  useEffect(() => {
+    if (!dexAvailable && tradeType !== 'limit') setTradeType('limit');
+  }, [dexAvailable, tradeType]);
 
   // Real data
   const [activeNotes, setActiveNotes] = useState<StoredNote[]>([]);
@@ -68,6 +123,33 @@ export default function TradeScreen() {
   const { makeController: makeSubmitAbort, isMounted } = useAbortOnUnmount();
   const [error, setError] = useState<string | null>(null);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
+
+  // Clamp a stale relayer pick when discovery updates (e.g. a relayer
+  // dropped off). Defined here — after the onlineRelayers declaration —
+  // so the dependency is resolved without a use-before-init.
+  useEffect(() => {
+    if (relayerIdx >= onlineRelayers.length && onlineRelayers.length > 0) setRelayerIdx(0);
+  }, [onlineRelayers.length, relayerIdx]);
+
+  // EdDSA trading-key status (one-time signMessage per wallet). Recompute
+  // on account switch; used to tell the user whether submit will prompt.
+  useEffect(() => {
+    if (!account) { setHasTradingKey(false); return; }
+    let cancelled = false;
+    EdDSAKeyService.loadKey(account).then((k) => {
+      if (!cancelled) setHasTradingKey(!!k);
+    });
+    return () => { cancelled = true; };
+  }, [account]);
+  const unlockTradingKey = useCallback(async () => {
+    if (!signer || !account) return;
+    try {
+      await EdDSAKeyService.getOrDeriveKey(signer, account);
+      setHasTradingKey(true);
+    } catch (err: any) {
+      Alert.alert('Key unlock failed', friendlyError(err));
+    }
+  }, [signer, account]);
 
   // Only limit orders require a relayer. Skip the registry read + per-relayer
   // /api/info probe when the user is in market mode, which is gas-paid and
@@ -96,32 +178,25 @@ export default function TradeScreen() {
   // should land in. `null` = picker closed.
   const [pickerForRow, setPickerForRow] = useState<number | null>(null);
 
-  // Load active notes
-  useEffect(() => {
-    let cancelled = false;
-    const loadNotes = async () => {
-      if (!account) {
-        if (!cancelled) { setActiveNotes([]); setSelectedNote(null); setLoading(false); }
-        return;
-      }
-      setLoading(true);
-      try {
-        const notes = await NoteStorageService.getActiveNotes(account);
-        if (!cancelled) {
-          setActiveNotes(notes);
-          if (notes.length > 0 && !selectedNote) {
-            setSelectedNote(notes[0]);
-          }
-        }
-      } catch {
-        if (!cancelled) setActiveNotes([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    loadNotes();
-    return () => { cancelled = true; };
-  }, [account]);
+  // Load active notes. The sync promotes any pending change UTXOs
+  // (e.g. the jump from Escrow deposit → Trade) before we read.
+  const loadNotes = useCallback(async () => {
+    if (!account) { setActiveNotes([]); setSelectedNote(null); setLoading(false); return; }
+    setLoading(true);
+    try {
+      await syncPendingNotesForAccount(account, readProvider).catch(() => 0);
+      const notes = await NoteStorageService.getActiveNotes(account);
+      setActiveNotes(notes);
+      setSelectedNote((prev) =>
+        prev && notes.some((n) => n.id === prev.id) ? prev : notes[0] ?? null,
+      );
+    } catch {
+      setActiveNotes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [account, readProvider]);
+  useNoteRefresh(loadNotes);
 
   // Eager clear on wallet switch. The `[account]` effect above already
   // re-fetches, but its setState lands one tick behind the switch — so
@@ -141,14 +216,6 @@ export default function TradeScreen() {
     });
   }, []);
 
-  // Compute USDC equivalent
-  const usdcAmount = (() => {
-    const a = parseFloat(amount);
-    const p = parseHumanNumber(price);
-    if (isNaN(a) || isNaN(p)) return '—';
-    return (a * p).toLocaleString('en-US', { maximumFractionDigits: 2 });
-  })();
-
   // Private balance for selected note
   const privateBalance = selectedNote
     ? `${formatAmount(selectedNote.amount)} ${selectedNote.tokenSymbol}`
@@ -165,7 +232,31 @@ export default function TradeScreen() {
   // with the post-fee amount or the swap reverts on insufficient
   // allowance. 0 is the safe default (no fee configured).
   const [dexPlatformFeeBps, setDexPlatformFeeBps] = useState<bigint>(0n);
-  const buyTokenAddress = useMemo(() => ConfigService.getWethAddress() || '', []);
+  const buyTokenAddress = buyToken.address;
+  // Scatter mode fires when the user chose a buy token identical to the
+  // sell note's token. In that mode there's no counterparty — the order
+  // becomes a unilateral distribution, price is meaningless (pinned to 1),
+  // and the circuit + contract enforce that claim total + fee ≤ sellAmount.
+  const isScatterMode = useMemo(
+    () => !!(selectedNote && eqAddr(selectedNote.token, buyToken.address)),
+    [selectedNote, buyToken.address],
+  );
+  // Auto-pin price to 1 when scatter becomes active so the derived
+  // buyAmount equals sellAmount (before fee).
+  useEffect(() => {
+    if (isScatterMode && price !== '1') setPrice('1');
+  }, [isScatterMode, price]);
+
+  // Right-hand "buy amount" is the gross exchange value (sellAmount ×
+  // price). In scatter mode price is pinned to 1 so it equals sellAmount;
+  // relay fee is shown separately in the Fee Summary section below.
+  // Widened to 6 decimals so small sells like 0.009 don't round up.
+  const usdcAmount = (() => {
+    const a = parseFloat(amount);
+    const p = parseHumanNumber(price);
+    if (isNaN(a) || isNaN(p)) return '—';
+    return (a * p).toLocaleString('en-US', { maximumFractionDigits: 6 });
+  })();
   const settlementAddress = useMemo(() => ConfigService.getPrivateSettlementAddress() || '', []);
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
@@ -286,8 +377,12 @@ export default function TradeScreen() {
     const n = parseFloat(r.amount);
     return sum + (Number.isFinite(n) ? n : 0);
   }, 0);
-  const claimRemainder = Math.max(0, buyAmountHuman - claimTotal);
-  const claimsOverflow = buyAmountHuman > 0 && claimTotal > buyAmountHuman + 1e-6;
+  // Recipients only ever receive (buyAmount − maxFee). The relayer pockets
+  // maxFeeBps as its cut at settle time, so the claim total has to fit in
+  // the post-fee envelope; otherwise the circuit/contract reject the order.
+  const netBuyAmount = Math.max(0, buyAmountHuman * (1 - maxFeeBps / 10000));
+  const claimRemainder = Math.max(0, netBuyAmount - claimTotal);
+  const claimsOverflow = netBuyAmount > 0 && claimTotal > netBuyAmount + 1e-6;
 
   const updateClaim = useCallback((id: number, patch: Partial<ClaimRow>) => {
     setClaimRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -329,8 +424,10 @@ export default function TradeScreen() {
       return;
     }
 
-    const buyToken = ConfigService.getWethAddress() || '';
-    if (!buyToken) {
+    // Sell is locked to the note's token; buy comes from the chip picker.
+    // Same addresses → scatter mode (validated again below by the circuit).
+    const buyTokenAddr = buyToken.address;
+    if (!buyTokenAddr) {
       Alert.alert('Configuration Error', 'Buy token address is not configured.');
       return;
     }
@@ -340,7 +437,7 @@ export default function TradeScreen() {
 
     try {
       if (tradeType === 'limit') {
-        const selectedRelayer = onlineRelayers[0];
+        const selectedRelayer = onlineRelayers[relayerIdx] ?? onlineRelayers[0];
         if (!selectedRelayer) {
           setSubmitting(false);
           Alert.alert(
@@ -354,7 +451,7 @@ export default function TradeScreen() {
         // for tokens like USDC (6). `selectedNote.token` is the sell side.
         const [sellDecimals, buyDecimals] = await Promise.all([
           TokenService.getDecimals(readProvider, selectedNote.token),
-          TokenService.getDecimals(readProvider, buyToken),
+          TokenService.getDecimals(readProvider, buyTokenAddr),
         ]);
 
         const priceClean = stripThousandsSep(price);
@@ -435,10 +532,10 @@ export default function TradeScreen() {
         const input: OrderInput = {
           note: selectedNote,
           sellAmount: amount,
-          buyToken,
+          buyToken: buyTokenAddr,
           buyAmount: buyAmountTotal,
-          maxFeeBps: 50,
-          expiryHours: 24,
+          maxFeeBps: maxFeeBps,
+          expiryHours: expiryHours,
           claims: parsedClaims,
           relayerUrl: selectedRelayer.url,
           relayerAddress: selectedRelayer.address,
@@ -447,7 +544,25 @@ export default function TradeScreen() {
         await OrderService.execute(signer, account, input, (p: OrderProgress) => {
           if (p.step === 'error') setError(p.error || 'Order failed');
           if (p.step === 'success') {
-            Alert.alert('Order Placed', `Order ID: ${p.orderId || 'submitted'}`);
+            // Route the user to the tab that will actually reflect their
+            // trade: scatter (same-token) settles on-chain immediately →
+            // Spent shows the source note; cross-token waits for a match
+            // → Pending shows the escrow waiting for a counterparty.
+            const initialTab = isScatterMode ? 'spent' : 'pending';
+            Alert.alert(
+              'Order submitted',
+              p.orderId
+                ? `The relayer accepted your order.\nOrder ID: ${p.orderId}`
+                : (isScatterMode
+                  ? 'The relayer accepted your scatter order. It settles on-chain asynchronously — check History → Spent.'
+                  : 'The relayer accepted your order. It will show in History → Pending until a match is found.'),
+              [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.navigate('History', { initialTab }),
+                },
+              ],
+            );
           }
         });
       } else {
@@ -460,7 +575,7 @@ export default function TradeScreen() {
 
         const [sellDec, buyDec] = await Promise.all([
           TokenService.getDecimals(readProvider, selectedNote.token),
-          TokenService.getDecimals(readProvider, buyToken),
+          TokenService.getDecimals(readProvider, buyTokenAddr),
         ]);
 
         const { sellAmountBn, minReceive } = computeMarketAmounts({
@@ -495,7 +610,7 @@ export default function TradeScreen() {
         const submitParams: MarketQuoteParams = {
           chainId: walletChainId,
           sellToken: selectedNote.token,
-          buyToken,
+          buyToken: buyTokenAddr,
           sellAmount: swapAmount,
           minReceive,
           recipient: settlementAddr,
@@ -515,7 +630,7 @@ export default function TradeScreen() {
         const input: MarketOrderInput = {
           note: selectedNote,
           sellAmount: amount,
-          buyToken,
+          buyToken: buyTokenAddr,
           buyAmount: buyAmountMinHuman,
           expiryHours: 1,
           claimRecipient: account,
@@ -561,30 +676,155 @@ export default function TradeScreen() {
             >
               <Text style={[s.tabText, tradeType === 'limit' && s.tabTextActive]}>Private Trade</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.tab, tradeType === 'market' && s.tabActive]}
-              onPress={() => setTradeType('market')}
-            >
-              <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>DEX Trade</Text>
-            </TouchableOpacity>
+            {dexAvailable && (
+              <TouchableOpacity
+                style={[s.tab, tradeType === 'market' && s.tabActive]}
+                onPress={() => setTradeType('market')}
+              >
+                <Text style={[s.tabText, tradeType === 'market' && s.tabTextActive]}>DEX Trade</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
-        {/* Token pair (token selection is driven by the note chosen below) */}
-        <View style={s.tokenRow}>
-          <View style={s.tokenBox}>
-            <View style={s.tokenInner}>
-              <View style={[s.tokenDot, { backgroundColor: colors.primary }]} />
-              <Text style={s.tokenName}>{selectedNote?.tokenSymbol || 'ETH'}</Text>
+        {/* Section 1: Commitment picker — select which escrow note to spend.
+            Mirrors frontend/app/trade/private-order/page.tsx's top-of-form
+            commitment card so the token and balance context are visible
+            before the user touches amounts/prices. */}
+        <View style={s.sectionCard}>
+          <View style={s.sectionHeaderRow}>
+            <Text style={s.sectionTitle}>🔒 Escrow Commitment</Text>
+            <Text style={s.sectionSub}>{activeNotes.length} available</Text>
+          </View>
+          {loading ? (
+            <Text style={s.sectionEmpty}>Loading notes…</Text>
+          ) : activeNotes.length === 0 ? (
+            <Text style={s.sectionEmpty}>
+              No active notes. Fund Escrow first to trade privately.
+            </Text>
+          ) : (
+            <View style={{ gap: 8 }}>
+              {(() => {
+                // Always render the selected note first; hide the rest
+                // behind "+ N more" unless the user asks to expand.
+                const sel = selectedNote && activeNotes.find((n) => n.id === selectedNote.id);
+                const others = activeNotes.filter((n) => n.id !== selectedNote?.id);
+                const visible = notesExpanded ? [sel, ...others].filter(Boolean) as StoredNote[]
+                  : sel ? [sel] : activeNotes.slice(0, 1);
+                const hiddenCount = activeNotes.length - visible.length;
+                return (
+                  <>
+                    {visible.map((note) => {
+                      const isSel = selectedNote?.id === note.id;
+                      return (
+                        <TouchableOpacity
+                          key={note.id}
+                          style={[s.noteCard, isSel && s.noteCardActive]}
+                          onPress={() => setSelectedNote(note)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={[s.noteCardAmount, isSel && { color: colors.primaryDark }]}>
+                              {formatAmount(note.amount)} {note.tokenSymbol}
+                            </Text>
+                            <Text style={s.noteCardSub}>
+                              leaf #{note.leafIndex ?? '—'}
+                              {note.txHash ? ` · tx ${note.txHash.slice(0, 8)}…` : ''}
+                            </Text>
+                          </View>
+                          {isSel && <Text style={s.noteCardCheck}>✓</Text>}
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {(hiddenCount > 0 || notesExpanded) && (
+                      <TouchableOpacity
+                        style={s.expandBtn}
+                        onPress={() => setNotesExpanded((v) => !v)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={s.expandBtnText}>
+                          {notesExpanded ? '▲ Hide extras' : `▼ + ${hiddenCount} more note${hiddenCount > 1 ? 's' : ''}`}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                );
+              })()}
+              {selectedNote && (() => {
+                const sell = parseFloat(amount);
+                if (!Number.isFinite(sell) || sell <= 0) return null;
+                const bal = parseFloat(ethers.formatEther(selectedNote.amount));
+                const change = bal - sell;
+                return (
+                  <View style={s.changeRow}>
+                    <Text style={s.changeLabel}>Change after spend</Text>
+                    <Text style={[
+                      s.changeValue,
+                      change < 0 && { color: colors.danger },
+                    ]}>
+                      {change.toLocaleString('en-US', { maximumFractionDigits: 6 })} {selectedNote.tokenSymbol}
+                    </Text>
+                  </View>
+                );
+              })()}
+            </View>
+          )}
+        </View>
+
+        {/* Section 2: Token pair — sell is locked to the selected note's
+            token; buy is a whitelist chip picker. Same sellToken+buyToken
+            triggers scatter mode. */}
+        <View style={s.sectionCard}>
+          <Text style={s.sectionTitle}>↔ Token Pair</Text>
+          <View style={s.tokenRow}>
+            <View style={s.tokenBox}>
+              <View style={s.tokenInner}>
+                <View style={[s.tokenDot, { backgroundColor: colors.primary }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.tokenName}>{selectedNote?.tokenSymbol || 'ETH'}</Text>
+                  <Text style={s.tokenSubLabel}>You sell</Text>
+                </View>
+              </View>
+            </View>
+            <Text style={s.swapIcon}>→</Text>
+            <View style={s.tokenBox}>
+              <View style={s.tokenInner}>
+                <View style={[s.tokenDot, { backgroundColor: colors.success }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.tokenName}>{buyTokenSymbol}</Text>
+                  <Text style={s.tokenSubLabel}>{isScatterMode ? 'Recipients receive' : 'You buy'}</Text>
+                </View>
+              </View>
             </View>
           </View>
-          <Text style={s.swapIcon}>→</Text>
-          <View style={s.tokenBox}>
-            <View style={s.tokenInner}>
-              <View style={[s.tokenDot, { backgroundColor: colors.success }]} />
-              <Text style={s.tokenName}>{buyTokenSymbol}</Text>
-            </View>
+          {/* Buy-token chips. Dedupe ETH+WETH entries (they share an address)
+              so we don't produce two chips that route to the same pair. */}
+          <View style={s.chipRow}>
+            {tokenList
+              .filter((t, i, arr) => !t.isNative || arr.findIndex((x) => eqAddr(x.address, t.address)) === i)
+              .map((t) => {
+                const active = eqAddr(t.address, buyToken.address);
+                return (
+                  <TouchableOpacity
+                    key={`${t.address}-${t.symbol}`}
+                    style={[s.chip, active && s.chipActive]}
+                    onPress={() => setBuyToken(t)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[s.chipText, active && s.chipTextActive]}>{t.symbol}</Text>
+                  </TouchableOpacity>
+                );
+              })}
           </View>
+          {isScatterMode && (
+            <View style={s.scatterBanner}>
+              <Text style={s.scatterBannerText}>
+                Scatter mode · {buyTokenSymbol} → {buyTokenSymbol} is a direct
+                distribution. No counterparty; price is fixed at 1 and claims
+                are capped at (sellAmount − fee).
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={s.inputsRow}>
@@ -621,14 +861,21 @@ export default function TradeScreen() {
                 editable={false}
               />
             </View>
-            <Text style={s.inputHint}>Estimated from limit price</Text>
+            <Text style={s.inputHint}>
+              {isScatterMode
+                ? 'Gross exchange value (relay fee deducted at settlement)'
+                : 'Estimated from limit price'}
+            </Text>
           </View>
         </View>
 
+        {/* Limit price is only meaningful for cross-token limit orders.
+            Scatter (same-token) pins it to 1 and the circuit ignores it;
+            market orders derive from the DEX quote. Hide entirely to
+            avoid the "why is this here?" UX confusion. */}
+        {tradeType === 'limit' && !isScatterMode && (
         <View style={s.limitSection}>
-          <Text style={s.inputLabel}>
-            {tradeType === 'limit' ? 'Limit Price' : 'Expected Price (for slippage)'}
-          </Text>
+          <Text style={s.inputLabel}>Limit Price</Text>
           <View style={s.limitRow}>
             <TextInput
               style={s.limitInput}
@@ -652,6 +899,74 @@ export default function TradeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
+
+        {/* Section 3: Fee + Expiry (limit mode only — market uses gas-paid
+            on-chain swap so fee bps isn't meaningful and expiry is fixed). */}
+        {tradeType === 'limit' && (
+          <View style={s.sectionCard}>
+            <Text style={s.sectionTitle}>⚙ Fee & Expiry</Text>
+            <View>
+              <Text style={s.sectionSub}>Max relay fee</Text>
+              <View style={[s.chipRow, { marginTop: 6 }]}>
+                {FEE_PRESETS.map((bps) => {
+                  const active = maxFeeBps === bps;
+                  return (
+                    <TouchableOpacity
+                      key={`fee-${bps}`}
+                      style={[s.chip, active && s.chipActive]}
+                      onPress={() => setMaxFeeBps(bps)}
+                    >
+                      <Text style={[s.chipText, active && s.chipTextActive]}>
+                        {(bps / 100).toFixed(bps < 100 ? 2 : 1)}%
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            <View>
+              <Text style={s.sectionSub}>Expires in</Text>
+              <View style={[s.chipRow, { marginTop: 6 }]}>
+                {EXPIRY_PRESETS.map((h) => {
+                  const active = expiryHours === h;
+                  const label = h < 24 ? `${h}h` : h === 24 ? '1d' : `${h / 24}d`;
+                  return (
+                    <TouchableOpacity
+                      key={`exp-${h}`}
+                      style={[s.chip, active && s.chipActive]}
+                      onPress={() => setExpiryHours(h)}
+                    >
+                      <Text style={[s.chipText, active && s.chipTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            {buyAmountHuman > 0 && (() => {
+              const feeAmt = buyAmountHuman * (maxFeeBps / 10000);
+              const net = buyAmountHuman - feeAmt;
+              return (
+                <View style={s.feeSummary}>
+                  <View style={s.feeRow}>
+                    <Text style={s.feeRowLabel}>Gross buy</Text>
+                    <Text style={s.feeRowValue}>{buyAmountHuman.toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}</Text>
+                  </View>
+                  <View style={s.feeRow}>
+                    <Text style={s.feeRowLabel}>Max fee ({maxFeeBps} bps)</Text>
+                    <Text style={[s.feeRowValue, { color: colors.textMuted }]}>−{feeAmt.toLocaleString('en-US', { maximumFractionDigits: 4 })}</Text>
+                  </View>
+                  <View style={[s.feeRow, { borderTopWidth: 1, borderTopColor: colors.borderLight, paddingTop: 6 }]}>
+                    <Text style={[s.feeRowLabel, { fontWeight: '700' }]}>{isScatterMode ? 'Recipients receive' : 'You receive (net)'}</Text>
+                    <Text style={[s.feeRowValue, { color: colors.primaryDark, fontWeight: '700' }]}>
+                      {net.toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })()}
+          </View>
+        )}
 
         {tradeType === 'market' && account && selectedNote && marketQuoteInput && settlementAddress && (
           <MarketQuoteCard
@@ -664,15 +979,20 @@ export default function TradeScreen() {
           />
         )}
 
-        {/* Claim Builder (limit mode only) */}
+        {/* Section 4: Recipients (claim builder, limit mode only).
+            Scatter mode enforces claims total + fee ≤ sellAmount; the
+            overflow warning below (reusing claimsOverflow) catches it. */}
         {tradeType === 'limit' && (
-          <View style={s.claimSection}>
-            <View style={s.claimHeader}>
-              <Text style={s.inputLabel}>Claims ({claimRows.length}/{MAX_CLAIM_ROWS})</Text>
-              <Text style={s.claimSubtotal}>
+          <View style={s.sectionCard}>
+            <View style={s.sectionHeaderRow}>
+              <Text style={s.sectionTitle}>
+                👥 Recipients ({claimRows.length}/{MAX_CLAIM_ROWS})
+              </Text>
+              <Text style={s.sectionSub}>
                 {claimTotal.toLocaleString('en-US', { maximumFractionDigits: 4 })}
                 {' / '}
-                {buyAmountHuman > 0 ? buyAmountHuman.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '—'} {buyTokenSymbol}
+                {netBuyAmount > 0 ? netBuyAmount.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '—'} {buyTokenSymbol}
+                {' (net)'}
               </Text>
             </View>
             {claimRows.map((row, idx) => (
@@ -771,9 +1091,64 @@ export default function TradeScreen() {
             )}
             {claimsOverflow && (
               <Text style={s.claimWarn}>
-                Total exceeds buy amount by {(claimTotal - buyAmountHuman).toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}
+                Total exceeds net buy amount (after fee) by {(claimTotal - netBuyAmount).toLocaleString('en-US', { maximumFractionDigits: 4 })} {buyTokenSymbol}
               </Text>
             )}
+          </View>
+        )}
+
+        {/* Section 5: Relayer + Trading Key (limit mode only). Relayer
+            discovery runs on tab-enter; the list is sorted cheapest-first
+            so the default chip is already the best pick. Trading key is a
+            one-time signMessage per wallet — we surface its status so the
+            user knows whether submit will prompt. */}
+        {tradeType === 'limit' && (
+          <View style={s.sectionCard}>
+            <Text style={s.sectionTitle}>🛰 Relayer & Trading Key</Text>
+            <View>
+              <Text style={s.sectionSub}>ZK Relayer ({onlineRelayers.length} online)</Text>
+              {onlineRelayers.length === 0 ? (
+                <Text style={s.sectionEmpty}>
+                  No relayer found. Orders can't submit until one comes online.
+                </Text>
+              ) : (
+                <View style={[s.chipRow, { marginTop: 6 }]}>
+                  {onlineRelayers.slice(0, 5).map((r, i) => {
+                    const active = i === relayerIdx;
+                    return (
+                      <TouchableOpacity
+                        key={r.address}
+                        style={[s.chip, active && s.chipActive]}
+                        onPress={() => setRelayerIdx(i)}
+                      >
+                        <Text style={[s.chipText, active && s.chipTextActive]}>
+                          {r.address.slice(0, 8)}… · {r.fee}bps
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+            <View style={s.keyRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.sectionSub}>Trading Key</Text>
+                <Text style={s.keyStatusText}>
+                  {hasTradingKey
+                    ? '✓ Unlocked — no wallet prompt needed'
+                    : 'Not yet derived — will prompt on submit'}
+                </Text>
+              </View>
+              {!hasTradingKey && (
+                <TouchableOpacity
+                  style={s.keyUnlockBtn}
+                  onPress={unlockTradingKey}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.keyUnlockText}>Unlock</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         )}
 
@@ -802,45 +1177,6 @@ export default function TradeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Order Book */}
-        <View style={s.orderSection}>
-          <View style={s.orderTabs}>
-            <TouchableOpacity
-              style={[s.orderTab, orderTab === 'book' && s.orderTabActive]}
-              onPress={() => setOrderTab('book')}
-            >
-              <Text style={[s.orderTabText, orderTab === 'book' && s.orderTabTextActive]}>Order Book</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.orderTab, orderTab === 'recent' && s.orderTabActive]}
-              onPress={() => setOrderTab('recent')}
-            >
-              <Text style={[s.orderTabText, orderTab === 'recent' && s.orderTabTextActive]}>Recent Trades</Text>
-            </TouchableOpacity>
-          </View>
-          {activeNotes.length === 0 ? (
-            <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 16 }}>
-              {loading ? 'Loading notes...' : 'No active notes found. Fund Escrow first to trade.'}
-            </Text>
-          ) : (
-            activeNotes.map((note) => (
-              <TouchableOpacity
-                key={note.id}
-                style={[s.orderRow, selectedNote?.id === note.id && { backgroundColor: colors.primaryLight, borderRadius: 8, paddingHorizontal: 8 }]}
-                onPress={() => setSelectedNote(note)}
-              >
-                <Text style={s.orderName}>{note.tokenSymbol} Note</Text>
-                <View style={s.orderRight}>
-                  <View style={[s.orderTypeBadge, s.orderBuy]}>
-                    <Text style={[s.orderTypeText, s.orderBuyText]}>{note.status}</Text>
-                  </View>
-                  <Text style={s.orderPrice}>{formatAmount(note.amount)} {note.tokenSymbol}</Text>
-                </View>
-              </TouchableOpacity>
-            ))
-          )}
-        </View>
-
       </ScrollView>
 
       <AddressBookModal
@@ -865,6 +1201,39 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
   scrollContent: { gap: layout.sectionGap, paddingBottom: layout.contentBottom, paddingTop: layout.contentTop },
+
+  /* Section cards (frontend-style grouped inputs) */
+  sectionCard: { marginHorizontal: layout.screenHZ, padding: 14, backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.borderLight, gap: 10 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  sectionSub: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
+  sectionEmpty: { fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 12 },
+  noteCard: { flexDirection: 'row', alignItems: 'center', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.bgSecondary },
+  noteCardActive: { borderColor: colors.primary, backgroundColor: colors.primaryLight },
+  noteCardAmount: { fontSize: 14, fontWeight: '700', color: colors.text },
+  noteCardSub: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontFamily: 'monospace' },
+  noteCardCheck: { fontSize: 16, color: colors.primaryDark, fontWeight: '700', marginLeft: 8 },
+  changeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, paddingHorizontal: 4, marginTop: 2, borderTopWidth: 1, borderTopColor: colors.borderLight },
+  changeLabel: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
+  changeValue: { fontSize: 12, fontWeight: '700', color: colors.text },
+  expandBtn: { paddingVertical: 8, alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, borderStyle: 'dashed', backgroundColor: colors.bgSecondary },
+  expandBtnText: { fontSize: 11, fontWeight: '700', color: colors.primaryDark },
+  tokenSubLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontWeight: '500' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 99, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.bgSecondary },
+  chipActive: { backgroundColor: colors.primaryLight, borderColor: colors.primary },
+  chipText: { fontSize: 12, fontWeight: '700', color: colors.textSecondary },
+  chipTextActive: { color: colors.primaryDark },
+  scatterBanner: { padding: 10, backgroundColor: colors.warningLight, borderRadius: 10, borderWidth: 1, borderColor: colors.warning },
+  scatterBannerText: { fontSize: 11, color: colors.warning, fontWeight: '600', lineHeight: 16 },
+  feeSummary: { marginTop: 4, padding: 10, backgroundColor: colors.bgSecondary, borderRadius: 10, gap: 6 },
+  feeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  feeRowLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
+  feeRowValue: { fontSize: 12, color: colors.text, fontWeight: '600' },
+  keyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  keyStatusText: { fontSize: 11, color: colors.textSecondary, fontWeight: '500', marginTop: 4 },
+  keyUnlockBtn: { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.primaryDark, borderRadius: 10 },
+  keyUnlockText: { fontSize: 12, fontWeight: '700', color: colors.card },
 
   tabsWrap: { paddingHorizontal: layout.screenHZ },
   tabsBg: { flexDirection: 'row', backgroundColor: colors.bgSecondary, padding: 4, borderRadius: 12 },

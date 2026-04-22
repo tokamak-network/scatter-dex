@@ -1,5 +1,5 @@
 /**
- * Design tokens — Light theme (ScatterDEX design spec)
+ * Design tokens — Light theme (zkScatterDEX design spec)
  */
 import { StyleSheet } from 'react-native';
 
