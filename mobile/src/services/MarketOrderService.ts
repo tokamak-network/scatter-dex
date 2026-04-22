@@ -18,7 +18,8 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
-import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
+import { PRIVATE_SETTLEMENT_ABI } from '../lib/contracts';
+import { getCommitmentLeaves } from '../lib/commitmentScan';
 import type { SwapRoute } from '../lib/dex-aggregator';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
@@ -167,25 +168,15 @@ export const MarketOrderService = {
       const nullifier = await ZKBridgeService.computeNullifier('0', note.secret, note.salt);
       const nonceNullifier = await ZKBridgeService.computeNullifier('1', note.secret, nonce.toString());
 
-      // Commitment Merkle proof — fetch all commitments and build tree
-      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      // Scan the pool's **full** commitment history from the deploy block —
-      // not `ProviderService.getEarliestBlock()`, which is cached to the
-      // user's first-deposit block. If the pool had commitments before that
-      // block, the reconstructed leaf array would be short and
-      // `note.leafIndex` would index into the wrong slot (failing the
-      // membership check or settling against the wrong leaf). Mirrors the
-      // same fix in CancelService.
-      const fromBlock = ConfigService.getDeployBlock();
-
-      const insertEvents = await pool.queryFilter(
-        pool.filters.CommitmentInserted(),
-        fromBlock,
+      // Commitment Merkle proof — delegate to the shared checkpointed
+      // scanner so we only fetch the delta since the previous session
+      // instead of re-querying the full range from deploy on every
+      // market order.
+      const allLeaves = await getCommitmentLeaves(
+        poolAddr,
+        readProvider,
+        ConfigService.getChainId(),
       );
-      const allLeaves = insertEvents.map((e) => {
-        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
-        return parsed!.args.commitment.toString();
-      });
 
       // Compute commitment for this note and verify it's in the tree
       const noteCommitment = await ZKBridgeService.computeCommitment({

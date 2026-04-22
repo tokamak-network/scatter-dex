@@ -17,6 +17,7 @@ import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
 import { KeySecurityService } from './KeySecurityService';
 import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
+import { getCommitmentLeaves } from '../lib/commitmentScan';
 import { TAG_COMMITMENT_V2, TAG_ESCROW_NULL, TAG_NONCE_NULL } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
@@ -77,19 +78,17 @@ export const CancelService = {
 
       onProgress({ step: 'building_tree' });
       const readProvider = ProviderService.getReadProvider();
+      // Pool contract instance kept locally for tx-receipt log parsing
+      // further down. Leaves themselves come from the shared checkpointed
+      // scanner — chunked queryFilter + persistent (chainId, pool) state
+      // so we only pull the delta since the previous session instead of
+      // rescanning from deploy on every cancel.
       const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      // Scan the pool's **full** commitment history — not
-      // `ProviderService.getEarliestBlock()`, which is cached to the user's
-      // first-deposit block. If the pool had commitments before that block,
-      // the reconstructed leaf array would be short and `note.leafIndex`
-      // would index into the wrong slot (failing the membership check or,
-      // worse, rotating the wrong note).
-      const fromBlock = ConfigService.getDeployBlock();
-      const insertEvents = await pool.queryFilter(pool.filters.CommitmentInserted(), fromBlock);
-      const allLeaves = insertEvents.map((e) => {
-        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
-        return parsed!.args.commitment.toString();
-      });
+      const allLeaves = await getCommitmentLeaves(
+        poolAddr,
+        readProvider,
+        ConfigService.getChainId(),
+      );
 
       // Verify the stored note's leaf is what the pool actually has.
       const noteCommitment = await ZKBridgeService.computeCommitment({

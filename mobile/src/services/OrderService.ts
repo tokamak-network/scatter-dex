@@ -25,7 +25,7 @@ import { ConfigService } from './ConfigService';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
-import { COMMITMENT_POOL_ABI } from '../lib/contracts';
+import { getCommitmentLeaves } from '../lib/commitmentScan';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
 
@@ -188,28 +188,22 @@ export const OrderService = {
       }
 
       // ─── Step 5: Fetch commitment leaves + build Merkle proof ─────
-      // Mirrors MarketOrderService: relayer now requires a client-generated
-      // authorize.circom proof (endpoint /api/private-orders was deprecated,
-      // returns 410 with a migration hint). We rebuild the tree from the
-      // pool's CommitmentInserted events rather than fetching from the
-      // relayer — matches the slow-but-simple path the frontend also falls
-      // back to when /api/info/merkle-proof is unavailable.
+      // Relayer requires a client-generated authorize.circom proof
+      // (endpoint /api/private-orders was deprecated, returns 410 with
+      // a migration hint). Leaves come from the shared checkpointed
+      // scanner so we only query the delta since the last session, not
+      // the full range from deploy on every order.
       onProgress({ step: 'building_tree' });
       const poolAddr = ConfigService.getCommitmentPoolAddress();
       if (!poolAddr) throw new Error('CommitmentPool address not configured');
       const settlementAddr = ConfigService.getPrivateSettlementAddress();
       if (!settlementAddr) throw new Error('PrivateSettlement address not configured');
 
-      const pool = new ethers.Contract(poolAddr, COMMITMENT_POOL_ABI, readProvider);
-      const fromBlock = ConfigService.getDeployBlock();
-      const insertEvents = await pool.queryFilter(
-        pool.filters.CommitmentInserted(),
-        fromBlock,
+      const allLeaves = await getCommitmentLeaves(
+        poolAddr,
+        readProvider,
+        ConfigService.getChainId(),
       );
-      const allLeaves = insertEvents.map((e) => {
-        const parsed = pool.interface.parseLog({ topics: e.topics as string[], data: e.data });
-        return parsed!.args.commitment.toString();
-      });
 
       // Verify the stored note still matches the on-chain leaf at its
       // recorded index. A mismatch here means the note was spent/rotated
