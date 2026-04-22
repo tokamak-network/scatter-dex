@@ -13,6 +13,8 @@ import { useWallet } from '../contexts/WalletContext';
 import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
+import { TradeHistoryStorage, TradeRecord } from '../services/TradeHistoryStorage';
+import { ethers } from 'ethers';
 import { CancelService, CancelProgress } from '../services/CancelService';
 import { formatAmount, formatDate, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
@@ -96,6 +98,22 @@ export default function HistoryScreen() {
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatus>>(new Map());
   const [pendingOrders, setPendingOrders] = useState<OrderStatus[]>([]);
   const [cancellingNoteId, setCancellingNoteId] = useState<string | null>(null);
+  // Per-note trade record cache (populated as the user expands rows).
+  // `null` = fetched but no record; `undefined` = not yet loaded.
+  const [tradeByNote, setTradeByNote] = useState<Map<string, TradeRecord | null>>(new Map());
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
+
+  const toggleExpand = useCallback(async (noteId: string) => {
+    if (expandedNoteId === noteId) { setExpandedNoteId(null); return; }
+    setExpandedNoteId(noteId);
+    if (!account || tradeByNote.has(noteId)) return;
+    try {
+      const rec = await TradeHistoryStorage.getBySourceNoteId(account, noteId);
+      setTradeByNote((prev) => new Map(prev).set(noteId, rec));
+    } catch {
+      setTradeByNote((prev) => new Map(prev).set(noteId, null));
+    }
+  }, [account, expandedNoteId, tradeByNote]);
 
   // Load notes and order statuses
   useEffect(() => {
@@ -352,9 +370,15 @@ export default function HistoryScreen() {
               // their historical statusType but are not cancellable.
               const isCancellable = cancellableNoteIds.has(item.id);
               const isCancelling = cancellingNoteId === item.id;
+              const isExpanded = expandedNoteId === item.id;
+              const tradeRec = tradeByNote.get(item.id);
               return (
                 <View key={item.id} style={{ gap: 8 }}>
-                  <View style={s.actRow}>
+                  <TouchableOpacity
+                    style={s.actRow}
+                    onPress={() => toggleExpand(item.id)}
+                    activeOpacity={0.8}
+                  >
                     <View style={s.actLeft}>
                       <View style={s.actIcon}>
                         <View style={[s.actDot, { backgroundColor: TYPE_COLORS[item.type] || colors.primary }]} />
@@ -385,7 +409,62 @@ export default function HistoryScreen() {
                         </Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
+                  {isExpanded && (
+                    <View style={s.detailCard}>
+                      {tradeRec === undefined ? (
+                        <Text style={s.detailMuted}>Loading trade details…</Text>
+                      ) : tradeRec === null ? (
+                        <Text style={s.detailMuted}>No trade record for this note.</Text>
+                      ) : (
+                        <>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Sold</Text>
+                            <Text style={s.detailValue}>
+                              {ethers.formatUnits(tradeRec.sellAmount, 18)} {tradeRec.sellTokenSymbol}
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Change</Text>
+                            <Text style={s.detailValue}>
+                              {ethers.formatUnits(tradeRec.changeAmount, 18)} {tradeRec.sellTokenSymbol}
+                            </Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Max fee</Text>
+                            <Text style={s.detailValue}>{tradeRec.maxFeeBps} bps</Text>
+                          </View>
+                          <View style={s.detailRow}>
+                            <Text style={s.detailLabel}>Relayer</Text>
+                            <Text style={s.detailValueMono}>{shortAddr(tradeRec.relayerAddress)}</Text>
+                          </View>
+                          {tradeRec.settleTxHash && (
+                            <View style={s.detailRow}>
+                              <Text style={s.detailLabel}>Settle tx</Text>
+                              <Text style={s.detailValueMono}>{shortAddr(tradeRec.settleTxHash)}</Text>
+                            </View>
+                          )}
+                          <Text style={s.detailSectionHeader}>
+                            Recipients ({tradeRec.claims.length})
+                          </Text>
+                          {tradeRec.claims.map((c, i) => (
+                            <View key={i} style={s.claimRow}>
+                              <Text style={s.claimIdx}>#{i + 1}</Text>
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.detailValue}>
+                                  {ethers.formatUnits(c.amount, 18)} {tradeRec.buyTokenSymbol}
+                                </Text>
+                                <Text style={s.claimMeta}>
+                                  {shortAddr(c.recipient)} · release{' '}
+                                  {new Date(Number(c.releaseTime) * 1000).toLocaleString()}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </>
+                      )}
+                    </View>
+                  )}
                   {isCancellable && (
                     <TouchableOpacity
                       style={[s.cancelBtn, isCancelling && { opacity: 0.5 }]}
@@ -415,6 +494,17 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
   scrollContent: { gap: layout.sectionGap, paddingBottom: layout.contentBottom },
+
+  detailCard: { padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, gap: 6 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  detailLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
+  detailValue: { fontSize: 12, color: colors.text, fontWeight: '700' },
+  detailValueMono: { fontSize: 11, color: colors.text, fontFamily: 'monospace' },
+  detailMuted: { fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingVertical: 8 },
+  detailSectionHeader: { fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', marginTop: 6 },
+  claimRow: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: 4 },
+  claimIdx: { fontSize: 11, color: colors.primary, fontWeight: '700', width: 24 },
+  claimMeta: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
 
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.borderLight, alignItems: 'center', justifyContent: 'center' },
   avatarIcon: { fontSize: 20, color: colors.textSecondary },

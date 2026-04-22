@@ -17,6 +17,7 @@ import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService } from './RelayerApiService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
+import { TradeHistoryStorage } from './TradeHistoryStorage';
 import { ProviderService } from './ProviderService';
 import { KeySecurityService } from './KeySecurityService';
 import { TokenService } from './TokenService';
@@ -402,6 +403,33 @@ export const OrderService = {
 
       // Mark original note as spent (in trading)
       await NoteStorageService.updateNoteStatus(account, note.id, 'spent');
+
+      // Persist a per-order trade record so the History screen can
+      // expand a spent note and show sell/change/claims details.
+      await TradeHistoryStorage.append(account, {
+        id: orderHash,
+        sourceNoteId: note.id,
+        changeNoteId: changeAmount > 0n ? expectedChangeCommitment : undefined,
+        sellToken: note.token,
+        sellTokenSymbol: note.tokenSymbol,
+        buyToken,
+        buyTokenSymbol: note.tokenSymbol, // scatter: same token; cross-token trades resolve on settle
+        sellAmount: sellAmount.toString(),
+        buyAmount: buyAmount.toString(),
+        changeAmount: changeAmount.toString(),
+        maxFeeBps,
+        relayerAddress: input.relayerAddress,
+        relayerUrl: input.relayerUrl,
+        orderId: response.orderId,
+        claims: claims.map((c, idx) => ({
+          recipient: c.recipient,
+          amount: claimsData[idx].amount,
+          releaseTime: claimsData[idx].releaseTime,
+          secret: claimsData[idx].secret,
+          ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
+        })),
+        createdAt: Date.now(),
+      });
 
       // Save change note if applicable
       if (changeAmount > 0n) {

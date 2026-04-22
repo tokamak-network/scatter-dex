@@ -211,7 +211,12 @@ export default function HomeScreen() {
     // Trigger re-fetch by bumping the request counters.
     publicReqIdRef.current += 1;
     privateReqIdRef.current += 1;
-    // Manually kick off one more round of fetches + activity reload.
+    // Pull-to-refresh also kicks the pending-note sync — a user who
+    // just submitted an order and is waiting on Home expects a pull
+    // to promote the change UTXO once the settle tx lands on-chain.
+    await Promise.all(wallets.map((w) =>
+      syncPendingNotesForAccount(w.address, readProvider).catch(() => 0),
+    ));
     await Promise.all([
       fetchPublicTotals(),
       fetchPrivateTotals(),

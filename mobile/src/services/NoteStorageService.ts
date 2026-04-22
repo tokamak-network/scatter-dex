@@ -432,19 +432,26 @@ export const NoteStorageService = {
     if (!leaves) return 0;
 
     // Build a commitment → leafIndex map so the match is O(n+m) instead
-    // of O(n·m). `note.commitment` is stored as a decimal-string bigint;
-    // event data is decimal too so direct string compare works.
+    // of O(n·m). Normalise both sides via BigInt.toString() so a
+    // leading-zero or 0x-prefix mismatch between the note blob and
+    // the event payload can't make the lookup miss.
+    const norm = (x: string): string => {
+      try { return BigInt(x).toString(); } catch { return x; }
+    };
     const leafByCommit = new Map<string, number>();
-    for (let i = 0; i < leaves.length; i++) leafByCommit.set(leaves[i], i);
+    for (let i = 0; i < leaves.length; i++) leafByCommit.set(norm(leaves[i]), i);
 
     let promoted = 0;
     for (const n of stale) {
-      const idx = leafByCommit.get(n.commitment);
+      const idx = leafByCommit.get(norm(n.commitment));
       if (idx === undefined) continue;
       n.leafIndex = idx;
       n.status = 'active';
       await SecureStore.setItemAsync(noteKeyFor(address, n.id), JSON.stringify(n));
       promoted += 1;
+    }
+    if (promoted > 0) {
+      console.log(`[noteSync] promoted ${promoted} pending note(s) to active for ${address.slice(0, 8)}…`);
     }
     return promoted;
   },
