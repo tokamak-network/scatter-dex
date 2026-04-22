@@ -18,6 +18,7 @@ import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
 import { TradeHistoryStorage, TradeRecord } from '../services/TradeHistoryStorage';
+import { TokenService } from '../services/TokenService';
 import { ethers } from 'ethers';
 import { CancelService, CancelProgress } from '../services/CancelService';
 import { formatAmount, formatDate, shortAddr } from '../lib/format';
@@ -113,6 +114,10 @@ export default function HistoryScreen() {
   // Per-note trade record cache (populated as the user expands rows).
   // `null` = fetched but no record; `undefined` = not yet loaded.
   const [tradeByNote, setTradeByNote] = useState<Map<string, TradeRecord | null>>(new Map());
+  // Per-tradeRec token decimals so sell/buy amounts display correctly for
+  // non-18-decimal tokens (e.g. USDC=6). Resolved lazily on expand via
+  // TokenService.getDecimals (whitelist + on-chain fallback).
+  const [decimalsByNote, setDecimalsByNote] = useState<Map<string, { sell: number; buy: number }>>(new Map());
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
 
   const toggleExpand = useCallback(async (noteId: string) => {
@@ -122,6 +127,14 @@ export default function HistoryScreen() {
     try {
       const rec = await TradeHistoryStorage.getBySourceNoteId(account, noteId);
       setTradeByNote((prev) => new Map(prev).set(noteId, rec));
+      if (rec) {
+        const provider = ProviderService.getReadProvider();
+        const [sell, buy] = await Promise.all([
+          TokenService.getDecimals(provider, rec.sellToken).catch(() => 18),
+          TokenService.getDecimals(provider, rec.buyToken).catch(() => 18),
+        ]);
+        setDecimalsByNote((prev) => new Map(prev).set(noteId, { sell, buy }));
+      }
     } catch {
       setTradeByNote((prev) => new Map(prev).set(noteId, null));
     }
@@ -370,6 +383,9 @@ export default function HistoryScreen() {
               const isCancelling = cancellingNoteId === item.id;
               const isExpanded = expandedNoteId === item.id;
               const tradeRec = tradeByNote.get(item.id);
+              const decs = decimalsByNote.get(item.id);
+              const sellDec = decs?.sell ?? 18;
+              const buyDec = decs?.buy ?? 18;
               return (
                 <View key={item.id} style={{ gap: 8 }}>
                   <TouchableOpacity
@@ -419,13 +435,13 @@ export default function HistoryScreen() {
                           <View style={s.detailRow}>
                             <Text style={s.detailLabel}>Sold</Text>
                             <Text style={s.detailValue}>
-                              {ethers.formatUnits(tradeRec.sellAmount, 18)} {tradeRec.sellTokenSymbol}
+                              {ethers.formatUnits(tradeRec.sellAmount, sellDec)} {tradeRec.sellTokenSymbol}
                             </Text>
                           </View>
                           <View style={s.detailRow}>
                             <Text style={s.detailLabel}>Change</Text>
                             <Text style={s.detailValue}>
-                              {ethers.formatUnits(tradeRec.changeAmount, 18)} {tradeRec.sellTokenSymbol}
+                              {ethers.formatUnits(tradeRec.changeAmount, sellDec)} {tradeRec.sellTokenSymbol}
                             </Text>
                           </View>
                           <View style={s.detailRow}>
@@ -454,7 +470,7 @@ export default function HistoryScreen() {
                               <Text style={s.claimIdx}>#{i + 1}</Text>
                               <View style={{ flex: 1 }}>
                                 <Text style={s.detailValue}>
-                                  {ethers.formatUnits(c.amount, 18)} {tradeRec.buyTokenSymbol}
+                                  {ethers.formatUnits(c.amount, buyDec)} {tradeRec.buyTokenSymbol}
                                 </Text>
                                 <Text style={s.claimMeta}>
                                   {shortAddr(c.recipient)} · release{' '}
