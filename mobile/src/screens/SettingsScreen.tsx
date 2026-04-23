@@ -509,7 +509,7 @@ export default function SettingsScreen() {
                     style={[
                       s.toggleRow,
                       isActive && {
-                        borderColor: '#16A34A',
+                        borderColor: colors.successDark,
                         borderWidth: 1.5,
                         backgroundColor: colors.successLight,
                       },
@@ -539,7 +539,7 @@ export default function SettingsScreen() {
                           }}
                           accessibilityLabel="Active wallet"
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>✓ Active</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.successDark }}>✓ Active</Text>
                         </View>
                       ) : (
                         <TouchableOpacity
@@ -673,7 +673,7 @@ export default function SettingsScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {selectedNetworkId === net.id && (
                   <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: colors.successDark }}>Active</Text>
                   </View>
                 )}
                 {net.isCustom && (
@@ -837,7 +837,7 @@ export default function SettingsScreen() {
           keyboardType="url"
         />
         {netTestResult && (
-          <Text style={{ fontSize: 12, color: netTestResult.startsWith('OK') ? '#16A34A' : colors.danger }}>
+          <Text style={{ fontSize: 12, color: netTestResult.startsWith('OK') ? colors.successDark : colors.danger }}>
             {netTestResult}
           </Text>
         )}
