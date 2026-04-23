@@ -202,10 +202,15 @@ export const RelayerApiService = {
   async getAuthorizeOrderStatus(
     nullifier: string,
     relayerUrl?: string,
+    /** Optional per-call timeout override. Defaults to `TIMEOUT_READ_MS`
+     *  (5 s) for the normal poll path; callers on tight budgets (e.g.
+     *  OrderService's abort-recovery probe) pass a shorter value so a
+     *  slow relayer can't eat the whole recovery window. */
+    timeoutMs: number = TIMEOUT_READ_MS,
   ): Promise<AuthorizeOrderStatusResponse | null> {
     const base = relayerUrl || this.getBaseUrl();
     const res = await fetchWithTimeout(`${base}/api/authorize-orders/${nullifier}`, {
-      timeoutMs: TIMEOUT_READ_MS,
+      timeoutMs,
     });
     if (res.status === 404) return null;
     if (!res.ok) {

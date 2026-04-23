@@ -182,6 +182,13 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pollActive = false;
 let networkBackoffStep = 0;
 let appStateSub: { remove: () => void } | null = null;
+/** Gate set by `pausePoll()` / cleared by `resumePoll()`. Checked in
+ *  every path that would otherwise start a timer (`startPollLoop` on
+ *  a new subscriber, `handleAppStateChange` on foreground resume,
+ *  `startTimer` itself). Without this gate, a callsite pausing the
+ *  loop around a critical fetch could be defeated by an unrelated
+ *  subscription/AppState transition that races the pause. */
+let paused = false;
 
 async function pollOnce(): Promise<void> {
   if (pollActive) return; // previous tick still in flight
@@ -344,12 +351,14 @@ function startPollLoop(): void {
   }
   // Honour the current foreground state on first start; if the app was
   // launched while backgrounded (rare but possible on cold boot from a
-  // notification) we shouldn't immediately spin up the timer.
-  if (AppState.currentState === 'active') startTimer();
+  // notification) we shouldn't immediately spin up the timer. Respect
+  // the `paused` gate so a new subscriber can't race past pausePoll().
+  if (AppState.currentState === 'active' && !paused) startTimer();
 }
 
 function startTimer(): void {
   if (pollTimer !== null) return;
+  if (paused) return;
   // Schedule via setTimeout so the cadence can shift (fast → slow, or
   // network backoff) without a stop/restart cycle.
   const tick = async () => {
@@ -408,8 +417,10 @@ function handleAppStateChange(state: AppStateStatus): void {
   if (state === 'active') {
     // Foreground: restart the timer so we resume on the normal cadence,
     // and fire one immediate batch tick because while we were in the
-    // background the relayer may have finished several orders.
-    if (listeners.size > 0) {
+    // background the relayer may have finished several orders. Respect
+    // the `paused` gate — a critical fetch may be in flight and
+    // expecting the loop to stay down.
+    if (listeners.size > 0 && !paused) {
       startTimer();
       void pollOnce();
     }
@@ -508,6 +519,36 @@ export const PendingOrdersService = {
       listeners.delete(listener);
       if (listeners.size === 0) stopPollLoop();
     };
+  },
+
+  /** Pause the poll loop. Used by OrderService.execute around the
+   *  `submitAuthorizeOrder` fetch so the poll's concurrent requests
+   *  don't starve the NSURLSession connection pool (iOS caps at 6
+   *  concurrent hosts) and push the submit past its fetch timeout.
+   *
+   *  Sets the `paused` gate so that racing callers (new subscriber,
+   *  AppState 'active' transition) can't re-arm the timer until
+   *  `resumePoll()`. Idempotent.
+   *
+   *  Caveat: a `pollOnce()` already in progress when this fires keeps
+   *  running to completion — this is about blocking FUTURE ticks, not
+   *  cancelling in-flight fetches. Aborting mid-tick would require an
+   *  AbortController plumbed through fetchWithTimeout; follow-up work
+   *  if the in-flight window turns out to matter. */
+  pausePoll(): void {
+    paused = true;
+    stopTimer();
+  },
+
+  /** Resume the poll loop. Clears the pause gate and starts the timer
+   *  if the usual subscriber + AppState foreground conditions are met.
+   *  Idempotent — a no-subscribers or backgrounded caller just clears
+   *  the gate without starting anything, which is the desired state. */
+  resumePoll(): void {
+    paused = false;
+    if (listeners.size === 0) return;
+    if (AppState.currentState !== 'active') return;
+    startTimer();
   },
 
   /** Test helper — force a synchronous tick. */
