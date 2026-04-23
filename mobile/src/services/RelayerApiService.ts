@@ -211,7 +211,17 @@ export const RelayerApiService = {
     if (!res.ok) {
       throw new Error(`authorize-orders status ${res.status}`);
     }
-    const data: unknown = await res.json();
+    // res.json() throws on invalid/empty body. The poll loop treats a
+    // throw as a network failure and engages backoff — but a malformed
+    // 200 isn't really a network problem, it's "this row is currently
+    // unparseable, leave it for the next tick". Fall through to the
+    // null path so the caller can no-op without slowing the cadence.
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return null;
+    }
     if (!isAuthorizeOrderStatus(data)) return null;
     return data;
   },
