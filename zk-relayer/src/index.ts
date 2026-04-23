@@ -14,7 +14,8 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle } from "./routes/authorize-orders.js";
+import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
@@ -262,6 +263,31 @@ async function main() {
     if (removed > 0) console.log(`Purged ${removed} non-pending authorize orders`);
   }, 60_000);
 
+  // Async-settlement sprint #1: reset orphaned 'settling' rows from a prior
+  // crash, then start the worker that drains the accepted/retrying queue.
+  // See docs/design/async-settlement-protocol.md.
+  const orphans = db.resetOrphanedSettlingOrders();
+  if (orphans > 0) console.log(`[settlement-worker] Reset ${orphans} orphaned 'settling' row(s) → 'accepted'`);
+  const settlementWorker = new SettlementWorker({
+    db,
+    submitter: authSubmitter,
+    authorizeOrders,
+    findMatch: findAuthorizeMatch,
+    decPubKeyCount: decAuthorizePubKeyCount,
+    sharedClient,
+    nullifierToOfferHandle,
+    getFeeBps: () => BigInt(config.relayerFee),
+  });
+  settlementWorker.start();
+  console.log("[settlement-worker] Started");
+
+  // Expiry sweeper — bulk-mark accepted/retrying/settling rows whose
+  // circuit expiry passed without settlement (design §2.8).
+  const expirySweepInterval = setInterval(() => {
+    const expired = db.sweepExpiredAuthorizeOrders();
+    if (expired > 0) console.log(`[expiry-sweeper] Marked ${expired} expired authorize order(s)`);
+  }, 60_000);
+
   const server = app.listen(config.port, () => {
     console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
@@ -286,6 +312,8 @@ async function main() {
     clearInterval(reindexInterval);
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
+    clearInterval(expirySweepInterval);
+    void settlementWorker.stop();
     sharedClient?.stop();
     server.close(() => {
       db.close();

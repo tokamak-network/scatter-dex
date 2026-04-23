@@ -98,7 +98,60 @@ export interface AuthorizeOrderFile {
 
 // ─── Stored order (in-memory + SQLite) ──────────────────────────
 
-export type AuthorizeOrderStatus = "pending" | "matched" | "settled" | "cancelled" | "expired";
+/**
+ * Order lifecycle. Two generations coexist for one release:
+ *
+ *   Legacy (pre-async): pending → matched → settled | cancelled | expired
+ *   Async FSM         : accepted → settling → settled
+ *                                  → retrying → settling → settled
+ *                                  → failed | dead_letter
+ *                       cancelled | expired (orderly parallel states)
+ *
+ * Old clients keep working because the GET response surfaces both forms;
+ * see docs/design/async-settlement-protocol.md §2.3 + §5.
+ */
+export type AuthorizeOrderStatus =
+  | "pending"
+  | "matched"
+  | "accepted"
+  | "settling"
+  | "retrying"
+  | "settled"
+  | "failed"
+  | "dead_letter"
+  | "cancelled"
+  | "expired";
+
+/**
+ * Status categories. Single source of truth so the route handler, worker,
+ * sweeper, and idempotency mapper all agree on what counts as "live" vs
+ * "in-flight" vs "terminal". Mutating this set without updating the union
+ * above will break TypeScript narrowing — the assertion below is the
+ * canary.
+ *
+ *   LIVE      — sitting in the queue, eligible to be claimed by the worker.
+ *   IN_FLIGHT — the worker is mid-tx (do not purge / do not match against).
+ *   TERMINAL  — final outcome reached; safe to drop from in-memory cache.
+ */
+export const LIVE_STATUSES = new Set<AuthorizeOrderStatus>([
+  "pending", "accepted", "retrying",
+]);
+export const IN_FLIGHT_STATUSES = new Set<AuthorizeOrderStatus>([
+  "matched", "settling",
+]);
+export const TERMINAL_STATUSES = new Set<AuthorizeOrderStatus>([
+  "settled", "cancelled", "failed", "dead_letter", "expired",
+]);
+
+export function isLiveStatus(s: string): boolean {
+  return LIVE_STATUSES.has(s as AuthorizeOrderStatus);
+}
+export function isInFlightStatus(s: string): boolean {
+  return IN_FLIGHT_STATUSES.has(s as AuthorizeOrderStatus);
+}
+export function isTerminalStatus(s: string): boolean {
+  return TERMINAL_STATUSES.has(s as AuthorizeOrderStatus);
+}
 
 export interface StoredAuthorizeOrder {
   order: AuthorizeOrderFile;

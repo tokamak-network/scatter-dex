@@ -109,6 +109,8 @@ export class PrivateOrderDB {
   private markAuthSettled: ReturnType<Database.Database["prepare"]>;
   private markAuthFailed: ReturnType<Database.Database["prepare"]>;
   private scheduleAuthRetry: ReturnType<Database.Database["prepare"]>;
+  private deferAcceptedAuth: ReturnType<Database.Database["prepare"]>;
+  private resetOrphanedSettlingAuth: ReturnType<Database.Database["prepare"]>;
   private markAuthDeadLetter: ReturnType<Database.Database["prepare"]>;
   private sweepExpiredAuth: ReturnType<Database.Database["prepare"]>;
   private setAuthTxHash: ReturnType<Database.Database["prepare"]>;
@@ -182,8 +184,15 @@ export class PrivateOrderDB {
       "UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?",
     );
     this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?");
+    // Restore every still-live order on boot (accepted/retrying/settling for
+    // the new FSM, plus legacy 'pending' rows that pre-date the migration).
+    // The in-memory map needs all of them so cross-token matching can find
+    // them as counterparties.
     this.selectPendingAuth = this.db.prepare(
-      "SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx FROM authorize_orders WHERE status = 'pending'",
+      `SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson,
+              pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx
+         FROM authorize_orders
+        WHERE status IN ('pending', 'accepted', 'retrying', 'settling')`,
     );
     this.purgeAuthNonPending = this.db.prepare(
       "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
@@ -251,6 +260,20 @@ export class PrivateOrderDB {
           SET status = 'retrying', attempt = ?, next_retry_at = ?,
               last_error = ?, updated_at = ?
         WHERE nullifier = ?`,
+    );
+    // "Defer without penalty" — cross-token orders whose counterparty
+    // hasn't shown up yet aren't failing, so we keep status='accepted' and
+    // don't bump attempt. Only next_retry_at + updated_at move, which keeps
+    // the partial index happy and makes GET /:nullifier still report
+    // status='accepted' (not 'retrying') to the client.
+    this.deferAcceptedAuth = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'accepted', next_retry_at = ?, updated_at = ?
+        WHERE nullifier = ?`,
+    );
+    this.resetOrphanedSettlingAuth = this.db.prepare(
+      `UPDATE authorize_orders SET status = 'accepted', updated_at = ?
+        WHERE status = 'settling'`,
     );
     this.setAuthTxHash = this.db.prepare(
       `UPDATE authorize_orders SET settle_tx = ?, updated_at = ? WHERE nullifier = ?`,
@@ -608,10 +631,34 @@ export class PrivateOrderDB {
     ]);
   }
 
+  /** Defer an accepted order that isn't ready to settle (e.g. cross-token
+   *  waiting for a counterparty). Status stays 'accepted' and attempt is
+   *  untouched — this is not a retry, just rescheduling. */
+  deferAcceptedAuthorizeOrder(nullifier: string, nextRetryAt: number): void {
+    this.deferAcceptedAuth.run([nextRetryAt, Date.now(), nullifier]);
+  }
+
   /** Persist the broadcast tx hash even before confirmation so a crash
    *  mid-wait leaves enough trail to recover the receipt on restart. */
   recordAuthorizeOrderTxHash(nullifier: string, txHash: string): void {
     this.setAuthTxHash.run([txHash, Date.now(), nullifier]);
+  }
+
+  /** Reset orphaned 'settling' rows to 'accepted' on relayer boot. The
+   *  worker that was driving them was killed mid-flight; the queue claim
+   *  is the only place that should set 'settling', and only one process
+   *  may hold the DB at a time, so anything left in this state at boot
+   *  is by definition orphaned.
+   *
+   *  On-chain idempotency (the nullifier was either spent or it wasn't)
+   *  means a retried submit either succeeds or reverts cleanly; the
+   *  classifier promotes a revert to terminal `failed`. Receipt-based
+   *  recovery for the "tx broadcast but receipt missing" case is handled
+   *  separately by the pending_txs table (R-2).
+   *
+   *  Returns the count of rows reset (for boot-time logging). */
+  resetOrphanedSettlingOrders(): number {
+    return this.resetOrphanedSettlingAuth.run([Date.now()]).changes;
   }
 
   /** Bulk-mark any in-flight order whose circuit expiry has passed.
