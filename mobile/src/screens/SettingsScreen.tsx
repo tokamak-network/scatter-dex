@@ -443,7 +443,7 @@ export default function SettingsScreen() {
     } finally {
       setWalletLoading(false);
     }
-  }, [activeWalletId, switchWallet]);
+  }, [activeWalletId, walletLoading, switchWallet]);
 
   const handleDeleteWalletById = useCallback((w: WalletMeta) => {
     Alert.alert(
@@ -504,11 +504,16 @@ export default function SettingsScreen() {
               {wallets.map((w) => {
                 const isActive = w.id === activeWalletId;
                 return (
-                  <TouchableOpacity
+                  <View
                     key={w.id}
-                    style={s.toggleRow}
-                    onPress={() => handleSwitchWallet(w.id)}
-                    disabled={walletLoading}
+                    style={[
+                      s.toggleRow,
+                      isActive && {
+                        borderColor: colors.successDark,
+                        borderWidth: 1.5,
+                        backgroundColor: colors.successLight,
+                      },
+                    ]}
                   >
                     <View style={s.toggleLeft}>
                       <View style={s.toggleIcon}><Text style={s.toggleIconText}>👛</Text></View>
@@ -522,10 +527,36 @@ export default function SettingsScreen() {
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      {isActive && (
-                        <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
-                          <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                      {isActive ? (
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            borderRadius: 8,
+                          }}
+                          accessibilityLabel="Active wallet"
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.successDark }}>✓ Active</Text>
                         </View>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => handleSwitchWallet(w.id)}
+                          disabled={walletLoading}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: colors.primary,
+                            opacity: walletLoading ? 0.4 : 1,
+                          }}
+                          accessibilityLabel={`Activate ${w.nickname || shortAddr(w.address)}`}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>Activate</Text>
+                        </TouchableOpacity>
                       )}
                       <TouchableOpacity
                         onPress={() => handleDeleteWalletById(w)}
@@ -536,7 +567,7 @@ export default function SettingsScreen() {
                         <Text style={{ fontSize: 16, color: colors.danger, opacity: walletLoading ? 0.4 : 1 }}>🗑</Text>
                       </TouchableOpacity>
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 );
               })}
               <TouchableOpacity
@@ -642,7 +673,7 @@ export default function SettingsScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {selectedNetworkId === net.id && (
                   <View style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.successLight, borderRadius: 8 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Active</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: colors.successDark }}>Active</Text>
                   </View>
                 )}
                 {net.isCustom && (
@@ -806,7 +837,7 @@ export default function SettingsScreen() {
           keyboardType="url"
         />
         {netTestResult && (
-          <Text style={{ fontSize: 12, color: netTestResult.startsWith('OK') ? '#16A34A' : colors.danger }}>
+          <Text style={{ fontSize: 12, color: netTestResult.startsWith('OK') ? colors.successDark : colors.danger }}>
             {netTestResult}
           </Text>
         )}
