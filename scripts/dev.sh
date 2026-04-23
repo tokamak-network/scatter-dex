@@ -138,9 +138,24 @@ reset_mobile_app() {
   return 0
 }
 
-echo "Resetting mobile app on booted simulators/emulators..."
-reset_mobile_app
-echo ""
+# Mobile-app uninstall + DB wipe assume a fresh anvil (contract addresses
+# change every boot) and are destructive to any in-progress state. Only run
+# them when we're actually starting a fresh chain (`--mock`) or the user has
+# explicitly opted in with `RESET_STATE=1`; integration mode (external anvil)
+# should not auto-wipe.
+SHOULD_RESET_STATE=false
+if [ "$MOCK_MODE" = true ] || [ "${RESET_STATE:-0}" = "1" ]; then
+  SHOULD_RESET_STATE=true
+fi
+
+if [ "$SHOULD_RESET_STATE" = true ]; then
+  echo "Resetting mobile app on booted simulators/emulators..."
+  reset_mobile_app
+  echo ""
+else
+  echo "Skipping mobile-app / DB reset (integration mode). Set RESET_STATE=1 to force."
+  echo ""
+fi
 
 # Wipe relayer + shared-orderbook SQLite DBs: fresh anvil = fresh contracts =
 # previously-indexed commitments/orders are keyed to obsolete pool addresses.
@@ -158,7 +173,9 @@ wipe_dev_dbs() {
   done
   [ "$removed" = 1 ] && echo "Wiped stale relayer/orderbook DBs from previous run." && echo ""
 }
-wipe_dev_dbs
+if [ "$SHOULD_RESET_STATE" = true ]; then
+  wipe_dev_dbs
+fi
 
 # Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
 # setup emits different vkey constants, and the only way to guarantee
