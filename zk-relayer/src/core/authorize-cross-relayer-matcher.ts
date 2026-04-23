@@ -7,6 +7,7 @@ import {
   type AuthorizeMatch,
   isPriceCompatible,
   isTokenCompatible,
+  isLiveStatus,
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
@@ -79,7 +80,10 @@ export class AuthorizeCrossRelayerMatchService {
 
     // Pair index already enforces local.sell == remote.buy && local.buy == remote.sell.
     for (const [nullifier, local] of this.lookupByCounterPair(summary.sellToken, summary.buyToken)) {
-      if (local.status !== "pending") continue;
+      // Accept any live-queue status (legacy 'pending' or new 'accepted' /
+      // 'retrying'). In-flight ('matched' / 'settling') and terminal
+      // states stay skipped.
+      if (!isLiveStatus(local.status)) continue;
       if (this.lockingOrders.has(nullifier)) continue;
 
       const ps = local.order.publicSignals;
@@ -93,12 +97,23 @@ export class AuthorizeCrossRelayerMatchService {
 
       // Match! Attempt the trade offer.
       this.lockingOrders.add(nullifier);
+      // Capture the pre-`matched` live status so the reject / error paths
+      // can restore the exact prior state. Hard-coding a restore value
+      // would clobber rows that started as legacy 'pending' or new
+      // 'retrying' (drifting in-memory state from the DB-backed FSM).
+      const priorStatus = local.status;
       try {
         console.log(
           `[authorize-cross] Match: local taker ${nullifier.slice(0, 18)}... ` +
           `↔ remote maker ${summary.id.slice(0, 18)}... (relayer ${summary.relayerUrl})`,
         );
+        // Persist 'matched' to the DB *before* sending the offer so
+        // SettlementWorker.claimNextSettlementJob (which selects rows
+        // with status IN ('accepted','retrying')) can't race us by
+        // claiming the same order mid-offer and trying to settle it
+        // from the local queue path.
         local.status = "matched";
+        this.db?.updateAuthorizeOrderStatus(nullifier, "matched");
 
         const result = await this.sendTradeOffer(local.order, summary);
 
@@ -122,15 +137,20 @@ export class AuthorizeCrossRelayerMatchService {
           return; // Only match one pair per remote-arrival tick.
         }
 
-        // Rejection path — restore to pending so a future remote can retry.
+        // Rejection path — restore the prior live-queue status so a
+        // future remote (or the local SettlementWorker) can retry.
         console.warn(`[authorize-cross] Trade offer rejected: ${result.reason ?? "unknown"}`);
-        local.status = "pending";
+        local.status = priorStatus;
+        this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
       } catch (err) {
         console.warn(
           `[authorize-cross] Trade offer error:`,
           err instanceof Error ? err.message : "unknown",
         );
-        if (local.status === "matched") local.status = "pending";
+        if (local.status === "matched") {
+          local.status = priorStatus;
+          this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
+        }
       } finally {
         this.lockingOrders.delete(nullifier);
       }
@@ -199,7 +219,10 @@ export class AuthorizeCrossRelayerMatchService {
     if (!makerStored) {
       return { status: "rejected", reason: "maker order not found" };
     }
-    if (makerStored.status !== "pending") {
+    // Accept legacy 'pending' AND the new 'accepted' / 'retrying' live-queue
+    // states. In-flight / terminal rows stay rejected so a double-settle
+    // can't race.
+    if (!isLiveStatus(makerStored.status)) {
       return { status: "rejected", reason: `maker order status is ${makerStored.status}` };
     }
     if (this.lockingOrders.has(mapKey)) {
@@ -234,8 +257,16 @@ export class AuthorizeCrossRelayerMatchService {
     }
 
     this.lockingOrders.add(mapKey);
+    // Capture the pre-`matched` live status so the error path can restore
+    // the exact prior state — a maker row that was 'pending' (legacy) or
+    // 'retrying' shouldn't be rewritten to 'accepted'.
+    const priorMakerStatus = makerStored.status;
     try {
+      // Persist 'matched' to the DB before submitAuthSettle so our own
+      // SettlementWorker can't race-claim this nullifier from the local
+      // queue while the on-chain settle is pending.
       makerStored.status = "matched";
+      this.db?.updateAuthorizeOrderStatus(mapKey, "matched");
 
       const takerStored: StoredAuthorizeOrder = {
         order: takerOrder,
@@ -271,9 +302,11 @@ export class AuthorizeCrossRelayerMatchService {
       );
       return { status: "settled", txHash };
     } catch (err) {
-      // Don't leave the maker stuck in "matched" — the taker side will
-      // try another path or the user will re-submit.
-      makerStored.status = "pending";
+      // Don't leave the maker stuck in "matched" — restore the captured
+      // prior live-queue status in both memory AND the DB so the local
+      // SettlementWorker (or a future remote tick) can retry it.
+      makerStored.status = priorMakerStatus;
+      this.db?.updateAuthorizeOrderStatus(mapKey, priorMakerStatus);
       const reason = err instanceof Error ? err.message : "settleAuth failed";
       console.warn(`[authorize-cross] settleAuth failed:`, reason);
       return { status: "error", reason };
