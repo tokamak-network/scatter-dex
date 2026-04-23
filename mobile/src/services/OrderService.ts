@@ -35,33 +35,36 @@ const COMMIT_TREE_DEPTH = 20;
 const MAX_CLAIMS_PER_SIDE = 16;
 const CLAIMS_TREE_DEPTH = 4;
 
-/** Abort-recovery probe. Called after `submitAuthorizeOrder` throws an
- *  AbortError to check whether the relayer actually received the order —
- *  the POST sometimes aborts after a successful server-side accept
- *  (iOS NSURLSession connection-pool races, see issue #401). Polls the
- *  status endpoint a few times; returns the first hit or `null` if the
- *  order is genuinely missing.
+/** GET-based confirmation of order acceptance. The authorize-order POST
+ *  uses a short (5 s) timeout because the POST request-body upload on iOS
+ *  simulator loopback is observed to take 10-20 s for the ~100 KB ZK
+ *  payload (issue #401). NSURLSession keeps retrying the upload in the
+ *  background after the client-side abort, so the server eventually
+ *  receives the order — this poll is the *primary* confirmation path
+ *  waiting for that delayed server-side accept.
  *
- *  Timing: the first probe fires immediately (no initial sleep) because
- *  by the time fetch aborted, the server had long since decided the
- *  outcome — waiting would just add latency to an already-slow failure
- *  path. Subsequent probes space by 500 ms.
+ *  Timing: first probe fires immediately. Subsequent probes space by 1 s
+ *  (was 500 ms) to spread a longer recovery window without hammering.
  *
- *  Budget: 5 probes. Each probe uses a 2 s per-request timeout (tighter
- *  than the default 5 s TIMEOUT_READ_MS) so a slow / unreachable relayer
- *  can't eat the whole recovery window — worst case ~10 s if every
- *  probe times out, with an early-exit after 2 consecutive network
- *  errors that drops it to ~4 s. Happy path is 1 probe. */
+ *  Budget: 20 probes × 1 s spacing ≈ 20 s of recovery window. Combined
+ *  with the 5 s POST timeout that precedes it, total client patience
+ *  is ~25 s — enough to catch the observed worst-case 15-20 s server
+ *  accept on iOS simulator. Each probe uses a 2 s per-request timeout
+ *  so a totally unreachable relayer can't stall longer than the nominal
+ *  budget. Early-exits after 2 consecutive network errors keep a dead
+ *  server from eating the full 20 s. Happy path is 1 probe. */
 const RECOVERY_PROBE_TIMEOUT_MS = 2_000;
+const RECOVERY_PROBE_ATTEMPTS = 20;
+const RECOVERY_PROBE_INTERVAL_MS = 1_000;
 
 async function pollForAcceptedOrder(
   nullifier: string,
   relayerUrl: string,
 ): Promise<{ status: string } | null> {
   let consecutiveErrors = 0;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < RECOVERY_PROBE_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, RECOVERY_PROBE_INTERVAL_MS));
     }
     try {
       const status = await RelayerApiService.getAuthorizeOrderStatus(
@@ -460,10 +463,36 @@ export const OrderService = {
       // traffic and hit its 30 s timeout even when the relayer is
       // responding in < 10 ms. See issue #401.
       PendingOrdersService.pausePoll();
+      // Warm-up GET before the authorize POST. Net Test diagnostics
+      // (issue #401) showed that the same POST is fast when the
+      // NSURLSession pool already has a live connection to the relayer,
+      // but stalls 20-40 s after a cold window — specifically after
+      // the ~13 s HiddenWebView/WebKit proof-generation burst leaves
+      // the session in a state where the first POST's body upload
+      // doesn't drain. A cheap GET on `/api/info` re-establishes a
+      // clean connection and the subsequent POST rides on it. ~30 ms
+      // baseline cost vs. the 5-30 s we save on the happy path.
+      try {
+        await fetch(`${input.relayerUrl}/api/info`);
+      } catch {
+        // Warm-up is best-effort — if it fails, the real POST below
+        // will surface the actual error; don't short-circuit here.
+      }
       const t0 = Date.now();
+      // Race the POST (authoritative — yields orderId) against GET
+      // polling (confirmation — works even when the POST response never
+      // reaches the client, iOS simulator issue #401). First to confirm
+      // the server has the order wins. The loser is discarded; by that
+      // point the background POST has pushed the payload so nothing is
+      // lost. POST rejections resolve (not throw) into a tagged object
+      // so a failed POST doesn't short-circuit the race — we fall back
+      // to poll-only if POST dies.
       let response: { orderId?: string; status?: string; [k: string]: any };
       try {
-        response = await RelayerApiService.submitAuthorizeOrder(
+        const postPromise: Promise<
+          | { via: 'post'; data: { orderId?: string; [k: string]: any } }
+          | { via: 'post-err'; err: Error }
+        > = RelayerApiService.submitAuthorizeOrder(
           {
             proof: solidityProof,
             publicSignals: namedSignals,
@@ -472,39 +501,34 @@ export const OrderService = {
             pubKeyAy: keyPair.pubKeyAy,
           },
           input.relayerUrl,
-        );
-        console.log('[OrderService] relayer response', response, `(${Date.now() - t0}ms)`);
-      } catch (submitErr: unknown) {
-        // Recovery — an AbortError at this point doesn't actually mean
-        // the POST failed: the relayer's 202 roundtrip is milliseconds,
-        // so a timeout usually reflects a local fetch-resolution race,
-        // not a server-side failure. Poll GET /:nullifier a few times
-        // to check whether the relayer already has the order. If yes,
-        // treat as success and proceed. If no, rethrow.
-        const isAbort = submitErr instanceof Error
-          && (submitErr.name === 'AbortError' || /abort/i.test(submitErr.message));
-        if (!isAbort) throw submitErr;
-        console.warn(
-          '[OrderService] submit aborted after',
-          Date.now() - t0, 'ms — polling for server-side confirmation',
-        );
-        const recovered = await pollForAcceptedOrder(
+        ).then((r) => ({ via: 'post' as const, data: r }))
+          .catch((e) => ({ via: 'post-err' as const, err: e as Error }));
+
+        const pollPromise = pollForAcceptedOrder(
           namedSignals.nullifier,
           input.relayerUrl,
-        );
-        if (!recovered) {
-          console.error('[OrderService] recovery poll found no order — POST really failed');
-          throw submitErr;
+        ).then((status) => ({ via: 'poll' as const, data: status }));
+
+        const winner = await Promise.race([postPromise, pollPromise]);
+
+        if (winner.via === 'post') {
+          response = winner.data;
+        } else if (winner.via === 'poll' && winner.data) {
+          response = { status: winner.data.status };
+        } else {
+          // Poll won with null (exhausted) OR POST failed first.
+          // In either case, fall back to awaiting the other racer.
+          const other = winner.via === 'poll' ? await postPromise : await pollPromise;
+          if (other.via === 'post') {
+            response = other.data;
+          } else if (other.via === 'poll' && other.data) {
+            response = { status: other.data.status };
+          } else {
+            const err = winner.via === 'post-err' ? winner.err
+              : (other.via === 'post-err' ? other.err : new Error('order not accepted'));
+            throw err;
+          }
         }
-        console.log(
-          '[OrderService] recovered — relayer has the order with status',
-          recovered.status,
-        );
-        // Synthesise a response compatible with the rest of the flow.
-        // `orderId` is unavailable here (the 202 body we never saw
-        // would have contained it); downstream callers tolerate
-        // missing orderId (see PendingClaimsStorage.append:412).
-        response = { status: recovered.status };
       } finally {
         PendingOrdersService.resumePoll();
       }
