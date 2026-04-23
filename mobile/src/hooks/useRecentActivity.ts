@@ -82,21 +82,33 @@ export function useRecentActivity() {
         // would miss taker / submitter participation; a follow-up could
         // post-filter via `parsed.args` after a smaller server-side fetch.)
         settlement.queryFilter(settlement.filters.PrivateSettledAuth(), fromBlock),
-        // SettledWithDex has `submitter` as the third indexed param — match
-        // when the user submitted a market order themselves.
-        settlement.queryFilter(settlement.filters.SettledWithDex(null, null, account), fromBlock),
-        // ScatterDirectAuthSettled has `relayer` as the third indexed slot —
-        // matches when the user IS the relayer/submitter for a same-token
-        // single-party scatter (added in main commit 6635195, previously
-        // unindexed by mobile so it was invisible in HistoryScreen).
-        settlement.queryFilter(settlement.filters.ScatterDirectAuthSettled(null, null, account), fromBlock),
+        // ethers v6 maps filter args to event params in full declaration
+        // order (non-indexed slots must be null). SettledWithDex:
+        //   (nullifierⁱ, claimsRootⁱ, sellToken, buyToken, sellAmount,
+        //    amountOut, totalLocked, submitterⁱ) — submitter is position 7.
+        settlement.queryFilter(
+          settlement.filters.SettledWithDex(null, null, null, null, null, null, null, account),
+          fromBlock,
+        ),
+        // ScatterDirectAuthSettled:
+        //   (nullifierⁱ, nonceNullifierⁱ, claimsRoot, relayerⁱ, fee)
+        // — relayer is position 3. Matches when the user is the submitter
+        // for a same-token single-party scatter (contract commit 6635195).
+        settlement.queryFilter(
+          settlement.filters.ScatterDirectAuthSettled(null, null, null, account),
+          fromBlock,
+        ),
+        // PrivateClaim: (claimsRootⁱ, nullifierⁱ, recipientⁱ, token, amount)
+        // — recipient is position 2, all indexed so positional filter works.
         settlement.queryFilter(settlement.filters.PrivateClaim(null, null, account), fromBlock),
-        // PrivateCancel's third indexed slot is named `relayer` in the ABI
-        // but is actually `msg.sender` of `cancelPrivate` (the cancelling
-        // user). Mobile self-submits cancels, so filtering by `account`
-        // here matches the user's own cancellations. The naming asymmetry
-        // is a contract-side wart (circuit calls it `submitter`).
-        settlement.queryFilter(settlement.filters.PrivateCancel(null, null, account), fromBlock),
+        // PrivateCancel: (escrowNullifierⁱ, nonceNullifierⁱ, newCommitment,
+        //                 relayerⁱ) — relayer is position 3. The ABI names
+        // it `relayer` but the contract emits `msg.sender` of
+        // `cancelPrivate`, which on mobile is the cancelling user.
+        settlement.queryFilter(
+          settlement.filters.PrivateCancel(null, null, null, account),
+          fromBlock,
+        ),
       ]);
 
       // Per-source slice + global sort. With 5 sources we can have up to
