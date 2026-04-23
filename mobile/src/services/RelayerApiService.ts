@@ -7,7 +7,7 @@
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
-import { fetchWithTimeout, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS } from '../lib/http';
+import { fetchWithTimeout, normalizeUrl, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS, TIMEOUT_AUTHORIZE_SUBMIT_MS } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
 import { COMMIT_TREE_DEPTH } from '../lib/zk/constants';
 
@@ -176,12 +176,12 @@ export const RelayerApiService = {
     },
     relayerUrl?: string,
   ): Promise<{ orderId?: string; [k: string]: any }> {
-    const url = `${relayerUrl || this.getBaseUrl()}/api/authorize-orders`;
+    const url = `${normalizeUrl(relayerUrl || this.getBaseUrl())}/api/authorize-orders`;
     const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      timeoutMs: TIMEOUT_SUBMIT_MS,
+      timeoutMs: TIMEOUT_AUTHORIZE_SUBMIT_MS,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -208,7 +208,7 @@ export const RelayerApiService = {
      *  slow relayer can't eat the whole recovery window. */
     timeoutMs: number = TIMEOUT_READ_MS,
   ): Promise<AuthorizeOrderStatusResponse | null> {
-    const base = relayerUrl || this.getBaseUrl();
+    const base = normalizeUrl(relayerUrl || this.getBaseUrl());
     const res = await fetchWithTimeout(`${base}/api/authorize-orders/${nullifier}`, {
       timeoutMs,
     });

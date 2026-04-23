@@ -37,6 +37,17 @@ import { useMarketQuote, paramsMatch, MarketQuoteParams } from '../hooks/useMark
 // app enforces so the authorize proof stays fast enough for the user to wait.
 const MAX_CLAIM_ROWS = 10;
 
+// User-friendly labels for the order-submit step log. Missing steps fall
+// through to the raw key (harmless). Keep in sync with OrderProgress.
+const STEP_LABELS: Record<string, string> = {
+  deriving_key: 'Deriving trading key',
+  signing_order: 'Signing order',
+  building_tree: 'Building Merkle tree',
+  generating_proof: 'Generating ZK proof',
+  submitting: 'Submitting to relayer',
+  saving_change: 'Saving change note',
+};
+
 type DelayUnit = 'min' | 'hr' | 'day';
 type ClaimMode = 'standard' | 'stealth';
 interface ClaimRow {
@@ -136,6 +147,10 @@ export default function TradeScreen() {
   const [submitting, setSubmitting] = useState(false);
   const { makeController: makeSubmitAbort, isMounted } = useAbortOnUnmount();
   const [error, setError] = useState<string | null>(null);
+  // Per-step timing log for the order submit flow. Displayed inline so
+  // users (and we) can see which phase is slow without tailing Metro.
+  // Shape: `[{ step, startedAt, durationMs? }]`. Reset at submit start.
+  const [stepLog, setStepLog] = useState<{ step: string; startedAt: number; durationMs?: number }[]>([]);
   const [onlineRelayers, setOnlineRelayers] = useState<RelayerInfo[]>([]);
 
   // Clamp a stale relayer pick when discovery updates (e.g. a relayer
@@ -532,6 +547,7 @@ export default function TradeScreen() {
 
     setSubmitting(true);
     setError(null);
+    setStepLog([]);
 
     try {
       if (tradeType === 'limit') {
@@ -640,6 +656,16 @@ export default function TradeScreen() {
         };
 
         await OrderService.execute(signer, account, input, (p: OrderProgress) => {
+          // Close the previous step (stamp its duration) and push the new
+          // one. Terminal steps (success/error) just close the last entry.
+          setStepLog((prev) => {
+            const now = Date.now();
+            const closed = prev.length && prev[prev.length - 1].durationMs === undefined
+              ? [...prev.slice(0, -1), { ...prev[prev.length - 1], durationMs: now - prev[prev.length - 1].startedAt }]
+              : prev;
+            if (p.step === 'success' || p.step === 'error') return closed;
+            return [...closed, { step: p.step, startedAt: now }];
+          });
           if (p.step === 'error') setError(p.error || 'Order failed');
           if (p.step === 'success') {
             // Route the user to the tab that will actually reflect their
@@ -1261,7 +1287,32 @@ export default function TradeScreen() {
             error state or a half-filled form can be cleared without
             navigating away. Reset keeps the token pair / fee / expiry
             preferences and only clears the transient submit inputs. */}
-        <View style={[s.actionWrap, { flexDirection: 'row', gap: 12 }]}>
+        {/* Per-step progress — shown while submitting so users can see
+            what the app is doing (key derivation, tree build, ZK proof,
+            POST). Friendly labels instead of raw step names so this
+            reads as status, not debug output. */}
+        {stepLog.length > 0 && (
+          <View style={[s.actionWrap, { backgroundColor: '#f3f4f6', padding: 12, borderRadius: 10 }]}>
+            {stepLog.map((e, i) => {
+              const running = e.durationMs === undefined;
+              return (
+                <Text
+                  key={`${e.step}-${i}`}
+                  style={{
+                    color: running ? colors.primary : '#6b7280',
+                    fontSize: 12,
+                    paddingVertical: 2,
+                  }}
+                >
+                  {running ? '●' : '✓'} {STEP_LABELS[e.step] ?? e.step}
+                  {running ? ' …' : ` · ${(e.durationMs! / 1000).toFixed(1)}s`}
+                </Text>
+              );
+            })}
+          </View>
+        )}
+
+<View style={[s.actionWrap, { flexDirection: 'row', gap: 12 }]}>
           {/* Reset stays enabled while `submitting` so a stuck submitting
               flag can actually be cleared — that's the whole point of
               the button. `actionBtnDisabled` isn't appropriate for an
