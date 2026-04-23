@@ -15,13 +15,16 @@ import {
   isTokenCompatible,
   isPriceCompatible,
   publicSignalToAddress,
+  isLiveStatus,
+  isInFlightStatus,
+  isTerminalStatus,
   type AuthorizeOrderFile,
   type AuthorizePublicSignals,
   type StoredAuthorizeOrder,
   type AuthorizeMatch,
 } from "../types/authorize-order.js";
 import type { AuthorizeSubmitter } from "../core/authorize-submitter.js";
-import type { PrivateOrderDB } from "../core/db.js";
+import type { PrivateOrderDB, AuthorizeOrderRow } from "../core/db.js";
 import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 import { config } from "../config.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
@@ -114,6 +117,47 @@ export function nullifierToOfferHandle(nullifierDecimal: string): string {
   return "0x" + BigInt(nullifierDecimal).toString(16).padStart(64, "0");
 }
 
+/** HTTP code for an idempotent replay of an already-known nullifier.
+ *   terminal (settled/failed/expired/cancelled) → 200 (final answer)
+ *   in-progress (live or in-flight)              → 202
+ *   dead_letter                                  → 409 (give-up, surface)
+ *  Per docs/design/async-settlement-protocol.md §2.4. */
+function idempotencyHttpCode(status: string): number {
+  if (status === "dead_letter") return 409;
+  // dead_letter is in TERMINAL_STATUSES (it's a final outcome) but the
+  // wire contract maps it to 409, not 200 — handled above.
+  if (isTerminalStatus(status)) return 200;
+  return 202;
+}
+
+/** The async-FSM path writes submitted_at/updated_at in epoch-ms
+ *  (`Date.now()`), but legacy 'pending' rows written before the migration
+ *  used `saveAuthorizeOrder(nowSeconds)`. Normalise at the read boundary
+ *  without rewriting historic DB rows: anything below ~Sep-2001 in ms
+ *  (10^12) must be a seconds value and gets scaled up. */
+function normalizeEpochMs(value: number): number {
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+/** Build the status payload shape returned by POST (idempotent) and GET.
+ *  `order` is optional — the caller has it cheap from the in-memory cache;
+ *  when absent we fall back to parsing the DB blob. */
+function buildStatusReply(row: AuthorizeOrderRow, order: AuthorizeOrderFile | null) {
+  return {
+    status: row.status,
+    submittedAt: normalizeEpochMs(row.submittedAt),
+    updatedAt: normalizeEpochMs(row.updatedAt || row.submittedAt),
+    attempt: row.attempt,
+    settleTxHash: row.settleTx ?? null,
+    error: row.lastError ?? null,
+    expiresAt: order ? Number(order.publicSignals.expiry) : null,
+  };
+}
+
+function safeParseOrder(json: string): AuthorizeOrderFile | null {
+  try { return JSON.parse(json) as AuthorizeOrderFile; } catch { return null; }
+}
+
 export function decPubKeyCount(ax: string, ay: string): void {
   const id = pubKeyId(ax, ay);
   const count = (pendingCountByPubKey.get(id) ?? 0) - 1;
@@ -148,19 +192,24 @@ export function createAuthorizeOrderRoutes(
           throw new Error(`invalid nullifier shape: ${JSON.stringify(row.nullifier)}`);
         }
         const orderObj = JSON.parse(row.orderJson) as AuthorizeOrderFile;
+        // Legacy 'pending' rows were persisted in epoch-seconds; new rows
+        // under the async FSM use epoch-ms. Normalise on restore so the
+        // in-memory map stays in a single unit regardless of which
+        // generation the row came from.
         authorizeOrders.set(row.nullifier, {
           order: orderObj,
           status: row.status as StoredAuthorizeOrder["status"],
-          submittedAt: row.submittedAt,
+          submittedAt: normalizeEpochMs(row.submittedAt),
           pubKeyAx: row.pubKeyAx,
           pubKeyAy: row.pubKeyAy,
           settleTxHash: row.settleTx ?? undefined,
         });
         indexAuthorizeOrder(row.nullifier, orderObj);
         // Rebuild the per-pubKey pending counter so MAX_ORDERS_PER_PUBKEY
-        // can't be bypassed by restarting the relayer. Only pending orders
-        // count — settled/cancelled rows already had their slot released.
-        if (row.status === "pending" && row.pubKeyAx && row.pubKeyAy) {
+        // can't be bypassed by restarting the relayer. Only live-queue and
+        // in-flight rows hold a slot; terminal statuses have already
+        // released theirs.
+        if ((isLiveStatus(row.status) || isInFlightStatus(row.status)) && row.pubKeyAx && row.pubKeyAy) {
           incPubKeyCount(row.pubKeyAx, row.pubKeyAy);
         }
         restored++;
@@ -198,10 +247,44 @@ export function createAuthorizeOrderRoutes(
         return;
       }
 
-      // ── 3. Dedup by nullifier (before size cap so retries get 409, not 503) ──
       const nullifier = order.publicSignals.nullifier;
-      if (authorizeOrders.has(nullifier)) {
-        res.status(409).json({ error: "Order with this nullifier already exists" });
+      const pollUrl = `/api/authorize-orders/${nullifier}`;
+
+      // ── 3. Idempotency — same nullifier maps to one outcome forever.
+      // Read the DB row (durable across restarts; the in-memory map is a
+      // cache). Re-verifying the proof on every retry would let an attacker
+      // force CPU work just by replaying old payloads — design §2.4.
+      const existing = _db?.getAuthorizeOrder(nullifier) ?? null;
+      if (existing) {
+        // A replayed POST may carry a different `order` body than the one
+        // originally persisted (same nullifier is the only invariant).
+        // Deriving expiresAt from the stored blob keeps the idempotent
+        // response faithful to the persisted contract; fall back to the
+        // just-validated request value only if the blob can't be parsed.
+        const persistedOrder = safeParseOrder(existing.orderJson);
+        const reply = buildStatusReply(existing, persistedOrder ?? order);
+        const code = idempotencyHttpCode(existing.status);
+        res.status(code).json({ ...reply, nullifier, pollUrl });
+        return;
+      }
+      // In-memory fallback for setups without a DB. Status is whatever the
+      // worker last set; the in-memory record always has at least 'pending'.
+      const cached = authorizeOrders.get(nullifier);
+      if (cached) {
+        // `cached.submittedAt` is epoch-ms under the async FSM (the
+        // seconds-based legacy path is gone below). Reply in the same
+        // unit as the DB-backed path above.
+        res.status(202).json({
+          status: cached.status,
+          submittedAt: cached.submittedAt,
+          updatedAt: cached.submittedAt,
+          attempt: 0,
+          settleTxHash: cached.settleTxHash ?? null,
+          error: null,
+          expiresAt: Number(cached.order.publicSignals.expiry),
+          nullifier,
+          pollUrl,
+        });
         return;
       }
 
@@ -247,69 +330,70 @@ export function createAuthorizeOrderRoutes(
         res.status(429).json({ error: `Too many pending orders for this pubKey (max ${MAX_ORDERS_PER_PUBKEY})` });
         return;
       }
-      // Increment immediately to prevent race conditions across concurrent requests
       incPubKeyCount(pubKeyAx, pubKeyAy);
 
-      // ── 5. Store the order ──
+      // ── 5. Persist as 'accepted' and seed the in-memory match cache.
+      // The settlement worker (core/settlement-worker.ts) picks the row up
+      // from the queue; this handler returns immediately.
+      const submittedAtMs = Date.now();
+      try {
+        _db?.insertAcceptedOrder({
+          nullifier,
+          submittedAt: submittedAtMs,
+          orderJson: JSON.stringify(order),
+          pubKeyAx,
+          pubKeyAy,
+        });
+      } catch (err) {
+        // Lost the unique-constraint race against a concurrent submit.
+        // Restore the per-pubKey slot we optimistically claimed and route
+        // through the idempotency path so the response is consistent.
+        decPubKeyCount(pubKeyAx, pubKeyAy);
+        const row = _db?.getAuthorizeOrder(nullifier);
+        if (row) {
+          const reply = buildStatusReply(row, order);
+          res.status(idempotencyHttpCode(row.status)).json({ ...reply, nullifier, pollUrl });
+          return;
+        }
+        throw err;
+      }
+
+      // Keep the in-memory timestamp in epoch-ms to match what
+      // `insertAcceptedOrder` persists. The design doc (§2.1) and every
+      // other consumer (worker retry scheduling, GET response, FSM
+      // transitions) talks in ms; flooring to seconds here previously
+      // created a unit mismatch between freshly-submitted orders and rows
+      // restored from the DB.
       const stored: StoredAuthorizeOrder = {
         order,
-        status: "pending",
-        submittedAt: nowSeconds,
+        status: "accepted",
+        submittedAt: submittedAtMs,
         pubKeyAx,
         pubKeyAy,
       };
       authorizeOrders.set(nullifier, stored);
       indexAuthorizeOrder(nullifier, order);
-      _db?.saveAuthorizeOrder(nullifier, "pending", nowSeconds, JSON.stringify(order), pubKeyAx, pubKeyAy);
-      // [R-8] Record order submission for throughput metrics
       recordOrderSubmitted();
 
       console.log(
-        `[authorize-orders] New order: sell=${order.publicSignals.sellToken} ` +
+        `[authorize-orders] Accepted: sell=${order.publicSignals.sellToken} ` +
         `buy=${order.publicSignals.buyToken} ` +
         `amount=${order.publicSignals.sellAmount} ` +
         `nullifier=${nullifier.slice(0, 18)}...` +
-        (pubKeyAx ? ` pubKey=${pubKeyAx.slice(0, 12)}...` : ""),
+        ` pubKey=${pubKeyAx.slice(0, 12)}...`,
       );
 
-      // ── 5a. Same-token scatter — no counterparty needed ──
+      // ── 5b. Publish cross-token orders to the shared orderbook so
+      // counterparty relayers can find them. Same-token (scatter) doesn't
+      // need a counterparty, so we skip the publish to keep the OB clean.
       const isSameToken = BigInt(order.publicSignals.sellToken) === BigInt(order.publicSignals.buyToken);
-      if (isSameToken) {
-        console.log("[authorize-orders] Same-token order detected — submitting scatterDirectAuth...");
-        stored.status = "matched";
-        try {
-          // Use the relayer's configured fee so the fee is actually routed
-          // to the FeeVault (capped by the user's signed maxFee inside
-          // `computeFee`). Previously hard-coded to 0n, which meant every
-          // scatter settled with fee=0 and no vault deposit.
-          const txHash = await submitter.submitScatterDirectAuth(order, BigInt(config.relayerFee));
-          stored.status = "settled";
-          stored.settleTxHash = txHash;
-          decPubKeyCount(pubKeyAx, pubKeyAy);
-          _db?.updateAuthorizeOrderStatus(nullifier, "settled", txHash);
-          res.json({ status: "settled", txHash, nullifier });
-          return;
-        } catch (err) {
-          // Keep a tombstone entry (status=cancelled) to prevent resubmission
-          // of the same nullifier — the TX may have been broadcast but not confirmed.
-          stored.status = "cancelled";
-          decPubKeyCount(pubKeyAx, pubKeyAy);
-          _db?.updateAuthorizeOrderStatus(nullifier, "cancelled");
-          console.error("[authorize-orders] scatterDirectAuth failed:", err);
-          res.status(500).json({
-            status: "scatter_failed",
-            error: "scatterDirectAuth submission failed — generate a new proof to retry",
-            nullifier,
-          });
-          return;
-        }
-      }
-
-      // ── 5b. Publish to shared orderbook for cross-relayer visibility ──
-      if (_sharedClient) {
+      if (!isSameToken && _sharedClient) {
         const ps = order.publicSignals;
         const offerHandle = nullifierToOfferHandle(nullifier);
-        const orderbookId = await _sharedClient.postOrder({
+        // Fire-and-forget — don't block the 202. Errors are logged by the
+        // shared-OB client; a publish failure just means cross-relayer
+        // visibility is delayed, not that the order is lost.
+        void _sharedClient.postOrder({
           id: offerHandle,
           sellToken: publicSignalToAddress(ps.sellToken),
           buyToken: publicSignalToAddress(ps.buyToken),
@@ -318,79 +402,21 @@ export function createAuthorizeOrderRoutes(
           minFillAmount: ps.buyAmount,
           maxFee: Number(ps.maxFee),
           expiry: Number(ps.expiry),
+        }).catch((err) => {
+          console.warn("[authorize-orders] shared-OB publish failed:", err instanceof Error ? err.message : err);
         });
-        if (orderbookId) {
-          console.log(`[authorize-orders] Published to shared orderbook: ${orderbookId}`);
-        }
       }
 
-      // ── 6. Try to match ──
-      const match = findMatch(stored);
-      if (match) {
-        console.log("[authorize-orders] Match found! Submitting settleAuth...");
-        try {
-          // Mark both as matched
-          match.maker.status = "matched";
-          match.taker.status = "matched";
-
-          // Use the relayer's configured fee — `computeFee` caps each
-          // side by the respective maker/taker maxFee, so the signed
-          // bound is always respected. Hard-coding 0n here silently
-          // skipped the fee deposit to FeeVault on every cross-token
-          // settlement.
-          // Send the same offer-handle encoding the cross-relayer matcher
-          // uses, so OrderbookDB.insertSettlement's snapshot lookup keys
-          // line up with shared-OB orders.id (which is the offer handle,
-          // not the raw nullifier). takerRelayer is omitted — submitter
-          // defaults it to itself in the push hook.
-          const txHash = await submitter.submitAuthSettle(match, BigInt(config.relayerFee), {
-            makerOrderId: nullifierToOfferHandle(match.maker.order.publicSignals.nullifier),
-            takerOrderId: nullifierToOfferHandle(match.taker.order.publicSignals.nullifier),
-          });
-
-          match.maker.status = "settled";
-          match.maker.settleTxHash = txHash;
-          decPubKeyCount(match.maker.pubKeyAx!, match.maker.pubKeyAy!);
-          match.taker.status = "settled";
-          match.taker.settleTxHash = txHash;
-          decPubKeyCount(match.taker.pubKeyAx!, match.taker.pubKeyAy!);
-          _db?.updateAuthorizeOrderStatus(match.maker.order.publicSignals.nullifier, "settled", txHash);
-          _db?.updateAuthorizeOrderStatus(match.taker.order.publicSignals.nullifier, "settled", txHash);
-
-          // Cancel both sides from shared orderbook. Best-effort —
-          // a 404 here is harmless (already cancelled / expired).
-          if (_sharedClient) {
-            const makerOid = nullifierToOfferHandle(match.maker.order.publicSignals.nullifier);
-            const takerOid = nullifierToOfferHandle(match.taker.order.publicSignals.nullifier);
-            void _sharedClient.cancelOrder(makerOid).catch(() => {});
-            void _sharedClient.cancelOrder(takerOid).catch(() => {});
-          }
-
-          res.json({
-            status: "settled",
-            txHash,
-            nullifier,
-          });
-          return;
-        } catch (err) {
-          // Settlement failed — revert both to pending for retry
-          match.maker.status = "pending";
-          match.taker.status = "pending";
-
-          console.error("[authorize-orders] settleAuth failed:", err);
-          res.json({
-            status: "pending",
-            nullifier,
-            message: "Order stored; matched but settlement failed — will retry",
-          });
-          return;
-        }
-      }
-
-      res.json({
-        status: "pending",
+      res.status(202).json({
+        status: "accepted",
+        submittedAt: submittedAtMs,
+        updatedAt: submittedAtMs,
+        attempt: 0,
+        settleTxHash: null,
+        error: null,
+        expiresAt: Number(order.publicSignals.expiry),
         nullifier,
-        message: "Order stored; waiting for counterparty",
+        pollUrl,
       });
     } catch (err: unknown) {
       console.error("[authorize-orders] Error:", err);
@@ -398,19 +424,34 @@ export function createAuthorizeOrderRoutes(
     }
   }) as RequestHandler);
 
-  // GET /api/authorize-orders/:nullifier — check order status
+  // GET /api/authorize-orders/:nullifier — status-poll endpoint.
+  // Reads from the durable DB row (the in-memory map is best-effort cache).
   if (readLimiter) router.get("/:nullifier", readLimiter);
   router.get("/:nullifier", ((req: Request, res: Response) => {
-    const stored = authorizeOrders.get(req.params.nullifier);
-    if (!stored) {
-      res.status(404).json({ error: "Order not found" });
+    const nullifier = req.params.nullifier;
+    const row = _db?.getAuthorizeOrder(nullifier) ?? null;
+    if (row) {
+      const cached = authorizeOrders.get(nullifier);
+      const order = cached?.order ?? safeParseOrder(row.orderJson);
+      res.json(buildStatusReply(row, order));
       return;
     }
-    res.json({
-      status: stored.status,
-      submittedAt: stored.submittedAt,
-      settleTxHash: stored.settleTxHash ?? null,
-    });
+    const cached = authorizeOrders.get(nullifier);
+    if (cached) {
+      // `cached.submittedAt` is epoch-ms now (see POST handler); the
+      // previous `* 1000` multiplication dates from when it was seconds.
+      res.json({
+        status: cached.status,
+        submittedAt: cached.submittedAt,
+        updatedAt: cached.submittedAt,
+        attempt: 0,
+        settleTxHash: cached.settleTxHash ?? null,
+        error: null,
+        expiresAt: Number(cached.order.publicSignals.expiry),
+      });
+      return;
+    }
+    res.status(404).json({ error: "Order not found" });
   }) as RequestHandler);
 
   // DELETE /api/authorize-orders/:nullifier — cancel a pending order
@@ -431,11 +472,13 @@ export function createAuthorizeOrderRoutes(
 // ─── Simple matching logic ──────────────────────────────────────
 
 // Token/price compatibility mirrors settleAuth on-chain (steps 3-4).
-function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
+export function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
   const inPs = incoming.order.publicSignals;
   for (const [, candidate] of lookupAuthorizeOrdersByCounterPair(inPs.sellToken, inPs.buyToken)) {
     if (candidate === incoming) continue;
-    if (candidate.status !== "pending") continue;
+    // Live = in the queue, eligible to be paired. In-flight rows
+    // ('matched'/'settling') are mid-tx; terminal rows are done.
+    if (!isLiveStatus(candidate.status)) continue;
 
     const cPs = candidate.order.publicSignals;
     if (!isTokenCompatible(cPs, inPs)) continue;
@@ -453,7 +496,7 @@ function findMatch(incoming: StoredAuthorizeOrder): AuthorizeMatch | null {
 export function drainAuthorizeOrders(): number {
   const toDelete: Array<[string, StoredAuthorizeOrder]> = [];
   for (const [key, stored] of authorizeOrders) {
-    if (stored.status !== "pending") continue;
+    if (!isLiveStatus(stored.status)) continue;
     stored.status = "cancelled";
     if (stored.pubKeyAx && stored.pubKeyAy) {
       decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
@@ -494,20 +537,18 @@ export function purgeNonPendingAuthorizeOrders(): number {
   const nowSeconds = Math.floor(Date.now() / 1000);
   let removed = 0;
   for (const [key, stored] of authorizeOrders) {
-    const isPending = stored.status === "pending";
+    // Skip anything the worker is actively settling — yanking it from
+    // the in-memory map mid-flight would strand the match's counterparty
+    // reference.
+    if (isInFlightStatus(stored.status)) continue;
+
+    const isLive = isLiveStatus(stored.status);
     const expired = Number(stored.order.publicSignals.expiry) < nowSeconds;
 
-    // Skip "matched" orders — they're being settled on-chain right now
-    if (stored.status === "matched") continue;
-
-    // Purge: terminal states (settled/cancelled) or expired pending orders
-    if (stored.status === "settled" || stored.status === "cancelled" || (isPending && expired)) {
-      // Only decrement counter for expired pending orders.
-      // Settled orders already had their counter decremented on settlement.
-      if (isPending && expired && stored.pubKeyAx && stored.pubKeyAy) {
+    if (isTerminalStatus(stored.status) || (isLive && expired)) {
+      if (isLive && expired && stored.pubKeyAx && stored.pubKeyAy) {
         decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
       }
-      // Cancel from shared orderbook if still listed (best-effort).
       if (_sharedClient) {
         void _sharedClient.cancelOrder(nullifierToOfferHandle(key)).catch(() => {});
       }
