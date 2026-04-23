@@ -533,26 +533,55 @@ async function main(): Promise<void> {
   // earlier e2e passes that left commitments behind) — the computed
   // root would diverge from the on-chain root and settleAuth would
   // revert with UnknownRoot().
+  //
+  // Scan bounds: override via E2E_EVENT_FROM_BLOCK to start from the
+  // pool deployment block on long-lived fork environments, where a
+  // full-chain scan would hit RPC log-range / result-size limits or
+  // just take forever. Default 0 covers fresh anvil.
+  const fromBlock = Number(process.env.E2E_EVENT_FROM_BLOCK ?? 0);
   const poolReader = new ethers.Contract(poolAddr, POOL_ABI, provider);
   const allInserts = await poolReader.queryFilter(
     poolReader.filters.CommitmentInserted(),
-    0,
+    fromBlock,
     "latest",
   );
   const leafByIndex: bigint[] = [];
+  // Track (block, logIndex) per slot so a mismatch error can point at
+  // the specific event that placed the unexpected value — useful when
+  // debugging an event scan that saw duplicates or wrong ordering.
+  const leafSourceByIndex: Array<{ blockNumber: number; logIndex: number } | undefined> = [];
   for (const log of allInserts) {
-    const [commitment, leafIndex] = (log as ethers.EventLog).args as unknown as [bigint, number, bigint];
+    const event = log as ethers.EventLog;
+    // Read named args from the EventLog — positional destructuring
+    // silently drifts if the ABI adds a field, and the ethers runtime
+    // already decodes by name.
+    const { commitment, leafIndex } = event.args as unknown as {
+      commitment: bigint;
+      leafIndex: bigint; // decoded as bigint from the uint32 ABI slot
+    };
     const idx = Number(leafIndex);
-    while (leafByIndex.length <= idx) leafByIndex.push(0n);
-    leafByIndex[idx] = BigInt(commitment);
+    while (leafByIndex.length <= idx) {
+      leafByIndex.push(0n);
+      leafSourceByIndex.push(undefined);
+    }
+    leafByIndex[idx] = commitment;
+    leafSourceByIndex[idx] = { blockNumber: event.blockNumber, logIndex: event.index };
   }
-  // Safety: our two fresh deposits must be present at their expected slots.
-  if (leafByIndex[aliceDep.leafIndex] !== aliceDep.commitment) {
-    throw new Error(`leafByIndex[${aliceDep.leafIndex}] mismatch for Alice`);
-  }
-  if (leafByIndex[bobDep.leafIndex] !== bobDep.commitment) {
-    throw new Error(`leafByIndex[${bobDep.leafIndex}] mismatch for Bob`);
-  }
+  // Safety: our two fresh deposits must be present at their expected
+  // slots. Include both values + origin on mismatch so a failure isn't
+  // a scavenger hunt through block logs.
+  const assertLeaf = (label: string, leafIndex: number, expected: bigint) => {
+    const actual = leafByIndex[leafIndex];
+    if (actual === expected) return;
+    const src = leafSourceByIndex[leafIndex];
+    const origin = src ? ` (from block ${src.blockNumber}, log index ${src.logIndex})` : "";
+    throw new Error(
+      `leafByIndex[${leafIndex}] mismatch for ${label}: ` +
+      `expected ${expected.toString()}, actual ${actual?.toString() ?? "<unset>"}${origin}`,
+    );
+  };
+  assertLeaf("Alice", aliceDep.leafIndex, aliceDep.commitment);
+  assertLeaf("Bob", bobDep.leafIndex, bobDep.commitment);
 
   const aliceArt = await buildAndSubmitOrder(alice, aliceDep, alicePool, leafByIndex);
   const bobArt = await buildAndSubmitOrder(bob, bobDep, bobPool, leafByIndex);
