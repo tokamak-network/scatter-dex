@@ -188,14 +188,24 @@ export class PrivateOrderDB {
     // the new FSM, plus legacy 'pending' rows that pre-date the migration).
     // The in-memory map needs all of them so cross-token matching can find
     // them as counterparties.
+    // `matched` is a legacy in-flight status that pre-dates the async FSM.
+    // Include it on restore so a relayer restarted mid-match doesn't orphan
+    // a live counterparty (the post-boot reset re-normalises 'settling' →
+    // 'accepted', but 'matched' must be visible to pubKey-slot accounting).
     this.selectPendingAuth = this.db.prepare(
       `SELECT nullifier, status, submitted_at as submittedAt, order_json as orderJson,
               pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy, settle_tx as settleTx
          FROM authorize_orders
-        WHERE status IN ('pending', 'accepted', 'retrying', 'settling')`,
+        WHERE status IN ('pending', 'accepted', 'retrying', 'settling', 'matched')`,
     );
+    // Only terminal outcomes (settled/failed/cancelled/expired/dead_letter)
+    // and genuinely expired live rows are safe to delete. The previous
+    // `status != 'pending'` would drop accepted/retrying/settling rows that
+    // the worker still owns, dropping them from the settlement queue.
     this.purgeAuthNonPending = this.db.prepare(
-      "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
+      `DELETE FROM authorize_orders
+         WHERE status NOT IN ('pending', 'accepted', 'retrying', 'settling', 'matched')
+            OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?`,
     );
 
     // ── Async-settlement queue statements ──────────────────────────
@@ -233,7 +243,8 @@ export class PrivateOrderDB {
            LIMIT 1
         )
       RETURNING nullifier, status, submitted_at as submittedAt, updated_at as updatedAt,
-                attempt, settle_tx as settleTx, pub_key_ax as pubKeyAx,
+                attempt, next_retry_at as nextRetryAt, last_error as lastError,
+                settle_tx as settleTx, pub_key_ax as pubKeyAx,
                 pub_key_ay as pubKeyAy, order_json as orderJson`,
     );
 
