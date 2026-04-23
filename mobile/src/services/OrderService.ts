@@ -39,24 +39,36 @@ const CLAIMS_TREE_DEPTH = 4;
  *  AbortError to check whether the relayer actually received the order —
  *  the POST sometimes aborts after a successful server-side accept
  *  (iOS NSURLSession connection-pool races, see issue #401). Polls the
- *  status endpoint a few times with a short interval; returns the first
- *  hit or `null` if the order is genuinely missing.
+ *  status endpoint a few times; returns the first hit or `null` if the
+ *  order is genuinely missing.
  *
- *  Budget: 5 attempts × 500 ms = 2.5 s worst case — well under any
- *  reasonable user-facing expectation of \"did my submit work?\" */
+ *  Timing: the first probe fires immediately (no initial sleep) because
+ *  by the time fetch aborted, the server had long since decided the
+ *  outcome — waiting would just add latency to an already-slow failure
+ *  path. Subsequent probes space by 500 ms.
+ *
+ *  Budget: 5 probes. Each probe uses a 2 s per-request timeout (tighter
+ *  than the default 5 s TIMEOUT_READ_MS) so a slow / unreachable relayer
+ *  can't eat the whole recovery window — worst case ~10 s if every
+ *  probe times out, with an early-exit after 2 consecutive network
+ *  errors that drops it to ~4 s. Happy path is 1 probe. */
+const RECOVERY_PROBE_TIMEOUT_MS = 2_000;
+
 async function pollForAcceptedOrder(
   nullifier: string,
   relayerUrl: string,
 ): Promise<{ status: string } | null> {
-  // Two consecutive network errors ⇒ relayer is really unreachable, not
-  // just racing the abort. Bail out of the full 5-attempt budget so a
-  // genuinely failed submit surfaces fast instead of padding the error
-  // with 2.5 s of wasted polling.
   let consecutiveErrors = 0;
   for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
     try {
-      const status = await RelayerApiService.getAuthorizeOrderStatus(nullifier, relayerUrl);
+      const status = await RelayerApiService.getAuthorizeOrderStatus(
+        nullifier,
+        relayerUrl,
+        RECOVERY_PROBE_TIMEOUT_MS,
+      );
       if (status) return status;
       consecutiveErrors = 0;
     } catch {
