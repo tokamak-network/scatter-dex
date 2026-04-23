@@ -401,10 +401,14 @@ export const OrderService = {
         relayer: ps[13],
         orderHash: ps[14],
       };
+      // Intentionally don't serialise the body just to log its length —
+      // ZK proofs and publicSignals are large and RelayerApiService does
+      // the real `JSON.stringify` for us on the very next line. Doubling
+      // the work right before a network request added noticeable CPU /
+      // memory pressure for no new signal.
       console.log('[OrderService] POST /api/authorize-orders', {
         relayerUrl: input.relayerUrl,
         nullifier: namedSignals.nullifier?.slice(0, 16) + '…',
-        bodyLen: JSON.stringify({ proof: solidityProof, publicSignals: namedSignals, publicSignalsArray: ps, pubKeyAx: keyPair.pubKeyAx, pubKeyAy: keyPair.pubKeyAy }).length,
       });
       const t0 = Date.now();
       const response = await RelayerApiService.submitAuthorizeOrder(
