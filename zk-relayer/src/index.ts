@@ -313,11 +313,16 @@ async function main() {
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
     clearInterval(expirySweepInterval);
-    void settlementWorker.stop();
     sharedClient?.stop();
-    server.close(() => {
-      db.close();
-      process.exit(0);
+    // `settlementWorker.stop()` awaits any in-flight tick, which itself
+    // runs SQLite statements through `db`. If we closed `db` before the
+    // tick drained, the worker would hit a closed handle. Chain stop →
+    // server.close → db.close so the order is strict.
+    void settlementWorker.stop().finally(() => {
+      server.close(() => {
+        db.close();
+        process.exit(0);
+      });
     });
   };
   process.on("SIGTERM", shutdown);
