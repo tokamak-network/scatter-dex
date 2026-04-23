@@ -48,6 +48,21 @@ const MAX_POLL_AGE_MS = 5 * 60_000;
  *  failure advances through this schedule; a success resets. */
 const NETWORK_BACKOFF_MS = [2_000, 5_000, 15_000, 60_000];
 
+/** Cap on parallel relayer requests per tick. Without this a burst of
+ *  N pending orders fans out to N concurrent fetches, congesting the
+ *  React Native bridge on mobile. */
+const POLL_CHUNK_SIZE = 8;
+
+/** Throttle for the "still polling" heartbeat write. The full-row update
+ *  fires immediately whenever the relayer reports an actual change; this
+ *  knob only governs the no-op tick that just bumps last_polled_at to
+ *  prove liveness. 60 s keeps SQLite I/O quiet without losing the signal. */
+const HEARTBEAT_WRITE_INTERVAL_MS = 60_000;
+
+/** SQL fragment shared by the poll loop, list endpoint, and prune so the
+ *  set of "still in flight" statuses stays in sync. */
+const LIVE_SQL = "last_polled_status NOT IN ('settled', 'failed', 'dead_letter', 'cancelled', 'expired')";
+
 export interface PendingOrderSummary {
   sellToken: string;
   sellTokenSymbol: string;
@@ -167,40 +182,45 @@ async function pollOnce(): Promise<void> {
   pollActive = true;
   try {
     const db = await getDb();
+    const ageCutoff = Date.now() - MAX_POLL_AGE_MS;
+    // Two queries instead of one in-JS filter: the SQL pulls only rows
+    // we'll actually poll, and a separate pass marks anything that aged
+    // out as locally 'expired' so the UI no longer renders it as
+    // perpetually 'accepted'. Using the SQL filter keeps the row pull
+    // tight when many terminal/over-age rows accumulate.
+    const expiredWallets = await markOverAgeAsExpired(db, ageCutoff);
     const rows = await db.getAllAsync<Row>(
-      `SELECT * FROM pending_orders
-         WHERE last_polled_status NOT IN ('settled', 'failed', 'dead_letter', 'cancelled', 'expired')`,
+      `SELECT * FROM pending_orders WHERE ${LIVE_SQL} AND submitted_at > ?`,
+      ageCutoff,
     );
+    for (const w of expiredWallets) notify(w);
     if (rows.length === 0) return;
 
-    // Stop polling rows that have been in flight for too long — the
-    // relayer's own sweeper will mark them expired eventually; no point
-    // hammering in the meantime.
-    const now = Date.now();
-    const live = rows.filter((r) => now - r.submitted_at < MAX_POLL_AGE_MS);
-
-    const results = await Promise.allSettled(
-      live.map(async (row) => {
-        const resp = await RelayerApiService.getAuthorizeOrderStatus(
-          row.nullifier,
-          row.relayer_url,
-        );
-        return { row, resp };
-      }),
-    );
-
+    // Chunk the fan-out so a queue of 50 in-flight orders doesn't open
+    // 50 simultaneous fetches over the RN bridge.
     let networkFailed = false;
     const walletsTouched = new Set<string>();
-
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        networkFailed = true;
-        continue;
+    for (let i = 0; i < rows.length; i += POLL_CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + POLL_CHUNK_SIZE);
+      const results = await Promise.allSettled(
+        chunk.map(async (row) => {
+          const resp = await RelayerApiService.getAuthorizeOrderStatus(
+            row.nullifier,
+            row.relayer_url,
+          );
+          return { row, resp };
+        }),
+      );
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          networkFailed = true;
+          continue;
+        }
+        const { row, resp } = result.value;
+        if (!resp) continue; // 404 or malformed — leave for a later tick
+        const changed = await applyStatus(db, row, resp);
+        if (changed) walletsTouched.add(row.wallet_address);
       }
-      const { row, resp } = result.value;
-      if (!resp) continue; // 404 or malformed — leave the row for a later tick
-      const changed = await applyStatus(db, row, resp);
-      if (changed) walletsTouched.add(row.wallet_address);
     }
 
     // Adaptive backoff: back off on network failures, reset on success.
@@ -220,6 +240,33 @@ async function pollOnce(): Promise<void> {
   }
 }
 
+/** Locally promote any non-terminal row past MAX_POLL_AGE_MS to 'expired'.
+ *  The relayer's sweeper does the same on its side; doing it client-side
+ *  too means History stops showing a stale 'accepted' badge while we wait
+ *  for the next reconciliation. Returns the wallet addresses that had at
+ *  least one row mutated, so the caller can fire targeted notify(). */
+async function markOverAgeAsExpired(
+  db: SQLite.SQLiteDatabase,
+  ageCutoff: number,
+): Promise<Set<string>> {
+  const stale = await db.getAllAsync<{ wallet_address: string }>(
+    `SELECT DISTINCT wallet_address FROM pending_orders
+       WHERE ${LIVE_SQL} AND submitted_at <= ?`,
+    ageCutoff,
+  );
+  if (stale.length === 0) return new Set();
+  await db.runAsync(
+    `UPDATE pending_orders
+        SET last_polled_status = 'expired',
+            last_polled_at = ?,
+            last_error = COALESCE(last_error, 'Locally expired — exceeded poll budget')
+      WHERE ${LIVE_SQL} AND submitted_at <= ?`,
+    Date.now(),
+    ageCutoff,
+  );
+  return new Set(stale.map((r) => r.wallet_address));
+}
+
 async function applyStatus(
   db: SQLite.SQLiteDatabase,
   row: Row,
@@ -231,14 +278,19 @@ async function applyStatus(
     && (resp.settleTxHash ?? null) === row.settle_tx_hash
     && (resp.error ?? null) === row.last_error;
   if (statusUnchanged) {
-    // Still update last_polled_at so the GC / debug view can tell the row
-    // is being actively polled. Cheap single-column write.
-    await db.runAsync(
-      'UPDATE pending_orders SET last_polled_at = ? WHERE wallet_address = ? AND nullifier = ?',
-      Date.now(),
-      row.wallet_address,
-      row.nullifier,
-    );
+    // Heartbeat write so the prune/debug path can tell the row is being
+    // actively polled — but throttled to once per HEARTBEAT_WRITE_INTERVAL_MS
+    // because, on a queue with N pending orders, the unthrottled version
+    // costs N writes per tick × 0.5–2 ticks/sec. SQLite is fine with that
+    // on desktop; on mobile it shows up in battery profiles.
+    if (Date.now() - row.last_polled_at >= HEARTBEAT_WRITE_INTERVAL_MS) {
+      await db.runAsync(
+        'UPDATE pending_orders SET last_polled_at = ? WHERE wallet_address = ? AND nullifier = ?',
+        Date.now(),
+        row.wallet_address,
+        row.nullifier,
+      );
+    }
     return false;
   }
 
@@ -278,6 +330,19 @@ async function applyStatus(
 }
 
 function startPollLoop(): void {
+  // AppState subscription is independent of the timer — we want to keep
+  // hearing 'active' transitions even while the timer is paused so we
+  // know when to wake back up.
+  if (!appStateSub) {
+    appStateSub = AppState.addEventListener('change', handleAppStateChange);
+  }
+  // Honour the current foreground state on first start; if the app was
+  // launched while backgrounded (rare but possible on cold boot from a
+  // notification) we shouldn't immediately spin up the timer.
+  if (AppState.currentState === 'active') startTimer();
+}
+
+function startTimer(): void {
   if (pollTimer !== null) return;
   // Schedule via setTimeout so the cadence can shift (fast → slow, or
   // network backoff) without a stop/restart cycle.
@@ -289,18 +354,17 @@ function startPollLoop(): void {
     pollTimer = setTimeout(tick, nextMs);
   };
   pollTimer = setTimeout(tick, FAST_POLL_MS);
-
-  // AppState subscription — pause/resume with foreground/background
-  if (!appStateSub) {
-    appStateSub = AppState.addEventListener('change', handleAppStateChange);
-  }
 }
 
-function stopPollLoop(): void {
+function stopTimer(): void {
   if (pollTimer !== null) {
     clearTimeout(pollTimer);
     pollTimer = null;
   }
+}
+
+function stopPollLoop(): void {
+  stopTimer();
   if (appStateSub) {
     appStateSub.remove();
     appStateSub = null;
@@ -315,7 +379,7 @@ async function nextDelayMs(): Promise<number> {
     const db = await getDb();
     const row = await db.getFirstAsync<{ submitted_at: number }>(
       `SELECT submitted_at FROM pending_orders
-         WHERE last_polled_status NOT IN ('settled', 'failed', 'dead_letter', 'cancelled', 'expired')
+         WHERE ${LIVE_SQL}
          ORDER BY submitted_at DESC LIMIT 1`,
     );
     if (!row) return SLOW_POLL_MS;
@@ -327,12 +391,23 @@ async function nextDelayMs(): Promise<number> {
 }
 
 function handleAppStateChange(state: AppStateStatus): void {
-  // Resume-on-foreground is the interesting path: while we were in the
-  // background the relayer may have finished several orders, so a single
-  // batch refresh is cheaper than a staggered one.
-  if (state === 'active' && listeners.size > 0) {
-    void pollOnce();
+  if (state === 'active') {
+    // Foreground: restart the timer so we resume on the normal cadence,
+    // and fire one immediate batch tick because while we were in the
+    // background the relayer may have finished several orders.
+    if (listeners.size > 0) {
+      startTimer();
+      void pollOnce();
+    }
+    return;
   }
+  // background / inactive: tear the timer down. iOS / Android throttle
+  // background JS work unpredictably anyway, and an unkilled setTimeout
+  // here keeps fetch attempts firing on whatever sparse cadence the OS
+  // grants us — which burns battery and produces uneven status jumps
+  // when we come back. The AppState listener stays alive so the next
+  // 'active' transition can wake us back up.
+  stopTimer();
 }
 
 export const PendingOrdersService = {
@@ -387,8 +462,7 @@ export const PendingOrdersService = {
     const sql = opts.includeTerminal
       ? 'SELECT * FROM pending_orders WHERE wallet_address = ? ORDER BY submitted_at DESC'
       : `SELECT * FROM pending_orders
-           WHERE wallet_address = ?
-             AND last_polled_status NOT IN ('settled', 'failed', 'dead_letter', 'cancelled', 'expired')
+           WHERE wallet_address = ? AND ${LIVE_SQL}
            ORDER BY submitted_at DESC`;
     const rows = await db.getAllAsync<Row>(sql, normalize(walletAddress));
     return rows.map(rowToOrder);
