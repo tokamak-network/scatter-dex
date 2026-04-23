@@ -39,6 +39,12 @@ const TERMINAL_STATUSES = new Set([
 const FAST_POLL_MS = 2_000;
 const SLOW_POLL_MS = 5_000;
 const FAST_WINDOW_MS = 30_000;
+/** Cadence used when no rows are eligible for polling. The loop keeps
+ *  waking up at this interval (instead of stopping entirely) so that a
+ *  newly-registered order can join the queue without needing the
+ *  subscriber to manually re-arm the timer. 30 s is roughly battery-
+ *  invisible and well below the relayer's settlement budget. */
+const IDLE_POLL_MS = 30_000;
 /** Max time a pending order stays in the poll loop. After this we stop
  *  polling and leave the row for the user to surface as "stuck" — the
  *  relayer will eventually mark it expired or dead_letter anyway. */
@@ -351,6 +357,9 @@ function startTimer(): void {
     await pollOnce();
     if (pollTimer === null) return;
     const nextMs = await nextDelayMs();
+    // Re-check after the second await — stopTimer() between the two
+    // awaits would otherwise be silently re-armed by the next line.
+    if (pollTimer === null) return;
     pollTimer = setTimeout(tick, nextMs);
   };
   pollTimer = setTimeout(tick, FAST_POLL_MS);
@@ -379,10 +388,15 @@ async function nextDelayMs(): Promise<number> {
     const db = await getDb();
     const row = await db.getFirstAsync<{ submitted_at: number }>(
       `SELECT submitted_at FROM pending_orders
-         WHERE ${LIVE_SQL}
+         WHERE ${LIVE_SQL} AND submitted_at > ?
          ORDER BY submitted_at DESC LIMIT 1`,
+      Date.now() - MAX_POLL_AGE_MS,
     );
-    if (!row) return SLOW_POLL_MS;
+    // Empty queue (or every live row already aged past MAX_POLL_AGE_MS) →
+    // fall back to the idle cadence so we're not waking the loop every 5 s
+    // for nothing. A fresh `track()` call still fires `pollOnce()`
+    // immediately, so user-visible latency is unaffected.
+    if (!row) return IDLE_POLL_MS;
     const age = Date.now() - row.submitted_at;
     return age < FAST_WINDOW_MS ? FAST_POLL_MS : SLOW_POLL_MS;
   } catch {
