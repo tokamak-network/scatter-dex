@@ -616,13 +616,15 @@ async function main(): Promise<void> {
   assert(BigInt(relBWeth) === expectedFeeWeth, `Relayer B WETH fee credit = ${expectedFeeWeth}`);
 
   // ─── Step 7: each user claims their tokens ─────────────────
-  // Snapshot Bob's native ETH before his claim fires: PrivateSettlement
-  // auto-unwraps WETH in `claimWithProof`, so Bob's recipient ends up
-  // with native ETH (not WETH). Asserting the ETH delta is the only
-  // honest check; `WETH.balanceOf(bobRecipient)` will always read 0.
+  // PrivateSettlement auto-unwraps WETH in `claimWithProof`, so Bob's
+  // recipient ends up with native ETH (not WETH). Asserting the ETH
+  // delta is the only honest check; `WETH.balanceOf(bobRecipient)`
+  // will always read 0. Snapshot immediately before Bob's claim (not
+  // before Alice's) so the delta isolates exactly the transaction
+  // under test.
   console.log("\n[7/8] Claiming...");
-  const bobEthBefore = await provider.getBalance(bobRecipient);
   await claimFor(alice, aliceArt, settlementAddr, provider, aliceWallet);
+  const bobEthBefore = await provider.getBalance(bobRecipient);
   await claimFor(bob, bobArt, settlementAddr, provider, bobWallet);
   const bobEthAfter = await provider.getBalance(bobRecipient);
 
@@ -635,7 +637,7 @@ async function main(): Promise<void> {
   const usdcRead = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
   const aliceRecvBal = await usdcRead.balanceOf(aliceRecipient);
   const bobEthDelta = bobEthAfter - bobEthBefore;
-  assert(BigInt(aliceRecvBal) === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
+  assert(aliceRecvBal === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
   assert(bobEthDelta === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} native ETH (Settlement auto-unwraps WETH)`);
 
   console.log("\n═══════════════════════════════════════════════════════");
