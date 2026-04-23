@@ -17,6 +17,7 @@ import { EdDSAKeyService, EdDSAKeyPair } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { RelayerApiService } from './RelayerApiService';
 import { PendingClaimsStorage } from './PendingClaimsStorage';
+import { PendingOrdersService } from './PendingOrdersService';
 import { TradeHistoryStorage } from './TradeHistoryStorage';
 import { ProviderService } from './ProviderService';
 import { KeySecurityService } from './KeySecurityService';
@@ -33,6 +34,23 @@ import { formatProofForSolidity } from '../lib/proofFormat';
 const COMMIT_TREE_DEPTH = 20;
 const MAX_CLAIMS_PER_SIDE = 16;
 const CLAIMS_TREE_DEPTH = 4;
+
+/** Resolve a buy-token symbol for display. Cross-token trades look up the
+ *  TokenService whitelist; scatter (same-token) falls back to the sell
+ *  symbol when the lookup misses. The '?' fallback is intentional — it
+ *  surfaces a token-list gap instead of silently mislabelling. */
+function resolveBuySymbol(
+  buyToken: string,
+  sellToken: string,
+  sellTokenSymbol: string,
+): string {
+  const hit = TokenService.getTokenList().find(
+    (t) => t.address.toLowerCase() === buyToken.toLowerCase(),
+  );
+  if (hit) return hit.symbol;
+  if (buyToken.toLowerCase() === sellToken.toLowerCase()) return sellTokenSymbol;
+  return '?';
+}
 
 export type OrderStep =
   | 'idle'
@@ -428,16 +446,7 @@ export const OrderService = {
         sellToken: note.token,
         sellTokenSymbol: note.tokenSymbol,
         buyToken,
-        // Resolve buy-token symbol from the token list so cross-token trades
-        // don't mislabel recipients. Falls back to the sell symbol for scatter
-        // (same-token) when the buy address matches, and to '?' otherwise so
-        // History makes the lookup gap visible instead of silently wrong.
-        buyTokenSymbol: (() => {
-          const hit = TokenService.getTokenList().find((t) => t.address.toLowerCase() === buyToken.toLowerCase());
-          if (hit) return hit.symbol;
-          if (buyToken.toLowerCase() === note.token.toLowerCase()) return note.tokenSymbol;
-          return '?';
-        })(),
+        buyTokenSymbol: resolveBuySymbol(buyToken, note.token, note.tokenSymbol),
         sellAmount: sellAmount.toString(),
         buyAmount: buyAmount.toString(),
         changeAmount: changeAmount.toString(),
@@ -476,6 +485,36 @@ export const OrderService = {
           createdAt: Date.now(),
         };
         await NoteStorageService.saveNote(account, changeNote);
+      }
+
+      // Track in the async-settlement local queue so History can show the
+      // settlement progression and a central poller drives the status
+      // updates. The relayer now returns 202 with status='accepted' (or a
+      // replayed-idempotent status); anything terminal will surface via
+      // the poll loop within a few seconds.
+      try {
+        await PendingOrdersService.track({
+          nullifier: namedSignals.nullifier,
+          walletAddress: account,
+          relayerUrl: input.relayerUrl,
+          relayerResponseStatus: (response as any).status ?? 'accepted',
+          attempt: (response as any).attempt ?? 0,
+          summary: {
+            sellToken: note.token,
+            sellTokenSymbol: note.tokenSymbol,
+            buyToken,
+            buyTokenSymbol: resolveBuySymbol(buyToken, note.token, note.tokenSymbol),
+            sellAmount: sellAmount.toString(),
+            buyAmount: buyAmount.toString(),
+            maxFeeBps,
+            orderHash,
+          },
+        });
+      } catch (err) {
+        // Failing to track locally shouldn't fail the submission — the
+        // relayer already accepted the order, so History will catch up
+        // on the next refetch even without the pending-orders entry.
+        console.warn('[OrderService] PendingOrdersService.track failed:', err);
       }
 
       onProgress({ step: 'success', orderId: response.orderId });
