@@ -31,26 +31,31 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Circuits we ship to the mobile + frontend clients. Matches the list
-# in circuits/scripts/build.sh (source of truth); keep in sync if that
-# list changes. Each has a zkey in circuits/build/ and a copy at
-# mobile/assets/zk/ and frontend/public/zk/. Mismatch between
-# circuits/build and the deployed verifier is the scenario that caused
-# issue #402; the client copies are also compared because a desync
-# there means mobile/frontend proofs won't verify either.
+# Circuits we verify against the deploy-time manifest. Matches the
+# list in circuits/scripts/build.sh (source of truth); keep in sync
+# if that list changes.
 #
-# withdraw is built by circuits/build.sh but doesn't have a client-side
-# copy (the pool hosts withdraw proving server-side), so the mobile /
-# frontend comparison skips it — see `client_copies` below.
+# Coverage split between the two clients:
+#   - frontend/public/zk/  — circuits/build.sh copies ALL circuits
+#     (see build.sh:117-123). The browser generates every proof type,
+#     including withdraw.
+#   - mobile/assets/zk/    — mobile/scripts/copy-zk-assets.sh omits
+#     `withdraw` (mobile doesn't generate withdraw proofs today).
+#
+# Separate predicates so `--verify` flags frontend-side withdraw drift
+# even though mobile has no corresponding file to compare.
 CIRCUITS=(deposit withdraw claim authorize cancel)
-# Circuits that DO get copied to mobile + frontend. Rest (just
-# `withdraw`) are verified against the manifest in `circuits/build/`
-# only.
-client_copies() {
+
+mobile_copies() {
   case "$1" in
     deposit|claim|authorize|cancel) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+frontend_copies() {
+  # All built circuits land in frontend/public/zk, per build.sh.
+  return 0
 }
 
 BUILD_DIR="$ROOT_DIR/circuits/build"
@@ -89,19 +94,38 @@ HELP
 esac
 
 # Cache the SHA binary once — `command -v` per file adds up across a
-# dozen hashes even though each call is cheap.
+# dozen hashes even though each call is cheap. Fail fast if neither
+# tool is available so write-mode can't emit a manifest full of empty
+# hashes that would later compare equal to one another.
 if command -v shasum >/dev/null 2>&1; then
   SHA_CMD="shasum -a 256"
-else
+elif command -v sha256sum >/dev/null 2>&1; then
   SHA_CMD="sha256sum"
+else
+  echo "error: neither 'shasum' nor 'sha256sum' is on PATH — cannot compute zkey fingerprints" >&2
+  exit 2
 fi
+
+# Enable pipefail so a hash binary that crashes mid-pipeline (ENOMEM,
+# truncated read, etc.) can't produce an empty hash that passes through
+# `awk` and looks like a normal result.
+set -o pipefail
 
 sha_of() {
   if [ ! -f "$1" ]; then
     echo "MISSING"
     return
   fi
-  $SHA_CMD "$1" | awk '{print $1}'
+  local out
+  if ! out="$($SHA_CMD "$1" | awk '{print $1}')"; then
+    echo "error: hashing $1 failed" >&2
+    exit 2
+  fi
+  if [ -z "$out" ]; then
+    echo "error: empty hash output for $1 — binary produced no data" >&2
+    exit 2
+  fi
+  echo "$out"
 }
 
 build_zkey()    { echo "$BUILD_DIR/${1}_final.zkey"; }
@@ -149,6 +173,14 @@ if [ ! -f "$MANIFEST" ]; then
   echo "[zk-drift] no manifest at $MANIFEST — skipping (run with --write after deploy)"
   exit 0
 fi
+if [ ! -r "$MANIFEST" ]; then
+  # File exists but can't be read. Distinct from "not present" —
+  # something in the dev env is actively wrong (permissions, bad
+  # symlink). Fail fast with a clear IO-error exit rather than looking
+  # like "clean" via an empty grep.
+  echo "[zk-drift] error: manifest exists but is not readable: $MANIFEST" >&2
+  exit 2
+fi
 
 # Hoisted — defined once, not per-iteration. Uses $expected / $c from
 # the enclosing loop rather than extra args to keep the call sites
@@ -171,14 +203,36 @@ report_line() {
 
 drift=0
 
+# Pull every expected SHA from the manifest in a single Python pass.
+# Python is available in every dev env we target; parsing real JSON
+# sidesteps the name-prefix false-positive (e.g. `deposit` matching
+# `deposit_v2`) that the previous grep/sed pipeline was vulnerable to.
+MANIFEST_ENTRIES="$(
+  python3 - "$MANIFEST" <<'PY' || exit 2
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"__ERROR__:{e}")
+    sys.exit(1)
+for name, sha in (data.get("circuits") or {}).items():
+    print(f"{name}\t{sha}")
+PY
+)"
+if printf '%s\n' "$MANIFEST_ENTRIES" | grep -q '^__ERROR__:'; then
+  echo "[zk-drift] error: failed to parse manifest: $MANIFEST_ENTRIES" >&2
+  exit 2
+fi
+
+lookup_expected() {
+  # $1 circuit name — prints the SHA or empty.
+  printf '%s\n' "$MANIFEST_ENTRIES" | awk -F'\t' -v n="$1" '$1==n {print $2; exit}'
+}
+
 echo "[zk-drift] verifying against $MANIFEST"
 for c in "${CIRCUITS[@]}"; do
-  # Pull expected from manifest without jq — grep the line, strip quotes.
-  expected="$(
-    grep -E "\"$c\":" "$MANIFEST" 2>/dev/null \
-      | head -1 \
-      | sed -E 's/.*"'"$c"'"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
-  )"
+  expected="$(lookup_expected "$c")"
   if [ -z "$expected" ]; then
     echo "  ⚠  $c: missing from manifest (manifest predates this circuit?)"
     continue
@@ -188,13 +242,12 @@ for c in "${CIRCUITS[@]}"; do
   row_ok=1
   report_line build "$(build_zkey "$c")" "$build_sha" || row_ok=0
 
-  # Only circuits that ship to clients get the mobile / frontend copy
-  # check. Skipping this for server-only circuits (e.g. `withdraw`)
-  # avoids spurious "file missing" warnings.
-  if client_copies "$c"; then
+  if mobile_copies "$c"; then
     mobile_sha="$(sha_of "$(mobile_zkey "$c")")"
+    report_line mobile "$(mobile_zkey "$c")" "$mobile_sha" || row_ok=0
+  fi
+  if frontend_copies "$c"; then
     frontend_sha="$(sha_of "$(frontend_zkey "$c")")"
-    report_line mobile   "$(mobile_zkey "$c")"   "$mobile_sha"   || row_ok=0
     report_line frontend "$(frontend_zkey "$c")" "$frontend_sha" || row_ok=0
   fi
 

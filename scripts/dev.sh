@@ -199,13 +199,20 @@ ensure_circuits_built() {
     exit 1
   fi
   echo "  Circuits built."
-  # Record a fingerprint of the freshly-built zkeys so a later run of
-  # `scripts/check-zk-artifacts.sh` can detect silent drift — e.g.
-  # someone reruns the circuit build manually, or an editor hook
-  # overwrites circuits/build/ between deploy and the next session.
-  # Drift there means every proof that hits the deployed Verifier.sol
-  # will revert InvalidProof(), and that failure mode is otherwise
-  # maddening to diagnose. See issue #402.
+  # Record a post-build fingerprint of the freshly-built zkeys so a
+  # later run of `scripts/check-zk-artifacts.sh` can detect silent
+  # drift — e.g. someone reruns the circuit build manually, or an
+  # editor hook overwrites circuits/build/ before a later deploy or
+  # the next session. Drift against whatever verifier set is eventually
+  # deployed means every proof will revert InvalidProof(), and that
+  # failure mode is otherwise maddening to diagnose. See issue #402.
+  #
+  # This snapshot is the local build output at this point in the
+  # script — it's not a confirmation that the subsequent deploy
+  # succeeded. If deploy later fails, the manifest still accurately
+  # describes the build that *would have been* deployed; drift
+  # detection remains useful. (Re-running the whole script regenerates
+  # both the build and the manifest atomically.)
   "$ROOT_DIR/scripts/check-zk-artifacts.sh" --write \
     || echo "  WARN: zk manifest write failed"
 }
