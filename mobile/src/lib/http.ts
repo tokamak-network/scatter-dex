@@ -27,6 +27,24 @@ export interface FetchWithTimeoutOptions extends Omit<RequestInit, 'signal'> {
   parentSignal?: AbortSignal;
 }
 
+/** Force IPv4 loopback for `localhost` relayer URLs in dev. iOS
+ *  Simulator's `localhost` resolution races IPv6 (`::1`) and IPv4
+ *  (`127.0.0.1`) via Happy Eyeballs, and the IPv6 path can stall on
+ *  loopback under specific timing (issue #401). Callers that pass
+ *  relayer URLs through this helper get a consistent IPv4 address
+ *  instead. Prod URLs (any other scheme/host) pass through unchanged. */
+export function normalizeUrl(url: string): string {
+  return url.replace(/^http:\/\/localhost(?=[:/]|$)/, 'http://127.0.0.1');
+}
+
+/** True for any dev loopback origin. Scoped `Connection: close` below
+ *  — the keep-alive pool stall we're defending against is specific to
+ *  loopback on iOS Simulator. Real-network requests keep keep-alive
+ *  (battery / latency). */
+function isLoopback(url: string): boolean {
+  return /^https?:\/\/(127\.0\.0\.1|localhost|::1|\[::1\])(?=[:/]|$)/i.test(url);
+}
+
 export async function fetchWithTimeout(
   url: string,
   { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
@@ -42,20 +60,19 @@ export async function fetchWithTimeout(
   // to this controller after the call resolves.
   const onParentAbort = () => controller.abort();
   parentSignal?.addEventListener('abort', onParentAbort, { once: true });
-  // Force a fresh TCP connection per request. Between calls to the
-  // relayer (e.g. during the 13 s proof-generation window) NSURLSession's
-  // keep-alive pool holds a socket that the server has already closed
-  // (Express keep-alive = 5 s). Reusing that dead socket writes bytes
-  // into a half-closed connection and the TCP retry chain stalls for
-  // 20–40 s before iOS gives up and reconnects. `Connection: close`
-  // costs one handshake per call (~1 ms on loopback) and sidesteps it.
-  // See issue #401.
-  const headersWithClose = {
-    ...(init.headers as Record<string, string> | undefined),
-    Connection: 'close',
-  };
+  // For dev loopback only: force a fresh TCP connection per request.
+  // NSURLSession's keep-alive pool can hold a socket that Express has
+  // already closed (5 s keep-alive timeout); a subsequent request then
+  // writes into a half-closed socket and the TCP retry chain stalls
+  // for 20–40 s before iOS reconnects (issue #401). On real networks
+  // keep-alive is a battery/latency win, so we scope the override.
+  // `new Headers(…)` handles every `HeadersInit` shape (object /
+  // Headers / [string, string][]) — the previous plain-object spread
+  // silently dropped non-object forms.
+  const headers = new Headers(init.headers);
+  if (isLoopback(url)) headers.set('Connection', 'close');
   try {
-    return await fetch(url, { ...init, headers: headersWithClose, signal: controller.signal });
+    return await fetch(url, { ...init, headers, signal: controller.signal });
   } finally {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', onParentAbort);

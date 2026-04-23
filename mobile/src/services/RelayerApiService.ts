@@ -7,21 +7,9 @@
 import { ethers } from 'ethers';
 import { ConfigService } from './ConfigService';
 import { ProviderService } from './ProviderService';
-import { fetchWithTimeout, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS, TIMEOUT_AUTHORIZE_SUBMIT_MS } from '../lib/http';
+import { fetchWithTimeout, normalizeUrl, TIMEOUT_PROBE_MS, TIMEOUT_READ_MS, TIMEOUT_SUBMIT_MS, TIMEOUT_AUTHORIZE_SUBMIT_MS } from '../lib/http';
 import { RELAYER_REGISTRY_ABI } from '../lib/contracts';
 import { COMMIT_TREE_DEPTH } from '../lib/zk/constants';
-
-/** Force IPv4 loopback for `localhost` relayer URLs in dev. iOS
- *  Simulator's `localhost` resolution races IPv6 (`::1`) and IPv4
- *  (`127.0.0.1`) via Happy Eyeballs, and the IPv6 path can stall on
- *  loopback under specific timing (issue #401). The dev shared
- *  orderbook registers relayers with `localhost:300x`, so rewrite
- *  every outgoing URL before it leaves the client to avoid the
- *  inconsistency altogether. Prod URLs (any other scheme/host) are
- *  passed through unchanged. */
-function normalizeUrl(url: string): string {
-  return url.replace(/^http:\/\/localhost(?=[:/]|$)/, 'http://127.0.0.1');
-}
 
 export interface RelayerInfo {
   address: string;
