@@ -52,7 +52,7 @@ function makeStored(order: AuthorizeOrderFile, overrides: Partial<StoredAuthoriz
   return {
     order,
     status: "pending",
-    submittedAt: Math.floor(Date.now() / 1000),
+    submittedAt: Date.now(),
     pubKeyAx: "1",
     pubKeyAy: "2",
     ...overrides,

@@ -240,7 +240,7 @@ export class AuthorizeCrossRelayerMatchService {
       const takerStored: StoredAuthorizeOrder = {
         order: takerOrder,
         status: "matched",
-        submittedAt: Math.floor(Date.now() / 1000),
+        submittedAt: Date.now(),
       };
       const match: AuthorizeMatch = { maker: makerStored, taker: takerStored };
 

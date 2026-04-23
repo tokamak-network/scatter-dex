@@ -130,14 +130,23 @@ function idempotencyHttpCode(status: string): number {
   return 202;
 }
 
+/** The async-FSM path writes submitted_at/updated_at in epoch-ms
+ *  (`Date.now()`), but legacy 'pending' rows written before the migration
+ *  used `saveAuthorizeOrder(nowSeconds)`. Normalise at the read boundary
+ *  without rewriting historic DB rows: anything below ~Sep-2001 in ms
+ *  (10^12) must be a seconds value and gets scaled up. */
+function normalizeEpochMs(value: number): number {
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
 /** Build the status payload shape returned by POST (idempotent) and GET.
  *  `order` is optional — the caller has it cheap from the in-memory cache;
  *  when absent we fall back to parsing the DB blob. */
 function buildStatusReply(row: AuthorizeOrderRow, order: AuthorizeOrderFile | null) {
   return {
     status: row.status,
-    submittedAt: row.submittedAt,
-    updatedAt: row.updatedAt || row.submittedAt,
+    submittedAt: normalizeEpochMs(row.submittedAt),
+    updatedAt: normalizeEpochMs(row.updatedAt || row.submittedAt),
     attempt: row.attempt,
     settleTxHash: row.settleTx ?? null,
     error: row.lastError ?? null,
@@ -183,10 +192,14 @@ export function createAuthorizeOrderRoutes(
           throw new Error(`invalid nullifier shape: ${JSON.stringify(row.nullifier)}`);
         }
         const orderObj = JSON.parse(row.orderJson) as AuthorizeOrderFile;
+        // Legacy 'pending' rows were persisted in epoch-seconds; new rows
+        // under the async FSM use epoch-ms. Normalise on restore so the
+        // in-memory map stays in a single unit regardless of which
+        // generation the row came from.
         authorizeOrders.set(row.nullifier, {
           order: orderObj,
           status: row.status as StoredAuthorizeOrder["status"],
-          submittedAt: row.submittedAt,
+          submittedAt: normalizeEpochMs(row.submittedAt),
           pubKeyAx: row.pubKeyAx,
           pubKeyAy: row.pubKeyAy,
           settleTxHash: row.settleTx ?? undefined,
@@ -243,7 +256,13 @@ export function createAuthorizeOrderRoutes(
       // force CPU work just by replaying old payloads — design §2.4.
       const existing = _db?.getAuthorizeOrder(nullifier) ?? null;
       if (existing) {
-        const reply = buildStatusReply(existing, order);
+        // A replayed POST may carry a different `order` body than the one
+        // originally persisted (same nullifier is the only invariant).
+        // Deriving expiresAt from the stored blob keeps the idempotent
+        // response faithful to the persisted contract; fall back to the
+        // just-validated request value only if the blob can't be parsed.
+        const persistedOrder = safeParseOrder(existing.orderJson);
+        const reply = buildStatusReply(existing, persistedOrder ?? order);
         const code = idempotencyHttpCode(existing.status);
         res.status(code).json({ ...reply, nullifier, pollUrl });
         return;
@@ -252,6 +271,9 @@ export function createAuthorizeOrderRoutes(
       // worker last set; the in-memory record always has at least 'pending'.
       const cached = authorizeOrders.get(nullifier);
       if (cached) {
+        // `cached.submittedAt` is epoch-ms under the async FSM (the
+        // seconds-based legacy path is gone below). Reply in the same
+        // unit as the DB-backed path above.
         res.status(202).json({
           status: cached.status,
           submittedAt: cached.submittedAt,
@@ -259,7 +281,7 @@ export function createAuthorizeOrderRoutes(
           attempt: 0,
           settleTxHash: cached.settleTxHash ?? null,
           error: null,
-          expiresAt: Number(order.publicSignals.expiry),
+          expiresAt: Number(cached.order.publicSignals.expiry),
           nullifier,
           pollUrl,
         });
@@ -336,10 +358,16 @@ export function createAuthorizeOrderRoutes(
         throw err;
       }
 
+      // Keep the in-memory timestamp in epoch-ms to match what
+      // `insertAcceptedOrder` persists. The design doc (§2.1) and every
+      // other consumer (worker retry scheduling, GET response, FSM
+      // transitions) talks in ms; flooring to seconds here previously
+      // created a unit mismatch between freshly-submitted orders and rows
+      // restored from the DB.
       const stored: StoredAuthorizeOrder = {
         order,
         status: "accepted",
-        submittedAt: Math.floor(submittedAtMs / 1000),
+        submittedAt: submittedAtMs,
         pubKeyAx,
         pubKeyAy,
       };
@@ -410,10 +438,12 @@ export function createAuthorizeOrderRoutes(
     }
     const cached = authorizeOrders.get(nullifier);
     if (cached) {
+      // `cached.submittedAt` is epoch-ms now (see POST handler); the
+      // previous `* 1000` multiplication dates from when it was seconds.
       res.json({
         status: cached.status,
-        submittedAt: cached.submittedAt * 1000,
-        updatedAt: cached.submittedAt * 1000,
+        submittedAt: cached.submittedAt,
+        updatedAt: cached.submittedAt,
         attempt: 0,
         settleTxHash: cached.settleTxHash ?? null,
         error: null,
