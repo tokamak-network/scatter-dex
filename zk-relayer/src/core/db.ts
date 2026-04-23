@@ -31,6 +31,31 @@ interface OrderRow {
   expected_change_commitment: string | null;
 }
 
+/** Row returned by the async-settlement queue statements. Fields are
+ *  aliased to camelCase in the SELECTs so consumers don't need a second
+ *  mapping layer. */
+export interface AuthorizeOrderRow {
+  nullifier: string;
+  status: string;
+  submittedAt: number;
+  updatedAt: number;
+  attempt: number;
+  nextRetryAt: number | null;
+  lastError: string | null;
+  settleTx: string | null;
+  pubKeyAx: string | null;
+  pubKeyAy: string | null;
+  orderJson: string;
+}
+
+// Keep the persisted error short — SQLite has no hard limit but callers
+// serialise these into JSON responses and log lines; a runaway stack
+// trace blows up both.
+const MAX_ERR_LEN = 512;
+function truncErr(err: string): string {
+  return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
+}
+
 export interface TradeOfferRow {
   id: number;
   direction: "sent" | "received";
@@ -77,6 +102,16 @@ export class PrivateOrderDB {
   private deleteAuthOrder: ReturnType<Database.Database["prepare"]>;
   private selectPendingAuth: ReturnType<Database.Database["prepare"]>;
   private purgeAuthNonPending: ReturnType<Database.Database["prepare"]>;
+  // Async-settlement queue statements
+  private selectAuthByNullifier: ReturnType<Database.Database["prepare"]>;
+  private insertAcceptedAuth: ReturnType<Database.Database["prepare"]>;
+  private claimSettlementJob: ReturnType<Database.Database["prepare"]>;
+  private markAuthSettled: ReturnType<Database.Database["prepare"]>;
+  private markAuthFailed: ReturnType<Database.Database["prepare"]>;
+  private scheduleAuthRetry: ReturnType<Database.Database["prepare"]>;
+  private markAuthDeadLetter: ReturnType<Database.Database["prepare"]>;
+  private sweepExpiredAuth: ReturnType<Database.Database["prepare"]>;
+  private setAuthTxHash: ReturnType<Database.Database["prepare"]>;
   // [R-2] Pending TX tracking
   private insertPendingTx: ReturnType<Database.Database["prepare"]>;
   private deletePendingTx: ReturnType<Database.Database["prepare"]>;
@@ -152,6 +187,82 @@ export class PrivateOrderDB {
     );
     this.purgeAuthNonPending = this.db.prepare(
       "DELETE FROM authorize_orders WHERE status != 'pending' OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?",
+    );
+
+    // ── Async-settlement queue statements ──────────────────────────
+    // Full-row lookup for the idempotency check on POST.
+    this.selectAuthByNullifier = this.db.prepare(
+      `SELECT nullifier, status, submitted_at as submittedAt, updated_at as updatedAt,
+              attempt, next_retry_at as nextRetryAt, last_error as lastError,
+              settle_tx as settleTx, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy,
+              order_json as orderJson
+         FROM authorize_orders WHERE nullifier = ?`,
+    );
+
+    // Seed a new order. Distinct from upsertAuthOrder because we must
+    // reject duplicates at the DB layer (the idempotency check feeds off
+    // the error — not a WHERE-clause race).
+    this.insertAcceptedAuth = this.db.prepare(
+      `INSERT INTO authorize_orders
+         (nullifier, status, submitted_at, updated_at, attempt, next_retry_at,
+          order_json, pub_key_ax, pub_key_ay)
+       VALUES (?, 'accepted', ?, ?, 0, NULL, ?, ?, ?)`,
+    );
+
+    // Atomic "claim one ready job": flip accepted/retrying → settling and
+    // return the row. RETURNING requires SQLite ≥ 3.35 (better-sqlite3
+    // bundles ≥ 3.45). Single-statement so the select-then-update race is
+    // impossible even across worker concurrency > 1.
+    this.claimSettlementJob = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'settling', updated_at = ?, next_retry_at = NULL
+        WHERE nullifier = (
+          SELECT nullifier FROM authorize_orders
+           WHERE status IN ('accepted', 'retrying')
+             AND (next_retry_at IS NULL OR next_retry_at <= ?)
+           ORDER BY COALESCE(next_retry_at, submitted_at) ASC
+           LIMIT 1
+        )
+      RETURNING nullifier, status, submitted_at as submittedAt, updated_at as updatedAt,
+                attempt, settle_tx as settleTx, pub_key_ax as pubKeyAx,
+                pub_key_ay as pubKeyAy, order_json as orderJson`,
+    );
+
+    this.markAuthSettled = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'settled', settle_tx = ?, updated_at = ?,
+              next_retry_at = NULL, last_error = NULL
+        WHERE nullifier = ?`,
+    );
+    this.markAuthFailed = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'failed', last_error = ?, updated_at = ?,
+              next_retry_at = NULL
+        WHERE nullifier = ?`,
+    );
+    this.markAuthDeadLetter = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'dead_letter', last_error = ?, updated_at = ?,
+              next_retry_at = NULL
+        WHERE nullifier = ?`,
+    );
+    this.scheduleAuthRetry = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'retrying', attempt = ?, next_retry_at = ?,
+              last_error = ?, updated_at = ?
+        WHERE nullifier = ?`,
+    );
+    this.setAuthTxHash = this.db.prepare(
+      `UPDATE authorize_orders SET settle_tx = ?, updated_at = ? WHERE nullifier = ?`,
+    );
+
+    // Bulk-expire orders whose circuit expiry has passed without settlement.
+    // `publicSignals.expiry` is seconds-since-epoch; updated_at is ms.
+    this.sweepExpiredAuth = this.db.prepare(
+      `UPDATE authorize_orders
+          SET status = 'expired', updated_at = ?, next_retry_at = NULL
+        WHERE status IN ('accepted', 'settling', 'retrying')
+          AND CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?`,
     );
 
     // [R-2] Pending TX tracking
@@ -259,7 +370,10 @@ export class PrivateOrderDB {
       );
     `);
 
-    // [R-6] Authorize orders persistence — survive relayer restarts
+    // [R-6] Authorize orders persistence — survive relayer restarts.
+    // Async-settlement FSM: accepted → settling → retrying → settled | failed
+    // | dead_letter; orderly parallel states: cancelled | expired. Legacy
+    // values ('pending', 'matched') remain readable for one release.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS authorize_orders (
         nullifier     TEXT PRIMARY KEY,
@@ -271,6 +385,33 @@ export class PrivateOrderDB {
         order_json    TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_ao_status ON authorize_orders(status);
+    `);
+
+    // Async-settlement extensions. Each column is added via idempotent
+    // ALTER so existing relayer DBs upgrade on first boot.
+    //
+    //   attempt       — number of settlement attempts; incremented on each
+    //                   retry scheduling. Crosses MAX_ATTEMPTS → dead_letter.
+    //   next_retry_at — epoch-ms when the order is eligible for the next
+    //                   settlement attempt. NULL when not currently scheduled
+    //                   (either settling, terminal, or just accepted — the
+    //                   worker treats NULL + 'accepted' as "ready now").
+    //   last_error    — most recent settlement error text; surfaced via
+    //                   GET /:nullifier when status is failed | dead_letter.
+    //   updated_at    — epoch-ms of last status mutation. Powers the status
+    //                   endpoint's updatedAt field without a separate log.
+    try { this.db.exec(`ALTER TABLE authorize_orders ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+    try { this.db.exec(`ALTER TABLE authorize_orders ADD COLUMN next_retry_at INTEGER`); } catch { /* exists */ }
+    try { this.db.exec(`ALTER TABLE authorize_orders ADD COLUMN last_error TEXT`); } catch { /* exists */ }
+    try { this.db.exec(`ALTER TABLE authorize_orders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+
+    // Queue-lookup index: the worker asks "which orders are ready to run?"
+    // against (status IN ('accepted','retrying'), next_retry_at <= now).
+    // Partial index keeps it tight — terminal rows don't pollute it.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_ao_queue
+        ON authorize_orders (status, next_retry_at)
+        WHERE status IN ('accepted', 'retrying');
     `);
 
     // [R-2] Pending TX tracking for receipt recovery on restart
@@ -403,6 +544,81 @@ export class PrivateOrderDB {
   purgeNonPendingAuthorizeOrdersDB(): number {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const result = this.purgeAuthNonPending.run(nowSeconds);
+    return result.changes;
+  }
+
+  // ─── Async-settlement queue API ────────────────────────────────
+
+  /** Full row lookup keyed by nullifier. Used by the idempotency check
+   *  on POST and by the status GET endpoint. */
+  getAuthorizeOrder(nullifier: string): AuthorizeOrderRow | null {
+    return (this.selectAuthByNullifier.get(nullifier) as AuthorizeOrderRow | undefined) ?? null;
+  }
+
+  /** Insert a fresh order as 'accepted'. Throws on nullifier collision —
+   *  the caller catches and resolves via the idempotency path. */
+  insertAcceptedOrder(params: {
+    nullifier: string;
+    submittedAt: number;
+    orderJson: string;
+    pubKeyAx?: string | null;
+    pubKeyAy?: string | null;
+  }): void {
+    this.insertAcceptedAuth.run([
+      params.nullifier,
+      params.submittedAt,
+      params.submittedAt, // updated_at = submitted_at at creation
+      params.orderJson,
+      params.pubKeyAx ?? null,
+      params.pubKeyAy ?? null,
+    ]);
+  }
+
+  /** Atomic dequeue: the next accepted/retrying order whose schedule is
+   *  due becomes 'settling' and is returned. Null when the queue is empty. */
+  claimNextSettlementJob(): AuthorizeOrderRow | null {
+    const now = Date.now();
+    return (this.claimSettlementJob.get([now, now]) as AuthorizeOrderRow | undefined) ?? null;
+  }
+
+  markAuthorizeOrderSettled(nullifier: string, txHash: string): void {
+    this.markAuthSettled.run([txHash, Date.now(), nullifier]);
+  }
+
+  markAuthorizeOrderFailed(nullifier: string, error: string): void {
+    this.markAuthFailed.run([truncErr(error), Date.now(), nullifier]);
+  }
+
+  markAuthorizeOrderDeadLetter(nullifier: string, error: string): void {
+    this.markAuthDeadLetter.run([truncErr(error), Date.now(), nullifier]);
+  }
+
+  scheduleAuthorizeOrderRetry(params: {
+    nullifier: string;
+    attempt: number;
+    nextRetryAt: number;
+    error: string;
+  }): void {
+    this.scheduleAuthRetry.run([
+      params.attempt,
+      params.nextRetryAt,
+      truncErr(params.error),
+      Date.now(),
+      params.nullifier,
+    ]);
+  }
+
+  /** Persist the broadcast tx hash even before confirmation so a crash
+   *  mid-wait leaves enough trail to recover the receipt on restart. */
+  recordAuthorizeOrderTxHash(nullifier: string, txHash: string): void {
+    this.setAuthTxHash.run([txHash, Date.now(), nullifier]);
+  }
+
+  /** Bulk-mark any in-flight order whose circuit expiry has passed.
+   *  Called by the expiry sweeper; returns the affected row count. */
+  sweepExpiredAuthorizeOrders(): number {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const result = this.sweepExpiredAuth.run([Date.now(), nowSeconds]);
     return result.changes;
   }
 
