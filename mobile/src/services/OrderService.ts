@@ -44,11 +44,14 @@ function resolveBuySymbol(
   sellToken: string,
   sellTokenSymbol: string,
 ): string {
+  // Cache the lowercase form once: each .find() iteration would otherwise
+  // re-lower buyToken; the same string is reused for the same-token check.
+  const buyLower = buyToken.toLowerCase();
   const hit = TokenService.getTokenList().find(
-    (t) => t.address.toLowerCase() === buyToken.toLowerCase(),
+    (t) => t.address === buyToken || t.address.toLowerCase() === buyLower,
   );
   if (hit) return hit.symbol;
-  if (buyToken.toLowerCase() === sellToken.toLowerCase()) return sellTokenSymbol;
+  if (buyToken === sellToken || buyLower === sellToken.toLowerCase()) return sellTokenSymbol;
   return '?';
 }
 
@@ -437,6 +440,11 @@ export const OrderService = {
       // Mark original note as spent (in trading)
       await NoteStorageService.updateNoteStatus(account, note.id, 'spent');
 
+      // Compute once and reuse for both the trade-history record and the
+      // pending-order summary below. `resolveBuySymbol` walks the token
+      // list, so calling it twice with identical inputs was wasteful.
+      const buyTokenSymbol = resolveBuySymbol(buyToken, note.token, note.tokenSymbol);
+
       // Persist a per-order trade record so the History screen can
       // expand a spent note and show sell/change/claims details.
       await TradeHistoryStorage.append(account, {
@@ -446,7 +454,7 @@ export const OrderService = {
         sellToken: note.token,
         sellTokenSymbol: note.tokenSymbol,
         buyToken,
-        buyTokenSymbol: resolveBuySymbol(buyToken, note.token, note.tokenSymbol),
+        buyTokenSymbol,
         sellAmount: sellAmount.toString(),
         buyAmount: buyAmount.toString(),
         changeAmount: changeAmount.toString(),
@@ -503,7 +511,7 @@ export const OrderService = {
             sellToken: note.token,
             sellTokenSymbol: note.tokenSymbol,
             buyToken,
-            buyTokenSymbol: resolveBuySymbol(buyToken, note.token, note.tokenSymbol),
+            buyTokenSymbol,
             sellAmount: sellAmount.toString(),
             buyAmount: buyAmount.toString(),
             maxFeeBps,
