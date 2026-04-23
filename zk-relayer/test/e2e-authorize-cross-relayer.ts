@@ -526,16 +526,33 @@ async function main(): Promise<void> {
 
   // ─── Step 3: build authorize orders and submit ─────────────
   console.log("\n[3/8] Building + submitting authorize orders...");
-  // Build the leaf-by-index array. The pool may already have prior
-  // deposits (re-runs, dev-env activity), so leafIndex isn't always
-  // 0/1 — push-order would silently misalign Merkle proofs. Size to
-  // `max(leafIndex)+1` and place each commitment at its actual slot;
-  // unused slots stay 0n which `buildTree` hashes to the zero subtree
-  // identical to what's on-chain.
-  const maxLeaf = Math.max(aliceDep.leafIndex, bobDep.leafIndex);
-  const leafByIndex: bigint[] = new Array(maxLeaf + 1).fill(0n);
-  leafByIndex[aliceDep.leafIndex] = aliceDep.commitment;
-  leafByIndex[bobDep.leafIndex] = bobDep.commitment;
+  // Read every `CommitmentInserted` event so the local Merkle tree we
+  // build matches the on-chain tree byte-for-byte. The previous
+  // "just the 2 known leaves, zeros elsewhere" shortcut broke in any
+  // environment that had prior deposits (re-runs, mobile dev sessions,
+  // earlier e2e passes that left commitments behind) — the computed
+  // root would diverge from the on-chain root and settleAuth would
+  // revert with UnknownRoot().
+  const poolReader = new ethers.Contract(poolAddr, POOL_ABI, provider);
+  const allInserts = await poolReader.queryFilter(
+    poolReader.filters.CommitmentInserted(),
+    0,
+    "latest",
+  );
+  const leafByIndex: bigint[] = [];
+  for (const log of allInserts) {
+    const [commitment, leafIndex] = (log as ethers.EventLog).args as unknown as [bigint, number, bigint];
+    const idx = Number(leafIndex);
+    while (leafByIndex.length <= idx) leafByIndex.push(0n);
+    leafByIndex[idx] = BigInt(commitment);
+  }
+  // Safety: our two fresh deposits must be present at their expected slots.
+  if (leafByIndex[aliceDep.leafIndex] !== aliceDep.commitment) {
+    throw new Error(`leafByIndex[${aliceDep.leafIndex}] mismatch for Alice`);
+  }
+  if (leafByIndex[bobDep.leafIndex] !== bobDep.commitment) {
+    throw new Error(`leafByIndex[${bobDep.leafIndex}] mismatch for Bob`);
+  }
 
   const aliceArt = await buildAndSubmitOrder(alice, aliceDep, alicePool, leafByIndex);
   const bobArt = await buildAndSubmitOrder(bob, bobDep, bobPool, leafByIndex);
