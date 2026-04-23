@@ -7,6 +7,7 @@ import {
   type AuthorizeMatch,
   isPriceCompatible,
   isTokenCompatible,
+  isLiveStatus,
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
@@ -79,7 +80,10 @@ export class AuthorizeCrossRelayerMatchService {
 
     // Pair index already enforces local.sell == remote.buy && local.buy == remote.sell.
     for (const [nullifier, local] of this.lookupByCounterPair(summary.sellToken, summary.buyToken)) {
-      if (local.status !== "pending") continue;
+      // Accept any live-queue status (legacy 'pending' or new 'accepted' /
+      // 'retrying'). In-flight ('matched' / 'settling') and terminal
+      // states stay skipped.
+      if (!isLiveStatus(local.status)) continue;
       if (this.lockingOrders.has(nullifier)) continue;
 
       const ps = local.order.publicSignals;
@@ -122,15 +126,17 @@ export class AuthorizeCrossRelayerMatchService {
           return; // Only match one pair per remote-arrival tick.
         }
 
-        // Rejection path — restore to pending so a future remote can retry.
+        // Rejection path — restore to the live-queue state so a future
+        // remote (or the local SettlementWorker) can retry. 'accepted' is
+        // the new FSM's queue-ready state; legacy rows used 'pending'.
         console.warn(`[authorize-cross] Trade offer rejected: ${result.reason ?? "unknown"}`);
-        local.status = "pending";
+        local.status = "accepted";
       } catch (err) {
         console.warn(
           `[authorize-cross] Trade offer error:`,
           err instanceof Error ? err.message : "unknown",
         );
-        if (local.status === "matched") local.status = "pending";
+        if (local.status === "matched") local.status = "accepted";
       } finally {
         this.lockingOrders.delete(nullifier);
       }
@@ -199,7 +205,10 @@ export class AuthorizeCrossRelayerMatchService {
     if (!makerStored) {
       return { status: "rejected", reason: "maker order not found" };
     }
-    if (makerStored.status !== "pending") {
+    // Accept legacy 'pending' AND the new 'accepted' / 'retrying' live-queue
+    // states. In-flight / terminal rows stay rejected so a double-settle
+    // can't race.
+    if (!isLiveStatus(makerStored.status)) {
       return { status: "rejected", reason: `maker order status is ${makerStored.status}` };
     }
     if (this.lockingOrders.has(mapKey)) {
@@ -271,9 +280,10 @@ export class AuthorizeCrossRelayerMatchService {
       );
       return { status: "settled", txHash };
     } catch (err) {
-      // Don't leave the maker stuck in "matched" — the taker side will
-      // try another path or the user will re-submit.
-      makerStored.status = "pending";
+      // Don't leave the maker stuck in "matched" — flip back to the
+      // live-queue state so a future remote or the local SettlementWorker
+      // can retry. 'accepted' is the new FSM's queue-ready state.
+      makerStored.status = "accepted";
       const reason = err instanceof Error ? err.message : "settleAuth failed";
       console.warn(`[authorize-cross] settleAuth failed:`, reason);
       return { status: "error", reason };
