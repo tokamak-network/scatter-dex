@@ -4,10 +4,15 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/.dev-logs"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-# Hardhat Account #1 — used for zk-relayer (separate identity)
+# Hardhat Account #1 — Relayer A (also registered on-chain by DeployLocal.s.sol).
 ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+# Hardhat Account #2 — Relayer B (registered post-deploy for P2P orderbook tests).
+RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+RELAYER_FEE_BPS=30
 RPC_URL="http://localhost:8545"
 MOCK_MODE=false
+MOBILE_BUNDLE_ID="io.scatterdex.mobile"
 PIDS=()
 CLEANED_UP=false
 
@@ -78,6 +83,80 @@ check_port() {
 # Create log directory
 mkdir -p "$LOG_DIR"
 
+# Ensure better-sqlite3's native binary matches the current shell arch.
+# The .node file is built x86_64 under `arch -x86_64 bash` (dev-fork.sh)
+# and arm64 under native bash (dev.sh --mock); switching between the two
+# scripts requires a rebuild or Node dlopen fails with an arch mismatch.
+ensure_sqlite_arch() {
+  local pkg_dir="$1"
+  local node_file="$pkg_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+  if [ ! -f "$node_file" ]; then return 0; fi
+  local expected current
+  expected=$(uname -m)
+  current=$(file "$node_file" 2>/dev/null | grep -oE 'x86_64|arm64' | head -1)
+  if [ -n "$current" ] && [ "$current" != "$expected" ]; then
+    echo "  better-sqlite3 in $(basename "$pkg_dir") is $current, need $expected — rebuilding..."
+    ( cd "$pkg_dir" && npm rebuild better-sqlite3 ) > "$LOG_DIR/sqlite-rebuild-$(basename "$pkg_dir").log" 2>&1 \
+      || { echo "  ERROR: better-sqlite3 rebuild failed. See $LOG_DIR/sqlite-rebuild-$(basename "$pkg_dir").log"; exit 1; }
+  fi
+}
+
+# Wipe the mobile app from any booted iOS simulator / Android emulator.
+# Fresh anvil means fresh contract addresses, so any cached commitment
+# notes / claim notes / trade history in the app are stale. Full uninstall
+# is the simplest reset — wallet/mnemonic must be re-entered on next run.
+reset_mobile_app() {
+  local wiped=0
+  if command -v xcrun >/dev/null 2>&1; then
+    local udids
+    # `|| true` so `set -e` doesn't abort when no simulators are booted
+    # (empty grep pipeline exits non-zero).
+    udids=$(xcrun simctl list devices booted 2>/dev/null \
+      | grep -oE '\([0-9A-F-]{36}\) \(Booted\)' \
+      | grep -oE '[0-9A-F-]{36}' || true)
+    for udid in $udids; do
+      if xcrun simctl uninstall "$udid" "$MOBILE_BUNDLE_ID" 2>/dev/null; then
+        echo "  Uninstalled $MOBILE_BUNDLE_ID from iOS simulator $udid"
+        wiped=1
+      fi
+    done
+  fi
+  if command -v adb >/dev/null 2>&1; then
+    local devs
+    devs=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}' || true)
+    for dev in $devs; do
+      if adb -s "$dev" uninstall "$MOBILE_BUNDLE_ID" >/dev/null 2>&1; then
+        echo "  Uninstalled $MOBILE_BUNDLE_ID from Android $dev"
+        wiped=1
+      fi
+    done
+  fi
+  [ "$wiped" = 0 ] && echo "  No booted simulators/emulators with the app installed (skipped)."
+  return 0
+}
+
+echo "Resetting mobile app on booted simulators/emulators..."
+reset_mobile_app
+echo ""
+
+# Wipe relayer + shared-orderbook SQLite DBs: fresh anvil = fresh contracts =
+# previously-indexed commitments/orders are keyed to obsolete pool addresses.
+wipe_dev_dbs() {
+  local files=(
+    "$ROOT_DIR/zk-relayer/zk-relayer.db"
+    "$ROOT_DIR/zk-relayer/zk-relayer-b.db"
+    "$ROOT_DIR/shared-orderbook/shared-orderbook.db"
+  )
+  local removed=0
+  for f in "${files[@]}"; do
+    for ext in "" "-wal" "-shm"; do
+      [ -f "${f}${ext}" ] && rm -f "${f}${ext}" && removed=1
+    done
+  done
+  [ "$removed" = 1 ] && echo "Wiped stale relayer/orderbook DBs from previous run." && echo ""
+}
+wipe_dev_dbs
+
 # Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
 # setup emits different vkey constants, and the only way to guarantee
 # zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
@@ -111,10 +190,12 @@ if [ "$MOCK_MODE" = true ]; then
   echo ""
 
   check_port 8545 "anvil"
-  check_port 3002 "zk-relayer"
+  check_port 4000 "shared-orderbook"
+  check_port 3002 "zk-relayer-a"
+  check_port 3003 "zk-relayer-b"
   check_port 3000 "frontend"
 
-  echo "[1/4] Starting anvil (hardfork=prague for EIP-7702)..."
+  echo "[1/6] Starting anvil (hardfork=prague for EIP-7702)..."
   # `--hardfork prague` enables Pectra-era features — notably EIP-7702
   # batch delegation, which the frontend uses to collapse the deposit
   # popup chain into one tx when the wallet supports it.
@@ -127,7 +208,7 @@ if [ "$MOCK_MODE" = true ]; then
   echo "  anvil running on $RPC_URL (PID $last_pid)"
 
   echo ""
-  echo "[2/4] Deploying contracts (MockIdentityRegistry)..."
+  echo "[2/6] Deploying contracts (MockIdentityRegistry)..."
   ensure_circuits_built
   cd "$ROOT_DIR/contracts"
   # `forge script` can exit non-zero even when the on-chain deployment
@@ -170,7 +251,7 @@ else
   echo ""
 
   # Verify anvil is running
-  echo "[1/4] Checking anvil..."
+  echo "[1/6] Checking anvil..."
   if ! curl -fsS "$RPC_URL" -X POST -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
     echo "  ERROR: anvil is not running at $RPC_URL"
@@ -180,7 +261,9 @@ else
   fi
   echo "  anvil is running."
 
-  check_port 3002 "zk-relayer"
+  check_port 4000 "shared-orderbook"
+  check_port 3002 "zk-relayer-a"
+  check_port 3003 "zk-relayer-b"
   check_port 3000 "frontend"
 
   # Helper: prompt for a registry address if not set, verify contract exists
@@ -222,7 +305,7 @@ else
   echo "  IdentityRegistry (Relayer CA): $RELAYER_IDENTITY_REGISTRY"
 
   echo ""
-  echo "[2/4] Deploying contracts (real IdentityGate)..."
+  echo "[2/6] Deploying contracts (real IdentityGate)..."
   ensure_circuits_built
   cd "$ROOT_DIR/contracts"
 
@@ -264,42 +347,122 @@ echo "  RelayerRegistry:     $RELAYER_REGISTRY"
 [ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
 [ -n "$PRIVATE_SETTLEMENT" ] && echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
 
-# ── 3. Start zk-relayer ─────────────────────────────────────
+if [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
+  echo "  ERROR: ZK contracts not deployed (missing CommitmentPool or PrivateSettlement)"
+  exit 1
+fi
+
+# TOKEN_LIST is empty in integration mode (no test tokens deployed).
+if [ -n "$WETH" ] && [ -n "$USDC" ]; then
+  TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:18"
+else
+  TOKEN_LIST=""
+fi
+
+# ── 3. Start shared orderbook ──────────────────────────────
 echo ""
-echo "[3/4] Starting zk-relayer..."
-if [ -n "$COMMITMENT_POOL" ] && [ -n "$PRIVATE_SETTLEMENT" ]; then
-  ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
-  cat > "$ROOT_DIR/zk-relayer/.env" << EOF
+echo "[3/6] Starting shared orderbook (port 4000)..."
+if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
+  echo "  Installing shared-orderbook dependencies (first run)..."
+  ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1
+fi
+ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
+cd "$ROOT_DIR/shared-orderbook"
+PORT=4000 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:4000/health" "shared-orderbook" 20; then
+  echo "  Last 20 lines of shared-orderbook log:"
+  tail -20 "$LOG_DIR/shared-orderbook.log" 2>/dev/null
+  exit 1
+fi
+echo "  shared-orderbook running on http://localhost:4000 (PID $last_pid)"
+
+# Capture post-deploy block so relayers skip pre-deploy history on scan.
+INDEX_FROM=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
+ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
+
+ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
+
+# ── 4. Start Relayer A (port 3002) ─────────────────────────
+echo ""
+echo "[4/6] Starting Relayer A (port 3002)..."
+cat > "$ROOT_DIR/zk-relayer/.env" << EOF
 RPC_URL=$RPC_URL
 RELAYER_PRIVATE_KEY=$ZK_RELAYER_KEY
 COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 FEE_VAULT_ADDRESS=$FEE_VAULT
-TOKEN_LIST=$WETH:WETH:18,$USDC:USDC:18
+TOKEN_LIST=$TOKEN_LIST
 ADMIN_API_KEY=$ADMIN_KEY
-RELAYER_FEE=30
+RELAYER_FEE=$RELAYER_FEE_BPS
 PORT=3002
+INDEX_FROM_BLOCK=$INDEX_FROM
+SHARED_ORDERBOOK_URL=http://localhost:4000
+RELAYER_PUBLIC_URL=http://localhost:3002
+RELAYER_NAME=Relayer-A
+DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
 EOF
-  echo "  Admin API key: $ADMIN_KEY"
+echo "  Admin API key: $ADMIN_KEY"
 
-  cd "$ROOT_DIR/zk-relayer"
-  npm run dev > "$LOG_DIR/zk-relayer.log" 2>&1 &
-  last_pid=$!
-  PIDS+=("$last_pid")
-  if ! wait_for "http://localhost:3002/api/info" "zk-relayer" 30; then
-    echo "  Last 20 lines of zk-relayer log:"
-    tail -20 "$LOG_DIR/zk-relayer.log" 2>/dev/null
-    exit 1
-  fi
-  echo "  zk-relayer running on http://localhost:3002 (PID $last_pid)"
-else
-  echo "  ERROR: ZK contracts not deployed (missing CommitmentPool or PrivateSettlement)"
+cd "$ROOT_DIR/zk-relayer"
+npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:3002/api/info" "relayer-a" 30; then
+  echo "  Last 20 lines of relayer-a log:"
+  tail -20 "$LOG_DIR/relayer-a.log" 2>/dev/null
   exit 1
 fi
+echo "  Relayer A running on http://localhost:3002 (PID $last_pid)"
 
-# ── 4. Start frontend ──────────────────────────────────────
+# ── 5. Start Relayer B (port 3003) ─────────────────────────
 echo ""
-echo "[4/4] Starting frontend..."
+echo "[5/6] Starting Relayer B (port 3003)..."
+RPC_URL="$RPC_URL" \
+RELAYER_PRIVATE_KEY="$RELAYER_B_KEY" \
+COMMITMENT_POOL_ADDRESS="$COMMITMENT_POOL" \
+PRIVATE_SETTLEMENT_ADDRESS="$PRIVATE_SETTLEMENT" \
+FEE_VAULT_ADDRESS="$FEE_VAULT" \
+TOKEN_LIST="$TOKEN_LIST" \
+ADMIN_API_KEY="$ADMIN_KEY" \
+RELAYER_FEE=$RELAYER_FEE_BPS \
+PORT=3003 \
+INDEX_FROM_BLOCK="$INDEX_FROM" \
+SHARED_ORDERBOOK_URL=http://localhost:4000 \
+RELAYER_PUBLIC_URL=http://localhost:3003 \
+RELAYER_NAME=Relayer-B \
+DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
+npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
+last_pid=$!
+PIDS+=("$last_pid")
+if ! wait_for "http://localhost:3003/api/info" "relayer-b" 30; then
+  echo "  Last 20 lines of relayer-b log:"
+  tail -20 "$LOG_DIR/relayer-b.log" 2>/dev/null
+  exit 1
+fi
+echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
+
+# Register Relayer B on-chain (DeployLocal.s.sol only registers Relayer A).
+if cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
+    "http://localhost:3003" "$RELAYER_FEE_BPS" \
+    --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" \
+    > /dev/null 2>&1; then
+  echo "  Relayer B registered on RelayerRegistry (fee=$RELAYER_FEE_BPS bps)"
+else
+  EXISTING_URL=$(cast call "$RELAYER_REGISTRY" \
+    "relayers(address)(string,uint256,uint256,uint256,uint256,bool)" \
+    "$RELAYER_B_ADDR" --rpc-url "$RPC_URL" 2>/dev/null | head -1)
+  if echo "$EXISTING_URL" | grep -q "http://localhost:3003"; then
+    echo "  Relayer B already registered on RelayerRegistry"
+  else
+    echo "  WARNING: Relayer B on-chain registration failed — frontend may only list Relayer A"
+  fi
+fi
+
+# ── 6. Start frontend ──────────────────────────────────────
+echo ""
+echo "[6/6] Starting frontend..."
 TOKENS=""
 [ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
@@ -397,7 +560,9 @@ else
 fi
 echo ""
 echo "  Frontend:    http://localhost:3000"
-echo "  ZK Relayer:  http://localhost:3002"
+echo "  Relayer A:   http://localhost:3002"
+echo "  Relayer B:   http://localhost:3003"
+echo "  Orderbook:   http://localhost:4000"
 echo "  Anvil:       $RPC_URL"
 echo ""
 echo "  RelayerRegistry:     $RELAYER_REGISTRY"

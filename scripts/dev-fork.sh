@@ -94,6 +94,79 @@ check_port() {
 
 mkdir -p "$LOG_DIR"
 
+MOBILE_BUNDLE_ID="io.scatterdex.mobile"
+
+# Ensure better-sqlite3's native binary matches the current shell arch.
+# dev-fork.sh runs under `arch -x86_64 bash`, so expected arch is x86_64;
+# switching to/from `dev.sh --mock` (native arm64) invalidates the build.
+ensure_sqlite_arch() {
+  local pkg_dir="$1"
+  local node_file="$pkg_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+  if [ ! -f "$node_file" ]; then return 0; fi
+  local expected current
+  expected=$(uname -m)
+  current=$(file "$node_file" 2>/dev/null | grep -oE 'x86_64|arm64' | head -1)
+  if [ -n "$current" ] && [ "$current" != "$expected" ]; then
+    echo "  better-sqlite3 in $(basename "$pkg_dir") is $current, need $expected — rebuilding..."
+    ( cd "$pkg_dir" && npm rebuild better-sqlite3 ) > "$LOG_DIR/sqlite-rebuild-$(basename "$pkg_dir").log" 2>&1 \
+      || { echo "  ERROR: better-sqlite3 rebuild failed. See $LOG_DIR/sqlite-rebuild-$(basename "$pkg_dir").log"; exit 1; }
+  fi
+}
+
+# Uninstall the mobile app from all booted simulators/emulators. Fresh contract
+# addresses on every run make cached commitments/claim notes stale; wallet
+# mnemonic must be re-imported after reset.
+reset_mobile_app() {
+  local wiped=0
+  if command -v xcrun >/dev/null 2>&1; then
+    local udids
+    # `|| true` so `set -e` doesn't abort when no simulators are booted.
+    udids=$(xcrun simctl list devices booted 2>/dev/null \
+      | grep -oE '\([0-9A-F-]{36}\) \(Booted\)' \
+      | grep -oE '[0-9A-F-]{36}' || true)
+    for udid in $udids; do
+      if xcrun simctl uninstall "$udid" "$MOBILE_BUNDLE_ID" 2>/dev/null; then
+        echo "  Uninstalled $MOBILE_BUNDLE_ID from iOS simulator $udid"
+        wiped=1
+      fi
+    done
+  fi
+  if command -v adb >/dev/null 2>&1; then
+    local devs
+    devs=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1}' || true)
+    for dev in $devs; do
+      if adb -s "$dev" uninstall "$MOBILE_BUNDLE_ID" >/dev/null 2>&1; then
+        echo "  Uninstalled $MOBILE_BUNDLE_ID from Android $dev"
+        wiped=1
+      fi
+    done
+  fi
+  [ "$wiped" = 0 ] && echo "  No booted simulators/emulators with the app installed (skipped)."
+  return 0
+}
+
+# Wipe relayer + shared-orderbook SQLite DBs: fresh fork = fresh contracts =
+# previously-indexed commitments/orders are keyed to obsolete pool addresses.
+wipe_dev_dbs() {
+  local files=(
+    "$ROOT_DIR/zk-relayer/zk-relayer.db"
+    "$ROOT_DIR/zk-relayer/zk-relayer-b.db"
+    "$ROOT_DIR/shared-orderbook/shared-orderbook.db"
+  )
+  local removed=0
+  for f in "${files[@]}"; do
+    for ext in "" "-wal" "-shm"; do
+      [ -f "${f}${ext}" ] && rm -f "${f}${ext}" && removed=1
+    done
+  done
+  [ "$removed" = 1 ] && echo "Wiped stale relayer/orderbook DBs from previous run." && echo ""
+}
+
+echo "Resetting mobile app on booted simulators/emulators..."
+reset_mobile_app
+echo ""
+wipe_dev_dbs
+
 # Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
 # setup emits different vkey constants, and the only way to guarantee
 # zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
@@ -274,6 +347,7 @@ if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
   echo "  Installing shared-orderbook dependencies (first run)..."
   ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1
 fi
+ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
 PORT=4000 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
@@ -311,6 +385,7 @@ EOF
 echo "  INDEX_FROM_BLOCK:    $INDEX_FROM"
 echo "  Admin API key: $ADMIN_KEY"
 
+ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 cd "$ROOT_DIR/zk-relayer"
 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
 last_pid=$!
