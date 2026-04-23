@@ -98,9 +98,22 @@ export const OrderService = {
     signer: ethers.Signer,
     account: string,
     input: OrderInput,
-    onProgress: (progress: OrderProgress) => void,
+    onProgressIn: (progress: OrderProgress) => void,
   ): Promise<string | null> {
+    // Diagnostic — mirrors `[DepositService]` style so a Metro tail can
+    // trace which step a stuck submit died on. Remove once the
+    // pending-orders integration is stable.
+    const onProgress = (p: OrderProgress) => {
+      console.log('[OrderService]', p.step, p.error ?? p.orderId ?? '');
+      onProgressIn(p);
+    };
     try {
+      console.log('[OrderService] execute START', {
+        account: account.slice(0, 10) + '…',
+        sellAmount: input.sellAmount,
+        buyToken: input.buyToken.slice(0, 10) + '…',
+        relayerUrl: input.relayerUrl,
+      });
       const { note, buyToken, maxFeeBps, expiryHours, claims } = input;
       // Per-transaction biometric gate. No-ops when the biometric
       // toggle is off; throws on user cancel so we never reach the
@@ -231,17 +244,21 @@ export const OrderService = {
       let pathElements: string[];
       let pathIndices: string[];
 
+      console.log('[OrderService] building_tree → fetching relayer merkle proof', { leafIndex: note.leafIndex });
       const remote = await RelayerApiService.getMerkleProof(note.leafIndex, input.relayerUrl);
+      console.log('[OrderService] relayer merkle proof', remote ? 'HIT' : 'MISS — falling back to local scan');
       if (remote) {
         commitmentRoot = remote.root;
         pathElements = remote.pathElements;
         pathIndices = remote.pathIndices.map(String);
       } else {
+        console.log('[OrderService] scanning on-chain CommitmentInserted events…');
         const allLeaves = await getCommitmentLeaves(
           poolAddr,
           readProvider,
           ConfigService.getChainId(),
         );
+        console.log('[OrderService] scan done, leaves =', allLeaves.length);
 
         // Only worth running the freshness check on this path since we
         // already paid for the full leaf set. Catches a stale note early
@@ -266,6 +283,7 @@ export const OrderService = {
         const proof = getMerkleProofFromTree(commitTree, note.leafIndex);
         pathElements = proof.pathElements;
         pathIndices = proof.pathIndices;
+        console.log('[OrderService] local tree built, root =', commitmentRoot.slice(0, 16) + '…');
       }
 
       // Nullifiers — tags 0 (escrow) / 1 (nonce) match cancel-prover and
@@ -383,6 +401,12 @@ export const OrderService = {
         relayer: ps[13],
         orderHash: ps[14],
       };
+      console.log('[OrderService] POST /api/authorize-orders', {
+        relayerUrl: input.relayerUrl,
+        nullifier: namedSignals.nullifier?.slice(0, 16) + '…',
+        bodyLen: JSON.stringify({ proof: solidityProof, publicSignals: namedSignals, publicSignalsArray: ps, pubKeyAx: keyPair.pubKeyAx, pubKeyAy: keyPair.pubKeyAy }).length,
+      });
+      const t0 = Date.now();
       const response = await RelayerApiService.submitAuthorizeOrder(
         {
           proof: solidityProof,
@@ -393,6 +417,7 @@ export const OrderService = {
         },
         input.relayerUrl,
       );
+      console.log('[OrderService] relayer response', response, `(${Date.now() - t0}ms)`);
 
       // ─── Step 6: Persist claim secrets + change note + mark spent ─
       onProgress({ step: 'saving_change' });
@@ -528,6 +553,11 @@ export const OrderService = {
       onProgress({ step: 'success', orderId: response.orderId });
       return response.orderId ?? null;
     } catch (err: any) {
+      console.error('[OrderService] FAILED', {
+        message: err?.message,
+        name: err?.name,
+        stack: err?.stack?.split('\n').slice(0, 5).join('\n'),
+      });
       onProgress({ step: 'error', error: err?.message || 'Order failed' });
       return null;
     }

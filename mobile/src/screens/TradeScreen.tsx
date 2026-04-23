@@ -171,9 +171,34 @@ export default function TradeScreen() {
   // Claim builder (limit mode only). Default delay matches the web
   // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
   // row doesn't ship an immediate-release claim by accident.
-  const [claimRows, setClaimRows] = useState<ClaimRow[]>([
-    { id: 1, mode: 'standard', address: '', amount: '', delay: '1', delayUnit: 'hr' },
-  ]);
+  const defaultClaimRow = (): ClaimRow => ({
+    id: 1, mode: 'standard', address: '', amount: '', delay: '1', delayUnit: 'hr',
+  });
+  const [claimRows, setClaimRows] = useState<ClaimRow[]>([defaultClaimRow()]);
+
+  // Reset clears the transient submit inputs (amount, price, claims, error,
+  // stuck submitting flag) so a failed or aborted attempt can be redone
+  // without navigating away. Token pair + fee/expiry preferences are left
+  // alone — those are the user's longer-lived choices and resetting them
+  // every time would be hostile.
+  const handleReset = useCallback(() => {
+    const hasInput =
+      amount.trim() !== '' ||
+      claimRows.length > 1 ||
+      claimRows.some((r) => r.address.trim() !== '' || r.amount.trim() !== '');
+    const doReset = () => {
+      setAmount('');
+      setPrice('1');
+      setClaimRows([defaultClaimRow()]);
+      setError(null);
+      setSubmitting(false);
+    };
+    if (!hasInput && !error && !submitting) return;
+    Alert.alert('Reset form?', 'This clears the amount and claim rows. Token pair, fee, and expiry stay as-is.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reset', style: 'destructive', onPress: doReset },
+    ]);
+  }, [amount, claimRows, error, submitting]);
   // Address-book picker target: which claim row the next picked address
   // should land in. `null` = picker closed.
   const [pickerForRow, setPickerForRow] = useState<number | null>(null);
@@ -1201,10 +1226,21 @@ export default function TradeScreen() {
           </View>
         )}
 
-        {/* Action Button */}
-        <View style={s.actionWrap}>
+        {/* Action Buttons — Reset + Place Order side-by-side so a stuck
+            error state or a half-filled form can be cleared without
+            navigating away. Reset keeps the token pair / fee / expiry
+            preferences and only clears the transient submit inputs. */}
+        <View style={[s.actionWrap, { flexDirection: 'row', gap: 12 }]}>
           <TouchableOpacity
-            style={[s.actionBtn, submitting && s.actionBtnDisabled]}
+            style={[s.resetBtn, submitting && s.actionBtnDisabled]}
+            activeOpacity={0.8}
+            onPress={handleReset}
+            disabled={submitting}
+          >
+            <Text style={s.resetBtnText}>Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.actionBtn, { flex: 1 }, submitting && s.actionBtnDisabled]}
             activeOpacity={0.8}
             onPress={handlePlaceOrder}
             disabled={submitting}
@@ -1342,6 +1378,8 @@ const s = StyleSheet.create({
   actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
+  resetBtn: { paddingVertical: 16, paddingHorizontal: 20, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  resetBtnText: { color: colors.textSecondary, fontSize: 14, fontWeight: '700' },
 
   /* Order Book */
   orderSection: { paddingHorizontal: layout.screenHZ, gap: 16 },
