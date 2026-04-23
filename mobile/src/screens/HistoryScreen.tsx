@@ -18,6 +18,7 @@ import { NoteStorageService, StoredNote } from '../services/NoteStorageService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import { RelayerApiService, OrderStatus } from '../services/RelayerApiService';
 import { TradeHistoryStorage, TradeRecord } from '../services/TradeHistoryStorage';
+import { PendingOrdersService, PendingOrder } from '../services/PendingOrdersService';
 import { TokenService } from '../services/TokenService';
 import { ethers } from 'ethers';
 import { CancelService, CancelProgress } from '../services/CancelService';
@@ -90,6 +91,90 @@ function noteToActivity(note: StoredNote, orderStatuses: Map<string, OrderStatus
   };
 }
 
+interface PendingOrderRowProps {
+  order: PendingOrder;
+}
+
+function PendingOrderRow({ order }: PendingOrderRowProps) {
+  const { sellTokenSymbol, buyTokenSymbol } = order.orderSummary;
+  const { label, tone } = formatPendingStatus(order.lastPolledStatus, order.attempt);
+  const isStuck = order.error && (order.lastPolledStatus === 'failed' || order.lastPolledStatus === 'dead_letter');
+  return (
+    <View style={s.detailCard}>
+      <View style={s.detailRow}>
+        <Text style={s.actType}>
+          {sellTokenSymbol === buyTokenSymbol
+            ? `Scatter ${sellTokenSymbol}`
+            : `${sellTokenSymbol} → ${buyTokenSymbol}`}
+        </Text>
+        <View style={[
+          s.statusBadge,
+          tone === 'progress' && s.statusMatching,
+          tone === 'success' && s.statusVerified,
+          tone === 'error' && s.statusWaiting,
+        ]}>
+          <Text style={[
+            s.statusText,
+            tone === 'progress' && s.statusMatchingText,
+            tone === 'success' && s.statusVerifiedText,
+            tone === 'error' && s.statusWaitingText,
+          ]}>{label}</Text>
+        </View>
+      </View>
+      <View style={s.detailRow}>
+        <Text style={s.detailLabel}>Submitted</Text>
+        <Text style={s.detailValue}>{formatDate(order.submittedAt)}</Text>
+      </View>
+      {order.settleTxHash && (
+        <View style={s.detailRow}>
+          <Text style={s.detailLabel}>Settle tx</Text>
+          <Text style={s.detailValueMono}>{shortAddr(order.settleTxHash)}</Text>
+        </View>
+      )}
+      {isStuck && order.error && (
+        <Text style={[s.detailMuted, { color: colors.danger, textAlign: 'left' }]}>
+          {order.error}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/**
+ * Map relayer FSM status → user-visible label + colour tone. The relayer
+ * categorises into LIVE / IN_FLIGHT / TERMINAL (per the protocol design);
+ * here we collapse those into three UI tones so the badge stays calm
+ * (progress) until something is conclusively done (success) or the
+ * relayer gives up (error).
+ */
+function formatPendingStatus(
+  status: string,
+  attempt: number,
+): { label: string; tone: 'progress' | 'success' | 'error' } {
+  switch (status) {
+    case 'accepted':
+    case 'pending':
+      return { label: 'Accepted', tone: 'progress' };
+    case 'matched':
+    case 'settling':
+      return { label: 'Settling', tone: 'progress' };
+    case 'retrying':
+      return { label: `Retrying (${attempt})`, tone: 'progress' };
+    case 'settled':
+      return { label: 'Settled', tone: 'success' };
+    case 'cancelled':
+      return { label: 'Cancelled', tone: 'error' };
+    case 'expired':
+      return { label: 'Expired', tone: 'error' };
+    case 'failed':
+      return { label: 'Failed', tone: 'error' };
+    case 'dead_letter':
+      return { label: 'Stuck — contact support', tone: 'error' };
+    default:
+      return { label: status, tone: 'progress' };
+  }
+}
+
 export default function HistoryScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -110,6 +195,11 @@ export default function HistoryScreen() {
   const [allNotes, setAllNotes] = useState<StoredNote[]>([]);
   const [orderStatuses, setOrderStatuses] = useState<Map<string, OrderStatus>>(new Map());
   const [pendingOrders, setPendingOrders] = useState<OrderStatus[]>([]);
+  // Local async-settlement queue. Independent of `pendingOrders` (which is
+  // the relayer's per-pubKey listing, used for cancel-eligibility checks)
+  // — these rows come from PendingOrdersService and reflect what *this
+  // device* has submitted, with status driven by the central poll loop.
+  const [asyncPending, setAsyncPending] = useState<PendingOrder[]>([]);
   const [cancellingNoteId, setCancellingNoteId] = useState<string | null>(null);
   // Per-note trade record cache (populated as the user expands rows).
   // `null` = fetched but no record; `undefined` = not yet loaded.
@@ -181,6 +271,34 @@ export default function HistoryScreen() {
   }, [account, signer]);
 
   useNoteRefresh(loadHistory);
+
+  // Subscribe to PendingOrdersService — first subscriber starts the
+  // poll loop; the unsubscribe stops it. The poll-driven `notify` fires
+  // when any row changed status, so refetching here is enough to keep
+  // the UI live without per-row state plumbing.
+  useEffect(() => {
+    if (!account) {
+      setAsyncPending([]);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const rows = await PendingOrdersService.listForWallet(account, { includeTerminal: true });
+        if (!cancelled) setAsyncPending(rows);
+      } catch (err) {
+        console.warn('PendingOrdersService.listForWallet failed:', err);
+      }
+    };
+    void refresh();
+    // One-shot prune of >1d-old terminal rows — keeps the list bounded
+    // without scheduling its own interval.
+    void PendingOrdersService.prune(account).catch(() => 0);
+    const unsub = PendingOrdersService.subscribe((wallet) => {
+      if (wallet === account.toLowerCase()) void refresh();
+    });
+    return () => { cancelled = true; unsub(); };
+  }, [account]);
 
   // Eager clear on wallet switch — matches TradeScreen / ClaimScreen.
   // Without this, the previous wallet's note history briefly renders
@@ -363,6 +481,18 @@ export default function HistoryScreen() {
             <Text style={s.filterIcon}>⊞</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Async-settlement queue — only shown on the Pending tab so it
+            doesn't crowd the Active / Spent views. Empty state is
+            silently hidden so a quiet wallet shows just the note list. */}
+        {tab === 'pending' && asyncPending.length > 0 && (
+          <View style={s.listSection}>
+            <Text style={s.detailSectionHeader}>Settlement queue</Text>
+            {asyncPending.map((p) => (
+              <PendingOrderRow key={p.nullifier} order={p} />
+            ))}
+          </View>
+        )}
 
         {/* Activity List */}
         <View style={s.listSection}>

@@ -93,6 +93,34 @@ export interface MerkleProofResponse {
   pathIndices: number[];
 }
 
+/**
+ * Response from `GET /api/authorize-orders/:nullifier`. Matches the
+ * `buildStatusReply` shape defined in
+ * zk-relayer/src/routes/authorize-orders.ts. `status` covers both the
+ * legacy enum (pending/matched/settled/cancelled/expired) and the new
+ * async-settlement FSM (accepted/settling/retrying/failed/dead_letter)
+ * — see docs/design/async-settlement-protocol.md §2.3.
+ */
+export interface AuthorizeOrderStatusResponse {
+  status:
+    | 'pending'
+    | 'matched'
+    | 'accepted'
+    | 'settling'
+    | 'retrying'
+    | 'settled'
+    | 'failed'
+    | 'dead_letter'
+    | 'cancelled'
+    | 'expired';
+  submittedAt: number;
+  updatedAt: number;
+  attempt: number;
+  settleTxHash: string | null;
+  error: string | null;
+  expiresAt: number | null;
+}
+
 export interface PrivateClaimRequest {
   proofA: string[];
   proofB: string[][];
@@ -160,6 +188,42 @@ export const RelayerApiService = {
       throw new Error(`Relayer rejected order: ${res.status} ${text}`);
     }
     return res.json();
+  },
+
+  /**
+   * Poll a single order's status by nullifier. The relayer (post
+   * async-settlement protocol) is the source of truth here — the request
+   * is fast and its response is idempotent, so it's safe to call
+   * repeatedly from a poll loop.
+   *
+   * Returns `null` on 404 (order unknown) or on a malformed body. Network
+   * errors throw so the caller's backoff loop can react.
+   */
+  async getAuthorizeOrderStatus(
+    nullifier: string,
+    relayerUrl?: string,
+  ): Promise<AuthorizeOrderStatusResponse | null> {
+    const base = relayerUrl || this.getBaseUrl();
+    const res = await fetchWithTimeout(`${base}/api/authorize-orders/${nullifier}`, {
+      timeoutMs: TIMEOUT_READ_MS,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(`authorize-orders status ${res.status}`);
+    }
+    // res.json() throws on invalid/empty body. The poll loop treats a
+    // throw as a network failure and engages backoff — but a malformed
+    // 200 isn't really a network problem, it's "this row is currently
+    // unparseable, leave it for the next tick". Fall through to the
+    // null path so the caller can no-op without slowing the cadence.
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return null;
+    }
+    if (!isAuthorizeOrderStatus(data)) return null;
+    return data;
   },
 
   async getOrderStatus(pubKeyAx: string, relayerUrl?: string): Promise<OrderStatus[]> {
@@ -300,6 +364,24 @@ async function relayerGetJson<T>(url: string, label: string): Promise<T> {
 function isBigIntString(v: unknown): v is string {
   if (typeof v !== 'string' || v.length === 0) return false;
   try { BigInt(v); return true; } catch { return false; }
+}
+
+const KNOWN_STATUSES = new Set([
+  'pending', 'matched', 'accepted', 'settling', 'retrying',
+  'settled', 'failed', 'dead_letter', 'cancelled', 'expired',
+]);
+
+function isAuthorizeOrderStatus(x: unknown): x is AuthorizeOrderStatusResponse {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  if (typeof o.status !== 'string' || !KNOWN_STATUSES.has(o.status)) return false;
+  if (typeof o.submittedAt !== 'number') return false;
+  if (typeof o.updatedAt !== 'number') return false;
+  if (typeof o.attempt !== 'number') return false;
+  if (o.settleTxHash !== null && typeof o.settleTxHash !== 'string') return false;
+  if (o.error !== null && typeof o.error !== 'string') return false;
+  if (o.expiresAt !== null && typeof o.expiresAt !== 'number') return false;
+  return true;
 }
 
 function isMerkleProofResponse(x: unknown): x is MerkleProofResponse {
