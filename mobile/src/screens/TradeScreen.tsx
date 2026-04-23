@@ -403,11 +403,33 @@ export default function TradeScreen() {
     setPickerForRow((cur) => (cur === id ? null : cur));
   }, []);
   const fillRest = useCallback((id: number) => {
-    if (claimRemainder <= 0) return;
-    // Truncate to 6 decimals to avoid float noise; server validates final sum.
-    const value = Math.floor(claimRemainder * 1e6) / 1e6;
-    updateClaim(id, { amount: value.toString() });
-  }, [claimRemainder, updateClaim]);
+    // Compute the remainder in wei using the same integer math the
+    // Authorize circuit runs (`totalLocked * 10000 >= buyAmount * (10000 -
+    // maxFee)`). The previous `Math.floor(rem * 1e6) / 1e6` path lost up
+    // to 10^-6 units of precision, leaving the claim sum a hair below
+    // `minReceive` and tripping the line-439 assertion at proof time.
+    if (!amount || !price) return;
+    try {
+      const priceClean = stripThousandsSep(price);
+      const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+      const priceBn = ethers.parseUnits(priceClean, buyDecimals);
+      const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
+      const minReceiveBn = (buyAmountBn * (10000n - BigInt(maxFeeBps))) / 10000n;
+      let sumBn = 0n;
+      for (const r of claimRows) {
+        if (r.id === id) continue;
+        const v = r.amount.trim();
+        if (!v) continue;
+        try { sumBn += ethers.parseUnits(v, buyDecimals); } catch { /* ignore invalid typing */ }
+      }
+      const restBn = minReceiveBn - sumBn;
+      if (restBn <= 0n) return;
+      updateClaim(id, { amount: ethers.formatUnits(restBn, buyDecimals) });
+    } catch {
+      // `parseUnits` throws on sub-precision input during typing — leave
+      // the row untouched until the user lands on valid numbers.
+    }
+  }, [amount, price, sellDecimals, buyDecimals, maxFeeBps, claimRows, updateClaim]);
 
   const handlePlaceOrder = useCallback(async () => {
     if (!account || !signer) {
