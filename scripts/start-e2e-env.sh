@@ -29,7 +29,7 @@ mkdir -p "$LOG_DIR"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 RELAYER_A_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"  # anvil #1
 RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"  # anvil #2
-RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"  # cast-derived from RELAYER_B_KEY; needed for isActiveRelayer() check below
 RPC_URL="${RPC_URL:-http://localhost:8545}"
 
 record_pid() { echo "$1" >> "$PID_FILE"; }
@@ -70,7 +70,7 @@ cd "$ROOT_DIR/contracts"
 # succeeded. Surface anything else.
 set +e
 DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
-  --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
+  --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" --no-color 2>&1)
 DEPLOY_STATUS=$?
 set -e
 if [ "$DEPLOY_STATUS" -ne 0 ] \
@@ -132,22 +132,35 @@ start_relayer() {
 echo ""
 echo "[4/5] Starting Relayer A & B..."
 # Fresh DBs each CI run so prior state never leaks across invocations.
-rm -f "$ROOT_DIR/zk-relayer/zk-relayer.db" "$ROOT_DIR/zk-relayer/zk-relayer-b.db"
+# Glob also catches SQLite WAL/SHM sidecar files (`-wal`/`-shm`) that
+# can otherwise retain in-flight state across reruns on the same runner.
+rm -f "$ROOT_DIR/zk-relayer/zk-relayer"*.db*
 start_relayer "Relayer-A" 3002 "$RELAYER_A_KEY" "zk-relayer.db"   "relayer-a.log"
 start_relayer "Relayer-B" 3003 "$RELAYER_B_KEY" "zk-relayer-b.db" "relayer-b.log"
 
 # ── 5. Register Relayer B on-chain ──────────────────────────
+# Must succeed: PrivateSettlement.settleAuth gates on
+# RelayerRegistry.isActiveRelayer() for both maker and taker relayers.
+# A silently-skipped registration would surface only as an opaque
+# `NotActiveRelayer` revert in the e2e test, so fail fast here instead.
 echo ""
 echo "[5/5] Registering Relayer B on RelayerRegistry..."
-if cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
-    "http://localhost:3003" 30 \
-    --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
-  echo "  [ok] Relayer B registered"
+if cast call "$RELAYER_REGISTRY" "isActiveRelayer(address)(bool)" "$RELAYER_B_ADDR" \
+    --rpc-url "$RPC_URL" 2>/dev/null | grep -q true; then
+  echo "  [ok] already active"
 else
-  # Non-fatal: the e2e test under #400 doesn't depend on the frontend's
-  # getActiveRelayers() view — Trade Offer routing uses the URL embedded
-  # in the shared-OB summary. Surface as a warning so CI logs flag it.
-  echo "  [warn] register() failed; e2e may still pass via shared-OB summary URL"
+  if ! cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
+      "http://localhost:3003" 30 \
+      --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+    echo "  ERROR: register() failed"
+    exit 1
+  fi
+  if ! cast call "$RELAYER_REGISTRY" "isActiveRelayer(address)(bool)" "$RELAYER_B_ADDR" \
+      --rpc-url "$RPC_URL" 2>/dev/null | grep -q true; then
+    echo "  ERROR: register() returned ok but isActiveRelayer() is still false"
+    exit 1
+  fi
+  echo "  [ok] Relayer B registered + active"
 fi
 
 echo ""
@@ -158,3 +171,15 @@ echo "  FEE_VAULT=$FEE_VAULT"
 echo "  USDC=$USDC"
 echo "  WETH=$WETH"
 echo "  PIDs: $(tr '\n' ' ' < "$PID_FILE")"
+
+# Propagate deployed addresses to the GitHub Actions env so downstream
+# steps don't have to hardcode them. No-op outside CI (unset $GITHUB_ENV).
+if [ -n "$GITHUB_ENV" ]; then
+  {
+    echo "E2E_USDC_ADDRESS=$USDC"
+    echo "E2E_WETH_ADDRESS=$WETH"
+    echo "E2E_COMMITMENT_POOL=$COMMITMENT_POOL"
+    echo "E2E_PRIVATE_SETTLEMENT=$PRIVATE_SETTLEMENT"
+    echo "E2E_FEE_VAULT=$FEE_VAULT"
+  } >> "$GITHUB_ENV"
+fi
