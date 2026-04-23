@@ -199,6 +199,15 @@ ensure_circuits_built() {
     exit 1
   fi
   echo "  Circuits built."
+  # Record a fingerprint of the freshly-built zkeys so a later run of
+  # `scripts/check-zk-artifacts.sh` can detect silent drift — e.g.
+  # someone reruns the circuit build manually, or an editor hook
+  # overwrites circuits/build/ between deploy and the next session.
+  # Drift there means every proof that hits the deployed Verifier.sol
+  # will revert InvalidProof(), and that failure mode is otherwise
+  # maddening to diagnose. See issue #402.
+  "$ROOT_DIR/scripts/check-zk-artifacts.sh" --write \
+    || echo "  WARN: zk manifest write failed"
 }
 
 echo "=== ScatterDEX Local Dev Environment ==="
