@@ -48,6 +48,20 @@ interface ClaimRow {
   delayUnit: DelayUnit;
 }
 
+// Fresh claim row. Default delay matches the web
+// (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a new
+// row doesn't ship an immediate-release claim by accident. Kept at
+// module scope so its identity is stable across renders (Reset's
+// `isDefaultForm` check also relies on this exact shape).
+const DEFAULT_CLAIM_ROW: Omit<ClaimRow, 'id'> = {
+  mode: 'standard',
+  address: '',
+  amount: '',
+  delay: '1',
+  delayUnit: 'hr',
+};
+const makeDefaultClaimRow = (id = 1): ClaimRow => ({ id, ...DEFAULT_CLAIM_ROW });
+
 function delayToSeconds(delay: string, unit: DelayUnit): number {
   const n = parseInt(delay, 10);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -168,13 +182,9 @@ export default function TradeScreen() {
     return () => { cancelled = true; };
   }, [tradeType]);
 
-  // Claim builder (limit mode only). Default delay matches the web
-  // (frontend/app/trade/private-order/page.tsx:212) — 1 hour — so a fresh
-  // row doesn't ship an immediate-release claim by accident.
-  const defaultClaimRow = (): ClaimRow => ({
-    id: 1, mode: 'standard', address: '', amount: '', delay: '1', delayUnit: 'hr',
-  });
-  const [claimRows, setClaimRows] = useState<ClaimRow[]>([defaultClaimRow()]);
+  // Claim builder (limit mode only). See DEFAULT_CLAIM_ROW at module
+  // scope for the default row shape.
+  const [claimRows, setClaimRows] = useState<ClaimRow[]>([makeDefaultClaimRow()]);
 
   // Reset clears the transient submit inputs (amount, price, claims, error,
   // stuck submitting flag) so a failed or aborted attempt can be redone
@@ -182,23 +192,44 @@ export default function TradeScreen() {
   // alone — those are the user's longer-lived choices and resetting them
   // every time would be hostile.
   const handleReset = useCallback(() => {
-    const hasInput =
-      amount.trim() !== '' ||
-      claimRows.length > 1 ||
-      claimRows.some((r) => r.address.trim() !== '' || r.amount.trim() !== '');
+    // True only when every visible input is already at its default /
+    // empty state. Covers amount AND price AND every claim-row field
+    // (address / amount / delay / delayUnit / mode) — the prior check
+    // was amount+address+amount only, so tweaks to price / delay / mode
+    // would make Reset a silent no-op.
+    const priceIsDefault = price === '' || price === '1';
+    const claimsAreDefault =
+      claimRows.length === 1 &&
+      (() => {
+        const r = claimRows[0];
+        return (
+          r.mode === DEFAULT_CLAIM_ROW.mode &&
+          r.address.trim() === DEFAULT_CLAIM_ROW.address &&
+          r.amount.trim() === DEFAULT_CLAIM_ROW.amount &&
+          r.delay === DEFAULT_CLAIM_ROW.delay &&
+          r.delayUnit === DEFAULT_CLAIM_ROW.delayUnit
+        );
+      })();
+    const isDefaultForm =
+      amount.trim() === '' && priceIsDefault && claimsAreDefault;
     const doReset = () => {
       setAmount('');
       setPrice('1');
-      setClaimRows([defaultClaimRow()]);
+      setClaimRows([makeDefaultClaimRow()]);
       setError(null);
+      // Clears a stuck submitting flag. In-flight network / prover work
+      // is not cancelled — the Alert copy below makes that explicit.
       setSubmitting(false);
     };
-    if (!hasInput && !error && !submitting) return;
-    Alert.alert('Reset form?', 'This clears the amount and claim rows. Token pair, fee, and expiry stay as-is.', [
+    if (isDefaultForm && !error && !submitting) return;
+    const msg = submitting
+      ? 'This clears the amount and claim rows. It will NOT cancel an in-flight submission — any already-sent request may still complete.'
+      : 'This clears the amount and claim rows. Token pair, fee, and expiry stay as-is.';
+    Alert.alert('Reset form?', msg, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: doReset },
     ]);
-  }, [amount, claimRows, error, submitting]);
+  }, [amount, price, claimRows, error, submitting]);
   // Address-book picker target: which claim row the next picked address
   // should land in. `null` = picker closed.
   const [pickerForRow, setPickerForRow] = useState<number | null>(null);
@@ -1231,11 +1262,14 @@ export default function TradeScreen() {
             navigating away. Reset keeps the token pair / fee / expiry
             preferences and only clears the transient submit inputs. */}
         <View style={[s.actionWrap, { flexDirection: 'row', gap: 12 }]}>
+          {/* Reset stays enabled while `submitting` so a stuck submitting
+              flag can actually be cleared — that's the whole point of
+              the button. `actionBtnDisabled` isn't appropriate for an
+              outlined secondary style anyway. */}
           <TouchableOpacity
-            style={[s.resetBtn, submitting && s.actionBtnDisabled]}
+            style={s.resetBtn}
             activeOpacity={0.8}
             onPress={handleReset}
-            disabled={submitting}
           >
             <Text style={s.resetBtnText}>Reset</Text>
           </TouchableOpacity>
@@ -1375,7 +1409,10 @@ const s = StyleSheet.create({
   claimWarn: { fontSize: 12, fontWeight: '600', color: colors.danger, textAlign: 'center' },
 
   actionWrap: { paddingHorizontal: layout.screenHZ },
-  actionBtn: { width: '100%', paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
+  // Width is controlled by the enclosing flex row (Reset + Place Order
+  // share the row via `flex: 1` on this button). Hard-coding width: '100%'
+  // here fought the row layout and caused overflow on narrow devices.
+  actionBtn: { paddingVertical: 16, backgroundColor: colors.primaryDark, borderRadius: 16, alignItems: 'center', shadowColor: '#93C5FD', shadowOpacity: 0.5, shadowOffset: { width: 0, height: 4 }, shadowRadius: 12, elevation: 4 },
   actionBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
   actionBtnText: { color: colors.card, fontSize: 16, fontWeight: '700' },
   resetBtn: { paddingVertical: 16, paddingHorizontal: 20, borderRadius: 16, borderWidth: 1, borderColor: colors.borderLight, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
