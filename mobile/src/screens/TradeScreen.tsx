@@ -227,6 +227,12 @@ export default function TradeScreen() {
   // `decimals()` function.
   const [sellDecimals, setSellDecimals] = useState<number>(18);
   const [buyDecimals, setBuyDecimals] = useState<number>(18);
+  // Tracks whether on-chain `decimals()` has actually resolved for the
+  // current sell/buy pair. Until it flips, the 18-default is a placeholder
+  // — `fillRest` (and any other integer-math consumer) must bail out so a
+  // stale default doesn't produce a silently-wrong remainder that then
+  // trips the Authorize circuit at proof time.
+  const [decimalsReady, setDecimalsReady] = useState<boolean>(false);
   // settleWithDex deducts a platform fee from sellAmount *before* the
   // DEX call, so the router calldata and 1inch quote must be built
   // with the post-fee amount or the swap reverts on insufficient
@@ -261,6 +267,9 @@ export default function TradeScreen() {
   useEffect(() => {
     if (!readProvider || !selectedNote?.token || !buyTokenAddress) return;
     let cancelled = false;
+    // Any change to the pair invalidates the previous `decimals()` result;
+    // flip the ready flag back to false until the new fetch completes.
+    setDecimalsReady(false);
     // Silent fallback to 18 keeps the preview alive during a flaky RPC,
     // but log so a systematic decimals-mismatch (which would make the
     // preview's minReceive disagree with the submit path) is visible
@@ -277,6 +286,7 @@ export default function TradeScreen() {
       if (cancelled) return;
       setSellDecimals(s);
       setBuyDecimals(b);
+      setDecimalsReady(true);
     });
     return () => { cancelled = true; };
   }, [readProvider, selectedNote?.token, buyTokenAddress]);
@@ -409,9 +419,19 @@ export default function TradeScreen() {
     // to 10^-6 units of precision, leaving the claim sum a hair below
     // `minReceive` and tripping the line-439 assertion at proof time.
     if (!amount || !price) return;
+    // Bail until on-chain decimals have actually resolved for the current
+    // pair — parsing the human `amount` against the 18-default placeholder
+    // would produce a remainder that silently disagrees with the submit
+    // path (which re-fetches decimals) and re-introduce the proof-time
+    // assertion this commit is trying to fix.
+    if (!decimalsReady) return;
     try {
+      // Strip thousands separators (e.g. "1,234.5" from paste / locale-aware
+      // keyboards) before `parseUnits`; otherwise the parser throws on the
+      // comma and fillRest silently no-ops. Matches how `price` is handled.
       const priceClean = stripThousandsSep(price);
-      const sellAmountBn = ethers.parseUnits(amount, sellDecimals);
+      const amountClean = stripThousandsSep(amount);
+      const sellAmountBn = ethers.parseUnits(amountClean, sellDecimals);
       const priceBn = ethers.parseUnits(priceClean, buyDecimals);
       const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
       const minReceiveBn = (buyAmountBn * (10000n - BigInt(maxFeeBps))) / 10000n;
@@ -429,7 +449,7 @@ export default function TradeScreen() {
       // `parseUnits` throws on sub-precision input during typing — leave
       // the row untouched until the user lands on valid numbers.
     }
-  }, [amount, price, sellDecimals, buyDecimals, maxFeeBps, claimRows, updateClaim]);
+  }, [amount, price, sellDecimals, buyDecimals, decimalsReady, maxFeeBps, claimRows, updateClaim]);
 
   const handlePlaceOrder = useCallback(async () => {
     if (!account || !signer) {
@@ -1076,9 +1096,9 @@ export default function TradeScreen() {
                     onChangeText={(v) => updateClaim(row.id, { amount: v })}
                   />
                   <TouchableOpacity
-                    style={[s.claimRestBtn, claimRemainder <= 0 && { opacity: 0.4 }]}
+                    style={[s.claimRestBtn, (claimRemainder <= 0 || !decimalsReady) && { opacity: 0.4 }]}
                     onPress={() => fillRest(row.id)}
-                    disabled={claimRemainder <= 0}
+                    disabled={claimRemainder <= 0 || !decimalsReady}
                   >
                     <Text style={s.claimRestText}>Rest</Text>
                   </TouchableOpacity>
