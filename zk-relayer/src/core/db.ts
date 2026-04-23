@@ -52,6 +52,16 @@ export interface AuthorizeOrderRow {
 // serialise these into JSON responses and log lines; a runaway stack
 // trace blows up both.
 const MAX_ERR_LEN = 512;
+
+/** Grace period before a terminal authorize_orders row is purged. The
+ *  mobile pending-orders poll loop needs to GET /:nullifier and observe
+ *  the terminal status (settled / failed / dead_letter / expired /
+ *  cancelled) at least once before the row vanishes; otherwise the
+ *  client never learns the outcome from the relayer side. 1 hour is
+ *  far longer than the mobile poll cadence (max 30 s idle) plus the
+ *  in-flight retry budget (~7 min), so any reasonable client has
+ *  observed the transition by the time deletion fires. */
+const TERMINAL_RETENTION_MS = 60 * 60 * 1000;
 function truncErr(err: string): string {
   return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
 }
@@ -198,14 +208,25 @@ export class PrivateOrderDB {
          FROM authorize_orders
         WHERE status IN ('pending', 'accepted', 'retrying', 'settling', 'matched')`,
     );
-    // Only terminal outcomes (settled/failed/cancelled/expired/dead_letter)
-    // and genuinely expired live rows are safe to delete. The previous
-    // `status != 'pending'` would drop accepted/retrying/settling rows that
-    // the worker still owns, dropping them from the settlement queue.
+    // Two-condition cleanup, both with grace periods:
+    //   1. Terminal rows (settled/failed/cancelled/expired/dead_letter)
+    //      — deleted only after TERMINAL_RETENTION_MS so the mobile
+    //      poll loop has time to GET /:nullifier and observe the
+    //      terminal status. Without this grace window, the relayer
+    //      deletes the row before mobile sees the transition, the
+    //      next poll gets 404, and local state stays at 'accepted'
+    //      until the client-side MAX_POLL_AGE_MS fallback fires.
+    //   2. Live rows whose circuit expiry has already passed — safe
+    //      to drop immediately (the on-chain check would revert
+    //      anyway). The expiry sweeper normally promotes these to
+    //      `expired` first; this is the safety-net cleanup for any
+    //      row the sweeper missed.
     this.purgeAuthNonPending = this.db.prepare(
       `DELETE FROM authorize_orders
-         WHERE status NOT IN ('pending', 'accepted', 'retrying', 'settling', 'matched')
-            OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?`,
+         WHERE (status NOT IN ('pending', 'accepted', 'retrying', 'settling', 'matched')
+                AND updated_at < ?)
+            OR (status IN ('pending', 'accepted', 'retrying', 'settling', 'matched')
+                AND CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?)`,
     );
 
     // ── Async-settlement queue statements ──────────────────────────
@@ -576,8 +597,10 @@ export class PrivateOrderDB {
   }
 
   purgeNonPendingAuthorizeOrdersDB(): number {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const result = this.purgeAuthNonPending.run(nowSeconds);
+    const now = Date.now();
+    const nowSeconds = Math.floor(now / 1000);
+    const terminalCutoffMs = now - TERMINAL_RETENTION_MS;
+    const result = this.purgeAuthNonPending.run([terminalCutoffMs, nowSeconds]);
     return result.changes;
   }
 
