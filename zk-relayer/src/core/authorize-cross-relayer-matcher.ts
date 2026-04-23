@@ -97,12 +97,23 @@ export class AuthorizeCrossRelayerMatchService {
 
       // Match! Attempt the trade offer.
       this.lockingOrders.add(nullifier);
+      // Capture the pre-`matched` live status so the reject / error paths
+      // can restore the exact prior state. Hard-coding a restore value
+      // would clobber rows that started as legacy 'pending' or new
+      // 'retrying' (drifting in-memory state from the DB-backed FSM).
+      const priorStatus = local.status;
       try {
         console.log(
           `[authorize-cross] Match: local taker ${nullifier.slice(0, 18)}... ` +
           `↔ remote maker ${summary.id.slice(0, 18)}... (relayer ${summary.relayerUrl})`,
         );
+        // Persist 'matched' to the DB *before* sending the offer so
+        // SettlementWorker.claimNextSettlementJob (which selects rows
+        // with status IN ('accepted','retrying')) can't race us by
+        // claiming the same order mid-offer and trying to settle it
+        // from the local queue path.
         local.status = "matched";
+        this.db?.updateAuthorizeOrderStatus(nullifier, "matched");
 
         const result = await this.sendTradeOffer(local.order, summary);
 
@@ -126,17 +137,20 @@ export class AuthorizeCrossRelayerMatchService {
           return; // Only match one pair per remote-arrival tick.
         }
 
-        // Rejection path — restore to the live-queue state so a future
-        // remote (or the local SettlementWorker) can retry. 'accepted' is
-        // the new FSM's queue-ready state; legacy rows used 'pending'.
+        // Rejection path — restore the prior live-queue status so a
+        // future remote (or the local SettlementWorker) can retry.
         console.warn(`[authorize-cross] Trade offer rejected: ${result.reason ?? "unknown"}`);
-        local.status = "accepted";
+        local.status = priorStatus;
+        this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
       } catch (err) {
         console.warn(
           `[authorize-cross] Trade offer error:`,
           err instanceof Error ? err.message : "unknown",
         );
-        if (local.status === "matched") local.status = "accepted";
+        if (local.status === "matched") {
+          local.status = priorStatus;
+          this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
+        }
       } finally {
         this.lockingOrders.delete(nullifier);
       }
@@ -243,8 +257,16 @@ export class AuthorizeCrossRelayerMatchService {
     }
 
     this.lockingOrders.add(mapKey);
+    // Capture the pre-`matched` live status so the error path can restore
+    // the exact prior state — a maker row that was 'pending' (legacy) or
+    // 'retrying' shouldn't be rewritten to 'accepted'.
+    const priorMakerStatus = makerStored.status;
     try {
+      // Persist 'matched' to the DB before submitAuthSettle so our own
+      // SettlementWorker can't race-claim this nullifier from the local
+      // queue while the on-chain settle is pending.
       makerStored.status = "matched";
+      this.db?.updateAuthorizeOrderStatus(mapKey, "matched");
 
       const takerStored: StoredAuthorizeOrder = {
         order: takerOrder,
@@ -280,10 +302,11 @@ export class AuthorizeCrossRelayerMatchService {
       );
       return { status: "settled", txHash };
     } catch (err) {
-      // Don't leave the maker stuck in "matched" — flip back to the
-      // live-queue state so a future remote or the local SettlementWorker
-      // can retry. 'accepted' is the new FSM's queue-ready state.
-      makerStored.status = "accepted";
+      // Don't leave the maker stuck in "matched" — restore the captured
+      // prior live-queue status in both memory AND the DB so the local
+      // SettlementWorker (or a future remote tick) can retry it.
+      makerStored.status = priorMakerStatus;
+      this.db?.updateAuthorizeOrderStatus(mapKey, priorMakerStatus);
       const reason = err instanceof Error ? err.message : "settleAuth failed";
       console.warn(`[authorize-cross] settleAuth failed:`, reason);
       return { status: "error", reason };
