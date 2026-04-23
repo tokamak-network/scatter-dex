@@ -35,6 +35,37 @@ const COMMIT_TREE_DEPTH = 20;
 const MAX_CLAIMS_PER_SIDE = 16;
 const CLAIMS_TREE_DEPTH = 4;
 
+/** Abort-recovery probe. Called after `submitAuthorizeOrder` throws an
+ *  AbortError to check whether the relayer actually received the order —
+ *  the POST sometimes aborts after a successful server-side accept
+ *  (iOS NSURLSession connection-pool races, see issue #401). Polls the
+ *  status endpoint a few times with a short interval; returns the first
+ *  hit or `null` if the order is genuinely missing.
+ *
+ *  Budget: 5 attempts × 500 ms = 2.5 s worst case — well under any
+ *  reasonable user-facing expectation of \"did my submit work?\" */
+async function pollForAcceptedOrder(
+  nullifier: string,
+  relayerUrl: string,
+): Promise<{ status: string } | null> {
+  // Two consecutive network errors ⇒ relayer is really unreachable, not
+  // just racing the abort. Bail out of the full 5-attempt budget so a
+  // genuinely failed submit surfaces fast instead of padding the error
+  // with 2.5 s of wasted polling.
+  let consecutiveErrors = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const status = await RelayerApiService.getAuthorizeOrderStatus(nullifier, relayerUrl);
+      if (status) return status;
+      consecutiveErrors = 0;
+    } catch {
+      if (++consecutiveErrors >= 2) return null;
+    }
+  }
+  return null;
+}
+
 /** Resolve a buy-token symbol for display. Cross-token trades look up the
  *  TokenService whitelist; scatter (same-token) falls back to the sell
  *  symbol when the lookup misses. The '?' fallback is intentional — it
@@ -410,18 +441,61 @@ export const OrderService = {
         relayerUrl: input.relayerUrl,
         nullifier: namedSignals.nullifier?.slice(0, 16) + '…',
       });
+      // Pause PendingOrdersService polling while the submit is in
+      // flight. The poll loop can fan out to 8 concurrent fetches per
+      // tick (POLL_CHUNK_SIZE) and iOS NSURLSession caps concurrent
+      // hosts at 6 — without the pause our POST can queue behind poll
+      // traffic and hit its 30 s timeout even when the relayer is
+      // responding in < 10 ms. See issue #401.
+      PendingOrdersService.pausePoll();
       const t0 = Date.now();
-      const response = await RelayerApiService.submitAuthorizeOrder(
-        {
-          proof: solidityProof,
-          publicSignals: namedSignals,
-          publicSignalsArray: ps,
-          pubKeyAx: keyPair.pubKeyAx,
-          pubKeyAy: keyPair.pubKeyAy,
-        },
-        input.relayerUrl,
-      );
-      console.log('[OrderService] relayer response', response, `(${Date.now() - t0}ms)`);
+      let response: { orderId?: string; status?: string; [k: string]: any };
+      try {
+        response = await RelayerApiService.submitAuthorizeOrder(
+          {
+            proof: solidityProof,
+            publicSignals: namedSignals,
+            publicSignalsArray: ps,
+            pubKeyAx: keyPair.pubKeyAx,
+            pubKeyAy: keyPair.pubKeyAy,
+          },
+          input.relayerUrl,
+        );
+        console.log('[OrderService] relayer response', response, `(${Date.now() - t0}ms)`);
+      } catch (submitErr: unknown) {
+        // Recovery — an AbortError at this point doesn't actually mean
+        // the POST failed: the relayer's 202 roundtrip is milliseconds,
+        // so a timeout usually reflects a local fetch-resolution race,
+        // not a server-side failure. Poll GET /:nullifier a few times
+        // to check whether the relayer already has the order. If yes,
+        // treat as success and proceed. If no, rethrow.
+        const isAbort = submitErr instanceof Error
+          && (submitErr.name === 'AbortError' || /abort/i.test(submitErr.message));
+        if (!isAbort) throw submitErr;
+        console.warn(
+          '[OrderService] submit aborted after',
+          Date.now() - t0, 'ms — polling for server-side confirmation',
+        );
+        const recovered = await pollForAcceptedOrder(
+          namedSignals.nullifier,
+          input.relayerUrl,
+        );
+        if (!recovered) {
+          console.error('[OrderService] recovery poll found no order — POST really failed');
+          throw submitErr;
+        }
+        console.log(
+          '[OrderService] recovered — relayer has the order with status',
+          recovered.status,
+        );
+        // Synthesise a response compatible with the rest of the flow.
+        // `orderId` is unavailable here (the 202 body we never saw
+        // would have contained it); downstream callers tolerate
+        // missing orderId (see PendingClaimsStorage.append:412).
+        response = { status: recovered.status };
+      } finally {
+        PendingOrdersService.resumePoll();
+      }
 
       // ─── Step 6: Persist claim secrets + change note + mark spent ─
       onProgress({ step: 'saving_change' });

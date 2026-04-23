@@ -510,6 +510,26 @@ export const PendingOrdersService = {
     };
   },
 
+  /** Pause the poll loop. Used by OrderService.execute around the
+   *  `submitAuthorizeOrder` fetch so the poll's concurrent requests
+   *  don't starve the NSURLSession connection pool (iOS caps at 6
+   *  concurrent hosts) and push the submit past its fetch timeout.
+   *  Idempotent. */
+  pausePoll(): void {
+    stopTimer();
+  },
+
+  /** Resume the poll loop. Safe to call even if not previously paused;
+   *  respects the subscriber + AppState gates so a no-subscribers or
+   *  background-resumed caller doesn't kick a timer that would just be
+   *  torn down again. Idempotent — `startTimer` no-ops if already
+   *  running. */
+  resumePoll(): void {
+    if (listeners.size === 0) return;
+    if (AppState.currentState !== 'active') return;
+    startTimer();
+  },
+
   /** Test helper — force a synchronous tick. */
   async _pollNow(): Promise<void> {
     await pollOnce();
