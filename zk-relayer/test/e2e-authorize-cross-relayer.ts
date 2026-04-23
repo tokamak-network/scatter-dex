@@ -634,7 +634,7 @@ async function main(): Promise<void> {
   console.log("\n[8/8] Verifying recipient balances...");
   const usdcRead = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
   const aliceRecvBal = await usdcRead.balanceOf(aliceRecipient);
-  const bobEthDelta = BigInt(bobEthAfter) - BigInt(bobEthBefore);
+  const bobEthDelta = bobEthAfter - bobEthBefore;
   assert(BigInt(aliceRecvBal) === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
   assert(bobEthDelta === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} native ETH (Settlement auto-unwraps WETH)`);
 
