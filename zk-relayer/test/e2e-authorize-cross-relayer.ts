@@ -616,20 +616,29 @@ async function main(): Promise<void> {
   assert(BigInt(relBWeth) === expectedFeeWeth, `Relayer B WETH fee credit = ${expectedFeeWeth}`);
 
   // ─── Step 7: each user claims their tokens ─────────────────
+  // PrivateSettlement auto-unwraps WETH in `claimWithProof`, so Bob's
+  // recipient ends up with native ETH (not WETH). Asserting the ETH
+  // delta is the only honest check; `WETH.balanceOf(bobRecipient)`
+  // will always read 0. Snapshot immediately before Bob's claim (not
+  // before Alice's) so the delta isolates exactly the transaction
+  // under test.
   console.log("\n[7/8] Claiming...");
   await claimFor(alice, aliceArt, settlementAddr, provider, aliceWallet);
+  const bobEthBefore = await provider.getBalance(bobRecipient);
   await claimFor(bob, bobArt, settlementAddr, provider, bobWallet);
+  const bobEthAfter = await provider.getBalance(bobRecipient);
 
   // ─── Step 8: verify recipient balances ─────────────────────
   // Recipients receive `claimAmount` (= buyAmount − fee), not the
   // gross buyAmount — the fee was already routed to FeeVault in step 6.
+  // Alice's side stays WETH→USDC so `balanceOf` is still right for her;
+  // Bob's WETH is unwrapped to ETH at claim time (see snapshot above).
   console.log("\n[8/8] Verifying recipient balances...");
   const usdcRead = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
-  const wethRead = new ethers.Contract(wethAddr, WETH_ABI, provider);
   const aliceRecvBal = await usdcRead.balanceOf(aliceRecipient);
-  const bobRecvBal = await wethRead.balanceOf(bobRecipient);
-  assert(BigInt(aliceRecvBal) === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
-  assert(BigInt(bobRecvBal) === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} WETH`);
+  const bobEthDelta = bobEthAfter - bobEthBefore;
+  assert(aliceRecvBal === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
+  assert(bobEthDelta === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} native ETH (Settlement auto-unwraps WETH)`);
 
   console.log("\n═══════════════════════════════════════════════════════");
   console.log("  ✅ AUTHORIZE CROSS-RELAYER E2E — ALL CHECKS PASSED");
