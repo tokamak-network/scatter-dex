@@ -52,6 +52,16 @@ export interface AuthorizeOrderRow {
 // serialise these into JSON responses and log lines; a runaway stack
 // trace blows up both.
 const MAX_ERR_LEN = 512;
+
+/** Grace period before a terminal authorize_orders row is purged. The
+ *  mobile pending-orders poll loop needs to GET /:nullifier and observe
+ *  the terminal status (settled / failed / dead_letter / expired /
+ *  cancelled) at least once before the row vanishes; otherwise the
+ *  client never learns the outcome from the relayer side. 1 hour is
+ *  far longer than the mobile poll cadence (max 30 s idle) plus the
+ *  in-flight retry budget (~7 min), so any reasonable client has
+ *  observed the transition by the time deletion fires. */
+const TERMINAL_RETENTION_MS = 60 * 60 * 1000;
 function truncErr(err: string): string {
   return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
 }
@@ -177,11 +187,16 @@ export class PrivateOrderDB {
     this.selectMeta = this.db.prepare("SELECT value FROM relayer_meta WHERE key = @key");
 
     // [R-6] Authorize order prepared statements
+    // `updated_at` must be written on every status mutation or the
+    // terminal-retention grace window in purgeAuthNonPending gets the
+    // wrong cutoff: a row stuck at updated_at=0 is "older than 1h ago"
+    // forever, so it gets purged on the next sweep and mobile sees 404
+    // instead of the terminal status.
     this.upsertAuthOrder = this.db.prepare(
-      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO authorize_orders (nullifier, status, submitted_at, updated_at, order_json, pub_key_ax, pub_key_ay, settle_tx) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.updateAuthStatus = this.db.prepare(
-      "UPDATE authorize_orders SET status = ?, settle_tx = ? WHERE nullifier = ?",
+      "UPDATE authorize_orders SET status = ?, settle_tx = ?, updated_at = ? WHERE nullifier = ?",
     );
     this.deleteAuthOrder = this.db.prepare("DELETE FROM authorize_orders WHERE nullifier = ?");
     // Restore every still-live order on boot (accepted/retrying/settling for
@@ -198,14 +213,23 @@ export class PrivateOrderDB {
          FROM authorize_orders
         WHERE status IN ('pending', 'accepted', 'retrying', 'settling', 'matched')`,
     );
-    // Only terminal outcomes (settled/failed/cancelled/expired/dead_letter)
-    // and genuinely expired live rows are safe to delete. The previous
-    // `status != 'pending'` would drop accepted/retrying/settling rows that
-    // the worker still owns, dropping them from the settlement queue.
+    // Purge only terminal rows, and only after the TERMINAL_RETENTION_MS
+    // grace window has elapsed since the last status mutation. This
+    // guarantees the mobile poll loop has time to GET /:nullifier and
+    // observe the final outcome before the row disappears; otherwise the
+    // next poll returns 404 and local state sticks on 'accepted' until
+    // the client-side MAX_POLL_AGE_MS fallback.
+    //
+    // We intentionally do **not** delete live-but-circuit-expired rows
+    // here — `sweepExpiredAuth` promotes those to the terminal 'expired'
+    // status, which then qualifies them for the grace-windowed delete
+    // above. Deleting them directly raced the sweeper and (more
+    // importantly) violated the "never purge in-flight rows" invariant
+    // that the mobile status contract depends on.
     this.purgeAuthNonPending = this.db.prepare(
       `DELETE FROM authorize_orders
          WHERE status NOT IN ('pending', 'accepted', 'retrying', 'settling', 'matched')
-            OR CAST(json_extract(order_json, '$.publicSignals.expiry') AS INTEGER) < ?`,
+           AND updated_at < ?`,
     );
 
     // ── Async-settlement queue statements ──────────────────────────
@@ -560,11 +584,18 @@ export class PrivateOrderDB {
   // ─── [R-6] Authorize order persistence ───
 
   saveAuthorizeOrder(nullifier: string, status: string, submittedAt: number, orderJson: string, pubKeyAx?: string | null, pubKeyAy?: string | null, settleTx?: string | null): void {
-    this.upsertAuthOrder.run([nullifier, status, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null]);
+    // Seed `updated_at` to `submittedAt` so the terminal-retention
+    // cutoff in purgeAuthNonPending has a meaningful baseline for rows
+    // that never transition (they'd only be purged once their circuit
+    // expiry lapses, which is the intended behaviour).
+    this.upsertAuthOrder.run([nullifier, status, submittedAt, submittedAt, orderJson, pubKeyAx ?? null, pubKeyAy ?? null, settleTx ?? null]);
   }
 
   updateAuthorizeOrderStatus(nullifier: string, status: string, settleTx?: string | null): void {
-    this.updateAuthStatus.run([status, settleTx ?? null, nullifier]);
+    // Stamp `updated_at` on every status mutation — including legacy
+    // call sites like the cross-relayer matcher's 'settled' write —
+    // so terminal rows get their 1h grace window in purgeAuthNonPending.
+    this.updateAuthStatus.run([status, settleTx ?? null, Date.now(), nullifier]);
   }
 
   deleteAuthorizeOrder(nullifier: string): void {
@@ -576,8 +607,8 @@ export class PrivateOrderDB {
   }
 
   purgeNonPendingAuthorizeOrdersDB(): number {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const result = this.purgeAuthNonPending.run(nowSeconds);
+    const terminalCutoffMs = Date.now() - TERMINAL_RETENTION_MS;
+    const result = this.purgeAuthNonPending.run([terminalCutoffMs]);
     return result.changes;
   }
 
