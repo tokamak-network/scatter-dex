@@ -93,7 +93,10 @@ ensure_sqlite_arch() {
   if [ ! -f "$node_file" ]; then return 0; fi
   local expected current
   expected=$(uname -m)
-  current=$(file "$node_file" 2>/dev/null | grep -oE 'x86_64|arm64' | head -1)
+  # `|| true` keeps `set -e` from aborting when `file` prints no recognised
+  # arch token (unusual platforms, file(1) wording drift). Empty `current`
+  # is then handled by the -n guard below.
+  current=$(file "$node_file" 2>/dev/null | grep -oE 'x86_64|arm64' | head -1 || true)
   if [ -n "$current" ] && [ "$current" != "$expected" ]; then
     echo "  better-sqlite3 in $(basename "$pkg_dir") is $current, need $expected — rebuilding..."
     ( cd "$pkg_dir" && npm rebuild better-sqlite3 ) > "$LOG_DIR/sqlite-rebuild-$(basename "$pkg_dir").log" 2>&1 \
