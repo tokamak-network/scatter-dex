@@ -270,7 +270,10 @@ export class SettlementWorker {
 
     if (kind === "permanent") {
       this.deps.db.markAuthorizeOrderFailed(job.nullifier, msg);
-      if (stored) stored.status = "cancelled";
+      // Mirror the durable FSM in-memory. Using 'cancelled' here would
+      // diverge from the persisted row and confuse GET fallbacks / metrics
+      // that bucket by status.
+      if (stored) stored.status = "failed";
       this.releasePubKeySlot(job, stored);
       console.error(
         `[settlement-worker] ${job.nullifier.slice(0, 12)}… permanent failure: ${msg}`,
@@ -285,10 +288,11 @@ export class SettlementWorker {
     if (nextAttempt > budget) {
       if (kind === "transient") {
         this.deps.db.markAuthorizeOrderDeadLetter(job.nullifier, msg);
+        if (stored) stored.status = "dead_letter";
       } else {
         this.deps.db.markAuthorizeOrderFailed(job.nullifier, msg);
+        if (stored) stored.status = "failed";
       }
-      if (stored) stored.status = "cancelled";
       this.releasePubKeySlot(job, stored);
       console.error(
         `[settlement-worker] ${job.nullifier.slice(0, 12)}… exhausted ${kind} retries: ${msg}`,
@@ -306,7 +310,9 @@ export class SettlementWorker {
       nextRetryAt: Date.now() + delay,
       error: msg,
     });
-    if (stored) stored.status = "pending";
+    // Mirror the durable 'retrying' state in-memory so matching/polling
+    // code paths that read the map see the same FSM slice as the DB.
+    if (stored) stored.status = "retrying";
     console.warn(
       `[settlement-worker] ${job.nullifier.slice(0, 12)}… ${kind} error, retry ${nextAttempt} in ${delay}ms: ${msg}`,
     );
