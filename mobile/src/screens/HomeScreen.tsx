@@ -30,6 +30,7 @@ import { ethers } from 'ethers';
 import { formatRelativeTime, shortAddr } from '../lib/format';
 import { colors, layout, shadowSubtle, HIT_SLOP_SM } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
+import MnemonicVerifyModal from '../components/MnemonicVerifyModal';
 
 const ACT_ICONS: Record<ActivityType, string> = {
   deposit: '↓', settle: '⇄', settle_dex: '⇆', settle_scatter: '⤳', claim: '↑', cancel: '✕',
@@ -63,6 +64,7 @@ export default function HomeScreen() {
   const [publicTotals, setPublicTotals] = useState<Record<string, TokenBal[]>>({});
   const [privateTotals, setPrivateTotals] = useState<Record<string, TokenBal[]>>({});
   const [pageIndex, setPageIndex] = useState(0);
+  const [pendingMnemonic, setPendingMnemonic] = useState<string | null>(null);
 
   const isMounted = useRef(true);
   const publicReqIdRef = useRef(0);
@@ -242,11 +244,7 @@ export default function HomeScreen() {
       // Fresh keychain → newly-generated mnemonic returned; surface it
       // once so the user can record it before any funds arrive.
       if (result && 'mnemonic' in result && result.mnemonic) {
-        Alert.alert(
-          'Wallet created — back up your recovery phrase',
-          `Write these 12 words down and store them offline. Anyone with them controls this wallet.\n\n${result.mnemonic}\n\nTap OK after you've saved it.`,
-          [{ text: 'OK', onPress: () => { connectBuiltin().catch(() => {}); } }],
-        );
+        setPendingMnemonic(result.mnemonic);
       } else {
         await connectBuiltin();
       }
@@ -586,6 +584,15 @@ export default function HomeScreen() {
           </View>
         )}
       </ScrollView>
+      <MnemonicVerifyModal
+        visible={!!pendingMnemonic}
+        mnemonic={pendingMnemonic || ''}
+        onConfirmed={() => {
+          setPendingMnemonic(null);
+          connectBuiltin().catch(() => {});
+        }}
+        onCancel={() => setPendingMnemonic(null)}
+      />
     </SafeAreaView>
   );
 }
