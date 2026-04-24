@@ -408,20 +408,35 @@ export const OrderService = {
         claimCount: claimsData.length.toString(),
       };
 
-      let wasmB64: string;
-      let zkeyB64: string;
+      // Native prover path — runs Groth16 proving in a Rust-compiled
+      // Turbo Module (see mobile/native-prover/). Eliminates the WebView
+      // CPU burst that starves the iOS dispatch queue and causes every
+      // post-proof HTTP call to abort (PR #401/#404/#407/#408 instrumentation).
+      // Falls back to the WebView path if the native module is missing
+      // (e.g. running in Expo Go, which can't load custom native code).
+      let proofResult: { proof: any; publicSignals: string[]; elapsedMs: number };
       try {
-        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
-        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
-      } catch {
-        throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
+        const { generateAuthorizeProof } = await import('./NativeProverService');
+        proofResult = await generateAuthorizeProof(circuitInputs);
+        console.log('[OrderService] native proof ok', { ms: proofResult.elapsedMs });
+      } catch (e: any) {
+        console.log('[OrderService] native proof unavailable, falling back to WebView', {
+          err: e?.message || String(e),
+        });
+        let wasmB64: string;
+        let zkeyB64: string;
+        try {
+          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
+          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
+        } catch {
+          throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
+        }
+        proofResult = await ZKBridgeService.generateProof(
+          circuitInputs,
+          wasmB64,
+          zkeyB64,
+        );
       }
-
-      const proofResult = await ZKBridgeService.generateProof(
-        circuitInputs,
-        wasmB64,
-        zkeyB64,
-      );
       const solidityProof = formatProofForSolidity(proofResult.proof);
 
       // ─── Step 7: Submit to /api/authorize-orders ──────
