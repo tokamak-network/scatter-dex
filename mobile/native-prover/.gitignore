@@ -1,0 +1,10 @@
+target/
+build/
+*.jar
+
+# Build inputs: duplicates of circuits/build/ — copy before `mopro build`
+test-vectors/circom/authorize_final.zkey
+test-vectors/circom/authorize.wasm
+
+# Generated static lib (~40MB per arch). Regenerate with `mopro build`.
+MoproReactNativeBindings/MoproFfiFramework.xcframework/*/libnative_prover.a
