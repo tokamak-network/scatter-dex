@@ -16,7 +16,8 @@ all four surfaces at once.
 - **Constants**: ABI strings + pre-parsed `Interface` objects for
   every core contract
 - **Helpers**: `chainName(id)`, `parseTokenList(raw)`,
-  `explorerLink(network, hash)`
+  `explorerLink(network, entity, value)` where `entity` is
+  `"tx" | "address" | "block"`
 
 No live network calls, no proof generation, no wallet hooks yet.
 Those modules ship in subsequent phases (see
@@ -71,6 +72,24 @@ const tokens: TokenInfo[] = parseTokenList(
 
 const name = chainName(11155111); // "Sepolia"
 ```
+
+## Distribution
+
+Phase 0 ships as **TypeScript source only**: `package.json` points
+`main` / `types` / `exports` at `./src/index.ts`. This is intentional
+for in-repo use:
+
+- Apps in `apps/*` consume the SDK via tsconfig path mapping +
+  Next.js `transpilePackages` — zero build step, instant type
+  refresh on save.
+- The SDK is `private: true` and not on npm yet.
+
+Before the first npm publish (or any consumer that does not
+transpile dependencies), we will add a `tsc` build that emits to
+`./dist/` and switch the `exports` field to a dual condition
+(`import` / `require`) with a `types` entry — matching the pattern
+already used by `packages/types`. Tracked alongside the Phase 1
+SDK work.
 
 ## Layout
 

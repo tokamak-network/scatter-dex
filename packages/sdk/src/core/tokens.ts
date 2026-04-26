@@ -9,12 +9,14 @@ export interface TokenInfo {
 }
 
 /** Parse the compact `address:symbol:decimals,address:symbol:decimals,…`
- *  token list format used by the env vars and config files.
+ *  token list format used by env vars and config files.
  *
- *  Whitespace and trailing commas are tolerated. Entries that fail to
- *  parse a positive integer for `decimals` are skipped (logged
- *  silently — config errors should surface in env validation, not
- *  here). */
+ *  Whitespace and trailing commas are tolerated. Entries are skipped
+ *  when any of address / symbol / decimals is missing or when
+ *  decimals does not parse to a non-negative integer (decimals = 0
+ *  is allowed — some tokens use it). Skipped entries are dropped
+ *  silently; surface config errors at the env-validation layer
+ *  upstream of the SDK. */
 export function parseTokenList(raw: string | undefined | null): TokenInfo[] {
   if (!raw) return [];
   const out: TokenInfo[] = [];
@@ -33,23 +35,35 @@ export function parseTokenList(raw: string | undefined | null): TokenInfo[] {
 /** Insert a synthetic "ETH" alias before the WETH entry, pointing at
  *  the same address. Returns a new array; the input is not mutated.
  *
+ *  Decimals are inherited from the matched WETH entry rather than
+ *  hardcoded — if the host's token-list config ever ships WETH with
+ *  non-standard decimals, the alias stays consistent.
+ *
  *  This is the convention every zkScatter surface uses to let users
  *  pick "ETH" in a token picker even though the backing entry is
  *  always WETH on chain. */
 export function withNativeEthAlias(tokens: TokenInfo[], wethAddress: string): TokenInfo[] {
-  const idx = tokens.findIndex((t) => eqAddress(t.address, wethAddress));
+  const idx = tokens.findIndex((t) => eqAddr(t.address, wethAddress));
   if (idx === -1) return tokens.slice();
+  const wethEntry = tokens[idx]!;
   const ethEntry: TokenInfo = {
-    address: wethAddress,
+    address: wethEntry.address,
     symbol: "ETH",
-    decimals: 18,
+    decimals: wethEntry.decimals,
     isNative: true,
   };
   return [...tokens.slice(0, idx), ethEntry, ...tokens.slice(idx)];
 }
 
-/** Lowercased-address comparison without throwing on non-hex input. */
-export function eqAddress(a: string, b: string): boolean {
+/** Lowercased-address comparison. Returns false when either side is
+ *  null/undefined/empty so callers can pass optional config fields
+ *  without a separate guard. Matches the existing `eqAddr` helper
+ *  used by frontend/mobile/zk-relayer. */
+export function eqAddr(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false;
   return a.toLowerCase() === b.toLowerCase();
 }
 

@@ -10,7 +10,6 @@
     "noEmit": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "declaration": true,
     "jsx": "react-jsx"
   },
   "include": ["src/**/*"],

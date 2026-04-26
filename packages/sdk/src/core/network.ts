@@ -81,5 +81,9 @@ export function explorerLink(
 ): string | undefined {
   const base = network.explorerBase ?? KNOWN_EXPLORER_BASES[network.chainId];
   if (!base) return undefined;
-  return `${base}/${entity}/${value}`;
+  // Strip a trailing slash so an explorerBase set as either
+  // `https://etherscan.io` or `https://etherscan.io/` produces the
+  // same `/{entity}/{value}` join.
+  const trimmed = base.endsWith("/") ? base.slice(0, -1) : base;
+  return `${trimmed}/${entity}/${value}`;
 }

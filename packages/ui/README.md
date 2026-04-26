@@ -21,8 +21,8 @@ master brand. See `docs/product/BRAND_DIRECTION.md` for the rules.
 
 ## Usage
 
-```ts
-// apps/pro/app/globals.css
+```css
+/* apps/pro/app/globals.css */
 @import "@zkscatter/ui/tokens/pro.css";
 @import "tailwindcss";
 ```
