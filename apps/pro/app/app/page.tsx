@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { useVault } from "../lib/vault";
+import { useSharedOrderbook } from "../lib/orderbook";
 import { DepositModal } from "../components/DepositModal";
 import { OrderModal } from "../components/OrderModal";
 
-const orderbook = {
+const MOCK_ORDERBOOK = {
   asks: [
     { price: "4,225.10", size: "1.2" },
     { price: "4,218.50", size: "0.8" },
@@ -19,6 +21,41 @@ const orderbook = {
   ],
 };
 
+interface RowData {
+  price: string;
+  size: string;
+}
+
+/** Project a list of `SharedOrder`s into the workbench's
+ *  asks/bids visual. The shared orderbook stores raw amounts in
+ *  base units; we format with naive precision since the UI only
+ *  needs an approximate display. Phase 5d swaps to a token-aware
+ *  formatter. */
+function projectOrderbook(
+  orders: SharedOrder[],
+  baseToken: string,
+): { asks: RowData[]; bids: RowData[] } {
+  const asks: RowData[] = [];
+  const bids: RowData[] = [];
+  for (const o of orders) {
+    // sell base → quote means it's an ASK (offering base for quote)
+    const isAsk = o.sellToken.toLowerCase() === baseToken.toLowerCase();
+    const sell = Number(o.sellAmount);
+    const buy = Number(o.buyAmount);
+    if (!Number.isFinite(sell) || !Number.isFinite(buy) || sell === 0 || buy === 0) continue;
+    const price = isAsk ? buy / sell : sell / buy;
+    const sizeRaw = isAsk ? sell : buy;
+    const row = {
+      price: price.toLocaleString("en-US", { maximumFractionDigits: 2 }),
+      size: (sizeRaw / 1e18).toLocaleString("en-US", { maximumFractionDigits: 4 }),
+    };
+    (isAsk ? asks : bids).push(row);
+  }
+  asks.sort((a, b) => Number(a.price.replace(/,/g, "")) - Number(b.price.replace(/,/g, "")));
+  bids.sort((a, b) => Number(b.price.replace(/,/g, "")) - Number(a.price.replace(/,/g, "")));
+  return { asks: asks.slice(0, 6), bids: bids.slice(0, 6) };
+}
+
 export default function Workbench() {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [price, setPrice] = useState("4,205");
@@ -26,6 +63,19 @@ export default function Workbench() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const { notes } = useVault();
+  // Pair string for the shared orderbook lookup. Phase 5d will
+  // build this from the form's selected sell/buy tokens; today
+  // ETH/USDC is the only wired pair.
+  const pair = "ETH/USDC";
+  const ETH_ADDRESS = "0x0000000000000000000000000000000000000001";
+  const ob = useSharedOrderbook(pair);
+  const projected = useMemo(
+    () => (ob.orders ? projectOrderbook(ob.orders, ETH_ADDRESS) : null),
+    [ob.orders],
+  );
+  // Show real data when configured + non-empty; otherwise fall
+  // back to the seed mock so the workbench still feels alive.
+  const display = projected ?? MOCK_ORDERBOOK;
 
   return (
     <div className="space-y-6">
@@ -104,20 +154,46 @@ export default function Workbench() {
 
         {/* Orderbook */}
         <aside className="col-span-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Orderbook · ETH/USDC</div>
+          <div className="mb-4 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            <span>Orderbook · {pair}</span>
+            {ob.configured ? (
+              ob.loading ? (
+                <span className="text-[var(--color-text-subtle)]">Loading…</span>
+              ) : (
+                <span className="text-[var(--color-success)]">Live</span>
+              )
+            ) : (
+              <span
+                className="text-[var(--color-warning)]"
+                title="DEMO_NETWORK has no shared orderbook URL — using mock data"
+              >
+                Mock
+              </span>
+            )}
+          </div>
           <div className="text-sm">
-            {orderbook.asks.slice().reverse().map((o) => (
-              <Row key={`a-${o.price}`} side="ask" price={o.price} size={o.size} />
-            ))}
-            <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
-              mid 4,204.10
-            </div>
-            {orderbook.bids.map((o) => (
-              <Row key={`b-${o.price}`} side="bid" price={o.price} size={o.size} />
-            ))}
+            {display.asks.length === 0 && display.bids.length === 0 ? (
+              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                No open orders for this pair.
+              </div>
+            ) : (
+              <>
+                {display.asks.slice().reverse().map((o, i) => (
+                  <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} />
+                ))}
+                <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
+                  {display === MOCK_ORDERBOOK ? "mid 4,204.10" : "—"}
+                </div>
+                {display.bids.map((o, i) => (
+                  <Row key={`b-${i}-${o.price}`} side="bid" price={o.price} size={o.size} />
+                ))}
+              </>
+            )}
           </div>
           <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            Depth: $1.2M · Avg fill: 0.3%
+            {display === MOCK_ORDERBOOK
+              ? "Depth: $1.2M · Avg fill: 0.3% (mock)"
+              : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders`}
           </div>
         </aside>
       </div>
