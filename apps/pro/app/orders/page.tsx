@@ -1,13 +1,24 @@
-import Link from "next/link";
+"use client";
 
-const orders = [
-  { id: "ord_8412", side: "Sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "settled",  date: "Apr 26, 09:14" },
-  { id: "ord_8401", side: "Buy",  pair: "WBTC/USDC", price: "67,210", size: "0.15", status: "matching", date: "Apr 26, 08:51" },
-  { id: "ord_8388", side: "Sell", pair: "ETH/USDC", price: "4,198", size: "1.5", status: "settled",  date: "Apr 25, 22:30" },
-  { id: "ord_8377", side: "Buy",  pair: "TON/USDC", price: "5.42",   size: "1500", status: "cancelled", date: "Apr 25, 18:02" },
+import Link from "next/link";
+import { useOrders, type OrderRecord } from "../lib/orders";
+
+const SEED_ORDERS: OrderRecord[] = [
+  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "settled",   createdAt: Date.parse("2026-04-26T09:14:00Z") },
+  { id: "seed-2", label: "ord_8401", side: "buy",  pair: "WBTC/USDC", price: "67,210", size: "0.15", status: "matching", createdAt: Date.parse("2026-04-26T08:51:00Z") },
+  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC", price: "4,198", size: "1.5", status: "settled",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
+  { id: "seed-4", label: "ord_8377", side: "buy",  pair: "TON/USDC", price: "5.42",   size: "1500", status: "cancelled", createdAt: Date.parse("2026-04-25T18:02:00Z") },
 ];
 
+function formatWhen(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function Orders() {
+  const { orders } = useOrders();
+  const all: OrderRecord[] = [...orders, ...SEED_ORDERS];
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -30,15 +41,15 @@ export default function Orders() {
             </tr>
           </thead>
           <tbody>
-            {orders.map((o) => (
+            {all.map((o) => (
               <tr key={o.id} className="border-t border-[var(--color-border)]">
-                <td className="px-5 py-3 font-mono text-xs">{o.id}</td>
-                <td className="px-5 py-3">{o.side}</td>
+                <td className="px-5 py-3 font-mono text-xs">{o.label}</td>
+                <td className="px-5 py-3">{o.side === "sell" ? "Sell" : "Buy"}</td>
                 <td className="px-5 py-3">{o.pair}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.price}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
                 <td className="px-5 py-3"><Pill s={o.status} /></td>
-                <td className="px-5 py-3 text-[var(--color-text-muted)]">{o.date}</td>
+                <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
               </tr>
             ))}
           </tbody>
