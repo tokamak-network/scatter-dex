@@ -24,6 +24,12 @@ anyhow = "1.0.99"
 circom-prover = "0.1"
 rust-witness  = "0.1"
 num-bigint    = "0.4.0"
+# Native Poseidon-BN254 implementation that matches circomlibjs's
+# output (verified by `light-poseidon`'s own circom-compat tests).
+# Replaces the per-hash WebView round-trip in `ZKBridge.poseidonHash`.
+light-poseidon = "0.4"
+ark-bn254     = "0.5"
+ark-ff        = { version = "0.5", default-features = false }
     
 # HALO2_DEPENDENCIES
 # NOIR_DEPENDENCIES

@@ -6,6 +6,17 @@
  */
 import type WebView from 'react-native-webview';
 
+// `null` when mopro-ffi isn't on this build (Expo Go, missing arm64 jniLib).
+const _nativePoseidon: ((inputs: string[]) => string) | null = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fn = require('mopro-ffi').poseidonHash as (i: string[]) => string;
+    return typeof fn === 'function' ? fn : null;
+  } catch {
+    return null;
+  }
+})();
+
 type PendingRequest = {
   resolve: (value: any) => void;
   reject: (reason: any) => void;
@@ -219,6 +230,23 @@ class ZKBridgeServiceImpl {
   }
 
   async poseidonHash(inputs: string[]): Promise<string> {
+    // Native (Rust/light-poseidon) takes ~0.1 ms FFI vs ~50-200 ms per
+    // call through the WebView bridge — the WebView burst during merkle
+    // tree builds saturated the RN bridge and poisoned subsequent
+    // fetches. Output is bit-identical (verified by light-poseidon's
+    // circom-compat suite).
+    if (_nativePoseidon) {
+      try {
+        // light-poseidon only parses decimal; merkle zero-hash defaults
+        // are hex (mirroring Solidity `_zeros(d)`). Normalize here.
+        const decimal = inputs.map((s) =>
+          /^0x[0-9a-fA-F]+$/.test(s) ? BigInt(s).toString(10) : s,
+        );
+        return _nativePoseidon(decimal);
+      } catch (e: any) {
+        console.warn('[ZKBridge] native poseidonHash failed, falling back:', e?.message || String(e));
+      }
+    }
     const result = await this.sendCommand('poseidon_hash', { inputs });
     return result.hash;
   }

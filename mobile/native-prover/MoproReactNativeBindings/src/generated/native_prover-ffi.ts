@@ -27,46 +27,24 @@ interface NativeModuleInterface {
     buffer: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): string;
-  ubrn_uniffi_native_prover_fn_func_mopro_hello_world(
-    uniffi_out_err: UniffiRustCallStatus
-  ): Uint8Array;
   ubrn_uniffi_native_prover_fn_func_generate_circom_proof(
     zkeyPath: Uint8Array,
     circuitInputs: Uint8Array,
     proofLib: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): Uint8Array;
-  ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
-    zkeyPath: Uint8Array,
-    proofResult: Uint8Array,
-    proofLib: Uint8Array,
-    uniffi_out_err: UniffiRustCallStatus
-  ): number;
   ubrn_uniffi_native_prover_fn_func_generate_gnark_proof(
     r1csPath: Uint8Array,
     pkPath: Uint8Array,
     witnessJson: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): Uint8Array;
-  ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(
-    r1csPath: Uint8Array,
-    vkPath: Uint8Array,
-    proofResult: Uint8Array,
-    uniffi_out_err: UniffiRustCallStatus
-  ): number;
   ubrn_uniffi_native_prover_fn_func_generate_halo2_proof(
     srsPath: Uint8Array,
     pkPath: Uint8Array,
     circuitInputs: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): Uint8Array;
-  ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(
-    srsPath: Uint8Array,
-    vkPath: Uint8Array,
-    proof: Uint8Array,
-    publicInput: Uint8Array,
-    uniffi_out_err: UniffiRustCallStatus
-  ): number;
   ubrn_uniffi_native_prover_fn_func_generate_noir_proof(
     circuitPath: Uint8Array,
     srsPath: Uint8Array,
@@ -83,6 +61,32 @@ interface NativeModuleInterface {
     lowMemoryMode: number,
     uniffi_out_err: UniffiRustCallStatus
   ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_mopro_hello_world(
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_poseidon_hash(
+    inputs: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
+    zkeyPath: Uint8Array,
+    proofResult: Uint8Array,
+    proofLib: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(
+    r1csPath: Uint8Array,
+    vkPath: Uint8Array,
+    proofResult: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(
+    srsPath: Uint8Array,
+    vkPath: Uint8Array,
+    proof: Uint8Array,
+    publicInput: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
   ubrn_uniffi_native_prover_fn_func_verify_noir_proof(
     circuitPath: Uint8Array,
     proof: Uint8Array,
@@ -91,15 +95,16 @@ interface NativeModuleInterface {
     lowMemoryMode: number,
     uniffi_out_err: UniffiRustCallStatus
   ): number;
-  ubrn_uniffi_native_prover_checksum_func_mopro_hello_world(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_circom_proof(): number;
-  ubrn_uniffi_native_prover_checksum_func_verify_circom_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof(): number;
-  ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof(): number;
-  ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_noir_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key(): number;
+  ubrn_uniffi_native_prover_checksum_func_mopro_hello_world(): number;
+  ubrn_uniffi_native_prover_checksum_func_poseidon_hash(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_circom_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_verify_noir_proof(): number;
   ubrn_ffi_native_prover_uniffi_contract_version(): number;
 }
