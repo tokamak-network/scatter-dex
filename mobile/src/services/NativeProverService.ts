@@ -134,25 +134,63 @@ export type SnarkjsLikeProofResult = {
   elapsedMs: number;
 };
 
-/** Append-only log of every native prove call's inputs and outputs.
- *  Lives in the app's documents dir so it survives Metro reloads but
- *  is wiped on app uninstall. Cheap byte-cap rotation prevents long
- *  sessions from filling the device. */
-const PROVE_LOG_PATH = `${FileSystem.documentDirectory ?? ''}native_prover.log`;
-const PROVE_LOG_MAX_BYTES = 4 * 1024 * 1024;
-async function appendProveLog(record: Record<string, unknown>): Promise<void> {
-  if (!FileSystem.documentDirectory) return;
-  try {
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
-    const info = await FileSystem.getInfoAsync(PROVE_LOG_PATH);
-    if (info.exists && (info as any).size > PROVE_LOG_MAX_BYTES) {
-      await FileSystem.deleteAsync(PROVE_LOG_PATH, { idempotent: true });
-    }
-    const existing = info.exists ? await FileSystem.readAsStringAsync(PROVE_LOG_PATH) : '';
-    await FileSystem.writeAsStringAsync(PROVE_LOG_PATH, existing + line);
-  } catch {
-    // Logging must never break the prove path.
+/** Append-only log of every native prove call. Dev-only — secrets like
+ *  `note.secret`, `salt`, `claimSecrets` and the EdDSA signature live in
+ *  the circuit `inputs` object, so this would persist witness material
+ *  to disk in production. Diagnostic value is "did the proof go through
+ *  and what were the public signals", which is captured by `kind`,
+ *  `elapsedMs`, `publicSignals` and a redacted input shape — not by
+ *  logging the raw witness. */
+const PROVE_LOG_FILENAME = 'native_prover.log';
+const PROVE_LOG_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB; entries are small
+const SENSITIVE_INPUT_KEYS = new Set([
+  'secret', 'salt', 'newSalt',
+  'sigS', 'sigR8x', 'sigR8y',
+  'claimSecrets',
+]);
+
+function redactInputs(inputs: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(inputs)) {
+    out[k] = SENSITIVE_INPUT_KEYS.has(k) ? '<redacted>' : v;
   }
+  return out;
+}
+
+// Serialise writes through a single promise chain so concurrent prove
+// calls can't interleave a read-modify-write race that drops entries
+// or corrupts the file.
+let proveLogQueue: Promise<void> = Promise.resolve();
+
+async function appendProveLog(record: Record<string, unknown>): Promise<void> {
+  // Gate behind __DEV__ so production builds never touch disk on a
+  // prove call. The variable is statically replaced by Metro at bundle
+  // time, so the file-system code below tree-shakes out of release.
+  if (!__DEV__) return;
+  // Resolve the path lazily — `FileSystem.documentDirectory` is `null`
+  // for a brief window before expo-file-system finishes its first
+  // initialization (early prove call from a cold start).
+  const docDir = FileSystem.documentDirectory;
+  if (!docDir) return;
+  const path = `${docDir}${PROVE_LOG_FILENAME}`;
+  proveLogQueue = proveLogQueue.then(async () => {
+    try {
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
+      const info = await FileSystem.getInfoAsync(path);
+      const overCap = info.exists && (info as any).size > PROVE_LOG_MAX_BYTES;
+      if (overCap) {
+        // Overwrite for rotation. The previous version deleted then read,
+        // which raced (`readAsStringAsync` after `deleteAsync` would throw
+        // and the catch dropped the new record).
+        await FileSystem.writeAsStringAsync(path, line);
+        return;
+      }
+      const existing = info.exists ? await FileSystem.readAsStringAsync(path) : '';
+      await FileSystem.writeAsStringAsync(path, existing + line);
+    } catch {
+      // Logging must never break the prove path.
+    }
+  });
 }
 
 /** Runs Groth16 proving for the `authorize` circuit natively. Input is
@@ -174,7 +212,7 @@ export async function generateAuthorizeProof(
     void appendProveLog({
       kind: 'authorize.error',
       zkeyPath,
-      inputs: normalized,
+      inputs: redactInputs(normalized),
       error: { name: e?.name, message: e?.message, str: String(e) },
     });
     throw e;
@@ -184,9 +222,8 @@ export async function generateAuthorizeProof(
     kind: 'authorize.ok',
     elapsedMs,
     zkeyPath,
-    inputs: normalized,
+    inputs: redactInputs(normalized),
     publicSignals: res.inputs,
-    proof: res.proof,
   });
   // mopro returns G1/G2 points as {x,y,z} / {x:[],y:[],z:[]}. snarkjs
   // returns pi_a / pi_b / pi_c as flat arrays. Convert here so callers
