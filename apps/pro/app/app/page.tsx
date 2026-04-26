@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useVault } from "../lib/vault";
 import { DepositModal } from "../components/DepositModal";
+import { OrderModal } from "../components/OrderModal";
 
 const orderbook = {
   asks: [
@@ -23,6 +24,7 @@ export default function Workbench() {
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
   const [depositOpen, setDepositOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
   const { notes } = useVault();
 
   return (
@@ -90,9 +92,12 @@ export default function Workbench() {
             <div className="mt-1 flex justify-between font-medium text-[var(--color-success)]"><span>Slippage saved</span><span>−0.7% (≈ $58.40)</span></div>
           </div>
           <div className="mt-3 text-xs text-[var(--color-text-muted)]">
-            Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement · ~30s proof generation. You can close this tab — submission continues in background.
+            Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement. Proof generation is ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on mobile.
           </div>
-          <button className="mt-4 w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
+          <button
+            onClick={() => setOrderOpen(true)}
+            className="mt-4 w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
+          >
             Sign &amp; submit
           </button>
         </section>
@@ -118,6 +123,14 @@ export default function Workbench() {
       </div>
 
       <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
+      <OrderModal
+        open={orderOpen}
+        onClose={() => setOrderOpen(false)}
+        side={side}
+        pair="ETH/USDC"
+        price={price}
+        size={size}
+      />
     </div>
   );
 }

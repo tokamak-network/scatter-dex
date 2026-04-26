@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -54,12 +55,13 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // Default to empty so the new empty-state UI is reachable on a
   // fresh load and "deposit adds a row" is visually verifiable.
   const [notes, setNotes] = useState<VaultNote[]>([]);
-  const [labelCounter, setLabelCounter] = useState(0);
+  // Ref instead of useState so two adds in the same tick get
+  // distinct sequence numbers — same fix as OrdersProvider.
+  const labelCounter = useRef(0);
 
   const add = useCallback(
     (n: Omit<VaultNote, "id" | "createdAt" | "label">) => {
-      const seq = labelCounter + 1;
-      setLabelCounter(seq);
+      const seq = ++labelCounter.current;
       const note: VaultNote = {
         ...n,
         id: newId(),
@@ -69,7 +71,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [note, ...prev]);
       return note;
     },
-    [labelCounter],
+    [],
   );
 
   const value = useMemo<VaultState>(() => ({ notes, add }), [notes, add]);
