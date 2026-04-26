@@ -11,8 +11,17 @@ const SEED_ORDERS: OrderRecord[] = [
 ];
 
 function formatWhen(ts: number): string {
+  // Fixed `en-US` locale so the SSG-rendered table cell matches what
+  // the client renders during hydration. `undefined` would let
+  // each side resolve to its own system locale and trigger a
+  // hydration warning.
   const d = new Date(ts);
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function Orders() {
