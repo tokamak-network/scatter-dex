@@ -165,11 +165,25 @@ export function OrderModal({
       setPhase({ kind: "error", message: "Deposit to your vault before placing an order." });
       return;
     }
+    if (side !== "sell") {
+      // The proof always sells the deposited token; supporting "Buy"
+      // requires the user to have a quote-token note in the vault and
+      // a token-aware decimals lookup. Phase 5 wires the token list +
+      // proper side handling.
+      setPhase({
+        kind: "error",
+        message:
+          "Buy side isn't wired yet — this demo only supports selling the deposited token. Phase 5 adds proper side handling against the token list.",
+      });
+      return;
+    }
 
     let sellAmount: bigint;
     let buyAmount: bigint;
     try {
       // Demo decimals — Phase 5 derives these from a real token list.
+      // Sell side: deposited token (assume 18 dec like ETH/WETH);
+      // Buy side: USDC-shaped quote token (6 dec).
       sellAmount = parseUnits(size.replace(/,/g, ""), 18);
       const priceUnits = parseUnits(price.replace(/,/g, ""), 6);
       const sizeUnits = parseUnits(size.replace(/,/g, ""), 18);
@@ -185,6 +199,16 @@ export function OrderModal({
       setPhase({ kind: "error", message: "Price and size must be positive." });
       return;
     }
+    // Circuit invariant: sellAmount ≤ note.amount (overspending the
+    // escrow is rejected by authorize.circom). Catching it here saves
+    // the user a 1–2 s proof followed by the SDK's pre-check throw.
+    if (sellAmount > note.note.amount) {
+      setPhase({
+        kind: "error",
+        message: `Order size (${size}) exceeds the vault note's balance.`,
+      });
+      return;
+    }
 
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
@@ -192,6 +216,12 @@ export function OrderModal({
       setPhase({ kind: "preparing" });
       const eddsaKey = await deriveEdDSA();
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      // Capture once — using `Date.now()` separately for releaseTime
+      // and expiry would race the second boundary in rare cases and
+      // produce a 1-second discrepancy.
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const horizonSec = nowSec + BigInt(Math.floor(ORDER_LIFETIME_MS / 1000));
 
       // Build a single-claim distribution: the user receives
       // `buyAmount` of the buy token at their own EOA. Phase 4 adds
@@ -201,7 +231,7 @@ export function OrderModal({
         recipient: account,
         token: DEMO_BUY_TOKEN,
         amount: buyAmount,
-        releaseTime: BigInt(Math.floor((Date.now() + ORDER_LIFETIME_MS) / 1000)),
+        releaseTime: horizonSec,
       };
 
       // Single-leaf-at-0 empty Merkle tree — see lib/emptyTreeProof.ts.
@@ -220,7 +250,7 @@ export function OrderModal({
         buyAmount,
         // 50 bps cap. Phase 5 derives this from chosen relayer terms.
         maxFee: 50n,
-        expiry: BigInt(Math.floor((Date.now() + ORDER_LIFETIME_MS) / 1000)),
+        expiry: horizonSec,
         nonce: randomFieldElement(),
         relayer: DEMO_RELAYER,
         eddsaPrivateKey: eddsaKey.privateKey,
