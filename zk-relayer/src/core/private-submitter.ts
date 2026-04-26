@@ -152,9 +152,14 @@ export class PrivateSubmitter {
       }
       this.commitmentLeaves = [];
     }
-    const latest = await this.provider.getBlockNumber();
-    if (fromBlock > latest) return;
-    const events = await this.pool.queryFilter(filter, fromBlock, latest);
+    // Stay `confirmations` blocks behind tip — anything newer can be
+    // reorged out and would leave us with stale leaves the chain no
+    // longer knows about. Default 0 for anvil/fork; ops should set
+    // INDEX_CONFIRMATIONS=12 on L1 mainnet/testnet.
+    const tip = await this.provider.getBlockNumber();
+    const toBlock = tip - config.indexConfirmations;
+    if (toBlock < 0 || fromBlock > toBlock) return;
+    const events = await this.pool.queryFilter(filter, fromBlock, toBlock);
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
         topics: event.topics as string[],
@@ -168,9 +173,9 @@ export class PrivateSubmitter {
         this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
       }
     }
-    this.lastIndexedBlock = latest;
+    this.lastIndexedBlock = toBlock;
     if (events.length > 0) {
-      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new)`);
+      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new, tip=${tip} indexed=${toBlock})`);
     }
   }
 

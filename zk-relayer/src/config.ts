@@ -53,6 +53,20 @@ export const config = {
   // [R-10] Sanctions pubKey blocklist file (optional JSON array of {pubKeyAx, pubKeyAy})
   sanctionsPubKeyList: process.env.SANCTIONS_PUBKEY_LIST || null,
 
+  // Confirmation depth for commitment indexing. Anvil/local fork doesn't
+  // reorg, so default 0. On L1 mainnet/testnets a small buffer (e.g. 12)
+  // protects /merkle-proof from serving roots whose tail blocks could
+  // be replaced by a reorg.
+  indexConfirmations: (() => {
+    const raw = process.env.INDEX_CONFIRMATIONS;
+    const parsed = raw !== undefined ? parseInt(raw, 10) : 0;
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      console.warn(`[config] Invalid INDEX_CONFIRMATIONS="${raw}", using default 0`);
+      return 0;
+    }
+    return parsed;
+  })(),
+
   // [R-1] Gas guard: max gas price in gwei (default 100)
   maxGasPriceGwei: (() => {
     const parsed = parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10);
