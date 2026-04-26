@@ -15,6 +15,7 @@ import {
   MAX_CLAIMS_PER_SIDE,
 } from "../constants";
 import { wipeBytes } from "../secureWipe";
+import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
 import type { Groth16Proof } from "../types";
 import type { CircuitAssets } from "./deposit";
 
@@ -86,6 +87,10 @@ export interface AuthorizeProofInput {
 export interface AuthorizeProofResult {
   proof: Groth16Proof;
   publicSignals: readonly bigint[];
+  /** First public signal of authorize.circom — the BabyJub pubkey
+   *  bound to this proof. Off-chain relayer compliance checks read
+   *  this without re-deriving from publicSignals. */
+  pubKeyBind: bigint;
   commitmentRoot: bigint;
   nullifier: bigint;
   nonceNullifier: bigint;
@@ -134,11 +139,7 @@ interface SnarkjsModule {
       wasm: CircuitAssets["wasm"],
       zkey: CircuitAssets["zkey"],
     ) => Promise<{
-      proof: {
-        pi_a: [string, string, string];
-        pi_b: [[string, string], [string, string], [string, string]];
-        pi_c: [string, string, string];
-      };
+      proof: SnarkjsRawProof;
       publicSignals: string[];
     }>;
   };
@@ -159,6 +160,9 @@ export async function generateAuthorizeProof(
   assets: CircuitAssets,
 ): Promise<AuthorizeProofResult> {
   // ── Validate inputs ──
+  // Cheap pre-checks for constraints that authorize.circom would also
+  // reject. Catching them before snarkjs runs saves the user a 1–9 s
+  // proof followed by an opaque "constraint not satisfied" failure.
   if (input.claims.length === 0) {
     throw new Error("generateAuthorizeProof: at least one claim is required");
   }
@@ -169,6 +173,29 @@ export async function generateAuthorizeProof(
   }
   if (input.sellAmount > input.note.amount) {
     throw new Error("generateAuthorizeProof: sellAmount exceeds note balance");
+  }
+  // Per-claim token must equal the order's buyToken (PR #127 gemini
+  // HIGH fix in the original frontend).
+  const buyTokenLower = input.buyToken.toLowerCase();
+  for (let i = 0; i < input.claims.length; i++) {
+    if (input.claims[i]!.token.toLowerCase() !== buyTokenLower) {
+      throw new Error(
+        `generateAuthorizeProof: claims[${i}].token does not match buyToken`,
+      );
+    }
+  }
+  // totalLocked * 10000 ≥ buyAmount * (10000 - maxFee). The circuit
+  // enforces this so the order's minimum-receive guarantee can't be
+  // bypassed by under-allocating to claims.
+  const preTotalLocked = input.claims.reduce((s, c) => s + c.amount, 0n);
+  const FEE_DENOM = 10_000n;
+  if (input.maxFee > FEE_DENOM) {
+    throw new Error("generateAuthorizeProof: maxFee exceeds 10000 bps");
+  }
+  if (preTotalLocked * FEE_DENOM < input.buyAmount * (FEE_DENOM - input.maxFee)) {
+    throw new Error(
+      "generateAuthorizeProof: claim allocation falls short of buyAmount net of maxFee",
+    );
   }
 
   // ── 1. Commitment membership ──
@@ -354,17 +381,14 @@ export async function generateAuthorizeProof(
     );
   }
 
+  const publicSignalsBig = publicSignals.map((s) => BigInt(s));
   return {
-    proof: {
-      a: [BigInt(proof.pi_a[0]), BigInt(proof.pi_a[1])],
-      b: [
-        // Solidity G2 limb-order swap, same convention as deposit.
-        [BigInt(proof.pi_b[0][1]), BigInt(proof.pi_b[0][0])],
-        [BigInt(proof.pi_b[1][1]), BigInt(proof.pi_b[1][0])],
-      ],
-      c: [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])],
-    },
-    publicSignals: publicSignals.map((s) => BigInt(s)),
+    proof: formatGroth16Proof(proof),
+    publicSignals: publicSignalsBig,
+    // authorize.circom emits the BabyJub-bound pubkey as
+    // publicSignals[0] (Circom 2.x: outputs come first, then public
+    // inputs in declaration order).
+    pubKeyBind: publicSignalsBig[0]!,
     commitmentRoot,
     nullifier,
     nonceNullifier,

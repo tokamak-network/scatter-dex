@@ -54,17 +54,30 @@ export const FIELD_MODULUS =
 // circomlibjs has no published types — `unknown` here, then narrowed
 // inside the helper functions where we touch the API surface.
 type Poseidon = (inputs: bigint[]) => unknown;
-interface PoseidonModule {
+
+/** Opaque Poseidon module handle. Hot loops (e.g. building a
+ *  depth-20 Merkle tree → 1M+ hashes) should fetch this once via
+ *  `getPoseidonModule()` and call `poseidonHashWith(p, inputs)`
+ *  synchronously inside the loop, rather than awaiting
+ *  `poseidonHash` per hash and paying 1M microtasks. */
+export interface PoseidonModule {
   (inputs: bigint[]): unknown;
   F: { toObject(value: unknown): bigint };
 }
 
 let poseidonPromise: Promise<PoseidonModule> | null = null;
-function getPoseidon(): Promise<PoseidonModule> {
+
+/** Get (and lazily build) the cached Poseidon module. The in-flight
+ *  Promise is memoized so concurrent callers share one initialization. */
+export function getPoseidonModule(): Promise<PoseidonModule> {
   if (!poseidonPromise) {
-    poseidonPromise = import("circomlibjs").then(
+    const p = import("circomlibjs").then(
       (mod) => (mod as { buildPoseidon: () => Promise<PoseidonModule> }).buildPoseidon(),
     );
+    p.catch(() => {
+      if (poseidonPromise === p) poseidonPromise = null;
+    });
+    poseidonPromise = p;
   }
   return poseidonPromise;
 }
@@ -73,14 +86,26 @@ function getPoseidon(): Promise<PoseidonModule> {
  *  proof job doesn't pay the build cost on the user's hot path.
  *  Worker `preload` hooks should call this on startup. */
 export async function warmupPoseidon(): Promise<void> {
-  await getPoseidon();
+  await getPoseidonModule();
 }
 
-/** Generic Poseidon hash. Returns the field element as a bigint. */
+/** Generic Poseidon hash — convenient for one-off calls. Awaits
+ *  the cached module each call, so use `poseidonHashWith` inside
+ *  hot loops instead. */
 export async function poseidonHash(inputs: bigint[]): Promise<bigint> {
-  const p = await getPoseidon();
-  const hash = (p as unknown as Poseidon)(inputs);
-  return p.F.toObject(hash);
+  const p = await getPoseidonModule();
+  return poseidonHashWith(p, inputs);
+}
+
+/** Synchronous Poseidon hash given an already-built module. Use
+ *  inside hot loops where awaiting per call would dominate the
+ *  cost. */
+export function poseidonHashWith(
+  poseidon: PoseidonModule,
+  inputs: bigint[],
+): bigint {
+  const hash = (poseidon as unknown as Poseidon)(inputs);
+  return poseidon.F.toObject(hash);
 }
 
 // ---------------------------------------------------------------------

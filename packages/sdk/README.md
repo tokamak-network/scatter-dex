@@ -132,7 +132,6 @@ packages/sdk/
 | 3a | `zk/eddsa.ts` (key derivation + signing) | done |
 | 3b | `zk/{constants,merkle,secureWipe}.ts` + `zk/circuits/authorize.ts` | done |
 | 3c | apps/pro order placement UI wired | next |
-| 3c | apps/pro order placement UI wired | |
 | 4 | `zk/claim.ts` + `stealth.ts` | withdraw + stealth derivation |
 | 5 | `orderbook/` + `relayer/` | shared orderbook + relayer registry |
 | 6 | `notes/` storage adapters | filesystem (web) / sqlite (mobile) |

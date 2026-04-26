@@ -1,4 +1,5 @@
 import { type CommitmentNote, computeCommitment } from "../commitment";
+import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
 import type { Groth16Proof } from "../types";
 
 /** Wasm + zkey assets for a single circuit. snarkjs accepts URLs,
@@ -31,11 +32,7 @@ interface SnarkjsModule {
       wasm: CircuitAssets["wasm"],
       zkey: CircuitAssets["zkey"],
     ) => Promise<{
-      proof: {
-        pi_a: [string, string, string];
-        pi_b: [[string, string], [string, string], [string, string]];
-        pi_c: [string, string, string];
-      };
+      proof: SnarkjsRawProof;
       publicSignals: string[];
     }>;
   };
@@ -95,16 +92,7 @@ export async function generateDepositProof(
 
   return {
     commitment,
-    proof: {
-      a: [BigInt(proof.pi_a[0]), BigInt(proof.pi_a[1])],
-      b: [
-        // Solidity verifier expects the G2 element with reversed
-        // limb order — see circomlibjs docs.
-        [BigInt(proof.pi_b[0][1]), BigInt(proof.pi_b[0][0])],
-        [BigInt(proof.pi_b[1][1]), BigInt(proof.pi_b[1][0])],
-      ],
-      c: [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])],
-    },
+    proof: formatGroth16Proof(proof),
     publicSignals: publicSignals.map((s) => BigInt(s)),
   };
 }

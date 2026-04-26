@@ -1,4 +1,4 @@
-import { poseidonHash } from "./commitment";
+import { getPoseidonModule, poseidonHashWith } from "./commitment";
 
 /** A built Poseidon Merkle tree. `layers[0]` is the leaf layer
  *  (padded to `2^depth`); `layers[depth]` is the root layer (one
@@ -13,28 +13,47 @@ export interface BuiltTree {
  *  `2^depth`; internal zero values are derived by hashing the level
  *  below.
  *
- *  Cost: O(2^depth) Poseidon hashes. For the protocol's
- *  `COMMIT_TREE_DEPTH = 20`, that's roughly a million hashes —
- *  several seconds on desktop, longer on mobile. Apps that maintain
- *  an incremental tree should pre-compute `MerkleProof`s and pass
- *  them through `AuthorizeProofInput.merkleProof` instead of asking
- *  the prover to rebuild from scratch each time. */
+ *  Awaits the Poseidon module **once** at the top, then hashes
+ *  synchronously inside the loop. Awaiting per hash would cost a
+ *  microtask per node — at `COMMIT_TREE_DEPTH = 20` (~1 M hashes)
+ *  that becomes the dominant cost.
+ *
+ *  Apps that maintain an incremental tree should pre-compute
+ *  `MerkleProof`s and pass them through `AuthorizeProofInput
+ *  .merkleProof` instead of asking the prover to rebuild from
+ *  scratch each call. */
 export async function buildMerkleTree(
   leaves: bigint[],
   depth: number,
 ): Promise<BuiltTree> {
-  if (depth < 1) throw new Error("buildMerkleTree: depth must be ≥ 1");
-
+  if (!Number.isInteger(depth) || depth < 1 || depth > 30) {
+    // Bounded so the `1 << depth` shift below stays in 32-bit
+    // signed range (depth=31 would produce a negative size). The
+    // protocol's max depth is 20; any caller asking for >30 is
+    // almost certainly mistaken about units.
+    throw new Error("buildMerkleTree: depth must be an integer in [1, 30]");
+  }
   const size = 1 << depth;
-  const padded = leaves.slice(0, size);
+  if (leaves.length > size) {
+    // `slice(0, size)` would silently truncate, producing a root
+    // that doesn't match the caller's expectations. Surface the
+    // mismatch instead.
+    throw new Error(
+      `buildMerkleTree: leaves.length (${leaves.length}) exceeds 2^${depth} (${size})`,
+    );
+  }
+
+  const poseidon = await getPoseidonModule();
+
+  const padded = leaves.slice();
   while (padded.length < size) padded.push(0n);
 
   const layers: bigint[][] = [padded];
   let current = padded;
   for (let level = 0; level < depth; level++) {
-    const next: bigint[] = [];
-    for (let i = 0; i < current.length; i += 2) {
-      next.push(await poseidonHash([current[i]!, current[i + 1]!]));
+    const next: bigint[] = new Array(current.length >> 1);
+    for (let i = 0, j = 0; i < current.length; i += 2, j++) {
+      next[j] = poseidonHashWith(poseidon, [current[i]!, current[i + 1]!]);
     }
     layers.push(next);
     current = next;
@@ -69,7 +88,17 @@ export function getMerkleProof(
     const layer = layers[level]!;
     const isRight = idx % 2;
     const siblingIdx = isRight ? idx - 1 : idx + 1;
-    pathElements.push(layer[siblingIdx] ?? 0n);
+    const sibling = layer[siblingIdx];
+    if (sibling === undefined) {
+      // A well-formed BuiltTree has every layer padded to a power
+      // of two, so the sibling is always present. Falling back to
+      // 0n would silently produce an invalid Merkle path that
+      // only fails much later (snarkjs / on-chain). Throw instead.
+      throw new Error(
+        `getMerkleProof: layer ${level} missing sibling at index ${siblingIdx} (malformed tree)`,
+      );
+    }
+    pathElements.push(sibling);
     pathIndices.push(isRight);
     idx = Math.floor(idx / 2);
   }
