@@ -92,6 +92,13 @@ export default function HiddenWebView() {
           if (DEBUG_PROBES) console.warn('HiddenWebView: blocked navigation to', req.url);
           return false;
         }}
+        onLoadStart={() => {
+          // Mark the init phase as actually begun — until now, the
+          // ZKBridgeService.waitReady() budget was deferred so it won't
+          // be consumed by Asset.downloadAsync() + WebView spawn time.
+          ZKBridgeService.notifyInitStarted();
+          if (DEBUG_PROBES) console.log('HiddenWebView: onLoadStart fired');
+        }}
         onLoad={DEBUG_PROBES ? () => console.log('HiddenWebView: onLoad fired') : undefined}
         onLoadEnd={DEBUG_PROBES ? () => {
           console.log('HiddenWebView: onLoadEnd fired');

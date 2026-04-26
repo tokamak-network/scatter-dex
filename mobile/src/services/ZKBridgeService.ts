@@ -29,6 +29,19 @@ class ZKBridgeServiceImpl {
   // `readyPromise` / `readyResolve`, incorrectly marking the *new*
   // attempt as timed out.
   private readyTimer: ReturnType<typeof setTimeout> | null = null;
+  // Tracks the most recent timeout budget passed to `waitReady` so a
+  // later `notifyInitStarted()` (fired from HiddenWebView's onLoadStart)
+  // can arm the timer with the same budget the caller asked for.
+  private readyTimeoutMs: number | null = null;
+  // Set to true once the WebView begins loading the bundled HTML. Until
+  // then, `waitReady()` defers the timeout — the cold-start budget is
+  // for *engine init*, not for asset extraction + WebView content-process
+  // spawn (which can themselves consume many seconds on a fresh launch).
+  private webViewInitStarted = false;
+  // Wall-clock timestamp (ms) when the WebView started loading the
+  // bundled HTML. Used to log actual engine-init duration in dev so the
+  // 60s budget can be tuned against real low-end-device numbers.
+  private initStartedAt: number | null = null;
   private requestCounter = 0;
 
   constructor() {
@@ -61,18 +74,44 @@ class ZKBridgeServiceImpl {
    * When the timeout fires we mark the bridge failed so `isReady()` stays
    * false and callers can surface a retryable error.
    */
-  waitReady(timeoutMs: number = 30000): Promise<ZKReadyStatus> {
+  waitReady(timeoutMs: number = 60000): Promise<ZKReadyStatus> {
     if (this.ready || this.initError) return this.readyPromise;
-    // A concurrent waitReady call is fine — we only need one timer
-    // guarding the single shared readyPromise, so reuse the one we've
-    // already armed.
-    if (this.readyTimer) return this.readyPromise;
+    // Remember the budget so a later `notifyInitStarted()` can arm the
+    // timer using the same value the caller intended.
+    this.readyTimeoutMs = timeoutMs;
+    // Defer arming until the WebView actually begins loading. Otherwise
+    // the budget is consumed by Asset.downloadAsync() + WebView content-
+    // process spawn — both of which run before any engine code executes
+    // and which can take several seconds on cold start. If init has
+    // already started, arm immediately.
+    if (this.webViewInitStarted) {
+      this.armReadyTimer();
+    }
+    return this.readyPromise;
+  }
 
+  /**
+   * Called by HiddenWebView the moment the WebView begins loading the
+   * bundled HTML (onLoadStart). Marks the engine-init phase as having
+   * truly begun so `waitReady`'s budget measures init, not the preceding
+   * asset-extraction / WebView-spawn phases. Safe to call multiple times.
+   */
+  notifyInitStarted(): void {
+    if (this.webViewInitStarted) return;
+    this.webViewInitStarted = true;
+    this.initStartedAt = Date.now();
+    // If a `waitReady()` is already pending, arm its timer now.
+    if (this.readyTimeoutMs !== null && !this.readyTimer && !this.ready && !this.initError) {
+      this.armReadyTimer();
+    }
+  }
+
+  private armReadyTimer(): void {
+    if (this.readyTimer || this.readyTimeoutMs === null) return;
+    const timeoutMs = this.readyTimeoutMs;
     // Snapshot the resolver so a `reload()` that swaps `readyResolve`
     // before the timer fires can't make this timer resolve the *next*
-    // attempt's promise. The snapshot still resolves the original
-    // promise (a no-op if `reload()` already rejected its pending
-    // commands and moved on).
+    // attempt's promise.
     const resolveForThisAttempt = this.readyResolve;
 
     this.readyTimer = setTimeout(() => {
@@ -84,8 +123,6 @@ class ZKBridgeServiceImpl {
       this.initError = errMsg;
       resolveForThisAttempt({ status: 'failed', error: errMsg });
     }, timeoutMs);
-
-    return this.readyPromise;
   }
 
   /** Internal: cancel the init timeout armed by `waitReady`. Called on
@@ -112,6 +149,12 @@ class ZKBridgeServiceImpl {
   reload(): void {
     this.ready = false;
     this.initError = null;
+    // The new WebView load will fire `onLoadStart` again, which arms a
+    // fresh init timer. Until then, defer arming so the budget covers
+    // engine init only — same rationale as the cold-start path.
+    this.webViewInitStarted = false;
+    this.readyTimeoutMs = null;
+    this.initStartedAt = null;
     // Cancel any in-flight init timer before we swap in the new
     // readyPromise — otherwise the old timer would race with the
     // fresh init handshake and could resolve the new promise as failed.
@@ -154,7 +197,8 @@ class ZKBridgeServiceImpl {
       // slow handshake that lands just before the deadline doesn't still
       // allow the timer to fire and flip us to `failed` afterwards.
       this.clearReadyTimer();
-      console.log('ZKBridge __init__:', status, JSON.stringify(result));
+      const initDurationMs = this.initStartedAt ? Date.now() - this.initStartedAt : null;
+      console.log('ZKBridge __init__:', status, 'durationMs=', initDurationMs, JSON.stringify(result));
       if (status === 'success') {
         this.ready = true;
         this.initError = null;
