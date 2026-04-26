@@ -130,8 +130,8 @@ packages/sdk/
 | 2b-ii | apps/pro Vault deposit UI wired to deposit prover | done |
 | 2b-iii | swap mock for real Web Worker once deposit circuit ships | (gated on circuit build) |
 | 3a | `zk/eddsa.ts` (key derivation + signing) | done |
-| 3b | `zk/circuits/authorize.ts` + order hashing | next |
-| 3c | apps/pro order placement UI wired | |
+| 3b | `zk/{constants,merkle,secureWipe}.ts` + `zk/circuits/authorize.ts` | done |
+| 3c | apps/pro order placement UI wired | next |
 | 4 | `zk/claim.ts` + `stealth.ts` | withdraw + stealth derivation |
 | 5 | `orderbook/` + `relayer/` | shared orderbook + relayer registry |
 | 6 | `notes/` storage adapters | filesystem (web) / sqlite (mobile) |
