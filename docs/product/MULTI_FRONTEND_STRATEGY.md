@@ -9,7 +9,7 @@ is not. We ship three distinct frontends rather than one
 
 | Line | App | Target | Channel | Revenue model |
 | --- | --- | --- | --- | --- |
-| **Pro** | `frontend/` (existing, to be repositioned) | Semi-pro / OTC traders, $20K–$1M positions | crypto-twitter, KOLs, OTC Telegram rooms | Per-trade fee 0.03–0.05% |
+| **Pro** | `apps/pro/` (production product; consumes SDK) | Semi-pro / OTC traders, $20K–$1M positions | crypto-twitter, KOLs, OTC Telegram rooms | Per-trade fee 0.03–0.05% |
 | **Pay** | `apps/pay/` (new) | Finance ops at small crypto-native companies & DAOs | DAO forums, Safe Apps directory, SEO vs Request Finance | MRR: $0 / $49 / $199 / Enterprise |
 | **Drop** | `apps/drop/` (new) | Token launch teams, governance distributors | L2 partnerships, "anti-sybil airdrop tool" SEO | 0.5% of distributed value, or $500–$5K flat |
 
@@ -53,19 +53,24 @@ once at the master brand and reuse it everywhere.
 
 ## Rollout order
 
-1. **Foundation (3 weeks)** — extract `packages/sdk` + `packages/ui`.
-   Without this, every app duplicates contract calls and styles.
-2. **Pro reposition (2 weeks)** — workbench consolidation, copy
-   rewrite, vs-Uniswap comparison metric. See `PRO_REPOSITION.md`.
+1. **Foundation (in progress)** — `packages/sdk` skeleton shipped
+   (Phases 0–5c). Real ZK workers + note storage + merkle tree
+   migration from `frontend/` is the next SDK push. See
+   `SHARED_FOUNDATION.md`.
+2. **Pro production push (in progress)** — `apps/pro` workbench
+   shipped; UX essentials (Withdraw, Cancel, pair selector, network
+   switcher, stealth inbox, settings, status system, pre-sign
+   preview) and SDK real-logic wiring are the launch-blockers.
+   See `PRO_REPOSITION.md` §7–§8.
 3. **Scatter Pay MVP (4 weeks)** — fastest path to MRR. Recurring
    payouts is the lock-in. See `SCATTERPAY_SPEC.md`.
-4. **Scatter Drop MVP (4 weeks)** — biggest single-deal sizes (campaign
-   fees in the $K–$10K range). Pair with one launch partner from
-   week 1. See `SCATTERDROP_SPEC.md`.
+4. **Scatter Drop MVP (4 weeks)** — biggest single-deal sizes
+   (campaign fees in the $K–$10K range). Pair with one launch
+   partner from week 1. See `SCATTERDROP_SPEC.md`.
 5. **Mobile Quick Sign + Scatter Pay recurring (4 weeks, parallel)**
 
-Total: ~17 weeks from foundation → 3 frontends + mobile pairing
-shipping.
+Note: `frontend/` (the reference implementation) stays alive until
+`apps/pro` reaches feature parity, then is archived.
 
 ## Decisions still open
 

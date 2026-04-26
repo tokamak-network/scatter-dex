@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -55,6 +56,9 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
+  /** Mark an order as cancelled. Only valid for `matching` orders;
+   *  no-op when the order is already filled / claimed / cancelled. */
+  markCancelled(id: string): void;
 }
 
 const OrdersCtx = createContext<OrdersState | null>(null);
@@ -73,9 +77,19 @@ function newId(): string {
 
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  // Use a ref instead of useState so two adds in the same tick
-  // (double-click, fast resubmit) get distinct sequence numbers.
   const labelCounter = useRef(0);
+  // Tracks demo-lifecycle promote timers so they're cleared on
+  // unmount (HMR, route swap) and don't fire setOrders against an
+  // unmounted provider.
+  const promoteTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    const timers = promoteTimers.current;
+    return () => {
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   const add = useCallback(
     (o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">) => {
@@ -85,12 +99,24 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         id: newId(),
         label: `ord-${seq}`,
         createdAt: Date.now(),
-        // Phase 4 demo: orders skip "matching" and go straight to
-        // "claimable" so the claim flow is reachable without a
-        // relayer/chain backend. Phase 5 wires the real lifecycle.
-        status: "claimable",
+        status: "matching",
       };
       setOrders((prev) => [order, ...prev]);
+      // Demo lifecycle: matching → claimable after 8s. Bails out
+      // (preserving array identity) if the order was cancelled or
+      // already claimed by then. Real lifecycle events land with the
+      // SDK migration.
+      const handle = setTimeout(() => {
+        promoteTimers.current.delete(handle);
+        setOrders((prev) => {
+          const target = prev.find((x) => x.id === order.id);
+          if (!target || target.status !== "matching") return prev;
+          return prev.map((x) =>
+            x.id === order.id ? { ...x, status: "claimable" } : x,
+          );
+        });
+      }, 8_000);
+      promoteTimers.current.add(handle);
       return order;
     },
     [],
@@ -108,9 +134,19 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const markCancelled = useCallback((id: string) => {
+    setOrders((prev) => {
+      const target = prev.find((o) => o.id === id);
+      if (!target || target.status !== "matching") return prev;
+      return prev.map((o) =>
+        o.id === id ? { ...o, status: "cancelled" } : o,
+      );
+    });
+  }, []);
+
   const value = useMemo<OrdersState>(
-    () => ({ orders, add, markClaimed }),
-    [orders, add, markClaimed],
+    () => ({ orders, add, markClaimed, markCancelled }),
+    [orders, add, markClaimed, markCancelled],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;

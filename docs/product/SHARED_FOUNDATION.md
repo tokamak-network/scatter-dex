@@ -1,9 +1,14 @@
 # Shared Foundation — `packages/sdk` and `packages/ui`
 
-The three frontends (`frontend/`, `apps/pay/`, `apps/drop/`) and
-`mobile/` will all depend on shared TypeScript packages. Without
+The three production apps (`apps/pro/`, `apps/pay/`, `apps/drop/`)
+and `mobile/` all depend on shared TypeScript packages. Without
 these, every app duplicates contract calls, ZK glue, and design
 tokens.
+
+`frontend/` is the **reference implementation** whose real logic
+(workers, storage, merkle tree, on-chain dispatch) is being
+migrated into `@zkscatter/sdk` so the apps can consume it. Once
+`apps/pro` reaches parity, `frontend/` is archived.
 
 This is the prerequisite work before app-specific features can ship
 quickly.
@@ -87,7 +92,7 @@ ship a new `create*Prover()` factory.
 
 | Backend | Engine | Target | Status |
 | --- | --- | --- | --- |
-| `createWebWorkerProver` | snarkjs (Web Worker) | `apps/pro`, `pay`, `drop` (web) | active (Phase 2a) |
+| `createWebWorkerProver` | snarkjs (Web Worker) | `apps/pro`, `pay`, `drop` (web) | active (Phase 2a) — real circuit assets ship as part of the `frontend/` → SDK worker migration |
 | `createMockProver` | deterministic dummy | dev, tests, storybooks; unblocks UI when circuit assets aren't ready | active (Phase 2a) |
 | `createNativeProver` | mopro (Rust ↔ React Native FFI) | apps mobile companion | planned (Phase 4–6) |
 | `createWasmProver` | mopro compiled to WASM | web speed-up, optional | exploratory |
@@ -112,14 +117,17 @@ shipping and the WASM target is essentially free.
 
 ### Tokens
 
-Per-brand theme files, one file per app:
+Per-brand theme files, one file per app. All three default to the
+light, fintech-trustworthy palette per `BRAND_DIRECTION.md`; the
+sub-brand difference is accent color, not chrome.
 
 ```
 packages/ui/
-├── tokens/
-│   ├── pro.css        # dark, blue/cyan
-│   ├── pay.css        # light, blue
-│   └── drop.css       # light, purple
+├── src/
+│   ├── tokens/
+│   │   ├── pro.css    # light, blue primary  (trader-focused)
+│   │   ├── pay.css    # light, teal primary  (payouts / B2B)
+│   │   └── drop.css   # light, purple accent (campaigns)
 ├── components/
 │   ├── Button.tsx
 │   ├── Input.tsx
@@ -143,21 +151,32 @@ Components consume CSS variables, not hardcoded colors. Theme switch
 
 ## Migration order
 
-1. **Create `packages/sdk` skeleton** with module structure + empty
-   exports. (1 day)
-2. **Move `frontend/app/lib/zk/*`** into `packages/sdk/zk` and update
-   `frontend/` imports. Frontend still works. (3 days)
-3. **Move `mobile/src/services/{Deposit,Order,Claim,ZKBridge}*`**
-   into the same SDK with platform adapters. Mobile uses the same
-   SDK for everything except prover (WebView adapter) and storage
-   (sqlite adapter). (1 week)
-4. **Create `packages/ui`** with three theme files + 6 primitive
-   components. Update `frontend/` to use `Button`, `Input`,
-   `Modal`. (3 days)
-5. **`apps/pay/` and `apps/drop/`** import both packages from day 1.
+1. ✅ **Create `packages/sdk` skeleton** with module structure +
+   public exports (Phases 0–4 done — types, ABIs, wallet, ZK
+   prover interface, EdDSA, stealth, contract helpers, relayer
+   client, shared orderbook client).
+2. **Move `frontend/app/lib/zk/*` into `packages/sdk/src/zk/`** —
+   real Web Worker provers (deposit / authorize / claim / cancel),
+   worker-client + serde split, prove-timer, secure-wipe,
+   zkey-cache. `apps/pro` swaps its mock prover for the real one
+   in the same PR; `frontend/` swaps its imports next. (1 PR)
+3. **Move note storage** — `frontend/app/lib/zk/note-storage.ts` →
+   `packages/sdk/src/notes/` with adapter interface + IndexedDB
+   adapter (web) + memory adapter (tests). `apps/pro` replaces its
+   in-memory vault. (1 PR)
+4. **Move incremental Merkle tree** — `frontend/app/lib/zk/incremental-tree.ts`
+   → `packages/sdk/src/zk/merkle/` with chain-sync helper. (1 PR)
+5. **Move `mobile/src/services/{Deposit,Order,Claim,ZKBridge}*`**
+   into the same SDK with platform adapters (WebView prover,
+   AsyncStorage / SQLite note adapter). (1 PR)
+6. **Create `packages/ui`** with three theme files + primitive
+   components. (1 PR)
+7. **`apps/pay/` and `apps/drop/`** import both packages from
+   day 1.
 
-Total: ~3 weeks, 1 engineer, no user-visible changes during the
-extraction.
+Each migration step keeps `frontend/` running by leaving its
+imports until the new SDK module is verified in apps/pro, then
+swapping. No user-visible regression at any step.
 
 ## Workspace setup
 

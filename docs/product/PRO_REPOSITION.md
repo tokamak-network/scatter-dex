@@ -1,10 +1,18 @@
 # Pro Reposition
 
-The existing `frontend/` is a feature-complete ZK DEX console. Its
-gap is **positioning**, not capability. This doc captures the
-reposition plan.
+`apps/pro/` is the **shipping Pro product** — a production-grade,
+segment-targeted ZK trading workbench for semi-pro / OTC traders.
 
-## Current state (from inventory)
+The existing `frontend/` is a **feature-complete reference
+implementation** whose real ZK + on-chain logic gets migrated into
+`@zkscatter/sdk` so all three apps (`apps/pro`, `pay`, `drop`)
+consume the same proven core. Once `apps/pro` reaches feature
+parity (real provers, real dispatch, persistent vault, withdraw,
+cancel), `frontend/` is archived.
+
+This doc captures the reposition plan AND the production gap list.
+
+## Reference state (from `frontend/` inventory)
 
 - 12 top-level routes — equally weighted in nav
 - Landing page leads with "Privacy Trilemma" (educates ZK insiders,
@@ -15,7 +23,9 @@ reposition plan.
 - Dark mode only — codes "underground" instead of the
   regulator-friendly fintech look we want (see `BRAND_DIRECTION.md`)
 
-See `inventory/FRONTEND_FEATURES.md` for the raw catalog.
+See `inventory/FRONTEND_FEATURES.md` for the raw catalog of what
+the reference implementation already does (used as the migration
+checklist when porting real logic into SDK + apps/pro).
 
 ## Target after reposition
 
@@ -107,6 +117,73 @@ Add a paired-device flow:
 
 This is the demo that earns press for the multi-frontend strategy.
 
+### 7. Production UX essentials (gap list vs `frontend/` parity)
+
+These are the user-facing capabilities `frontend/` already covers
+that `apps/pro` must absorb before launch. Tracked as
+launch-blockers.
+
+**Critical (cannot launch without):**
+
+| # | Capability | Today in apps/pro | Needed |
+| --- | --- | --- | --- |
+| 1 | Withdraw funds from vault | ❌ no modal | `WithdrawModal` — pick note, choose destination (same wallet / stealth / arbitrary), ZK proof, dispatch |
+| 2 | Cancel open order | ❌ missing | `CancelOrderModal` — sign cancel, post nonce nullifier; Cancel button on each Open Order row |
+| 3 | Pair selector | ❌ ETH/USDC hardcoded | Searchable pair switcher in workbench header, recent + favorite pairs |
+| 4 | Network switcher | ❌ DEMO_NETWORK fixed | Header network pill, supports L2 testnet + L2 mainnet, custom RPC override in Settings |
+| 5 | Order detail / receipt | ❌ no detail view | Click an order row → side drawer with tx links, fill price, claim status, raw signed payload |
+| 6 | Stealth-receive inbox | ❌ no view | New `/inbox` page — scan progress, received notes, claim CTA |
+| 7 | Empty / error states with next-step CTAs | ⚠️ partial | Every empty state has a primary action; every error states what to retry |
+
+**High (needed for trader trust):**
+
+- Vault note consolidate / split
+- Quick-fill buttons (25/50/75/Max) on order form
+- Click on orderbook row → autofill price + size
+- Unified pre-sign preview (fee + slippage + gas in real numbers)
+  shared across Deposit / Order / Claim / Withdraw / Cancel
+- Toast notification system (filled / claim ready / failed → retry)
+- Status badges + progress bar (Pending → Matching → Filled →
+  Claimed) on every order card
+- `/settings` page (RPC, default relayer, default expiry, auto-lock,
+  data export)
+- Help drawer with glossary + short videos
+
+**Mid (long-term trust):**
+
+- Activity feed (chronological all-events)
+- Tax-friendly CSV / JSON export
+- KISA identity gate entry (compliance gate)
+- Multi-wallet switcher
+- Keyboard shortcuts (B/S, Esc, Enter)
+- Mobile responsive (current `grid-cols-12` doesn't break down)
+
+### 8. Workbench left column — "My Position" panel
+
+Current left column shows raw notes only. Replace with:
+
+```
+┌─────────────────────────┐
+│ Total private balance   │
+│ $12,840.50  [+ Deposit] │
+├─────────────────────────┤
+│ Open orders         [3] │
+│ • ord-7  buy  …  Cancel │
+│ • ord-9  sell …  Cancel │
+├─────────────────────────┤
+│ Ready to claim      [2] │
+│ • $4,200  Claim all →   │
+├─────────────────────────┤
+│ Notes               [4] │
+│ ETH 1.2  USDC 4,200 …   │
+│            Withdraw →   │
+└─────────────────────────┘
+```
+
+Why: a Pro trader's first glance must answer "where is my money?
+what's open? what can I claim?" — not "list of internal note
+records."
+
 ## Out of scope for this reposition
 
 - Liquidity pools (we're not an AMM, never will be)
@@ -115,16 +192,38 @@ This is the demo that earns press for the multi-frontend strategy.
 
 ## Sequence
 
-1. Landing copy + hero rewrite (1 day, no engineering blocker)
-2. **Light theme conversion + trust signals** (2 days — swap tokens
-   per `BRAND_DIRECTION.md`, add zk-X509 badge + footer)
-3. Route consolidation: build `/app` workbench (1 week)
-4. vs-Uniswap quote integration (3 days, needs Uniswap SOR call)
-5. Vocabulary swap pass (2 days, mostly find-and-replace + review)
-6. Vault cloud backup (1 week, careful crypto + UX)
-7. Mobile Quick Sign pairing (parallel mobile work, 1 week)
+**Done (apps/pro foundation, Phases 0–5c):**
+- ✅ Light theme + trust signals (BRAND_DIRECTION tokens applied)
+- ✅ `/app` workbench layout (vault + order form + orderbook)
+- ✅ `/orders` history page
+- ✅ Wallet connect, EdDSA derivation, vault context
+- ✅ DepositModal / OrderModal / ClaimModal scaffolds (mock prover)
+- ✅ Relayer registry pill, shared orderbook hook
 
-Total: ~3 weeks if 1 person, 1.5 weeks with mobile parallel.
+**Up next (Pro production push):**
+
+1. **UX essentials wave** (this PR set):
+   - Workbench "My Position" panel + status badges + toast system
+   - WithdrawModal + CancelOrderModal
+   - Orderbook click-to-fill + quick-fill buttons
+   - Unified pre-sign preview component
+2. **Pair + network switcher** (1 week)
+3. **Order detail drawer** + receipt view (3 days)
+4. **Stealth inbox `/inbox`** (1 week)
+5. **`/settings` page** (3 days)
+6. **vs-Uniswap quote integration** (3 days, needs Uniswap SOR call)
+7. **Vocabulary swap pass** (2 days, find-and-replace + review)
+8. **Vault cloud backup** (1 week, careful crypto + UX)
+9. **Mobile Quick Sign pairing** (parallel mobile work, 1 week)
+
+**SDK migration (parallel track, see `SHARED_FOUNDATION.md`):**
+- Real ZK workers from `frontend/app/lib/zk/*` → `@zkscatter/sdk/zk`
+- Note storage adapter (IndexedDB browser) → SDK
+- Incremental Merkle tree → SDK
+- Real on-chain dispatch wiring (already partial via `src/contracts/`)
+
+When the SDK migration lands, every UX component above starts
+producing real proofs and real transactions without UI changes.
 
 ## Success metrics (90-day)
 

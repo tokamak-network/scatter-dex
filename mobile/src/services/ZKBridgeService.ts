@@ -325,26 +325,36 @@ class ZKBridgeServiceImpl {
     return result.pong === true;
   }
 
-  async poseidonHash(inputs: string[]): Promise<string> {
-    // Native (Rust/light-poseidon) takes ~0.1 ms FFI vs ~50-200 ms per
-    // call through the WebView bridge — the WebView burst during merkle
-    // tree builds saturated the RN bridge and poisoned subsequent
-    // fetches. Output is bit-identical (verified by light-poseidon's
-    // circom-compat suite).
-    if (_nativePoseidon) {
-      try {
-        // light-poseidon only parses decimal; merkle zero-hash defaults
-        // are hex (mirroring Solidity `_zeros(d)`). Normalize here.
-        const decimal = inputs.map((s) =>
-          /^0x[0-9a-fA-F]+$/.test(s) ? BigInt(s).toString(10) : s,
-        );
-        return _nativePoseidon(decimal);
-      } catch (e) {
-        // Log the raw error so unexpected fields (uniffi error variants,
-        // ethers v6 shortMessage, etc.) survive for diagnosis.
-        console.warn('[ZKBridge] native poseidonHash failed, falling back:', e);
-      }
+  /** Try the native Poseidon path; returns null when the native module
+   *  isn't loaded or threw. Centralises hex→decimal normalization since
+   *  light-poseidon only parses decimal but call sites pass hex (merkle
+   *  zero-hashes mirror Solidity's hex `_zeros(d)`). */
+  private tryNativeHash(inputs: string[], label: string): string | null {
+    if (!_nativePoseidon) return null;
+    try {
+      const decimal = inputs.map((s) =>
+        /^0x[0-9a-fA-F]+$/.test(s) ? BigInt(s).toString(10) : s,
+      );
+      return _nativePoseidon(decimal);
+    } catch (e) {
+      // Narrow before formatting; pass the raw object as a second arg so
+      // any extra diagnostic fields (uniffi error variants, etc.) survive.
+      const msg = e instanceof Error
+        ? ((e as { shortMessage?: string; reason?: string }).shortMessage
+          ?? (e as { reason?: string }).reason
+          ?? e.message)
+        : String(e);
+      console.warn(`[ZKBridge] native ${label} failed (${msg}), falling back:`, e);
+      return null;
     }
+  }
+
+  async poseidonHash(inputs: string[]): Promise<string> {
+    // Native (Rust/light-poseidon): ~0.1 ms FFI vs ~50-200 ms per
+    // WebView round-trip. The WebView burst during merkle-tree builds
+    // saturated the RN bridge and poisoned subsequent fetches.
+    const native = this.tryNativeHash(inputs, 'poseidonHash');
+    if (native !== null) return native;
     const result = await this.sendCommand('poseidon_hash', { inputs });
     return result.hash;
   }
@@ -358,11 +368,18 @@ class ZKBridgeServiceImpl {
     pubKeyAx: string;
     pubKeyAy: string;
   }): Promise<string> {
+    // Same Poseidon underneath as the WebView path —
+    // Poseidon([tag, secret, token, balance, salt, pubKeyAx, pubKeyAy]).
+    const inputs = [params.tag, params.secret, params.token, params.balance, params.salt, params.pubKeyAx, params.pubKeyAy];
+    const native = this.tryNativeHash(inputs, 'computeCommitment');
+    if (native !== null) return native;
     const result = await this.sendCommand('compute_commitment', params);
     return result.commitment;
   }
 
   async computeNullifier(tag: string, secret: string, salt: string): Promise<string> {
+    const native = this.tryNativeHash([tag, secret, salt], 'computeNullifier');
+    if (native !== null) return native;
     const result = await this.sendCommand('compute_nullifier', { tag, secret, salt });
     return result.nullifier;
   }
@@ -401,6 +418,8 @@ class ZKBridgeServiceImpl {
   }
 
   async hashOrder(inputs: string[]): Promise<string> {
+    const native = this.tryNativeHash(inputs, 'hashOrder');
+    if (native !== null) return native;
     const result = await this.sendCommand('hash_order', { inputs });
     return result.hash;
   }

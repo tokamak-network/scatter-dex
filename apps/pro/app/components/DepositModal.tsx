@@ -12,6 +12,8 @@ import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
+import { useToast } from "./Toast";
+import { abortableSleep, isAbortError } from "../lib/abort";
 
 const DEMO_TOKENS = [
   { symbol: "ETH", address: "0x0000000000000000000000000000000000000001", decimals: 18 },
@@ -32,43 +34,11 @@ interface DepositModalProps {
   onClose: () => void;
 }
 
-/** Was the error a cancellation (AbortSignal triggered)? Checks
- *  by exception type / name rather than message string — the
- *  message text isn't a stable contract across DOMException
- *  implementations. */
-function isAbortError(e: unknown, signal: AbortSignal): boolean {
-  if (signal.aborted) return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
-    return e.name === "AbortError";
-  }
-  return (e as Error)?.name === "AbortError";
-}
-
-/** Sleep that honors an AbortSignal — rejects with AbortError when
- *  the signal fires, instead of resolving and letting the caller
- *  silently mutate state after a cancel. */
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export function DepositModal({ open, onClose }: DepositModalProps) {
   const { add: addNote } = useVault();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState("ETH");
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -171,19 +141,23 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
         commitment,
       });
       setPhase({ kind: "success", commitment });
+      toast.push({
+        kind: "success",
+        title: `Deposited ${amount} ${token.symbol}`,
+        description: "Note added to your private vault.",
+      });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) {
-        // Cancel path — leave the modal in idle/closed by the
-        // caller's close() handler. Don't surface an error UI.
         return;
       }
       console.error("[deposit]", e);
       const msg = (e as Error)?.message ?? "Deposit failed.";
       setPhase({ kind: "error", message: msg });
+      toast.push({ kind: "error", title: "Deposit failed", description: msg });
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, deriveEdDSA, addNote]);
+  }, [tokenSymbol, amount, account, deriveEdDSA, addNote, toast]);
 
   if (!open) return null;
 
