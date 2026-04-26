@@ -1,6 +1,6 @@
-# @scatterdex/sdk
+# @zkscatter/sdk
 
-Typed TypeScript client for the ScatterDEX core: contracts + ZK
+Typed TypeScript client for the zkScatter core: contracts + ZK
 proofs + relayer network + shared orderbook.
 
 Used by every persona-specific frontend (`apps/pro`, `apps/pay`,
@@ -30,7 +30,7 @@ TypeScript path mapping. There is no published npm version yet.
 ```jsonc
 // apps/<name>/package.json
 "dependencies": {
-  "@scatterdex/sdk": "file:../../packages/sdk"
+  "@zkscatter/sdk": "file:../../packages/sdk"
 }
 ```
 
@@ -40,14 +40,14 @@ at the source and add to `transpilePackages` in `next.config.ts`:
 ```jsonc
 // apps/<name>/tsconfig.json
 "paths": {
-  "@scatterdex/sdk": ["../../packages/sdk/src/index.ts"]
+  "@zkscatter/sdk": ["../../packages/sdk/src/index.ts"]
 }
 ```
 
 ```ts
 // apps/<name>/next.config.ts
 const nextConfig: NextConfig = {
-  transpilePackages: ["@scatterdex/sdk"],
+  transpilePackages: ["@zkscatter/sdk"],
 };
 ```
 
@@ -63,7 +63,7 @@ import {
   parseTokenList,
   type NetworkConfig,
   type TokenInfo,
-} from "@scatterdex/sdk";
+} from "@zkscatter/sdk";
 
 const tokens: TokenInfo[] = parseTokenList(
   "0xabc…:USDC:6,0xdef…:USDT:6",
@@ -97,7 +97,7 @@ packages/sdk/
    functions; defer side-effecty bits (proving, RPC) to adapters.
 3. **Versioned ABIs.** When contracts upgrade, SDK gets a new minor
    version; apps adopt at their own pace.
-4. **Tree-shakeable.** Subpath exports (`@scatterdex/sdk/core`) so
+4. **Tree-shakeable.** Subpath exports (`@zkscatter/sdk/core`) so
    bundlers don't ship the proving module to apps that don't use it.
 
 ## Roadmap

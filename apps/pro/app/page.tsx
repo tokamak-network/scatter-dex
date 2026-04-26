@@ -99,7 +99,7 @@ export default function Landing() {
 
       {/* Strengths / differentiators */}
       <section>
-        <h2 className="mb-2 text-center text-2xl font-semibold">Why ScatterDEX Pro</h2>
+        <h2 className="mb-2 text-center text-2xl font-semibold">Why Scatter Pro</h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
           The only DEX that combines MEV immunity, balance privacy, and a
           public regulatory record.
@@ -128,7 +128,7 @@ export default function Landing() {
                 <th className="px-5 py-3 text-center">Uniswap</th>
                 <th className="px-5 py-3 text-center">CowSwap</th>
                 <th className="px-5 py-3 text-center">Tornado-style</th>
-                <th className="px-5 py-3 text-center text-[var(--color-primary)]">ScatterDEX Pro</th>
+                <th className="px-5 py-3 text-center text-[var(--color-primary)]">Scatter Pro</th>
               </tr>
             </thead>
             <tbody>

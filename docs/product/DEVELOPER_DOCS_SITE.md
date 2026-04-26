@@ -1,6 +1,6 @@
 # Developer Docs Site (planned)
 
-Public-facing docs site for engineers consuming `@scatterdex/sdk`.
+Public-facing docs site for engineers consuming `@zkscatter/sdk`.
 
 ## Why a separate site
 
@@ -14,7 +14,7 @@ need:
   from TSDoc)
 - Concept guides — what's a commitment, how stealth claims work,
   why Dual-CA matters for compliance
-- Recipes — "build a custom relayer dashboard", "add ScatterPay to
+- Recipes — "build a custom relayer dashboard", "add Scatter Pay to
   my Safe", "verify a payout audit signature"
 - Migration guides — when SDK ships a breaking version
 
@@ -39,7 +39,7 @@ Pick Nextra unless we hit a hard limitation.
 ## Location
 
 `apps/docs/` — fourth Next.js app, port 3004 in dev,
-`docs.scatterdex.xyz` in production.
+`docs.zkscatter.xyz` in production.
 
 ## Phased build
 

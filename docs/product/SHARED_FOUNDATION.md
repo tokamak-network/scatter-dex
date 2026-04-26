@@ -13,7 +13,7 @@ quickly.
 After extraction:
 
 - Adding a new frontend = `pnpm create next-app` + import
-  `@scatterdex/sdk` + theme `@scatterdex/ui` → first wired screen in
+  `@zkscatter/sdk` + theme `@zkscatter/ui` → first wired screen in
   a day.
 - Bug in deposit flow gets fixed once, lands in all four surfaces.
 - Designers can ship a token change (e.g. brand color) by editing
@@ -56,7 +56,7 @@ packages/sdk/
 ### API shape (sketch)
 
 ```ts
-import { ScatterSDK } from "@scatterdex/sdk";
+import { ScatterSDK } from "@zkscatter/sdk";
 
 const sdk = ScatterSDK.create({
   network: "thanos-sepolia",

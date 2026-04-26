@@ -1,4 +1,4 @@
-# ScatterDrop — MVP Spec
+# Scatter Drop — MVP Spec
 
 `apps/drop/` · target persona: P3 "Marcus" (see `PERSONAS.md`)
 
@@ -136,7 +136,7 @@ GET  /api/campaigns/:id/stats
 ## GTM
 
 - **Anchor partner**: line up one Tokamak ecosystem token launch as
-  the inaugural ScatterDrop campaign before public launch. Generates
+  the inaugural Scatter Drop campaign before public launch. Generates
   the case study.
 - **Comparison content**: "How Arbitrum lost 7% of their drop to
   sybils — and what to do instead" → tool demo
@@ -147,7 +147,7 @@ GET  /api/campaigns/:id/stats
 
 ## Differentiators (paste this in marketing copy)
 
-| | Merkle distributor | Galxe / Layer3 | **ScatterDrop** |
+| | Merkle distributor | Galxe / Layer3 | **Scatter Drop** |
 | --- | --- | --- | --- |
 | Anti-sybil | none | heuristics | **zk-X509 proof** |
 | Recipient gas | recipient pays | recipient pays | **gasless** |

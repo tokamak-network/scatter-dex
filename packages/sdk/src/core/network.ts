@@ -1,6 +1,6 @@
 import type { TokenInfo } from "./tokens";
 
-/** Addresses of every core ScatterDEX contract on a given chain. */
+/** Addresses of every core zkScatter contract on a given chain. */
 export interface ContractAddresses {
   /** PrivateSettlement: settles matched private orders + DEX swaps. */
   privateSettlement: string;
@@ -16,7 +16,7 @@ export interface ContractAddresses {
   weth: string;
 }
 
-/** Everything an app needs to talk to one ScatterDEX deployment.
+/** Everything an app needs to talk to one zkScatter deployment.
  *
  *  Deliberately *passive* — the SDK never reads it from
  *  `process.env` or `window.__ENV__`. The host app builds it from its

@@ -1,4 +1,4 @@
-# ScatterPay — MVP Spec
+# Scatter Pay — MVP Spec
 
 `apps/pay/` · target persona: P2 "Sora" (see `PERSONAS.md`)
 
@@ -136,7 +136,7 @@ on Enterprise. Shown in the review step.
    week 2)
 2. Post in DAO ops Discords (Bankless, Llama, Karpatkey ops)
 3. ProductHunt launch with "Mercury for crypto payroll" framing
-4. Comparison post: "ScatterPay vs Request vs Sablier" (table)
+4. Comparison post: "Scatter Pay vs Request vs Sablier" (table)
 
 **First-month metrics**
 - 5 paying Team plan signups

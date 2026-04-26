@@ -33,7 +33,7 @@ export function parseTokenList(raw: string | undefined | null): TokenInfo[] {
 /** Insert a synthetic "ETH" alias before the WETH entry, pointing at
  *  the same address. Returns a new array; the input is not mutated.
  *
- *  This is the convention every ScatterDEX surface uses to let users
+ *  This is the convention every zkScatter surface uses to let users
  *  pick "ETH" in a token picker even though the backing entry is
  *  always WETH on chain. */
 export function withNativeEthAlias(tokens: TokenInfo[], wethAddress: string): TokenInfo[] {

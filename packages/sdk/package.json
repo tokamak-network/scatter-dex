@@ -1,8 +1,8 @@
 {
-  "name": "@scatterdex/sdk",
+  "name": "@zkscatter/sdk",
   "version": "0.0.1",
   "private": true,
-  "description": "Typed TypeScript client for the ScatterDEX core (contracts + ZK + relayer + shared orderbook).",
+  "description": "Typed TypeScript client for the zkScatter core (contracts + ZK + relayer + shared orderbook).",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

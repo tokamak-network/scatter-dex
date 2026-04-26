@@ -1,6 +1,6 @@
-# @scatterdex/ui
+# @zkscatter/ui
 
-Shared design tokens and primitive React components for ScatterDEX
+Shared design tokens and primitive React components for zkScatter
 frontends.
 
 Each app picks **one** theme by importing the matching token CSS
@@ -23,7 +23,7 @@ master brand. See `docs/product/BRAND_DIRECTION.md` for the rules.
 
 ```ts
 // apps/pro/app/globals.css
-@import "@scatterdex/ui/tokens/pro.css";
+@import "@zkscatter/ui/tokens/pro.css";
 @import "tailwindcss";
 ```
 
@@ -37,7 +37,7 @@ Tailwind utilities then resolve against the imported variables
 | 0 (this PR) | token CSS files | done |
 | 1 | `Button`, `Input`, `Modal` | replace inline styles in apps |
 | 2 | `Stepper`, `EmptyState`, `StatCard` | extracted from app dupes |
-| 3 | `ConnectWalletButton` | depends on `@scatterdex/sdk/react` wallet hook |
+| 3 | `ConnectWalletButton` | depends on `@zkscatter/sdk/react` wallet hook |
 
 ## Design rules
 

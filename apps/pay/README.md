@@ -1,4 +1,4 @@
-# ScatterPay
+# Scatter Pay
 
 Private bulk payouts for small crypto-native companies and DAOs.
 One transaction, N recipients, zero leaks between recipients.
@@ -28,7 +28,7 @@ npm run dev   # http://localhost:3001
 
 ## Domain (planned)
 
-`pay.scatterdex.xyz`
+`pay.zkscatter.xyz`
 
 ## Pricing (planned)
 

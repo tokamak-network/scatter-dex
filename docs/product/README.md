@@ -1,7 +1,7 @@
 # Product docs
 
 Strategic & implementation docs for the persona-specific frontends
-that share the ScatterDEX core (contracts + ZK + relayer + shared
+that share the zkScatter core (contracts + ZK + relayer + shared
 orderbook).
 
 ## Contents
