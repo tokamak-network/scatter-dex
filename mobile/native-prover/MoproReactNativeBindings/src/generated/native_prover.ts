@@ -63,6 +63,27 @@ const uniffiIsDebug =
   false;
 // Public interface members begin here.
 
+/**
+ * Derive a BabyJubJub keypair from a 32-byte signature hash. Matches
+ * circomlibjs `eddsa.prv2pub` (which interprets the first 32 bytes as
+ * the private key directly).
+ */
+export function deriveEddsaKey(signatureHash: string): EdDsaKey /*throws*/ {
+  return FfiConverterTypeEdDSAKey.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_derive_eddsa_key(
+          FfiConverterString.lower(signatureHash),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
 export function generateCircomProof(
   zkeyPath: string,
   circuitInputs: string,
@@ -197,13 +218,6 @@ export function moproHelloWorld(): string {
     )
   );
 }
-/**
- * Poseidon-BN254 hash of an arbitrary-arity input vector. Inputs and
- * the returned hash are decimal `BigUint` strings — same shape the JS
- * side already passes around for circuit signal values, so call sites
- * can swap `await ZKBridgeService.poseidonHash([...])` for
- * `await NativeProver.poseidonHash([...])` without touching the data.
- */
 export function poseidonHash(inputs: Array<string>): string /*throws*/ {
   return FfiConverterString.lift(
     uniffiCaller.rustCallWithError(
@@ -213,6 +227,29 @@ export function poseidonHash(inputs: Array<string>): string /*throws*/ {
       /*caller:*/ (callStatus) => {
         return nativeModule().ubrn_uniffi_native_prover_fn_func_poseidon_hash(
           FfiConverterArrayString.lower(inputs),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+/**
+ * Poseidon-EdDSA sign. Matches circomlibjs `eddsa.signPoseidon`.
+ */
+export function signEddsa(
+  privateKeyHex: string,
+  message: string
+): EdDsaSignature /*throws*/ {
+  return FfiConverterTypeEdDSASignature.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_sign_eddsa(
+          FfiConverterString.lower(privateKeyHex),
+          FfiConverterString.lower(message),
           callStatus
         );
       },
@@ -411,6 +448,102 @@ const FfiConverterTypeCircomProofResult = (() => {
       return (
         FfiConverterTypeCircomProof.allocationSize(value.proof) +
         FfiConverterArrayString.allocationSize(value.inputs)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type EdDsaKey = {
+  privateKeyHex: string;
+  pubKeyAx: string;
+  pubKeyAy: string;
+};
+
+/**
+ * Generated factory for {@link EdDsaKey} record objects.
+ */
+export const EdDsaKey = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<EdDsaKey, ReturnType<typeof defaults>>(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<EdDsaKey>,
+  });
+})();
+
+const FfiConverterTypeEdDSAKey = (() => {
+  type TypeName = EdDsaKey;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        privateKeyHex: FfiConverterString.read(from),
+        pubKeyAx: FfiConverterString.read(from),
+        pubKeyAy: FfiConverterString.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.privateKeyHex, into);
+      FfiConverterString.write(value.pubKeyAx, into);
+      FfiConverterString.write(value.pubKeyAy, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.privateKeyHex) +
+        FfiConverterString.allocationSize(value.pubKeyAx) +
+        FfiConverterString.allocationSize(value.pubKeyAy)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type EdDsaSignature = {
+  s: string;
+  r8x: string;
+  r8y: string;
+};
+
+/**
+ * Generated factory for {@link EdDsaSignature} record objects.
+ */
+export const EdDsaSignature = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<EdDsaSignature, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<EdDsaSignature>,
+  });
+})();
+
+const FfiConverterTypeEdDSASignature = (() => {
+  type TypeName = EdDsaSignature;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        s: FfiConverterString.read(from),
+        r8x: FfiConverterString.read(from),
+        r8y: FfiConverterString.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.s, into);
+      FfiConverterString.write(value.r8x, into);
+      FfiConverterString.write(value.r8y, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.s) +
+        FfiConverterString.allocationSize(value.r8x) +
+        FfiConverterString.allocationSize(value.r8y)
       );
     }
   }
@@ -934,17 +1067,9 @@ const FfiConverterMapStringArrayString = new FfiConverterMap(
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
 function uniffiEnsureInitialized() {
-  // HACK (spike): ubrn 0.31.0-2 ships TS templates that assume uniffi
-  // contract version 30, but mopro-ffi 0.3.5 is built against uniffi
-  // 0.29.x (contract version 29). Override the template constant to 29
-  // so the contract-version check actually matches the Rust scaffolding —
-  // this is the load-bearing binary-compat guard. The per-function
-  // checksum block below stays disabled because of an independent ubrn
-  // template bug (compares function-name strings vs numeric hashes),
-  // so they would always throw. Remove this whole hack once ubrn /
-  // mopro ship a matched pair.
+  // HACK (spike): contract version 29 to match mopro-ffi 0.3.5's uniffi 0.29.
+  // ubrn 0.31.0-2 emits 30 here; the dylib reports 29.
   const bindingsContractVersion = 29;
-  // Get the scaffolding contract version by calling the into the dylib
   const scaffoldingContractVersion =
     nativeModule().ubrn_ffi_native_prover_uniffi_contract_version();
   if (bindingsContractVersion !== scaffoldingContractVersion) {
@@ -953,11 +1078,16 @@ function uniffiEnsureInitialized() {
       bindingsContractVersion
     );
   }
+  // Skip per-function checksum checks (calibrated against contract v30).
   return;
-  // Per-function checksum checks below disabled — see comment at top.
-  // (Unreachable; left in place so the next clean ubrn regen drops in
-  // without losing context.)
-  // eslint-disable-next-line no-unreachable
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_derive_eddsa_key() !==
+    31502
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_derive_eddsa_key'
+    );
+  }
   if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_circom_proof() !==
     36118
@@ -1008,10 +1138,18 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_poseidon_hash() !==
-    50829
+    63380
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_native_prover_checksum_func_poseidon_hash'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_sign_eddsa() !==
+    11491
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_sign_eddsa'
     );
   }
   if (
@@ -1053,6 +1191,8 @@ export default Object.freeze({
   converters: {
     FfiConverterTypeCircomProof,
     FfiConverterTypeCircomProofResult,
+    FfiConverterTypeEdDSAKey,
+    FfiConverterTypeEdDSASignature,
     FfiConverterTypeG1,
     FfiConverterTypeG2,
     FfiConverterTypeGnarkProofResult,

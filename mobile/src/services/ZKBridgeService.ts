@@ -7,15 +7,27 @@
 import type WebView from 'react-native-webview';
 
 // `null` when mopro-ffi isn't on this build (Expo Go, missing arm64 jniLib).
-const _nativePoseidon: ((inputs: string[]) => string) | null = (() => {
+type NativeEdDsaKey = { privateKeyHex: string; pubKeyAx: string; pubKeyAy: string };
+type NativeEdDsaSignature = { s: string; r8x: string; r8y: string };
+type NativeFns = {
+  poseidonHash: ((inputs: string[]) => string) | null;
+  deriveEddsaKey: ((sigHash: string) => NativeEdDsaKey) | null;
+  signEddsa: ((privHex: string, msg: string) => NativeEdDsaSignature) | null;
+};
+const _native: NativeFns = (() => {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fn = require('mopro-ffi').poseidonHash as (i: string[]) => string;
-    return typeof fn === 'function' ? fn : null;
+    const m = require('mopro-ffi');
+    return {
+      poseidonHash: typeof m.poseidonHash === 'function' ? m.poseidonHash : null,
+      deriveEddsaKey: typeof m.deriveEddsaKey === 'function' ? m.deriveEddsaKey : null,
+      signEddsa: typeof m.signEddsa === 'function' ? m.signEddsa : null,
+    };
   } catch {
-    return null;
+    return { poseidonHash: null, deriveEddsaKey: null, signEddsa: null };
   }
 })();
+const _nativePoseidon = _native.poseidonHash;
 
 type PendingRequest = {
   resolve: (value: any) => void;
@@ -377,6 +389,13 @@ class ZKBridgeServiceImpl {
     pubKeyAx: string;
     pubKeyAy: string;
   }> {
+    if (_native.deriveEddsaKey) {
+      try {
+        return _native.deriveEddsaKey(signatureHash);
+      } catch (e) {
+        console.warn('[ZKBridge] native deriveEddsaKey failed, falling back:', e);
+      }
+    }
     return this.sendCommand('derive_eddsa_key', { signatureHash });
   }
 
@@ -385,6 +404,22 @@ class ZKBridgeServiceImpl {
     R8x: string;
     R8y: string;
   }> {
+    if (_native.signEddsa) {
+      try {
+        // babyjubjub-rs's `sign` parses message as decimal BigUint;
+        // some callers (orderHash from circomlibjs paths) pass hex.
+        // Normalize at the boundary, same shape as `tryNativeHash`.
+        const decimalMsg = /^0x[0-9a-fA-F]+$/.test(message)
+          ? BigInt(message).toString(10)
+          : message;
+        const sig = _native.signEddsa(privateKeyHex, decimalMsg);
+        // Native uses lower-case (r8x/r8y/s); WebView callers expect
+        // upper-case S/R8x/R8y. Adapt at the boundary.
+        return { S: sig.s, R8x: sig.r8x, R8y: sig.r8y };
+      } catch (e) {
+        console.warn('[ZKBridge] native signEddsa failed, falling back:', e);
+      }
+    }
     return this.sendCommand('sign_eddsa', { privateKeyHex, message });
   }
 
