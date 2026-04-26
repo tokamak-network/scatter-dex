@@ -65,10 +65,28 @@ interface ResolvedTree {
 
 /** Fast path: caller already maintains an incremental tree. */
 function fromMerkleProof(p: MerkleProof, leafIndex: number): ResolvedTree {
-  if (leafIndex < 0) {
+  if (leafIndex < 0 || leafIndex >= CLAIMS_TREE_SIZE) {
     throw new Error(
-      `generateClaimProof: leafIndex ${leafIndex} cannot be negative`,
+      `generateClaimProof: leafIndex ${leafIndex} out of range [0, ${CLAIMS_TREE_SIZE})`,
     );
+  }
+  if (p.pathElements.length !== CLAIMS_TREE_DEPTH) {
+    throw new Error(
+      `generateClaimProof: merkleProof.pathElements length must be ${CLAIMS_TREE_DEPTH} (got ${p.pathElements.length})`,
+    );
+  }
+  if (p.pathIndices.length !== CLAIMS_TREE_DEPTH) {
+    throw new Error(
+      `generateClaimProof: merkleProof.pathIndices length must be ${CLAIMS_TREE_DEPTH} (got ${p.pathIndices.length})`,
+    );
+  }
+  for (let i = 0; i < p.pathIndices.length; i++) {
+    const v = p.pathIndices[i];
+    if (v !== 0 && v !== 1) {
+      throw new Error(
+        `generateClaimProof: merkleProof.pathIndices[${i}] must be 0 or 1 (got ${v})`,
+      );
+    }
   }
   return { claimsRoot: p.root, pathElements: p.pathElements, pathIndices: p.pathIndices };
 }

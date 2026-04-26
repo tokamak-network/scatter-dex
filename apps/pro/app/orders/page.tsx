@@ -5,19 +5,22 @@ import { useMemo, useState } from "react";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 
-const PILL_CLASSES: Record<string, string> = {
+import type { OrderStatus } from "../lib/orders";
+
+// Class lookup keyed by `OrderStatus` so a typo here is a compile
+// error and adding a new status surfaces a missing entry.
+const PILL_CLASSES: Record<OrderStatus, string> = {
   claimed:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
-  settled:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
   claimable: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
   matching:  "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
   cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
 };
 
 const SEED_ORDERS: OrderRecord[] = [
-  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
+  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC",  price: "4,205",  size: "2.0",  status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
   { id: "seed-2", label: "ord_8401", side: "buy",  pair: "WBTC/USDC", price: "67,210", size: "0.15", status: "matching",  createdAt: Date.parse("2026-04-26T08:51:00Z") },
-  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC", price: "4,198", size: "1.5", status: "claimed",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
-  { id: "seed-4", label: "ord_8377", side: "buy",  pair: "TON/USDC", price: "5.42",   size: "1500", status: "cancelled", createdAt: Date.parse("2026-04-25T18:02:00Z") },
+  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC",  price: "4,198",  size: "1.5",  status: "claimed",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
+  { id: "seed-4", label: "ord_8377", side: "buy",  pair: "TON/USDC",  price: "5.42",   size: "1500", status: "cancelled", createdAt: Date.parse("2026-04-25T18:02:00Z") },
 ];
 
 function formatWhen(ts: number): string {
@@ -97,6 +100,6 @@ export default function Orders() {
   );
 }
 
-function Pill({ s }: { s: string }) {
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PILL_CLASSES[s] || ""}`}>{s}</span>;
+function Pill({ s }: { s: OrderStatus }) {
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PILL_CLASSES[s]}`}>{s}</span>;
 }

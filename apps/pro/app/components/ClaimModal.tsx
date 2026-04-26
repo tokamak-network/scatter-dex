@@ -32,15 +32,19 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
       reject(new DOMException("Aborted", "AbortError"));
       return;
     }
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
+    // Register the abort listener BEFORE setTimeout so an abort
+    // landing in the gap between `setTimeout(...)` and
+    // `addEventListener(...)` can't leave the promise hanging.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => {
-      clearTimeout(t);
+      if (timer !== undefined) clearTimeout(timer);
       reject(new DOMException("Aborted", "AbortError"));
     };
     signal.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
   });
 }
 

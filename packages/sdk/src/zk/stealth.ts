@@ -15,11 +15,12 @@
  *       at `stealthAddress`.
  *
  *  Compared with the frontend's existing implementation, this
- *  module:
- *  - is host-agnostic (no `window.location.origin` for link
- *    helpers — those live in app code)
- *  - exports `bytesToBigInt` / `bigintToBytes32` helpers because
- *    other circuit modules need the same conversions */
+ *  module is host-agnostic — link-building helpers that touch
+ *  `window.location.origin` live in app code, not here. The
+ *  big-endian byte ↔ bigint conversion is delegated to
+ *  `bytesToNumberBE` from `@noble/curves/utils` (re-exported at
+ *  the bottom of this file for callers that prefer one import
+ *  path). */
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, bytesToNumberBE, hexToBytes } from "@noble/curves/utils.js";
