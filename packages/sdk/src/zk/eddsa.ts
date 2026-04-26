@@ -3,9 +3,9 @@
  *  Why EdDSA: every spending circuit (authorize / claim / cancel)
  *  verifies a signature over the operation's Poseidon hash. ECDSA
  *  in-circuit is ~750K constraints; EdDSA on Baby Jubjub is ~5K.
- *  We use the wallet's native ECDSA exactly once — to deterministic-
- *  -ally derive the EdDSA key — and run every subsequent signature
- *  off the EdDSA key.
+ *  We use the wallet's native ECDSA exactly once — to
+ *  deterministically derive the EdDSA key — and run every
+ *  subsequent signature off the EdDSA key.
  *
  *  Derivation: the user signs a fixed message with the wallet
  *  (MetaMask / Rabby / Coinbase), the resulting ECDSA signature is
@@ -56,7 +56,7 @@ let cachePromise: Promise<{ eddsa: Eddsa; babyJub: Babyjub }> | null = null;
 async function getEddsa(): Promise<{ eddsa: Eddsa; babyJub: Babyjub }> {
   if (cached) return cached;
   if (!cachePromise) {
-    cachePromise = (async () => {
+    const promise = (async () => {
       const mod = (await import("circomlibjs")) as unknown as {
         buildEddsa: () => Promise<Eddsa>;
         buildBabyjub: () => Promise<Babyjub>;
@@ -65,6 +65,15 @@ async function getEddsa(): Promise<{ eddsa: Eddsa; babyJub: Babyjub }> {
       cached = { eddsa, babyJub };
       return cached;
     })();
+    // Clear the in-flight Promise on rejection so a transient failure
+    // (network blip on the dynamic import, OOM during table build)
+    // doesn't latch — the next caller can retry instead of inheriting
+    // the same poisoned Promise. `cached` only sets on success above,
+    // so the only state to reset is `cachePromise`.
+    promise.catch(() => {
+      if (cachePromise === promise) cachePromise = null;
+    });
+    cachePromise = promise;
   }
   return cachePromise;
 }
@@ -88,16 +97,35 @@ interface DeriveOpts {
  *  Pass either an `ethers.Signer` (we'll prompt for `signMessage`)
  *  or a hex-encoded signature you already have. Returning the
  *  signature lets callers cache it for later flows that need the
- *  same material (e.g. AES-GCM key-wrapping for vault backup). */
+ *  same material (e.g. AES-GCM key-wrapping for vault backup).
+ *
+ *  When a string signature is passed, `opts.message` has no effect
+ *  (the signature was produced against whatever message the caller
+ *  used). Passing both is treated as a programmer error — throws
+ *  rather than silently ignoring the override. */
 export async function deriveEdDSAKey(
   signerOrSignature: ethers.Signer | string,
   opts: DeriveOpts = {},
 ): Promise<{ keyPair: EdDSAKeyPair; signature: string }> {
-  const message = opts.message ?? DEFAULT_DERIVE_MESSAGE;
-  const signature =
-    typeof signerOrSignature === "string"
-      ? signerOrSignature
-      : await signerOrSignature.signMessage(message);
+  let signature: string;
+  if (typeof signerOrSignature === "string") {
+    if (opts.message !== undefined) {
+      throw new Error(
+        "deriveEdDSAKey: opts.message is ignored when a signature string is provided — drop one or the other",
+      );
+    }
+    // EIP-191 ECDSA signatures from `personal_sign` are 65 bytes
+    // (r ‖ s ‖ v) → 132 hex chars including the 0x prefix.
+    if (!ethers.isHexString(signerOrSignature, 65)) {
+      throw new Error(
+        "deriveEdDSAKey: signature must be a 0x-prefixed 65-byte hex string",
+      );
+    }
+    signature = signerOrSignature;
+  } else {
+    const message = opts.message ?? DEFAULT_DERIVE_MESSAGE;
+    signature = await signerOrSignature.signMessage(message);
+  }
 
   const hash = ethers.keccak256(signature);
   const privateKey = ethers.getBytes(hash);
@@ -149,22 +177,37 @@ export function serializeKeyPair(kp: EdDSAKeyPair): string {
   });
 }
 
-/** Inverse of `serializeKeyPair`. Throws on malformed input rather
- *  than silently corrupting the keypair. */
+/** Inverse of `serializeKeyPair`. Throws a single
+ *  `"deserializeKeyPair: malformed JSON"` for any structural issue
+ *  — invalid JSON, wrong shape, non-string fields, BigInt parse
+ *  failure — so callers don't have to discriminate between the
+ *  underlying parse / coercion errors. */
 export function deserializeKeyPair(json: string): EdDSAKeyPair {
-  const parsed = JSON.parse(json) as {
-    privateKey?: string;
-    publicKey?: [string, string];
-  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("deserializeKeyPair: malformed JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("deserializeKeyPair: malformed JSON");
+  }
+  const obj = parsed as { privateKey?: unknown; publicKey?: unknown };
   if (
-    typeof parsed.privateKey !== "string" ||
-    !Array.isArray(parsed.publicKey) ||
-    parsed.publicKey.length !== 2
+    typeof obj.privateKey !== "string" ||
+    !Array.isArray(obj.publicKey) ||
+    obj.publicKey.length !== 2 ||
+    typeof obj.publicKey[0] !== "string" ||
+    typeof obj.publicKey[1] !== "string"
   ) {
     throw new Error("deserializeKeyPair: malformed JSON");
   }
-  return {
-    privateKey: ethers.getBytes(parsed.privateKey),
-    publicKey: [BigInt(parsed.publicKey[0]!), BigInt(parsed.publicKey[1]!)],
-  };
+  try {
+    return {
+      privateKey: ethers.getBytes(obj.privateKey),
+      publicKey: [BigInt(obj.publicKey[0]), BigInt(obj.publicKey[1])],
+    };
+  } catch {
+    throw new Error("deserializeKeyPair: malformed JSON");
+  }
 }
