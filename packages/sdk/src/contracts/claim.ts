@@ -1,54 +1,49 @@
 import { ethers } from "ethers";
-import { PRIVATE_SETTLEMENT_ABI } from "../core/contracts";
+import { PRIVATE_SETTLEMENT_IFACE } from "../core/contracts";
 import { toBytes32Hex } from "../zk/commitment";
 import type { ClaimProofResult } from "../zk/circuits/claim";
 
-/** Inputs the contract needs that aren't carried by the prover —
- *  the recipient address (it's a public input but lives outside
- *  the proof object), the token address (same), and the original
- *  release time. */
-export interface ClaimCallExtras {
+/** Public-input scalars the contract receives alongside the proof.
+ *  These MUST match the values the caller passed to
+ *  `generateClaimProof` — passing different scalars and the matching
+ *  proof together would fail on-chain verification. */
+export interface ClaimCallInputs {
   recipient: string;
   token: string;
   amount: bigint;
   releaseTime: bigint;
 }
 
-/** Build and send `PrivateSettlement.claimWithProof(...)`.
- *
- *  Anyone can call this on behalf of the recipient; the recipient
- *  is encoded as a public signal so a relayer can submit gaslessly.
- *  Returns the pending `TransactionResponse`. */
+/** Send `PrivateSettlement.claimWithProof(...)`. Anyone can submit
+ *  on behalf of the recipient (the address is encoded in the
+ *  public signals), so a relayer can dispatch gaslessly. */
 export async function callClaimWithProof(
   signer: ethers.Signer,
   settlementAddress: string,
   proof: ClaimProofResult,
-  extras: ClaimCallExtras,
+  inputs: ClaimCallInputs,
 ): Promise<ethers.TransactionResponse> {
-  const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_ABI, signer);
+  const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_IFACE, signer);
+  const { a, b, c } = proof.proof;
   return settlement.claimWithProof(
-    proof.proof.a,
-    proof.proof.b,
-    proof.proof.c,
+    a, b, c,
     toBytes32Hex(proof.claimsRoot),
     toBytes32Hex(proof.nullifier),
-    extras.amount,
-    extras.token,
-    extras.recipient,
-    extras.releaseTime,
+    inputs.amount,
+    inputs.token,
+    inputs.recipient,
+    inputs.releaseTime,
   ) as Promise<ethers.TransactionResponse>;
 }
 
 export interface BatchClaimItem {
   proof: ClaimProofResult;
-  extras: ClaimCallExtras;
+  inputs: ClaimCallInputs;
 }
 
-/** Batch variant — submit several claims in one tx. The contract
- *  reverts atomically if any claim fails, so the caller must
- *  ensure every element is individually valid. Caps at the
- *  contract's `MAX_CLAIM_BATCH_SIZE`; chunk larger sets at the
- *  app layer. */
+/** Batch variant. Reverts atomically if any element is invalid;
+ *  caps at the contract's `MAX_CLAIM_BATCH_SIZE` (caller chunks
+ *  larger sets). */
 export async function callClaimWithProofBatch(
   signer: ethers.Signer,
   settlementAddress: string,
@@ -57,17 +52,20 @@ export async function callClaimWithProofBatch(
   if (items.length === 0) {
     throw new Error("callClaimWithProofBatch: empty batch");
   }
-  const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_ABI, signer);
-  const params = items.map((it) => ({
-    proofA: it.proof.proof.a,
-    proofB: it.proof.proof.b,
-    proofC: it.proof.proof.c,
-    claimsRoot: toBytes32Hex(it.proof.claimsRoot),
-    claimNullifier: toBytes32Hex(it.proof.nullifier),
-    amount: it.extras.amount,
-    token: it.extras.token,
-    recipient: it.extras.recipient,
-    releaseTime: it.extras.releaseTime,
-  }));
+  const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_IFACE, signer);
+  const params = items.map((it) => {
+    const { a, b, c } = it.proof.proof;
+    return {
+      proofA: a,
+      proofB: b,
+      proofC: c,
+      claimsRoot: toBytes32Hex(it.proof.claimsRoot),
+      claimNullifier: toBytes32Hex(it.proof.nullifier),
+      amount: it.inputs.amount,
+      token: it.inputs.token,
+      recipient: it.inputs.recipient,
+      releaseTime: it.inputs.releaseTime,
+    };
+  });
   return settlement.claimWithProofBatch(params) as Promise<ethers.TransactionResponse>;
 }

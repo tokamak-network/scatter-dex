@@ -65,6 +65,9 @@ export interface OrderHistoryResponse {
   offset: number;
 }
 
+/** Fee modes the relayer accepts on `submitOrder`. */
+export type FeeMode = "cover_taker";
+
 /** Order payload as the relayer expects it on submit. */
 export interface OrderData {
   maker: string;

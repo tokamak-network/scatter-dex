@@ -1,11 +1,10 @@
+import { timeoutSignal } from "../util/http";
+
 /** Shared orderbook — cross-relayer order discovery service.
  *
- *  Read-only client: fetches stats, the registered relayer list,
- *  and global orders (optionally filtered by trading pair). All
- *  methods return `null` (or `[]`) on transport / parsing failure
- *  so a missing service doesn't surface as a thrown error in the
- *  UI — pages display "no orders" / "service unavailable" empty
- *  states instead of hard-erroring. */
+ *  Read-only client. Returns `null` / `[]` on transport / parse
+ *  failure so missing service surfaces as an empty state in the
+ *  UI rather than a thrown error. */
 
 export interface SharedOrderbookStats {
   totalOrders: number;
@@ -38,9 +37,7 @@ export interface SharedOrder {
 }
 
 interface ClientOpts {
-  /** Per-call timeout. Defaults to 5 s. */
   timeoutMs?: number;
-  /** Test seam. */
   fetchImpl?: typeof fetch;
 }
 
@@ -65,10 +62,9 @@ export class SharedOrderbookClient {
   }
 
   async getRelayers(): Promise<SharedRelayer[]> {
-    const result = await this.fetchJSON<{
-      relayers: SharedRelayer[];
-      count: number;
-    }>("/api/relayers");
+    const result = await this.fetchJSON<{ relayers: SharedRelayer[]; count: number }>(
+      "/api/relayers",
+    );
     return result?.relayers ?? [];
   }
 
@@ -86,12 +82,10 @@ export class SharedOrderbookClient {
     return result?.orders ?? [];
   }
 
-  /** Returns `null` instead of throwing on any transport / status /
-   *  parse failure. Callers treat `null` as "service unavailable". */
   private async fetchJSON<T>(path: string): Promise<T | null> {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: timeoutSignal(this.timeoutMs),
       });
       if (!res.ok) return null;
       return (await res.json()) as T;

@@ -1,90 +1,69 @@
 import { sanitizeProfile } from "./profile";
+import { safeJson, timeoutSignal } from "../util/http";
 import type {
+  FeeMode,
   OrderData,
   OrderHistoryResponse,
   RelayerApiInfo,
   RelayerOrder,
 } from "./types";
 
-/** Default per-call timeout. Relayer probes during list-load
- *  shouldn't stall the UI on one slow node. */
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 interface ClientOpts {
-  /** Override the per-request timeout. Useful for slow networks
-   *  during dev. */
   timeoutMs?: number;
-  /** Fetch implementation for tests. Defaults to `globalThis.fetch`. */
   fetchImpl?: typeof fetch;
 }
 
-/** Talk to one relayer's HTTP API.
- *
- *  This is a thin client. It does not retry, cache, or reorder;
+/** Thin HTTP client for one relayer's API. No retry, no caching;
  *  callers compose those concerns. Errors throw with the relayer's
- *  message body when available; the timeout abort fires
- *  AbortError. */
+ *  message body when present. */
 export class RelayerClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(baseUrl: string, opts: ClientOpts = {}) {
-    // Strip trailing slash so the path joins below produce a single
-    // separator in every case.
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  private signal(extraSignal?: AbortSignal): AbortSignal {
-    const controllers: AbortSignal[] = [AbortSignal.timeout(this.timeoutMs)];
-    if (extraSignal) controllers.push(extraSignal);
-    return controllers.length === 1
-      ? controllers[0]!
-      : AbortSignal.any(controllers);
-  }
-
-  /** Probe `/api/info`. The `profile` field is sanitised before
-   *  return — see `sanitizeProfile`. */
   async getInfo(extraSignal?: AbortSignal): Promise<RelayerApiInfo> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/info`, {
-      signal: this.signal(extraSignal),
+      signal: timeoutSignal(this.timeoutMs, extraSignal),
     });
-    if (!res.ok) throw new Error(`relayer info ${res.status}: ${res.statusText}`);
+    if (!res.ok) throw httpError("info", res);
     const raw = (await res.json()) as RelayerApiInfo;
     return { ...raw, profile: sanitizeProfile(raw?.profile) };
   }
 
-  /** Submit a signed order to the relayer for matching. */
   async submitOrder(
     order: OrderData,
     signature: string,
-    feeMode?: "cover_taker",
+    feeMode?: FeeMode,
   ): Promise<{ status: string; txHash?: string; nonce?: string }> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ order, signature, ...(feeMode && { feeMode }) }),
-      signal: this.signal(),
+      signal: timeoutSignal(this.timeoutMs),
     });
     if (!res.ok) {
-      const err = await this.safeJson(res);
-      throw new Error(err?.error ?? `relayer submit ${res.status}: ${res.statusText}`);
+      const err = await safeJson<{ error?: string }>(res);
+      throw new Error(err?.error ?? defaultErrorMsg("submit", res));
     }
     return res.json();
   }
 
-  /** Get all open orders for `address` (no pagination). */
   async getOrders(address: string): Promise<RelayerOrder[]> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/orders/${address}`, {
-      signal: this.signal(),
+      signal: timeoutSignal(this.timeoutMs),
     });
-    if (!res.ok) throw new Error(`relayer orders ${res.status}: ${res.statusText}`);
+    if (!res.ok) throw httpError("orders", res);
     return res.json();
   }
 
-  /** Paginated order history with optional status filter. */
   async getOrderHistory(
     address: string,
     opts: { status?: string; limit?: number; offset?: number } = {},
@@ -95,18 +74,18 @@ export class RelayerClient {
     params.set("offset", String(opts.offset ?? 0));
     const res = await this.fetchImpl(
       `${this.baseUrl}/api/orders/${address}?${params}`,
-      { signal: this.signal() },
+      { signal: timeoutSignal(this.timeoutMs) },
     );
-    if (!res.ok) throw new Error(`relayer history ${res.status}: ${res.statusText}`);
+    if (!res.ok) throw httpError("history", res);
     return res.json();
   }
 
   async getOrderDetail(address: string, nonce: string): Promise<RelayerOrder> {
     const res = await this.fetchImpl(
       `${this.baseUrl}/api/orders/${address}/${nonce}`,
-      { signal: this.signal() },
+      { signal: timeoutSignal(this.timeoutMs) },
     );
-    if (!res.ok) throw new Error(`relayer order ${res.status}: ${res.statusText}`);
+    if (!res.ok) throw httpError("order", res);
     return res.json();
   }
 
@@ -116,22 +95,20 @@ export class RelayerClient {
       {
         method: "DELETE",
         headers: { "x-cancel-signature": signature },
-        signal: this.signal(),
+        signal: timeoutSignal(this.timeoutMs),
       },
     );
     if (!res.ok) {
-      const err = await this.safeJson(res);
-      throw new Error(err?.error ?? `relayer cancel ${res.status}: ${res.statusText}`);
+      const err = await safeJson<{ error?: string }>(res);
+      throw new Error(err?.error ?? defaultErrorMsg("cancel", res));
     }
   }
+}
 
-  /** Read JSON if the body parses; otherwise return null. Used so
-   *  the error path doesn't itself throw on malformed bodies. */
-  private async safeJson(res: Response): Promise<{ error?: string } | null> {
-    try {
-      return (await res.json()) as { error?: string };
-    } catch {
-      return null;
-    }
-  }
+function httpError(label: string, res: Response): Error {
+  return new Error(defaultErrorMsg(label, res));
+}
+
+function defaultErrorMsg(label: string, res: Response): string {
+  return `relayer ${label} ${res.status}: ${res.statusText}`;
 }
