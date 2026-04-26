@@ -77,8 +77,11 @@ export default function Workbench() {
     () => (ob.orders ? projectOrderbook(ob.orders, BASE_TOKEN_ADDRESS) : null),
     [ob.orders],
   );
-  const isMock = projected === null;
-  const display = projected ?? MOCK_ORDERBOOK;
+  // Mock fallback only when the network has no shared orderbook
+  // configured — a configured-but-still-loading state should keep
+  // the orderbook empty while showing the "Loading…" badge.
+  const isMock = !ob.configured;
+  const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
 
   return (
     <div className="space-y-6">
@@ -159,20 +162,12 @@ export default function Workbench() {
         <aside className="col-span-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="mb-4 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
             <span>Orderbook · {pair}</span>
-            {ob.configured ? (
-              ob.loading ? (
-                <span className="text-[var(--color-text-subtle)]">Loading…</span>
-              ) : (
-                <span className="text-[var(--color-success)]">Live</span>
-              )
-            ) : (
-              <span
-                className="text-[var(--color-warning)]"
-                title="DEMO_NETWORK has no shared orderbook URL — using mock data"
-              >
-                Mock
-              </span>
-            )}
+            <OrderbookStatus
+              configured={ob.configured}
+              loading={ob.loading}
+              error={ob.error}
+              hasOrders={ob.orders !== null}
+            />
           </div>
           <div className="text-sm">
             {display.asks.length === 0 && display.bids.length === 0 ? (
@@ -234,4 +229,39 @@ function Row({ side, price, size }: { side: "ask" | "bid"; price: string; size: 
       <span className="text-[var(--color-text-muted)]">{size}</span>
     </div>
   );
+}
+
+function OrderbookStatus({
+  configured,
+  loading,
+  error,
+  hasOrders,
+}: {
+  configured: boolean;
+  loading: boolean;
+  error: string | null;
+  hasOrders: boolean;
+}) {
+  if (!configured) {
+    return (
+      <span
+        className="text-[var(--color-warning)]"
+        title="DEMO_NETWORK has no shared orderbook URL — using mock data"
+      >
+        Mock
+      </span>
+    );
+  }
+  if (error) {
+    // Show "Stale" if we have a cached result, "Error" otherwise.
+    return (
+      <span className="text-[var(--color-danger)]" title={error}>
+        {hasOrders ? "Stale" : "Error"}
+      </span>
+    );
+  }
+  if (loading) {
+    return <span className="text-[var(--color-text-subtle)]">Loading…</span>;
+  }
+  return <span className="text-[var(--color-success)]">Live</span>;
 }
