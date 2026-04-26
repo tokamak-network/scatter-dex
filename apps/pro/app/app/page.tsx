@@ -1,12 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { useVault } from "../lib/vault";
+import { useSharedOrderbook } from "../lib/orderbook";
 import { DepositModal } from "../components/DepositModal";
 import { OrderModal } from "../components/OrderModal";
 
-const orderbook = {
+// Sentinel used by `projectOrderbook` to distinguish ask vs bid
+// in the demo. Replaced by the real WETH address when the token
+// list is wired.
+const BASE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000001";
+
+const MOCK_ORDERBOOK = {
   asks: [
     { price: "4,225.10", size: "1.2" },
     { price: "4,218.50", size: "0.8" },
@@ -19,6 +26,44 @@ const orderbook = {
   ],
 };
 
+interface RowData {
+  price: string;
+  size: string;
+}
+
+interface NumericRow {
+  priceNum: number;
+  sizeNum: number;
+}
+
+/** Project SharedOrders into asks/bids tables. Uses naive Number
+ *  math since the UI only needs an approximate display; a
+ *  token-aware formatter (with proper BigInt division per token
+ *  decimals) is a follow-up when the token list is wired. */
+function projectOrderbook(
+  orders: SharedOrder[],
+  baseToken: string,
+): { asks: RowData[]; bids: RowData[] } {
+  const asksN: NumericRow[] = [];
+  const bidsN: NumericRow[] = [];
+  for (const o of orders) {
+    const isAsk = o.sellToken.toLowerCase() === baseToken.toLowerCase();
+    const sell = Number(o.sellAmount);
+    const buy = Number(o.buyAmount);
+    if (!Number.isFinite(sell) || !Number.isFinite(buy) || sell === 0 || buy === 0) continue;
+    const priceNum = isAsk ? buy / sell : sell / buy;
+    const sizeNum = (isAsk ? sell : buy) / 1e18;
+    (isAsk ? asksN : bidsN).push({ priceNum, sizeNum });
+  }
+  asksN.sort((a, b) => a.priceNum - b.priceNum);
+  bidsN.sort((a, b) => b.priceNum - a.priceNum);
+  const fmt = (n: NumericRow): RowData => ({
+    price: n.priceNum.toLocaleString("en-US", { maximumFractionDigits: 2 }),
+    size: n.sizeNum.toLocaleString("en-US", { maximumFractionDigits: 4 }),
+  });
+  return { asks: asksN.slice(0, 6).map(fmt), bids: bidsN.slice(0, 6).map(fmt) };
+}
+
 export default function Workbench() {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [price, setPrice] = useState("4,205");
@@ -26,6 +71,17 @@ export default function Workbench() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const { notes } = useVault();
+  const pair = "ETH/USDC";
+  const ob = useSharedOrderbook(pair);
+  const projected = useMemo(
+    () => (ob.orders ? projectOrderbook(ob.orders, BASE_TOKEN_ADDRESS) : null),
+    [ob.orders],
+  );
+  // Mock fallback only when the network has no shared orderbook
+  // configured — a configured-but-still-loading state should keep
+  // the orderbook empty while showing the "Loading…" badge.
+  const isMock = !ob.configured;
+  const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
 
   return (
     <div className="space-y-6">
@@ -104,20 +160,38 @@ export default function Workbench() {
 
         {/* Orderbook */}
         <aside className="col-span-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Orderbook · ETH/USDC</div>
+          <div className="mb-4 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            <span>Orderbook · {pair}</span>
+            <OrderbookStatus
+              configured={ob.configured}
+              loading={ob.loading}
+              error={ob.error}
+              hasOrders={ob.orders !== null}
+            />
+          </div>
           <div className="text-sm">
-            {orderbook.asks.slice().reverse().map((o) => (
-              <Row key={`a-${o.price}`} side="ask" price={o.price} size={o.size} />
-            ))}
-            <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
-              mid 4,204.10
-            </div>
-            {orderbook.bids.map((o) => (
-              <Row key={`b-${o.price}`} side="bid" price={o.price} size={o.size} />
-            ))}
+            {display.asks.length === 0 && display.bids.length === 0 ? (
+              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                No open orders for this pair.
+              </div>
+            ) : (
+              <>
+                {display.asks.slice().reverse().map((o, i) => (
+                  <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} />
+                ))}
+                <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
+                  {isMock ? "mid 4,204.10" : "—"}
+                </div>
+                {display.bids.map((o, i) => (
+                  <Row key={`b-${i}-${o.price}`} side="bid" price={o.price} size={o.size} />
+                ))}
+              </>
+            )}
           </div>
           <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            Depth: $1.2M · Avg fill: 0.3%
+            {isMock
+              ? "Depth: $1.2M · Avg fill: 0.3% (mock)"
+              : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders`}
           </div>
         </aside>
       </div>
@@ -155,4 +229,39 @@ function Row({ side, price, size }: { side: "ask" | "bid"; price: string; size: 
       <span className="text-[var(--color-text-muted)]">{size}</span>
     </div>
   );
+}
+
+function OrderbookStatus({
+  configured,
+  loading,
+  error,
+  hasOrders,
+}: {
+  configured: boolean;
+  loading: boolean;
+  error: string | null;
+  hasOrders: boolean;
+}) {
+  if (!configured) {
+    return (
+      <span
+        className="text-[var(--color-warning)]"
+        title="DEMO_NETWORK has no shared orderbook URL — using mock data"
+      >
+        Mock
+      </span>
+    );
+  }
+  if (error) {
+    // Show "Stale" if we have a cached result, "Error" otherwise.
+    return (
+      <span className="text-[var(--color-danger)]" title={error}>
+        {hasOrders ? "Stale" : "Error"}
+      </span>
+    );
+  }
+  if (loading) {
+    return <span className="text-[var(--color-text-subtle)]">Loading…</span>;
+  }
+  return <span className="text-[var(--color-success)]">Live</span>;
 }
