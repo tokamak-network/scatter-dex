@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrders } from "../lib/orders";
 import { getAuthorizeProver } from "../lib/authorizeProver";
+import { parseUnits } from "../lib/parseUnits";
 
 type Phase =
   | { kind: "idle" }
@@ -50,6 +51,34 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Format a quote-token-denominated estimated fill (price × size).
+ *  Uses string-based parsing so an 18-decimal token doesn't lose
+ *  precision and a fixed `en-US` locale so SSR and client agree. */
+function estimateFill(price: string, size: string): string {
+  try {
+    // The form accepts comma-separated thousands ("4,205") and a
+    // dot decimal. parseUnits doesn't tolerate commas, so strip
+    // them first.
+    const cleanPrice = price.replace(/,/g, "");
+    const cleanSize = size.replace(/,/g, "");
+    // Use 8 fractional digits — enough headroom for any pair, then
+    // rebuild the display string.
+    const priceUnits = parseUnits(cleanPrice, 8);
+    const sizeUnits = parseUnits(cleanSize, 8);
+    // (price * size) at 8+8 = 16 fractional digits. Format the
+    // integer-part and a 2-digit fractional part for display.
+    const product = priceUnits * sizeUnits;
+    const denom = 10n ** 16n;
+    const whole = product / denom;
+    const frac = ((product % denom) * 100n) / denom; // 2 frac digits
+    const wholeStr = whole.toLocaleString("en-US");
+    const fracStr = frac.toString().padStart(2, "0");
+    return `$${wholeStr}.${fracStr}`;
+  } catch {
+    return "—";
+  }
+}
+
 export function OrderModal({
   open,
   onClose,
@@ -60,28 +89,63 @@ export function OrderModal({
 }: OrderModalProps) {
   const { add: addOrder } = useOrders();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
+  // useRef instead of useState — we never need a re-render on
+  // controller changes, only synchronous access from `close()`,
+  // and the previous useState pattern had a brief window after
+  // `setAbortCtrl(ctrl)` where a sibling close() could read a
+  // stale ref.
+  const abortCtrlRef = useRef<AbortController | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
   }, [open]);
 
   const close = useCallback(() => {
-    if (abortCtrl) abortCtrl.abort();
+    abortCtrlRef.current?.abort();
+    abortCtrlRef.current = null;
     setPhase({ kind: "idle" });
-    setAbortCtrl(null);
     onClose();
-  }, [abortCtrl, onClose]);
+  }, [onClose]);
+
+  // Escape-to-close + initial focus into the dialog. Only attach
+  // while open. This is *not* a full focus trap — Tab can still
+  // reach focusable elements behind the backdrop because we don't
+  // mark the rest of the page inert. Good enough for a confirm
+  // dialog where the underlying page is mostly non-interactive
+  // while the modal is up; a sentinel-pair trap can land later if
+  // we add modals over more interactive surfaces.
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("keydown", onKey);
+    const initial = dialogRef.current?.querySelector<HTMLElement>(
+      "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+    );
+    initial?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Restore focus to whatever was focused before the modal
+      // opened, so Esc-then-Tab feels right.
+      previouslyFocused?.focus?.();
+    };
+  }, [open, close]);
 
   const submit = useCallback(async () => {
     const ctrl = new AbortController();
-    setAbortCtrl(ctrl);
+    abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // Phase 3d will compose: deriveEdDSAKey on first use →
-      // hashAuthorizeOrder → signEdDSA → assemble circuit input. For
-      // 3c the modal exercises the surrounding UX with a small
-      // delay so progress states are visible.
+      // Phase 3d wires the real authorize Web Worker (see
+      // lib/authorizeProver.ts), but the input we pass through is
+      // still a stub: Phase 3e composes `deriveEdDSAKey` on first
+      // use → `hashAuthorizeOrder` → `signEdDSA` → real
+      // `AuthorizeProofInput`. Until then the worker will throw
+      // for unrecognised inputs — that's expected; the demo
+      // banner above warns it's mock mode.
       await abortableSleep(300, ctrl.signal);
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
@@ -108,12 +172,15 @@ export function OrderModal({
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       console.error("[order]", e);
+      // Prefer Error.message; fall back to a static label for
+      // thrown non-Errors. Avoid `String(e)` because it can
+      // produce "[object Object]" for some thrown shapes.
       setPhase({
         kind: "error",
-        message: (e as Error)?.message ?? "Order failed.",
+        message: e instanceof Error ? e.message : "Order failed.",
       });
     } finally {
-      setAbortCtrl(null);
+      if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
   }, [side, pair, price, size, addOrder]);
 
@@ -127,11 +194,19 @@ export function OrderModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="order-title"
+      // Backdrop click closes — only when the click landed on the
+      // backdrop itself, not bubbled up from the dialog.
+      onClick={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="order-title"
+      >
         <div className="mb-1 flex items-center justify-between">
           <h2 id="order-title" className="text-lg font-semibold">
             Confirm private order
@@ -157,7 +232,7 @@ export function OrderModal({
           <Row k="Side" v={side === "sell" ? "Sell" : "Buy"} />
           <Row k="Price" v={price} />
           <Row k="Size" v={size} />
-          <Row k="Estimated fill" v="$4,205.30" />
+          <Row k="Estimated fill" v={estimateFill(price, size)} />
           <Row k="vs Uniswap" v="−0.7% slippage" />
           <Row
             k="Fee"
@@ -215,7 +290,7 @@ function PhaseStatus({ phase }: { phase: Phase }) {
 
   if (phase.kind === "error") {
     return (
-      <div className="mt-4 rounded-md border border-[var(--color-danger)] bg-white px-3 py-2 text-sm text-[var(--color-danger)]">
+      <div className="mt-4 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-danger)]">
         {phase.message}
       </div>
     );
