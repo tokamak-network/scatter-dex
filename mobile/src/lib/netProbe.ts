@@ -59,12 +59,13 @@ export async function probeHttp(
     });
     const text = await res.text();
     return { ok: res.ok, ms: Date.now() - t0, bytes: text.length };
-  } catch (e: any) {
+  } catch (e) {
+    console.warn("[netProbe]", e);
     return {
       ok: false,
       ms: Date.now() - t0,
       bytes: 0,
-      error: e?.message || String(e),
+      error: e instanceof Error ? e.message : String(e),
     };
   }
 }
@@ -106,12 +107,13 @@ export async function probeWarmupThenPost(
     });
     const text = await res.text();
     return { ok: res.ok, ms: Date.now() - tPost, bytes: text.length };
-  } catch (e: any) {
+  } catch (e) {
+    console.warn('[netProbe] warm+post', e);
     return {
       ok: false,
       ms: Date.now() - tPost,
       bytes: 0,
-      error: `(after ${Date.now() - t0}ms warm-up) ${e?.message || String(e)}`,
+      error: `(after ${Date.now() - t0}ms warm-up) ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }
@@ -124,7 +126,7 @@ export async function probeHttpWrapped(
   relayerUrl: string,
   payload: Record<string, unknown>,
 ): Promise<ProbeResult> {
-  const url = `${relayerUrl}/api/echo`;
+  const url = `${normalizeUrl(relayerUrl)}/api/echo`;
   const body = JSON.stringify(payload);
   const t0 = Date.now();
   try {
@@ -136,12 +138,13 @@ export async function probeHttpWrapped(
     });
     const text = await res.text();
     return { ok: res.ok, ms: Date.now() - t0, bytes: text.length };
-  } catch (e: any) {
+  } catch (e) {
+    console.warn("[netProbe]", e);
     return {
       ok: false,
       ms: Date.now() - t0,
       bytes: 0,
-      error: e?.message || String(e),
+      error: e instanceof Error ? e.message : String(e),
     };
   }
 }
@@ -165,12 +168,13 @@ export async function probeWs(
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl);
-    } catch (e: any) {
+    } catch (e) {
+      console.warn('[netProbe] ws ctor', e);
       settle({
         ok: false,
         ms: Date.now() - t0,
         bytes: 0,
-        error: e?.message || String(e),
+        error: e instanceof Error ? e.message : String(e),
       });
       return;
     }

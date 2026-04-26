@@ -243,8 +243,10 @@ class ZKBridgeServiceImpl {
           /^0x[0-9a-fA-F]+$/.test(s) ? BigInt(s).toString(10) : s,
         );
         return _nativePoseidon(decimal);
-      } catch (e: any) {
-        console.warn('[ZKBridge] native poseidonHash failed, falling back:', e?.message || String(e));
+      } catch (e) {
+        // Log the raw error so unexpected fields (uniffi error variants,
+        // ethers v6 shortMessage, etc.) survive for diagnosis.
+        console.warn('[ZKBridge] native poseidonHash failed, falling back:', e);
       }
     }
     const result = await this.sendCommand('poseidon_hash', { inputs });

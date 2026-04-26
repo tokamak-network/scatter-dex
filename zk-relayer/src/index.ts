@@ -364,8 +364,10 @@ async function main() {
     });
     const wss = new WebSocketServer({ server, path: "/ws/echo" });
     wss.on("connection", (ws) => {
-      ws.on("message", (data) => {
-        ws.send(typeof data === "string" ? data : data.toString());
+      ws.on("message", (data, isBinary) => {
+        // ws@8 hands us RawData (Buffer/ArrayBuffer/Buffer[]); echo it
+        // back unchanged with the original binary/text framing.
+        ws.send(data, { binary: isBinary });
       });
     });
     console.log("[net] echo probe enabled at POST /api/echo and WS /ws/echo");

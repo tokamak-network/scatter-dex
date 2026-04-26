@@ -83,6 +83,8 @@ export class PrivateSubmitter {
   // Concurrent requests on a busy relayer must not each re-run the
   // depth-20 build or the event loop starves.
   private cachedTree: { leafCount: number; tree: Awaited<ReturnType<typeof buildMerkleTree>> } | null = null;
+  private treeBuildInflight: Promise<Awaited<ReturnType<typeof buildMerkleTree>>> | null = null;
+  private indexInflight: Promise<void> | null = null;
   private lastIndexedBlock: number = -1;
 
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
@@ -96,12 +98,26 @@ export class PrivateSubmitter {
       !this.cachedTree ||
       this.cachedTree.leafCount !== this.commitmentLeaves.length
     ) {
-      const tree = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
-      this.cachedTree = { leafCount: this.commitmentLeaves.length, tree };
+      // Coalesce concurrent rebuilds onto a single Promise so a burst
+      // of /merkle-proof requests doesn't spawn N parallel depth-20
+      // builds when the cache is empty/stale.
+      if (!this.treeBuildInflight) {
+        const targetCount = this.commitmentLeaves.length;
+        this.treeBuildInflight = buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH)
+          .then((tree) => {
+            this.cachedTree = { leafCount: targetCount, tree };
+            return tree;
+          })
+          .finally(() => {
+            this.treeBuildInflight = null;
+          });
+      }
+      await this.treeBuildInflight;
     }
-    const proof = getMerkleProof(this.cachedTree.tree, leafIndex);
+    const cached = this.cachedTree!;
+    const proof = getMerkleProof(cached.tree, leafIndex);
     return {
-      root: this.cachedTree.tree.root.toString(),
+      root: cached.tree.root.toString(),
       pathElements: proof.pathElements.map((e) => e.toString()),
       pathIndices: proof.pathIndices,
     };
@@ -109,8 +125,17 @@ export class PrivateSubmitter {
 
   /** Index commitment deposits from on-chain events. Incremental: only
    *  queries blocks past `lastIndexedBlock`, so /merkle-proof on a hot
-   *  relayer doesn't re-scan history each call. */
+   *  relayer doesn't re-scan history each call. Concurrent callers
+   *  share a single in-flight indexing pass via `indexInflight`. */
   async indexCommitments(): Promise<void> {
+    if (this.indexInflight) return this.indexInflight;
+    this.indexInflight = this.runIndexCommitments().finally(() => {
+      this.indexInflight = null;
+    });
+    return this.indexInflight;
+  }
+
+  private async runIndexCommitments(): Promise<void> {
     const filter = this.pool.filters.CommitmentInserted();
     let fromBlock: number;
     if (this.lastIndexedBlock >= 0) {

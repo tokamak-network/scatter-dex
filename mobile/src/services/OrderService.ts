@@ -520,41 +520,42 @@ export const OrderService = {
       // route for genuine aborts.
       let response: { orderId?: string; status?: string; [k: string]: any };
       try {
-        response = await RelayerApiService.submitAuthorizeOrder(
-          {
-            proof: solidityProof,
-            publicSignals: namedSignals,
-            publicSignalsArray: ps,
-            pubKeyAx: keyPair.pubKeyAx,
-            pubKeyAy: keyPair.pubKeyAy,
-          },
-          input.relayerUrl,
-        );
-        console.log('[OrderService] POST resolved', { ms: Date.now() - t0 });
-      } catch (postErr: any) {
-        const isAbort = postErr instanceof Error
-          && (postErr.name === 'AbortError' || /abort/i.test(postErr.message));
-        console.log('[OrderService] POST rejected', {
-          ms: Date.now() - t0,
-          err: postErr?.name || postErr?.message,
-        });
-        if (!isAbort) {
-          // Terminal error (400 rejection, network unreachable). No
-          // fallback — surface to the user.
-          throw postErr;
+        try {
+          response = await RelayerApiService.submitAuthorizeOrder(
+            {
+              proof: solidityProof,
+              publicSignals: namedSignals,
+              publicSignalsArray: ps,
+              pubKeyAx: keyPair.pubKeyAx,
+              pubKeyAy: keyPair.pubKeyAy,
+            },
+            input.relayerUrl,
+          );
+          console.log('[OrderService] POST resolved', { ms: Date.now() - t0 });
+        } catch (postErr: any) {
+          const isAbort = postErr instanceof Error
+            && (postErr.name === 'AbortError' || /abort/i.test(postErr.message));
+          console.log('[OrderService] POST rejected', {
+            ms: Date.now() - t0,
+            err: postErr?.name || postErr?.message,
+          });
+          if (!isAbort) throw postErr;
+          // POST aborted recoverably — poll for acceptance. Kept for
+          // the rare case where response delivery dies but the relayer
+          // still got the body.
+          console.log('[OrderService] POST aborted; falling back to GET poll');
+          const status = await pollForAcceptedOrder(
+            namedSignals.nullifier,
+            input.relayerUrl,
+          );
+          if (!status) throw postErr;
+          response = { status: status.status };
         }
-        // POST aborted recoverably — fall back to polling for whether
-        // the relayer eventually accepted. This is the path the old
-        // race covered, kept only for genuine aborts now.
-        console.log('[OrderService] POST aborted; falling back to GET poll');
-        const status = await pollForAcceptedOrder(
-          namedSignals.nullifier,
-          input.relayerUrl,
-        );
-        if (!status) throw postErr;
-        response = { status: status.status };
+      } finally {
+        // Polling must always resume, including on terminal POST errors,
+        // or pending-order updates stall for the rest of the session.
+        PendingOrdersService.resumePoll();
       }
-      PendingOrdersService.resumePoll();
 
       // ─── Step 6: Persist claim secrets + change note + mark spent ─
       onProgress({ step: 'saving_change' });

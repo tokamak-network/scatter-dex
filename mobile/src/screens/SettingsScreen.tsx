@@ -706,12 +706,8 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Network Probe — compares HTTP vs WebSocket roundtrip latency
-            on the same ~2.6 KB payload, against the relayer's echo
-            endpoints. Hypothesis: the iOS Simulator / Android response-
-            delivery delay observed on `/api/authorize-orders` is HTTP-
-            specific and disappears over WebSocket. Endpoints are
-            gated by `DIAG_AUTH_ORDERS=1` on the relayer. */}
+        {/* Dev-only network probe. Strip from release builds. */}
+        {__DEV__ && (
         <View style={s.sectionGroup}>
           <Text style={s.sectionTitle}>🛰️ Network Probe (dev)</Text>
           <View style={s.toggleRow}>
@@ -792,6 +788,7 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        )}
 
         <View style={{ height: 96 }} />
       </ScrollView>
