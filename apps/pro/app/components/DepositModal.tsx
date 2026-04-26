@@ -7,8 +7,9 @@ import {
   toBytes32Hex,
   type CommitmentNote,
 } from "@zkscatter/sdk/zk";
+import { useWallet } from "@zkscatter/sdk/react";
 import { useVault } from "../lib/vault";
-import { demoEddsaPubKey } from "../lib/demoEddsa";
+import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 
@@ -66,6 +67,8 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
   const { add: addNote } = useVault();
+  const { account } = useWallet();
+  const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const [tokenSymbol, setTokenSymbol] = useState("ETH");
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -92,6 +95,13 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   const submit = useCallback(async () => {
     const token = DEMO_TOKENS.find((t) => t.symbol === tokenSymbol);
     if (!token) return;
+    if (!account) {
+      setPhase({
+        kind: "error",
+        message: "Connect a wallet before depositing.",
+      });
+      return;
+    }
 
     let amountWei: bigint;
     try {
@@ -113,10 +123,16 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
 
     try {
       setPhase({ kind: "preparing" });
+      // Derive (or retrieve cached) EdDSA keypair via the wallet.
+      // First call prompts the wallet for a signature; later calls
+      // in the same session resolve from cache.
+      const eddsaKey = await deriveEdDSA();
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
       const note: CommitmentNote = generateNote(
         token.address,
         amountWei,
-        demoEddsaPubKey(),
+        eddsaKey.publicKey,
       );
       const commitment = await computeCommitment(note);
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -151,6 +167,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       addNote({
         symbol: token.symbol,
         amount,
+        note,
         commitment,
       });
       setPhase({ kind: "success", commitment });
@@ -166,7 +183,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, addNote]);
+  }, [tokenSymbol, amount, account, deriveEdDSA, addNote]);
 
   if (!open) return null;
 
@@ -258,10 +275,11 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
               </button>
               <button
                 onClick={submit}
-                disabled={busy}
+                disabled={busy || isDeriving || !account}
+                title={!account ? "Connect a wallet first" : undefined}
                 className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
               >
-                {busy ? "Working…" : "Deposit"}
+                {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
               </button>
             </>
           )}

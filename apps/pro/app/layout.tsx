@@ -4,6 +4,7 @@ import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { VaultProvider } from "./lib/vault";
 import { OrdersProvider } from "./lib/orders";
+import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <WalletProvider network={DEMO_NETWORK}>
+          <EdDSAKeyProvider>
           <VaultProvider>
             <OrdersProvider>
               <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
@@ -43,6 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </footer>
             </OrdersProvider>
           </VaultProvider>
+          </EdDSAKeyProvider>
         </WalletProvider>
       </body>
     </html>

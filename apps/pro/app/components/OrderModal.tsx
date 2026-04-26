@@ -1,9 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  randomFieldElement,
+  type AuthorizeProofInput,
+  type ClaimEntry,
+} from "@zkscatter/sdk/zk";
+import { useWallet } from "@zkscatter/sdk/react";
 import { useOrders } from "../lib/orders";
+import { useEdDSAKey } from "../lib/eddsaKey";
 import { getAuthorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
+import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
+import type { VaultNote } from "../lib/vault";
 
 type Phase =
   | { kind: "idle" }
@@ -23,7 +32,17 @@ interface OrderModalProps {
   pair: string;
   price: string;
   size: string;
+  /** The vault note funding this order. Null when the vault is
+   *  empty — the modal still renders but the submit button is
+   *  disabled with a clear message. */
+  note: VaultNote | null;
 }
+
+// Demo placeholders. Phase 5 reads these from on-chain state /
+// user choice (relayer registry + token list).
+const DEMO_BUY_TOKEN = "0x0000000000000000000000000000000000000002";
+const DEMO_RELAYER = "0x0000000000000000000000000000000000000099";
+const ORDER_LIFETIME_MS = 60 * 60 * 1000; // 1h
 
 function isAbortError(e: unknown, signal: AbortSignal): boolean {
   if (signal.aborted) return true;
@@ -86,8 +105,11 @@ export function OrderModal({
   pair,
   price,
   size,
+  note,
 }: OrderModalProps) {
   const { add: addOrder } = useOrders();
+  const { account } = useWallet();
+  const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -135,27 +157,111 @@ export function OrderModal({
   }, [open, close]);
 
   const submit = useCallback(async () => {
+    if (!account) {
+      setPhase({ kind: "error", message: "Connect a wallet first." });
+      return;
+    }
+    if (!note) {
+      setPhase({ kind: "error", message: "Deposit to your vault before placing an order." });
+      return;
+    }
+    if (side !== "sell") {
+      // The proof always sells the deposited token; supporting "Buy"
+      // requires the user to have a quote-token note in the vault and
+      // a token-aware decimals lookup. Phase 5 wires the token list +
+      // proper side handling.
+      setPhase({
+        kind: "error",
+        message:
+          "Buy side isn't wired yet — this demo only supports selling the deposited token. Phase 5 adds proper side handling against the token list.",
+      });
+      return;
+    }
+
+    let sellAmount: bigint;
+    let buyAmount: bigint;
+    try {
+      // Demo decimals — Phase 5 derives these from a real token list.
+      // Sell side: deposited token (assume 18 dec like ETH/WETH);
+      // Buy side: USDC-shaped quote token (6 dec).
+      sellAmount = parseUnits(size.replace(/,/g, ""), 18);
+      const priceUnits = parseUnits(price.replace(/,/g, ""), 6);
+      const sizeUnits = parseUnits(size.replace(/,/g, ""), 18);
+      buyAmount = (priceUnits * sizeUnits) / 10n ** 18n;
+    } catch (e) {
+      setPhase({
+        kind: "error",
+        message: (e as Error)?.message ?? "Invalid price or size.",
+      });
+      return;
+    }
+    if (sellAmount <= 0n || buyAmount <= 0n) {
+      setPhase({ kind: "error", message: "Price and size must be positive." });
+      return;
+    }
+    // Circuit invariant: sellAmount ≤ note.amount (overspending the
+    // escrow is rejected by authorize.circom). Catching it here saves
+    // the user a 1–2 s proof followed by the SDK's pre-check throw.
+    if (sellAmount > note.note.amount) {
+      setPhase({
+        kind: "error",
+        message: `Order size (${size}) exceeds the vault note's balance.`,
+      });
+      return;
+    }
+
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // Phase 3d wires the real authorize Web Worker (see
-      // lib/authorizeProver.ts), but the input we pass through is
-      // still a stub: Phase 3e composes `deriveEdDSAKey` on first
-      // use → `hashAuthorizeOrder` → `signEdDSA` → real
-      // `AuthorizeProofInput`. Until then the worker will throw
-      // for unrecognised inputs — that's expected; the demo
-      // banner above warns it's mock mode.
-      await abortableSleep(300, ctrl.signal);
+      const eddsaKey = await deriveEdDSA();
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      // Capture once — using `Date.now()` separately for releaseTime
+      // and expiry would race the second boundary in rare cases and
+      // produce a 1-second discrepancy.
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const horizonSec = nowSec + BigInt(Math.floor(ORDER_LIFETIME_MS / 1000));
+
+      // Build a single-claim distribution: the user receives
+      // `buyAmount` of the buy token at their own EOA. Phase 4 adds
+      // multi-claim + stealth address support.
+      const claim: ClaimEntry = {
+        secret: randomFieldElement(),
+        recipient: account,
+        token: DEMO_BUY_TOKEN,
+        amount: buyAmount,
+        releaseTime: horizonSec,
+      };
+
+      // Single-leaf-at-0 empty Merkle tree — see lib/emptyTreeProof.ts.
+      // This is enough for the prover to produce a self-consistent
+      // proof; the resulting root won't match an on-chain
+      // CommitmentPool root (Phase 5 wires the real one).
+      const { merkleProof, leafIndex } = await buildEmptyTreeProof(note.note);
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      const input: AuthorizeProofInput = {
+        note: note.note,
+        leafIndex,
+        merkleProof,
+        sellAmount,
+        buyToken: DEMO_BUY_TOKEN,
+        buyAmount,
+        // 50 bps cap. Phase 5 derives this from chosen relayer terms.
+        maxFee: 50n,
+        expiry: horizonSec,
+        nonce: randomFieldElement(),
+        relayer: DEMO_RELAYER,
+        eddsaPrivateKey: eddsaKey.privateKey,
+        claims: [claim],
+      };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
       const prover = getAuthorizeProver();
       await prover.ready();
       await prover.prove(
-        {
-          circuitId: "authorize",
-          input: { side, pair, price, size },
-        },
+        { circuitId: "authorize", input: input as unknown as Record<string, unknown> },
         {
           signal: ctrl.signal,
           onProgress: (m) => setPhase({ kind: "proving", message: m }),
@@ -172,9 +278,6 @@ export function OrderModal({
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       console.error("[order]", e);
-      // Prefer Error.message; fall back to a static label for
-      // thrown non-Errors. Avoid `String(e)` because it can
-      // produce "[object Object]" for some thrown shapes.
       setPhase({
         kind: "error",
         message: e instanceof Error ? e.message : "Order failed.",
@@ -182,7 +285,7 @@ export function OrderModal({
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [side, pair, price, size, addOrder]);
+  }, [side, pair, price, size, account, note, deriveEdDSA, addOrder]);
 
   if (!open) return null;
 
@@ -221,10 +324,10 @@ export function OrderModal({
         </div>
 
         <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
-          <strong>Demo mode</strong> — proof is generated locally with the
-          mock prover, and no order is submitted to a relayer. Phase 3d
-          ships the real authorize circuit; Phase 5 wires actual relayer
-          dispatch.
+          <strong>Demo mode</strong> — a real authorize Groth16 proof is
+          generated locally in a Web Worker, but the Merkle tree is empty
+          (no on-chain CommitmentPool yet) and no relayer is contacted.
+          Phase 5 wires both.
         </div>
 
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
@@ -263,10 +366,21 @@ export function OrderModal({
               </button>
               <button
                 onClick={submit}
-                disabled={busy}
+                disabled={busy || isDeriving || !account || !note}
+                title={
+                  !account
+                    ? "Connect a wallet first"
+                    : !note
+                    ? "Deposit to your vault first"
+                    : undefined
+                }
                 className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
               >
-                {busy ? "Working…" : "Sign & submit"}
+                {busy
+                  ? "Working…"
+                  : isDeriving
+                  ? "Awaiting signature…"
+                  : "Sign & submit"}
               </button>
             </>
           )}

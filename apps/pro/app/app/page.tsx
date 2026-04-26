@@ -130,6 +130,10 @@ export default function Workbench() {
         pair="ETH/USDC"
         price={price}
         size={size}
+        // Phase 3e-ii: source the spending note from the vault.
+        // For now we always pick the first (most recent) note; a
+        // dropdown lands when the order form gains a per-pair filter.
+        note={notes[0] ?? null}
       />
     </div>
   );

@@ -8,10 +8,15 @@ import {
   useRef,
   useState,
 } from "react";
+import type { CommitmentNote } from "@zkscatter/sdk/zk";
 
-/** A note in the user's local vault. Phase 2b-ii uses an in-memory
- *  React state store; Phase 6 swaps in a real storage adapter
- *  (filesystem on web, SQLite on mobile) from `@zkscatter/sdk/notes`. */
+/** A note in the user's local vault. The full `CommitmentNote` is
+ *  carried so spending circuits (authorize / claim) can spend this
+ *  note later without re-deriving its preimage from on-chain data.
+ *
+ *  Phase 3e-i uses an in-memory React state store; Phase 6 swaps in
+ *  a real storage adapter (filesystem on web, SQLite on mobile)
+ *  from `@zkscatter/sdk/notes`. */
 export interface VaultNote {
   /** Stable per-session id used as the React key. Generated with
    *  `crypto.randomUUID()` so two deposits in the same tick can't
@@ -21,9 +26,14 @@ export interface VaultNote {
   label: string;
   /** Token symbol shown in the UI. */
   symbol: string;
-  /** Display amount (already formatted). */
+  /** Display amount (already formatted; not used for math). */
   amount: string;
-  /** Poseidon commitment from `generateDepositProof`. */
+  /** Full commitment note — the secret material that lets us spend
+   *  this entry. Storage adapters in Phase 6 will encrypt before
+   *  persisting; today it lives in React state and dies on refresh. */
+  note: CommitmentNote;
+  /** Poseidon commitment derived from `note`. Cached so the order
+   *  flow doesn't have to recompute it on every render. */
   commitment: bigint;
   /** When the note was added (ms epoch). */
   createdAt: number;
