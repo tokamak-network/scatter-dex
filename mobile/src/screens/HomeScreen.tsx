@@ -49,7 +49,7 @@ export default function HomeScreen() {
   const {
     account, connectionMode, isConnecting, connect, connectBuiltin, disconnect,
     error, wallets, activeWalletId, switchWallet, readProvider,
-    addWalletFromCreate,
+    addWalletFromCreate, removeWallet,
   } = useWallet();
   const { activities, loading: actLoading, refresh: refreshAct } = useRecentActivity();
 
@@ -65,6 +65,13 @@ export default function HomeScreen() {
   const [privateTotals, setPrivateTotals] = useState<Record<string, TokenBal[]>>({});
   const [pageIndex, setPageIndex] = useState(0);
   const [pendingMnemonic, setPendingMnemonic] = useState<string | null>(null);
+  // Track the wallet id created alongside `pendingMnemonic` so a Cancel
+  // from the verify modal can roll back the persisted wallet. Without
+  // this rollback the freshly-created wallet would remain in `wallets[]`
+  // (since `addWalletFromCreate` persists before returning) and a later
+  // tap on Connect would let the user enter the wallet without ever
+  // completing the backup-verification flow.
+  const [pendingWalletId, setPendingWalletId] = useState<string | null>(null);
 
   const isMounted = useRef(true);
   const publicReqIdRef = useRef(0);
@@ -244,6 +251,7 @@ export default function HomeScreen() {
       // Fresh keychain → newly-generated mnemonic returned; surface it
       // once so the user can record it before any funds arrive.
       if (result && 'mnemonic' in result && result.mnemonic) {
+        setPendingWalletId(result.id);
         setPendingMnemonic(result.mnemonic);
       } else {
         await connectBuiltin();
@@ -589,9 +597,19 @@ export default function HomeScreen() {
         mnemonic={pendingMnemonic || ''}
         onConfirmed={() => {
           setPendingMnemonic(null);
+          setPendingWalletId(null);
           connectBuiltin().catch(() => {});
         }}
-        onCancel={() => setPendingMnemonic(null)}
+        onCancel={() => {
+          // Roll back the just-persisted wallet so the user cannot bypass
+          // the backup flow by cancelling and then tapping Connect later.
+          const id = pendingWalletId;
+          setPendingMnemonic(null);
+          setPendingWalletId(null);
+          if (id) {
+            removeWallet(id).catch(() => {});
+          }
+        }}
       />
     </SafeAreaView>
   );
