@@ -154,8 +154,12 @@ export class PrivateSubmitter {
       this.commitmentLeaves = [];
     }
     // Stay `confirmations` blocks behind tip — newer blocks can be
-    // reorged. Bumping INDEX_CONFIRMATIONS at restart, or running on a
-    // very fresh chain, can leave nothing to index until tip advances;
+    // reorged. Caveat: lag too far and CommitmentPool's root ring
+    // buffer (ROOT_HISTORY_SIZE) rotates the lagged root out before
+    // clients submit, causing on-chain `isKnownRoot` to revert. See
+    // config.ts:indexConfirmations for the trade-off discussion.
+    // Bumping INDEX_CONFIRMATIONS at restart, or running on a very
+    // fresh chain, can leave nothing to index until tip advances;
     // surface that with a one-shot warn so it isn't a silent stall.
     const tip = await this.provider.getBlockNumber();
     const toBlock = tip - config.indexConfirmations;

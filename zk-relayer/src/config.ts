@@ -54,7 +54,13 @@ export const config = {
   sanctionsPubKeyList: process.env.SANCTIONS_PUBKEY_LIST || null,
 
   // Stay this many blocks behind tip when indexing CommitmentInserted.
-  // Anvil/local fork: 0 (no reorgs). L1 mainnet/testnets: ~12.
+  // Trade-off: too low → reorgs invalidate cached roots; too high →
+  // CommitmentPool's root ring buffer (default ROOT_HISTORY_SIZE=30)
+  // can rotate the relayer's lagged root out before clients submit
+  // proofs, causing on-chain `isKnownRoot` to fail. Pick the smallest
+  // value that survives expected reorg depth on the target chain.
+  // Anvil/fork: 0 (no reorgs). Post-merge L1: 1-2 is enough; 12 is
+  // only safe when deposits-per-12-blocks << ROOT_HISTORY_SIZE.
   indexConfirmations: parseEnvInt("INDEX_CONFIRMATIONS", 0, 0),
 
   // [R-1] Gas guard: max gas price in gwei.
