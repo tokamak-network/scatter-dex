@@ -411,20 +411,43 @@ export const OrderService = {
         claimCount: claimsData.length.toString(),
       };
 
-      let wasmB64: string;
-      let zkeyB64: string;
+      // Native prover path — runs Groth16 proving in a Rust-compiled
+      // Turbo Module (see mobile/native-prover/). Cuts authorize-circuit
+      // proof time from ~3.4s on the WebView/snarkjs path to ~60ms.
+      //
+      // Note: the iOS Simulator POST-abort chain in #401/#404/#407/#408
+      // was originally suspected to be caused by the WebView's Groth16
+      // CPU burst starving the iOS dispatch queue. Empirically that
+      // hypothesis is wrong — the same `Aborted` lands on the subsequent
+      // POST even when this native path runs in 60ms with no WebKit
+      // burst at all (see PR #409). Root cause is somewhere in the RN
+      // fetch / NSURLSession layer; investigation continues.
+      //
+      // Falls back to the WebView path if the native module is missing
+      // (e.g. running in Expo Go, which can't load custom native code).
+      let proofResult: { proof: any; publicSignals: string[]; elapsedMs: number };
       try {
-        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
-        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
-      } catch {
-        throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
+        const { generateAuthorizeProof } = await import('./NativeProverService');
+        proofResult = await generateAuthorizeProof(circuitInputs);
+        console.log('[OrderService] native proof ok', { ms: proofResult.elapsedMs });
+      } catch (e: any) {
+        console.log('[OrderService] native proof unavailable, falling back to WebView', {
+          err: e?.message || String(e),
+        });
+        let wasmB64: string;
+        let zkeyB64: string;
+        try {
+          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
+          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
+        } catch {
+          throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
+        }
+        proofResult = await ZKBridgeService.generateProof(
+          circuitInputs,
+          wasmB64,
+          zkeyB64,
+        );
       }
-
-      const proofResult = await ZKBridgeService.generateProof(
-        circuitInputs,
-        wasmB64,
-        zkeyB64,
-      );
       const solidityProof = formatProofForSolidity(proofResult.proof);
 
       // ─── Step 7: Submit to /api/authorize-orders ──────
