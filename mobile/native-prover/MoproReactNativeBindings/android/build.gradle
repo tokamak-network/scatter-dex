@@ -75,7 +75,11 @@ android {
     externalNativeBuild {
       cmake {
         arguments '-DANDROID_STL=c++_shared'
-        abiFilters (*reactNativeArchitectures())
+        // Match the `ndk.abiFilters` below so Gradle doesn't attempt
+        // x86/x86_64 CMake builds that would fail on the missing
+        // `${ANDROID_ABI}/libnative_prover.so` — only arm64-v8a is
+        // wired in jniLibs today.
+        abiFilters "arm64-v8a"
       }
     }
     ndk {

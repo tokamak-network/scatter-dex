@@ -45,9 +45,16 @@ add the matching `cargo build` step + jniLibs path and update
 ```sh
 # Prereqs (one-time)
 rustup target add aarch64-linux-android
+
 # Adjust to the NDK version you installed.
 NDK=$ANDROID_HOME/ndk/27.1.12297006
-TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/darwin-x86_64
+# Pick the prebuilt directory matching your host. NDK r25+ ships:
+#   macOS Intel : darwin-x86_64  (also runs under Rosetta on Apple Silicon)
+#   macOS Apple Silicon (NDK 27+): darwin-arm64
+#   Linux x86_64: linux-x86_64
+#   Windows     : windows-x86_64
+HOST_TAG=darwin-x86_64
+TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/$HOST_TAG
 export CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang
 export CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++
 export AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar
