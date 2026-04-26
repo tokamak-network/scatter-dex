@@ -497,7 +497,14 @@ export const OrderService = {
       const tWarm = Date.now();
       try {
         const r = await fetchWithTimeout(warmupUrl, { timeoutMs: TIMEOUT_PROBE_MS });
-        console.log('[OrderService] warm-up ok', { ms: Date.now() - tWarm, status: r.status });
+        // fetchWithTimeout only throws on network/abort, so a non-2xx
+        // still resolves here. Distinguish the two so warm-up diagnostics
+        // don't mislabel a 5xx as "ok".
+        if (r.ok) {
+          console.log('[OrderService] warm-up ok', { ms: Date.now() - tWarm, status: r.status });
+        } else {
+          console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, status: r.status });
+        }
       } catch (e: any) {
         console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, err: e?.name || e?.message });
       }
