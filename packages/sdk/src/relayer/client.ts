@@ -17,7 +17,9 @@ interface ClientOpts {
 
 /** Thin HTTP client for one relayer's API. No retry, no caching;
  *  callers compose those concerns. Errors throw with the relayer's
- *  message body when present. */
+ *  `error` body field when present, falling back to the HTTP
+ *  status line. Every method accepts an optional `signal` so
+ *  callers can cancel from a UI's `AbortController`. */
 export class RelayerClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -29,11 +31,11 @@ export class RelayerClient {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  async getInfo(extraSignal?: AbortSignal): Promise<RelayerApiInfo> {
+  async getInfo(signal?: AbortSignal): Promise<RelayerApiInfo> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/info`, {
-      signal: timeoutSignal(this.timeoutMs, extraSignal),
+      signal: timeoutSignal(this.timeoutMs, signal),
     });
-    if (!res.ok) throw httpError("info", res);
+    if (!res.ok) throw await httpError("info", res);
     const raw = (await res.json()) as RelayerApiInfo;
     return { ...raw, profile: sanitizeProfile(raw?.profile) };
   }
@@ -42,31 +44,29 @@ export class RelayerClient {
     order: OrderData,
     signature: string,
     feeMode?: FeeMode,
+    signal?: AbortSignal,
   ): Promise<{ status: string; txHash?: string; nonce?: string }> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ order, signature, ...(feeMode && { feeMode }) }),
-      signal: timeoutSignal(this.timeoutMs),
+      signal: timeoutSignal(this.timeoutMs, signal),
     });
-    if (!res.ok) {
-      const err = await safeJson<{ error?: string }>(res);
-      throw new Error(err?.error ?? defaultErrorMsg("submit", res));
-    }
+    if (!res.ok) throw await httpError("submit", res);
     return res.json();
   }
 
-  async getOrders(address: string): Promise<RelayerOrder[]> {
+  async getOrders(address: string, signal?: AbortSignal): Promise<RelayerOrder[]> {
     const res = await this.fetchImpl(`${this.baseUrl}/api/orders/${address}`, {
-      signal: timeoutSignal(this.timeoutMs),
+      signal: timeoutSignal(this.timeoutMs, signal),
     });
-    if (!res.ok) throw httpError("orders", res);
+    if (!res.ok) throw await httpError("orders", res);
     return res.json();
   }
 
   async getOrderHistory(
     address: string,
-    opts: { status?: string; limit?: number; offset?: number } = {},
+    opts: { status?: string; limit?: number; offset?: number; signal?: AbortSignal } = {},
   ): Promise<OrderHistoryResponse> {
     const params = new URLSearchParams();
     if (opts.status) params.set("status", opts.status);
@@ -74,41 +74,49 @@ export class RelayerClient {
     params.set("offset", String(opts.offset ?? 0));
     const res = await this.fetchImpl(
       `${this.baseUrl}/api/orders/${address}?${params}`,
-      { signal: timeoutSignal(this.timeoutMs) },
+      { signal: timeoutSignal(this.timeoutMs, opts.signal) },
     );
-    if (!res.ok) throw httpError("history", res);
+    if (!res.ok) throw await httpError("history", res);
     return res.json();
   }
 
-  async getOrderDetail(address: string, nonce: string): Promise<RelayerOrder> {
+  async getOrderDetail(
+    address: string,
+    nonce: string,
+    signal?: AbortSignal,
+  ): Promise<RelayerOrder> {
     const res = await this.fetchImpl(
       `${this.baseUrl}/api/orders/${address}/${nonce}`,
-      { signal: timeoutSignal(this.timeoutMs) },
+      { signal: timeoutSignal(this.timeoutMs, signal) },
     );
-    if (!res.ok) throw httpError("order", res);
+    if (!res.ok) throw await httpError("order", res);
     return res.json();
   }
 
-  async cancelOrder(address: string, nonce: number, signature: string): Promise<void> {
+  async cancelOrder(
+    address: string,
+    nonce: number,
+    signature: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const res = await this.fetchImpl(
       `${this.baseUrl}/api/orders/${address}/${nonce}`,
       {
         method: "DELETE",
         headers: { "x-cancel-signature": signature },
-        signal: timeoutSignal(this.timeoutMs),
+        signal: timeoutSignal(this.timeoutMs, signal),
       },
     );
-    if (!res.ok) {
-      const err = await safeJson<{ error?: string }>(res);
-      throw new Error(err?.error ?? defaultErrorMsg("cancel", res));
-    }
+    if (!res.ok) throw await httpError("cancel", res);
   }
 }
 
-function httpError(label: string, res: Response): Error {
-  return new Error(defaultErrorMsg(label, res));
-}
-
-function defaultErrorMsg(label: string, res: Response): string {
-  return `relayer ${label} ${res.status}: ${res.statusText}`;
+/** Build a clear Error from a non-OK Response. Tries to parse a
+ *  `{ error: string }` body (the relayer's convention) and uses
+ *  it as the message; otherwise falls back to the HTTP status
+ *  line so the caller never sees a bare HTTP error. */
+async function httpError(label: string, res: Response): Promise<Error> {
+  const body = await safeJson<{ error?: string }>(res);
+  const detail = body?.error ?? `${res.status}: ${res.statusText}`;
+  return new Error(`relayer ${label} — ${detail}`);
 }

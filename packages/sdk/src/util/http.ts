@@ -1,6 +1,12 @@
 /** Compose a per-call timeout signal with an optional caller-
- *  supplied signal. Uses native `AbortSignal.timeout` and
- *  `AbortSignal.any` (browsers + Node 20.3+). */
+ *  supplied signal. Uses native `AbortSignal.timeout` (Node 17+,
+ *  all modern browsers) and `AbortSignal.any` (Node 20.3+,
+ *  Chrome 116+, Firefox 124+, Safari 17.4+).
+ *
+ *  Runtime requirement: Node ≥ 20.3 when an `extra` signal is
+ *  passed. Older Node throws on `AbortSignal.any`. The repo's
+ *  `@noble/curves ^2.0.1` already pins Node ≥ 20.19, so this is
+ *  consistent with the project's effective floor. */
 export function timeoutSignal(timeoutMs: number, extra?: AbortSignal): AbortSignal {
   return extra
     ? AbortSignal.any([AbortSignal.timeout(timeoutMs), extra])

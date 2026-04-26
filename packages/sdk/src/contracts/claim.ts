@@ -41,9 +41,14 @@ export interface BatchClaimItem {
   inputs: ClaimCallInputs;
 }
 
+/** Hard cap enforced by `PrivateSettlement.claimWithProofBatch`.
+ *  Mirrors the contract's `MAX_CLAIM_BATCH_SIZE` constant; an
+ *  oversized batch reverts on-chain after burning gas, so we
+ *  catch it client-side. Callers chunk larger sets. */
+export const MAX_CLAIM_BATCH_SIZE = 20;
+
 /** Batch variant. Reverts atomically if any element is invalid;
- *  caps at the contract's `MAX_CLAIM_BATCH_SIZE` (caller chunks
- *  larger sets). */
+ *  caps at `MAX_CLAIM_BATCH_SIZE` (caller chunks larger sets). */
 export async function callClaimWithProofBatch(
   signer: ethers.Signer,
   settlementAddress: string,
@@ -51,6 +56,11 @@ export async function callClaimWithProofBatch(
 ): Promise<ethers.TransactionResponse> {
   if (items.length === 0) {
     throw new Error("callClaimWithProofBatch: empty batch");
+  }
+  if (items.length > MAX_CLAIM_BATCH_SIZE) {
+    throw new Error(
+      `callClaimWithProofBatch: batch size ${items.length} exceeds MAX_CLAIM_BATCH_SIZE (${MAX_CLAIM_BATCH_SIZE}). Chunk and call repeatedly.`,
+    );
   }
   const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_IFACE, signer);
   const params = items.map((it) => {
