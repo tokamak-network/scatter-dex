@@ -30,6 +30,18 @@ num-bigint    = "0.4.0"
 light-poseidon = "0.4"
 ark-bn254     = "0.5"
 ark-ff        = { version = "0.5", default-features = false }
+# circomlibjs-compatible BabyJubJub EdDSA. Replaces the WebView calls
+# `derive_eddsa_key` (prv2pub) and `sign_eddsa` (signPoseidon). Default
+# feature `blake-hash` pulls `ppv-lite86` whose generic SIMD backend is
+# `unimplemented!()` on non-x86 targets (aarch64-apple-* / Android arm64),
+# panicking inside Blake-512. The `aarch64` feature swaps to the `blake`
+# crate which uses a portable C impl — works on every target we ship.
+babyjubjub-rs = { version = "0.0.11", default-features = false, features = ["aarch64"] }
+# Re-export the same `ff_ce` and `poseidon-rs` crates that babyjubjub-rs
+# uses internally so we can convert `Point.x`/`Point.y` (a `poseidon_rs::Fr`)
+# to a decimal `BigUint` string from our wrapper.
+ff            = { package = "ff_ce", version = "0.11", features = ["derive"] }
+poseidon-rs   = "0.0.8"
     
 # HALO2_DEPENDENCIES
 # NOIR_DEPENDENCIES

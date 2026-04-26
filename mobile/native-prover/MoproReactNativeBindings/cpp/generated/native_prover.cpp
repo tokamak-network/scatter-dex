@@ -129,6 +129,10 @@ extern "C" {
     uint64_t callback_data, 
     UniffiForeignFutureResultVoid result
     );
+    RustBuffer uniffi_native_prover_fn_func_derive_eddsa_key(
+        RustBuffer signature_hash, 
+        RustCallStatus *uniffi_out_err
+    );
     RustBuffer uniffi_native_prover_fn_func_generate_circom_proof(
         RustBuffer zkey_path, 
         RustBuffer circuit_inputs, 
@@ -167,6 +171,11 @@ extern "C" {
     );
     RustBuffer uniffi_native_prover_fn_func_poseidon_hash(
         RustBuffer inputs, 
+        RustCallStatus *uniffi_out_err
+    );
+    RustBuffer uniffi_native_prover_fn_func_sign_eddsa(
+        RustBuffer private_key_hex, 
+        RustBuffer message, 
         RustCallStatus *uniffi_out_err
     );
     int8_t uniffi_native_prover_fn_func_verify_circom_proof(
@@ -393,6 +402,8 @@ extern "C" {
         /*handle*/ uint64_t handle, 
         RustCallStatus *uniffi_out_err
     );
+    uint16_t uniffi_native_prover_checksum_func_derive_eddsa_key(
+    );
     uint16_t uniffi_native_prover_checksum_func_generate_circom_proof(
     );
     uint16_t uniffi_native_prover_checksum_func_generate_gnark_proof(
@@ -406,6 +417,8 @@ extern "C" {
     uint16_t uniffi_native_prover_checksum_func_mopro_hello_world(
     );
     uint16_t uniffi_native_prover_checksum_func_poseidon_hash(
+    );
+    uint16_t uniffi_native_prover_checksum_func_sign_eddsa(
     );
     uint16_t uniffi_native_prover_checksum_func_verify_circom_proof(
     );
@@ -1847,6 +1860,14 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_internal_fn_func_ffi__arraybuffer_to_string(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_fn_func_derive_eddsa_key"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_derive_eddsa_key"),
+        1,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_fn_func_derive_eddsa_key(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_fn_func_generate_circom_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_generate_circom_proof"),
@@ -1903,6 +1924,14 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_fn_func_poseidon_hash(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_fn_func_sign_eddsa"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_sign_eddsa"),
+        2,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_fn_func_sign_eddsa(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_fn_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_circom_proof"),
@@ -1933,6 +1962,14 @@ NativeNativeProver::NativeNativeProver(
         5,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_fn_func_verify_noir_proof(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_native_prover_checksum_func_derive_eddsa_key"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_derive_eddsa_key"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_derive_eddsa_key(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_checksum_func_generate_circom_proof"] = jsi::Function::createFromHostFunction(
@@ -1989,6 +2026,14 @@ NativeNativeProver::NativeNativeProver(
         0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_checksum_func_poseidon_hash(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_native_prover_checksum_func_sign_eddsa"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_sign_eddsa"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_sign_eddsa(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_checksum_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
@@ -2088,6 +2133,16 @@ jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__arraybuffer_to_s
 }
 
 // Methods calling directly into the uniffi generated C API of the Rust crate.
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_derive_eddsa_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_derive_eddsa_key(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), 
+            &status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_native_prover_fn_func_generate_circom_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
@@ -2157,6 +2212,16 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_poseidon_hash(js
         
         return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_sign_eddsa(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_sign_eddsa(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), 
+            &status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_native_prover_fn_func_verify_circom_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
@@ -2196,6 +2261,13 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_noir_proo
 
         
         return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_derive_eddsa_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_derive_eddsa_key(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_generate_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_native_prover_checksum_func_generate_circom_proof(
@@ -2241,6 +2313,13 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_mopro_hell
 }
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_poseidon_hash(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_native_prover_checksum_func_poseidon_hash(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_sign_eddsa(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_sign_eddsa(
         );
 
         

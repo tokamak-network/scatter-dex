@@ -27,6 +27,10 @@ interface NativeModuleInterface {
     buffer: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): string;
+  ubrn_uniffi_native_prover_fn_func_derive_eddsa_key(
+    signatureHash: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
   ubrn_uniffi_native_prover_fn_func_generate_circom_proof(
     zkeyPath: Uint8Array,
     circuitInputs: Uint8Array,
@@ -68,6 +72,11 @@ interface NativeModuleInterface {
     inputs: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_sign_eddsa(
+    privateKeyHex: Uint8Array,
+    message: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
   ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
     zkeyPath: Uint8Array,
     proofResult: Uint8Array,
@@ -95,6 +104,7 @@ interface NativeModuleInterface {
     lowMemoryMode: number,
     uniffi_out_err: UniffiRustCallStatus
   ): number;
+  ubrn_uniffi_native_prover_checksum_func_derive_eddsa_key(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_circom_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof(): number;
@@ -102,6 +112,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key(): number;
   ubrn_uniffi_native_prover_checksum_func_mopro_hello_world(): number;
   ubrn_uniffi_native_prover_checksum_func_poseidon_hash(): number;
+  ubrn_uniffi_native_prover_checksum_func_sign_eddsa(): number;
   ubrn_uniffi_native_prover_checksum_func_verify_circom_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof(): number;
   ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof(): number;
