@@ -13,6 +13,7 @@ import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { useToast } from "./Toast";
+import { abortableSleep, isAbortError } from "../lib/abort";
 
 const DEMO_TOKENS = [
   { symbol: "ETH", address: "0x0000000000000000000000000000000000000001", decimals: 18 },
@@ -31,39 +32,6 @@ type Phase =
 interface DepositModalProps {
   open: boolean;
   onClose: () => void;
-}
-
-/** Was the error a cancellation (AbortSignal triggered)? Checks
- *  by exception type / name rather than message string — the
- *  message text isn't a stable contract across DOMException
- *  implementations. */
-function isAbortError(e: unknown, signal: AbortSignal): boolean {
-  if (signal.aborted) return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
-    return e.name === "AbortError";
-  }
-  return (e as Error)?.name === "AbortError";
-}
-
-/** Sleep that honors an AbortSignal — rejects with AbortError when
- *  the signal fires, instead of resolving and letting the caller
- *  silently mutate state after a cancel. */
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 export function DepositModal({ open, onClose }: DepositModalProps) {

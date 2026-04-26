@@ -25,8 +25,15 @@ export function MyPositionPanel() {
   const { notes } = useVault();
   const { orders } = useOrders();
 
-  const open = useMemo(() => orders.filter((o) => o.status === "matching"), [orders]);
-  const claimable = useMemo(() => orders.filter((o) => o.status === "claimable"), [orders]);
+  const { open, claimable } = useMemo(() => {
+    const o: OrderRecord[] = [];
+    const c: OrderRecord[] = [];
+    for (const ord of orders) {
+      if (ord.status === "matching") o.push(ord);
+      else if (ord.status === "claimable") c.push(ord);
+    }
+    return { open: o, claimable: c };
+  }, [orders]);
 
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawNote, setWithdrawNote] = useState<VaultNote | null>(null);

@@ -14,6 +14,7 @@ import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import type { VaultNote } from "../lib/vault";
 import { useToast } from "./Toast";
+import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
   | { kind: "idle" }
@@ -44,32 +45,6 @@ interface OrderModalProps {
 const DEMO_BUY_TOKEN = "0x0000000000000000000000000000000000000002";
 const DEMO_RELAYER = "0x0000000000000000000000000000000000000099";
 const ORDER_LIFETIME_MS = 60 * 60 * 1000; // 1h
-
-function isAbortError(e: unknown, signal: AbortSignal): boolean {
-  if (signal.aborted) return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
-    return e.name === "AbortError";
-  }
-  return (e as Error)?.name === "AbortError";
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
 
 /** Format a quote-token-denominated estimated fill (price × size).
  *  Uses string-based parsing so an 18-decimal token doesn't lose

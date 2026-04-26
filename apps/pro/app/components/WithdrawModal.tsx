@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useToast } from "./Toast";
 import { PreSignPreview } from "./PreSignPreview";
@@ -36,14 +36,18 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   const abortCtrlRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
-  // Reset on open and lock onto the initial note when one was passed.
+  // Reset on the open transition only — re-running this when `notes`
+  // changes (e.g. another deposit lands) would yank a mid-edit user's
+  // selection back to the seed.
   useEffect(() => {
     if (!open) return;
     setPhase({ kind: "idle" });
     setNoteId(initialNote?.id ?? notes[0]?.id ?? null);
     setDestKind("self");
     setCustomAddr("");
-  }, [open, initialNote, notes]);
+    // notes intentionally omitted — see comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialNote]);
 
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
@@ -70,16 +74,17 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   }, [open, close]);
 
   const note = useMemo(() => notes.find((n) => n.id === noteId) ?? null, [notes, noteId]);
-  const destAddr = useMemo(() => {
-    if (destKind === "self") return account ?? "";
-    if (destKind === "custom") return customAddr.trim();
-    return "stealth-address-pending"; // sentinel; real path lands with stealth integration
+  /** Resolved destination, or null when the choice can't yet produce
+   *  one (no wallet for `self`, invalid custom address). The stealth
+   *  branch resolves to null until the stealth-derive integration
+   *  ships — the preview uses `destKind` to label that case. */
+  const destAddr: string | null = useMemo(() => {
+    if (destKind === "self") return account ?? null;
+    if (destKind === "custom") return ADDR_RE.test(customAddr.trim()) ? customAddr.trim() : null;
+    return null;
   }, [destKind, account, customAddr]);
 
-  const destValid =
-    destKind === "stealth" ||
-    (destKind === "self" && !!account) ||
-    (destKind === "custom" && ADDR_RE.test(customAddr.trim()));
+  const destValid = destKind === "stealth" || destAddr !== null;
 
   const submit = useCallback(async () => {
     if (!note) {
@@ -113,7 +118,10 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       toast.push({
         kind: "success",
         title: `Withdrew ${note.amount} ${note.symbol}`,
-        description: `Sent to ${shortAddr(destAddr)}.`,
+        description:
+          destKind === "stealth"
+            ? "Sent to a fresh stealth address."
+            : `Sent to ${shortAddr(destAddr)}.`,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -224,7 +232,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
                 value:
                   destKind === "stealth"
                     ? "Fresh stealth"
-                    : destValid
+                    : destAddr
                     ? shortAddr(destAddr)
                     : "—",
               },
@@ -330,7 +338,3 @@ function PhaseStatus({ phase }: { phase: Phase }) {
   );
 }
 
-function shortAddr(a: string): string {
-  if (!a || a.length < 10) return a;
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
-}

@@ -42,6 +42,9 @@ export function useToast(): ToastApi {
 }
 
 const DEFAULT_DURATION_MS = 5_000;
+/** Cap concurrent toasts. A buggy caller looping `push` should not
+ *  pin unbounded memory or render thousands of cards. Oldest drops. */
+const MAX_TOASTS = 5;
 
 function newId(): string {
   const c = globalThis.crypto;
@@ -67,7 +70,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (t: ToastInput) => {
       const id = newId();
       const entry: ToastEntry = { ...t, id };
-      setToasts((prev) => [...prev, entry]);
+      setToasts((prev) => {
+        const next = [...prev, entry];
+        if (next.length <= MAX_TOASTS) return next;
+        // Cancel the dropped entries' timers so they don't fire
+        // dismiss against a no-longer-present id.
+        for (const dropped of next.slice(0, next.length - MAX_TOASTS)) {
+          const t = timers.current.get(dropped.id);
+          if (t !== undefined) {
+            clearTimeout(t);
+            timers.current.delete(dropped.id);
+          }
+        }
+        return next.slice(-MAX_TOASTS);
+      });
       const ms = t.durationMs ?? DEFAULT_DURATION_MS;
       if (ms > 0) {
         const handle = setTimeout(() => dismiss(id), ms);

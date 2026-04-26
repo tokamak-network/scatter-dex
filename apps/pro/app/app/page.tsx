@@ -78,6 +78,9 @@ export default function Workbench() {
   );
   const isMock = !ob.configured;
   const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
+  // Reverse the ask side once per orderbook update — keystrokes on
+  // price/size shouldn't reallocate.
+  const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
   // Quick-fill: pick a fraction of the active note's amount. Falls
   // back to the entered value when no note is selected.
@@ -177,7 +180,7 @@ export default function Workbench() {
               </div>
             ) : (
               <>
-                {display.asks.slice().reverse().map((o, i) => (
+                {asksReversed.map((o, i) => (
                   <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} onClick={() => fillFromRow(o)} />
                 ))}
                 <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">

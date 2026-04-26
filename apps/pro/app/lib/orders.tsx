@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -76,9 +77,19 @@ function newId(): string {
 
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  // Use a ref instead of useState so two adds in the same tick
-  // (double-click, fast resubmit) get distinct sequence numbers.
   const labelCounter = useRef(0);
+  // Tracks demo-lifecycle promote timers so they're cleared on
+  // unmount (HMR, route swap) and don't fire setOrders against an
+  // unmounted provider.
+  const promoteTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    const timers = promoteTimers.current;
+    return () => {
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   const add = useCallback(
     (o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">) => {
@@ -91,17 +102,21 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         status: "matching",
       };
       setOrders((prev) => [order, ...prev]);
-      // Demo lifecycle: simulate a fill after 8s so the user can see
-      // the matching → claimable transition in the My Position panel.
-      // Replaced by real relayer / on-chain lifecycle events in the
-      // SDK migration. Cancellation between submit and fill stops
-      // the promotion (the timer no-ops if status is no longer
-      // "matching" by then).
-      setTimeout(() => {
-        setOrders((prev) =>
-          prev.map((x) => (x.id === order.id && x.status === "matching" ? { ...x, status: "claimable" } : x)),
-        );
+      // Demo lifecycle: matching → claimable after 8s. Bails out
+      // (preserving array identity) if the order was cancelled or
+      // already claimed by then. Real lifecycle events land with the
+      // SDK migration.
+      const handle = setTimeout(() => {
+        promoteTimers.current.delete(handle);
+        setOrders((prev) => {
+          const target = prev.find((x) => x.id === order.id);
+          if (!target || target.status !== "matching") return prev;
+          return prev.map((x) =>
+            x.id === order.id ? { ...x, status: "claimable" } : x,
+          );
+        });
       }, 8_000);
+      promoteTimers.current.add(handle);
       return order;
     },
     [],

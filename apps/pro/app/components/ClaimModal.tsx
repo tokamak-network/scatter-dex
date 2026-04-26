@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { getClaimProver } from "../lib/claimProver";
 import { useToast } from "./Toast";
+import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
   | { kind: "idle" }
@@ -17,36 +18,6 @@ interface ClaimModalProps {
   open: boolean;
   onClose: () => void;
   order: OrderRecord | null;
-}
-
-function isAbortError(e: unknown, signal: AbortSignal): boolean {
-  if (signal.aborted) return true;
-  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
-    return e.name === "AbortError";
-  }
-  return (e as Error)?.name === "AbortError";
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    // Register the abort listener BEFORE setTimeout so an abort
-    // landing in the gap between `setTimeout(...)` and
-    // `addEventListener(...)` can't leave the promise hanging.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => {
-      if (timer !== undefined) clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-  });
 }
 
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
