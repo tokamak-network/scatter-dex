@@ -1,11 +1,10 @@
 import {
   computeClaimNullifier,
   poseidonHash,
-  poseidonHashWith,
-  getPoseidonModule,
   type MerkleProof,
 } from "../commitment";
 import { CLAIMS_TREE_DEPTH } from "../constants";
+import { buildMerkleTree, getMerkleProof } from "../merkle";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
 import type { Groth16Proof } from "../types";
 import type { CircuitAssets } from "./deposit";
@@ -27,12 +26,11 @@ export interface ClaimProofInput {
   /** Index of this claim within the settlement's 16-leaf tree. */
   leafIndex: number;
   /** All 16 leaves of the claims tree (padded with `0n`). Used to
-   *  re-derive `claimsRoot` and the inclusion proof. Phase 5 will
-   *  let callers pass a pre-computed `MerkleProof` to skip the
-   *  rebuild — included as an optional escape hatch already. */
+   *  re-derive `claimsRoot` and the inclusion proof. Ignored when
+   *  `merkleProof` is supplied. */
   allClaimLeaves: bigint[];
   /** Optional fast path: when supplied, `allClaimLeaves` is ignored
-   *  and the circuit input takes this proof's `pathElements` /
+   *  and the circuit takes this proof's `pathElements` /
    *  `pathIndices` / `root` directly. */
   merkleProof?: MerkleProof;
 }
@@ -57,92 +55,78 @@ interface SnarkjsModule {
   };
 }
 
+const CLAIMS_TREE_SIZE = 1 << CLAIMS_TREE_DEPTH;
+
+interface ResolvedTree {
+  claimsRoot: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+}
+
+/** Fast path: caller already maintains an incremental tree. */
+function fromMerkleProof(p: MerkleProof, leafIndex: number): ResolvedTree {
+  if (leafIndex < 0) {
+    throw new Error(
+      `generateClaimProof: leafIndex ${leafIndex} cannot be negative`,
+    );
+  }
+  return { claimsRoot: p.root, pathElements: p.pathElements, pathIndices: p.pathIndices };
+}
+
+/** Slow path: rebuild the tree from `allClaimLeaves`. Validates the
+ *  tree size and checks the supplied claim data hashes to the leaf
+ *  at `leafIndex` before paying for the tree build. */
+async function fromLeaves(
+  allClaimLeaves: bigint[],
+  leafIndex: number,
+  expectedLeaf: bigint,
+): Promise<ResolvedTree> {
+  if (allClaimLeaves.length !== CLAIMS_TREE_SIZE) {
+    throw new Error(
+      `generateClaimProof: allClaimLeaves length must be ${CLAIMS_TREE_SIZE} (got ${allClaimLeaves.length})`,
+    );
+  }
+  if (leafIndex < 0 || leafIndex >= allClaimLeaves.length) {
+    throw new Error(
+      `generateClaimProof: leafIndex ${leafIndex} out of range for ${allClaimLeaves.length} leaves`,
+    );
+  }
+  if (allClaimLeaves[leafIndex] !== expectedLeaf) {
+    throw new Error(
+      "generateClaimProof: claim data does not match the leaf at the given index — wrong claim file or settlement",
+    );
+  }
+  const { root, layers } = await buildMerkleTree(allClaimLeaves, CLAIMS_TREE_DEPTH);
+  const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
+  return { claimsRoot: root, pathElements, pathIndices };
+}
+
 /** Generate a Groth16 claim proof for one slot of a settlement.
  *
  *  Pre-checks:
- *  - `leafIndex` in range
- *  - hash of (`secret`, `recipient`, `token`, `amount`, `releaseTime`)
- *    equals the leaf at `leafIndex` — catches "wrong claim file" /
- *    "wrong settlement" mistakes loudly instead of after a 2 s
- *    proof followed by an opaque snarkjs failure.
- *  - the claims tree padding length matches `2^CLAIMS_TREE_DEPTH`
- *    (16). */
+ *  - `leafIndex` in range (slow path) or non-negative (fast path)
+ *  - claim data hashes to the leaf at `leafIndex` (slow path) —
+ *    catches "wrong claim file" / "wrong settlement" mistakes
+ *    loudly instead of after a 2 s proof
+ *  - `allClaimLeaves.length === 2^CLAIMS_TREE_DEPTH` */
 export async function generateClaimProof(
   input: ClaimProofInput,
   assets: CircuitAssets,
 ): Promise<ClaimProofResult> {
-  if (!input.merkleProof) {
-    if (input.leafIndex < 0 || input.leafIndex >= input.allClaimLeaves.length) {
-      throw new Error(
-        `generateClaimProof: leafIndex ${input.leafIndex} out of range for ${input.allClaimLeaves.length} leaves`,
-      );
-    }
-  } else if (input.leafIndex < 0) {
-    throw new Error(
-      `generateClaimProof: leafIndex ${input.leafIndex} cannot be negative`,
-    );
-  }
-
-  // Verify the supplied claim data matches the leaf we'd build from it.
-  const expectedLeaf = await poseidonHash([
-    input.secret,
-    input.recipient,
-    input.token,
-    input.amount,
-    input.releaseTime,
-  ]);
-
-  let claimsRoot: bigint;
-  let pathElements: bigint[];
-  let pathIndices: number[];
-
+  let resolved: ResolvedTree;
   if (input.merkleProof) {
-    claimsRoot = input.merkleProof.root;
-    pathElements = input.merkleProof.pathElements;
-    pathIndices = input.merkleProof.pathIndices;
+    resolved = fromMerkleProof(input.merkleProof, input.leafIndex);
   } else {
-    if (input.allClaimLeaves[input.leafIndex] !== expectedLeaf) {
-      throw new Error(
-        "generateClaimProof: claim data does not match the leaf at the given index — wrong claim file or settlement",
-      );
-    }
-    // Build the 16-leaf claims tree synchronously after one
-    // Poseidon module fetch, same pattern as merkle.ts.
-    const poseidon = await getPoseidonModule();
-    const size = 1 << CLAIMS_TREE_DEPTH;
-    if (input.allClaimLeaves.length !== size) {
-      throw new Error(
-        `generateClaimProof: allClaimLeaves length must be ${size} (got ${input.allClaimLeaves.length})`,
-      );
-    }
-    const layers: bigint[][] = [input.allClaimLeaves.slice()];
-    let current = layers[0]!;
-    for (let level = 0; level < CLAIMS_TREE_DEPTH; level++) {
-      const next: bigint[] = new Array(current.length >> 1);
-      for (let i = 0, j = 0; i < current.length; i += 2, j++) {
-        next[j] = poseidonHashWith(poseidon, [current[i]!, current[i + 1]!]);
-      }
-      layers.push(next);
-      current = next;
-    }
-    claimsRoot = current[0]!;
-    // Walk the tree to collect the inclusion proof.
-    pathElements = [];
-    pathIndices = [];
-    let idx = input.leafIndex;
-    for (let level = 0; level < CLAIMS_TREE_DEPTH; level++) {
-      const layer = layers[level]!;
-      const isRight = idx & 1;
-      const sibling = layer[isRight ? idx - 1 : idx + 1];
-      if (sibling === undefined) {
-        throw new Error(
-          `generateClaimProof: malformed tree — missing sibling at level ${level}`,
-        );
-      }
-      pathElements.push(sibling);
-      pathIndices.push(isRight);
-      idx >>= 1;
-    }
+    // Compute expectedLeaf only on the slow path — the fast path
+    // doesn't consume it.
+    const expectedLeaf = await poseidonHash([
+      input.secret,
+      input.recipient,
+      input.token,
+      input.amount,
+      input.releaseTime,
+    ]);
+    resolved = await fromLeaves(input.allClaimLeaves, input.leafIndex, expectedLeaf);
   }
 
   const nullifier = await computeClaimNullifier(
@@ -151,18 +135,16 @@ export async function generateClaimProof(
   );
 
   const circuitInput: Record<string, unknown> = {
-    // Public
-    claimsRoot: claimsRoot.toString(),
+    claimsRoot: resolved.claimsRoot.toString(),
     nullifier: nullifier.toString(),
     amount: input.amount.toString(),
     token: input.token.toString(),
     recipient: input.recipient.toString(),
     releaseTime: input.releaseTime.toString(),
-    // Private
     secret: input.secret.toString(),
     leafIndex: input.leafIndex.toString(),
-    pathElements: pathElements.map((e) => e.toString()),
-    pathIndices: pathIndices.map((i) => i.toString()),
+    pathElements: resolved.pathElements.map((e) => e.toString()),
+    pathIndices: resolved.pathIndices.map((i) => i.toString()),
   };
 
   const snarkjs = (await import("snarkjs")) as unknown as SnarkjsModule;
@@ -180,7 +162,7 @@ export async function generateClaimProof(
   return {
     proof: formatGroth16Proof(proof),
     publicSignals: publicSignals.map((s) => BigInt(s)),
-    claimsRoot,
+    claimsRoot: resolved.claimsRoot,
     nullifier,
   };
 }

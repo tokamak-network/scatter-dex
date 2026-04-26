@@ -22,7 +22,7 @@
  *    other circuit modules need the same conversions */
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { bytesToHex, bytesToNumberBE, hexToBytes } from "@noble/curves/utils.js";
 import { ethers } from "ethers";
 
 const POINT = secp256k1.Point;
@@ -103,14 +103,15 @@ export function generateStealthAddress(metaAddress: string): StealthResult {
   const ephemeralPrivKey = secp256k1.utils.randomSecretKey();
   const ephemeralPubKey = secp256k1.getPublicKey(ephemeralPrivKey, true);
 
-  // Shared secret: r * V (ECDH).
-  const V = POINT.fromHex(bytesToHex(viewingPubKey));
-  const sharedPoint = V.multiply(bytesToBigInt(ephemeralPrivKey));
+  // Shared secret: r * V (ECDH). `Point.fromBytes` skips the
+  // bytes->hex->bytes round-trip `fromHex` would impose.
+  const V = POINT.fromBytes(viewingPubKey);
+  const sharedPoint = V.multiply(bytesToNumberBE(ephemeralPrivKey));
   const sharedSecret = keccak_256(sharedPoint.toBytes(true));
 
   // Stealth public key: S + H(sharedSecret) * G.
-  const S = POINT.fromHex(bytesToHex(spendingPubKey));
-  const stealthOffset = POINT.BASE.multiply(bytesToBigInt(sharedSecret));
+  const S = POINT.fromBytes(spendingPubKey);
+  const stealthOffset = POINT.BASE.multiply(bytesToNumberBE(sharedSecret));
   const stealthPubKey = S.add(stealthOffset);
 
   // Last 20 bytes of keccak(uncompressed pubkey without 04 prefix)
@@ -136,12 +137,12 @@ export function deriveStealthPrivateKey(
 ): string {
   const strip0x = (h: string) => (h.startsWith("0x") ? h.slice(2) : h);
 
-  const R = POINT.fromHex(strip0x(ephemeralPubKeyHex));
-  const sharedPoint = R.multiply(bytesToBigInt(hexToBytes(strip0x(viewingKey))));
+  const R = POINT.fromBytes(hexToBytes(strip0x(ephemeralPubKeyHex)));
+  const sharedPoint = R.multiply(bytesToNumberBE(hexToBytes(strip0x(viewingKey))));
   const sharedSecret = keccak_256(sharedPoint.toBytes(true));
 
-  const s = bytesToBigInt(hexToBytes(strip0x(spendingKey)));
-  const offset = bytesToBigInt(sharedSecret);
+  const s = bytesToNumberBE(hexToBytes(strip0x(spendingKey)));
+  const offset = bytesToNumberBE(sharedSecret);
   const stealthPrivKey = (s + offset) % POINT.Fn.ORDER;
 
   return "0x" + stealthPrivKey.toString(16).padStart(64, "0");
@@ -160,11 +161,7 @@ export function stealthWallet(
   return new ethers.Wallet(privKey, provider);
 }
 
-// ---------------------------------------------------------------------
-// Internal helpers, also exported because other circuit modules
-// often need the same conversions.
-// ---------------------------------------------------------------------
-
-export function bytesToBigInt(bytes: Uint8Array): bigint {
-  return BigInt("0x" + bytesToHex(bytes));
-}
+// `bytesToNumberBE` from `@noble/curves/utils` is the canonical
+// big-endian byte → bigint helper; re-export it here for callers
+// that want one import path.
+export { bytesToNumberBE } from "@noble/curves/utils.js";

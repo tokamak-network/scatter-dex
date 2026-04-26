@@ -97,9 +97,15 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   );
 
   const markClaimed = useCallback((id: string) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, status: "claimed" as const } : o)),
-    );
+    setOrders((prev) => {
+      // Bail with the same array reference when the id isn't
+      // present — React's bail-out skips the re-render entirely
+      // instead of producing a new equal-content array.
+      if (!prev.some((o) => o.id === id)) return prev;
+      return prev.map((o) =>
+        o.id === id ? { ...o, status: "claimed" } : o,
+      );
+    });
   }, []);
 
   const value = useMemo<OrdersState>(

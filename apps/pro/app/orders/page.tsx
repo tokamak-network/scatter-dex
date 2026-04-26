@@ -1,9 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
+
+const PILL_CLASSES: Record<string, string> = {
+  claimed:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
+  settled:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
+  claimable: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
+  matching:  "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
+  cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
+};
 
 const SEED_ORDERS: OrderRecord[] = [
   { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
@@ -29,7 +37,7 @@ function formatWhen(ts: number): string {
 
 export default function Orders() {
   const { orders } = useOrders();
-  const all: OrderRecord[] = [...orders, ...SEED_ORDERS];
+  const all = useMemo<OrderRecord[]>(() => [...orders, ...SEED_ORDERS], [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
 
   return (
@@ -90,12 +98,5 @@ export default function Orders() {
 }
 
 function Pill({ s }: { s: string }) {
-  const map: Record<string, string> = {
-    claimed:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
-    settled:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
-    claimable: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
-    matching:  "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
-    cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
-  };
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${map[s] || ""}`}>{s}</span>;
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PILL_CLASSES[s] || ""}`}>{s}</span>;
 }

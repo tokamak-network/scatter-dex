@@ -90,12 +90,8 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // Phase 4b stub: a real claim proof needs the full
-      // `allClaimLeaves` from the original settlement plus the
-      // claim circuit assets. We have the claim secret + slot
-      // index already; the worker will rebuild the rest in the
-      // Phase 4c wiring once the claim circuit lands in
-      // circuits/build/.
+      // TODO: build a real ClaimProofInput once claim circuit
+      // assets ship. The mock prover ignores the input shape.
       await abortableSleep(200, ctrl.signal);
 
       setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
@@ -105,7 +101,6 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
         {
           circuitId: "claim",
           input: {
-            // Stub shape — Phase 4c sends a real ClaimProofInput.
             secret: order.claim.secret.toString(),
             recipient: order.claim.recipient,
             token: order.claim.token,
@@ -121,7 +116,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
       );
 
       setPhase({ kind: "submitting" });
-      // Phase 5+ wires the on-chain `claim` call.
+      // TODO: on-chain `claim` dispatch.
       await abortableSleep(400, ctrl.signal);
 
       markClaimed(order.id);
@@ -174,8 +169,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
 
         <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
           <strong>Demo mode</strong> — claim proof is generated locally with
-          the mock prover, no on-chain claim is sent. Real claim circuit
-          + chain dispatch land in Phase 4c / 5.
+          the mock prover; real on-chain claim is coming soon.
         </div>
 
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
