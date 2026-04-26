@@ -112,15 +112,27 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
   echo "  Copied to contracts/src/zk/${VERIFIER_NAME}.sol"
 done
 
-# Copy WASM + zkey for frontend
+# Copy WASM + zkey to every consumer surface. apps/pro is the
+# shipping Pro product (real ZK in workers); frontend/ is the
+# reference implementation kept in lock-step until apps/pro reaches
+# parity. Apps/pay and apps/drop will be added here when their
+# circuit-driven flows ship.
 echo ""
-echo "Copying artifacts for frontend..."
-mkdir -p "../frontend/public/zk"
-for CIRCUIT in "${CIRCUITS[@]}"; do
-  cp "$BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm" "../frontend/public/zk/"
-  cp "$BUILD/${CIRCUIT}_final.zkey" "../frontend/public/zk/"
+echo "Copying artifacts to consumer surfaces..."
+TARGETS=("../frontend/public/zk" "../apps/pro/public/zk")
+for TARGET in "${TARGETS[@]}"; do
+  mkdir -p "$TARGET"
 done
-echo "  Copied .wasm and .zkey to frontend/public/zk/"
+for CIRCUIT in "${CIRCUITS[@]}"; do
+  for TARGET in "${TARGETS[@]}"; do
+    cp "$BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm" "$TARGET/"
+    cp "$BUILD/${CIRCUIT}_final.zkey" "$TARGET/"
+  done
+done
+echo "  Copied .wasm and .zkey to:"
+for TARGET in "${TARGETS[@]}"; do
+  echo "    $TARGET/"
+done
 
 echo ""
 echo "=== Build complete ==="

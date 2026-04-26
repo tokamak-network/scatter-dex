@@ -55,7 +55,45 @@ interface SnarkjsModule {
   };
 }
 
-const CLAIMS_TREE_SIZE = 1 << CLAIMS_TREE_DEPTH;
+/** Number of leaves in the claims tree (`2 ^ CLAIMS_TREE_DEPTH`).
+ *  Exported so consumers building single-entry trees inline don't
+ *  recompute the same constant. */
+export const CLAIMS_TREE_SIZE = 1 << CLAIMS_TREE_DEPTH;
+
+/** Build a 16-leaf claims tree with a single entry at `leafIndex`,
+ *  rest zero-padded. The shape every single-claim flow needs;
+ *  centralised so the inline poseidonHash + Array(16).fill(0n)
+ *  pattern lives in one place.
+ *
+ *  Note: `recipient` and `token` are passed as BigInt — call sites
+ *  with 0x-prefixed hex strings should `BigInt(addr)` before
+ *  passing, since the circuit hashes them as field elements. */
+export async function singleClaimTree(
+  entry: {
+    secret: bigint;
+    recipient: bigint;
+    token: bigint;
+    amount: bigint;
+    releaseTime: bigint;
+  },
+  leafIndex: number,
+): Promise<{ claimLeaf: bigint; allClaimLeaves: bigint[] }> {
+  if (leafIndex < 0 || leafIndex >= CLAIMS_TREE_SIZE) {
+    throw new Error(
+      `singleClaimTree: leafIndex ${leafIndex} out of range [0, ${CLAIMS_TREE_SIZE})`,
+    );
+  }
+  const claimLeaf = await poseidonHash([
+    entry.secret,
+    entry.recipient,
+    entry.token,
+    entry.amount,
+    entry.releaseTime,
+  ]);
+  const allClaimLeaves = new Array<bigint>(CLAIMS_TREE_SIZE).fill(0n);
+  allClaimLeaves[leafIndex] = claimLeaf;
+  return { claimLeaf, allClaimLeaves };
+}
 
 interface ResolvedTree {
   claimsRoot: bigint;

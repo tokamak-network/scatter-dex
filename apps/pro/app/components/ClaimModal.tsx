@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { singleClaimTree, type ClaimProofInput } from "@zkscatter/sdk/zk";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { getClaimProver } from "../lib/claimProver";
 import { useToast } from "./Toast";
@@ -67,9 +68,28 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // TODO: build a real ClaimProofInput once claim circuit
-      // assets ship. The mock prover ignores the input shape.
-      await abortableSleep(200, ctrl.signal);
+
+      // The order flow stored a single claim entry at leafIndex 0.
+      // `singleClaimTree` rebuilds the matching 16-leaf claims tree
+      // shape that the on-chain `claimsRoot` was computed against.
+      // Once a real settled order is sourced from chain events, a
+      // `merkleProof` from the indexer replaces this rebuild.
+      const recipientBn = BigInt(order.claim.recipient);
+      const tokenBn = BigInt(order.claim.token);
+      const entry = {
+        secret: order.claim.secret,
+        recipient: recipientBn,
+        token: tokenBn,
+        amount: order.claim.amount,
+        releaseTime: order.claim.releaseTime,
+      };
+      const { allClaimLeaves } = await singleClaimTree(entry, order.claim.leafIndex);
+
+      const claimInput: ClaimProofInput = {
+        ...entry,
+        leafIndex: order.claim.leafIndex,
+        allClaimLeaves,
+      };
 
       setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
       const prover = getClaimProver();
@@ -77,14 +97,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
       await prover.prove(
         {
           circuitId: "claim",
-          input: {
-            secret: order.claim.secret.toString(),
-            recipient: order.claim.recipient,
-            token: order.claim.token,
-            amount: order.claim.amount.toString(),
-            releaseTime: order.claim.releaseTime.toString(),
-            leafIndex: order.claim.leafIndex,
-          },
+          input: claimInput as unknown as Record<string, unknown>,
         },
         {
           signal: ctrl.signal,

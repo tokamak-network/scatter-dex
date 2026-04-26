@@ -110,18 +110,14 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
       const prover = getDepositProver();
       await prover.ready();
+      // Pass the BigInt CommitmentNote directly — structured-clone
+      // supports BigInt natively. The worker calls
+      // `generateDepositProof(note, urls)` which derives the
+      // commitment and the rest of the witness internally.
       await prover.prove(
         {
           circuitId: "deposit",
-          input: {
-            commitment: commitment.toString(),
-            token: note.token.toString(),
-            amount: note.amount.toString(),
-            secret: note.ownerSecret.toString(),
-            salt: note.salt.toString(),
-            pubKeyAx: note.pubKeyAx.toString(),
-            pubKeyAy: note.pubKeyAy.toString(),
-          },
+          input: note as unknown as Record<string, unknown>,
         },
         {
           signal: ctrl.signal,
