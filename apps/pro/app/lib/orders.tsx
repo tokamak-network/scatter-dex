@@ -45,6 +45,15 @@ export interface OrderRecord {
   /** Material the user needs to claim once the order settles.
    *  Optional because seeded demo rows don't carry it. */
   claim?: OrderClaim;
+  /** Authorize-circuit nonce used at order-submit time. Required
+   *  later for the cancel proof (the cancel circuit publishes
+   *  `nonceNullifier(secret, nonce)` to kill *this* order
+   *  specifically). Optional because seeded demo rows don't carry
+   *  it. */
+  nonce?: bigint;
+  /** Vault note id that funded the order — needed by the cancel
+   *  flow to look up the spending note and rotate it. */
+  noteId?: string;
   /** When the order was submitted (ms epoch). */
   createdAt: number;
 }

@@ -26,21 +26,37 @@ import {
  *  / Merkle root, but the root won't match anything an on-chain
  *  `CommitmentPool` has published. Phase 5 swaps this for a
  *  real Merkle proof maintained from `CommitmentInserted` events. */
+// `zeros[i]` = the all-zero sibling at level i of an empty tree. Only
+// depends on `COMMIT_TREE_DEPTH` and the Poseidon hash, so it's
+// process-static. Cache the *promise* (not the resolved value) so two
+// concurrent first-callers share one computation instead of racing
+// to compute it twice.
+let zerosPromise: Promise<readonly bigint[]> | null = null;
+
+function getZeros(): Promise<readonly bigint[]> {
+  if (zerosPromise) return zerosPromise;
+  zerosPromise = (async () => {
+    const poseidon = await getPoseidonModule();
+    const zeros: bigint[] = [0n];
+    for (let i = 1; i <= COMMIT_TREE_DEPTH; i++) {
+      zeros.push(poseidonHashWith(poseidon, [zeros[i - 1]!, zeros[i - 1]!]));
+    }
+    return zeros;
+  })();
+  return zerosPromise;
+}
+
 export async function buildEmptyTreeProof(
   note: CommitmentNote,
 ): Promise<{ commitment: bigint; merkleProof: MerkleProof; leafIndex: number }> {
-  const poseidon = await getPoseidonModule();
+  const [poseidon, zeros, commitment] = await Promise.all([
+    getPoseidonModule(),
+    getZeros(),
+    computeCommitment(note),
+  ]);
 
-  // Precompute zero-node values for each level (level 0 = leaves).
-  const zeros: bigint[] = [0n];
-  for (let i = 1; i <= COMMIT_TREE_DEPTH; i++) {
-    zeros.push(poseidonHashWith(poseidon, [zeros[i - 1]!, zeros[i - 1]!]));
-  }
-
-  const commitment = await computeCommitment(note);
-
-  // Walk leaf → root, hashing with the right zero sibling at each level.
-  // pathIndices are all 0 because the leaf sits at index 0.
+  // Walk leaf → root, hashing with the right zero sibling at each
+  // level. pathIndices are all 0 because the leaf sits at index 0.
   const pathElements: bigint[] = [];
   const pathIndices: number[] = [];
   let current = commitment;

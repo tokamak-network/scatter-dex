@@ -14,3 +14,6 @@ export * from "./proofFormat";
 export * from "./circuits/deposit";
 export * from "./circuits/authorize";
 export * from "./circuits/claim";
+export * from "./circuits/cancel";
+export * from "./zkeyCache";
+export * from "./proveTimer";
