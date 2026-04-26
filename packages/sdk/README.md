@@ -131,8 +131,11 @@ packages/sdk/
 | 2b-iii | swap mock for real Web Worker once deposit circuit ships | (gated on circuit build) |
 | 3a | `zk/eddsa.ts` (key derivation + signing) | done |
 | 3b | `zk/{constants,merkle,secureWipe}.ts` + `zk/circuits/authorize.ts` | done |
-| 3c | apps/pro order placement UI wired | next |
-| 4 | `zk/claim.ts` + `stealth.ts` | withdraw + stealth derivation |
+| 3c | apps/pro order placement UI wired (mock) | done |
+| 3d | apps/pro real authorize Web Worker + assets | done |
+| 3e | EdDSA hook + full notes + real `AuthorizeProofInput` | done |
+| 4a | `zk/circuits/claim.ts` + `zk/stealth.ts` | done |
+| 4b | apps/pro Claim UI | next |
 | 5 | `orderbook/` + `relayer/` | shared orderbook + relayer registry |
 | 6 | `notes/` storage adapters | filesystem (web) / sqlite (mobile) |
 | 7 | `identity/zkX509.ts` | KYC integration |

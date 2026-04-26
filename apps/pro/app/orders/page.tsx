@@ -1,22 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { useOrders, type OrderRecord } from "../lib/orders";
+import { ClaimModal } from "../components/ClaimModal";
 
 const SEED_ORDERS: OrderRecord[] = [
-  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "settled",   createdAt: Date.parse("2026-04-26T09:14:00Z") },
-  { id: "seed-2", label: "ord_8401", side: "buy",  pair: "WBTC/USDC", price: "67,210", size: "0.15", status: "matching", createdAt: Date.parse("2026-04-26T08:51:00Z") },
-  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC", price: "4,198", size: "1.5", status: "settled",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
+  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205", size: "2.0", status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
+  { id: "seed-2", label: "ord_8401", side: "buy",  pair: "WBTC/USDC", price: "67,210", size: "0.15", status: "matching",  createdAt: Date.parse("2026-04-26T08:51:00Z") },
+  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC", price: "4,198", size: "1.5", status: "claimed",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
   { id: "seed-4", label: "ord_8377", side: "buy",  pair: "TON/USDC", price: "5.42",   size: "1500", status: "cancelled", createdAt: Date.parse("2026-04-25T18:02:00Z") },
 ];
 
 function formatWhen(ts: number): string {
   // Fixed locale + time zone so the SSG-rendered cell matches what
-  // the client renders during hydration. Without `timeZone: "UTC"`
-  // the server (typically UTC) and the client (user's system zone)
-  // would format different local times for the same instant.
-  // The "UTC" suffix is explicit so users don't misread their own
-  // zone into the value.
+  // the client renders during hydration.
   const d = new Date(ts);
   return (
     d.toLocaleString("en-US", {
@@ -32,6 +30,7 @@ function formatWhen(ts: number): string {
 export default function Orders() {
   const { orders } = useOrders();
   const all: OrderRecord[] = [...orders, ...SEED_ORDERS];
+  const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
 
   return (
     <div className="space-y-6">
@@ -52,6 +51,7 @@ export default function Orders() {
               <th className="px-5 py-3 text-right">Size</th>
               <th className="px-5 py-3 text-left">Status</th>
               <th className="px-5 py-3 text-left">When</th>
+              <th className="px-5 py-3 text-right">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -64,18 +64,36 @@ export default function Orders() {
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
                 <td className="px-5 py-3"><Pill s={o.status} /></td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
+                <td className="px-5 py-3 text-right">
+                  {o.status === "claimable" && o.claim && (
+                    <button
+                      onClick={() => setClaimTarget(o)}
+                      className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                    >
+                      Claim
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <ClaimModal
+        open={!!claimTarget}
+        order={claimTarget}
+        onClose={() => setClaimTarget(null)}
+      />
     </div>
   );
 }
 
 function Pill({ s }: { s: string }) {
   const map: Record<string, string> = {
+    claimed:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
     settled:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
+    claimable: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
     matching:  "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
     cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
   };
