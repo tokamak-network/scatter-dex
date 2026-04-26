@@ -17,3 +17,4 @@ export * from "./circuits/claim";
 export * from "./circuits/cancel";
 export * from "./zkeyCache";
 export * from "./proveTimer";
+export * from "./incrementalTree";

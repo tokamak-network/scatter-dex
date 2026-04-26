@@ -116,7 +116,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       setPhase({ kind: "submitting" });
       await abortableSleep(500, ctrl.signal);
 
-      remove(note.id);
+      await remove(note.id);
       setPhase({ kind: "success" });
       toast.push({
         kind: "success",
