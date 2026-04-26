@@ -14,6 +14,7 @@ import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import type { VaultNote } from "../lib/vault";
 import { Button, Modal, useToast } from "@zkscatter/ui";
+import { TestnetNotice } from "./TestnetNotice";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
@@ -274,6 +275,7 @@ export function OrderModal({
 
   return (
     <Modal open={open} onClose={close} title="Confirm private order">
+      <TestnetNotice />
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Pair" v={pair} />
         <Row k="Side" v={side === "sell" ? "Sell" : "Buy"} />

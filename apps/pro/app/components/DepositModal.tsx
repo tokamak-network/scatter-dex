@@ -12,6 +12,7 @@ import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
+import { TestnetNotice } from "./TestnetNotice";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 const DEMO_TOKENS = [
@@ -168,6 +169,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
 
   return (
     <Modal open={open} onClose={close} title="Deposit to vault">
+      <TestnetNotice />
       <fieldset disabled={busy} className="space-y-4">
         <Field label="Token">
           <select

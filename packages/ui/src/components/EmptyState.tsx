@@ -24,6 +24,7 @@ export function EmptyState({ children, action, size = "compact" }: EmptyStatePro
       <div>{children}</div>
       {action && (
         <button
+          type="button"
           onClick={action.onClick}
           className="mt-2 text-xs font-medium text-[var(--color-primary)] hover:underline"
         >

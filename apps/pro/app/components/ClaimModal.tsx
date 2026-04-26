@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Modal, useToast } from "@zkscatter/ui";
+import { TestnetNotice } from "./TestnetNotice";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { getClaimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
@@ -110,6 +111,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
 
   return (
     <Modal open={open} onClose={close} title="Claim proceeds">
+      <TestnetNotice />
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Order" v={order.label} />
         <Row k="Pair" v={order.pair} />

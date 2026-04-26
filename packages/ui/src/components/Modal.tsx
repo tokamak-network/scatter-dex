@@ -1,6 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+// Module-level stack of open modal close-handlers. The most recently
+// pushed entry is the "topmost" modal — only it responds to Escape.
+// Without this, two modals stacked (Deposit triggered while Order is
+// open) would both close on a single Esc press.
+const escapeStack: Array<() => void> = [];
+let listenerInstalled = false;
+function ensureGlobalEscapeListener() {
+  if (listenerInstalled || typeof document === "undefined") return;
+  listenerInstalled = true;
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const top = escapeStack[escapeStack.length - 1];
+    if (top) top();
+  });
+}
 
 interface ModalProps {
   /** Visibility — when `false` the dialog isn't rendered (no
@@ -42,8 +59,8 @@ export function Modal({
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // Per-instance id so two modals mounted simultaneously (e.g. Order
-  // open + Deposit triggered from a sibling) don't both claim
-  // `aria-labelledby="modal-title"` and confuse assistive tech.
+  // open + Deposit triggered from a sibling) don't both claim the
+  // same `aria-labelledby` and confuse assistive tech.
   const titleId = useId();
 
   // Stable close ref so the keydown handler doesn't have to re-bind
@@ -53,26 +70,46 @@ export function Modal({
 
   const close = useCallback(() => onCloseRef.current(), []);
 
+  // Track client mount so the portal target (`document.body`) only
+  // resolves on the client — avoids SSR `document is not defined`.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Escape handling: register this modal's close on the shared stack
+  // while open. The stack-top wins, so a deeper modal (Deposit on
+  // top of Order) gets the Esc and the underlying Order survives.
+  useEffect(() => {
+    if (!open) return;
+    ensureGlobalEscapeListener();
+    escapeStack.push(close);
+    return () => {
+      const i = escapeStack.lastIndexOf(close);
+      if (i !== -1) escapeStack.splice(i, 1);
+    };
+  }, [open, close]);
+
+  // Initial focus + focus restore — runs only while open.
   useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
     const initial = dialogRef.current?.querySelector<HTMLElement>(
       "select, input, button:not([disabled]), [href], textarea, [tabindex]:not([tabindex='-1'])",
     );
     initial?.focus();
     return () => {
-      document.removeEventListener("keydown", onKey);
       previouslyFocused?.focus?.();
     };
-  }, [open, close]);
+  }, [open]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
+  // Portal to `document.body` so the dialog doesn't get clipped by an
+  // ancestor's `overflow: hidden` / `transform` / `contain` and so
+  // the stacking context is at the root — a parent with z-index can't
+  // render content over the modal.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={(e) => {
@@ -92,6 +129,7 @@ export function Modal({
             {title}
           </h2>
           <button
+            type="button"
             onClick={close}
             className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
             aria-label="Close"
@@ -101,6 +139,7 @@ export function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
