@@ -4,11 +4,16 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { deriveEdDSAKey, type EdDSAKeyPair } from "@zkscatter/sdk/zk";
+import {
+  deriveEdDSAKey,
+  wipeBytes,
+  type EdDSAKeyPair,
+} from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 
 interface EdDSAKeyState {
@@ -25,7 +30,8 @@ interface EdDSAKeyState {
 
   /** Trigger derivation via the connected wallet. Resolves to the
    *  cached keypair on subsequent calls — never prompts the wallet
-   *  twice in the same session. Throws when no wallet is connected. */
+   *  twice in the same session, even when called concurrently from
+   *  multiple components. Throws when no wallet is connected. */
   derive(): Promise<EdDSAKeyPair>;
 }
 
@@ -43,22 +49,35 @@ export function EdDSAKeyProvider({ children }: { children: React.ReactNode }) {
   const [signature, setSignature] = useState<string | null>(null);
   const [isDeriving, setIsDeriving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Track the account the cached key was derived for so a wallet
-  // switch invalidates it. We don't use this for in-flight detection
-  // because the `signer` reference itself changes on connect.
+  // Tracks the account the cached key was derived for so account
+  // switching invalidates it. Lives in a ref to avoid a render loop.
   const derivedForRef = useRef<string | null>(null);
+  // Memoizes the in-flight derivation Promise so two concurrent
+  // callers (e.g. DepositModal and OrderModal racing on first
+  // user click) share one wallet prompt instead of opening two.
+  const inflightRef = useRef<Promise<EdDSAKeyPair> | null>(null);
 
-  // Switching accounts invalidates the cached key. We do this in
-  // `derive` (lazy) rather than via an effect so a tab that never
-  // calls derive doesn't churn.
-  if (account && derivedForRef.current && account !== derivedForRef.current) {
-    if (keyPair) setKeyPair(null);
-    if (signature) setSignature(null);
-    derivedForRef.current = null;
-  }
+  // Account-switch cache invalidation runs in an effect, not during
+  // render — setting state during render breaks Strict Mode and
+  // could loop.
+  useEffect(() => {
+    const derivedFor = derivedForRef.current;
+    if (derivedFor && account !== derivedFor) {
+      setKeyPair((prev) => {
+        // Best-effort wipe of the old private key bytes before they
+        // become unreachable. Doesn't touch any caller-owned copy
+        // (we only ever hand out a reference; see `derive`).
+        if (prev) wipeBytes(prev.privateKey);
+        return null;
+      });
+      setSignature(null);
+      derivedForRef.current = null;
+    }
+  }, [account]);
 
   const derive = useCallback(async (): Promise<EdDSAKeyPair> => {
     if (keyPair) return keyPair;
+    if (inflightRef.current) return inflightRef.current;
     if (!signer) {
       const msg = "Connect a wallet before deriving the trading key.";
       setError(msg);
@@ -66,19 +85,29 @@ export function EdDSAKeyProvider({ children }: { children: React.ReactNode }) {
     }
     setIsDeriving(true);
     setError(null);
-    try {
-      const { keyPair: kp, signature: sig } = await deriveEdDSAKey(signer);
-      setKeyPair(kp);
-      setSignature(sig);
-      derivedForRef.current = account;
-      return kp;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Trading key derivation failed.";
-      setError(msg);
-      throw e;
-    } finally {
-      setIsDeriving(false);
-    }
+
+    const promise = (async () => {
+      try {
+        const { keyPair: kp, signature: sig } = await deriveEdDSAKey(signer);
+        setKeyPair(kp);
+        setSignature(sig);
+        derivedForRef.current = account;
+        return kp;
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Trading key derivation failed.";
+        setError(msg);
+        // Re-throw a real Error preserving the message so callers
+        // see the same string we put into `error`. `cause` carries
+        // the original for debugging.
+        throw e instanceof Error ? e : new Error(msg);
+      } finally {
+        setIsDeriving(false);
+        inflightRef.current = null;
+      }
+    })();
+    inflightRef.current = promise;
+    return promise;
   }, [signer, account, keyPair]);
 
   const value = useMemo<EdDSAKeyState>(
