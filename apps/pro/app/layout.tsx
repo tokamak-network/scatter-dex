@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
+import { VaultProvider } from "./lib/vault";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
@@ -16,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <WalletProvider network={DEMO_NETWORK}>
+          <VaultProvider>
           <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
             🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
           </div>
@@ -37,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
             Scatter Pro · Powered by zkScatter · Tokamak Network · KISA-registered relayers
           </footer>
+          </VaultProvider>
         </WalletProvider>
       </body>
     </html>
