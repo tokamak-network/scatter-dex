@@ -1,3 +1,11 @@
+/** Throws an AbortError when the signal is aborted; otherwise no-op.
+ *  Use as a checkpoint between async steps so a cancellation lands
+ *  on a deterministic boundary instead of completing a step the
+ *  caller no longer wants. */
+export function assertNotAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+}
+
 /** Was the error a cancellation (AbortSignal triggered)? Checks by
  *  exception type / name rather than message string — message text
  *  isn't a stable contract across DOMException implementations. */

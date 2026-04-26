@@ -218,6 +218,13 @@ export function OrderModal({
       const { merkleProof, leafIndex } = await buildEmptyTreeProof(note.note);
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
+      // Capture the nonce so the cancel flow can later derive the
+      // matching `nonceNullifier(secret, nonce)` to kill *this* order
+      // specifically. Without persisting it on the OrderRecord, a
+      // user who cancels would be cancelling a different (or
+      // un-derivable) order.
+      const nonce = randomFieldElement();
+
       const input: AuthorizeProofInput = {
         note: note.note,
         leafIndex,
@@ -228,7 +235,7 @@ export function OrderModal({
         // 50 bps cap. Phase 5 derives this from chosen relayer terms.
         maxFee: 50n,
         expiry: horizonSec,
-        nonce: randomFieldElement(),
+        nonce,
         relayer: DEMO_RELAYER,
         eddsaPrivateKey: eddsaKey.privateKey,
         claims: [claim],
@@ -255,6 +262,8 @@ export function OrderModal({
       // events. Phase 5 swaps to reading this from a settled
       // on-chain event.
       const order = addOrder({
+        nonce,
+        noteId: note.id,
         side,
         pair,
         price,

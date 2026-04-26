@@ -3,56 +3,51 @@
 // Web Worker that runs the authorize-circuit prover off the main
 // thread. snarkjs.fullProve takes 1–2 s on desktop / 5–9 s on
 // mobile and would freeze React if it ran inline.
-//
-// The worker speaks the SDK's prover protocol (ProverWorkerRequest /
-// ProverWorkerResponse, defined in @zkscatter/sdk/zk). The main-
-// thread client (createWebWorkerProver) handles single-flight
-// queueing, AbortSignal-driven cancellation, and result decoding —
-// this file only owns the per-job prove() call.
 
 import {
   generateAuthorizeProof,
   setupProverWorker,
+  warmProverAssets,
   warmupEddsa,
-  warmupPoseidon,
+  withCachedAssets,
+  timeProve,
   type AuthorizeProofInput,
 } from "@zkscatter/sdk/zk";
 
+const CIRCUIT_ASSETS = {
+  wasm: "/zk/authorize.wasm",
+  zkey: "/zk/authorize_final.zkey",
+} as const;
+
 setupProverWorker({
-  // Build the Poseidon round-constant table and EdDSA / Babyjub
-  // singletons before announcing readiness. Without this the very
-  // first prove pays the ~50–150 ms × 3 build cost on the user's
-  // hot path; with it the cost lands during worker boot and the
-  // first prove gets the same latency as the second.
+  // Build Poseidon + EdDSA / Babyjub singletons AND prefetch
+  // wasm/zkey into the IDB cache before announcing readiness. Without
+  // this the first prove pays the ~50–150 ms table-build cost AND the
+  // ~24 MB asset fetch on the user's hot path; with it both costs
+  // land during worker boot and the first prove gets the same
+  // latency as the second.
   preload: async () => {
-    await Promise.all([warmupPoseidon(), warmupEddsa()]);
+    await Promise.all([warmProverAssets(CIRCUIT_ASSETS), warmupEddsa()]);
   },
 
   prove: async (req) => {
-    // This worker is dedicated to the authorize circuit. Catch a
-    // mis-wiring (e.g. a future caller that picks the wrong worker
-    // factory) early instead of silently proving with the wrong
-    // assets and producing a verifier-failing proof.
     if (req.circuitId !== "authorize") {
       throw new Error(
         `authorize.worker: refusing circuitId=${req.circuitId}; this worker only handles "authorize"`,
       );
     }
 
-    // The main-thread caller (OrderModal → authorizeProver) packs
-    // an `AuthorizeProofInput` into `req.input`. We trust the
-    // shape on this side because the prover protocol already
-    // validated the envelope (see workerRuntime.ts isProveRequest).
     const input = req.input as unknown as AuthorizeProofInput;
 
-    const result = await generateAuthorizeProof(input, {
-      wasm: "/zk/authorize.wasm",
-      zkey: "/zk/authorize_final.zkey",
-    });
-
-    return {
-      proof: result.proof,
-      publicSignals: result.publicSignals,
-    };
+    // `withCachedAssets` resolves wasm + zkey to Blob URLs backed by
+    // IndexedDB (revalidated via ETag) so repeat proves never refetch
+    // the asset bundle. `timeProve` posts a perf timing event the
+    // host wires into telemetry.
+    return withCachedAssets(CIRCUIT_ASSETS, (urls) =>
+      timeProve("authorize", async () => {
+        const result = await generateAuthorizeProof(input, urls);
+        return { proof: result.proof, publicSignals: result.publicSignals };
+      }),
+    );
   },
 });
