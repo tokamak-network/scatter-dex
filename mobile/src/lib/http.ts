@@ -5,16 +5,16 @@
 
 /** Per-call semantic buckets. Keeps the rationale (short for probes,
  *  long for submits) in one place and avoids magic numbers at call sites. */
-export const TIMEOUT_PROBE_MS = 3_000;       // liveness probes (discoverRelayers)
-export const TIMEOUT_READ_MS = 5_000;        // relayer GETs + RPC eth_chainId
+export const TIMEOUT_PROBE_MS = 10_000;      // SPIKE: was 3s; iOS sim drops responses <5s
+export const TIMEOUT_READ_MS = 10_000;       // SPIKE: was 5s
 export const TIMEOUT_AGGREGATOR_MS = 12_000; // 1inch proxy (its server has a 10 s budget)
 export const TIMEOUT_SUBMIT_MS = 30_000;     // relayer POSTs (claim + order submit)
-// authorize-order POST specifically: the relayer answers 202 in ~10 ms once
-// it has decoded + persisted the order, so a long timeout only masks network
-// pathologies (iOS NSURLSession response-read hangs on POST, issue #401).
-// Pair this with the GET /:nullifier recovery poll in OrderService — if the
-// POST aborts, the poll confirms whether the server actually got the order.
-export const TIMEOUT_AUTHORIZE_SUBMIT_MS = 5_000;
+// SPIKE: was 5s. iOS Simulator empirically delays response delivery 5–10 s
+// after server `RES_FINISH` (verified via diag-auth middleware showing
+// status=200 sent in <1ms while the client races to its 5s abort). Until the
+// real fix (NSURLSession layer / different transport / real device), give
+// the response packet enough wall-clock budget to actually arrive.
+export const TIMEOUT_AUTHORIZE_SUBMIT_MS = 30_000;
 
 // `signal` is intentionally stripped so callers can't silently bypass
 // the chained timeout by passing their own — they must route cancels
@@ -49,6 +49,12 @@ export async function fetchWithTimeout(
   url: string,
   { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
 ): Promise<Response> {
+  // Normalize at the wrapper boundary so every caller is automatically
+  // protected — call-site `normalizeUrl(...)` was inconsistent and a
+  // single missed site brings back the IPv6/IPv4 Happy-Eyeballs stall
+  // (issue #401, observed empirically: `localhost:3002` → 2.4 s,
+  // `127.0.0.1:3002` → 0.6 ms on the same host).
+  url = normalizeUrl(url);
   const controller = new AbortController();
   // Honour a parent that's already aborted — otherwise `addEventListener`
   // never fires and the fetch proceeds despite the caller having
@@ -70,7 +76,14 @@ export async function fetchWithTimeout(
   // Headers / [string, string][]) — the previous plain-object spread
   // silently dropped non-object forms.
   const headers = new Headers(init.headers);
-  if (isLoopback(url)) headers.set('Connection', 'close');
+  // SPIKE: previously we forced `Connection: close` on loopback to dodge
+  // an NSURLSession keep-alive pool stall (issue #401). Empirically that
+  // is now causing the *response* to be dropped by the simulator before
+  // the client can read it — server logs show 200 RES_FINISH on every
+  // POST/GET while the client races to AbortError at its timeout. Drop
+  // the override and see if the keep-alive pool holds together with
+  // the rest of the spike's hardening (warm-up + POST/poll race +
+  // IPv4-forced URL).
   try {
     return await fetch(url, { ...init, headers, signal: controller.signal });
   } finally {

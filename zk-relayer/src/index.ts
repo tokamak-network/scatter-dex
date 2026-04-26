@@ -212,6 +212,41 @@ async function main() {
   // Half-proof (trustless) order routes — settleAuth path.
   // `authSubmitter` was instantiated earlier so the cross-relayer service
   // could depend on it; here we just mount the HTTP routes.
+  // SPIKE diagnostic — log the full server-side timeline of every
+  // /api/authorize-orders request so we can compare against the iOS
+  // client's POST/Aborted timestamps and locate the stall (body upload?
+  // body parser? handler? response flush?). Remove once root cause is
+  // found.
+  app.use("/api/authorize-orders", (req, res, next) => {
+    const t0 = Date.now();
+    const cl = req.headers["content-length"] ?? "?";
+    const ua = String(req.headers["user-agent"] ?? "").slice(0, 60);
+    console.log(`[diag-auth] REQ ${req.method} cl=${cl} ua="${ua}" t=0`);
+    let firstChunk = -1;
+    let bytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      if (firstChunk < 0) {
+        firstChunk = Date.now() - t0;
+        console.log(`[diag-auth] FIRST_CHUNK ${firstChunk}ms`);
+      }
+      bytes += chunk.length;
+    });
+    req.on("end", () => {
+      console.log(`[diag-auth] BODY_END ${Date.now() - t0}ms bytes=${bytes}`);
+    });
+    req.on("aborted", () => {
+      console.log(`[diag-auth] ABORTED ${Date.now() - t0}ms bytes=${bytes}`);
+    });
+    res.on("finish", () => {
+      console.log(`[diag-auth] RES_FINISH ${Date.now() - t0}ms status=${res.statusCode}`);
+    });
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        console.log(`[diag-auth] RES_CLOSE_EARLY ${Date.now() - t0}ms`);
+      }
+    });
+    next();
+  });
   app.use("/api/authorize-orders", pauseGuard, createAuthorizeOrderRoutes(
     authSubmitter, writeLimiter, authSubmitter.getAddress(), readLimiter, db,
     sharedClient, authWriteLimiter,

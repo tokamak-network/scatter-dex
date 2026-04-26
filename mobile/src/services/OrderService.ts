@@ -54,7 +54,10 @@ const CLAIMS_TREE_DEPTH = 4;
  *  so a totally unreachable relayer can't stall longer than the nominal
  *  budget. Early-exits after 2 consecutive network errors keep a dead
  *  server from eating the full 20 s. Happy path is 1 probe. */
-const RECOVERY_PROBE_TIMEOUT_MS = 2_000;
+// SPIKE: was 2_000ms per probe — too tight for the iOS simulator response
+// delay (server logs show 200 sent <1ms; client receives it 5-9s later).
+// Bumping to 10s gives each probe enough budget to actually read the body.
+const RECOVERY_PROBE_TIMEOUT_MS = 10_000;
 const RECOVERY_PROBE_ATTEMPTS = 20;
 const RECOVERY_PROBE_INTERVAL_MS = 1_000;
 
@@ -469,6 +472,13 @@ export const OrderService = {
       //   [13] relayer
       //   [14] orderHash
       const ps = proofResult.publicSignals;
+      // SPIKE diagnostic: log the raw array so we can confirm the native
+      // path's ordering matches snarkjs. arkworks-side empty-or-shifted
+      // ordering would silently zero out fields like `expiry`.
+      console.log('[OrderService] publicSignals raw', {
+        len: ps.length,
+        sample: ps.map((v, i) => `[${i}]=${typeof v === 'string' ? v.slice(0, 16) : v}`),
+      });
       const namedSignals: Record<string, string> = {
         pubKeyBind: ps[0],
         commitmentRoot: ps[1],

@@ -89,10 +89,33 @@ function deepDecimal(value: unknown): unknown {
 /** Recursively rewrite hex BigInt strings to base-10. Returns the original
  *  reference unchanged when the tree is already all-decimal — once callers
  *  emit decimal at source, the steady-state allocation is zero. */
-function normalizeInputs(
+function decimalize(
   inputs: Record<string, unknown>,
 ): Record<string, unknown> {
   return hasHexBigInt(inputs) ? (deepDecimal(inputs) as Record<string, unknown>) : inputs;
+}
+
+/** circom-prover's `json_to_hashmap` (rustwitness path) only ingests
+ *  values whose top-level JSON form is an Array of strings — single
+ *  strings are silently dropped, leaving the witness with missing
+ *  inputs and the proof with all-zero public outputs. snarkjs is
+ *  permissive and auto-wraps singletons; we replicate that here so
+ *  callers can keep using the same `Record<string, string | string[]>`
+ *  shape on both backends. */
+function wrapSingletons(
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(inputs)) {
+    out[k] = Array.isArray(v) ? v : [v];
+  }
+  return out;
+}
+
+function normalizeInputs(
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  return wrapSingletons(decimalize(inputs));
 }
 
 /** Shape matching `snarkjs.groth16.fullProve` so `formatProofForSolidity`
@@ -108,6 +131,27 @@ export type SnarkjsLikeProofResult = {
   elapsedMs: number;
 };
 
+/** Append-only log of every native prove call's inputs and outputs.
+ *  Lives in the app's documents dir so it survives Metro reloads but
+ *  is wiped on app uninstall. Cheap byte-cap rotation prevents long
+ *  sessions from filling the device. */
+const PROVE_LOG_PATH = `${FileSystem.documentDirectory ?? ''}native_prover.log`;
+const PROVE_LOG_MAX_BYTES = 4 * 1024 * 1024;
+async function appendProveLog(record: Record<string, unknown>): Promise<void> {
+  if (!FileSystem.documentDirectory) return;
+  try {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
+    const info = await FileSystem.getInfoAsync(PROVE_LOG_PATH);
+    if (info.exists && (info as any).size > PROVE_LOG_MAX_BYTES) {
+      await FileSystem.deleteAsync(PROVE_LOG_PATH, { idempotent: true });
+    }
+    const existing = info.exists ? await FileSystem.readAsStringAsync(PROVE_LOG_PATH) : '';
+    await FileSystem.writeAsStringAsync(PROVE_LOG_PATH, existing + line);
+  } catch {
+    // Logging must never break the prove path.
+  }
+}
+
 /** Runs Groth16 proving for the `authorize` circuit natively. Input is
  *  the same JSON shape snarkjs takes on the WebView side, so callers
  *  don't need to branch. */
@@ -120,8 +164,27 @@ export async function generateAuthorizeProof(
   // Arkworks is the only proof backend bundled today. Rapidsnark is
   // available as an alternative but not wired in — keep a single path
   // until benchmarks show it's worth the extra binary size.
-  const res = generateCircomProof(zkeyPath, JSON.stringify(normalized), ProofLib.Arkworks);
+  let res: ReturnType<typeof generateCircomProof>;
+  try {
+    res = generateCircomProof(zkeyPath, JSON.stringify(normalized), ProofLib.Arkworks);
+  } catch (e: any) {
+    void appendProveLog({
+      kind: 'authorize.error',
+      zkeyPath,
+      inputs: normalized,
+      error: { name: e?.name, message: e?.message, str: String(e) },
+    });
+    throw e;
+  }
   const elapsedMs = Date.now() - t0;
+  void appendProveLog({
+    kind: 'authorize.ok',
+    elapsedMs,
+    zkeyPath,
+    inputs: normalized,
+    publicSignals: res.inputs,
+    proof: res.proof,
+  });
   // mopro returns G1/G2 points as {x,y,z} / {x:[],y:[],z:[]}. snarkjs
   // returns pi_a / pi_b / pi_c as flat arrays. Convert here so callers
   // can keep using `formatProofForSolidity` without branching.

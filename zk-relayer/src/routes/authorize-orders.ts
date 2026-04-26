@@ -243,6 +243,13 @@ export function createAuthorizeOrderRoutes(
       const addr = relayerAddress ?? submitter.getAddress();
       const error = validateAuthorizeOrder(order, addr, nowSeconds);
       if (error) {
+        // SPIKE diagnostic: surface why validation rejected the body so the
+        // mobile-side `Aborted` diagnosis isn't blocked on opaque 400s.
+        console.log(`[diag-auth] VALIDATION_400 reason="${error}" proof_keys=${
+          Object.keys(order.proof ?? {}).join(",")
+        } ps_keys=${
+          Object.keys(order.publicSignals ?? {}).join(",")
+        } psa_len=${order.publicSignalsArray?.length ?? "n/a"}`);
         res.status(400).json({ error });
         return;
       }
