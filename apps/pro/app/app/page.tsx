@@ -41,7 +41,7 @@ export default function Workbench() {
           <div className="space-y-3">
             {notes.map((n) => (
               <div key={n.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                <div className="text-xs text-[var(--color-text-muted)]">{n.id}</div>
+                <div className="text-xs text-[var(--color-text-muted)]">{n.label}</div>
                 <div className="mt-0.5 font-mono text-sm font-semibold">{n.amount} {n.symbol}</div>
               </div>
             ))}

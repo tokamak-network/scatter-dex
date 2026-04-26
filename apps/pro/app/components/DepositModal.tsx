@@ -10,6 +10,7 @@ import {
 import { useVault } from "../lib/vault";
 import { demoEddsaPubKey } from "../lib/demoEddsa";
 import { getDepositProver } from "../lib/depositProver";
+import { parseUnits } from "../lib/parseUnits";
 
 const DEMO_TOKENS = [
   { symbol: "ETH", address: "0x0000000000000000000000000000000000000001", decimals: 18 },
@@ -28,6 +29,39 @@ type Phase =
 interface DepositModalProps {
   open: boolean;
   onClose: () => void;
+}
+
+/** Was the error a cancellation (AbortSignal triggered)? Checks
+ *  by exception type / name rather than message string — the
+ *  message text isn't a stable contract across DOMException
+ *  implementations. */
+function isAbortError(e: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted) return true;
+  if (typeof DOMException !== "undefined" && e instanceof DOMException) {
+    return e.name === "AbortError";
+  }
+  return (e as Error)?.name === "AbortError";
+}
+
+/** Sleep that honors an AbortSignal — rejects with AbortError when
+ *  the signal fires, instead of resolving and letting the caller
+ *  silently mutate state after a cancel. */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
@@ -58,8 +92,18 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   const submit = useCallback(async () => {
     const token = DEMO_TOKENS.find((t) => t.symbol === tokenSymbol);
     if (!token) return;
-    const parsed = Number(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
+
+    let amountWei: bigint;
+    try {
+      amountWei = parseUnits(amount, token.decimals);
+    } catch (e) {
+      setPhase({
+        kind: "error",
+        message: (e as Error)?.message ?? "Invalid amount.",
+      });
+      return;
+    }
+    if (amountWei <= 0n) {
       setPhase({ kind: "error", message: "Enter a positive amount." });
       return;
     }
@@ -69,14 +113,13 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
 
     try {
       setPhase({ kind: "preparing" });
-      // Build the note with a placeholder EdDSA pubkey (real
-      // derivation lands in Phase 3 — see lib/demoEddsa.ts).
       const note: CommitmentNote = generateNote(
         token.address,
-        BigInt(Math.round(parsed * 10 ** token.decimals)),
+        amountWei,
         demoEddsaPubKey(),
       );
       const commitment = await computeCommitment(note);
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
       const prover = getDepositProver();
@@ -101,21 +144,24 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       );
 
       setPhase({ kind: "submitting" });
-      // Phase 2b-ii: no real chain interaction — Phase 5+ wires the
-      // CommitmentPool.deposit() call. The commitment is already
-      // valid; the contract call would be a one-liner via ethers.
-      await new Promise((r) => setTimeout(r, 600));
+      // Phase 5+ wires CommitmentPool.deposit(); the abortable
+      // sleep stands in for it now and respects cancel.
+      await abortableSleep(600, ctrl.signal);
 
       addNote({
         symbol: token.symbol,
-        amount: parsed.toLocaleString(),
+        amount,
         commitment,
       });
       setPhase({ kind: "success", commitment });
     } catch (e) {
+      if (isAbortError(e, ctrl.signal)) {
+        // Cancel path — leave the modal in idle/closed by the
+        // caller's close() handler. Don't surface an error UI.
+        return;
+      }
+      console.error("[deposit]", e);
       const msg = (e as Error)?.message ?? "Deposit failed.";
-      // Don't show AbortError — that's just a cancel.
-      if (msg === "Aborted") return;
       setPhase({ kind: "error", message: msg });
     } finally {
       setAbortCtrl(null);
@@ -143,8 +189,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
           </h2>
           <button
             onClick={close}
-            disabled={busy}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40"
+            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
             aria-label="Close"
           >
             ×
@@ -179,13 +224,12 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
               Amount
             </span>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              min={0}
-              step="any"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+              placeholder="0.0"
             />
           </label>
         </fieldset>
@@ -202,10 +246,13 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
             </button>
           ) : (
             <>
+              {/* Cancel must stay enabled even mid-submit — that's
+                  the whole point of an escape hatch. The handler
+                  fires the AbortController so the prover and the
+                  pseudo-submit step both unwind cleanly. */}
               <button
                 onClick={close}
-                disabled={phase.kind === "submitting"}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm disabled:opacity-40"
+                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
               >
                 {busy ? "Cancel" : "Close"}
               </button>
