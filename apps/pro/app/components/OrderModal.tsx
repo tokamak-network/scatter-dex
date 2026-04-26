@@ -273,7 +273,24 @@ export function OrderModal({
       // the latency so the flow feels coherent.
       await abortableSleep(500, ctrl.signal);
 
-      const order = addOrder({ side, pair, price, size });
+      // Persist enough material on the order record that the user
+      // can later run the claim flow without re-deriving from chain
+      // events. Phase 5 swaps to reading this from a settled
+      // on-chain event.
+      const order = addOrder({
+        side,
+        pair,
+        price,
+        size,
+        claim: {
+          secret: claim.secret,
+          recipient: claim.recipient,
+          token: claim.token,
+          amount: claim.amount,
+          releaseTime: claim.releaseTime,
+          leafIndex: 0,
+        },
+      });
       setPhase({ kind: "success", orderLabel: order.label });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;

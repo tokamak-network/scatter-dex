@@ -9,7 +9,24 @@ import {
   useState,
 } from "react";
 
-export type OrderStatus = "matching" | "settled" | "cancelled";
+export type OrderStatus = "matching" | "claimable" | "claimed" | "cancelled";
+
+/** Claim material captured at order-submit time so the user can
+ *  release their proceeds later via the claim flow. Phase 5 will
+ *  read this from on-chain settlement events instead of carrying
+ *  it client-side. */
+export interface OrderClaim {
+  secret: bigint;
+  recipient: string;
+  /** Token address as 0x-prefixed hex. */
+  token: string;
+  amount: bigint;
+  /** Unix-seconds release time the order set. */
+  releaseTime: bigint;
+  /** Index of this claim in the settlement's claims tree (0 for
+   *  the demo's single-claim distribution). */
+  leafIndex: number;
+}
 
 /** A submitted private limit order. Phase 3c stores everything in
  *  React state (lost on refresh); Phase 6 swaps in a real storage
@@ -24,13 +41,20 @@ export interface OrderRecord {
   price: string;
   size: string;
   status: OrderStatus;
+  /** Material the user needs to claim once the order settles.
+   *  Optional because seeded demo rows don't carry it. */
+  claim?: OrderClaim;
   /** When the order was submitted (ms epoch). */
   createdAt: number;
 }
 
 interface OrdersState {
   orders: OrderRecord[];
-  add(o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">): OrderRecord;
+  add(
+    o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">,
+  ): OrderRecord;
+  /** Mark an order as claimed. Idempotent. */
+  markClaimed(id: string): void;
 }
 
 const OrdersCtx = createContext<OrdersState | null>(null);
@@ -51,8 +75,6 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   // Use a ref instead of useState so two adds in the same tick
   // (double-click, fast resubmit) get distinct sequence numbers.
-  // setState would have closed over the same value and produced
-  // duplicate labels.
   const labelCounter = useRef(0);
 
   const add = useCallback(
@@ -63,7 +85,10 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         id: newId(),
         label: `ord-${seq}`,
         createdAt: Date.now(),
-        status: "matching",
+        // Phase 4 demo: orders skip "matching" and go straight to
+        // "claimable" so the claim flow is reachable without a
+        // relayer/chain backend. Phase 5 wires the real lifecycle.
+        status: "claimable",
       };
       setOrders((prev) => [order, ...prev]);
       return order;
@@ -71,7 +96,22 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const value = useMemo<OrdersState>(() => ({ orders, add }), [orders, add]);
+  const markClaimed = useCallback((id: string) => {
+    setOrders((prev) => {
+      // Bail with the same array reference when the id isn't
+      // present — React's bail-out skips the re-render entirely
+      // instead of producing a new equal-content array.
+      if (!prev.some((o) => o.id === id)) return prev;
+      return prev.map((o) =>
+        o.id === id ? { ...o, status: "claimed" } : o,
+      );
+    });
+  }, []);
+
+  const value = useMemo<OrdersState>(
+    () => ({ orders, add, markClaimed }),
+    [orders, add, markClaimed],
+  );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;
 }

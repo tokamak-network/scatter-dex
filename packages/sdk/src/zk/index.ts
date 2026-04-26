@@ -9,6 +9,8 @@ export * from "./secureWipe";
 export * from "./commitment";
 export * from "./merkle";
 export * from "./eddsa";
+export * from "./stealth";
 export * from "./proofFormat";
 export * from "./circuits/deposit";
 export * from "./circuits/authorize";
+export * from "./circuits/claim";
