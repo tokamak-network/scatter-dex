@@ -13,6 +13,8 @@ import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { KeySecurityService } from '../services/KeySecurityService';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
+import { buildPayload, probeHttp, probeHttpWrapped, probeWarmupThenPost, probeWs, type ProbeResult } from '../lib/netProbe';
+import { RelayerApiService } from '../services/RelayerApiService';
 import { ConfigService } from '../services/ConfigService';
 import { EdDSAKeyService, EdDSAKeyPair } from '../services/EdDSAKeyService';
 import AddressBookModal from '../components/AddressBookModal';
@@ -67,6 +69,14 @@ export default function SettingsScreen() {
   const [eddsaKey, setEddsaKey] = useState<EdDSAKeyPair | null>(null);
   const [networks, setNetworks] = useState<NetworkConfig[]>([]);
   const [selectedNetworkId, setSelectedNetworkId] = useState<string>('');
+  // Network-transport probe state. Used by the dev-only Network Probe
+  // section to compare HTTP vs WebSocket roundtrip latency on the same
+  // ~2.6 KB payload (mirrors a real authorize-order POST size).
+  const [probeRunning, setProbeRunning] = useState(false);
+  const [probeHttpResult, setProbeHttpResult] = useState<ProbeResult | null>(null);
+  const [probeWrappedResult, setProbeWrappedResult] = useState<ProbeResult | null>(null);
+  const [probeWarmupResult, setProbeWarmupResult] = useState<ProbeResult | null>(null);
+  const [probeWsResult, setProbeWsResult] = useState<ProbeResult | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [addressBookVisible, setAddressBookVisible] = useState(false);
@@ -695,6 +705,90 @@ export default function SettingsScreen() {
             <Text style={{ fontSize: 14, fontWeight: '700', color: colors.primary }}>+ Add Custom Network</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Dev-only network probe. Strip from release builds. */}
+        {__DEV__ && (
+        <View style={s.sectionGroup}>
+          <Text style={s.sectionTitle}>🛰️ Network Probe (dev)</Text>
+          <View style={s.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.toggleLabel}>Compare HTTP vs WebSocket</Text>
+              <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+                ~2.6 KB echo against the active relayer
+              </Text>
+            </View>
+            <TouchableOpacity
+              disabled={probeRunning}
+              style={{
+                paddingHorizontal: 14, paddingVertical: 8,
+                borderRadius: 8,
+                backgroundColor: probeRunning ? colors.textMuted : colors.primary,
+              }}
+              onPress={async () => {
+                setProbeRunning(true);
+                setProbeHttpResult(null);
+                setProbeWrappedResult(null);
+                setProbeWarmupResult(null);
+                setProbeWsResult(null);
+                try {
+                  const relayers = await RelayerApiService.discoverRelayers();
+                  const target = relayers.find((r) => r.online);
+                  if (!target) {
+                    Alert.alert('No relayer online', 'No active relayer was reachable for the probe.');
+                    return;
+                  }
+                  const payload = buildPayload(2600);
+                  // Sequential, ordered to isolate each layer:
+                  //   1) raw fetch — baseline RN fetch
+                  //   2) fetchWithTimeout — confirms our wrapper is fine
+                  //   3) warm-up→POST — replicates OrderService's pattern
+                  //      so a slow result here pinpoints warm-up as the
+                  //      cause of the real authorize POST stall.
+                  //   4) WebSocket — alternate transport sanity check.
+                  const http = await probeHttp(target.url, payload);
+                  setProbeHttpResult(http);
+                  const wrapped = await probeHttpWrapped(target.url, payload);
+                  setProbeWrappedResult(wrapped);
+                  const warm = await probeWarmupThenPost(target.url, payload);
+                  setProbeWarmupResult(warm);
+                  const ws = await probeWs(target.url, payload);
+                  setProbeWsResult(ws);
+                } finally {
+                  setProbeRunning(false);
+                }
+              }}
+            >
+              <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>
+                {probeRunning ? 'Running…' : 'Run probe'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {(probeHttpResult || probeWrappedResult || probeWarmupResult || probeWsResult) && (
+            <View style={[s.toggleRow, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+              {probeHttpResult && (
+                <Text style={{ fontSize: 12, color: colors.text }}>
+                  HTTP (raw fetch): {probeHttpResult.ok ? `${probeHttpResult.ms} ms (${probeHttpResult.bytes} B)` : `FAIL — ${probeHttpResult.error ?? 'unknown'}`}
+                </Text>
+              )}
+              {probeWrappedResult && (
+                <Text style={{ fontSize: 12, color: colors.text }}>
+                  HTTP (fetchWithTimeout): {probeWrappedResult.ok ? `${probeWrappedResult.ms} ms (${probeWrappedResult.bytes} B)` : `FAIL — ${probeWrappedResult.error ?? 'unknown'}`}
+                </Text>
+              )}
+              {probeWarmupResult && (
+                <Text style={{ fontSize: 12, color: colors.text }}>
+                  POST after warm-up: {probeWarmupResult.ok ? `${probeWarmupResult.ms} ms (${probeWarmupResult.bytes} B)` : `FAIL — ${probeWarmupResult.error ?? 'unknown'}`}
+                </Text>
+              )}
+              {probeWsResult && (
+                <Text style={{ fontSize: 12, color: colors.text }}>
+                  WebSocket: {probeWsResult.ok ? `${probeWsResult.ms} ms (${probeWsResult.bytes} B)` : `FAIL — ${probeWsResult.error ?? 'unknown'}`}
+                </Text>
+              )}
+            </View>
+          )}
+        </View>
+        )}
 
         <View style={{ height: 96 }} />
       </ScrollView>

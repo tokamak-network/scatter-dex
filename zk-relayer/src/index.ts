@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import { WebSocketServer } from "ws";
 import { config, updateRelayerFee } from "./config.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
 import { PrivateOrderDB } from "./core/db.js";
@@ -343,6 +344,34 @@ async function main() {
       console.log(`Public URL: ${config.relayerPublicUrl}`);
     }
   });
+  // Disable Nagle's algorithm on every accepted TCP connection.
+  // Express's default keeps Nagle on, which interacts with TCP
+  // delayed-ACK to delay our small JSON responses on loopback / LAN.
+  // On iOS Simulator and Android real-device loopback that delay
+  // stretches into seconds (see #401, #414, #421). Flushing
+  // immediately costs nothing for our short responses and cuts the
+  // perceived submit latency on the client side.
+  server.on("connection", (socket) => {
+    socket.setNoDelay(true);
+  });
+
+  // Latency probe endpoints (mobile NetProbe). Echoes input back so
+  // wall-clock differences isolate the transport. Bypass-prone, so
+  // gated behind DIAG_AUTH_ORDERS like the diag middleware.
+  if (process.env.DIAG_AUTH_ORDERS === "1") {
+    app.post("/api/echo", express.json({ limit: "1mb" }), (req, res) => {
+      res.status(200).json({ echo: req.body, t: Date.now() });
+    });
+    const wss = new WebSocketServer({ server, path: "/ws/echo" });
+    wss.on("connection", (ws) => {
+      ws.on("message", (data, isBinary) => {
+        // ws@8 hands us RawData (Buffer/ArrayBuffer/Buffer[]); echo it
+        // back unchanged with the original binary/text framing.
+        ws.send(data, { binary: isBinary });
+      });
+    });
+    console.log("[net] echo probe enabled at POST /api/echo and WS /ws/echo");
+  }
 
   // Graceful shutdown
   let isShuttingDown = false;

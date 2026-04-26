@@ -511,115 +511,49 @@ export const OrderService = {
       // traffic and hit its 30 s timeout even when the relayer is
       // responding in < 10 ms. See issue #401.
       PendingOrdersService.pausePoll();
-      // Warm-up GET before the authorize POST. The same POST is fast
-      // when NSURLSession's pool has a live connection to the relayer,
-      // but stalls 20-40 s after a cold window — specifically after
-      // the ~13 s HiddenWebView / WebKit proof-generation burst leaves
-      // the session in a state where the first POST's body upload
-      // doesn't drain (issue #401). A cheap GET on `/api/info` re-
-      // establishes a clean connection; the POST then rides on it.
-      //
-      // Uses the same URL normalisation (localhost → 127.0.0.1) and
-      // wrapper (`Connection: close` on loopback, AbortController-based
-      // timeout) as the POST so the warm-up hits the exact same
-      // connection-pool entry. A short probe timeout keeps an
-      // unreachable relayer from stalling the submit here — the real
-      // POST below will surface any genuine connectivity error.
-      const warmupUrl = `${normalizeUrl(input.relayerUrl)}/api/info`;
-      const tWarm = Date.now();
-      try {
-        const r = await fetchWithTimeout(warmupUrl, { timeoutMs: TIMEOUT_PROBE_MS });
-        // fetchWithTimeout only throws on network/abort, so a non-2xx
-        // still resolves here. Distinguish the two so warm-up diagnostics
-        // don't mislabel a 5xx as "ok".
-        if (r.ok) {
-          console.log('[OrderService] warm-up ok', { ms: Date.now() - tWarm, status: r.status });
-        } else {
-          console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, status: r.status });
-        }
-      } catch (e: any) {
-        console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, err: e?.name || e?.message });
-      }
       const t0 = Date.now();
-      // Race the POST (authoritative — yields orderId) against GET
-      // polling (confirmation — works even when the POST response never
-      // reaches the client, iOS simulator issue #401). First to confirm
-      // the server has the order wins. POST rejections resolve (not
-      // throw) into a tagged object so a failed POST doesn't
-      // short-circuit the race when it's a recoverable abort. Terminal
-      // POST errors (non-abort) are thrown immediately — no point
-      // waiting 20 s for poll to confirm a 400.
+      // POST-only path with poll fallback only on AbortError. The
+      // previous parallel POST+poll race contended on the same
+      // OkHttp / NSURLSession pool and stalled response delivery;
+      // a single awaited POST round-trips in ~60 ms once the relayer
+      // event loop isn't blocked. The poll path stays as a salvage
+      // route for genuine aborts.
       let response: { orderId?: string; status?: string; [k: string]: any };
-      const raceAbort = new AbortController();
-      const isAbortError = (e: unknown) =>
-        e instanceof Error && (e.name === 'AbortError' || /abort/i.test(e.message));
       try {
-        const postPromise: Promise<
-          | { via: 'post'; data: { orderId?: string; [k: string]: any } }
-          | { via: 'post-err'; err: Error }
-        > = RelayerApiService.submitAuthorizeOrder(
-          {
-            proof: solidityProof,
-            publicSignals: namedSignals,
-            publicSignalsArray: ps,
-            pubKeyAx: keyPair.pubKeyAx,
-            pubKeyAy: keyPair.pubKeyAy,
-          },
-          input.relayerUrl,
-        ).then((r) => {
+        try {
+          response = await RelayerApiService.submitAuthorizeOrder(
+            {
+              proof: solidityProof,
+              publicSignals: namedSignals,
+              publicSignalsArray: ps,
+              pubKeyAx: keyPair.pubKeyAx,
+              pubKeyAy: keyPair.pubKeyAy,
+            },
+            input.relayerUrl,
+          );
           console.log('[OrderService] POST resolved', { ms: Date.now() - t0 });
-          return { via: 'post' as const, data: r };
-        })
-          .catch((e) => {
-            console.log('[OrderService] POST rejected', { ms: Date.now() - t0, err: (e as Error)?.name || (e as Error)?.message });
-            return { via: 'post-err' as const, err: e as Error };
+        } catch (postErr: any) {
+          const isAbort = postErr instanceof Error
+            && (postErr.name === 'AbortError' || /abort/i.test(postErr.message));
+          console.log('[OrderService] POST rejected', {
+            ms: Date.now() - t0,
+            err: postErr?.name || postErr?.message,
           });
-
-        const pollPromise = pollForAcceptedOrder(
-          namedSignals.nullifier,
-          input.relayerUrl,
-          raceAbort.signal,
-        ).then((status) => ({ via: 'poll' as const, data: status }));
-
-        const winner = await Promise.race([postPromise, pollPromise]);
-
-        if (winner.via === 'post') {
-          // POST resolved successfully: cancel the now-redundant poll
-          // so it doesn't keep hitting the relayer for ~20 s and
-          // contend with PendingOrdersService after `resumePoll()`.
-          raceAbort.abort();
-          response = winner.data;
-        } else if (winner.via === 'poll' && winner.data) {
-          // Poll confirmed acceptance while POST was still in flight.
-          // Leave POST to resolve in the background — it can't make
-          // the server state any worse (server is idempotent on
-          // nullifier, see authorize-orders route §2.4).
-          response = { status: winner.data.status };
-        } else if (winner.via === 'post-err' && !isAbortError(winner.err)) {
-          // Terminal POST error (400 rejection, network unreachable,
-          // etc.). No point waiting 20 s for poll to confirm something
-          // that already decided the outcome — fail fast.
-          raceAbort.abort();
-          throw winner.err;
-        } else {
-          // Poll won with null (exhausted) OR POST aborted recoverably.
-          // In either case, fall back to awaiting the other racer.
-          const other = winner.via === 'poll' ? await postPromise : await pollPromise;
-          if (other.via === 'post') {
-            raceAbort.abort();
-            response = other.data;
-          } else if (other.via === 'poll' && other.data) {
-            response = { status: other.data.status };
-          } else {
-            const err = winner.via === 'post-err' ? winner.err
-              : (other.via === 'post-err' ? other.err : new Error('order not accepted'));
-            throw err;
-          }
+          if (!isAbort) throw postErr;
+          // POST aborted recoverably — poll for acceptance. Kept for
+          // the rare case where response delivery dies but the relayer
+          // still got the body.
+          console.log('[OrderService] POST aborted; falling back to GET poll');
+          const status = await pollForAcceptedOrder(
+            namedSignals.nullifier,
+            input.relayerUrl,
+          );
+          if (!status) throw postErr;
+          response = { status: status.status };
         }
       } finally {
-        // Belt-and-braces: guarantee the loser poll is cancelled even
-        // when we throw out of the race (e.g. terminal POST error).
-        raceAbort.abort();
+        // Polling must always resume, including on terminal POST errors,
+        // or pending-order updates stall for the rest of the session.
         PendingOrdersService.resumePoll();
       }
 

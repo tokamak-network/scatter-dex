@@ -97,51 +97,78 @@ export async function computeClaimNullifier(secret: bigint, leafIndex: bigint): 
   return poseidonHash([TAG_CLAIM_NULL, secret, leafIndex]);
 }
 
-// ─── Merkle Tree ─────────────────────────────────────────────
+// ─── Merkle Tree (sparse) ─────────────────────────────────────
+// Sparse build: ~2N+depth hashes vs 2^depth for the naive padder.
+// Root is bit-identical. Mirrors `mobile/src/lib/merkleTree.ts`.
 
-export async function buildMerkleTree(
-  leaves: bigint[],
-  depth: number
-): Promise<{ root: bigint; layers: bigint[][] }> {
+let zeroHashCache: { depth: number; zeros: bigint[] } | null = null;
+
+async function getZeroHashes(depth: number): Promise<bigint[]> {
+  if (zeroHashCache && zeroHashCache.depth >= depth) return zeroHashCache.zeros;
   const poseidon = await getPoseidon();
   const F = poseidon.F;
-
   const zeros: bigint[] = [0n];
   for (let i = 1; i <= depth; i++) {
     zeros.push(F.toObject(poseidon([zeros[i - 1], zeros[i - 1]])));
   }
+  zeroHashCache = { depth, zeros };
+  return zeros;
+}
 
-  const size = 2 ** depth;
-  const paddedLeaves = [...leaves];
-  while (paddedLeaves.length < size) paddedLeaves.push(0n);
+export interface SparseMerkleTree {
+  root: bigint;
+  /** `layers[d]` truncated to the non-zero prefix; siblings outside use `zeroHashes[d]`. */
+  layers: bigint[][];
+  zeroHashes: bigint[];
+  depth: number;
+}
 
-  const layers: bigint[][] = [paddedLeaves];
-  let currentLayer = paddedLeaves;
+export async function buildMerkleTree(
+  leaves: bigint[],
+  depth: number,
+): Promise<SparseMerkleTree> {
+  const poseidon = await getPoseidon();
+  const F = poseidon.F;
+  const zeros = await getZeroHashes(depth);
 
-  for (let i = 0; i < depth; i++) {
-    const nextLayer: bigint[] = [];
-    for (let j = 0; j < currentLayer.length; j += 2) {
-      nextLayer.push(F.toObject(poseidon([currentLayer[j], currentLayer[j + 1]])));
+  const layers: bigint[][] = [[...leaves]];
+  let current = layers[0];
+
+  for (let d = 0; d < depth; d++) {
+    if (current.length === 0) {
+      // Remaining levels are entirely zero — fill from the precomputed
+      // table so the final layer still contains the all-zero root.
+      for (let dd = d; dd < depth; dd++) {
+        layers.push([zeros[dd + 1]]);
+      }
+      current = layers[layers.length - 1];
+      break;
     }
-    layers.push(nextLayer);
-    currentLayer = nextLayer;
+    const next: bigint[] = [];
+    for (let j = 0; j < current.length; j += 2) {
+      const left = current[j];
+      const right = j + 1 < current.length ? current[j + 1] : zeros[d];
+      next.push(F.toObject(poseidon([left, right])));
+    }
+    layers.push(next);
+    current = next;
   }
 
-  return { root: currentLayer[0], layers };
+  return { root: current[0], layers, zeroHashes: zeros, depth };
 }
 
 export function getMerkleProof(
-  layers: bigint[][],
-  leafIndex: number
+  tree: SparseMerkleTree,
+  leafIndex: number,
 ): { pathElements: bigint[]; pathIndices: number[] } {
   const pathElements: bigint[] = [];
   const pathIndices: number[] = [];
   let index = leafIndex;
 
-  for (let i = 0; i < layers.length - 1; i++) {
+  for (let i = 0; i < tree.layers.length - 1; i++) {
     const isRight = index % 2;
     const siblingIndex = isRight ? index - 1 : index + 1;
-    pathElements.push(layers[i][siblingIndex] ?? 0n);
+    pathElements.push(tree.layers[i][siblingIndex] ?? tree.zeroHashes[i]);
     pathIndices.push(isRight);
     index = Math.floor(index / 2);
   }

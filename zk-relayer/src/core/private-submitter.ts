@@ -79,6 +79,14 @@ export class PrivateSubmitter {
     return this.provider;
   }
 
+  // Tree cache for /merkle-proof; rebuild only when leaf count grows.
+  // Concurrent requests on a busy relayer must not each re-run the
+  // depth-20 build or the event loop starves.
+  private cachedTree: { leafCount: number; tree: Awaited<ReturnType<typeof buildMerkleTree>> } | null = null;
+  private treeBuildInflight: Promise<Awaited<ReturnType<typeof buildMerkleTree>>> | null = null;
+  private indexInflight: Promise<void> | null = null;
+  private lastIndexedBlock: number = -1;
+
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
   async getCommitmentMerkleProof(leafIndex: number): Promise<{
     root: string;
@@ -86,31 +94,67 @@ export class PrivateSubmitter {
     pathIndices: number[];
   }> {
     await this.indexCommitments();
-    const { root, layers } = await buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH);
-    const proof = getMerkleProof(layers, leafIndex);
+    if (
+      !this.cachedTree ||
+      this.cachedTree.leafCount !== this.commitmentLeaves.length
+    ) {
+      // Coalesce concurrent rebuilds onto a single Promise so a burst
+      // of /merkle-proof requests doesn't spawn N parallel depth-20
+      // builds when the cache is empty/stale.
+      if (!this.treeBuildInflight) {
+        const targetCount = this.commitmentLeaves.length;
+        this.treeBuildInflight = buildMerkleTree(this.commitmentLeaves, COMMIT_TREE_DEPTH)
+          .then((tree) => {
+            this.cachedTree = { leafCount: targetCount, tree };
+            return tree;
+          })
+          .finally(() => {
+            this.treeBuildInflight = null;
+          });
+      }
+      await this.treeBuildInflight;
+    }
+    const cached = this.cachedTree!;
+    const proof = getMerkleProof(cached.tree, leafIndex);
     return {
-      root: root.toString(),
+      root: cached.tree.root.toString(),
       pathElements: proof.pathElements.map((e) => e.toString()),
       pathIndices: proof.pathIndices,
     };
   }
 
-  /** Index all commitment deposits from on-chain events. */
+  /** Index commitment deposits from on-chain events. Incremental: only
+   *  queries blocks past `lastIndexedBlock`, so /merkle-proof on a hot
+   *  relayer doesn't re-scan history each call. Concurrent callers
+   *  share a single in-flight indexing pass via `indexInflight`. */
   async indexCommitments(): Promise<void> {
-    const filter = this.pool.filters.CommitmentInserted();
-    // On forked chains, querying from block 0 crosses pre-fork history and
-    // trips upstream RPC block-range limits (e.g. drpc free tier rejects
-    // >10k block ranges). INDEX_FROM_BLOCK lets operators skip the unused
-    // pre-deployment range. Defaults to 0 for fresh chains (anvil mock).
-    const raw = process.env.INDEX_FROM_BLOCK;
-    const parsed = raw !== undefined ? Number(raw) : 0;
-    const fromBlock = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
-    if (raw !== undefined && fromBlock !== parsed) {
-      console.warn(`INDEX_FROM_BLOCK=${raw} is not a non-negative integer; falling back to 0`);
-    }
-    const events = await this.pool.queryFilter(filter, fromBlock, "latest");
-    this.commitmentLeaves = [];
+    if (this.indexInflight) return this.indexInflight;
+    this.indexInflight = this.runIndexCommitments().finally(() => {
+      this.indexInflight = null;
+    });
+    return this.indexInflight;
+  }
 
+  private async runIndexCommitments(): Promise<void> {
+    const filter = this.pool.filters.CommitmentInserted();
+    let fromBlock: number;
+    if (this.lastIndexedBlock >= 0) {
+      fromBlock = this.lastIndexedBlock + 1;
+    } else {
+      // INDEX_FROM_BLOCK lets operators skip pre-deployment history on
+      // forked chains where some upstream RPCs (drpc free) reject >10k
+      // block ranges. Default 0 for fresh anvil chains.
+      const raw = process.env.INDEX_FROM_BLOCK;
+      const parsed = raw !== undefined ? Number(raw) : 0;
+      fromBlock = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+      if (raw !== undefined && fromBlock !== parsed) {
+        console.warn(`INDEX_FROM_BLOCK=${raw} is not a non-negative integer; falling back to 0`);
+      }
+      this.commitmentLeaves = [];
+    }
+    const latest = await this.provider.getBlockNumber();
+    if (fromBlock > latest) return;
+    const events = await this.pool.queryFilter(filter, fromBlock, latest);
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
         topics: event.topics as string[],
@@ -124,7 +168,10 @@ export class PrivateSubmitter {
         this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
       }
     }
-    console.log(`Indexed ${this.commitmentLeaves.length} commitments`);
+    this.lastIndexedBlock = latest;
+    if (events.length > 0) {
+      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new)`);
+    }
   }
 
 

@@ -63,22 +63,6 @@ const uniffiIsDebug =
   false;
 // Public interface members begin here.
 
-/**
- * You can also customize the bindings by #[uniffi::export]
- * Reference: https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html
- */
-export function moproHelloWorld(): string {
-  return FfiConverterString.lift(
-    uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_native_prover_fn_func_mopro_hello_world(
-          callStatus
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift
-    )
-  );
-}
 export function generateCircomProof(
   zkeyPath: string,
   circuitInputs: string,
@@ -93,28 +77,6 @@ export function generateCircomProof(
         return nativeModule().ubrn_uniffi_native_prover_fn_func_generate_circom_proof(
           FfiConverterString.lower(zkeyPath),
           FfiConverterString.lower(circuitInputs),
-          FfiConverterTypeProofLib.lower(proofLib),
-          callStatus
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift
-    )
-  );
-}
-export function verifyCircomProof(
-  zkeyPath: string,
-  proofResult: CircomProofResult,
-  proofLib: ProofLib
-): boolean /*throws*/ {
-  return FfiConverterBool.lift(
-    uniffiCaller.rustCallWithError(
-      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
-        FfiConverterTypeMoproError
-      ),
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
-          FfiConverterString.lower(zkeyPath),
-          FfiConverterTypeCircomProofResult.lower(proofResult),
           FfiConverterTypeProofLib.lower(proofLib),
           callStatus
         );
@@ -145,28 +107,6 @@ export function generateGnarkProof(
     )
   );
 }
-export function verifyGnarkProof(
-  r1csPath: string,
-  vkPath: string,
-  proofResult: GnarkProofResult
-): boolean /*throws*/ {
-  return FfiConverterBool.lift(
-    uniffiCaller.rustCallWithError(
-      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
-        FfiConverterTypeMoproError
-      ),
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(
-          FfiConverterString.lower(r1csPath),
-          FfiConverterString.lower(vkPath),
-          FfiConverterTypeGnarkProofResult.lower(proofResult),
-          callStatus
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift
-    )
-  );
-}
 export function generateHalo2Proof(
   srsPath: string,
   pkPath: string,
@@ -182,30 +122,6 @@ export function generateHalo2Proof(
           FfiConverterString.lower(srsPath),
           FfiConverterString.lower(pkPath),
           FfiConverterMapStringArrayString.lower(circuitInputs),
-          callStatus
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift
-    )
-  );
-}
-export function verifyHalo2Proof(
-  srsPath: string,
-  vkPath: string,
-  proof: ArrayBuffer,
-  publicInput: ArrayBuffer
-): boolean /*throws*/ {
-  return FfiConverterBool.lift(
-    uniffiCaller.rustCallWithError(
-      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
-        FfiConverterTypeMoproError
-      ),
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(
-          FfiConverterString.lower(srsPath),
-          FfiConverterString.lower(vkPath),
-          FfiConverterArrayBuffer.lower(proof),
-          FfiConverterArrayBuffer.lower(publicInput),
           callStatus
         );
       },
@@ -258,6 +174,113 @@ export function getNoirVerificationKey(
           FfiConverterOptionalString.lower(srsPath),
           FfiConverterBool.lower(onChain),
           FfiConverterBool.lower(lowMemoryMode),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+/**
+ * You can also customize the bindings by #[uniffi::export]
+ * Reference: https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html
+ */
+export function moproHelloWorld(): string {
+  return FfiConverterString.lift(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_mopro_hello_world(
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+/**
+ * Poseidon-BN254 hash of an arbitrary-arity input vector. Inputs and
+ * the returned hash are decimal `BigUint` strings — same shape the JS
+ * side already passes around for circuit signal values, so call sites
+ * can swap `await ZKBridgeService.poseidonHash([...])` for
+ * `await NativeProver.poseidonHash([...])` without touching the data.
+ */
+export function poseidonHash(inputs: Array<string>): string /*throws*/ {
+  return FfiConverterString.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_poseidon_hash(
+          FfiConverterArrayString.lower(inputs),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+export function verifyCircomProof(
+  zkeyPath: string,
+  proofResult: CircomProofResult,
+  proofLib: ProofLib
+): boolean /*throws*/ {
+  return FfiConverterBool.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
+          FfiConverterString.lower(zkeyPath),
+          FfiConverterTypeCircomProofResult.lower(proofResult),
+          FfiConverterTypeProofLib.lower(proofLib),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+export function verifyGnarkProof(
+  r1csPath: string,
+  vkPath: string,
+  proofResult: GnarkProofResult
+): boolean /*throws*/ {
+  return FfiConverterBool.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(
+          FfiConverterString.lower(r1csPath),
+          FfiConverterString.lower(vkPath),
+          FfiConverterTypeGnarkProofResult.lower(proofResult),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift
+    )
+  );
+}
+export function verifyHalo2Proof(
+  srsPath: string,
+  vkPath: string,
+  proof: ArrayBuffer,
+  publicInput: ArrayBuffer
+): boolean /*throws*/ {
+  return FfiConverterBool.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeMoproError.lift.bind(
+        FfiConverterTypeMoproError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(
+          FfiConverterString.lower(srsPath),
+          FfiConverterString.lower(vkPath),
+          FfiConverterArrayBuffer.lower(proof),
+          FfiConverterArrayBuffer.lower(publicInput),
           callStatus
         );
       },
@@ -915,12 +938,13 @@ function uniffiEnsureInitialized() {
   // contract version 30, but mopro-ffi 0.3.5 is built against uniffi
   // 0.29.x (contract version 29). Override the template constant to 29
   // so the contract-version check actually matches the Rust scaffolding —
-  // this is the real load-bearing binary-compat guard. Keep the
-  // per-function checksum checks below disabled because the ubrn
-  // template *also* has a separate bug there (compares function-name
-  // strings instead of numeric hashes), so they would always throw.
-  // Remove this whole hack once ubrn / mopro ship a matched pair.
+  // this is the load-bearing binary-compat guard. The per-function
+  // checksum block below stays disabled because of an independent ubrn
+  // template bug (compares function-name strings vs numeric hashes),
+  // so they would always throw. Remove this whole hack once ubrn /
+  // mopro ship a matched pair.
   const bindingsContractVersion = 29;
+  // Get the scaffolding contract version by calling the into the dylib
   const scaffoldingContractVersion =
     nativeModule().ubrn_ffi_native_prover_uniffi_contract_version();
   if (bindingsContractVersion !== scaffoldingContractVersion) {
@@ -930,6 +954,50 @@ function uniffiEnsureInitialized() {
     );
   }
   return;
+  // Per-function checksum checks below disabled — see comment at top.
+  // (Unreachable; left in place so the next clean ubrn regen drops in
+  // without losing context.)
+  // eslint-disable-next-line no-unreachable
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_circom_proof() !==
+    36118
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_generate_circom_proof'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof() !==
+    45818
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_generate_gnark_proof'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof() !==
+    20945
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_generate_halo2_proof'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_noir_proof() !==
+    13761
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_generate_noir_proof'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key() !==
+    40800
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_native_prover_checksum_func_get_noir_verification_key'
+    );
+  }
   if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_mopro_hello_world() !==
     53713
@@ -939,72 +1007,40 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
-    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_circom_proof() !==
-    23571
+    nativeModule().ubrn_uniffi_native_prover_checksum_func_poseidon_hash() !==
+    50829
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
-      'uniffi_native_prover_checksum_func_generate_circom_proof'
+      'uniffi_native_prover_checksum_func_poseidon_hash'
     );
   }
   if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_verify_circom_proof() !==
-    21838
+    18666
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_native_prover_checksum_func_verify_circom_proof'
     );
   }
   if (
-    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof() !==
-    27
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      'uniffi_native_prover_checksum_func_generate_gnark_proof'
-    );
-  }
-  if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof() !==
-    30624
+    33709
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_native_prover_checksum_func_verify_gnark_proof'
     );
   }
   if (
-    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof() !==
-    26263
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      'uniffi_native_prover_checksum_func_generate_halo2_proof'
-    );
-  }
-  if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof() !==
-    49326
+    10053
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_native_prover_checksum_func_verify_halo2_proof'
     );
   }
   if (
-    nativeModule().ubrn_uniffi_native_prover_checksum_func_generate_noir_proof() !==
-    20925
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      'uniffi_native_prover_checksum_func_generate_noir_proof'
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key() !==
-    58845
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      'uniffi_native_prover_checksum_func_get_noir_verification_key'
-    );
-  }
-  if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_verify_noir_proof() !==
-    64636
+    42351
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_native_prover_checksum_func_verify_noir_proof'
