@@ -53,30 +53,26 @@ export const config = {
   // [R-10] Sanctions pubKey blocklist file (optional JSON array of {pubKeyAx, pubKeyAy})
   sanctionsPubKeyList: process.env.SANCTIONS_PUBKEY_LIST || null,
 
-  // Confirmation depth for commitment indexing. Anvil/local fork doesn't
-  // reorg, so default 0. On L1 mainnet/testnets a small buffer (e.g. 12)
-  // protects /merkle-proof from serving roots whose tail blocks could
-  // be replaced by a reorg.
-  indexConfirmations: (() => {
-    const raw = process.env.INDEX_CONFIRMATIONS;
-    const parsed = raw !== undefined ? parseInt(raw, 10) : 0;
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      console.warn(`[config] Invalid INDEX_CONFIRMATIONS="${raw}", using default 0`);
-      return 0;
-    }
-    return parsed;
-  })(),
+  // Stay this many blocks behind tip when indexing CommitmentInserted.
+  // Anvil/local fork: 0 (no reorgs). L1 mainnet/testnets: ~12.
+  indexConfirmations: parseEnvInt("INDEX_CONFIRMATIONS", 0, 0),
 
-  // [R-1] Gas guard: max gas price in gwei (default 100)
-  maxGasPriceGwei: (() => {
-    const parsed = parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      console.warn(`[config] Invalid MAX_GAS_PRICE_GWEI="${process.env.MAX_GAS_PRICE_GWEI}", using default 100`);
-      return 100;
-    }
-    return parsed;
-  })(),
+  // [R-1] Gas guard: max gas price in gwei.
+  maxGasPriceGwei: parseEnvInt("MAX_GAS_PRICE_GWEI", 100, 1),
 };
+
+/** Parse a non-negative integer env var with a default. Logs a warn and
+ *  uses the default when the value is missing, non-numeric, or below `min`. */
+function parseEnvInt(name: string, defaultValue: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    console.warn(`[config] Invalid ${name}="${raw}", using default ${defaultValue}`);
+    return defaultValue;
+  }
+  return parsed;
+}
 
 /** [R-7] Update relayer fee at runtime (admin API). */
 export function updateRelayerFee(feeBps: number): void {
