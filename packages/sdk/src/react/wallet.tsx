@@ -6,6 +6,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { ethers } from "ethers";
@@ -55,7 +56,8 @@ export interface WalletState {
   readProvider: ethers.JsonRpcProvider;
   /** Best-effort wallet vendor name; null when disconnected. */
   walletName: string | null;
-  /** Last error from a `connect()` attempt (e.g. "no wallet"). */
+  /** Last error from a `connect()` attempt — covers both the
+   *  "no wallet detected" case and user rejections. */
   connectError: string | null;
   /** Trigger the wallet's account-request flow. */
   connect: () => Promise<void>;
@@ -97,31 +99,76 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
   // churn JsonRpcProvider instances (each opens its own keep-alive).
   const readProvider = useMemo(() => getReadProvider(network.rpcUrl), [network.rpcUrl]);
 
-  const refreshFromInjected = useCallback(async () => {
-    const eth = injectedFromWindow();
-    if (!eth) return;
-    try {
-      const bp = new ethers.BrowserProvider(eth);
-      setProvider(bp);
-      const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
-      if (accounts.length === 0) return;
-      setAccount(accounts[0]!.toLowerCase());
-      setWalletName(detectWalletName(eth));
+  // Tracks lifecycle so async refreshes can no-op after unmount and
+  // avoid React's "setState on unmounted component" warnings.
+  const mountedRef = useRef(true);
+
+  /** Hydrate wallet state from the injected provider. Accepts a
+   *  preFetched accounts list so callers that already received it
+   *  (e.g. the `accountsChanged` event) don't pay an extra
+   *  `eth_accounts` round-trip. An empty/missing accounts list is
+   *  treated as "now disconnected" and clears stale state — important
+   *  when a previously-connected wallet gets locked or revokes. */
+  const refreshFromInjected = useCallback(
+    async (preFetchedAccounts?: readonly string[]) => {
+      const eth = injectedFromWindow();
+      if (!eth) return;
       try {
-        setSigner(await bp.getSigner());
-      } catch {
-        setSigner(null);
+        const bp = new ethers.BrowserProvider(eth);
+        const accounts =
+          preFetchedAccounts ??
+          ((await eth.request({ method: "eth_accounts" })) as string[]);
+
+        if (accounts.length === 0) {
+          // Disconnect path — clear everything so a previously connected
+          // session doesn't leave stale signer/account behind.
+          if (!mountedRef.current) return;
+          setProvider(null);
+          setAccount(null);
+          setSigner(null);
+          setChainId(null);
+          setWalletName(null);
+          return;
+        }
+
+        if (!mountedRef.current) return;
+        setProvider(bp);
+        setAccount(accounts[0]!.toLowerCase());
+        setWalletName(detectWalletName(eth));
+
+        let nextSigner: ethers.Signer | null = null;
+        try {
+          nextSigner = await bp.getSigner();
+        } catch {
+          nextSigner = null;
+        }
+        if (!mountedRef.current) return;
+        setSigner(nextSigner);
+
+        const net = await bp.getNetwork();
+        if (!mountedRef.current) return;
+        setChainId(Number(net.chainId));
+      } catch (e) {
+        console.error("[wallet] refreshFromInjected failed:", e);
       }
-      const net = await bp.getNetwork();
-      setChainId(Number(net.chainId));
-    } catch (e) {
-      console.error("[wallet] refreshFromInjected failed:", e);
-    }
+    },
+    [],
+  );
+
+  // Track mount lifecycle. Set false on unmount so any in-flight
+  // promise from refreshFromInjected skips the setState calls.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
-  // Eagerly hydrate from any pre-authorized session and subscribe to
-  // wallet events. Cleanup removes listeners so re-renders don't pile
-  // up handlers on the injected provider.
+  // Hydrate from any pre-authorized session and subscribe to wallet
+  // events. Re-runs on `injectionTick` so a wallet that injects late
+  // (e.g. extension still booting at first paint) still gets wired
+  // up once it dispatches the `ethereum#initialized` window event.
+  const [injectionTick, setInjectionTick] = useState(0);
   useEffect(() => {
     const eth = injectedFromWindow();
     if (!eth) return;
@@ -129,16 +176,9 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
     refreshFromInjected();
 
     const handleAccountsChanged = (accounts: unknown) => {
-      const list = accounts as string[];
-      if (list.length === 0) {
-        setAccount(null);
-        setSigner(null);
-        setChainId(null);
-        setWalletName(null);
-        return;
-      }
-      setAccount(list[0]!.toLowerCase());
-      refreshFromInjected();
+      // Forward the array straight to the refresher so it doesn't
+      // need to re-query eth_accounts; empty array drops state.
+      refreshFromInjected((accounts as string[]) ?? []);
     };
     const handleChainChanged = () => {
       refreshFromInjected();
@@ -151,7 +191,17 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
       eth.removeListener?.("accountsChanged", handleAccountsChanged);
       eth.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, [refreshFromInjected]);
+  }, [refreshFromInjected, injectionTick]);
+
+  // Late-injection bootstrap. Some extensions inject `window.ethereum`
+  // after React mounts and dispatch `ethereum#initialized` when they
+  // do; bumping injectionTick re-runs the subscription effect above.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onInitialized = () => setInjectionTick((n) => n + 1);
+    window.addEventListener("ethereum#initialized", onInitialized, { once: true });
+    return () => window.removeEventListener("ethereum#initialized", onInitialized);
+  }, []);
 
   const connect = useCallback(async () => {
     const eth = injectedFromWindow();
@@ -167,11 +217,16 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
         method: "eth_requestAccounts",
       })) as string[];
       if (accounts.length > 0) {
-        await refreshFromInjected();
+        await refreshFromInjected(accounts);
       }
     } catch (e) {
-      // User-rejected requests are the common case — log quietly.
+      // EIP-1193 user-rejection is code 4001 but other shapes exist;
+      // surface a friendly message and keep the original on console
+      // for debugging.
       console.warn("[wallet] connect rejected:", e);
+      const msg =
+        (e as { message?: string })?.message ?? "Wallet connection failed.";
+      setConnectError(msg);
     }
   }, [refreshFromInjected]);
 
@@ -180,6 +235,7 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
     setSigner(null);
     setChainId(null);
     setWalletName(null);
+    setProvider(null);
   }, []);
 
   const value = useMemo<WalletState>(
