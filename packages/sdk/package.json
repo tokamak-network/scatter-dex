@@ -8,7 +8,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./core": "./src/core/index.ts"
+    "./core": "./src/core/index.ts",
+    "./react": "./src/react/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -16,8 +17,16 @@
   "dependencies": {
     "ethers": "^6.16.0"
   },
+  "peerDependencies": {
+    "react": "^19"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/react": "^19",
+    "react": "^19",
     "typescript": "^5"
   }
 }
