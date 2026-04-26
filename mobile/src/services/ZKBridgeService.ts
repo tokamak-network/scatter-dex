@@ -325,7 +325,14 @@ class ZKBridgeServiceImpl {
       );
       return _nativePoseidon(decimal);
     } catch (e) {
-      console.warn(`[ZKBridge] native ${label} failed, falling back:`, e);
+      // Narrow before formatting; pass the raw object as a second arg so
+      // any extra diagnostic fields (uniffi error variants, etc.) survive.
+      const msg = e instanceof Error
+        ? ((e as { shortMessage?: string; reason?: string }).shortMessage
+          ?? (e as { reason?: string }).reason
+          ?? e.message)
+        : String(e);
+      console.warn(`[ZKBridge] native ${label} failed (${msg}), falling back:`, e);
       return null;
     }
   }
