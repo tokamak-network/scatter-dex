@@ -406,7 +406,13 @@ class ZKBridgeServiceImpl {
   }> {
     if (_native.signEddsa) {
       try {
-        const sig = _native.signEddsa(privateKeyHex, message);
+        // babyjubjub-rs's `sign` parses message as decimal BigUint;
+        // some callers (orderHash from circomlibjs paths) pass hex.
+        // Normalize at the boundary, same shape as `tryNativeHash`.
+        const decimalMsg = /^0x[0-9a-fA-F]+$/.test(message)
+          ? BigInt(message).toString(10)
+          : message;
+        const sig = _native.signEddsa(privateKeyHex, decimalMsg);
         // Native uses lower-case (r8x/r8y/s); WebView callers expect
         // upper-case S/R8x/R8y. Adapt at the boundary.
         return { S: sig.s, R8x: sig.r8x, R8y: sig.r8y };

@@ -77,17 +77,20 @@ pub fn poseidon_hash(inputs: Vec<String>) -> Result<String, MoproError> {
 // circomlibjs-compatible Rust impl by arnaucube / Iden3.
 
 use babyjubjub_rs::{decompress_signature, PrivateKey};
-use ff::{to_hex, PrimeField as _};
+use ff::to_hex;
 use num_bigint::{BigInt, Sign};
 
 /// Convert a babyjubjub-rs `Fr` (poseidon_rs::Fr) to a decimal `BigUint`
 /// string — same shape circomlibjs's `babyJub.F.toString(p, 10)` returns.
 fn fr_to_dec(fr: &poseidon_rs::Fr) -> String {
-    // `to_hex` is a circomlibjs/Iden3-style 64-char hex without 0x prefix.
+    // `to_hex` is guaranteed by `ff_ce` to emit a fixed-width hex repr;
+    // a parse failure here would mean the Fr invariant is broken. Fail
+    // loudly rather than masking it as "0" — bug masking that path
+    // would silently emit invalid pubkeys/signatures.
     let hex = to_hex(fr);
     num_bigint::BigUint::parse_bytes(hex.as_bytes(), 16)
-        .map(|b| b.to_str_radix(10))
-        .unwrap_or_else(|| "0".to_string())
+        .expect("EdDSA: ff_ce::to_hex produced invalid hex")
+        .to_str_radix(10)
 }
 
 fn parse_priv_key_hex(s: &str) -> Result<Vec<u8>, MoproError> {
@@ -183,6 +186,65 @@ mod uniffi_tests {
     #[test]
     fn test_mopro_hello_world() {
         assert_eq!(super::mopro_hello_world(), "Hello, World!");
+    }
+}
+
+#[cfg(test)]
+mod eddsa_tests {
+    use super::{derive_eddsa_key, sign_eddsa};
+
+    // Deterministic vector: priv = 0x000102…1f (32 bytes counting from 0).
+    // Reference values produced by the same pair of dependencies pinned
+    // in this crate (babyjubjub-rs 0.0.11 + poseidon-rs 0.0.8) which are
+    // bit-compatible with circomlibjs's `eddsa.prv2pub` /
+    // `eddsa.signPoseidon`. If a future dep update breaks circomlibjs
+    // compat the asserts below catch it before we ship.
+    const PRIV_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    const PUB_AX: &str = "1120771572304984668855649788542860110303223894298952018121329196339919157573";
+    const PUB_AY: &str = "20197087425205130352574209034729275460185533126585197591053247747830393653846";
+
+    #[test]
+    fn derive_pubkey_matches_circomlibjs_vector() {
+        let key = derive_eddsa_key(PRIV_HEX.to_string()).expect("derive");
+        assert_eq!(key.private_key_hex, PRIV_HEX);
+        assert_eq!(key.pub_key_ax, PUB_AX);
+        assert_eq!(key.pub_key_ay, PUB_AY);
+    }
+
+    #[test]
+    fn sign_small_message_matches_circomlibjs_vector() {
+        let sig = sign_eddsa(PRIV_HEX.to_string(), "12345".to_string()).expect("sign");
+        // Captured by running this same code path on the host (cargo
+        // run --example eddsa_probe) — locks in the EdDSA-Poseidon
+        // signature scheme + field encoding.
+        assert_eq!(sig.s, "1739790466773065296181678212741954535739539898060771208642831439111861798085");
+        assert_eq!(sig.r8x, "2204325964008126994588720944122362049669595579112675351026637866395221427436");
+        assert_eq!(sig.r8y, "16388779925939887818626849442548090612482898205585699613549062336288697370499");
+    }
+
+    #[test]
+    fn sign_poseidon_size_message_matches_circomlibjs_vector() {
+        let msg = "20671313523276210208694036424897136061965743176757356315862460569396468490866";
+        let sig = sign_eddsa(PRIV_HEX.to_string(), msg.to_string()).expect("sign");
+        assert_eq!(sig.s, "934736112787989380428518989385490047154871226061435499690412523401779437611");
+        assert_eq!(sig.r8x, "4763617124038858249833498930009178202408287439972483916942165104723128200982");
+        assert_eq!(sig.r8y, "10834163655245825241732230187624856803051578830955712197435943430630520703678");
+    }
+
+    #[test]
+    fn sign_rejects_hex_message() {
+        // Native `sign_eddsa` is decimal-only; the JS wrapper is
+        // expected to normalize hex→decimal before crossing FFI.
+        let err = sign_eddsa(PRIV_HEX.to_string(), "0xabc".to_string()).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("decimal"), "unexpected err: {msg}");
+    }
+
+    #[test]
+    fn derive_rejects_short_priv_key() {
+        let err = derive_eddsa_key("deadbeef".to_string()).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("32 bytes"), "unexpected err: {msg}");
     }
 }
 
