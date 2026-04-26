@@ -14,7 +14,6 @@ import {
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
-import type { CommitmentNote } from "@zkscatter/sdk/zk";
 import { DEMO_NETWORK } from "./network";
 
 /** A note in the user's local vault. The full `CommitmentNote` is
@@ -91,9 +90,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       try {
         const list = await adapter.loadAll();
         if (cancelled) return;
-        const filtered = list.filter(
-          (n) => n.chainId === undefined || n.chainId === DEMO_NETWORK.chainId,
-        );
+        // Adapter returns oldest → newest. `add()` prepends, so the
+        // in-memory invariant is **newest-first**. Reverse hydrated
+        // entries to match — without this, a refresh would visibly
+        // flip the vault order and any pre-hydration `add()` would
+        // straddle the boundary.
+        const filtered = list
+          .filter((n) => n.chainId === undefined || n.chainId === DEMO_NETWORK.chainId)
+          .sort((a, b) => b.createdAt - a.createdAt);
         // Merge with anything `add()` may have inserted before
         // hydration completed. Without this, a deposit fired during
         // the initial async load would be visible in IDB but blown
@@ -102,7 +106,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
           if (prev.length === 0) return filtered;
           const seen = new Set(filtered.map((n) => n.id));
           const fresh = prev.filter((n) => !seen.has(n.id));
-          return fresh.length === 0 ? filtered : [...fresh, ...filtered];
+          if (fresh.length === 0) return filtered;
+          // Both sides already newest-first; merge then re-sort to
+          // restore the invariant when `prev` had a slightly older
+          // createdAt than the most recent hydrated entry.
+          return [...fresh, ...filtered].sort((a, b) => b.createdAt - a.createdAt);
         });
         labelCounter.current = Math.max(
           labelCounter.current,

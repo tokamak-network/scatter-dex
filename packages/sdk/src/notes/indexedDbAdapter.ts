@@ -84,7 +84,28 @@ function deserialize(w: WireNote): StoredNote {
  *  by `note.id`. Survives page reload + browser restart. Falls back
  *  to in-memory state on platforms without IDB (private-mode quotas,
  *  SSR, broken handles) — failures don't surface to the caller, but
- *  are logged once per session. */
+ *  are logged once per session.
+ *
+ *  ## Security model (read before relying on this in production)
+ *
+ *  This adapter persists `note.ownerSecret`, `note.salt`, and
+ *  `note.amount` **as plaintext hex** in the browser's IndexedDB.
+ *  Any JavaScript that runs on the same origin (including
+ *  cross-site-scripting, malicious extensions, dev-tools usage by
+ *  anyone with physical device access) can read this material.
+ *
+ *  The protocol mitigates leak-only attacks via the v2 commitment
+ *  binding: spending the note also requires the EdDSA private key
+ *  bound into the commitment, which apps store **encrypted** under
+ *  a wallet-derived passphrase. So an IDB read alone cannot move
+ *  funds. But it does leak the link between the note and the
+ *  user's other on-chain activity (defeating the privacy goal).
+ *
+ *  A future PR adds an optional `encrypt` / `decrypt` pair to the
+ *  adapter opts (matching the existing EdDSA key encryption flow)
+ *  so callers can opt into encryption-at-rest. Until then, treat
+ *  IDB as semi-trusted storage and rely on the EdDSA key
+ *  encryption + on-chain nullifier checks to prevent fund theft. */
 export function createIndexedDbNoteAdapter(
   opts: IndexedDbAdapterOpts = {},
 ): NoteStorageAdapter {

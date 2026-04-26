@@ -97,9 +97,13 @@ export function assembleCancelProofResult(envelope: {
   publicSignals: readonly bigint[];
 }): CancelProofResult {
   const ps = envelope.publicSignals;
-  if (ps.length < 4) {
+  // Validate against the circuit's full public-signal count (not
+  // just the 4 we read into named fields) so a circuit / worker
+  // mismatch surfaces here instead of silently producing a
+  // contract-rejected proof.
+  if (ps.length < CANCEL_PUBLIC_SIGNALS.length) {
     throw new Error(
-      `assembleCancelProofResult: ${ps.length} public signals; expected ≥ 4`,
+      `assembleCancelProofResult: ${ps.length} public signals; expected ${CANCEL_PUBLIC_SIGNALS.length}`,
     );
   }
   return {

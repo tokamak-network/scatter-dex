@@ -50,7 +50,10 @@ export class IncrementalMerkleTree {
       );
     }
     this.depth = depth;
-    this.filledSubtrees = ZEROS.slice(0, depth).map((z) => z);
+    // `slice` already returns a fresh array; `map(z => z)` was a
+    // no-op carried over from the original port. bigint is primitive
+    // so element-by-element copy isn't required for isolation.
+    this.filledSubtrees = ZEROS.slice(0, depth);
     this._root = ZEROS[depth]!;
   }
 
