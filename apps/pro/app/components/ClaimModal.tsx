@@ -67,9 +67,20 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // TODO: build a real ClaimProofInput once claim circuit
-      // assets ship. The mock prover ignores the input shape.
-      await abortableSleep(200, ctrl.signal);
+
+      // The order stored a single claim entry. We send the
+      // BigInt-backed `entry` + `leafIndex` to the worker; the
+      // worker rebuilds the matching 16-leaf claims tree there so
+      // circomlibjs's Poseidon init never boots on the UI thread.
+      // When real settled orders arrive from chain events, a pre-
+      // derived `merkleProof` from the indexer replaces this.
+      const entry = {
+        secret: order.claim.secret,
+        recipient: BigInt(order.claim.recipient),
+        token: BigInt(order.claim.token),
+        amount: order.claim.amount,
+        releaseTime: order.claim.releaseTime,
+      };
 
       setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
       const prover = getClaimProver();
@@ -77,14 +88,10 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
       await prover.prove(
         {
           circuitId: "claim",
-          input: {
-            secret: order.claim.secret.toString(),
-            recipient: order.claim.recipient,
-            token: order.claim.token,
-            amount: order.claim.amount.toString(),
-            releaseTime: order.claim.releaseTime.toString(),
-            leafIndex: order.claim.leafIndex,
-          },
+          input: { entry, leafIndex: order.claim.leafIndex } as unknown as Record<
+            string,
+            unknown
+          >,
         },
         {
           signal: ctrl.signal,

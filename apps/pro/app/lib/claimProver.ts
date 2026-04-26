@@ -1,15 +1,26 @@
 "use client";
 
-import { createMockProver, type Prover } from "@zkscatter/sdk/zk";
+import { createWebWorkerProver, type Prover } from "@zkscatter/sdk/zk";
+import { wrapWithTimer } from "./proverTimer";
 
-/** Lazy singleton claim prover. Mock until the claim circuit
- *  wasm/zkey ship; swap for `createWebWorkerProver` then. The
- *  `ClaimModal` consumer doesn't change. */
-let prover: Prover | null = null;
+/** Single shared prover instance for the claim flow.
+ *
+ *  Real Web Worker pointed at `app/workers/claim.worker.ts`, which
+ *  calls `generateClaimProof` against the bundled claim circuit
+ *  assets in `public/zk/`. */
+let _prover: Prover | null = null;
 
 export function getClaimProver(): Prover {
-  if (!prover) {
-    prover = createMockProver({ latencyMs: 2000, publicSignalsCount: 6 });
+  if (!_prover) {
+    const inner = createWebWorkerProver({
+      label: "claim",
+      createWorker: () =>
+        new Worker(
+          new URL("../workers/claim.worker.ts", import.meta.url),
+          { type: "module" },
+        ),
+    });
+    _prover = wrapWithTimer("claim", inner);
   }
-  return prover;
+  return _prover;
 }
