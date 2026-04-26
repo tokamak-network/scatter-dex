@@ -5,16 +5,16 @@
 
 /** Per-call semantic buckets. Keeps the rationale (short for probes,
  *  long for submits) in one place and avoids magic numbers at call sites. */
-export const TIMEOUT_PROBE_MS = 3_000;       // liveness probes (discoverRelayers)
-export const TIMEOUT_READ_MS = 5_000;        // relayer GETs + RPC eth_chainId
+export const TIMEOUT_PROBE_MS = 10_000;      // SPIKE: was 3s; iOS sim drops responses <5s
+export const TIMEOUT_READ_MS = 10_000;       // SPIKE: was 5s
 export const TIMEOUT_AGGREGATOR_MS = 12_000; // 1inch proxy (its server has a 10 s budget)
 export const TIMEOUT_SUBMIT_MS = 30_000;     // relayer POSTs (claim + order submit)
-// authorize-order POST specifically: the relayer answers 202 in ~10 ms once
-// it has decoded + persisted the order, so a long timeout only masks network
-// pathologies (iOS NSURLSession response-read hangs on POST, issue #401).
-// Pair this with the GET /:nullifier recovery poll in OrderService — if the
-// POST aborts, the poll confirms whether the server actually got the order.
-export const TIMEOUT_AUTHORIZE_SUBMIT_MS = 5_000;
+// SPIKE: was 5s. iOS Simulator empirically delays response delivery 5–10 s
+// after server `RES_FINISH` (verified via diag-auth middleware showing
+// status=200 sent in <1ms while the client races to its 5s abort). Until the
+// real fix (NSURLSession layer / different transport / real device), give
+// the response packet enough wall-clock budget to actually arrive.
+export const TIMEOUT_AUTHORIZE_SUBMIT_MS = 30_000;
 
 // `signal` is intentionally stripped so callers can't silently bypass
 // the chained timeout by passing their own — they must route cancels
@@ -37,18 +37,16 @@ export function normalizeUrl(url: string): string {
   return url.replace(/^http:\/\/localhost(?=[:/]|$)/, 'http://127.0.0.1');
 }
 
-/** True for any dev loopback origin. Scoped `Connection: close` below
- *  — the keep-alive pool stall we're defending against is specific to
- *  loopback on iOS Simulator. Real-network requests keep keep-alive
- *  (battery / latency). */
-function isLoopback(url: string): boolean {
-  return /^https?:\/\/(127\.0\.0\.1|localhost|::1|\[::1\])(?=[:/]|$)/i.test(url);
-}
-
 export async function fetchWithTimeout(
   url: string,
   { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
 ): Promise<Response> {
+  // Normalize at the wrapper boundary so every caller is automatically
+  // protected — call-site `normalizeUrl(...)` was inconsistent and a
+  // single missed site brings back the IPv6/IPv4 Happy-Eyeballs stall
+  // (issue #401, observed empirically: `localhost:3002` → 2.4 s,
+  // `127.0.0.1:3002` → 0.6 ms on the same host).
+  url = normalizeUrl(url);
   const controller = new AbortController();
   // Honour a parent that's already aborted — otherwise `addEventListener`
   // never fires and the fetch proceeds despite the caller having
@@ -60,17 +58,17 @@ export async function fetchWithTimeout(
   // to this controller after the call resolves.
   const onParentAbort = () => controller.abort();
   parentSignal?.addEventListener('abort', onParentAbort, { once: true });
-  // For dev loopback only: force a fresh TCP connection per request.
-  // NSURLSession's keep-alive pool can hold a socket that Express has
-  // already closed (5 s keep-alive timeout); a subsequent request then
-  // writes into a half-closed socket and the TCP retry chain stalls
-  // for 20–40 s before iOS reconnects (issue #401). On real networks
-  // keep-alive is a battery/latency win, so we scope the override.
   // `new Headers(…)` handles every `HeadersInit` shape (object /
   // Headers / [string, string][]) — the previous plain-object spread
   // silently dropped non-object forms.
   const headers = new Headers(init.headers);
-  if (isLoopback(url)) headers.set('Connection', 'close');
+  // Note: an earlier spike forced `Connection: close` on loopback to
+  // dodge an NSURLSession keep-alive pool stall (issue #401), but the
+  // override turned out to be *causing* the simulator to drop response
+  // reads — server logs showed 200 RES_FINISH on every request while
+  // the client raced to AbortError. Keep-alive is left on for all
+  // requests now; the loopback hardening is handled by IPv4 forcing
+  // (`normalizeUrl` above) plus the bumped read/probe/submit timeouts.
   try {
     return await fetch(url, { ...init, headers, signal: controller.signal });
   } finally {

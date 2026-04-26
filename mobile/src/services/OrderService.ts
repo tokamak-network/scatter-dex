@@ -37,24 +37,26 @@ const MAX_CLAIMS_PER_SIDE = 16;
 const CLAIMS_TREE_DEPTH = 4;
 
 /** GET-based confirmation of order acceptance. The authorize-order POST
- *  uses a short (5 s) timeout because the POST request-body upload on iOS
- *  simulator loopback is observed to take 10-20 s for the ~100 KB ZK
- *  payload (issue #401). NSURLSession keeps retrying the upload in the
- *  background after the client-side abort, so the server eventually
- *  receives the order — this poll is the *primary* confirmation path
- *  waiting for that delayed server-side accept.
+ *  uses a 30 s timeout (`TIMEOUT_AUTHORIZE_SUBMIT_MS` in `lib/http.ts`)
+ *  because the iOS simulator loopback delays response delivery 5–30 s
+ *  after the relayer has already finished writing the response (issue
+ *  #401, verified via the relayer-side `diag-auth` middleware showing
+ *  `RES_FINISH 0ms status=200`). If that POST nonetheless aborts before
+ *  the body arrives, NSURLSession keeps retrying the upload in the
+ *  background and the server eventually accepts the order — this poll
+ *  is the recovery path that waits for that delayed accept.
  *
- *  Timing: first probe fires immediately. Subsequent probes space by 1 s
- *  (was 500 ms) to spread a longer recovery window without hammering.
+ *  Timing: first probe fires immediately. Subsequent probes space by 1 s.
  *
  *  Budget: 20 probes × 1 s spacing ≈ 20 s of recovery window. Combined
- *  with the 5 s POST timeout that precedes it, total client patience
- *  is ~25 s — enough to catch the observed worst-case 15-20 s server
- *  accept on iOS simulator. Each probe uses a 2 s per-request timeout
- *  so a totally unreachable relayer can't stall longer than the nominal
- *  budget. Early-exits after 2 consecutive network errors keep a dead
- *  server from eating the full 20 s. Happy path is 1 probe. */
-const RECOVERY_PROBE_TIMEOUT_MS = 2_000;
+ *  with the 30 s POST timeout that precedes it, total client patience
+ *  is ~50 s in the worst case. Each probe uses a 10 s per-request
+ *  timeout (also a workaround for the simulator response-delivery
+ *  delay) so a totally unreachable relayer is bounded by the probe
+ *  count rather than spinning forever. Early-exits after 2 consecutive
+ *  network errors keep a dead server from eating the full window.
+ *  Happy path is 1 probe. */
+const RECOVERY_PROBE_TIMEOUT_MS = 10_000;
 const RECOVERY_PROBE_ATTEMPTS = 20;
 const RECOVERY_PROBE_INTERVAL_MS = 1_000;
 
@@ -469,6 +471,13 @@ export const OrderService = {
       //   [13] relayer
       //   [14] orderHash
       const ps = proofResult.publicSignals;
+      // SPIKE diagnostic: log the raw array so we can confirm the native
+      // path's ordering matches snarkjs. arkworks-side empty-or-shifted
+      // ordering would silently zero out fields like `expiry`.
+      console.log('[OrderService] publicSignals raw', {
+        len: ps.length,
+        sample: ps.map((v, i) => `[${i}]=${typeof v === 'string' ? v.slice(0, 16) : v}`),
+      });
       const namedSignals: Record<string, string> = {
         pubKeyBind: ps[0],
         commitmentRoot: ps[1],
