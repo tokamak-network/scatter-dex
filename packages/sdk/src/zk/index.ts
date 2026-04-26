@@ -5,4 +5,5 @@ export * from "./webWorker";
 export * from "./workerRuntime";
 export * from "./tags";
 export * from "./commitment";
+export * from "./eddsa";
 export * from "./circuits/deposit";
