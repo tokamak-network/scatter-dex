@@ -38,18 +38,29 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   if (cachedZkeyPath) return cachedZkeyPath;
   const asset = Asset.fromModule(require('../../assets/zk-native/authorize_final.zkey'));
   await asset.downloadAsync();
-  const uri = asset.localUri || asset.uri;
-  if (!uri) throw new Error(`${ZKEY_FILENAME} asset could not be resolved`);
+  // Require `localUri` specifically. `asset.uri` may still hold an
+  // `http(s)://` (Metro dev server) or `asset:/` (Android asset
+  // archive) URI that `expo-file-system.copyAsync` rejects — only the
+  // post-download local file:// URI is safe to hand to `copyAsync`.
+  const uri = asset.localUri;
+  if (!uri || !uri.startsWith('file://')) {
+    throw new Error(
+      `${ZKEY_FILENAME} asset has no local file URI after downloadAsync (got ${String(uri)})`,
+    );
+  }
   // expo's `documentDirectory` is `null` until the FS module finishes
   // initializing; bail with a clear message rather than concatenating a
   // literal `nullauthorize_final.zkey` path that mopro will then reject.
   const docDir = FileSystem.documentDirectory;
   if (!docDir) throw new Error('expo-file-system documentDirectory unavailable');
-  const srcPath = uri.replace(/^file:\/\//, '');
   const destPath = `${docDir}${ZKEY_FILENAME}`;
   const destInfo = await FileSystem.getInfoAsync(destPath);
   if (!destInfo.exists) {
-    await FileSystem.copyAsync({ from: srcPath, to: destPath });
+    // expo-file-system on Android requires URI-form paths (with the
+    // `file://` scheme) for `copyAsync`; iOS accepts both. Strip the
+    // scheme only when the resulting plain path crosses the FFI to Rust,
+    // which uses `std::fs::File::open` and rejects URI-form input.
+    await FileSystem.copyAsync({ from: uri, to: destPath });
   }
   cachedZkeyPath = destPath.replace(/^file:\/\//, '');
   return cachedZkeyPath;

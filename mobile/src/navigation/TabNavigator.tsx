@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import HomeScreen from '../screens/HomeScreen';
 import TradeScreen from '../screens/TradeScreen';
 import HistoryScreen from '../screens/HistoryScreen';
@@ -15,6 +16,7 @@ const icon = (emoji: string) => ({ focused }: { focused: boolean }) => (
 );
 
 export default function TabNavigator() {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -24,8 +26,14 @@ export default function TabNavigator() {
           borderTopColor: '#F3F4F6',
           borderTopWidth: 1,
           paddingTop: 6,
-          paddingBottom: 8,
-          height: 60,
+          // Honour the OS gesture / nav-bar inset so the bottom tabs
+          // aren't hidden behind Android's home gesture pill or iOS's
+          // home indicator. iOS's safe-area on the simulator was 0 so
+          // the previous fixed `paddingBottom: 8` looked fine there;
+          // Android gesture nav reports ~24 px which collides with
+          // the tab bar.
+          paddingBottom: 8 + insets.bottom,
+          height: 60 + insets.bottom,
         },
         tabBarActiveTintColor: '#3B82F6',
         tabBarInactiveTintColor: '#9CA3AF',
