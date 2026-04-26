@@ -123,9 +123,10 @@ packages/sdk/
 
 | Phase | Module | Notes |
 | --- | --- | --- |
-| 0 (this PR) | `core/` types, ABIs, helpers | done |
-| 1 | `core/provider.ts` + wallet | useWallet hook in a `react/` subpath |
-| 2 | `zk/deposit.ts` + `prover` adapter | Web Worker on web, WebView on RN |
+| 0 | `core/` types, ABIs, helpers | done |
+| 1 | `core/provider.ts` + wallet | done — `useWallet` in `./react` |
+| 2a | `zk/` Prover interface + WebWorker / Mock impls | done |
+| 2b | `zk/deposit.ts` + circuit worker | next |
 | 3 | `zk/authorize.ts` + EdDSA signing | order signing + proof |
 | 4 | `zk/claim.ts` + `stealth.ts` | withdraw + stealth derivation |
 | 5 | `orderbook/` + `relayer/` | shared orderbook + relayer registry |

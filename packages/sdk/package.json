@@ -9,7 +9,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core/index.ts",
-    "./react": "./src/react/index.ts"
+    "./react": "./src/react/index.ts",
+    "./zk": "./src/zk/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
