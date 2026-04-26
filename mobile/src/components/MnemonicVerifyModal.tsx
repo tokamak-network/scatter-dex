@@ -27,7 +27,11 @@ function pickChallenges(words: string[]): Challenge[] {
   const indices = shuffle(words.map((_, i) => i)).slice(0, VERIFY_COUNT).sort((a, b) => a - b);
   return indices.map((idx) => {
     const answer = words[idx];
-    const distractorPool = words.filter((_, i) => i !== idx);
+    // Dedup the distractor pool by string (BIP-39 phrases can repeat
+    // a word at multiple positions — without dedup, "answer" or another
+    // duplicate could appear twice in `choices`, weakening the check
+    // and causing React key collisions on the choice buttons.
+    const distractorPool = Array.from(new Set(words)).filter((w) => w !== answer);
     const distractors = shuffle(distractorPool).slice(0, 3);
     return { index: idx, answer, choices: shuffle([answer, ...distractors]) };
   });
@@ -145,9 +149,9 @@ export default function MnemonicVerifyModal({ visible, mnemonic, onConfirmed, on
                     Word #{challenges[current].index + 1}
                   </Text>
                   <View style={styles.choices}>
-                    {challenges[current].choices.map((c) => (
+                    {challenges[current].choices.map((c, i) => (
                       <TouchableOpacity
-                        key={c}
+                        key={`${i}-${c}`}
                         style={styles.choiceBtn}
                         onPress={() => onPick(c)}
                       >
