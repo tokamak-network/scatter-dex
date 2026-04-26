@@ -10,6 +10,8 @@ Bob,0xcd34ef56789012345678901234567890abcdef12,4200
 Carol,0xef56789012345678901234567890abcdef123456,3800
 Dan,0x789012345678901234567890abcdef1234567890,5000`;
 
+const STEPPER_LABELS = ["Token & total", "Recipients", "Review & sign"] as const;
+
 export default function NewPayout() {
   const [step, setStep] = useState(1);
   const [token, setToken] = useState("USDC");
@@ -23,9 +25,10 @@ export default function NewPayout() {
       .map((l) => l.trim())
       .filter(Boolean)
       .map((l) => {
-        const [name, address, amount] = l.split(",").map((x) => (x ?? "").trim());
-        return { name, address, amount };
-      });
+        const parts = l.split(",").map((x) => (x ?? "").trim());
+        return { name: parts[0] ?? "", address: parts[1] ?? "", amount: parts[2] ?? "" };
+      })
+      .filter((r) => r.address.length > 0);
   }, [csv]);
 
   const total = useMemo(
@@ -97,7 +100,7 @@ export default function NewPayout() {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={i} className="border-t border-[var(--color-border)]">
+                    <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
                       <td className="py-1.5">{r.name}</td>
                       <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
                       <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
@@ -120,14 +123,14 @@ export default function NewPayout() {
         {step === 3 && (
           <div className="space-y-5">
             <h2 className="text-lg font-semibold">Review & sign</h2>
-            <dl className="divide-y divide-[var(--color-border)] text-sm">
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
               <Row k="Token" v={token} />
               <Row k="Recipients" v={`${rows.length}`} />
               <Row k="Total" v={`${total.toLocaleString()} ${token}`} />
               <Row k="Stealth" v={stealth ? "Yes" : "No"} />
               <Row k="Notification" v={notify ? "Email + Discord" : "None"} />
               <Row k="Estimated gas" v="~$0.50 (one tx)" />
-              <Row k="ScatterPay fee" v={`${(total * 0.001).toFixed(2)} ${token} (0.1%)`} />
+              <Row k="ScatterPay fee" v={`Free (launch event until Dec 31, 2026 · normally 0.05%, capped at $20)`} />
             </dl>
             <button className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
               Sign & submit
@@ -168,10 +171,9 @@ export default function NewPayout() {
 }
 
 function Stepper({ step }: { step: number }) {
-  const labels = ["Token & total", "Recipients", "Review & sign"];
   return (
     <div className="flex gap-2">
-      {labels.map((l, i) => {
+      {STEPPER_LABELS.map((l, i) => {
         const n = i + 1;
         const active = n === step;
         const done = n < step;
@@ -214,10 +216,12 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 function Row({ k, v }: { k: string; v: string }) {
+  // dt/dd as direct children of the parent <dl> (valid HTML).
+  // The grid layout on the <dl> places key + value on one row.
   return (
-    <div className="flex justify-between py-2">
-      <dt className="text-[var(--color-text-muted)]">{k}</dt>
-      <dd className="font-medium">{v}</dd>
-    </div>
+    <>
+      <dt className="py-2 text-[var(--color-text-muted)]">{k}</dt>
+      <dd className="py-2 text-right font-medium">{v}</dd>
+    </>
   );
 }

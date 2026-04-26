@@ -34,7 +34,7 @@ secondary device for monitoring + Quick Sign.
 - Contracts (PrivateSettlement, CommitmentPool, Registry, IdentityGate)
 - ZK circuits & proofs (deposit / authorize / claim)
 - Relayer network & shared orderbook
-- (Future) `packages/sdk-ts` — typed TS client for the core
+- (Future) `packages/sdk` (`@scatterdex/sdk`) — typed TS client for the core
 - (Future) `packages/ui` — design tokens & primitive components per
   brand theme
 

@@ -5,12 +5,14 @@ Persona-specific frontends built on the shared ScatterDEX core
 
 | App | Target | Status | Port |
 | --- | --- | --- | --- |
+| [`pro/`](./pro) | Semi-pro / OTC traders — private limit orders | scaffold | 3003 |
 | [`pay/`](./pay) | Small companies & DAOs — payroll & vendor payouts | scaffold | 3001 |
 | [`drop/`](./drop) | Token launch teams — sybil-resistant private airdrops | scaffold | 3002 |
 
-The existing `frontend/` (Pro — traders) and `mobile/` (consumer wallet)
-remain at the repo root for now. They will move under `apps/` in a later
-workspace pass once these two new apps stabilize.
+`pro/` is a fresh light-theme reimagining of the trader experience.
+The existing dark `frontend/` and the `mobile/` consumer wallet stay
+at the repo root for now. They will be reconciled with `apps/pro/`
+and moved under `apps/` once these scaffolds stabilize.
 
 ## Why split?
 
@@ -27,6 +29,7 @@ They share the underlying contracts and (eventually) `packages/sdk` +
 ## Run
 
 ```bash
+cd apps/pro  && npm install && npm run dev   # http://localhost:3003
 cd apps/pay  && npm install && npm run dev   # http://localhost:3001
 cd apps/drop && npm install && npm run dev   # http://localhost:3002
 ```

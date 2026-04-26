@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 
+const STEPPER_LABELS = ["Token & supply", "Recipients", "Sybil & privacy", "Window"] as const;
+
 export default function NewCampaign() {
   const [step, setStep] = useState(1);
   const [token, setToken] = useState("$XYZ");
@@ -34,7 +36,13 @@ export default function NewCampaign() {
                 <input value={token} onChange={(e) => setToken(e.target.value)} className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2" />
               </Field>
               <Field label="Total supply to distribute">
-                <input value={supply} onChange={(e) => setSupply(e.target.value)} className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono" />
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={supply}
+                  onChange={(e) => setSupply(e.target.value)}
+                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                />
               </Field>
             </div>
           </div>
@@ -74,7 +82,14 @@ export default function NewCampaign() {
           <div className="space-y-5">
             <h2 className="text-lg font-semibold">Window & recovery</h2>
             <Field label="Claim window (days)">
-              <input value={days} onChange={(e) => setDays(e.target.value)} className="w-32 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono" />
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                className="w-32 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+              />
             </Field>
             <Toggle checked={recover} onChange={setRecover} label="Sweep unclaimed back to treasury after window" />
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-sm">
@@ -85,7 +100,7 @@ export default function NewCampaign() {
               <Row k="Privacy" v={stealth ? "Stealth claim" : "Public claim"} />
               <Row k="Gas" v={gasless ? "You pay (gasless for recipients)" : "Recipient pays"} />
               <Row k="Window" v={`${days} days, ${recover ? "sweep unclaimed" : "leave forever"}`} />
-              <Row k="ScatterDrop fee" v="0.5% of distributed value" />
+              <Row k="ScatterDrop fee" v="Free (launch event until Dec 31, 2026 · normally 0.2%)" />
             </div>
             <button className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
               Sign & launch campaign
@@ -120,10 +135,9 @@ export default function NewCampaign() {
 }
 
 function Stepper({ step }: { step: number }) {
-  const labels = ["Token & supply", "Recipients", "Sybil & privacy", "Window"];
   return (
     <div className="flex gap-2">
-      {labels.map((l, i) => {
+      {STEPPER_LABELS.map((l, i) => {
         const n = i + 1;
         const active = n === step;
         return (
