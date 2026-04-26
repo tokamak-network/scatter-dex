@@ -30,6 +30,11 @@ function formatWhen(ts: number): string {
 export default function Orders() {
   const { orders } = useOrders();
   const all = useMemo<OrderRecord[]>(() => [...orders, ...SEED_ORDERS], [orders]);
+  // Cancel dispatches `markCancelled` against `OrdersProvider` state
+  // — seed rows aren't in that state, so the action would no-op while
+  // the modal reports success. Gate the Cancel button on real-order
+  // membership to keep the UI honest.
+  const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
 
@@ -66,7 +71,7 @@ export default function Orders() {
                 <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
                 <td className="px-5 py-3 text-right">
-                  {o.status === "matching" && (
+                  {o.status === "matching" && realIds.has(o.id) && (
                     <button
                       onClick={() => setCancelTarget(o)}
                       className="rounded-md border border-[var(--color-danger)] px-3 py-1 text-xs font-medium text-[var(--color-danger)] hover:bg-white"

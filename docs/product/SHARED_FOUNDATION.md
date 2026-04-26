@@ -123,10 +123,11 @@ sub-brand difference is accent color, not chrome.
 
 ```
 packages/ui/
-├── tokens/
-│   ├── pro.css        # light, blue primary  (trader-focused)
-│   ├── pay.css        # light, teal primary  (payouts / B2B)
-│   └── drop.css       # light, purple accent (campaigns)
+├── src/
+│   ├── tokens/
+│   │   ├── pro.css    # light, blue primary  (trader-focused)
+│   │   ├── pay.css    # light, teal primary  (payouts / B2B)
+│   │   └── drop.css   # light, purple accent (campaigns)
 ├── components/
 │   ├── Button.tsx
 │   ├── Input.tsx

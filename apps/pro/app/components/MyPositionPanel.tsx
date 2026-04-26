@@ -48,7 +48,7 @@ export function MyPositionPanel() {
   const symbolTotals = useMemo(() => {
     const m = new Map<string, number>();
     for (const n of notes) {
-      const num = Number(String(n.amount).replace(/,/g, ""));
+      const num = Number(n.amount.replace(/,/g, ""));
       if (Number.isFinite(num)) m.set(n.symbol, (m.get(n.symbol) ?? 0) + num);
     }
     return Array.from(m.entries());

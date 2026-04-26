@@ -82,12 +82,10 @@ export default function Workbench() {
   // price/size shouldn't reallocate.
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
-  // Quick-fill: pick a fraction of the active note's amount. Falls
-  // back to the entered value when no note is selected.
   const fillFraction = (frac: number) => {
     const n = notes[0];
     if (!n) return;
-    const num = Number(String(n.amount).replace(/,/g, ""));
+    const num = Number(n.amount.replace(/,/g, ""));
     if (!Number.isFinite(num)) return;
     const v = num * frac;
     setSize(v.toLocaleString("en-US", { maximumFractionDigits: 4 }));

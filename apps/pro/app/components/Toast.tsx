@@ -70,19 +70,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (t: ToastInput) => {
       const id = newId();
       const entry: ToastEntry = { ...t, id };
+      // A late-firing timer for a dropped entry calls `dismiss(id)`,
+      // which already no-ops when the id isn't present — so we don't
+      // need to chase down the dropped timers from inside the
+      // setState updater (which would be an impure side-effect).
       setToasts((prev) => {
         const next = [...prev, entry];
-        if (next.length <= MAX_TOASTS) return next;
-        // Cancel the dropped entries' timers so they don't fire
-        // dismiss against a no-longer-present id.
-        for (const dropped of next.slice(0, next.length - MAX_TOASTS)) {
-          const t = timers.current.get(dropped.id);
-          if (t !== undefined) {
-            clearTimeout(t);
-            timers.current.delete(dropped.id);
-          }
-        }
-        return next.slice(-MAX_TOASTS);
+        return next.length <= MAX_TOASTS ? next : next.slice(-MAX_TOASTS);
       });
       const ms = t.durationMs ?? DEFAULT_DURATION_MS;
       if (ms > 0) {

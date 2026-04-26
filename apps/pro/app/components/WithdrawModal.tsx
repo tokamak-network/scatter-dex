@@ -80,7 +80,10 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
    *  ships — the preview uses `destKind` to label that case. */
   const destAddr: string | null = useMemo(() => {
     if (destKind === "self") return account ?? null;
-    if (destKind === "custom") return ADDR_RE.test(customAddr.trim()) ? customAddr.trim() : null;
+    if (destKind === "custom") {
+      const trimmed = customAddr.trim();
+      return ADDR_RE.test(trimmed) ? trimmed : null;
+    }
     return null;
   }, [destKind, account, customAddr]);
 
