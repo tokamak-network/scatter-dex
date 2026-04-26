@@ -32,7 +32,6 @@ import { buildMerkleTree, getMerkleProof } from "../merkle";
 import { COMMIT_TREE_DEPTH } from "../constants";
 import { wipeBytes } from "../secureWipe";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
-import { TAG_COMMITMENT_V2 } from "../tags";
 import type { Groth16Proof } from "../types";
 import type { CircuitAssets } from "./deposit";
 
@@ -126,25 +125,19 @@ export async function generateCancelProof(
     input.nonce,
   );
 
-  // Rotate the escrow: same balance + token, fresh salt. Loop guards
-  // two pathological cases — Poseidon hashing to 0 (negligible
-  // probability but would brick the rotated balance on-chain) and a
-  // freshSalt collision with the existing salt (would produce an
-  // identical commitment, defeating the rotation).
+  // Rotate the escrow: same balance + token, fresh salt. Derive the
+  // new commitment via `computeCommitment` so the v2 commitment
+  // format (tag, field order) lives in exactly one place. The loop
+  // guards Poseidon hashing to 0 (negligible probability but would
+  // brick the rotated balance on-chain) and a freshSalt collision
+  // with the existing salt (would produce an identical commitment,
+  // defeating the rotation).
   let freshSalt: bigint;
   let newCommitment = 0n;
   do {
     freshSalt = randomFieldElement();
     if (freshSalt === input.note.salt) continue;
-    newCommitment = await poseidonHash([
-      TAG_COMMITMENT_V2,
-      input.note.ownerSecret,
-      input.note.token,
-      input.note.amount,
-      freshSalt,
-      input.note.pubKeyAx,
-      input.note.pubKeyAy,
-    ]);
+    newCommitment = await computeCommitment({ ...input.note, salt: freshSalt });
   } while (newCommitment === 0n);
 
   // cancelMsg = Poseidon(oldNonceNullifier, relayer). Distinct from

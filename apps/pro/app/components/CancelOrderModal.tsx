@@ -140,7 +140,8 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       toast.push({
         kind: "success",
         title: `${order.label} cancelled`,
-        description: "Funds rotated to a fresh commitment in your vault.",
+        description:
+          "Cancel proof generated — order will not match. On-chain rotation lands when the contract dispatch wires up.",
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -197,7 +198,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
             { label: "Size", value: order.size },
             { label: "Cancel fee", value: "0", highlight: true },
           ]}
-          footer="Cancellation publishes the order's nonce nullifier and rotates the escrow to a fresh commitment. The order can never be matched after this — funds stay in your vault."
+          footer="Generates a ZK cancel proof binding the order's nonce nullifier to the chosen relayer. Once the contract dispatch ships, this also rotates the escrow to a fresh commitment so the same balance can immediately be re-ordered. Funds stay in your vault either way."
         />
 
         <PhaseStatus phase={phase} />

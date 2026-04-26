@@ -34,14 +34,15 @@ function defaultReporter(timing: ProveTiming): void {
   }
 }
 
-/** True in dev/test environments. Workers don't have `process` unless
- *  the bundler shims it, and `globalThis.process?.env?.NODE_ENV` is
- *  the safe read. The console fallback is silenced in production
- *  bundles where this evaluates to `false`. */
+/** True only when the bundler explicitly stamps `NODE_ENV` to a dev
+ *  value. Worker bundles often have no `process` shim at all (read
+ *  resolves to `undefined`); treating that as dev would leak console
+ *  logs into production. We require an explicit `development` /
+ *  `test` value, so the absence-of-shim case stays silent. */
 function isDev(): boolean {
   const env = (globalThis as { process?: { env?: { NODE_ENV?: string } } })
     .process?.env?.NODE_ENV;
-  return env !== "production";
+  return env === "development" || env === "test";
 }
 
 export async function timeProve<T>(

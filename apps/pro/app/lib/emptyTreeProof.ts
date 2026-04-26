@@ -28,19 +28,22 @@ import {
  *  real Merkle proof maintained from `CommitmentInserted` events. */
 // `zeros[i]` = the all-zero sibling at level i of an empty tree. Only
 // depends on `COMMIT_TREE_DEPTH` and the Poseidon hash, so it's
-// process-static — cache once and reuse for every authorize / cancel
-// call. Saves ~20 Poseidon hashes per submit on the user's hot path.
-let zerosCache: readonly bigint[] | null = null;
+// process-static. Cache the *promise* (not the resolved value) so two
+// concurrent first-callers share one computation instead of racing
+// to compute it twice.
+let zerosPromise: Promise<readonly bigint[]> | null = null;
 
-async function getZeros(): Promise<readonly bigint[]> {
-  if (zerosCache) return zerosCache;
-  const poseidon = await getPoseidonModule();
-  const zeros: bigint[] = [0n];
-  for (let i = 1; i <= COMMIT_TREE_DEPTH; i++) {
-    zeros.push(poseidonHashWith(poseidon, [zeros[i - 1]!, zeros[i - 1]!]));
-  }
-  zerosCache = zeros;
-  return zerosCache;
+function getZeros(): Promise<readonly bigint[]> {
+  if (zerosPromise) return zerosPromise;
+  zerosPromise = (async () => {
+    const poseidon = await getPoseidonModule();
+    const zeros: bigint[] = [0n];
+    for (let i = 1; i <= COMMIT_TREE_DEPTH; i++) {
+      zeros.push(poseidonHashWith(poseidon, [zeros[i - 1]!, zeros[i - 1]!]));
+    }
+    return zeros;
+  })();
+  return zerosPromise;
 }
 
 export async function buildEmptyTreeProof(

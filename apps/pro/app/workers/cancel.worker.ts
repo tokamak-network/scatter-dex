@@ -11,7 +11,6 @@ import {
   warmProverAssets,
   warmupEddsa,
   withCachedAssets,
-  timeProve,
   type CancelProofInput,
 } from "@zkscatter/sdk/zk";
 
@@ -19,6 +18,10 @@ const CIRCUIT_ASSETS = {
   wasm: "/zk/cancel.wasm",
   zkey: "/zk/cancel_final.zkey",
 } as const;
+
+// Timing telemetry runs on the main thread side — see the matching
+// note in `authorize.worker.ts`. Workers can't dispatch the
+// `zk-perf:prove` window event.
 
 setupProverWorker({
   preload: async () => {
@@ -34,11 +37,9 @@ setupProverWorker({
 
     const input = req.input as unknown as CancelProofInput;
 
-    return withCachedAssets(CIRCUIT_ASSETS, (urls) =>
-      timeProve("cancel", async () => {
-        const result = await generateCancelProof(input, urls);
-        return { proof: result.proof, publicSignals: result.publicSignals };
-      }),
-    );
+    return withCachedAssets(CIRCUIT_ASSETS, async (urls) => {
+      const result = await generateCancelProof(input, urls);
+      return { proof: result.proof, publicSignals: result.publicSignals };
+    });
   },
 });
