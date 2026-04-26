@@ -15,6 +15,12 @@ export interface DepositProofResult {
    *  the deposit transaction. */
   commitment: bigint;
   proof: Groth16Proof;
+  /** Public signals from the prover, in circuit-declared order. The
+   *  deposit circuit emits one signal — the commitment — but we
+   *  return the full array so callers can plug the result straight
+   *  into the SDK's `ProveResult` / `ProverWorkerResponse` shape
+   *  without re-deriving it. */
+  publicSignals: readonly bigint[];
 }
 
 // snarkjs has no first-class types — narrow what we touch.
@@ -44,8 +50,9 @@ interface SnarkjsModule {
  *  The commitment is derived from the note's preimage internally,
  *  so a caller can't accidentally pair a note with a mismatched
  *  commitment and then debug an opaque on-chain `InvalidProof`
- *  revert. The function also re-checks the prover's public signal
- *  against the derived commitment as a defence-in-depth assertion. */
+ *  revert. The function also re-checks the prover's first public
+ *  signal against the derived commitment as a defence-in-depth
+ *  assertion. */
 export async function generateDepositProof(
   note: CommitmentNote,
   assets: CircuitAssets,
@@ -75,6 +82,11 @@ export async function generateDepositProof(
     assets.zkey,
   );
 
+  if (!Array.isArray(publicSignals) || publicSignals.length === 0) {
+    throw new Error(
+      "generateDepositProof: snarkjs returned no publicSignals — circuit/wasm mismatch?",
+    );
+  }
   if (BigInt(publicSignals[0]!) !== commitment) {
     throw new Error(
       "generateDepositProof: snarkjs publicSignals[0] does not match the derived commitment",
@@ -93,5 +105,6 @@ export async function generateDepositProof(
       ],
       c: [BigInt(proof.pi_c[0]), BigInt(proof.pi_c[1])],
     },
+    publicSignals: publicSignals.map((s) => BigInt(s)),
   };
 }

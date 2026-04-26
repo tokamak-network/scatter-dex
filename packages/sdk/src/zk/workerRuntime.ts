@@ -10,11 +10,17 @@ export interface ProverWorkerHandlers {
     publicSignals: readonly bigint[];
   }>;
   /** Optional asset / Poseidon warmup, run once before the worker
-   *  signals "ready". Errors here propagate as a worker-scope
-   *  error; the client tears down and either falls back or surfaces
-   *  the error. */
+   *  signals "ready". Errors here are reported as a worker-scope
+   *  error AND posted as a sentinel error message so the main
+   *  thread surfaces a clear failure instead of waiting forever
+   *  for a `ready` that never comes. */
   preload?(): Promise<void>;
 }
+
+/** Sentinel jobId used by preload-failure error messages. The main
+ *  client uses this to surface init failures even when no job is
+ *  in flight; a real prove jobId is always > 0. */
+export const PRELOAD_ERROR_JOB_ID = -1;
 
 /** Wire a Web Worker script to the SDK's prover protocol.
  *
@@ -22,22 +28,27 @@ export interface ProverWorkerHandlers {
  *
  *  ```ts
  *  // apps/<name>/workers/deposit.worker.ts
- *  import { setupProverWorker } from "@zkscatter/sdk/zk";
- *  import { generateDepositProof } from "@zkscatter/sdk/zk";
- *  import { warmupPoseidon } from "@zkscatter/sdk/zk";
+ *  import {
+ *    setupProverWorker,
+ *    warmupPoseidon,
+ *    generateDepositProof,
+ *  } from "@zkscatter/sdk/zk";
  *
  *  setupProverWorker({
  *    preload: () => warmupPoseidon(),
- *    prove: (req) => generateDepositProof(req.input as never, {
- *      wasm: "/zk/deposit.wasm",
- *      zkey: "/zk/deposit.zkey",
- *    }),
+ *    prove: async (req) => {
+ *      const { proof, publicSignals } = await generateDepositProof(
+ *        req.input as never,
+ *        { wasm: "/zk/deposit.wasm", zkey: "/zk/deposit.zkey" },
+ *      );
+ *      return { proof, publicSignals };
+ *    },
  *  });
  *  ```
  *
- *  The runtime handles message decoding, error wrapping, and the
- *  initial `ready` signal. Per-job progress messages can be sent
- *  with the returned `postProgress` helper. */
+ *  The runtime handles message decoding, request validation, and
+ *  error wrapping. Per-job progress messages can be sent with the
+ *  returned `postProgress` helper. */
 export function setupProverWorker(handlers: ProverWorkerHandlers): {
   /** Send a progress message to the main thread for a job in flight.
    *  No-op outside a Web Worker context. */
@@ -56,23 +67,32 @@ export function setupProverWorker(handlers: ProverWorkerHandlers): {
     return { postProgress: () => {} };
   }
 
-  // Preload, then announce readiness. If preload throws, surface as
-  // a worker-scope error so the client tears down + retries.
+  // Preload, then announce readiness. If preload throws, surface
+  // the failure both as a sentinel error message (so the main thread
+  // can see what went wrong) AND by re-throwing on a later task so
+  // the host's `error` handler also fires — the client tears down
+  // either way.
   (async () => {
     try {
       if (handlers.preload) await handlers.preload();
       post({ type: "ready" });
     } catch (e) {
-      // Re-throw on a microtask so the host's `error` handler fires.
+      const message = (e as Error)?.message ?? "unknown preload error";
+      post({ type: "error", jobId: PRELOAD_ERROR_JOB_ID, message });
+      // Re-throw on a macrotask so the host's `error` handler also
+      // fires — belt and suspenders.
       setTimeout(() => {
         throw e;
       }, 0);
     }
   })();
 
-  scope.addEventListener("message", async (ev: MessageEvent<ProverWorkerRequest>) => {
+  scope.addEventListener("message", async (ev: MessageEvent<unknown>) => {
     const req = ev.data;
-    if (!req || typeof req !== "object" || req.type !== "prove") return;
+    // Centralized request validation — reject malformed envelopes
+    // before they reach handlers. Bad input from a misbehaving
+    // sender no longer produces results with NaN job ids.
+    if (!isProveRequest(req)) return;
     try {
       const result = await handlers.prove(req);
       const out: ProverWorkerResponse = {
@@ -97,4 +117,17 @@ export function setupProverWorker(handlers: ProverWorkerHandlers): {
       post({ type: "progress", jobId, message });
     },
   };
+}
+
+function isProveRequest(value: unknown): value is ProverWorkerRequest {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.type === "prove" &&
+    typeof v.jobId === "number" &&
+    Number.isFinite(v.jobId) &&
+    typeof v.circuitId === "string" &&
+    v.input != null &&
+    typeof v.input === "object"
+  );
 }

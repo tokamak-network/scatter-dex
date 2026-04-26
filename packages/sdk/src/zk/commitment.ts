@@ -89,7 +89,15 @@ export async function poseidonHash(inputs: bigint[]): Promise<bigint> {
 
 /** Generate a cryptographically random field element strictly less
  *  than the BN254 scalar modulus. Uses `crypto.getRandomValues`
- *  (`globalThis.crypto` works in browser, Node 19+, Deno, Bun). */
+ *  (`globalThis.crypto` works in browser, Node 19+, Deno, Bun).
+ *
+ *  Sampling: top byte is masked with `0x3f` so the candidate is at
+ *  most 254 bits (since `FIELD_MODULUS < 2^254`). The do-while
+ *  rejects the ~24% of candidates that still land in `[FIELD_MODULUS,
+ *  2^254)`, leaving a uniform distribution over `[0, FIELD_MODULUS)`
+ *  with no modulo bias. We pay slightly more rejections than the
+ *  legacy `0x1f` mask did, but get a full ~254 bits of entropy
+ *  rather than ~253. */
 export function randomFieldElement(): bigint {
   const subtleCrypto = globalThis.crypto;
   if (!subtleCrypto || typeof subtleCrypto.getRandomValues !== "function") {
@@ -99,8 +107,7 @@ export function randomFieldElement(): bigint {
   do {
     const bytes = new Uint8Array(32);
     subtleCrypto.getRandomValues(bytes);
-    // Cap to ~253 bits to minimise rejection-sampling iterations.
-    bytes[0]! &= 0x1f;
+    bytes[0]! &= 0x3f; // cap to 254 bits; FIELD_MODULUS < 2^254
     value = 0n;
     for (const b of bytes) value = (value << 8n) | BigInt(b);
   } while (value >= FIELD_MODULUS);
