@@ -86,6 +86,7 @@ export class PrivateSubmitter {
   private treeBuildInflight: Promise<Awaited<ReturnType<typeof buildMerkleTree>>> | null = null;
   private indexInflight: Promise<void> | null = null;
   private lastIndexedBlock: number = -1;
+  private warnedIndexStall: boolean = false;
 
   /** Get a Merkle proof for a specific leaf in the commitment tree. */
   async getCommitmentMerkleProof(leafIndex: number): Promise<{
@@ -152,9 +153,28 @@ export class PrivateSubmitter {
       }
       this.commitmentLeaves = [];
     }
-    const latest = await this.provider.getBlockNumber();
-    if (fromBlock > latest) return;
-    const events = await this.pool.queryFilter(filter, fromBlock, latest);
+    // Stay `confirmations` blocks behind tip — newer blocks can be
+    // reorged. Caveat: lag too far and CommitmentPool's root ring
+    // buffer (ROOT_HISTORY_SIZE) rotates the lagged root out before
+    // clients submit, causing on-chain `isKnownRoot` to revert. See
+    // config.ts:indexConfirmations for the trade-off discussion.
+    // Bumping INDEX_CONFIRMATIONS at restart, or running on a very
+    // fresh chain, can leave nothing to index until tip advances;
+    // surface that with a one-shot warn so it isn't a silent stall.
+    const tip = await this.provider.getBlockNumber();
+    const toBlock = tip - config.indexConfirmations;
+    if (toBlock < 0 || fromBlock > toBlock) {
+      if (!this.warnedIndexStall) {
+        console.warn(
+          `[indexer] paused: tip=${tip} confirmations=${config.indexConfirmations} ` +
+          `fromBlock=${fromBlock} toBlock=${toBlock} — waiting for tip to advance`,
+        );
+        this.warnedIndexStall = true;
+      }
+      return;
+    }
+    this.warnedIndexStall = false;
+    const events = await this.pool.queryFilter(filter, fromBlock, toBlock);
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
         topics: event.topics as string[],
@@ -168,9 +188,9 @@ export class PrivateSubmitter {
         this.commitmentLeaves[leafIndex] = BigInt(parsed.args.commitment);
       }
     }
-    this.lastIndexedBlock = latest;
+    this.lastIndexedBlock = toBlock;
     if (events.length > 0) {
-      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new)`);
+      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new, tip=${tip} indexed=${toBlock})`);
     }
   }
 

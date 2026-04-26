@@ -336,6 +336,7 @@ async function main() {
     console.log(`CommitmentPool: ${config.commitmentPoolAddress}`);
     console.log(`PrivateSettlement: ${config.privateSettlementAddress}`);
     console.log(`Fee: ${config.relayerFee} bps`);
+    console.log(`Index confirmations: ${config.indexConfirmations}`);
     if (config.feeVaultAddress) {
       console.log(`FeeVault: ${config.feeVaultAddress}`);
     }

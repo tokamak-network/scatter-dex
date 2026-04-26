@@ -53,16 +53,32 @@ export const config = {
   // [R-10] Sanctions pubKey blocklist file (optional JSON array of {pubKeyAx, pubKeyAy})
   sanctionsPubKeyList: process.env.SANCTIONS_PUBKEY_LIST || null,
 
-  // [R-1] Gas guard: max gas price in gwei (default 100)
-  maxGasPriceGwei: (() => {
-    const parsed = parseInt(process.env.MAX_GAS_PRICE_GWEI || "100", 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      console.warn(`[config] Invalid MAX_GAS_PRICE_GWEI="${process.env.MAX_GAS_PRICE_GWEI}", using default 100`);
-      return 100;
-    }
-    return parsed;
-  })(),
+  // Stay this many blocks behind tip when indexing CommitmentInserted.
+  // Trade-off: too low → reorgs invalidate cached roots; too high →
+  // CommitmentPool's root ring buffer (default ROOT_HISTORY_SIZE=30)
+  // can rotate the relayer's lagged root out before clients submit
+  // proofs, causing on-chain `isKnownRoot` to fail. Pick the smallest
+  // value that survives expected reorg depth on the target chain.
+  // Anvil/fork: 0 (no reorgs). Post-merge L1: 1-2 is enough; 12 is
+  // only safe when deposits-per-12-blocks << ROOT_HISTORY_SIZE.
+  indexConfirmations: parseEnvInt("INDEX_CONFIRMATIONS", 0, 0),
+
+  // [R-1] Gas guard: max gas price in gwei.
+  maxGasPriceGwei: parseEnvInt("MAX_GAS_PRICE_GWEI", 100, 1),
 };
+
+/** Parse a non-negative integer env var with a default. Logs a warn and
+ *  uses the default when the value is missing, non-numeric, or below `min`. */
+function parseEnvInt(name: string, defaultValue: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    console.warn(`[config] Invalid ${name}="${raw}", using default ${defaultValue}`);
+    return defaultValue;
+  }
+  return parsed;
+}
 
 /** [R-7] Update relayer fee at runtime (admin API). */
 export function updateRelayerFee(feeBps: number): void {
