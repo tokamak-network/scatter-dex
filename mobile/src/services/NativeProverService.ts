@@ -131,25 +131,63 @@ export type SnarkjsLikeProofResult = {
   elapsedMs: number;
 };
 
-/** Append-only log of every native prove call's inputs and outputs.
- *  Lives in the app's documents dir so it survives Metro reloads but
- *  is wiped on app uninstall. Cheap byte-cap rotation prevents long
- *  sessions from filling the device. */
-const PROVE_LOG_PATH = `${FileSystem.documentDirectory ?? ''}native_prover.log`;
+/** Append-only log of every native prove call's outputs. Lives in the
+ *  app's documents dir so it survives Metro reloads but is wiped on app
+ *  uninstall. Disabled in production builds — the log retains debug
+ *  metadata only (proving inputs include witness `secret`/`salt`, so we
+ *  never persist them; only public outputs and proof points are kept).
+ *
+ *  Writes are queued so callers can `void appendProveLog(...)` on the
+ *  hot path without waiting on disk I/O, and use `append: true` so the
+ *  per-call cost is O(line) instead of O(fileSize). The byte-cap rotation
+ *  re-stats after deletion to avoid acting on stale `info.exists`. */
+const PROVE_LOG_FILENAME = 'native_prover.log';
 const PROVE_LOG_MAX_BYTES = 4 * 1024 * 1024;
-async function appendProveLog(record: Record<string, unknown>): Promise<void> {
-  if (!FileSystem.documentDirectory) return;
-  try {
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
-    const info = await FileSystem.getInfoAsync(PROVE_LOG_PATH);
-    if (info.exists && (info as any).size > PROVE_LOG_MAX_BYTES) {
-      await FileSystem.deleteAsync(PROVE_LOG_PATH, { idempotent: true });
-    }
-    const existing = info.exists ? await FileSystem.readAsStringAsync(PROVE_LOG_PATH) : '';
-    await FileSystem.writeAsStringAsync(PROVE_LOG_PATH, existing + line);
-  } catch {
-    // Logging must never break the prove path.
+
+function getProveLogPath(): string | null {
+  const dir = FileSystem.documentDirectory;
+  return dir ? `${dir}${PROVE_LOG_FILENAME}` : null;
+}
+
+/** Drop fields that may contain witness secrets (`secret`, `salt`,
+ *  private claim/note material). Public outputs and proof points are
+ *  safe — they're the same values the relayer sees on submit. */
+function redactInputsForLog(
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  const SENSITIVE = new Set([
+    'secret', 'salt', 'noteSecret', 'noteSalt',
+    'pathSecret', 'sk', 'privateKey',
+  ]);
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(inputs)) {
+    out[k] = SENSITIVE.has(k) ? '[redacted]' : '[present]';
   }
+  return out;
+}
+
+let proveLogChain: Promise<void> = Promise.resolve();
+function appendProveLog(record: Record<string, unknown>): void {
+  if (!__DEV__) return;
+  const path = getProveLogPath();
+  if (!path) return;
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
+  proveLogChain = proveLogChain
+    .catch(() => {})
+    .then(async () => {
+      try {
+        const info = await FileSystem.getInfoAsync(path);
+        if (info.exists && (info as any).size > PROVE_LOG_MAX_BYTES) {
+          await FileSystem.deleteAsync(path, { idempotent: true });
+        }
+        await FileSystem.writeAsStringAsync(path, line, {
+          encoding: FileSystem.EncodingType.UTF8,
+          append: true,
+        } as any);
+      } catch {
+        // Logging must never break the prove path.
+      }
+    });
 }
 
 /** Runs Groth16 proving for the `authorize` circuit natively. Input is
@@ -168,20 +206,20 @@ export async function generateAuthorizeProof(
   try {
     res = generateCircomProof(zkeyPath, JSON.stringify(normalized), ProofLib.Arkworks);
   } catch (e: any) {
-    void appendProveLog({
+    appendProveLog({
       kind: 'authorize.error',
       zkeyPath,
-      inputs: normalized,
+      inputKeys: redactInputsForLog(normalized),
       error: { name: e?.name, message: e?.message, str: String(e) },
     });
     throw e;
   }
   const elapsedMs = Date.now() - t0;
-  void appendProveLog({
+  appendProveLog({
     kind: 'authorize.ok',
     elapsedMs,
     zkeyPath,
-    inputs: normalized,
+    inputKeys: redactInputsForLog(normalized),
     publicSignals: res.inputs,
     proof: res.proof,
   });

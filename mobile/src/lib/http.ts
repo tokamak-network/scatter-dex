@@ -37,14 +37,6 @@ export function normalizeUrl(url: string): string {
   return url.replace(/^http:\/\/localhost(?=[:/]|$)/, 'http://127.0.0.1');
 }
 
-/** True for any dev loopback origin. Scoped `Connection: close` below
- *  — the keep-alive pool stall we're defending against is specific to
- *  loopback on iOS Simulator. Real-network requests keep keep-alive
- *  (battery / latency). */
-function isLoopback(url: string): boolean {
-  return /^https?:\/\/(127\.0\.0\.1|localhost|::1|\[::1\])(?=[:/]|$)/i.test(url);
-}
-
 export async function fetchWithTimeout(
   url: string,
   { timeoutMs, parentSignal, ...init }: FetchWithTimeoutOptions,
@@ -66,24 +58,17 @@ export async function fetchWithTimeout(
   // to this controller after the call resolves.
   const onParentAbort = () => controller.abort();
   parentSignal?.addEventListener('abort', onParentAbort, { once: true });
-  // For dev loopback only: force a fresh TCP connection per request.
-  // NSURLSession's keep-alive pool can hold a socket that Express has
-  // already closed (5 s keep-alive timeout); a subsequent request then
-  // writes into a half-closed socket and the TCP retry chain stalls
-  // for 20–40 s before iOS reconnects (issue #401). On real networks
-  // keep-alive is a battery/latency win, so we scope the override.
   // `new Headers(…)` handles every `HeadersInit` shape (object /
   // Headers / [string, string][]) — the previous plain-object spread
   // silently dropped non-object forms.
   const headers = new Headers(init.headers);
-  // SPIKE: previously we forced `Connection: close` on loopback to dodge
-  // an NSURLSession keep-alive pool stall (issue #401). Empirically that
-  // is now causing the *response* to be dropped by the simulator before
-  // the client can read it — server logs show 200 RES_FINISH on every
-  // POST/GET while the client races to AbortError at its timeout. Drop
-  // the override and see if the keep-alive pool holds together with
-  // the rest of the spike's hardening (warm-up + POST/poll race +
-  // IPv4-forced URL).
+  // Note: an earlier spike forced `Connection: close` on loopback to
+  // dodge an NSURLSession keep-alive pool stall (issue #401), but the
+  // override turned out to be *causing* the simulator to drop response
+  // reads — server logs showed 200 RES_FINISH on every request while
+  // the client raced to AbortError. Keep-alive is left on for all
+  // requests now; the loopback hardening is handled by IPv4 forcing
+  // (`normalizeUrl` above) plus the bumped read/probe/submit timeouts.
   try {
     return await fetch(url, { ...init, headers, signal: controller.signal });
   } finally {
