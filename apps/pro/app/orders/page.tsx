@@ -4,17 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
-
-import type { OrderStatus } from "../lib/orders";
-
-// Class lookup keyed by `OrderStatus` so a typo here is a compile
-// error and adding a new status surfaces a missing entry.
-const PILL_CLASSES: Record<OrderStatus, string> = {
-  claimed:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
-  claimable: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
-  matching:  "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
-  cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
-};
+import { CancelOrderModal } from "../components/CancelOrderModal";
+import { StatusBadge } from "../components/StatusBadge";
 
 const SEED_ORDERS: OrderRecord[] = [
   { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC",  price: "4,205",  size: "2.0",  status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
@@ -24,8 +15,6 @@ const SEED_ORDERS: OrderRecord[] = [
 ];
 
 function formatWhen(ts: number): string {
-  // Fixed locale + time zone so the SSG-rendered cell matches what
-  // the client renders during hydration.
   const d = new Date(ts);
   return (
     d.toLocaleString("en-US", {
@@ -41,7 +30,13 @@ function formatWhen(ts: number): string {
 export default function Orders() {
   const { orders } = useOrders();
   const all = useMemo<OrderRecord[]>(() => [...orders, ...SEED_ORDERS], [orders]);
+  // Cancel dispatches `markCancelled` against `OrdersProvider` state
+  // — seed rows aren't in that state, so the action would no-op while
+  // the modal reports success. Gate the Cancel button on real-order
+  // membership to keep the UI honest.
+  const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
 
   return (
     <div className="space-y-6">
@@ -73,9 +68,17 @@ export default function Orders() {
                 <td className="px-5 py-3">{o.pair}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.price}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
-                <td className="px-5 py-3"><Pill s={o.status} /></td>
+                <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
                 <td className="px-5 py-3 text-right">
+                  {o.status === "matching" && realIds.has(o.id) && (
+                    <button
+                      onClick={() => setCancelTarget(o)}
+                      className="rounded-md border border-[var(--color-danger)] px-3 py-1 text-xs font-medium text-[var(--color-danger)] hover:bg-white"
+                    >
+                      Cancel
+                    </button>
+                  )}
                   {o.status === "claimable" && o.claim && (
                     <button
                       onClick={() => setClaimTarget(o)}
@@ -96,10 +99,11 @@ export default function Orders() {
         order={claimTarget}
         onClose={() => setClaimTarget(null)}
       />
+      <CancelOrderModal
+        open={!!cancelTarget}
+        order={cancelTarget}
+        onClose={() => setCancelTarget(null)}
+      />
     </div>
   );
-}
-
-function Pill({ s }: { s: OrderStatus }) {
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PILL_CLASSES[s]}`}>{s}</span>;
 }
