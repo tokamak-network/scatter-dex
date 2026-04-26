@@ -79,15 +79,18 @@ async function pollForAcceptedOrder(
       });
       if (signal?.aborted) return null;
     }
+    const tAtt = Date.now();
     try {
       const status = await RelayerApiService.getAuthorizeOrderStatus(
         nullifier,
         relayerUrl,
         RECOVERY_PROBE_TIMEOUT_MS,
       );
+      console.log('[OrderService] poll attempt', { n: attempt, ms: Date.now() - tAtt, has: !!status });
       if (status) return status;
       consecutiveErrors = 0;
-    } catch {
+    } catch (e: any) {
+      console.log('[OrderService] poll attempt FAIL', { n: attempt, ms: Date.now() - tAtt, err: e?.name || e?.message });
       if (++consecutiveErrors >= 2) return null;
     }
   }
@@ -491,10 +494,19 @@ export const OrderService = {
       // unreachable relayer from stalling the submit here — the real
       // POST below will surface any genuine connectivity error.
       const warmupUrl = `${normalizeUrl(input.relayerUrl)}/api/info`;
+      const tWarm = Date.now();
       try {
-        await fetchWithTimeout(warmupUrl, { timeoutMs: TIMEOUT_PROBE_MS });
-      } catch {
-        // best-effort; fall through.
+        const r = await fetchWithTimeout(warmupUrl, { timeoutMs: TIMEOUT_PROBE_MS });
+        // fetchWithTimeout only throws on network/abort, so a non-2xx
+        // still resolves here. Distinguish the two so warm-up diagnostics
+        // don't mislabel a 5xx as "ok".
+        if (r.ok) {
+          console.log('[OrderService] warm-up ok', { ms: Date.now() - tWarm, status: r.status });
+        } else {
+          console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, status: r.status });
+        }
+      } catch (e: any) {
+        console.log('[OrderService] warm-up FAIL', { ms: Date.now() - tWarm, err: e?.name || e?.message });
       }
       const t0 = Date.now();
       // Race the POST (authoritative — yields orderId) against GET
@@ -522,8 +534,14 @@ export const OrderService = {
             pubKeyAy: keyPair.pubKeyAy,
           },
           input.relayerUrl,
-        ).then((r) => ({ via: 'post' as const, data: r }))
-          .catch((e) => ({ via: 'post-err' as const, err: e as Error }));
+        ).then((r) => {
+          console.log('[OrderService] POST resolved', { ms: Date.now() - t0 });
+          return { via: 'post' as const, data: r };
+        })
+          .catch((e) => {
+            console.log('[OrderService] POST rejected', { ms: Date.now() - t0, err: (e as Error)?.name || (e as Error)?.message });
+            return { via: 'post-err' as const, err: e as Error };
+          });
 
         const pollPromise = pollForAcceptedOrder(
           namedSignals.nullifier,
