@@ -134,7 +134,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       // sleep stands in for it now and respects cancel.
       await abortableSleep(600, ctrl.signal);
 
-      addNote({
+      await addNote({
         symbol: token.symbol,
         amount,
         note,

@@ -1,13 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CancelProofInput } from "@zkscatter/sdk/zk";
+import { useWallet } from "@zkscatter/sdk/react";
+import {
+  assembleCancelProofResult,
+  type CancelProofInput,
+} from "@zkscatter/sdk/zk";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
 import { useRelayers } from "../lib/relayers";
 import { getCancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
+import { dispatchCancel } from "../lib/dispatch";
 import { useToast } from "./Toast";
 import { PreSignPreview } from "./PreSignPreview";
 import { abortableSleep, assertNotAborted, isAbortError } from "../lib/abort";
@@ -31,6 +36,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const { notes } = useVault();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const { selected: selectedRelayer } = useRelayers();
+  const { signer } = useWallet();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const abortCtrlRef = useRef<AbortController | null>(null);
@@ -122,18 +128,31 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       setPhase({ kind: "proving", message: "Generating ZK cancel proof…" });
       const prover = getCancelProver();
       await prover.ready();
-      await prover.prove(
+      const proveResult = await prover.prove(
         { circuitId: "cancel", input: input as unknown as Record<string, unknown> },
         {
           signal: ctrl.signal,
           onProgress: (m) => setPhase({ kind: "proving", message: m }),
         },
       );
+      assertNotAborted(ctrl.signal);
+
+      // SDK helper assembles the rich `CancelProofResult` from the
+      // worker's slim `{ proof, publicSignals }` envelope. freshSalt
+      // is private and not yet plumbed back through the worker
+      // protocol — see `assembleCancelProofResult` for the limitation;
+      // `callCancel` doesn't read it, but vault rotation persistence
+      // is gated on the follow-up that adds a `meta` channel.
+      const cancelProof = assembleCancelProofResult(proveResult);
 
       setPhase({ kind: "submitting" });
-      // Phase 5+ wires CommitmentPool.cancelPrivate(...) — this sleep
-      // stands in until the contracts module gains the helper.
-      await abortableSleep(400, ctrl.signal);
+      const dispatch = await dispatchCancel(signer, cancelProof);
+      assertNotAborted(ctrl.signal);
+      // Brief pause on the simulated path so the spinner is visible
+      // — instant transitions read as "nothing happened".
+      if (dispatch.kind === "simulated") {
+        await abortableSleep(400, ctrl.signal);
+      }
 
       markCancelled(order.id);
       setPhase({ kind: "success" });
@@ -141,7 +160,9 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         kind: "success",
         title: `${order.label} cancelled`,
         description:
-          "Cancel proof generated — order will not match. On-chain rotation lands when the contract dispatch wires up.",
+          dispatch.kind === "onchain"
+            ? `On-chain cancellation submitted. Tx ${dispatch.txHash.slice(0, 10)}…`
+            : "Cancel proof generated. On-chain rotation activates once the network has a deployed PrivateSettlement contract.",
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -151,7 +172,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [order, notes, selectedRelayer, deriveEdDSA, markCancelled, toast]);
+  }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast]);
 
   if (!open || !order) return null;
 

@@ -4,48 +4,34 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { CommitmentNote } from "@zkscatter/sdk/zk";
+import {
+  createIndexedDbNoteAdapter,
+  type NoteStorageAdapter,
+  type StoredNote,
+} from "@zkscatter/sdk/notes";
+import { DEMO_NETWORK } from "./network";
 
 /** A note in the user's local vault. The full `CommitmentNote` is
  *  carried so spending circuits (authorize / claim) can spend this
  *  note later without re-deriving its preimage from on-chain data.
  *
- *  Phase 3e-i uses an in-memory React state store; Phase 6 swaps in
- *  a real storage adapter (filesystem on web, SQLite on mobile)
- *  from `@zkscatter/sdk/notes`. */
-export interface VaultNote {
-  /** Stable per-session id used as the React key. Generated with
-   *  `crypto.randomUUID()` so two deposits in the same tick can't
-   *  collide and a React key warning never fires. */
-  id: string;
-  /** Display label (e.g. `lot-1`). */
-  label: string;
-  /** Token symbol shown in the UI. */
-  symbol: string;
-  /** Display amount (already formatted; not used for math). */
-  amount: string;
-  /** Full commitment note — the secret material that lets us spend
-   *  this entry. Storage adapters in Phase 6 will encrypt before
-   *  persisting; today it lives in React state and dies on refresh. */
-  note: CommitmentNote;
-  /** Poseidon commitment derived from `note`. Cached so the order
-   *  flow doesn't have to recompute it on every render. */
-  commitment: bigint;
-  /** When the note was added (ms epoch). */
-  createdAt: number;
-}
+ *  Persisted via `@zkscatter/sdk/notes` IndexedDB adapter — survives
+ *  page reload + browser restart. */
+export type VaultNote = StoredNote;
 
 interface VaultState {
   notes: VaultNote[];
-  add(n: Omit<VaultNote, "id" | "createdAt" | "label">): VaultNote;
-  /** Remove a note by id (e.g. after a successful withdraw).
-   *  Idempotent — a missing id is a no-op so double-fire from a
-   *  modal's success handler doesn't blow up. */
-  remove(id: string): void;
+  /** True once the storage adapter has loaded existing notes. UI
+   *  surfaces a brief loading state to avoid flashing "vault empty"
+   *  on a refresh of a page that actually has notes. */
+  loaded: boolean;
+  add(n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">): Promise<VaultNote>;
+  remove(id: string): Promise<void>;
 }
 
 const VaultCtx = createContext<VaultState | null>(null);
@@ -57,44 +43,126 @@ export function useVault(): VaultState {
 }
 
 function newId(): string {
-  // crypto.randomUUID is available in modern browsers + Node 19+.
-  // Fallback to a timestamp+random hex string for the rare host
-  // that's missing it.
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Pull the highest `lot-N` sequence number out of an existing note
+ *  list so a new add never collides with a previously-persisted
+ *  label. Falls back to 0 when no parseable label is found. */
+function deriveLabelCounter(notes: readonly VaultNote[]): number {
+  let max = 0;
+  for (const n of notes) {
+    const m = /^lot-(\d+)$/.exec(n.label);
+    if (!m) continue;
+    const v = Number(m[1]);
+    if (Number.isFinite(v) && v > max) max = v;
+  }
+  return max;
+}
+
 export function VaultProvider({ children }: { children: React.ReactNode }) {
-  // Default to empty so the new empty-state UI is reachable on a
-  // fresh load and "deposit adds a row" is visually verifiable.
   const [notes, setNotes] = useState<VaultNote[]>([]);
-  // Ref instead of useState so two adds in the same tick get
-  // distinct sequence numbers — same fix as OrdersProvider.
+  const [loaded, setLoaded] = useState(false);
+  // Ref so two adds in the same tick get distinct sequence numbers.
   const labelCounter = useRef(0);
+  // Single adapter instance per provider lifetime — closing the IDB
+  // connection on every render would re-open it on every hook call.
+  const adapterRef = useRef<NoteStorageAdapter | null>(null);
+  if (adapterRef.current === null) {
+    // Lazy-init guarded by ref so SSR doesn't trigger the IDB open
+    // path (the adapter handles `typeof indexedDB === "undefined"`
+    // internally, but skipping the call is cleaner).
+    adapterRef.current = createIndexedDbNoteAdapter({
+      // Per-chain DB so notes from one network don't leak into a
+      // different one when the user switches.
+      dbName: `zkscatter-notes-${DEMO_NETWORK.chainId}`,
+    });
+  }
+
+  // Hydrate on mount. Cancellation guards a fast unmount (HMR, route
+  // swap during initial fetch) from setting state on a dead provider.
+  useEffect(() => {
+    const adapter = adapterRef.current!;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await adapter.loadAll();
+        if (cancelled) return;
+        // Adapter returns oldest → newest. `add()` prepends, so the
+        // in-memory invariant is **newest-first**. Reverse hydrated
+        // entries to match — without this, a refresh would visibly
+        // flip the vault order and any pre-hydration `add()` would
+        // straddle the boundary.
+        const filtered = list
+          .filter((n) => n.chainId === undefined || n.chainId === DEMO_NETWORK.chainId)
+          .sort((a, b) => b.createdAt - a.createdAt);
+        // Merge with anything `add()` may have inserted before
+        // hydration completed. Without this, a deposit fired during
+        // the initial async load would be visible in IDB but blown
+        // away from in-memory state when the loaded list overwrites.
+        setNotes((prev) => {
+          if (prev.length === 0) return filtered;
+          const seen = new Set(filtered.map((n) => n.id));
+          const fresh = prev.filter((n) => !seen.has(n.id));
+          if (fresh.length === 0) return filtered;
+          // Both sides already newest-first; merge then re-sort to
+          // restore the invariant when `prev` had a slightly older
+          // createdAt than the most recent hydrated entry.
+          return [...fresh, ...filtered].sort((a, b) => b.createdAt - a.createdAt);
+        });
+        labelCounter.current = Math.max(
+          labelCounter.current,
+          deriveLabelCounter(filtered),
+        );
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // TODO(multi-chain): when a runtime network switcher lands,
+    // re-create `adapterRef` keyed on chainId so the per-chain DB
+    // name follows the active network. Today DEMO_NETWORK.chainId
+    // is fixed at module-load.
+  }, []);
 
   const add = useCallback(
-    (n: Omit<VaultNote, "id" | "createdAt" | "label">) => {
+    async (n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">) => {
       const seq = ++labelCounter.current;
       const note: VaultNote = {
         ...n,
         id: newId(),
         label: `lot-${seq}`,
         createdAt: Date.now(),
+        chainId: DEMO_NETWORK.chainId,
+        // `-1` until the deposit's `CommitmentInserted` event is
+        // reconciled. Spending paths that need a real index must
+        // wait until then; the empty-tree shortcut treats it as 0.
+        leafIndex: -1,
       };
+      // Persist before flipping React state — a write failure is
+      // logged inside the adapter and we still surface the note in
+      // the UI (memory tier holds it), but the user wouldn't see a
+      // confusing "added then disappeared on refresh" if the adapter
+      // had thrown.
+      await adapterRef.current!.put(note);
       setNotes((prev) => [note, ...prev]);
       return note;
     },
     [],
   );
 
-  const remove = useCallback((id: string) => {
+  const remove = useCallback(async (id: string) => {
+    await adapterRef.current!.remove(id);
     setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
   }, []);
 
   const value = useMemo<VaultState>(
-    () => ({ notes, add, remove }),
-    [notes, add, remove],
+    () => ({ notes, loaded, add, remove }),
+    [notes, loaded, add, remove],
   );
 
   return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;

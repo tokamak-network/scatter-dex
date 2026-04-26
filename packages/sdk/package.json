@@ -13,7 +13,8 @@
     "./zk": "./src/zk/index.ts",
     "./relayer": "./src/relayer/index.ts",
     "./orderbook": "./src/orderbook/index.ts",
-    "./contracts": "./src/contracts/index.ts"
+    "./contracts": "./src/contracts/index.ts",
+    "./notes": "./src/notes/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

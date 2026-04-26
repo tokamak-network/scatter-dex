@@ -70,6 +70,53 @@ export interface CancelProofResult {
   freshSalt: bigint;
 }
 
+/** Cancel circuit's public-input order, in the same order the
+ *  `.circom` declares them. Mirrored by the contract verifier's
+ *  scalar arguments. Change one, change both — the constant lives
+ *  here so consumers can't drift from it. */
+export const CANCEL_PUBLIC_SIGNALS = [
+  "commitmentRoot",
+  "oldNullifier",
+  "oldNonceNullifier",
+  "newCommitment",
+  "relayer",
+] as const;
+
+/** Reconstruct a rich `CancelProofResult` from the slim
+ *  `{ proof, publicSignals }` envelope a Web Worker passes back.
+ *  The cancel circuit's private `freshSalt` is *not* in
+ *  `publicSignals`; it isn't needed by the on-chain `cancelPrivate`
+ *  call (the contract doesn't take it), but vault rotation
+ *  persistence (writing the rotated note with the new salt) is
+ *  blocked until the worker protocol gains a `meta` channel —
+ *  callers that need rotation must produce the proof on-thread.
+ *  Until then this returns `freshSalt: 0n` and that path is gated
+ *  off in apps. */
+export function assembleCancelProofResult(envelope: {
+  proof: Groth16Proof;
+  publicSignals: readonly bigint[];
+}): CancelProofResult {
+  const ps = envelope.publicSignals;
+  // Validate against the circuit's full public-signal count (not
+  // just the 4 we read into named fields) so a circuit / worker
+  // mismatch surfaces here instead of silently producing a
+  // contract-rejected proof.
+  if (ps.length < CANCEL_PUBLIC_SIGNALS.length) {
+    throw new Error(
+      `assembleCancelProofResult: ${ps.length} public signals; expected ${CANCEL_PUBLIC_SIGNALS.length}`,
+    );
+  }
+  return {
+    proof: envelope.proof,
+    publicSignals: ps,
+    commitmentRoot: ps[0]!,
+    oldNullifier: ps[1]!,
+    oldNonceNullifier: ps[2]!,
+    newCommitment: ps[3]!,
+    freshSalt: 0n,
+  };
+}
+
 interface SnarkjsModule {
   groth16: {
     fullProve: (

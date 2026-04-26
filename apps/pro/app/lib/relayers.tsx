@@ -15,7 +15,7 @@ import {
 } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 
 interface RelayersState {
   relayers: RelayerInfo[];
@@ -48,8 +48,7 @@ export function RelayersProvider({ children }: { children: React.ReactNode }) {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const registryAddress = DEMO_NETWORK.contracts.relayerRegistry;
-  const registryConfigured =
-    registryAddress.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
+  const registryConfigured = isConfiguredAddress(registryAddress);
 
   // Fetch lives inside the effect so its returned cleanup actually
   // runs on dep change / unmount — a useCallback wrapper would have
