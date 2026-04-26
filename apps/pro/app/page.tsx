@@ -10,14 +10,14 @@ export default function Landing() {
           MEV-free · Balance-private · Regulator-ready
         </div>
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
-          Big trades. Quietly.
+          Get the price you see.
           <br />
-          <span className="text-[var(--color-primary)]">No front-running. No balance exposure.</span>
+          <span className="text-[var(--color-primary)]">No MEV. No desk spread. No RFQ leak.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
-          Private limit orders on Ethereum L2 for semi-pro and OTC traders.
-          Place a limit, get matched off-chain, settle on-chain — your wallet
-          balance never appears in public dashboards, and front-runners get nothing to copy.
+          Limit orders matched directly with other size traders. Skip the
+          OTC desk spread, skip the Telegram intros, settle on Ethereum
+          mainnet. ETH / USDC / USDT / TON pairs at launch.
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
@@ -40,9 +40,9 @@ export default function Landing() {
 
       {/* Quick proof bar */}
       <section className="grid grid-cols-4 gap-4">
-        <StatBig n="-0.7%" label="Slippage saved" sub="vs Uniswap on $50K trade" />
-        <StatBig n="0%" label="MEV exposure" sub="limit orders, not AMM" />
-        <StatBig n="~$0.01" label="Cost per proof" sub="L2 settlement" />
+        <StatBig n="1-3%" label="Saved per trade" sub="vs OTC desk spread" />
+        <StatBig n="0" label="MEV exposure" sub="limit orders, not AMM" />
+        <StatBig n="~$0.01" label="Cost per proof" sub="Mainnet settlement" />
         <StatBig n="100%" label="On-chain auditable" sub="Dual-CA registry" />
       </section>
 
@@ -53,21 +53,26 @@ export default function Landing() {
           Built for traders whose positions are big enough that being seen
           on-chain costs real money.
         </p>
-        <div className="grid grid-cols-3 gap-4">
-          <PersonaCard
-            badge="Semi-pro trader"
-            title="Your trades move the order book"
-            body="A $50K trade on Uniswap costs you 1–3% to MEV. Limit orders matched off-chain skip the sandwich entirely."
-          />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <PersonaCard
             badge="OTC desk"
-            title="You shop counterparties for size"
-            body="Pre-sign your size at your price. The shared orderbook discovers the opposite side without exposing your wallet."
+            title="Skip the spread"
+            body="Stop paying Wintermute 1–2% per trade. Match directly with another OTC trader over the shared private orderbook — no Telegram intros, no RFQ leak."
+          />
+          <PersonaCard
+            badge="Semi-pro trader"
+            title="No MEV bleed"
+            body="$50K trades on Uniswap lose 1–3% to sandwiches. Limit orders matched off-chain skip the AMM curve and the front-runner entirely."
           />
           <PersonaCard
             badge="Privacy-conscious whale"
-            title="Your wallet is being watched"
-            body="Copy-traders, liquidation hunters, and tax-tracking services all watch big wallets. Once you trade, your vault stays private."
+            title="Stop being a target"
+            body="Copy traders, liquidation bots, and tax-tracking services all watch big wallets. Trade without leaving public data behind for the next desk to read."
+          />
+          <PersonaCard
+            badge="Treasury / family office"
+            title="One trade, many recipients"
+            body="Sell size in a single order and route the proceeds across multiple wallets — different addresses, optional per-recipient vesting, all in one private transaction."
           />
         </div>
       </section>

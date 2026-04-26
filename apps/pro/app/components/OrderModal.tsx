@@ -13,9 +13,18 @@ import { getAuthorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import type { VaultNote } from "../lib/vault";
+import {
+  delaySeconds,
+  expirySeconds,
+  useTradeForm,
+  type RecipientRow,
+} from "../lib/tradeForm";
+import { DEMO_NETWORK } from "../lib/network";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { abortableSleep, isAbortError } from "../lib/abort";
+
+const STEALTH_PLACEHOLDER = "0x0000000000000000000000000000000000005ea1";
 
 type Phase =
   | { kind: "idle" }
@@ -41,11 +50,9 @@ interface OrderModalProps {
   note: VaultNote | null;
 }
 
-// Demo placeholders. Phase 5 reads these from on-chain state /
-// user choice (relayer registry + token list).
-const DEMO_BUY_TOKEN = "0x0000000000000000000000000000000000000002";
+// Relayer placeholder until relayer-registry context threads a real
+// selection through. Phase 5d-followup reads this from `useRelayers().selected`.
 const DEMO_RELAYER = "0x0000000000000000000000000000000000000099";
-const ORDER_LIFETIME_MS = 60 * 60 * 1000; // 1h
 
 /** Format a quote-token-denominated estimated fill (price × size).
  *  Uses string-based parsing so an 18-decimal token doesn't lose
@@ -75,6 +82,64 @@ function estimateFill(price: string, size: string): string {
   }
 }
 
+/** Map the form's recipient rows into circuit `ClaimEntry`s.
+ *
+ *  Default single-row case: empty address → "send the full
+ *  buyAmount to my own connected wallet". Common path; no manual
+ *  amount needed.
+ *
+ *  Multi-row case: every row needs an explicit amount; the sum must
+ *  equal `buyAmount` (no auto-fill — fill-rest UX is a follow-up).
+ *  Stealth mode currently uses a placeholder recipient address; the
+ *  real `deriveStealthAddress` integration ships with the SDK
+ *  stealth migration. */
+function resolveClaims(
+  rows: readonly RecipientRow[],
+  defaultRecipient: string,
+  buyTokenAddress: string,
+  buyTokenDecimals: number,
+  buyAmount: bigint,
+): ClaimEntry[] {
+  const single = rows.length === 1;
+  const total = rows.reduce<bigint>((acc, r) => {
+    if (single && !r.amount.trim()) return buyAmount;
+    if (!r.amount.trim()) return acc;
+    try {
+      return acc + parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
+    } catch {
+      return acc;
+    }
+  }, 0n);
+  if (!single && total !== buyAmount) {
+    throw new Error(
+      `Recipient amounts (sum) must equal the order's buy amount. Off by ${
+        total > buyAmount ? "+" : "−"
+      }${(total > buyAmount ? total - buyAmount : buyAmount - total).toString()} units.`,
+    );
+  }
+
+  return rows.map((r) => {
+    const recipient = (() => {
+      const trimmed = r.address.trim();
+      if (r.mode === "stealth") return STEALTH_PLACEHOLDER;
+      if (!trimmed) return defaultRecipient;
+      return trimmed;
+    })();
+    const amount =
+      single && !r.amount.trim()
+        ? buyAmount
+        : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
+    return {
+      secret: randomFieldElement(),
+      recipient,
+      token: buyTokenAddress,
+      amount,
+      // releaseTime is patched in the submit flow with `nowSec + delaySeconds(row)`.
+      releaseTime: 0n,
+    };
+  });
+}
+
 export function OrderModal({
   open,
   onClose,
@@ -88,6 +153,12 @@ export function OrderModal({
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
+  // Pull the active pair object + advanced settings from the
+  // trade-form context. The `pair` prop is the display string and
+  // is still used for record-keeping (so the OrderRecord ends up
+  // tagged with the user-facing label even if the form's active
+  // pair changes mid-modal).
+  const { pair: activePair, recipients, expiry: expiryKey, maxFeeBps } = useTradeForm();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -116,15 +187,27 @@ export function OrderModal({
       setPhase({ kind: "error", message: "Deposit to your vault before placing an order." });
       return;
     }
-    if (side !== "sell") {
-      // The proof always sells the deposited token; supporting "Buy"
-      // requires the user to have a quote-token note in the vault and
-      // a token-aware decimals lookup. Phase 5 wires the token list +
-      // proper side handling.
+
+    // Resolve sell/buy tokens from the active pair + side. Sell side
+    // means "sell `pair.base`" (sellToken = base, buyToken = quote);
+    // buy side flips them. The vault note must be in the sell-side
+    // token — surface that mismatch as a precise error before paying
+    // the 1–2 s prove cost.
+    const baseToken = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
+    const quoteToken = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    if (!baseToken || !quoteToken) {
       setPhase({
         kind: "error",
-        message:
-          "Buy side isn't wired yet — this demo only supports selling the deposited token. Phase 5 adds proper side handling against the token list.",
+        message: `Active network doesn't list ${activePair.display} — switch network or pair.`,
+      });
+      return;
+    }
+    const sellToken = side === "sell" ? baseToken : quoteToken;
+    const buyToken = side === "sell" ? quoteToken : baseToken;
+    if (note.note.token !== BigInt(sellToken.address)) {
+      setPhase({
+        kind: "error",
+        message: `Vault note is in a different token than ${sellToken.symbol}. Deposit ${sellToken.symbol} or switch side / pair.`,
       });
       return;
     }
@@ -132,13 +215,25 @@ export function OrderModal({
     let sellAmount: bigint;
     let buyAmount: bigint;
     try {
-      // Demo decimals — Phase 5 derives these from a real token list.
-      // Sell side: deposited token (assume 18 dec like ETH/WETH);
-      // Buy side: USDC-shaped quote token (6 dec).
-      sellAmount = parseUnits(size.replace(/,/g, ""), 18);
-      const priceUnits = parseUnits(price.replace(/,/g, ""), 6);
-      const sizeUnits = parseUnits(size.replace(/,/g, ""), 18);
-      buyAmount = (priceUnits * sizeUnits) / 10n ** 18n;
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      // Sell-side: size is in `base` units (sellAmount), price is
+      //   `quote/base`, so buyAmount = size × price (in `quote` units).
+      // Buy-side: size is in `base` units (buyAmount), sellAmount =
+      //   size × price (in `quote` units).
+      if (side === "sell") {
+        sellAmount = parseUnits(cleanSize, baseToken.decimals);
+        const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
+        const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
+        buyAmount =
+          (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
+      } else {
+        buyAmount = parseUnits(cleanSize, baseToken.decimals);
+        const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
+        const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
+        sellAmount =
+          (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
+      }
     } catch (e) {
       setPhase({
         kind: "error",
@@ -150,13 +245,31 @@ export function OrderModal({
       setPhase({ kind: "error", message: "Price and size must be positive." });
       return;
     }
-    // Circuit invariant: sellAmount ≤ note.amount (overspending the
-    // escrow is rejected by authorize.circom). Catching it here saves
-    // the user a 1–2 s proof followed by the SDK's pre-check throw.
     if (sellAmount > note.note.amount) {
       setPhase({
         kind: "error",
         message: `Order size (${size}) exceeds the vault note's balance.`,
+      });
+      return;
+    }
+
+    // Resolve recipient distribution from the trade-form context.
+    // Default (single empty row) is interpreted as "send everything
+    // to my own connected wallet". Multi-row mode requires explicit
+    // amount entry per row; the sum must equal `buyAmount` post-fee.
+    let resolvedClaims: ClaimEntry[];
+    try {
+      resolvedClaims = resolveClaims(
+        recipients,
+        account,
+        buyToken.address,
+        buyToken.decimals,
+        buyAmount,
+      );
+    } catch (e) {
+      setPhase({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Recipients invalid.",
       });
       return;
     }
@@ -172,31 +285,18 @@ export function OrderModal({
       // and expiry would race the second boundary in rare cases and
       // produce a 1-second discrepancy.
       const nowSec = BigInt(Math.floor(Date.now() / 1000));
-      const horizonSec = nowSec + BigInt(Math.floor(ORDER_LIFETIME_MS / 1000));
+      const expirySec = nowSec + BigInt(expirySeconds(expiryKey));
 
-      // Build a single-claim distribution: the user receives
-      // `buyAmount` of the buy token at their own EOA. Phase 4 adds
-      // multi-claim + stealth address support.
-      const claim: ClaimEntry = {
-        secret: randomFieldElement(),
-        recipient: account,
-        token: DEMO_BUY_TOKEN,
-        amount: buyAmount,
-        releaseTime: horizonSec,
-      };
+      // Apply per-claim release delays on top of `nowSec`.
+      const claims: ClaimEntry[] = resolvedClaims.map((c, i) => ({
+        ...c,
+        releaseTime: nowSec + BigInt(delaySeconds(recipients[i]!)),
+      }));
 
       // Single-leaf-at-0 empty Merkle tree — see lib/emptyTreeProof.ts.
-      // This is enough for the prover to produce a self-consistent
-      // proof; the resulting root won't match an on-chain
-      // CommitmentPool root (Phase 5 wires the real one).
       const { merkleProof, leafIndex } = await buildEmptyTreeProof(note.note);
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-      // Capture the nonce so the cancel flow can later derive the
-      // matching `nonceNullifier(secret, nonce)` to kill *this* order
-      // specifically. Without persisting it on the OrderRecord, a
-      // user who cancels would be cancelling a different (or
-      // un-derivable) order.
       const nonce = randomFieldElement();
 
       const input: AuthorizeProofInput = {
@@ -204,15 +304,14 @@ export function OrderModal({
         leafIndex,
         merkleProof,
         sellAmount,
-        buyToken: DEMO_BUY_TOKEN,
+        buyToken: buyToken.address,
         buyAmount,
-        // 50 bps cap. Phase 5 derives this from chosen relayer terms.
-        maxFee: 50n,
-        expiry: horizonSec,
+        maxFee: BigInt(maxFeeBps),
+        expiry: expirySec,
         nonce,
         relayer: DEMO_RELAYER,
         eddsaPrivateKey: eddsaKey.privateKey,
-        claims: [claim],
+        claims,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
@@ -235,6 +334,11 @@ export function OrderModal({
       // can later run the claim flow without re-deriving from chain
       // events. Phase 5 swaps to reading this from a settled
       // on-chain event.
+      // First claim's material is what apps/pro stores on the
+      // OrderRecord — sufficient to drive the single-recipient claim
+      // flow that today's UI exercises. Multi-claim history surfaces
+      // when a per-recipient drawer / inbox lands.
+      const firstClaim = claims[0]!;
       const order = addOrder({
         nonce,
         noteId: note.id,
@@ -243,11 +347,11 @@ export function OrderModal({
         price,
         size,
         claim: {
-          secret: claim.secret,
-          recipient: claim.recipient,
-          token: claim.token,
-          amount: claim.amount,
-          releaseTime: claim.releaseTime,
+          secret: firstClaim.secret,
+          recipient: firstClaim.recipient,
+          token: firstClaim.token,
+          amount: firstClaim.amount,
+          releaseTime: firstClaim.releaseTime,
           leafIndex: 0,
         },
       });
@@ -266,7 +370,11 @@ export function OrderModal({
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [side, pair, price, size, account, note, deriveEdDSA, addOrder, toast]);
+  }, [
+    side, pair, price, size, account, note,
+    activePair, recipients, expiryKey, maxFeeBps,
+    deriveEdDSA, addOrder, toast,
+  ]);
 
   const busy =
     phase.kind === "preparing" ||

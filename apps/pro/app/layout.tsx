@@ -3,18 +3,20 @@ import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { RelayerPill } from "./components/RelayerPill";
+import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { VaultProvider } from "./lib/vault";
 import { OrdersProvider } from "./lib/orders";
 import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
+import { TradeFormProvider } from "./lib/tradeForm";
 import { ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Scatter Pro — Private limit orders for serious traders",
+  title: "Scatter Pro — Get the price you see",
   description:
-    "MEV-free, balance-private, regulator-ready private limit orders on Ethereum L2.",
+    "Limit orders matched directly with other size traders. No MEV, no OTC desk spread, no RFQ leak. Settled on Ethereum mainnet.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <RelayersProvider>
               <VaultProvider>
                 <OrdersProvider>
+                  <TradeFormProvider>
                   <ToastProvider>
                     <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                       🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
@@ -40,6 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                           <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                           <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                           <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
+                          <NetworkSwitcher />
                           <RelayerPill />
                           <ConnectWalletPill />
                         </nav>
@@ -50,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       Scatter Pro · Powered by zkScatter · Tokamak Network · KISA-registered relayers
                     </footer>
                   </ToastProvider>
+                  </TradeFormProvider>
                 </OrdersProvider>
               </VaultProvider>
             </RelayersProvider>
