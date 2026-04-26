@@ -9,7 +9,10 @@ type Phase =
   | { kind: "preparing" }
   | { kind: "proving"; message?: string }
   | { kind: "submitting" }
-  | { kind: "success"; orderId: string }
+  // `orderLabel` is the display label (e.g. "ord-3"), not the
+  // stable internal `OrderRecord.id`. Keeping the field name
+  // honest about what it carries.
+  | { kind: "success"; orderLabel: string }
   | { kind: "error"; message: string };
 
 interface OrderModalProps {
@@ -101,7 +104,7 @@ export function OrderModal({
       await abortableSleep(500, ctrl.signal);
 
       const order = addOrder({ side, pair, price, size });
-      setPhase({ kind: "success", orderId: order.label });
+      setPhase({ kind: "success", orderLabel: order.label });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       console.error("[order]", e);
@@ -144,8 +147,9 @@ export function OrderModal({
 
         <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
           <strong>Demo mode</strong> — proof is generated locally with the
-          mock prover, no order is submitted to a relayer. Real
-          authorize circuit + relayer dispatch land in Phase 3d.
+          mock prover, and no order is submitted to a relayer. Phase 3d
+          ships the real authorize circuit; Phase 5 wires actual relayer
+          dispatch.
         </div>
 
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
@@ -224,8 +228,8 @@ function PhaseStatus({ phase }: { phase: Phase }) {
           Order submitted
         </div>
         <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          {phase.orderId} is now matching against the orderbook. Open the
-          Orders page to track it.
+          {phase.orderLabel} is now matching against the orderbook. Open
+          the Orders page to track it.
         </div>
       </div>
     );

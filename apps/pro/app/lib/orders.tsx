@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -48,12 +49,15 @@ function newId(): string {
 
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [labelCounter, setLabelCounter] = useState(0);
+  // Use a ref instead of useState so two adds in the same tick
+  // (double-click, fast resubmit) get distinct sequence numbers.
+  // setState would have closed over the same value and produced
+  // duplicate labels.
+  const labelCounter = useRef(0);
 
   const add = useCallback(
     (o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">) => {
-      const seq = labelCounter + 1;
-      setLabelCounter(seq);
+      const seq = ++labelCounter.current;
       const order: OrderRecord = {
         ...o,
         id: newId(),
@@ -64,7 +68,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
       setOrders((prev) => [order, ...prev]);
       return order;
     },
-    [labelCounter],
+    [],
   );
 
   const value = useMemo<OrdersState>(() => ({ orders, add }), [orders, add]);

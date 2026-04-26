@@ -92,7 +92,7 @@ export default function Workbench() {
             <div className="mt-1 flex justify-between font-medium text-[var(--color-success)]"><span>Slippage saved</span><span>−0.7% (≈ $58.40)</span></div>
           </div>
           <div className="mt-3 text-xs text-[var(--color-text-muted)]">
-            Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement · ~30s proof generation. You can close this tab — submission continues in background.
+            Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement. Proof generation is ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on mobile.
           </div>
           <button
             onClick={() => setOrderOpen(true)}
