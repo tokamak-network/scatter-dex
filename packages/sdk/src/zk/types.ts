@@ -1,6 +1,9 @@
 /** Identifier for a Groth16 circuit shipped with the protocol.
- *  String literal union (not enum) so consumers can extend it via
- *  declaration merging if they ship private circuits. */
+ *  Open string-literal union — the well-known names get IDE
+ *  autocomplete, but any string is accepted so consumers shipping
+ *  private circuits don't have to fork the SDK. (Type aliases
+ *  can't be declaration-merged; widening via `(string & {})` is
+ *  the workaround.) */
 export type CircuitId = "deposit" | "authorize" | "claim" | (string & {});
 
 /** Groth16 proof in the shape every Solidity verifier expects:
