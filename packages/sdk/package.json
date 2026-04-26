@@ -10,7 +10,10 @@
     ".": "./src/index.ts",
     "./core": "./src/core/index.ts",
     "./react": "./src/react/index.ts",
-    "./zk": "./src/zk/index.ts"
+    "./zk": "./src/zk/index.ts",
+    "./relayer": "./src/relayer/index.ts",
+    "./orderbook": "./src/orderbook/index.ts",
+    "./contracts": "./src/contracts/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
