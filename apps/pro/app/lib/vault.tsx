@@ -42,6 +42,10 @@ export interface VaultNote {
 interface VaultState {
   notes: VaultNote[];
   add(n: Omit<VaultNote, "id" | "createdAt" | "label">): VaultNote;
+  /** Remove a note by id (e.g. after a successful withdraw).
+   *  Idempotent — a missing id is a no-op so double-fire from a
+   *  modal's success handler doesn't blow up. */
+  remove(id: string): void;
 }
 
 const VaultCtx = createContext<VaultState | null>(null);
@@ -84,7 +88,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const value = useMemo<VaultState>(() => ({ notes, add }), [notes, add]);
+  const remove = useCallback((id: string) => {
+    setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
+  }, []);
+
+  const value = useMemo<VaultState>(
+    () => ({ notes, add, remove }),
+    [notes, add, remove],
+  );
 
   return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;
 }

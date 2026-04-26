@@ -55,6 +55,9 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
+  /** Mark an order as cancelled. Only valid for `matching` orders;
+   *  no-op when the order is already filled / claimed / cancelled. */
+  markCancelled(id: string): void;
 }
 
 const OrdersCtx = createContext<OrdersState | null>(null);
@@ -85,12 +88,20 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         id: newId(),
         label: `ord-${seq}`,
         createdAt: Date.now(),
-        // Phase 4 demo: orders skip "matching" and go straight to
-        // "claimable" so the claim flow is reachable without a
-        // relayer/chain backend. Phase 5 wires the real lifecycle.
-        status: "claimable",
+        status: "matching",
       };
       setOrders((prev) => [order, ...prev]);
+      // Demo lifecycle: simulate a fill after 8s so the user can see
+      // the matching → claimable transition in the My Position panel.
+      // Replaced by real relayer / on-chain lifecycle events in the
+      // SDK migration. Cancellation between submit and fill stops
+      // the promotion (the timer no-ops if status is no longer
+      // "matching" by then).
+      setTimeout(() => {
+        setOrders((prev) =>
+          prev.map((x) => (x.id === order.id && x.status === "matching" ? { ...x, status: "claimable" } : x)),
+        );
+      }, 8_000);
       return order;
     },
     [],
@@ -108,9 +119,19 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const markCancelled = useCallback((id: string) => {
+    setOrders((prev) => {
+      const target = prev.find((o) => o.id === id);
+      if (!target || target.status !== "matching") return prev;
+      return prev.map((o) =>
+        o.id === id ? { ...o, status: "cancelled" } : o,
+      );
+    });
+  }, []);
+
   const value = useMemo<OrdersState>(
-    () => ({ orders, add, markClaimed }),
-    [orders, add, markClaimed],
+    () => ({ orders, add, markClaimed, markCancelled }),
+    [orders, add, markClaimed, markCancelled],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;

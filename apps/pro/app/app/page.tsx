@@ -5,12 +5,12 @@ import { useMemo, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { useVault } from "../lib/vault";
 import { useSharedOrderbook } from "../lib/orderbook";
-import { DepositModal } from "../components/DepositModal";
 import { OrderModal } from "../components/OrderModal";
+import { MyPositionPanel } from "../components/MyPositionPanel";
 
-// Sentinel used by `projectOrderbook` to distinguish ask vs bid
-// in the demo. Replaced by the real WETH address when the token
-// list is wired.
+// Sentinel used by `projectOrderbook` to distinguish ask vs bid in
+// the demo. Replaced by the real WETH address when the token list
+// is wired.
 const BASE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000001";
 
 const MOCK_ORDERBOOK = {
@@ -68,7 +68,6 @@ export default function Workbench() {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
-  const [depositOpen, setDepositOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const { notes } = useVault();
   const pair = "ETH/USDC";
@@ -77,11 +76,25 @@ export default function Workbench() {
     () => (ob.orders ? projectOrderbook(ob.orders, BASE_TOKEN_ADDRESS) : null),
     [ob.orders],
   );
-  // Mock fallback only when the network has no shared orderbook
-  // configured — a configured-but-still-loading state should keep
-  // the orderbook empty while showing the "Loading…" badge.
   const isMock = !ob.configured;
   const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
+
+  // Quick-fill: pick a fraction of the active note's amount. Falls
+  // back to the entered value when no note is selected.
+  const fillFraction = (frac: number) => {
+    const n = notes[0];
+    if (!n) return;
+    const num = Number(String(n.amount).replace(/,/g, ""));
+    if (!Number.isFinite(num)) return;
+    const v = num * frac;
+    setSize(v.toLocaleString("en-US", { maximumFractionDigits: 4 }));
+  };
+
+  // Orderbook click-to-fill — autofill price + size from the row.
+  const fillFromRow = (row: RowData) => {
+    setPrice(row.price);
+    setSize(row.size);
+  };
 
   return (
     <div className="space-y-6">
@@ -93,32 +106,7 @@ export default function Workbench() {
       </div>
 
       <div className="grid grid-cols-12 gap-4">
-        {/* Vault */}
-        <aside className="col-span-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">My vault</div>
-          <div className="space-y-3">
-            {notes.map((n) => (
-              <div key={n.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                <div className="text-xs text-[var(--color-text-muted)]">{n.label}</div>
-                <div className="mt-0.5 font-mono text-sm font-semibold">{n.amount} {n.symbol}</div>
-              </div>
-            ))}
-            {notes.length === 0 && (
-              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
-                Your vault is empty. Deposit to start trading privately.
-              </div>
-            )}
-          </div>
-          <button
-            onClick={() => setDepositOpen(true)}
-            className="mt-4 w-full rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]"
-          >
-            + Deposit
-          </button>
-          <div className="mt-5 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            Funds in your vault are not visible to public dashboards.
-          </div>
-        </aside>
+        <MyPositionPanel />
 
         {/* Order form */}
         <section className="col-span-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -133,6 +121,19 @@ export default function Workbench() {
             </Field>
             <Field label="Size (ETH)">
               <input value={size} onChange={(e) => setSize(e.target.value)} className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono" />
+              {notes.length > 0 && (
+                <div className="mt-1.5 flex gap-1">
+                  {[0.25, 0.5, 0.75, 1].map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => fillFraction(f)}
+                      className="flex-1 rounded border border-[var(--color-border)] py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                    >
+                      {f === 1 ? "Max" : `${f * 100}%`}
+                    </button>
+                  ))}
+                </div>
+              )}
             </Field>
             <Field label="Receive at">
               <select className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2">
@@ -177,26 +178,25 @@ export default function Workbench() {
             ) : (
               <>
                 {display.asks.slice().reverse().map((o, i) => (
-                  <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} />
+                  <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} onClick={() => fillFromRow(o)} />
                 ))}
                 <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
                   {isMock ? "mid 4,204.10" : "—"}
                 </div>
                 {display.bids.map((o, i) => (
-                  <Row key={`b-${i}-${o.price}`} side="bid" price={o.price} size={o.size} />
+                  <Row key={`b-${i}-${o.price}`} side="bid" price={o.price} size={o.size} onClick={() => fillFromRow(o)} />
                 ))}
               </>
             )}
           </div>
           <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
             {isMock
-              ? "Depth: $1.2M · Avg fill: 0.3% (mock)"
-              : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders`}
+              ? "Click a row to fill the form · Depth: $1.2M (mock)"
+              : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill`}
           </div>
         </aside>
       </div>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
       <OrderModal
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
@@ -204,9 +204,9 @@ export default function Workbench() {
         pair="ETH/USDC"
         price={price}
         size={size}
-        // Phase 3e-ii: source the spending note from the vault.
-        // For now we always pick the first (most recent) note; a
-        // dropdown lands when the order form gains a per-pair filter.
+        // Phase 3e-ii: source the spending note from the vault. For
+        // now we always pick the first (most recent) note; a dropdown
+        // lands when the order form gains a per-pair filter.
         note={notes[0] ?? null}
       />
     </div>
@@ -222,12 +222,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Row({ side, price, size }: { side: "ask" | "bid"; price: string; size: string }) {
+function Row({
+  side,
+  price,
+  size,
+  onClick,
+}: {
+  side: "ask" | "bid";
+  price: string;
+  size: string;
+  onClick: () => void;
+}) {
+  const tone = side === "ask" ? "text-[var(--color-danger)]" : "text-[var(--color-success)]";
   return (
-    <div className={`flex justify-between rounded px-2 py-1 font-mono text-xs ${side === "ask" ? "text-[var(--color-danger)]" : "text-[var(--color-success)]"}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      title="Click to fill the order form"
+      className={`flex w-full justify-between rounded px-2 py-1 text-left font-mono text-xs hover:bg-[var(--color-bg)] ${tone}`}
+    >
       <span>{price}</span>
       <span className="text-[var(--color-text-muted)]">{size}</span>
-    </div>
+    </button>
   );
 }
 
@@ -253,7 +269,6 @@ function OrderbookStatus({
     );
   }
   if (error) {
-    // Show "Stale" if we have a cached result, "Error" otherwise.
     return (
       <span className="text-[var(--color-danger)]" title={error}>
         {hasOrders ? "Stale" : "Error"}

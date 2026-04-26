@@ -13,6 +13,7 @@ import { getAuthorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import type { VaultNote } from "../lib/vault";
+import { useToast } from "./Toast";
 
 type Phase =
   | { kind: "idle" }
@@ -110,6 +111,7 @@ export function OrderModal({
   const { add: addOrder } = useOrders();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -292,17 +294,21 @@ export function OrderModal({
         },
       });
       setPhase({ kind: "success", orderLabel: order.label });
+      toast.push({
+        kind: "success",
+        title: `${order.label} submitted`,
+        description: `${side === "sell" ? "Sell" : "Buy"} ${size} @ ${price} — matching now.`,
+      });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       console.error("[order]", e);
-      setPhase({
-        kind: "error",
-        message: e instanceof Error ? e.message : "Order failed.",
-      });
+      const msg = e instanceof Error ? e.message : "Order failed.";
+      setPhase({ kind: "error", message: msg });
+      toast.push({ kind: "error", title: "Order failed", description: msg });
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [side, pair, price, size, account, note, deriveEdDSA, addOrder]);
+  }, [side, pair, price, size, account, note, deriveEdDSA, addOrder, toast]);
 
   if (!open) return null;
 
