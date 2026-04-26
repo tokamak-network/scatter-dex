@@ -2,6 +2,7 @@
 
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { chainName } from "@zkscatter/sdk";
+import { Pill, StatusDot } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "../lib/network";
 
 /** Header pill: shows the chain + a Connect button when disconnected,
@@ -29,13 +30,8 @@ export function ConnectWalletPill() {
   }
 
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-      <span
-        aria-hidden="true"
-        className={`inline-block h-1.5 w-1.5 rounded-full ${
-          wrongChain ? "bg-[var(--color-warning)]" : "bg-[var(--color-success)]"
-        } align-middle`}
-      />
+    <Pill>
+      <StatusDot kind={wrongChain ? "warn" : "online"} />
       {wrongChain ? (
         <span className="text-[var(--color-warning)]">
           Wrong chain — switch to {networkLabel}
@@ -55,6 +51,6 @@ export function ConnectWalletPill() {
       >
         ×
       </button>
-    </span>
+    </Pill>
   );
 }

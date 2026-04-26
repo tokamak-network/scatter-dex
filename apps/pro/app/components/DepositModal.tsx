@@ -11,7 +11,7 @@ import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
-import { useToast } from "./Toast";
+import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 const DEMO_TOKENS = [
@@ -167,99 +167,60 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     phase.kind === "submitting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="deposit-title"
-    >
-      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 id="deposit-title" className="text-lg font-semibold">
-            Deposit to vault
-          </h2>
-          <button
-            onClick={close}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            aria-label="Close"
+    <Modal open={open} onClose={close} title="Deposit to vault">
+      <fieldset disabled={busy} className="space-y-4">
+        <Field label="Token">
+          <select
+            value={tokenSymbol}
+            onChange={(e) => setTokenSymbol(e.target.value)}
+            className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
           >
-            ×
-          </button>
-        </div>
+            {DEMO_TOKENS.map((t) => (
+              <option key={t.symbol} value={t.symbol}>
+                {t.symbol}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Amount">
+          <input
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+            placeholder="0.0"
+          />
+        </Field>
+      </fieldset>
 
-        <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
-          <strong>Demo mode</strong> — proofs are generated locally with the
-          mock prover, no on-chain transaction is sent. Real deposit circuit
-          + contract call land in Phase 2b-iii.
-        </div>
+      <PhaseStatus phase={phase} />
 
-        <fieldset disabled={busy} className="space-y-4">
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-              Token
-            </span>
-            <select
-              value={tokenSymbol}
-              onChange={(e) => setTokenSymbol(e.target.value)}
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
+      <div className="mt-5 flex justify-end gap-2">
+        {phase.kind === "success" ? (
+          <Button onClick={close} size="lg">
+            Done
+          </Button>
+        ) : (
+          <>
+            {/* Cancel must stay enabled even mid-submit — that's the
+                whole point of an escape hatch. The handler fires the
+                AbortController so the prover and the pseudo-submit
+                step both unwind cleanly. */}
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Cancel" : "Close"}
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={busy || isDeriving || !account}
+              title={!account ? "Connect a wallet first" : undefined}
             >
-              {DEMO_TOKENS.map((t) => (
-                <option key={t.symbol} value={t.symbol}>
-                  {t.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-              Amount
-            </span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
-              placeholder="0.0"
-            />
-          </label>
-        </fieldset>
-
-        <PhaseStatus phase={phase} />
-
-        <div className="mt-5 flex justify-end gap-2">
-          {phase.kind === "success" ? (
-            <button
-              onClick={close}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-            >
-              Done
-            </button>
-          ) : (
-            <>
-              {/* Cancel must stay enabled even mid-submit — that's
-                  the whole point of an escape hatch. The handler
-                  fires the AbortController so the prover and the
-                  pseudo-submit step both unwind cleanly. */}
-              <button
-                onClick={close}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-              >
-                {busy ? "Cancel" : "Close"}
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy || isDeriving || !account}
-                title={!account ? "Connect a wallet first" : undefined}
-                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-              >
-                {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
-              </button>
-            </>
-          )}
-        </div>
+              {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

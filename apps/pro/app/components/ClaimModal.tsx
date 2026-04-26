@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Modal, useToast } from "@zkscatter/ui";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { getClaimProver } from "../lib/claimProver";
-import { useToast } from "./Toast";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
@@ -25,7 +25,6 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const abortCtrlRef = useRef<AbortController | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
@@ -37,25 +36,6 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     setPhase({ kind: "idle" });
     onClose();
   }, [onClose]);
-
-  // Esc-to-close + initial focus + focus restore (same pattern as
-  // OrderModal — not a full focus trap, adequate for a confirm dialog).
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    const initial = dialogRef.current?.querySelector<HTMLElement>(
-      "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-    );
-    initial?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [open, close]);
 
   const submit = useCallback(async () => {
     if (!order || !order.claim) {
@@ -121,7 +101,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     }
   }, [order, markClaimed, toast]);
 
-  if (!open || !order) return null;
+  if (!order) return null;
 
   const busy =
     phase.kind === "preparing" ||
@@ -129,82 +109,41 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     phase.kind === "submitting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      <div
-        ref={dialogRef}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="claim-title"
-      >
-        <div className="mb-1 flex items-center justify-between">
-          <h2 id="claim-title" className="text-lg font-semibold">
-            Claim proceeds
-          </h2>
-          <button
-            onClick={close}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+    <Modal open={open} onClose={close} title="Claim proceeds">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
+        <Row k="Order" v={order.label} />
+        <Row k="Pair" v={order.pair} />
+        <Row k="Side" v={order.side === "sell" ? "Sell" : "Buy"} />
+        <Row k="Price" v={order.price} />
+        <Row k="Size" v={order.size} />
+        {order.claim && (
+          <Row k="Receive" v={`${order.claim.amount.toString()} (raw units)`} />
+        )}
+      </dl>
 
-        <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
-          <strong>Demo mode</strong> — claim proof is generated locally with
-          the mock prover; real on-chain claim is coming soon.
-        </div>
+      <PhaseStatus phase={phase} />
 
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
-          <Row k="Order" v={order.label} />
-          <Row k="Pair" v={order.pair} />
-          <Row k="Side" v={order.side === "sell" ? "Sell" : "Buy"} />
-          <Row k="Price" v={order.price} />
-          <Row k="Size" v={order.size} />
-          {order.claim && (
-            <Row
-              k="Receive"
-              v={`${order.claim.amount.toString()} (raw units)`}
-            />
-          )}
-        </dl>
-
-        <PhaseStatus phase={phase} />
-
-        <div className="mt-5 flex justify-end gap-2">
-          {phase.kind === "success" ? (
-            <button
-              onClick={close}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+      <div className="mt-5 flex justify-end gap-2">
+        {phase.kind === "success" ? (
+          <Button onClick={close} size="lg">
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Cancel" : "Close"}
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={busy || !order.claim}
+              title={!order.claim ? "No claim material on this order" : undefined}
             >
-              Done
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={close}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-              >
-                {busy ? "Cancel" : "Close"}
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy || !order.claim}
-                title={!order.claim ? "No claim material on this order" : undefined}
-                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-              >
-                {busy ? "Working…" : "Claim"}
-              </button>
-            </>
-          )}
-        </div>
+              {busy ? "Working…" : "Claim"}
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

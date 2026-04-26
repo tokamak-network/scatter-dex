@@ -13,7 +13,7 @@ import { getAuthorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import type { VaultNote } from "../lib/vault";
-import { useToast } from "./Toast";
+import { Button, Modal, useToast } from "@zkscatter/ui";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
@@ -94,7 +94,6 @@ export function OrderModal({
   // `setAbortCtrl(ctrl)` where a sibling close() could read a
   // stale ref.
   const abortCtrlRef = useRef<AbortController | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
@@ -106,32 +105,6 @@ export function OrderModal({
     setPhase({ kind: "idle" });
     onClose();
   }, [onClose]);
-
-  // Escape-to-close + initial focus into the dialog. Only attach
-  // while open. This is *not* a full focus trap — Tab can still
-  // reach focusable elements behind the backdrop because we don't
-  // mark the rest of the page inert. Good enough for a confirm
-  // dialog where the underlying page is mostly non-interactive
-  // while the modal is up; a sentinel-pair trap can land later if
-  // we add modals over more interactive surfaces.
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    const initial = dialogRef.current?.querySelector<HTMLElement>(
-      "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-    );
-    initial?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      // Restore focus to whatever was focused before the modal
-      // opened, so Esc-then-Tab feels right.
-      previouslyFocused?.focus?.();
-    };
-  }, [open, close]);
 
   const submit = useCallback(async () => {
     if (!account) {
@@ -294,106 +267,59 @@ export function OrderModal({
     }
   }, [side, pair, price, size, account, note, deriveEdDSA, addOrder, toast]);
 
-  if (!open) return null;
-
   const busy =
     phase.kind === "preparing" ||
     phase.kind === "proving" ||
     phase.kind === "submitting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      // Backdrop click closes — only when the click landed on the
-      // backdrop itself, not bubbled up from the dialog.
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      <div
-        ref={dialogRef}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="order-title"
-      >
-        <div className="mb-1 flex items-center justify-between">
-          <h2 id="order-title" className="text-lg font-semibold">
-            Confirm private order
-          </h2>
-          <button
-            onClick={close}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+    <Modal open={open} onClose={close} title="Confirm private order">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
+        <Row k="Pair" v={pair} />
+        <Row k="Side" v={side === "sell" ? "Sell" : "Buy"} />
+        <Row k="Price" v={price} />
+        <Row k="Size" v={size} />
+        <Row k="Estimated fill" v={estimateFill(price, size)} />
+        <Row k="vs Uniswap" v="−0.7% slippage" />
+        <Row k="Fee" v="Free (launch event until Dec 31, 2026)" />
+      </dl>
 
-        <div className="mb-4 rounded-md border border-[var(--color-warning-soft)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
-          <strong>Demo mode</strong> — a real authorize Groth16 proof is
-          generated locally in a Web Worker, but the Merkle tree is empty
-          (no on-chain CommitmentPool yet) and no relayer is contacted.
-          Phase 5 wires both.
-        </div>
+      <PhaseStatus phase={phase} />
 
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
-          <Row k="Pair" v={pair} />
-          <Row k="Side" v={side === "sell" ? "Sell" : "Buy"} />
-          <Row k="Price" v={price} />
-          <Row k="Size" v={size} />
-          <Row k="Estimated fill" v={estimateFill(price, size)} />
-          <Row k="vs Uniswap" v="−0.7% slippage" />
-          <Row
-            k="Fee"
-            v="Free (launch event until Dec 31, 2026)"
-          />
-        </dl>
-
-        <PhaseStatus phase={phase} />
-
-        <div className="mt-5 flex justify-end gap-2">
-          {phase.kind === "success" ? (
-            <button
-              onClick={close}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+      <div className="mt-5 flex justify-end gap-2">
+        {phase.kind === "success" ? (
+          <Button onClick={close} size="lg">
+            Done
+          </Button>
+        ) : (
+          <>
+            {/* Cancel stays enabled mid-submit — escape hatch fires
+                the AbortController which unwinds the prover and the
+                simulated submission. */}
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Cancel" : "Close"}
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={busy || isDeriving || !account || !note}
+              title={
+                !account
+                  ? "Connect a wallet first"
+                  : !note
+                  ? "Deposit to your vault first"
+                  : undefined
+              }
             >
-              Done
-            </button>
-          ) : (
-            <>
-              {/* Cancel stays enabled mid-submit — escape hatch fires
-                  the AbortController which unwinds the prover and
-                  the simulated submission. */}
-              <button
-                onClick={close}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-              >
-                {busy ? "Cancel" : "Close"}
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy || isDeriving || !account || !note}
-                title={
-                  !account
-                    ? "Connect a wallet first"
-                    : !note
-                    ? "Deposit to your vault first"
-                    : undefined
-                }
-                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-              >
-                {busy
-                  ? "Working…"
-                  : isDeriving
-                  ? "Awaiting signature…"
-                  : "Sign & submit"}
-              </button>
-            </>
-          )}
-        </div>
+              {busy
+                ? "Working…"
+                : isDeriving
+                ? "Awaiting signature…"
+                : "Sign & submit"}
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

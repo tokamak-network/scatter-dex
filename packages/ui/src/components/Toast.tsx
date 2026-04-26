@@ -88,8 +88,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [dismiss],
   );
 
-  // Capture timer map for cleanup. Reading `.current` inside the
-  // returned cleanup is correct because the ref identity is stable.
   useEffect(() => {
     const map = timers.current;
     return () => {

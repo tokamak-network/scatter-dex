@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
+import { EmptyState } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
 import { useSharedOrderbook } from "../lib/orderbook";
 import { OrderModal } from "../components/OrderModal";
@@ -173,9 +174,7 @@ export default function Workbench() {
           </div>
           <div className="text-sm">
             {display.asks.length === 0 && display.bids.length === 0 ? (
-              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
-                No open orders for this pair.
-              </div>
+              <EmptyState>No open orders for this pair.</EmptyState>
             ) : (
               <>
                 {asksReversed.map((o, i) => (

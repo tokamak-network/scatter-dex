@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { useVault, type VaultNote } from "../lib/vault";
-import { useToast } from "./Toast";
+import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
@@ -34,8 +34,6 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   const [destKind, setDestKind] = useState<DestKind>("self");
   const [customAddr, setCustomAddr] = useState("");
   const abortCtrlRef = useRef<AbortController | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-
   // Reset on the open transition only — re-running this when `notes`
   // changes (e.g. another deposit lands) would yank a mid-edit user's
   // selection back to the seed.
@@ -55,23 +53,6 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     setPhase({ kind: "idle" });
     onClose();
   }, [onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    const initial = dialogRef.current?.querySelector<HTMLElement>(
-      "select, input, button:not([disabled])",
-    );
-    initial?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [open, close]);
 
   const note = useMemo(() => notes.find((n) => n.id === noteId) ?? null, [notes, noteId]);
   /** Resolved destination, or null when the choice can't yet produce
@@ -136,157 +117,119 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     }
   }, [note, destValid, destKind, destAddr, remove, toast]);
 
-  if (!open) return null;
-
   const busy = phase.kind === "proving" || phase.kind === "submitting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      <div
-        ref={dialogRef}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="withdraw-title"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="withdraw-title" className="text-lg font-semibold">
-            Withdraw from vault
-          </h2>
-          <button
-            onClick={close}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            aria-label="Close"
+    <Modal open={open} onClose={close} title="Withdraw from vault">
+      <fieldset disabled={busy} className="space-y-4">
+        <Field label="Note">
+          <select
+            value={noteId ?? ""}
+            onChange={(e) => setNoteId(e.target.value || null)}
+            className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
           >
-            ×
-          </button>
-        </div>
+            {notes.length === 0 && <option value="">(no notes)</option>}
+            {notes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.label} — {n.amount} {n.symbol}
+              </option>
+            ))}
+          </select>
+        </Field>
 
-        <fieldset disabled={busy} className="space-y-4">
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-              Note
-            </span>
-            <select
-              value={noteId ?? ""}
-              onChange={(e) => setNoteId(e.target.value || null)}
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
-            >
-              {notes.length === 0 && <option value="">(no notes)</option>}
-              {notes.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.label} — {n.amount} {n.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <fieldset className="space-y-2 rounded-md border border-[var(--color-border)] p-3 text-sm">
-            <legend className="px-1 text-xs font-semibold text-[var(--color-text-muted)]">
-              Send to
-            </legend>
-            <Radio
-              checked={destKind === "self"}
-              onChange={() => setDestKind("self")}
-              label="My connected wallet"
-              hint={account ? shortAddr(account) : "Connect a wallet first"}
-              disabled={!account}
-            />
-            <Radio
-              checked={destKind === "stealth"}
-              onChange={() => setDestKind("stealth")}
-              label="Fresh stealth address"
-              hint="Generates a one-time recipient — recommended for privacy"
-            />
-            <Radio
-              checked={destKind === "custom"}
-              onChange={() => setDestKind("custom")}
-              label="Custom address"
-              hint="0x…"
-            />
-            {destKind === "custom" && (
-              <input
-                type="text"
-                value={customAddr}
-                onChange={(e) => setCustomAddr(e.target.value)}
-                placeholder="0x…"
-                className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
-              />
-            )}
-          </fieldset>
-        </fieldset>
-
-        <div className="mt-4">
-          <PreSignPreview
-            primary={[
-              {
-                label: "You receive",
-                value: note ? `${note.amount} ${note.symbol}` : "—",
-              },
-            ]}
-            secondary={[
-              {
-                label: "Destination",
-                value:
-                  destKind === "stealth"
-                    ? "Fresh stealth"
-                    : destAddr
-                    ? shortAddr(destAddr)
-                    : "—",
-              },
-              { label: "Network gas", value: "≈ $0.42", muted: true },
-              { label: "Privacy", value: destKind === "self" ? "Linkable to wallet" : "Unlinkable" },
-            ]}
-            footer={
-              destKind === "self"
-                ? "Withdrawing to your connected wallet links the funds to your public balance."
-                : "Withdrawing to a fresh address keeps the funds unlinkable from your wallet."
-            }
+        <fieldset className="space-y-2 rounded-md border border-[var(--color-border)] p-3 text-sm">
+          <legend className="px-1 text-xs font-semibold text-[var(--color-text-muted)]">
+            Send to
+          </legend>
+          <Radio
+            checked={destKind === "self"}
+            onChange={() => setDestKind("self")}
+            label="My connected wallet"
+            hint={account ? shortAddr(account) : "Connect a wallet first"}
+            disabled={!account}
           />
-        </div>
-
-        <PhaseStatus phase={phase} />
-
-        <div className="mt-5 flex justify-end gap-2">
-          {phase.kind === "success" ? (
-            <button
-              onClick={close}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-            >
-              Done
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={close}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-              >
-                {busy ? "Cancel" : "Close"}
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy || !note || !destValid}
-                title={
-                  !note
-                    ? "Pick a note to withdraw"
-                    : !destValid
-                    ? "Pick a valid destination"
-                    : undefined
-                }
-                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-              >
-                {busy ? "Working…" : "Withdraw"}
-              </button>
-            </>
+          <Radio
+            checked={destKind === "stealth"}
+            onChange={() => setDestKind("stealth")}
+            label="Fresh stealth address"
+            hint="Generates a one-time recipient — recommended for privacy"
+          />
+          <Radio
+            checked={destKind === "custom"}
+            onChange={() => setDestKind("custom")}
+            label="Custom address"
+            hint="0x…"
+          />
+          {destKind === "custom" && (
+            <input
+              type="text"
+              value={customAddr}
+              onChange={(e) => setCustomAddr(e.target.value)}
+              placeholder="0x…"
+              className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+            />
           )}
-        </div>
+        </fieldset>
+      </fieldset>
+
+      <div className="mt-4">
+        <PreSignPreview
+          primary={[
+            {
+              label: "You receive",
+              value: note ? `${note.amount} ${note.symbol}` : "—",
+            },
+          ]}
+          secondary={[
+            {
+              label: "Destination",
+              value:
+                destKind === "stealth"
+                  ? "Fresh stealth"
+                  : destAddr
+                  ? shortAddr(destAddr)
+                  : "—",
+            },
+            { label: "Network gas", value: "≈ $0.42", muted: true },
+            { label: "Privacy", value: destKind === "self" ? "Linkable to wallet" : "Unlinkable" },
+          ]}
+          footer={
+            destKind === "self"
+              ? "Withdrawing to your connected wallet links the funds to your public balance."
+              : "Withdrawing to a fresh address keeps the funds unlinkable from your wallet."
+          }
+        />
       </div>
-    </div>
+
+      <PhaseStatus phase={phase} />
+
+      <div className="mt-5 flex justify-end gap-2">
+        {phase.kind === "success" ? (
+          <Button onClick={close} size="lg">
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Cancel" : "Close"}
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={busy || !note || !destValid}
+              title={
+                !note
+                  ? "Pick a note to withdraw"
+                  : !destValid
+                  ? "Pick a valid destination"
+                  : undefined
+              }
+            >
+              {busy ? "Working…" : "Withdraw"}
+            </Button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 
