@@ -45,11 +45,14 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   // literal `nullauthorize_final.zkey` path that mopro will then reject.
   const docDir = FileSystem.documentDirectory;
   if (!docDir) throw new Error('expo-file-system documentDirectory unavailable');
-  const srcPath = uri.replace(/^file:\/\//, '');
   const destPath = `${docDir}${ZKEY_FILENAME}`;
   const destInfo = await FileSystem.getInfoAsync(destPath);
   if (!destInfo.exists) {
-    await FileSystem.copyAsync({ from: srcPath, to: destPath });
+    // expo-file-system on Android requires URI-form paths (with the
+    // `file://` scheme) for `copyAsync`; iOS accepts both. Strip the
+    // scheme only when the resulting plain path crosses the FFI to Rust,
+    // which uses `std::fs::File::open` and rejects URI-form input.
+    await FileSystem.copyAsync({ from: uri, to: destPath });
   }
   cachedZkeyPath = destPath.replace(/^file:\/\//, '');
   return cachedZkeyPath;

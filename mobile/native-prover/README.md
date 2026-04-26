@@ -32,8 +32,37 @@ mopro build \
   --no-auto-update
 ```
 
-For device / release builds, also include `aarch64-apple-ios`. Android
-support is not wired yet.
+For device / release builds, also include `aarch64-apple-ios`.
+
+### Android (arm64-v8a)
+
+Set up the NDK toolchain once, then `cargo build` produces a `.so` that
+the Gradle CMake step links against. Only `arm64-v8a` is wired today —
+real devices ship arm64; if you need x86_64 (emulator) or armeabi-v7a,
+add the matching `cargo build` step + jniLibs path and update
+`mobile/android/gradle.properties#reactNativeArchitectures`.
+
+```sh
+# Prereqs (one-time)
+rustup target add aarch64-linux-android
+# Adjust to the NDK version you installed.
+NDK=$ANDROID_HOME/ndk/27.1.12297006
+TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/darwin-x86_64
+export CC_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang
+export CXX_aarch64_linux_android=$TOOLCHAIN/bin/aarch64-linux-android21-clang++
+export AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/bin/aarch64-linux-android21-clang
+
+# Build + drop the .so into the place Gradle's CMake step expects.
+cargo build --release --target aarch64-linux-android
+mkdir -p MoproReactNativeBindings/android/src/main/jniLibs/arm64-v8a
+cp target/aarch64-linux-android/release/libnative_prover.so \
+   MoproReactNativeBindings/android/src/main/jniLibs/arm64-v8a/
+```
+
+Then `npx expo run:android --device <name>` from `mobile/`. The CMake
+script in `MoproReactNativeBindings/android/CMakeLists.txt` already
+imports the `.so` as a vendored library and links it into `libmopro-ffi.so`.
 
 ## Layout
 
