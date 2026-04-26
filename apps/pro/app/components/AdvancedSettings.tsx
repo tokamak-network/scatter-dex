@@ -85,7 +85,10 @@ export function AdvancedSettings() {
           </Button>
         )}
         <p className="text-[11px] text-[var(--color-text-subtle)]">
-          Up to 16 recipients in one private order. Empty address = your own wallet. Stealth mode generates a one-time receiver per claim — unlinkable on-chain.
+          Up to 16 recipients in one private order. Empty address = your
+          own wallet. Stealth mode is wired but uses a placeholder
+          recipient until the SDK stealth-derive integration ships;
+          regular mode is fully active.
         </p>
       </section>
 
@@ -150,8 +153,9 @@ function RecipientRowItem({
   onChange: <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => void;
   onRemove: () => void;
 }) {
+  // 7 columns: index · mode · address (fr) · amount · delay · delayUnit · remove
   return (
-    <div className="grid grid-cols-[auto_1fr_5rem_4rem_3rem_auto] items-center gap-1.5 text-xs">
+    <div className="grid grid-cols-[auto_5rem_1fr_5rem_4rem_3rem_auto] items-center gap-1.5 text-xs">
       <span className="font-mono text-[var(--color-text-subtle)]">#{index + 1}</span>
       <select
         value={row.mode}

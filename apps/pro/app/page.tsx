@@ -41,7 +41,7 @@ export default function Landing() {
       {/* Quick proof bar */}
       <section className="grid grid-cols-4 gap-4">
         <StatBig n="1-3%" label="Saved per trade" sub="vs OTC desk spread" />
-        <StatBig n="0" label="MEV exposure" sub="limit orders, not AMM" />
+        <StatBig n="0%" label="MEV exposure" sub="limit orders, not AMM" />
         <StatBig n="~$0.01" label="Cost per proof" sub="Mainnet settlement" />
         <StatBig n="100%" label="On-chain auditable" sub="Dual-CA registry" />
       </section>

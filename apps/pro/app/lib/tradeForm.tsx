@@ -71,9 +71,10 @@ interface TradeFormState {
   ): void;
   resetRecipients(): void;
 
-  /** Order expiry as preset chip key. `custom` toggles a number+unit
-   *  picker. Default is 1h — matches the order's pre-existing
-   *  `ORDER_LIFETIME_MS` in OrderModal. */
+  /** Order expiry as preset chip key. Default 1h. Custom expiry
+   *  (number + unit picker) is a follow-up — the preset chips cover
+   *  the common range and avoid a typo-prone manual entry on the
+   *  hot path. */
   expiry: "15m" | "1h" | "4h" | "24h" | "7d";
   setExpiry(v: TradeFormState["expiry"]): void;
 

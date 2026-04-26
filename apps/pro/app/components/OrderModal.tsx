@@ -93,6 +93,19 @@ function estimateFill(price: string, size: string): string {
  *  Stealth mode currently uses a placeholder recipient address; the
  *  real `deriveStealthAddress` integration ships with the SDK
  *  stealth migration. */
+const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+
+function formatTokenAmount(amount: bigint, decimals: number): string {
+  if (decimals <= 0) return amount.toString();
+  const divisor = 10n ** BigInt(decimals);
+  const whole = amount / divisor;
+  const frac = amount % divisor;
+  if (frac === 0n) return whole.toString();
+  // Trim trailing zeros for readability ("1.5" not "1.500000").
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fracStr.length > 0 ? `${whole}.${fracStr}` : whole.toString();
+}
+
 function resolveClaims(
   rows: readonly RecipientRow[],
   defaultRecipient: string,
@@ -100,22 +113,50 @@ function resolveClaims(
   buyTokenDecimals: number,
   buyAmount: bigint,
 ): ClaimEntry[] {
-  const single = rows.length === 1;
-  const total = rows.reduce<bigint>((acc, r) => {
-    if (single && !r.amount.trim()) return buyAmount;
-    if (!r.amount.trim()) return acc;
-    try {
-      return acc + parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
-    } catch {
-      return acc;
+  // Auto-fill convention: a single row with no amount = "send the
+  // entire buyAmount to this recipient". In every other case (single
+  // row with explicit amount, or multi-row), the sum of all
+  // explicit amounts must equal buyAmount — including the single-
+  // row case, so a typo can't underspend the order silently.
+  const autoFillSingle = rows.length === 1 && !rows[0]!.amount.trim();
+
+  let total = 0n;
+  for (const r of rows) {
+    if (autoFillSingle) continue;
+    if (!r.amount.trim()) {
+      throw new Error(
+        `Recipient #${rows.indexOf(r) + 1} is missing an amount.`,
+      );
     }
-  }, 0n);
-  if (!single && total !== buyAmount) {
+    try {
+      total += parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
+    } catch {
+      throw new Error(
+        `Recipient #${rows.indexOf(r) + 1} amount "${r.amount}" is not a valid number.`,
+      );
+    }
+  }
+  if (!autoFillSingle && total !== buyAmount) {
+    const diff = total > buyAmount ? total - buyAmount : buyAmount - total;
     throw new Error(
-      `Recipient amounts (sum) must equal the order's buy amount. Off by ${
+      `Recipient amounts must sum to the order's buy amount. Off by ${
         total > buyAmount ? "+" : "−"
-      }${(total > buyAmount ? total - buyAmount : buyAmount - total).toString()} units.`,
+      }${formatTokenAmount(diff, buyTokenDecimals)}.`,
     );
+  }
+
+  // Validate recipient addresses up front so a typo doesn't surface
+  // mid-prove with a cryptic BigInt parse error.
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (r.mode === "stealth") continue; // placeholder; not user-entered
+    const trimmed = r.address.trim();
+    if (!trimmed) continue; // empty = self
+    if (!ADDR_RE.test(trimmed)) {
+      throw new Error(
+        `Recipient #${i + 1} address "${trimmed}" is not a valid 0x… address.`,
+      );
+    }
   }
 
   return rows.map((r) => {
@@ -125,10 +166,9 @@ function resolveClaims(
       if (!trimmed) return defaultRecipient;
       return trimmed;
     })();
-    const amount =
-      single && !r.amount.trim()
-        ? buyAmount
-        : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
+    const amount = autoFillSingle
+      ? buyAmount
+      : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
     return {
       secret: randomFieldElement(),
       recipient,
