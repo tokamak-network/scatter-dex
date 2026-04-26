@@ -409,9 +409,17 @@ export const OrderService = {
       };
 
       // Native prover path — runs Groth16 proving in a Rust-compiled
-      // Turbo Module (see mobile/native-prover/). Eliminates the WebView
-      // CPU burst that starves the iOS dispatch queue and causes every
-      // post-proof HTTP call to abort (PR #401/#404/#407/#408 instrumentation).
+      // Turbo Module (see mobile/native-prover/). Cuts authorize-circuit
+      // proof time from ~3.4s on the WebView/snarkjs path to ~60ms.
+      //
+      // Note: the iOS Simulator POST-abort chain in #401/#404/#407/#408
+      // was originally suspected to be caused by the WebView's Groth16
+      // CPU burst starving the iOS dispatch queue. Empirically that
+      // hypothesis is wrong — the same `Aborted` lands on the subsequent
+      // POST even when this native path runs in 60ms with no WebKit
+      // burst at all (see PR #409). Root cause is somewhere in the RN
+      // fetch / NSURLSession layer; investigation continues.
+      //
       // Falls back to the WebView path if the native module is missing
       // (e.g. running in Expo Go, which can't load custom native code).
       let proofResult: { proof: any; publicSignals: string[]; elapsedMs: number };

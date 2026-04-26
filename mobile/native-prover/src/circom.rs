@@ -71,15 +71,19 @@ impl From<CircomProverProof> for CircomProof {
     }
 }
 
-impl From<CircomProof> for CircomProverProof {
-    fn from(proof: CircomProof) -> Self {
-        CircomProverProof {
-            a: proof.a.into(),
-            b: proof.b.into(),
-            c: proof.c.into(),
+// JS-side proof points cross the FFI as strings, so parsing them back to
+// `BigUint` is fallible — propagate the error to the caller instead of
+// `.unwrap()`-ing into a process panic.
+impl TryFrom<CircomProof> for CircomProverProof {
+    type Error = MoproError;
+    fn try_from(proof: CircomProof) -> Result<Self, Self::Error> {
+        Ok(CircomProverProof {
+            a: proof.a.try_into()?,
+            b: proof.b.try_into()?,
+            c: proof.c.try_into()?,
             protocol: proof.protocol,
             curve: proof.curve,
-        }
+        })
     }
 }
 
@@ -93,13 +97,14 @@ impl From<CircomProverG1> for G1 {
     }
 }
 
-impl From<G1> for CircomProverG1 {
-    fn from(g1: G1) -> Self {
-        CircomProverG1 {
-            x: BigUint::from_str(g1.x.as_str()).unwrap(),
-            y: BigUint::from_str(g1.y.as_str()).unwrap(),
-            z: BigUint::from_str(g1.z.as_str()).unwrap(),
-        }
+impl TryFrom<G1> for CircomProverG1 {
+    type Error = MoproError;
+    fn try_from(g1: G1) -> Result<Self, Self::Error> {
+        Ok(CircomProverG1 {
+            x: parse_g_coord(&g1.x, "G1.x")?,
+            y: parse_g_coord(&g1.y, "G1.y")?,
+            z: parse_g_coord(&g1.z, "G1.z")?,
+        })
     }
 }
 
@@ -112,23 +117,29 @@ impl From<CircomProverG2> for G2 {
     }
 }
 
-impl From<G2> for CircomProverG2 {
-    fn from(g2: G2) -> Self {
-        CircomProverG2 {
+impl TryFrom<G2> for CircomProverG2 {
+    type Error = MoproError;
+    fn try_from(g2: G2) -> Result<Self, Self::Error> {
+        Ok(CircomProverG2 {
             x: [
-                BigUint::from_str(g2.x[0].as_str()).unwrap(),
-                BigUint::from_str(g2.x[1].as_str()).unwrap(),
+                parse_g_coord(&g2.x[0], "G2.x[0]")?,
+                parse_g_coord(&g2.x[1], "G2.x[1]")?,
             ],
             y: [
-                BigUint::from_str(g2.y[0].as_str()).unwrap(),
-                BigUint::from_str(g2.y[1].as_str()).unwrap(),
+                parse_g_coord(&g2.y[0], "G2.y[0]")?,
+                parse_g_coord(&g2.y[1], "G2.y[1]")?,
             ],
             z: [
-                BigUint::from_str(g2.z[0].as_str()).unwrap(),
-                BigUint::from_str(g2.z[1].as_str()).unwrap(),
+                parse_g_coord(&g2.z[0], "G2.z[0]")?,
+                parse_g_coord(&g2.z[1], "G2.z[1]")?,
             ],
-        }
+        })
     }
+}
+
+fn parse_g_coord(s: &str, label: &str) -> Result<BigUint, MoproError> {
+    BigUint::from_str(s)
+        .map_err(|e| MoproError::CircomError(format!("invalid {label}: {e}")))
 }
 
 impl Into<CircomProverProofLib> for ProofLib {
@@ -156,7 +167,10 @@ pub fn generate_circom_proof(
             MoproError::CircomError("failed to parse file name from zkey_path".to_string())
         })?;
 
-    let witness_fn = crate::circom_get(name.to_str().unwrap()).ok_or_else(|| {
+    let name_str = name.to_str().ok_or_else(|| {
+        MoproError::CircomError("zkey_path contains invalid UTF-8".to_string())
+    })?;
+    let witness_fn = crate::circom_get(name_str).ok_or_else(|| {
         MoproError::CircomError(format!("Unknown ZKEY: {}", name.to_string_lossy()))
     })?;
 
@@ -189,7 +203,7 @@ pub fn verify_circom_proof(
     CircomProver::verify(
         chosen_proof_lib,
         circom_prover::prover::CircomProof {
-            proof: proof_result.proof.into(),
+            proof: proof_result.proof.try_into()?,
             pub_inputs: proof_result.inputs.into(),
         },
         zkey_path,

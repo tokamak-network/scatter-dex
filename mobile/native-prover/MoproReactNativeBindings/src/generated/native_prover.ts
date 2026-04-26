@@ -911,15 +911,16 @@ const FfiConverterMapStringArrayString = new FfiConverterMap(
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
 function uniffiEnsureInitialized() {
-  return; // spike: bypass ubrn 0.31.0-2 checksum template bug
-  // HACK (spike): ubrn 0.31.0-2 template bug — emits function-name strings in
-  // the RHS of checksum comparisons instead of numeric hashes, so the check
-  // always throws. Bypass while the real fix is upstreamed. Binary compat
-  // is still enforced below via `ubrn_ffi_native_prover_uniffi_contract_version`.
-  return;
-  // Get the bindings contract version from our ComponentInterface
-  const bindingsContractVersion = 30;
-  // Get the scaffolding contract version by calling the into the dylib
+  // HACK (spike): ubrn 0.31.0-2 ships TS templates that assume uniffi
+  // contract version 30, but mopro-ffi 0.3.5 is built against uniffi
+  // 0.29.x (contract version 29). Override the template constant to 29
+  // so the contract-version check actually matches the Rust scaffolding —
+  // this is the real load-bearing binary-compat guard. Keep the
+  // per-function checksum checks below disabled because the ubrn
+  // template *also* has a separate bug there (compares function-name
+  // strings instead of numeric hashes), so they would always throw.
+  // Remove this whole hack once ubrn / mopro ship a matched pair.
+  const bindingsContractVersion = 29;
   const scaffoldingContractVersion =
     nativeModule().ubrn_ffi_native_prover_uniffi_contract_version();
   if (bindingsContractVersion !== scaffoldingContractVersion) {
@@ -928,6 +929,7 @@ function uniffiEnsureInitialized() {
       bindingsContractVersion
     );
   }
+  return;
   if (
     nativeModule().ubrn_uniffi_native_prover_checksum_func_mopro_hello_world() !==
     53713

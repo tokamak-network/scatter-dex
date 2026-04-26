@@ -40,8 +40,13 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   await asset.downloadAsync();
   const uri = asset.localUri || asset.uri;
   if (!uri) throw new Error(`${ZKEY_FILENAME} asset could not be resolved`);
+  // expo's `documentDirectory` is `null` until the FS module finishes
+  // initializing; bail with a clear message rather than concatenating a
+  // literal `nullauthorize_final.zkey` path that mopro will then reject.
+  const docDir = FileSystem.documentDirectory;
+  if (!docDir) throw new Error('expo-file-system documentDirectory unavailable');
   const srcPath = uri.replace(/^file:\/\//, '');
-  const destPath = `${FileSystem.documentDirectory}${ZKEY_FILENAME}`;
+  const destPath = `${docDir}${ZKEY_FILENAME}`;
   const destInfo = await FileSystem.getInfoAsync(destPath);
   if (!destInfo.exists) {
     await FileSystem.copyAsync({ from: srcPath, to: destPath });
