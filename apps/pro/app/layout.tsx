@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { chainName } from "@zkscatter/sdk";
+import { WalletProvider } from "@zkscatter/sdk/react";
+import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
@@ -14,33 +15,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-          🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
-        </div>
-        <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <Link href="/" className="flex items-center gap-2 font-semibold">
-              <span className="inline-block h-6 w-6 rounded bg-[var(--color-primary)]" />
-              Scatter <span className="text-xs font-medium text-[var(--color-text-muted)]">Pro</span>
-            </Link>
-            <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
-              <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
-              <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
-              <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
-              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-                <span
-                  aria-hidden="true"
-                  className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)] align-middle"
-                />
-                {DEMO_NETWORK.name ?? chainName(DEMO_NETWORK.chainId)} · zk-X509 ✓ · 0x12…ab
-              </span>
-            </nav>
+        <WalletProvider network={DEMO_NETWORK}>
+          <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
+            🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
           </div>
-        </header>
-        <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
-        <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-          Scatter Pro · Powered by zkScatter · Tokamak Network · KISA-registered relayers
-        </footer>
+          <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+              <Link href="/" className="flex items-center gap-2 font-semibold">
+                <span className="inline-block h-6 w-6 rounded bg-[var(--color-primary)]" />
+                Scatter <span className="text-xs font-medium text-[var(--color-text-muted)]">Pro</span>
+              </Link>
+              <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
+                <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
+                <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
+                <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
+                <ConnectWalletPill />
+              </nav>
+            </div>
+          </header>
+          <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
+          <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
+            Scatter Pro · Powered by zkScatter · Tokamak Network · KISA-registered relayers
+          </footer>
+        </WalletProvider>
       </body>
     </html>
   );
