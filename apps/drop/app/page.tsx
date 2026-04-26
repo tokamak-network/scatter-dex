@@ -7,7 +7,7 @@ export default function Landing() {
       <section className="pt-12 text-center">
         <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
           <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-primary)]" />
-          Powered by ScatterDEX · Tokamak Network
+          Powered by zkScatter · Tokamak Network
         </div>
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
           Get your token to real humans,
@@ -79,7 +79,7 @@ export default function Landing() {
 
       {/* Why us */}
       <section>
-        <h2 className="mb-2 text-center text-2xl font-semibold">Why ScatterDrop</h2>
+        <h2 className="mb-2 text-center text-2xl font-semibold">Why Scatter Drop</h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
           Existing tools either let bots in, charge recipients gas, or expose
           claim amounts publicly. We close all three holes.
@@ -91,7 +91,7 @@ export default function Landing() {
                 <th className="px-5 py-3 text-left">Feature</th>
                 <th className="px-5 py-3 text-center">Merkle distributor</th>
                 <th className="px-5 py-3 text-center">Galxe / Layer3</th>
-                <th className="px-5 py-3 text-center text-[var(--color-primary)]">ScatterDrop</th>
+                <th className="px-5 py-3 text-center text-[var(--color-primary)]">Scatter Drop</th>
               </tr>
             </thead>
             <tbody>

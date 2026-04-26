@@ -1,4 +1,4 @@
-# ScatterDEX Pro
+# Scatter Pro
 
 Private limit orders for serious traders.
 MEV-free, balance-private, regulator-ready.
@@ -26,7 +26,7 @@ npm run dev   # http://localhost:3003
 
 ## Domain (planned)
 
-`pro.scatterdex.xyz`
+`pro.zkscatter.xyz`
 
 ## Pricing (planned)
 

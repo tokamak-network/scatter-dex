@@ -100,7 +100,7 @@ export default function NewCampaign() {
               <Row k="Privacy" v={stealth ? "Stealth claim" : "Public claim"} />
               <Row k="Gas" v={gasless ? "You pay (gasless for recipients)" : "Recipient pays"} />
               <Row k="Window" v={`${days} days, ${recover ? "sweep unclaimed" : "leave forever"}`} />
-              <Row k="ScatterDrop fee" v="Free (launch event until Dec 31, 2026 · normally 0.2%)" />
+              <Row k="Scatter Drop fee" v="Free (launch event until Dec 31, 2026 · normally 0.2%)" />
             </div>
             <button className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
               Sign & launch campaign

@@ -46,7 +46,7 @@ export default function Claim({ params }: { params: Promise<{ link: string }> })
               Claim — gasless
             </button>
             <div className="mt-3 text-center text-xs text-[var(--color-text-muted)]">
-              No gas. Recipient pays nothing. Powered by ScatterDEX relayers.
+              No gas. Recipient pays nothing. Powered by zkScatter relayers.
             </div>
           </>
         ) : (

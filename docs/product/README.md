@@ -1,7 +1,7 @@
 # Product docs
 
 Strategic & implementation docs for the persona-specific frontends
-that share the ScatterDEX core (contracts + ZK + relayer + shared
+that share the zkScatter core (contracts + ZK + relayer + shared
 orderbook).
 
 ## Contents
@@ -24,6 +24,8 @@ orderbook).
   `/app` route, vs-Uniswap comparison metric).
 - [`SHARED_FOUNDATION.md`](./SHARED_FOUNDATION.md) — `packages/sdk` and
   `packages/ui` extraction plan that all three apps depend on.
+- [`DEVELOPER_DOCS_SITE.md`](./DEVELOPER_DOCS_SITE.md) — `apps/docs/`
+  plan: Nextra-based public reference for SDK consumers.
 - [`inventory/FRONTEND_FEATURES.md`](./inventory/FRONTEND_FEATURES.md) —
   raw feature inventory of `frontend/` (web).
 - [`inventory/MOBILE_FEATURES.md`](./inventory/MOBILE_FEATURES.md) —

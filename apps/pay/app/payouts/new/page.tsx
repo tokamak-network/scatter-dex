@@ -130,7 +130,7 @@ export default function NewPayout() {
               <Row k="Stealth" v={stealth ? "Yes" : "No"} />
               <Row k="Notification" v={notify ? "Email + Discord" : "None"} />
               <Row k="Estimated gas" v="~$0.50 (one tx)" />
-              <Row k="ScatterPay fee" v={`Free (launch event until Dec 31, 2026 · normally 0.05%, capped at $20)`} />
+              <Row k="Scatter Pay fee" v={`Free (launch event until Dec 31, 2026 · normally 0.05%, capped at $20)`} />
             </dl>
             <button className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
               Sign & submit

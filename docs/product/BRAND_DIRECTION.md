@@ -1,6 +1,6 @@
 # Brand Direction
 
-The visual and verbal direction shared across all ScatterDEX
+The visual and verbal direction shared across all zkScatter
 frontends (Pro / Pay / Drop / Mobile).
 
 ## North star
@@ -91,7 +91,7 @@ Every frontend should show, in the footer or a header badge:
 
 - **zk-X509 verified** badge when the user has completed identity
   verification (header)
-- "Powered by ScatterDEX" with link to a one-page explainer of the
+- "Powered by zkScatter" with link to a one-page explainer of the
   Dual-CA model (footer)
 - Network / chain indicator (footer)
 - "Tokamak Network · KISA-registered relayers" (footer)
@@ -110,7 +110,7 @@ When describing the product to outsiders, use this 3-beat structure:
    identity privately once, relayers are publicly registered. No
    anonymous mixing. Audit trail preserved."
 
-The third beat is non-negotiable. It's what separates ScatterDEX
+The third beat is non-negotiable. It's what separates zkScatter
 from the privacy products that get sanctioned.
 
 ## Per-app landing page hero (suggested copy)

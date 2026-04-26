@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ScatterPay — Private bulk payouts",
+  title: "Scatter Pay — Private bulk payouts",
   description:
     "Pay your team or vendors in one transaction. Recipients can't see each other's amounts.",
 };
@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
             <Link href="/" className="flex items-center gap-2 font-semibold">
               <span className="inline-block h-6 w-6 rounded bg-[var(--color-primary)]" />
-              ScatterPay
+              Scatter Pay
             </Link>
             <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
               <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
         <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-          ScatterPay · Powered by ScatterDEX · zk-X509 audit trail · Tokamak Network
+          Scatter Pay · Powered by zkScatter · zk-X509 audit trail · Tokamak Network
         </footer>
       </body>
     </html>

@@ -1,4 +1,4 @@
-# ScatterDrop
+# Scatter Drop
 
 Sybil-resistant private airdrops. Recipients claim gaslessly, amounts
 are hidden on-chain, and zk-X509 enforces real 1-person-1-claim.
@@ -28,7 +28,7 @@ npm run dev   # http://localhost:3002
 
 ## Domain (planned)
 
-`drop.scatterdex.xyz`
+`drop.zkscatter.xyz`
 
 ## Pricing (planned)
 

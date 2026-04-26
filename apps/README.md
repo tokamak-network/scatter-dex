@@ -1,6 +1,6 @@
 # apps/
 
-Persona-specific frontends built on the shared ScatterDEX core
+Persona-specific frontends built on the shared zkScatter core
 (contracts + ZK engine + relayer network + shared orderbook).
 
 | App | Target | Status | Port |

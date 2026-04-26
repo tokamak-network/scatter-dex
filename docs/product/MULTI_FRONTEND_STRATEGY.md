@@ -1,6 +1,6 @@
 # Multi-Frontend Strategy
 
-**One core, three personas.** ScatterDEX's contracts + ZK engine +
+**One core, three personas.** zkScatter's contracts + ZK engine +
 relayer network + shared orderbook are persona-agnostic; the UX layer
 is not. We ship three distinct frontends rather than one
 "do-everything" app.
@@ -34,7 +34,7 @@ secondary device for monitoring + Quick Sign.
 - Contracts (PrivateSettlement, CommitmentPool, Registry, IdentityGate)
 - ZK circuits & proofs (deposit / authorize / claim)
 - Relayer network & shared orderbook
-- (Future) `packages/sdk` (`@scatterdex/sdk`) — typed TS client for the core
+- (Future) `packages/sdk` (`@zkscatter/sdk`) — typed TS client for the core
 - (Future) `packages/ui` — design tokens & primitive components per
   brand theme
 
@@ -42,8 +42,8 @@ secondary device for monitoring + Quick Sign.
 
 **Recommendation: master brand + sub-brand.**
 
-- ScatterDEX as the master (trust anchor: ZK, regulator-ready, Tokamak)
-- Sub-brands: ScatterDEX **Pro**, Scatter**Pay**, Scatter**Drop**
+- zkScatter as the master (trust anchor: ZK, regulator-ready, Tokamak)
+- Sub-brands: zkScatter **Pro**, Scatter**Pay**, Scatter**Drop**
 - Each gets its own subdomain (`pro.`, `pay.`, `drop.`) and visual
   treatment but shares logomark + footer trust signals (zk-X509,
   KISA-registered relayers, etc.)
@@ -57,12 +57,12 @@ once at the master brand and reuse it everywhere.
    Without this, every app duplicates contract calls and styles.
 2. **Pro reposition (2 weeks)** — workbench consolidation, copy
    rewrite, vs-Uniswap comparison metric. See `PRO_REPOSITION.md`.
-3. **ScatterPay MVP (4 weeks)** — fastest path to MRR. Recurring
+3. **Scatter Pay MVP (4 weeks)** — fastest path to MRR. Recurring
    payouts is the lock-in. See `SCATTERPAY_SPEC.md`.
-4. **ScatterDrop MVP (4 weeks)** — biggest single-deal sizes (campaign
+4. **Scatter Drop MVP (4 weeks)** — biggest single-deal sizes (campaign
    fees in the $K–$10K range). Pair with one launch partner from
    week 1. See `SCATTERDROP_SPEC.md`.
-5. **Mobile Quick Sign + ScatterPay recurring (4 weeks, parallel)**
+5. **Mobile Quick Sign + Scatter Pay recurring (4 weeks, parallel)**
 
 Total: ~17 weeks from foundation → 3 frontends + mobile pairing
 shipping.
