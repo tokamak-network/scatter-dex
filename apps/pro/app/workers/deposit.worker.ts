@@ -35,10 +35,11 @@ setupProverWorker({
       );
     }
 
-    // The main-thread caller (DepositModal → depositProver) packs
-    // a `CommitmentNote` into `req.input` (it has no extra fields
-    // — generateDepositProof derives the commitment internally).
-    // Reconstruct the BigInt fields snarkjs needs.
+    // The main-thread caller (DepositModal → depositProver) sends
+    // `req.input` already shaped as a BigInt-backed `CommitmentNote`
+    // — structured-clone preserves BigInt fields end-to-end so no
+    // normalization is needed here. `generateDepositProof` derives
+    // the commitment internally and returns it via publicSignals[0].
     const note = req.input as unknown as CommitmentNote;
 
     return withCachedAssets(CIRCUIT_ASSETS, async (urls) => {

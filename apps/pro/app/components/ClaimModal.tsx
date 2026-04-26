@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { singleClaimTree, type ClaimProofInput } from "@zkscatter/sdk/zk";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { getClaimProver } from "../lib/claimProver";
 import { useToast } from "./Toast";
@@ -69,26 +68,18 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     try {
       setPhase({ kind: "preparing" });
 
-      // The order flow stored a single claim entry at leafIndex 0.
-      // `singleClaimTree` rebuilds the matching 16-leaf claims tree
-      // shape that the on-chain `claimsRoot` was computed against.
-      // Once a real settled order is sourced from chain events, a
-      // `merkleProof` from the indexer replaces this rebuild.
-      const recipientBn = BigInt(order.claim.recipient);
-      const tokenBn = BigInt(order.claim.token);
+      // The order stored a single claim entry. We send the
+      // BigInt-backed `entry` + `leafIndex` to the worker; the
+      // worker rebuilds the matching 16-leaf claims tree there so
+      // circomlibjs's Poseidon init never boots on the UI thread.
+      // When real settled orders arrive from chain events, a pre-
+      // derived `merkleProof` from the indexer replaces this.
       const entry = {
         secret: order.claim.secret,
-        recipient: recipientBn,
-        token: tokenBn,
+        recipient: BigInt(order.claim.recipient),
+        token: BigInt(order.claim.token),
         amount: order.claim.amount,
         releaseTime: order.claim.releaseTime,
-      };
-      const { allClaimLeaves } = await singleClaimTree(entry, order.claim.leafIndex);
-
-      const claimInput: ClaimProofInput = {
-        ...entry,
-        leafIndex: order.claim.leafIndex,
-        allClaimLeaves,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
@@ -97,7 +88,10 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
       await prover.prove(
         {
           circuitId: "claim",
-          input: claimInput as unknown as Record<string, unknown>,
+          input: { entry, leafIndex: order.claim.leafIndex } as unknown as Record<
+            string,
+            unknown
+          >,
         },
         {
           signal: ctrl.signal,

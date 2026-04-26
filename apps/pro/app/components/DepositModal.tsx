@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  computeCommitment,
   generateNote,
   toBytes32Hex,
   type CommitmentNote,
@@ -104,17 +103,18 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
         amountWei,
         eddsaKey.publicKey,
       );
-      const commitment = await computeCommitment(note);
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
       const prover = getDepositProver();
       await prover.ready();
       // Pass the BigInt CommitmentNote directly — structured-clone
-      // supports BigInt natively. The worker calls
-      // `generateDepositProof(note, urls)` which derives the
-      // commitment and the rest of the witness internally.
-      await prover.prove(
+      // supports BigInt natively. `generateDepositProof` derives the
+      // commitment internally and returns it as `publicSignals[0]`,
+      // so we read it from the prove result instead of running a
+      // second `computeCommitment` on the main thread (which would
+      // boot circomlibjs's Poseidon tables a second time).
+      const proveResult = await prover.prove(
         {
           circuitId: "deposit",
           input: note as unknown as Record<string, unknown>,
@@ -124,6 +124,10 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
           onProgress: (m) => setPhase({ kind: "proving", message: m }),
         },
       );
+      if (proveResult.publicSignals.length === 0) {
+        throw new Error("deposit prove returned no public signals");
+      }
+      const commitment = proveResult.publicSignals[0]!;
 
       setPhase({ kind: "submitting" });
       // Phase 5+ wires CommitmentPool.deposit(); the abortable

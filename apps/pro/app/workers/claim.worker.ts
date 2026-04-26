@@ -8,6 +8,7 @@
 import {
   generateClaimProof,
   setupProverWorker,
+  singleClaimTree,
   warmProverAssets,
   withCachedAssets,
   type ClaimProofInput,
@@ -21,6 +22,23 @@ const CIRCUIT_ASSETS = {
 // Timing telemetry runs on the main thread side — see the matching
 // note in `authorize.worker.ts`.
 
+/** Worker input for the single-claim-tree path. The main thread
+ *  sends the BigInt-backed `entry` + `leafIndex` only; the
+ *  Poseidon-based tree construction runs here so circomlibjs's
+ *  ~50–150 ms init never blocks the UI thread. When real settled
+ *  orders arrive from chain events, callers can switch to sending
+ *  a pre-derived `merkleProof` instead. */
+interface ClaimWorkerInput {
+  entry: {
+    secret: bigint;
+    recipient: bigint;
+    token: bigint;
+    amount: bigint;
+    releaseTime: bigint;
+  };
+  leafIndex: number;
+}
+
 setupProverWorker({
   preload: async () => {
     await warmProverAssets(CIRCUIT_ASSETS);
@@ -33,10 +51,16 @@ setupProverWorker({
       );
     }
 
-    const input = req.input as unknown as ClaimProofInput;
+    const { entry, leafIndex } = req.input as unknown as ClaimWorkerInput;
+    const { allClaimLeaves } = await singleClaimTree(entry, leafIndex);
+    const proofInput: ClaimProofInput = {
+      ...entry,
+      leafIndex,
+      allClaimLeaves,
+    };
 
     return withCachedAssets(CIRCUIT_ASSETS, async (urls) => {
-      const result = await generateClaimProof(input, urls);
+      const result = await generateClaimProof(proofInput, urls);
       return { proof: result.proof, publicSignals: result.publicSignals };
     });
   },
