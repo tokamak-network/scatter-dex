@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { chainName } from "@zkscatter/sdk";
+import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,7 +28,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
               <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
               <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-                zk-X509 ✓ · 0x12…ab
+                <span
+                  aria-hidden="true"
+                  className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-success)] align-middle"
+                />
+                {DEMO_NETWORK.name ?? chainName(DEMO_NETWORK.chainId)} · zk-X509 ✓ · 0x12…ab
               </span>
             </nav>
           </div>
