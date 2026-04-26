@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useVault } from "../lib/vault";
+import { DepositModal } from "../components/DepositModal";
 
 const orderbook = {
   asks: [
@@ -16,15 +18,12 @@ const orderbook = {
   ],
 };
 
-const notes = [
-  { id: "lot-3", token: "ETH", amount: "8.40" },
-  { id: "lot-5", token: "USDC", amount: "12,500" },
-];
-
 export default function Workbench() {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
+  const [depositOpen, setDepositOpen] = useState(false);
+  const { notes } = useVault();
 
   return (
     <div className="space-y-6">
@@ -42,12 +41,20 @@ export default function Workbench() {
           <div className="space-y-3">
             {notes.map((n) => (
               <div key={n.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                <div className="text-xs text-[var(--color-text-muted)]">{n.id}</div>
-                <div className="mt-0.5 font-mono text-sm font-semibold">{n.amount} {n.token}</div>
+                <div className="text-xs text-[var(--color-text-muted)]">{n.label}</div>
+                <div className="mt-0.5 font-mono text-sm font-semibold">{n.amount} {n.symbol}</div>
               </div>
             ))}
+            {notes.length === 0 && (
+              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                Your vault is empty. Deposit to start trading privately.
+              </div>
+            )}
           </div>
-          <button className="mt-4 w-full rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]">
+          <button
+            onClick={() => setDepositOpen(true)}
+            className="mt-4 w-full rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]"
+          >
             + Deposit
           </button>
           <div className="mt-5 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
@@ -109,6 +116,8 @@ export default function Workbench() {
           </div>
         </aside>
       </div>
+
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
     </div>
   );
 }

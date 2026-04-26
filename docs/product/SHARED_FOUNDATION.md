@@ -78,6 +78,36 @@ environment varies on.
   relayer fetch, stealth math
 - **App**: routes, copy, layout, persona-specific composition
 
+### Prover backends
+
+The `Prover` interface in `@zkscatter/sdk/zk` lets us slot in a
+different proving engine per environment without touching the
+calling code (modal, vault, settlement flow). New backends just
+ship a new `create*Prover()` factory.
+
+| Backend | Engine | Target | Status |
+| --- | --- | --- | --- |
+| `createWebWorkerProver` | snarkjs (Web Worker) | `apps/pro`, `pay`, `drop` (web) | active (Phase 2a) |
+| `createMockProver` | deterministic dummy | dev, tests, storybooks; unblocks UI when circuit assets aren't ready | active (Phase 2a) |
+| `createNativeProver` | mopro (Rust ↔ React Native FFI) | apps mobile companion | planned (Phase 4–6) |
+| `createWasmProver` | mopro compiled to WASM | web speed-up, optional | exploratory |
+
+**Why a Rust prover for mobile.** snarkjs running in a WebView is
+30–60 s per proof on phone-class hardware — unacceptable UX for a
+sign-and-go flow. mopro's arkworks-rs path is 5–10× faster.
+`mobile/native-prover/` already builds the iOS `xcframework` +
+Android `.so` via mopro's CLI; the Phase 4–6 mobile track will
+plug those bindings into the SDK as `createNativeProver` so
+`apps/pro`'s flow code (and eventually `apps/pay`, `apps/drop`)
+runs unchanged on mobile.
+
+**Why not WASM-everywhere now.** A mopro→WASM build for web is
+attractive (5–10× over snarkjs) but has trade-offs: bundle size,
+SharedArrayBuffer requirement (COOP/COEP headers), and a second
+asset pipeline alongside snarkjs. Defer until web users complain
+about the 30 s snarkjs path or until mobile native-prover is
+shipping and the WASM target is essentially free.
+
 ## `packages/ui` — what it provides
 
 ### Tokens
