@@ -129,9 +129,17 @@ extern "C" {
     uint64_t callback_data, 
     UniffiForeignFutureResultVoid result
     );
+    RustBuffer uniffi_native_prover_fn_func_mopro_hello_world(RustCallStatus *uniffi_out_err
+    );
     RustBuffer uniffi_native_prover_fn_func_generate_circom_proof(
         RustBuffer zkey_path, 
         RustBuffer circuit_inputs, 
+        RustBuffer proof_lib, 
+        RustCallStatus *uniffi_out_err
+    );
+    int8_t uniffi_native_prover_fn_func_verify_circom_proof(
+        RustBuffer zkey_path, 
+        RustBuffer proof_result, 
         RustBuffer proof_lib, 
         RustCallStatus *uniffi_out_err
     );
@@ -141,10 +149,23 @@ extern "C" {
         RustBuffer _witness_json, 
         RustCallStatus *uniffi_out_err
     );
+    int8_t uniffi_native_prover_fn_func_verify_gnark_proof(
+        RustBuffer _r1cs_path, 
+        RustBuffer _vk_path, 
+        RustBuffer _proof_result, 
+        RustCallStatus *uniffi_out_err
+    );
     RustBuffer uniffi_native_prover_fn_func_generate_halo2_proof(
         RustBuffer _srs_path, 
         RustBuffer _pk_path, 
         RustBuffer _circuit_inputs, 
+        RustCallStatus *uniffi_out_err
+    );
+    int8_t uniffi_native_prover_fn_func_verify_halo2_proof(
+        RustBuffer _srs_path, 
+        RustBuffer _vk_path, 
+        RustBuffer _proof, 
+        RustBuffer _public_input, 
         RustCallStatus *uniffi_out_err
     );
     RustBuffer uniffi_native_prover_fn_func_generate_noir_proof(
@@ -161,27 +182,6 @@ extern "C" {
         RustBuffer _srs_path, 
         int8_t _on_chain, 
         int8_t _low_memory_mode, 
-        RustCallStatus *uniffi_out_err
-    );
-    RustBuffer uniffi_native_prover_fn_func_mopro_hello_world(RustCallStatus *uniffi_out_err
-    );
-    int8_t uniffi_native_prover_fn_func_verify_circom_proof(
-        RustBuffer zkey_path, 
-        RustBuffer proof_result, 
-        RustBuffer proof_lib, 
-        RustCallStatus *uniffi_out_err
-    );
-    int8_t uniffi_native_prover_fn_func_verify_gnark_proof(
-        RustBuffer _r1cs_path, 
-        RustBuffer _vk_path, 
-        RustBuffer _proof_result, 
-        RustCallStatus *uniffi_out_err
-    );
-    int8_t uniffi_native_prover_fn_func_verify_halo2_proof(
-        RustBuffer _srs_path, 
-        RustBuffer _vk_path, 
-        RustBuffer _proof, 
-        RustBuffer _public_input, 
         RustCallStatus *uniffi_out_err
     );
     int8_t uniffi_native_prover_fn_func_verify_noir_proof(
@@ -389,23 +389,23 @@ extern "C" {
         /*handle*/ uint64_t handle, 
         RustCallStatus *uniffi_out_err
     );
+    uint16_t uniffi_native_prover_checksum_func_mopro_hello_world(
+    );
     uint16_t uniffi_native_prover_checksum_func_generate_circom_proof(
+    );
+    uint16_t uniffi_native_prover_checksum_func_verify_circom_proof(
     );
     uint16_t uniffi_native_prover_checksum_func_generate_gnark_proof(
     );
+    uint16_t uniffi_native_prover_checksum_func_verify_gnark_proof(
+    );
     uint16_t uniffi_native_prover_checksum_func_generate_halo2_proof(
+    );
+    uint16_t uniffi_native_prover_checksum_func_verify_halo2_proof(
     );
     uint16_t uniffi_native_prover_checksum_func_generate_noir_proof(
     );
     uint16_t uniffi_native_prover_checksum_func_get_noir_verification_key(
-    );
-    uint16_t uniffi_native_prover_checksum_func_mopro_hello_world(
-    );
-    uint16_t uniffi_native_prover_checksum_func_verify_circom_proof(
-    );
-    uint16_t uniffi_native_prover_checksum_func_verify_gnark_proof(
-    );
-    uint16_t uniffi_native_prover_checksum_func_verify_halo2_proof(
     );
     uint16_t uniffi_native_prover_checksum_func_verify_noir_proof(
     );
@@ -925,11 +925,11 @@ template <> struct Bridging<UniffiForeignFutureResultU8> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<uint8_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -999,11 +999,11 @@ template <> struct Bridging<UniffiForeignFutureResultI8> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<int8_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1073,11 +1073,11 @@ template <> struct Bridging<UniffiForeignFutureResultU16> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<uint16_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1147,11 +1147,11 @@ template <> struct Bridging<UniffiForeignFutureResultI16> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<int16_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1221,11 +1221,11 @@ template <> struct Bridging<UniffiForeignFutureResultU32> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<uint32_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1295,11 +1295,11 @@ template <> struct Bridging<UniffiForeignFutureResultI32> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<int32_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1369,11 +1369,11 @@ template <> struct Bridging<UniffiForeignFutureResultU64> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<uint64_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1443,11 +1443,11 @@ template <> struct Bridging<UniffiForeignFutureResultI64> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<int64_t>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1517,11 +1517,11 @@ template <> struct Bridging<UniffiForeignFutureResultF32> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<float>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1591,11 +1591,11 @@ template <> struct Bridging<UniffiForeignFutureResultF64> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi_jsi::Bridging<double>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1665,11 +1665,11 @@ template <> struct Bridging<UniffiForeignFutureResultRustBuffer> {
     // Create the vtable from the js callbacks.
     rsObject.return_value = uniffi::native_prover::Bridging<RustBuffer>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "return_value")
+        jsObject.getProperty(rt, "returnValue")
       );
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1739,7 +1739,7 @@ template <> struct Bridging<UniffiForeignFutureResultVoid> {
     // Create the vtable from the js callbacks.
     rsObject.call_status = uniffi::native_prover::Bridging<RustCallStatus>::fromJs(
         rt, callInvoker,
-        jsObject.getProperty(rt, "call_status")
+        jsObject.getProperty(rt, "callStatus")
       );
 
     return rsObject;
@@ -1825,28 +1825,28 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_internal_fn_func_ffi__string_to_byte_length(rt, thisVal, args, count);
         }
     );
-    props["ubrn_uniffi_internal_fn_func_ffi__string_to_buffer"] = jsi::Function::createFromHostFunction(
+    props["ubrn_uniffi_internal_fn_func_ffi__string_to_arraybuffer"] = jsi::Function::createFromHostFunction(
         rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_func_ffi__string_to_buffer"),
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_func_ffi__string_to_arraybuffer"),
         1,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_internal_fn_func_ffi__string_to_buffer(rt, thisVal, args, count);
+            return this->cpp_uniffi_internal_fn_func_ffi__string_to_arraybuffer(rt, thisVal, args, count);
         }
     );
-    props["ubrn_uniffi_internal_fn_func_ffi__string_from_buffer"] = jsi::Function::createFromHostFunction(
+    props["ubrn_uniffi_internal_fn_func_ffi__arraybuffer_to_string"] = jsi::Function::createFromHostFunction(
         rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_func_ffi__string_from_buffer"),
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_func_ffi__arraybuffer_to_string"),
         1,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_internal_fn_func_ffi__string_from_buffer(rt, thisVal, args, count);
+            return this->cpp_uniffi_internal_fn_func_ffi__arraybuffer_to_string(rt, thisVal, args, count);
         }
     );
-    props["ubrn_uniffi_internal_fn_func_ffi__read_string_from_buffer"] = jsi::Function::createFromHostFunction(
+    props["ubrn_uniffi_native_prover_fn_func_mopro_hello_world"] = jsi::Function::createFromHostFunction(
         rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_func_ffi__read_string_from_buffer"),
-        3,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_mopro_hello_world"),
+        0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_internal_fn_func_ffi__read_string_from_buffer(rt, thisVal, args, count);
+            return this->cpp_uniffi_native_prover_fn_func_mopro_hello_world(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_fn_func_generate_circom_proof"] = jsi::Function::createFromHostFunction(
@@ -1857,6 +1857,14 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_fn_func_generate_circom_proof(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_fn_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_circom_proof"),
+        3,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_fn_func_verify_circom_proof(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_fn_func_generate_gnark_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_generate_gnark_proof"),
@@ -1865,12 +1873,28 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_fn_func_generate_gnark_proof(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_fn_func_verify_gnark_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_gnark_proof"),
+        3,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_fn_func_verify_gnark_proof(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_fn_func_generate_halo2_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_generate_halo2_proof"),
         3,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_fn_func_generate_halo2_proof(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_native_prover_fn_func_verify_halo2_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_halo2_proof"),
+        4,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_fn_func_verify_halo2_proof(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_fn_func_generate_noir_proof"] = jsi::Function::createFromHostFunction(
@@ -1889,44 +1913,20 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_fn_func_get_noir_verification_key(rt, thisVal, args, count);
         }
     );
-    props["ubrn_uniffi_native_prover_fn_func_mopro_hello_world"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_mopro_hello_world"),
-        0,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_fn_func_mopro_hello_world(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_fn_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_circom_proof"),
-        3,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_fn_func_verify_circom_proof(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_fn_func_verify_gnark_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_gnark_proof"),
-        3,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_fn_func_verify_gnark_proof(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_fn_func_verify_halo2_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_halo2_proof"),
-        4,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_fn_func_verify_halo2_proof(rt, thisVal, args, count);
-        }
-    );
     props["ubrn_uniffi_native_prover_fn_func_verify_noir_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_fn_func_verify_noir_proof"),
         5,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_fn_func_verify_noir_proof(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_native_prover_checksum_func_mopro_hello_world"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_mopro_hello_world"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_mopro_hello_world(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_checksum_func_generate_circom_proof"] = jsi::Function::createFromHostFunction(
@@ -1937,6 +1937,14 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_checksum_func_generate_circom_proof(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_checksum_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_circom_proof"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_verify_circom_proof(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof"),
@@ -1945,12 +1953,28 @@ NativeNativeProver::NativeNativeProver(
             return this->cpp_uniffi_native_prover_checksum_func_generate_gnark_proof(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_verify_gnark_proof(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof"),
         0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_checksum_func_generate_halo2_proof(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_native_prover_checksum_func_verify_halo2_proof(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_checksum_func_generate_noir_proof"] = jsi::Function::createFromHostFunction(
@@ -1967,38 +1991,6 @@ NativeNativeProver::NativeNativeProver(
         0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_native_prover_checksum_func_get_noir_verification_key(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_checksum_func_mopro_hello_world"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_mopro_hello_world"),
-        0,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_checksum_func_mopro_hello_world(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_checksum_func_verify_circom_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_circom_proof"),
-        0,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_checksum_func_verify_circom_proof(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof"),
-        0,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_checksum_func_verify_gnark_proof(rt, thisVal, args, count);
-        }
-    );
-    props["ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof"] = jsi::Function::createFromHostFunction(
-        rt,
-        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof"),
-        0,
-        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
-            return this->cpp_uniffi_native_prover_checksum_func_verify_halo2_proof(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_native_prover_checksum_func_verify_noir_proof"] = jsi::Function::createFromHostFunction(
@@ -2065,19 +2057,24 @@ jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__string_to_byte_l
     return uniffi_jsi::Bridging<std::string>::string_to_bytelength(rt, args[0]);
 }
 
-jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__string_to_buffer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-    return uniffi_jsi::Bridging<std::string>::string_to_buffer(rt, args[0]);
+jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__string_to_arraybuffer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+    return uniffi_jsi::Bridging<std::string>::string_to_arraybuffer(rt, args[0]);
 }
 
-jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__string_from_buffer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-    return uniffi_jsi::Bridging<std::string>::string_from_buffer(rt, args[0]);
-}
-
-jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__read_string_from_buffer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-    return uniffi_jsi::Bridging<std::string>::read_string_from_buffer(rt, args[0], args[1], args[2]);
+jsi::Value NativeNativeProver::cpp_uniffi_internal_fn_func_ffi__arraybuffer_to_string(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+    return uniffi_jsi::Bridging<std::string>::arraybuffer_to_string(rt, args[0]);
 }
 
 // Methods calling directly into the uniffi generated C API of the Rust crate.
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_mopro_hello_world(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_mopro_hello_world(&status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_native_prover_fn_func_generate_circom_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
@@ -2087,6 +2084,16 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_circom_
 
         
         return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_verify_circom_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
+            &status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_gnark_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
@@ -2098,6 +2105,16 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_gnark_p
         
         return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_gnark_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_verify_gnark_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
+            &status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_native_prover_fn_func_generate_halo2_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
@@ -2107,6 +2124,16 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_halo2_p
 
         
         return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_native_prover_fn_func_verify_halo2_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[3]), 
+            &status
+        );
+        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_generate_noir_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
@@ -2128,45 +2155,6 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_get_noir_verific
         
         return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
 }
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_mopro_hello_world(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
-        auto value = uniffi_native_prover_fn_func_mopro_hello_world(&status
-        );
-        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
-
-        
-        return uniffi::native_prover::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
-        auto value = uniffi_native_prover_fn_func_verify_circom_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
-            &status
-        );
-        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
-
-        
-        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_gnark_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
-        auto value = uniffi_native_prover_fn_func_verify_gnark_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), 
-            &status
-        );
-        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
-
-        
-        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
-        auto value = uniffi_native_prover_fn_func_verify_halo2_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[3]), 
-            &status
-        );
-        uniffi::native_prover::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
-
-        
-        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
-}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_noir_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::native_prover::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_native_prover_fn_func_verify_noir_proof(uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[2]), uniffi::native_prover::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[3]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[4]), 
@@ -2177,8 +2165,22 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_fn_func_verify_noir_proo
         
         return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_mopro_hello_world(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_mopro_hello_world(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_generate_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_native_prover_checksum_func_generate_circom_proof(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_verify_circom_proof(
         );
 
         
@@ -2191,8 +2193,22 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_generate_g
         
         return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_gnark_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_verify_gnark_proof(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_generate_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_native_prover_checksum_func_generate_halo2_proof(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_native_prover_checksum_func_verify_halo2_proof(
         );
 
         
@@ -2207,34 +2223,6 @@ jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_generate_n
 }
 jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_get_noir_verification_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_native_prover_checksum_func_get_noir_verification_key(
-        );
-
-        
-        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_mopro_hello_world(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_native_prover_checksum_func_mopro_hello_world(
-        );
-
-        
-        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_circom_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_native_prover_checksum_func_verify_circom_proof(
-        );
-
-        
-        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_gnark_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_native_prover_checksum_func_verify_gnark_proof(
-        );
-
-        
-        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeNativeProver::cpp_uniffi_native_prover_checksum_func_verify_halo2_proof(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_native_prover_checksum_func_verify_halo2_proof(
         );
 
         

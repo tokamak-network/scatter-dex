@@ -24,28 +24,70 @@ import * as FileSystem from 'expo-file-system/legacy';
 // dedupe via the rustInstalled flag inside the package).
 import { generateCircomProof, ProofLib } from 'mopro-ffi';
 
-/** Resolved once, cached. The generated proof API needs a filesystem path
- *  (not a require()-returned asset number), so on the first call we make
- *  sure the asset is downloaded (expo-asset caches it in the app sandbox)
- *  and return its `localUri` without the `file://` scheme prefix — the
- *  Rust side passes the string to `std::fs::File::open`, which rejects
- *  URI-form paths. */
+// `set_circom_circuits!` in `mobile/native-prover/src/lib.rs` keys the
+// witness function on this exact basename — expo-asset's hashed filename
+// fails the `Path::file_name()` match, so we copy under the original.
+const ZKEY_FILENAME = 'authorize_final.zkey';
+
 let cachedZkeyPath: string | null = null;
 
+/** Resolves the bundled zkey to a plain filesystem path the Rust side can
+ *  `std::fs::File::open`. The FFI path must not have a `file://` prefix —
+ *  Rust's File::open rejects URI-form paths. */
 async function resolveAuthorizeZkeyPath(): Promise<string> {
   if (cachedZkeyPath) return cachedZkeyPath;
   const asset = Asset.fromModule(require('../../assets/zk-native/authorize_final.zkey'));
   await asset.downloadAsync();
   const uri = asset.localUri || asset.uri;
-  if (!uri) throw new Error('authorize_final.zkey asset could not be resolved');
-  // Some devices return the asset under `file://`, the native prover wants
-  // a plain path. Strip the scheme and verify the file actually exists —
-  // a missing asset here is a packaging bug, not a runtime network issue.
-  const path = uri.replace(/^file:\/\//, '');
-  const info = await FileSystem.getInfoAsync(path);
-  if (!info.exists) throw new Error(`authorize_final.zkey not found at ${path}`);
-  cachedZkeyPath = path;
-  return path;
+  if (!uri) throw new Error(`${ZKEY_FILENAME} asset could not be resolved`);
+  const srcPath = uri.replace(/^file:\/\//, '');
+  const destPath = `${FileSystem.documentDirectory}${ZKEY_FILENAME}`;
+  const destInfo = await FileSystem.getInfoAsync(destPath);
+  if (!destInfo.exists) {
+    await FileSystem.copyAsync({ from: srcPath, to: destPath });
+  }
+  cachedZkeyPath = destPath.replace(/^file:\/\//, '');
+  return cachedZkeyPath;
+}
+
+/** circom-prover (the arkworks backend mopro uses) only parses decimal
+ *  BigInt strings. snarkjs is lenient and accepts hex (`0x…`), which is
+ *  why merkle zero-hash defaults from `lib/merkleTree.ts` (kept in hex
+ *  to match Solidity `_zeros(d)`) flow through the WebView path fine but
+ *  panic the native witness calculator with `ParseBigIntError`. */
+const HEX_BIGINT = /^0x[0-9a-fA-F]+$/;
+
+function hasHexBigInt(value: unknown): boolean {
+  if (typeof value === 'string') return HEX_BIGINT.test(value);
+  if (Array.isArray(value)) return value.some(hasHexBigInt);
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(hasHexBigInt);
+  }
+  return false;
+}
+
+function deepDecimal(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return HEX_BIGINT.test(value) ? BigInt(value).toString(10) : value;
+  }
+  if (Array.isArray(value)) return value.map(deepDecimal);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = deepDecimal(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Recursively rewrite hex BigInt strings to base-10. Returns the original
+ *  reference unchanged when the tree is already all-decimal — once callers
+ *  emit decimal at source, the steady-state allocation is zero. */
+function normalizeInputs(
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  return hasHexBigInt(inputs) ? (deepDecimal(inputs) as Record<string, unknown>) : inputs;
 }
 
 /** Shape matching `snarkjs.groth16.fullProve` so `formatProofForSolidity`
@@ -62,17 +104,18 @@ export type SnarkjsLikeProofResult = {
 };
 
 /** Runs Groth16 proving for the `authorize` circuit natively. Input is
- *  the same JSON shape the circom circuit consumes — same as we pass to
- *  snarkjs on the WebView side — so the caller doesn't need to branch. */
+ *  the same JSON shape snarkjs takes on the WebView side, so callers
+ *  don't need to branch. */
 export async function generateAuthorizeProof(
   inputs: Record<string, unknown>,
 ): Promise<SnarkjsLikeProofResult> {
   const zkeyPath = await resolveAuthorizeZkeyPath();
+  const normalized = normalizeInputs(inputs);
   const t0 = Date.now();
   // Arkworks is the only proof backend bundled today. Rapidsnark is
   // available as an alternative but not wired in — keep a single path
   // until benchmarks show it's worth the extra binary size.
-  const res = generateCircomProof(zkeyPath, JSON.stringify(inputs), ProofLib.Arkworks);
+  const res = generateCircomProof(zkeyPath, JSON.stringify(normalized), ProofLib.Arkworks);
   const elapsedMs = Date.now() - t0;
   // mopro returns G1/G2 points as {x,y,z} / {x:[],y:[],z:[]}. snarkjs
   // returns pi_a / pi_b / pi_c as flat arrays. Convert here so callers

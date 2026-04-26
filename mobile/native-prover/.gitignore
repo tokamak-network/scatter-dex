@@ -8,3 +8,8 @@ test-vectors/circom/authorize.wasm
 
 # Generated static lib (~40MB per arch). Regenerate with `mopro build`.
 MoproReactNativeBindings/MoproFfiFramework.xcframework/*/libnative_prover.a
+
+# `bob build` output — Metro consumes the regenerated TS at `src/index.tsx`
+# directly (see the patched `package.json#main`), so committing this just
+# bloats diffs.
+MoproReactNativeBindings/lib/

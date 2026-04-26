@@ -12,100 +12,245 @@ import {
   type UniffiGcObject,
   type UniffiRustFutureContinuationCallback as RuntimeUniffiRustFutureContinuationCallback,
   type UniffiResult,
- } from 'uniffi-bindgen-react-native';
+} from 'uniffi-bindgen-react-native';
 
 interface NativeModuleInterface {
-    ubrn_uniffi_internal_fn_func_ffi__string_to_byte_length(string: string, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_uniffi_internal_fn_func_ffi__string_to_buffer(string: string, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_internal_fn_func_ffi__string_from_buffer(buffer: Uint8Array, uniffi_out_err: UniffiRustCallStatus): string;
-    ubrn_uniffi_internal_fn_func_ffi__read_string_from_buffer(buffer: any, offset: number, length: number): string;
-    ubrn_ffi_native_prover_rust_future_poll_u8(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_u8(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_u8(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_u8(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_i8(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_i8(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_i8(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_i8(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_u16(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_u16(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_u16(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_u16(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_i16(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_i16(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_i16(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_i16(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_u32(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_u32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_u32(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_u32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_i32(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_i32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_i32(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_i32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_u64(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_u64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_u64(handle: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    ubrn_ffi_native_prover_rust_future_free_u64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_i64(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_i64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_i64(handle: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
-    ubrn_ffi_native_prover_rust_future_free_i64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_f32(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_f32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_f32(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_f32(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_f64(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_f64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_f64(handle: bigint, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_rust_future_free_f64(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_rust_buffer(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_rust_buffer(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_rust_buffer(handle: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_ffi_native_prover_rust_future_free_rust_buffer(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_poll_void(handle: bigint, callback: UniffiRustFutureContinuationCallback, callbackData: bigint): void;
-    ubrn_ffi_native_prover_rust_future_cancel_void(handle: bigint): void;
-    ubrn_ffi_native_prover_rust_future_complete_void(handle: bigint, uniffi_out_err: UniffiRustCallStatus): void;
-    ubrn_ffi_native_prover_rust_future_free_void(handle: bigint): void;
-    ubrn_uniffi_native_prover_fn_func_generate_circom_proof(zkeyPath: Uint8Array, circuitInputs: Uint8Array, proofLib: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_generate_gnark_proof(r1csPath: Uint8Array, pkPath: Uint8Array, witnessJson: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_generate_halo2_proof(srsPath: Uint8Array, pkPath: Uint8Array, circuitInputs: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_generate_noir_proof(circuitPath: Uint8Array, srsPath: Uint8Array, inputs: Uint8Array, onChain: number, vk: Uint8Array, lowMemoryMode: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_get_noir_verification_key(circuitPath: Uint8Array, srsPath: Uint8Array, onChain: number, lowMemoryMode: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_mopro_hello_world(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    ubrn_uniffi_native_prover_fn_func_verify_circom_proof(zkeyPath: Uint8Array, proofResult: Uint8Array, proofLib: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(r1csPath: Uint8Array, vkPath: Uint8Array, proofResult: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(srsPath: Uint8Array, vkPath: Uint8Array, proof: Uint8Array, publicInput: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_uniffi_native_prover_fn_func_verify_noir_proof(circuitPath: Uint8Array, proof: Uint8Array, onChain: number, vk: Uint8Array, lowMemoryMode: number, uniffi_out_err: UniffiRustCallStatus): number;
-    ubrn_ffi_native_prover_uniffi_contract_version(): number;
-    ubrn_uniffi_native_prover_checksum_func_generate_circom_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_generate_noir_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key(): number;
-    ubrn_uniffi_native_prover_checksum_func_mopro_hello_world(): number;
-    ubrn_uniffi_native_prover_checksum_func_verify_circom_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof(): number;
-    ubrn_uniffi_native_prover_checksum_func_verify_noir_proof(): number;
+  ubrn_uniffi_internal_fn_func_ffi__string_to_byte_length(
+    string: string,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_internal_fn_func_ffi__string_to_arraybuffer(
+    string: string,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_internal_fn_func_ffi__arraybuffer_to_string(
+    buffer: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): string;
+  ubrn_uniffi_native_prover_fn_func_mopro_hello_world(
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_generate_circom_proof(
+    zkeyPath: Uint8Array,
+    circuitInputs: Uint8Array,
+    proofLib: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_verify_circom_proof(
+    zkeyPath: Uint8Array,
+    proofResult: Uint8Array,
+    proofLib: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_fn_func_generate_gnark_proof(
+    r1csPath: Uint8Array,
+    pkPath: Uint8Array,
+    witnessJson: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_verify_gnark_proof(
+    r1csPath: Uint8Array,
+    vkPath: Uint8Array,
+    proofResult: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_fn_func_generate_halo2_proof(
+    srsPath: Uint8Array,
+    pkPath: Uint8Array,
+    circuitInputs: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_verify_halo2_proof(
+    srsPath: Uint8Array,
+    vkPath: Uint8Array,
+    proof: Uint8Array,
+    publicInput: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_fn_func_generate_noir_proof(
+    circuitPath: Uint8Array,
+    srsPath: Uint8Array,
+    inputs: Uint8Array,
+    onChain: number,
+    vk: Uint8Array,
+    lowMemoryMode: number,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_get_noir_verification_key(
+    circuitPath: Uint8Array,
+    srsPath: Uint8Array,
+    onChain: number,
+    lowMemoryMode: number,
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
+  ubrn_uniffi_native_prover_fn_func_verify_noir_proof(
+    circuitPath: Uint8Array,
+    proof: Uint8Array,
+    onChain: number,
+    vk: Uint8Array,
+    lowMemoryMode: number,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
+  ubrn_uniffi_native_prover_checksum_func_mopro_hello_world(): number;
+  ubrn_uniffi_native_prover_checksum_func_generate_circom_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_circom_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_generate_gnark_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_gnark_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_generate_halo2_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_halo2_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_generate_noir_proof(): number;
+  ubrn_uniffi_native_prover_checksum_func_get_noir_verification_key(): number;
+  ubrn_uniffi_native_prover_checksum_func_verify_noir_proof(): number;
+  ubrn_ffi_native_prover_uniffi_contract_version(): number;
 }
 
-const getter: () => NativeModuleInterface = () => (globalThis as any).NativeNativeProver;
+// Casting globalThis to any allows us to look for `NativeNativeProver`
+// if it was added via JSI.
+//
+// We use a getter here rather than simply `globalThis.NativeNativeProver` so that
+// if/when the startup sequence isn't just so, an empty value isn't inadvertantly cached.
+const getter: () => NativeModuleInterface = () =>
+  (globalThis as any).NativeNativeProver;
 export default getter;
 
 // Structs and function types for calling back into Typescript from Rust.
-export type UniffiRustFutureContinuationCallback = (data: bigint, pollResult: number) => void;
+export type UniffiRustFutureContinuationCallback = (
+  data: bigint,
+  pollResult: number
+) => void;
 export type UniffiForeignFutureDroppedCallback = (handle: bigint) => void;
+type UniffiCallbackInterfaceFree = (handle: bigint) => void;
+type UniffiCallbackInterfaceClone = (handle: bigint) => UniffiResult<void>;
 export type UniffiForeignFutureDroppedCallbackStruct = {
   handle: bigint;
   free: UniffiForeignFutureDroppedCallback;
 };
+export type UniffiForeignFutureResultU8 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteU8 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultU8
+) => void;
+export type UniffiForeignFutureResultI8 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteI8 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultI8
+) => void;
+export type UniffiForeignFutureResultU16 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteU16 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultU16
+) => void;
+export type UniffiForeignFutureResultI16 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteI16 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultI16
+) => void;
+export type UniffiForeignFutureResultU32 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteU32 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultU32
+) => void;
+export type UniffiForeignFutureResultI32 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteI32 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultI32
+) => void;
+export type UniffiForeignFutureResultU64 = {
+  returnValue: bigint;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteU64 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultU64
+) => void;
+export type UniffiForeignFutureResultI64 = {
+  returnValue: bigint;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteI64 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultI64
+) => void;
+export type UniffiForeignFutureResultF32 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteF32 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultF32
+) => void;
+export type UniffiForeignFutureResultF64 = {
+  returnValue: number;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteF64 = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultF64
+) => void;
+export type UniffiForeignFutureResultRustBuffer = {
+  returnValue: Uint8Array;
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteRustBuffer = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultRustBuffer
+) => void;
+export type UniffiForeignFutureResultVoid = {
+  callStatus: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompleteVoid = (
+  callbackData: bigint,
+  result: UniffiForeignFutureResultVoid
+) => void;
 
 // UniffiRustFutureContinuationCallback is generated as part of the component interface's
 // ffi_definitions. However, we need it in the runtime.
-// We chose to generate the declaration anyway, and use a different declaration in the runtime.
-// We perform a compile time check that the two versions are structurally equivalent.
+// We could:
+// (a) do some complicated template logic to ensure the declaration is not generated here (possible)
+// (b) import the generated declaration into the runtime (m a y b e) or…
+// (c) generate the declaration anyway, and use a different declaration in the runtime.
+//
+// We chose (c) here as the simplest. In addition, we perform a compile time check that
+// the two versions of `UniffiRustFutureContinuationCallback` are structurally equivalent.
+//
+// If you see the error:
+// ```
+// Type 'true' is not assignable to type 'false'.(2322)
+// ```
+// Then a new version of uniffi has changed the signature of the callback. Most likely, code in
+// `typescript/src/async-rust-call.ts` will need to be changed.
+//
+// If you see the error:
+// ```
+// Cannot find name 'UniffiRustFutureContinuationCallback'. Did you mean 'RuntimeUniffiRustFutureContinuationCallback'?(2552)
+// ```
+// then you may not be using callbacks or promises, and uniffi is now not generating Futures and callbacks.
+// You should not generate this if that is the case.
+//
+// ('You' being the bindings generator maintainer).
 const isRustFutureContinuationCallbackTypeCompatible: UniffiStructuralEquality<
   RuntimeUniffiRustFutureContinuationCallback,
   UniffiRustFutureContinuationCallback
+> = true;
+const isUniffiForeignFutureTypeCompatible: UniffiStructuralEquality<
+  RuntimeUniffiForeignFuture,
+  UniffiForeignFuture
 > = true;
