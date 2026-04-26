@@ -11,15 +11,18 @@ import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
 import { getDepositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
+import { DEMO_NETWORK } from "../lib/network";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
-const DEMO_TOKENS = [
-  { symbol: "ETH", address: "0x0000000000000000000000000000000000000001", decimals: 18 },
-  { symbol: "USDC", address: "0x0000000000000000000000000000000000000002", decimals: 6 },
-  { symbol: "WBTC", address: "0x0000000000000000000000000000000000000003", decimals: 8 },
-];
+// Depositable tokens come straight from the active network's
+// whitelist — every entry that can be a sell-side or quote-side
+// of any launch pair. Previously this was a hardcoded local list
+// that drifted from the whitelist (ETH/USDC/WBTC vs the canonical
+// ETH/USDC/USDT/TON), which made vault notes unspendable in the
+// trade form. Source of truth: `DEMO_NETWORK.tokens`.
+const DEPOSITABLE = DEMO_NETWORK.tokens;
 
 type Phase =
   | { kind: "idle" }
@@ -63,7 +66,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   }, [abortCtrl, reset, onClose]);
 
   const submit = useCallback(async () => {
-    const token = DEMO_TOKENS.find((t) => t.symbol === tokenSymbol);
+    const token = DEPOSITABLE.find((t) => t.symbol === tokenSymbol);
     if (!token) return;
     if (!account) {
       setPhase({
@@ -177,7 +180,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
             onChange={(e) => setTokenSymbol(e.target.value)}
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
           >
-            {DEMO_TOKENS.map((t) => (
+            {DEPOSITABLE.map((t) => (
               <option key={t.symbol} value={t.symbol}>
                 {t.symbol}
               </option>

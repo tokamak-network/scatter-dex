@@ -3,16 +3,15 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
-import { EmptyState } from "@zkscatter/ui";
+import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
 import { useSharedOrderbook } from "../lib/orderbook";
+import { useTradeForm } from "../lib/tradeForm";
 import { OrderModal } from "../components/OrderModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
-
-// Sentinel used by `projectOrderbook` to distinguish ask vs bid in
-// the demo. Replaced by the real WETH address when the token list
-// is wired.
-const BASE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000001";
+import { PairSelector } from "../components/PairSelector";
+import { AdvancedSettings } from "../components/AdvancedSettings";
+import { DEMO_NETWORK } from "../lib/network";
 
 const MOCK_ORDERBOOK = {
   asks: [
@@ -37,18 +36,18 @@ interface NumericRow {
   sizeNum: number;
 }
 
-/** Project SharedOrders into asks/bids tables. Uses naive Number
- *  math since the UI only needs an approximate display; a
- *  token-aware formatter (with proper BigInt division per token
- *  decimals) is a follow-up when the token list is wired. */
+/** Project SharedOrders into asks/bids tables. Naive Number math —
+ *  the UI display only needs an approximation; precise BigInt math
+ *  with token-aware decimals lands when the orderbook hook gains
+ *  per-pair token resolution. */
 function projectOrderbook(
   orders: SharedOrder[],
-  baseToken: string,
+  baseTokenAddress: string,
 ): { asks: RowData[]; bids: RowData[] } {
   const asksN: NumericRow[] = [];
   const bidsN: NumericRow[] = [];
   for (const o of orders) {
-    const isAsk = o.sellToken.toLowerCase() === baseToken.toLowerCase();
+    const isAsk = o.sellToken.toLowerCase() === baseTokenAddress.toLowerCase();
     const sell = Number(o.sellAmount);
     const buy = Number(o.buyAmount);
     if (!Number.isFinite(sell) || !Number.isFinite(buy) || sell === 0 || buy === 0) continue;
@@ -66,21 +65,25 @@ function projectOrderbook(
 }
 
 export default function Workbench() {
-  const [side, setSide] = useState<"sell" | "buy">("sell");
-  const [price, setPrice] = useState("4,205");
-  const [size, setSize] = useState("2.0");
+  const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
   const { notes } = useVault();
-  const pair = "ETH/USDC";
-  const ob = useSharedOrderbook(pair);
+  const ob = useSharedOrderbook(pair.display);
+
+  // Resolve the base-token address on this network for the
+  // ask/bid classifier. Falls back to the placeholder so the
+  // projection still runs against mock orderbook data.
+  const baseAddress = useMemo(() => {
+    const t = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.base);
+    return t?.address ?? "0x0000000000000000000000000000000000000001";
+  }, [pair.base]);
+
   const projected = useMemo(
-    () => (ob.orders ? projectOrderbook(ob.orders, BASE_TOKEN_ADDRESS) : null),
-    [ob.orders],
+    () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
+    [ob.orders, baseAddress],
   );
   const isMock = !ob.configured;
   const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
-  // Reverse the ask side once per orderbook update — keystrokes on
-  // price/size shouldn't reallocate.
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
   const fillFraction = (frac: number) => {
@@ -92,7 +95,6 @@ export default function Workbench() {
     setSize(v.toLocaleString("en-US", { maximumFractionDigits: 4 }));
   };
 
-  // Orderbook click-to-fill — autofill price + size from the row.
   const fillFromRow = (row: RowData) => {
     setPrice(row.price);
     setSize(row.size);
@@ -101,7 +103,10 @@ export default function Workbench() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Workbench</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold">Workbench</h1>
+          <PairSelector />
+        </div>
         <Link href="/orders" className="text-sm text-[var(--color-primary)] hover:underline">
           View order history →
         </Link>
@@ -112,22 +117,45 @@ export default function Workbench() {
 
         {/* Order form */}
         <section className="col-span-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Place private order</div>
+          <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            Place private order
+          </div>
           <div className="mb-4 flex rounded-md border border-[var(--color-border)] p-1 text-sm">
-            <button onClick={() => setSide("sell")} className={`flex-1 rounded ${side === "sell" ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-muted)]"} py-1.5 font-medium`}>Sell ETH</button>
-            <button onClick={() => setSide("buy")} className={`flex-1 rounded ${side === "buy" ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-muted)]"} py-1.5 font-medium`}>Buy ETH</button>
+            <button
+              type="button"
+              onClick={() => setSide("sell")}
+              className={`flex-1 rounded ${side === "sell" ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-muted)]"} py-1.5 font-medium`}
+            >
+              Sell {pair.base}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSide("buy")}
+              className={`flex-1 rounded ${side === "buy" ? "bg-[var(--color-primary)] text-white" : "text-[var(--color-text-muted)]"} py-1.5 font-medium`}
+            >
+              Buy {pair.base}
+            </button>
           </div>
           <div className="space-y-3 text-sm">
-            <Field label="Price (USDC / ETH)">
-              <input value={price} onChange={(e) => setPrice(e.target.value)} className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono" />
+            <Field label={`Price (${pair.quote} / ${pair.base})`}>
+              <input
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+              />
             </Field>
-            <Field label="Size (ETH)">
-              <input value={size} onChange={(e) => setSize(e.target.value)} className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono" />
+            <Field label={`Size (${pair.base})`}>
+              <input
+                value={size}
+                onChange={(e) => setSize(e.target.value)}
+                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+              />
               {notes.length > 0 && (
                 <div className="mt-1.5 flex gap-1">
                   {[0.25, 0.5, 0.75, 1].map((f) => (
                     <button
                       key={f}
+                      type="button"
                       onClick={() => fillFraction(f)}
                       className="flex-1 rounded border border-[var(--color-border)] py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
                     >
@@ -137,34 +165,36 @@ export default function Workbench() {
                 </div>
               )}
             </Field>
-            <Field label="Receive at">
-              <select className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2">
-                <option>Same wallet</option>
-                <option>Stealth address (new)</option>
-                <option>Different address…</option>
-              </select>
-            </Field>
           </div>
+
+          <AdvancedSettings />
+
           <div className="mt-4 rounded-md border border-[var(--color-success-soft)] bg-[var(--color-success-soft)] p-3 text-xs">
-            <div className="flex justify-between"><span>Estimated fill</span><span className="font-mono">$4,205.30</span></div>
-            <div className="flex justify-between"><span>vs Uniswap quote</span><span className="font-mono">$4,176.10</span></div>
-            <div className="mt-1 flex justify-between font-medium text-[var(--color-success)]"><span>Slippage saved</span><span>−0.7% (≈ $58.40)</span></div>
+            <div className="flex justify-between">
+              <span>Estimated fill</span>
+              <span className="font-mono">$4,205.30</span>
+            </div>
+            <div className="flex justify-between">
+              <span>vs Uniswap quote</span>
+              <span className="font-mono">$4,176.10</span>
+            </div>
+            <div className="mt-1 flex justify-between font-medium text-[var(--color-success)]">
+              <span>Slippage saved</span>
+              <span>−0.7% (≈ $58.40)</span>
+            </div>
           </div>
           <div className="mt-3 text-xs text-[var(--color-text-muted)]">
             Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement. Proof generation is ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on mobile.
           </div>
-          <button
-            onClick={() => setOrderOpen(true)}
-            className="mt-4 w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
-          >
+          <Button onClick={() => setOrderOpen(true)} block size="lg" className="mt-4">
             Sign &amp; submit
-          </button>
+          </Button>
         </section>
 
         {/* Orderbook */}
         <aside className="col-span-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="mb-4 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-            <span>Orderbook · {pair}</span>
+            <span>Orderbook · {pair.display}</span>
             <OrderbookStatus
               configured={ob.configured}
               loading={ob.loading}
@@ -201,24 +231,12 @@ export default function Workbench() {
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
         side={side}
-        pair="ETH/USDC"
+        pair={pair.display}
         price={price}
         size={size}
-        // Phase 3e-ii: source the spending note from the vault. For
-        // now we always pick the first (most recent) note; a dropdown
-        // lands when the order form gains a per-pair filter.
         note={notes[0] ?? null}
       />
     </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block text-sm">
-      <span className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">{label}</span>
-      {children}
-    </label>
   );
 }
 
