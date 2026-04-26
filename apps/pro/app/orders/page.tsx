@@ -11,17 +11,22 @@ const SEED_ORDERS: OrderRecord[] = [
 ];
 
 function formatWhen(ts: number): string {
-  // Fixed `en-US` locale so the SSG-rendered table cell matches what
-  // the client renders during hydration. `undefined` would let
-  // each side resolve to its own system locale and trigger a
-  // hydration warning.
+  // Fixed locale + time zone so the SSG-rendered cell matches what
+  // the client renders during hydration. Without `timeZone: "UTC"`
+  // the server (typically UTC) and the client (user's system zone)
+  // would format different local times for the same instant.
+  // The "UTC" suffix is explicit so users don't misread their own
+  // zone into the value.
   const d = new Date(ts);
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return (
+    d.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    }) + " UTC"
+  );
 }
 
 export default function Orders() {

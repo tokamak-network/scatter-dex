@@ -29,6 +29,16 @@ setupProverWorker({
   },
 
   prove: async (req) => {
+    // This worker is dedicated to the authorize circuit. Catch a
+    // mis-wiring (e.g. a future caller that picks the wrong worker
+    // factory) early instead of silently proving with the wrong
+    // assets and producing a verifier-failing proof.
+    if (req.circuitId !== "authorize") {
+      throw new Error(
+        `authorize.worker: refusing circuitId=${req.circuitId}; this worker only handles "authorize"`,
+      );
+    }
+
     // The main-thread caller (OrderModal → authorizeProver) packs
     // an `AuthorizeProofInput` into `req.input`. We trust the
     // shape on this side because the prover protocol already

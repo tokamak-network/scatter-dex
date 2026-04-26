@@ -108,22 +108,30 @@ export function OrderModal({
     onClose();
   }, [onClose]);
 
-  // Escape-to-close + initial focus trap. Only attach while open.
+  // Escape-to-close + initial focus into the dialog. Only attach
+  // while open. This is *not* a full focus trap — Tab can still
+  // reach focusable elements behind the backdrop because we don't
+  // mark the rest of the page inert. Good enough for a confirm
+  // dialog where the underlying page is mostly non-interactive
+  // while the modal is up; a sentinel-pair trap can land later if
+  // we add modals over more interactive surfaces.
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
-    // Move focus into the dialog so the next Tab keeps the user
-    // inside (browsers handle Tab cycling within a focused subtree
-    // when nothing outside is reachable; the modal's backdrop is
-    // a non-focusable div so that effectively works as a trap).
     const initial = dialogRef.current?.querySelector<HTMLElement>(
       "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
     );
     initial?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Restore focus to whatever was focused before the modal
+      // opened, so Esc-then-Tab feels right.
+      previouslyFocused?.focus?.();
+    };
   }, [open, close]);
 
   const submit = useCallback(async () => {
@@ -131,10 +139,13 @@ export function OrderModal({
     abortCtrlRef.current = ctrl;
     try {
       setPhase({ kind: "preparing" });
-      // Phase 3d will compose: deriveEdDSAKey on first use →
-      // hashAuthorizeOrder → signEdDSA → assemble circuit input. For
-      // now the modal exercises the surrounding UX with a small
-      // delay so progress states are visible.
+      // Phase 3d wires the real authorize Web Worker (see
+      // lib/authorizeProver.ts), but the input we pass through is
+      // still a stub: Phase 3e composes `deriveEdDSAKey` on first
+      // use → `hashAuthorizeOrder` → `signEdDSA` → real
+      // `AuthorizeProofInput`. Until then the worker will throw
+      // for unrecognised inputs — that's expected; the demo
+      // banner above warns it's mock mode.
       await abortableSleep(300, ctrl.signal);
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
@@ -161,9 +172,12 @@ export function OrderModal({
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       console.error("[order]", e);
+      // Prefer Error.message; fall back to a static label for
+      // thrown non-Errors. Avoid `String(e)` because it can
+      // produce "[object Object]" for some thrown shapes.
       setPhase({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e) || "Order failed.",
+        message: e instanceof Error ? e.message : "Order failed.",
       });
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;

@@ -1,30 +1,33 @@
 "use client";
 
-import { createMockProver, type Prover } from "@zkscatter/sdk/zk";
+import {
+  createWebWorkerProver,
+  type Prover,
+} from "@zkscatter/sdk/zk";
 
 /** Single shared prover instance for the authorize (limit-order) flow.
  *
- *  Phase 3c uses `createMockProver` so the order UX is demonstrable
- *  without (a) shipping the 24 MB authorize circuit assets to the
- *  app's `public/zk/` and (b) wiring a Web Worker file. Both happen
- *  in Phase 3d — at which point this file becomes:
+ *  Phase 3d: real Web Worker pointed at `app/workers/authorize.worker
+ *  .ts`, which calls `generateAuthorizeProof` against the bundled
+ *  authorize circuit assets in `public/zk/`. The worker is spawned
+ *  lazily (first `prove` / `ready` call) so users who never place
+ *  an order don't pay the 24 MB asset fetch.
  *
- *  ```ts
- *  return createWebWorkerProver({
- *    createWorker: () =>
- *      new Worker(new URL("../workers/authorize.worker.ts", import.meta.url),
- *                 { type: "module" }),
- *  });
- *  ```
- *
- *  `OrderModal` is unchanged by that swap. The 3 s mock latency
- *  matches the real circuit's ~1–2 s (desktop) / ~5–9 s (mobile)
- *  range so progress UX is roughly proportional. */
+ *  No fallback is configured — Worker spawn failure surfaces to the
+ *  caller. We deliberately don't run snarkjs on the main thread
+ *  (it would freeze the UI for several seconds). */
 let _prover: Prover | null = null;
 
 export function getAuthorizeProver(): Prover {
   if (!_prover) {
-    _prover = createMockProver({ latencyMs: 3000, publicSignalsCount: 15 });
+    _prover = createWebWorkerProver({
+      label: "authorize",
+      createWorker: () =>
+        new Worker(
+          new URL("../workers/authorize.worker.ts", import.meta.url),
+          { type: "module" },
+        ),
+    });
   }
   return _prover;
 }
