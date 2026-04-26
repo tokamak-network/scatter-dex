@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { shortAddr } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
-import { Pill, StatusDot } from "./Pill";
+import { Pill, StatusDot } from "@zkscatter/ui";
 
 /** Header pill showing the currently selected relayer. Three
  *  states: registry-not-configured, loading, and live. Clicking

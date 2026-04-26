@@ -7,7 +7,7 @@ import { VaultProvider } from "./lib/vault";
 import { OrdersProvider } from "./lib/orders";
 import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
-import { ToastProvider } from "./components/Toast";
+import { ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 

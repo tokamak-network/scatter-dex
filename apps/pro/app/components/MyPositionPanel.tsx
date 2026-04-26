@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { DepositModal } from "./DepositModal";
@@ -84,7 +85,7 @@ export function MyPositionPanel() {
       {/* Open orders */}
       <Section title={`Open orders (${open.length})`}>
         {open.length === 0 ? (
-          <Empty>No open orders. Place one on the right →</Empty>
+          <EmptyState>No open orders. Place one on the right →</EmptyState>
         ) : (
           <ul className="space-y-2">
             {open.map((o) => (
@@ -119,7 +120,7 @@ export function MyPositionPanel() {
       {/* Ready to claim */}
       <Section title={`Ready to claim (${claimable.length})`}>
         {claimable.length === 0 ? (
-          <Empty>Nothing to claim right now.</Empty>
+          <EmptyState>Nothing to claim right now.</EmptyState>
         ) : (
           <ul className="space-y-2">
             {claimable.map((o) => (
@@ -151,7 +152,7 @@ export function MyPositionPanel() {
       {/* Notes */}
       <Section title={`Notes (${notes.length})`}>
         {notes.length === 0 ? (
-          <Empty>Deposit to start.</Empty>
+          <EmptyState>Deposit to start.</EmptyState>
         ) : (
           <ul className="space-y-2">
             {notes.map((n) => (
@@ -205,14 +206,6 @@ function Section({ title, children }: { title?: string; children: React.ReactNod
           {title}
         </div>
       )}
-      {children}
-    </div>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border border-dashed border-[var(--color-border)] p-3 text-center text-xs text-[var(--color-text-muted)]">
       {children}
     </div>
   );

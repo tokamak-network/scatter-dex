@@ -6,6 +6,7 @@ import {
   assembleCancelProofResult,
   type CancelProofInput,
 } from "@zkscatter/sdk/zk";
+import { Button, Modal, useToast } from "@zkscatter/ui";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
@@ -13,7 +14,6 @@ import { useRelayers } from "../lib/relayers";
 import { getCancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { dispatchCancel } from "../lib/dispatch";
-import { useToast } from "./Toast";
 import { PreSignPreview } from "./PreSignPreview";
 import { abortableSleep, assertNotAborted, isAbortError } from "../lib/abort";
 
@@ -40,35 +40,19 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const abortCtrlRef = useRef<AbortController | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
   }, [open]);
 
+  // Modal owns escape / focus restore / backdrop click; we still
+  // need the abort + phase reset on close, so wrap onClose.
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
     abortCtrlRef.current = null;
     setPhase({ kind: "idle" });
     onClose();
   }, [onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    const initial = dialogRef.current?.querySelector<HTMLElement>(
-      "button:not([disabled])",
-    );
-    initial?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [open, close]);
 
   const submit = useCallback(async () => {
     if (!order) return;
@@ -174,7 +158,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     }
   }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast]);
 
-  if (!open || !order) return null;
+  if (!order) return null;
 
   const busy =
     phase.kind === "preparing" ||
@@ -182,81 +166,49 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     phase.kind === "submitting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      <div
-        ref={dialogRef}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="cancel-title"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="cancel-title" className="text-lg font-semibold">
-            Cancel order
-          </h2>
-          <button
-            onClick={close}
-            className="rounded p-1 text-[var(--color-text-subtle)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
+    <Modal open={open} onClose={close} title="Cancel order">
+      <PreSignPreview
+        primary={[
+          { label: "Order", value: order.label },
+          { label: "Side", value: order.side === "sell" ? "Sell" : "Buy" },
+        ]}
+        secondary={[
+          { label: "Pair", value: order.pair },
+          { label: "Price", value: order.price },
+          { label: "Size", value: order.size },
+          { label: "Cancel fee", value: "0", highlight: true },
+        ]}
+        footer="Generates a ZK cancel proof binding the order's nonce nullifier to the chosen relayer. Once the contract dispatch ships, this also rotates the escrow to a fresh commitment so the same balance can immediately be re-ordered. Funds stay in your vault either way."
+      />
 
-        <PreSignPreview
-          primary={[
-            { label: "Order", value: order.label },
-            { label: "Side", value: order.side === "sell" ? "Sell" : "Buy" },
-          ]}
-          secondary={[
-            { label: "Pair", value: order.pair },
-            { label: "Price", value: order.price },
-            { label: "Size", value: order.size },
-            { label: "Cancel fee", value: "0", highlight: true },
-          ]}
-          footer="Generates a ZK cancel proof binding the order's nonce nullifier to the chosen relayer. Once the contract dispatch ships, this also rotates the escrow to a fresh commitment so the same balance can immediately be re-ordered. Funds stay in your vault either way."
-        />
+      <PhaseStatus phase={phase} />
 
-        <PhaseStatus phase={phase} />
-
-        <div className="mt-5 flex justify-end gap-2">
-          {phase.kind === "success" ? (
-            <button
-              onClick={close}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+      <div className="mt-5 flex justify-end gap-2">
+        {phase.kind === "success" ? (
+          <Button onClick={close} size="lg">
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Cancel" : "Keep order"}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={submit}
+              disabled={busy || isDeriving}
+              title={isDeriving ? "Awaiting wallet signature…" : undefined}
             >
-              Done
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={close}
-                className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-              >
-                {busy ? "Cancel" : "Keep order"}
-              </button>
-              <button
-                onClick={submit}
-                disabled={busy || isDeriving}
-                title={isDeriving ? "Awaiting wallet signature…" : undefined}
-                className="rounded-md bg-[var(--color-danger)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-              >
-                {busy
-                  ? "Working…"
-                  : isDeriving
-                  ? "Awaiting signature…"
-                  : "Cancel order"}
-              </button>
-            </>
-          )}
-        </div>
+              {busy
+                ? "Working…"
+                : isDeriving
+                ? "Awaiting signature…"
+                : "Cancel order"}
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
