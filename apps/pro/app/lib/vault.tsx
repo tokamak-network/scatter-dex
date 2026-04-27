@@ -68,25 +68,26 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
+  // Carries over across chain switches: hydration uses
+  // `Math.max(current, deriveLabelCounter(loaded))` so labels are
+  // monotonic per-provider lifetime — never resetting prevents a
+  // duplicate-`lot-N` race when `add()` fires during the new
+  // chain's hydrate window.
   const labelCounter = useRef(0);
+
   // Adapter is keyed on the active chainId — per-chain DB so notes
   // from one network don't leak into another when the user switches.
-  // Single instance per (provider × chainId) lifetime; closing the
-  // IDB connection on every render would re-open it on every hook
-  // call.
-  const adapterRef = useRef<NoteStorageAdapter | null>(null);
-  const adapterChainRef = useRef<number | null>(null);
-  if (adapterChainRef.current !== chainId) {
-    // Lazy-init / re-init guarded by ref so SSR doesn't trigger the
-    // IDB open path (the adapter handles `typeof indexedDB ===
-    // "undefined"` internally, but skipping the call is cleaner).
-    // Stale adapter is dropped — the IDB connection closes when the
-    // last reference is GC'd.
-    adapterRef.current = createIndexedDbNoteAdapter({
-      dbName: `zkscatter-notes-${chainId}`,
-    });
-    adapterChainRef.current = chainId;
-  }
+  // `useMemo` (not `useRef`) so each chainId gets its own stable
+  // instance and `add` / `remove` callbacks close over the correct
+  // one. An in-flight `add()` started under chain A keeps writing
+  // to chain A's adapter even if chainId flips mid-await — without
+  // this binding, the dereference `adapterRef.current` would land
+  // on chain B's IDB after the swap. The SDK adapter is SSR-safe
+  // (no IDB call until the first method invocation).
+  const adapter = useMemo<NoteStorageAdapter>(
+    () => createIndexedDbNoteAdapter({ dbName: `zkscatter-notes-${chainId}` }),
+    [chainId],
+  );
 
   // Hydrate on mount + on every chainId change. Cancellation guards
   // a fast unmount (HMR, route swap during initial fetch) and a
@@ -94,16 +95,15 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // resolves) from setting state on a dead adapter.
   const isFirstHydrateRef = useRef(true);
   useEffect(() => {
-    const adapter = adapterRef.current!;
     let cancelled = false;
     // On a real chainId change (not the initial mount) reset visible
     // state so the prior chain's notes don't bleed into the new
     // chain's "loading" view. Skip on first hydrate — the initial
     // values are already empty and a redundant set would flash.
+    // labelCounter is intentionally NOT reset (see ref comment).
     if (!isFirstHydrateRef.current) {
       setNotes([]);
       setLoaded(false);
-      labelCounter.current = 0;
     }
     isFirstHydrateRef.current = false;
     void (async () => {
@@ -143,7 +143,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [chainId]);
+  }, [adapter, chainId]);
 
   const add = useCallback(
     async (n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">) => {
@@ -163,18 +163,23 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       // logged inside the adapter and we still surface the note in
       // the UI (memory tier holds it), but the user wouldn't see a
       // confusing "added then disappeared on refresh" if the adapter
-      // had thrown.
-      await adapterRef.current!.put(note);
+      // had thrown. `adapter` is closed-over from the memo; if
+      // chainId flips mid-await, this still writes to the chain
+      // the call started on.
+      await adapter.put(note);
       setNotes((prev) => [note, ...prev]);
       return note;
     },
-    [chainId],
+    [adapter, chainId],
   );
 
-  const remove = useCallback(async (id: string) => {
-    await adapterRef.current!.remove(id);
-    setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
-  }, []);
+  const remove = useCallback(
+    async (id: string) => {
+      await adapter.remove(id);
+      setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
+    },
+    [adapter],
+  );
 
   const value = useMemo<VaultState>(
     () => ({ notes, loaded, add, remove }),
