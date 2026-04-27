@@ -1,0 +1,125 @@
+---
+title: Quickstart
+description: "Wire @zkscatter/sdk into a TypeScript project in under 5 minutes."
+---
+
+<Note>
+  `@zkscatter/sdk` is in **Phase 0** — it ships network configs, contract
+  ABIs/Interfaces, and a few helpers. The proof-generation and relayer
+  client surfaces ship in subsequent phases. This page reflects what
+  works today.
+</Note>
+
+## 1. Install
+
+<CodeGroup>
+
+```bash npm
+npm install @zkscatter/sdk
+```
+
+```bash pnpm
+pnpm add @zkscatter/sdk
+```
+
+```bash yarn
+yarn add @zkscatter/sdk
+```
+
+</CodeGroup>
+
+The SDK is a peer of `ethers` — it does not bundle one. Install
+`ethers` (or `viem`) yourself if your app does not already depend on
+either.
+
+## 2. Reach the core surface
+
+Everything platform-agnostic ships from the root entrypoint:
+
+```ts
+import {
+  PRIVATE_SETTLEMENT_ABI,
+  PRIVATE_SETTLEMENT_IFACE,
+  COMMITMENT_POOL_ABI,
+  ERC20_ABI,
+  chainName,
+  parseTokenList,
+  explorerLink,
+  type NetworkConfig,
+  type TokenInfo,
+} from "@zkscatter/sdk";
+```
+
+DOM-only modules (Web Worker proof types, the React hook) live behind
+their own subpaths so a Node/SSR consumer that omits `lib.dom` from
+`tsconfig` does not pick them up by accident:
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk/zk";
+import { /* ... */ } from "@zkscatter/sdk/relayer";
+import { /* ... */ } from "@zkscatter/sdk/react";
+```
+
+## 3. Resolve a network
+
+```ts
+const network: NetworkConfig = {
+  chainId: 11155111,
+  rpcUrl: process.env.RPC_URL!,
+  contracts: {
+    privateSettlement: "0x...",
+    commitmentPool: "0x...",
+    relayerRegistry: "0x...",
+    identityGate: "0x...",
+  },
+  tokens: parseTokenList(
+    "0x...:USDC:6,0x...:WETH:18",
+  ),
+};
+
+console.log(chainName(network.chainId));
+// → "Sepolia"
+
+console.log(
+  explorerLink(network, "tx", "0xdead..."),
+);
+// → "https://sepolia.etherscan.io/tx/0xdead..."
+```
+
+## 4. Decode a settlement event
+
+The pre-parsed `Interface` lets you decode logs without re-instantiating
+ethers:
+
+```ts
+import { PRIVATE_SETTLEMENT_IFACE } from "@zkscatter/sdk";
+
+const log = /* an ethers Log from the PrivateSettlement contract */;
+
+const parsed = PRIVATE_SETTLEMENT_IFACE.parseLog({
+  topics: [...log.topics],
+  data: log.data,
+});
+
+if (parsed?.name === "Settled") {
+  const [commitment, relayer] = parsed.args;
+  // ...
+}
+```
+
+<Check>
+  That covers the Phase 0 surface. The full proof-and-submit flow —
+  including the half-proof authorization, relayer submission, and
+  on-chain settlement — ships in Phase 1.
+</Check>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SDK README" icon="book" href="https://github.com/tokamak-network">
+    Module-by-module rundown of what Phase 0 ships and what is planned.
+  </Card>
+  <Card title="zkScatter apps" icon="grid" href="https://zkscatter.xyz/apps">
+    See the SDK in production behind Pro, Pay, Drop, and Mobile.
+  </Card>
+</CardGroup>
