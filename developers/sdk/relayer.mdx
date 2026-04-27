@@ -1,0 +1,153 @@
+---
+title: relayer
+description: "Registry, HTTP client, operator actions, profile sanitization."
+---
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk/relayer";
+```
+
+## Discovery
+
+```ts
+import { loadActiveRelayers, loadRelayersWithApiInfo } from "@zkscatter/sdk/relayer";
+
+// On-chain only — fast.
+const onChain = await loadActiveRelayers(network.contracts.relayerRegistry, provider);
+//   RelayerOnChain[]: { address, url, fee, bond, registeredAt, exitRequestedAt, active }
+
+// Combined: on-chain + live /api/info probe in parallel (default 3s timeout).
+const full = await loadRelayersWithApiInfo(
+  network.contracts.relayerRegistry,
+  provider,
+  { probeTimeoutMs: 3000 },
+);
+//   RelayerInfo[]: RelayerOnChain + { online, api?: RelayerApiInfo }
+```
+
+## RelayerClient
+
+```ts
+const client = new RelayerClient("https://relayer.example.com", {
+  fetch: globalThis.fetch,        // optional override
+  defaultTimeoutMs: 5000,
+});
+
+await client.getInfo();                        // /api/info
+await client.submitOrder(order, signature, "cover_taker");
+await client.getOrders(account);               // active orders for an account
+await client.getOrderHistory(account, { limit: 50, offset: 0 });
+await client.getClaims(account);               // pending stealth payouts
+```
+
+Every method accepts an optional trailing `AbortSignal` — pair with
+`timeoutSignal` from `@zkscatter/sdk/util` for per-call cancellation.
+
+### Submit order
+
+```ts
+type FeeMode = "cover_taker";
+
+interface OrderData {
+  maker: string;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: bigint;
+  buyAmount: bigint;
+  maxFee: bigint;
+  expiry: number;
+  nonce: string;
+}
+
+await client.submitOrder(order, signature, feeMode?);
+// → { status: "queued" | "matched" | "settled", txHash?, nonce? }
+```
+
+`signature` is the EdDSA signature serialized as a hex string. The
+relayer verifies it against the maker's pubkey before queueing.
+
+## Operator actions
+
+```ts
+import {
+  registerRelayer,
+  updateRelayerInfo,
+  addRelayerBond,
+  requestRelayerExit,
+  executeRelayerExit,
+  loadOperatorRow,
+  EXIT_COOLDOWN_SECONDS,
+  MAX_RELAYER_FEE_BPS,
+} from "@zkscatter/sdk/relayer";
+
+await registerRelayer(
+  network.contracts.relayerRegistry,
+  { url: "https://relayer.example.com", feeBps: 30, bondEth: "1.0" },
+  signer,
+);
+
+await addRelayerBond(network.contracts.relayerRegistry, "0.5", signer);
+
+await updateRelayerInfo(
+  network.contracts.relayerRegistry,
+  { url: "https://new.example.com", feeBps: 25 },
+  signer,
+);
+
+await requestRelayerExit(network.contracts.relayerRegistry, signer);
+// wait EXIT_COOLDOWN_SECONDS (7 days)
+await executeRelayerExit(network.contracts.relayerRegistry, signer);
+```
+
+### Operator row
+
+```ts
+const row = await loadOperatorRow(
+  network.contracts.relayerRegistry,
+  account,
+  provider,
+);
+// {
+//   url, feeBps, bond, bondEth,
+//   registeredAt,        // 0 if never registered
+//   exitRequestedAt,     // 0 if not in cooldown; else add EXIT_COOLDOWN_SECONDS for unlock time
+//   active, status,      // "active" | "cooldown" | "offline" | "unregistered"
+// }
+```
+
+Use this to drive an operator dashboard — single read, derived status.
+
+## Profile sanitization
+
+```ts
+import { sanitizeProfile, type RelayerProfile } from "@zkscatter/sdk/relayer";
+
+const safe = sanitizeProfile(untrustedJson);
+// undefined if invalid; otherwise:
+// { name, description, logoUrl, contact, socialX, website, updatedAt }
+```
+
+`sanitizeProfile` enforces:
+
+- length caps (no DoS through giant strings)
+- URL scheme allowlist (`https://` only)
+- character class filters on display fields
+
+Always run untrusted relayer profiles through this before rendering.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="Probe times out for every relayer">
+    Default timeout is 3s. Bump `probeTimeoutMs` for cross-region setups,
+    or pre-filter by `lastHeartbeat` from the shared orderbook.
+  </Accordion>
+  <Accordion title="`submitOrder` returns `status: "rejected"`">
+    Inspect the response body — common reasons are nonce reuse, EdDSA
+    signature mismatch, fee below relayer minimum, or expired order.
+  </Accordion>
+  <Accordion title="`registerRelayer` reverts with `Bond too low`">
+    The contract enforces a minimum bond. Read the registry's
+    `minBond()` view first.
+  </Accordion>
+</AccordionGroup>

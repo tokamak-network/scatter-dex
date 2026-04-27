@@ -1,0 +1,141 @@
+---
+title: contracts
+description: "Typed transaction builders for deposit, settle, claim, cancel."
+---
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk/contracts";
+```
+
+These functions wrap proof results in the correct ABI calls. They
+return ethers `TransactionResponse` — call `.wait()` to confirm.
+
+## ensureAllowance
+
+```ts
+async function ensureAllowance(
+  signer: Signer,
+  token: string,
+  spender: string,
+  amount: bigint,
+): Promise<TransactionResponse[]>
+```
+
+Sets ERC-20 allowance with USDT-safe semantics: if the current
+allowance is non-zero and not exact, it issues `approve(0)` first,
+then `approve(amount)`. Returns one or two pending transactions —
+await all of them before proceeding.
+
+## callDeposit
+
+```ts
+async function callDeposit(
+  signer: Signer,
+  poolAddress: string,
+  result: DepositProofResult,
+  token: string,
+  amount: bigint,
+): Promise<TransactionResponse>
+```
+
+Submits `CommitmentPool.deposit(token, amount, commitment, proof)` after
+`ensureAllowance` has cleared.
+
+## callSettleAuth
+
+```ts
+async function callSettleAuth(
+  signer: Signer,
+  settlementAddress: string,
+  maker: SettleAuthSide,
+  taker: SettleAuthSide,
+  fees: SettleAuthFees,
+): Promise<TransactionResponse>
+
+interface SettleAuthSide {
+  proof: Groth16Proof;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: bigint;
+  buyAmount: bigint;
+  maxFee: bigint;
+  expiry: number;
+  relayer: string;
+  // ...remaining public signals
+}
+
+interface SettleAuthFees {
+  makerFee: bigint;
+  takerFee: bigint;
+}
+```
+
+Called by relayers, not end users. Both sides must match (token pair
+flipped, amounts inverse). The contract verifies both Groth16 proofs,
+records nullifiers, and writes payout commitments.
+
+## callClaimWithProof
+
+```ts
+async function callClaimWithProof(
+  signer: Signer,
+  settlementAddress: string,
+  proof: Groth16Proof,
+  inputs: ClaimCallInputs,
+): Promise<TransactionResponse>
+
+interface ClaimCallInputs {
+  recipient: string;
+  token: string;
+  amount: bigint;
+  releaseTime: number;  // 0 = unlocked, else unix seconds
+}
+```
+
+## callClaimWithProofBatch
+
+```ts
+async function callClaimWithProofBatch(
+  signer: Signer,
+  settlementAddress: string,
+  items: BatchClaimItem[],  // up to MAX_CLAIM_BATCH_SIZE = 20
+): Promise<TransactionResponse>
+
+interface BatchClaimItem {
+  proof: Groth16Proof;
+  inputs: ClaimCallInputs;
+}
+```
+
+Atomic — if any claim reverts, the batch reverts. Cap at 20 to stay
+under typical block gas budgets.
+
+## callCancel
+
+```ts
+async function callCancel(
+  signer: Signer,
+  settlementAddress: string,
+  proof: CancelProofResult,
+): Promise<TransactionResponse>
+```
+
+Cancels an active order, advances the maker's nullifier, and writes a
+new commitment for the unspent balance.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`ERC20: transfer amount exceeds allowance`">
+    `ensureAllowance` was skipped or the second `approve(amount)` failed
+    silently. Re-run `ensureAllowance` before the deposit.
+  </Accordion>
+  <Accordion title="`PrivateSettlement: nullifier reused`">
+    The note has already been spent. Refresh from `loadCommitmentInsertedHistory`
+    + your nullifier scan to find the next unspent leaf.
+  </Accordion>
+  <Accordion title="`PrivateSettlement: order expired`">
+    `expiry` < `block.timestamp`. Generate a fresh authorize proof with
+    a later expiry.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,69 @@
+---
+title: Overview
+description: "Module map of @zkscatter/sdk."
+---
+
+`@zkscatter/sdk` ships as a multi-entry package. Pick the subpath that
+matches what you're doing — bundlers tree-shake the rest.
+
+## Modules
+
+<CardGroup cols={2}>
+  <Card title="core" icon="cube" href="/sdk/core">
+    Network config, contract ABIs, token whitelist, pool event helpers.
+  </Card>
+  <Card title="contracts" icon="file-contract" href="/sdk/contracts">
+    Typed transaction builders for deposit, settle, claim, cancel.
+  </Card>
+  <Card title="zk" icon="shield-halved" href="/sdk/zk">
+    Groth16 prover, Poseidon, EdDSA, Merkle trees, stealth addresses.
+  </Card>
+  <Card title="relayer" icon="network-wired" href="/sdk/relayer">
+    Registry, HTTP client, operator actions, profile sanitization.
+  </Card>
+  <Card title="orderbook" icon="list-ol" href="/sdk/orderbook">
+    Read-only client for the shared order discovery service.
+  </Card>
+  <Card title="notes" icon="database" href="/sdk/notes">
+    Pluggable note storage adapters (memory, IndexedDB).
+  </Card>
+  <Card title="react" icon="react" href="/sdk/react">
+    Wallet provider + `useWallet` hook for browser apps.
+  </Card>
+  <Card title="util" icon="wrench" href="/sdk/util">
+    HTTP and IndexedDB primitives shared across modules.
+  </Card>
+</CardGroup>
+
+## Compatibility matrix
+
+| Subpath | Browser | Node / SSR | React Native |
+|---|---|---|---|
+| root / `core` | ✅ | ✅ | ✅ |
+| `contracts` | ✅ | ✅ | ✅ |
+| `zk` | ✅ | ⚠️ no Worker | ⚠️ native prover required |
+| `relayer` | ✅ | ✅ | ✅ |
+| `orderbook` | ✅ | ✅ | ✅ |
+| `notes` | ✅ | ⚠️ memory only | ⚠️ memory only |
+| `react` | ✅ | ❌ | ❌ |
+| `util` | ✅ | ✅ | ✅ |
+
+## Versioning
+
+`@zkscatter/sdk` follows semver. Contract ABIs are pinned per minor —
+upgrading the SDK to track a contract upgrade is always a minor bump,
+even if the surface is source-compatible. See the
+[CHANGELOG](https://github.com/tokamak-network/scatter-dex/blob/main/packages/sdk/CHANGELOG.md)
+for migration notes.
+
+## Conventions
+
+- All async APIs accept an optional `AbortSignal` (`signal?` parameter)
+  for cancellation.
+- All bigint values use native `bigint`, not strings — the storage
+  adapters serialize at the boundary.
+- All ABIs are exposed as both raw strings (`*_ABI`) and pre-parsed
+  ethers `Interface` objects (`*_IFACE`) — use the iface for
+  decoding logs without re-parsing.
+- All HTTP clients accept a `fetch` override for custom transports
+  (proxies, mocks, polyfills).

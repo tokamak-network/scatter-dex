@@ -1,0 +1,108 @@
+---
+title: orderbook
+description: "Read-only client for the shared order discovery service."
+---
+
+```ts
+import { SharedOrderbookClient } from "@zkscatter/sdk/orderbook";
+```
+
+The shared orderbook aggregates orders across all active relayers so
+your app can show liquidity without polling each relayer's `/api/orders`
+endpoint individually.
+
+## Client
+
+```ts
+const orderbook = new SharedOrderbookClient("https://orderbook.zkscatter.xyz", {
+  fetch: globalThis.fetch,
+  defaultTimeoutMs: 5000,
+});
+
+await orderbook.isOnline();                          // boolean
+await orderbook.getStats();                          // { totalOrders, pairs, relayers }
+await orderbook.getRelayers();                       // SharedRelayer[]
+await orderbook.getOrders("ETH/USDC", 0);            // SharedOrder[]
+await orderbook.getPairsForRelayer(relayerAddress);  // pair strings
+```
+
+## Types
+
+```ts
+interface SharedOrderbookStats {
+  totalOrders: number;
+  pairs: number;
+  relayers: number;
+}
+
+interface SharedRelayer {
+  address: string;
+  url: string;
+  name: string;
+  orderCount: number;
+  lastHeartbeat: number;       // unix seconds
+}
+
+interface SharedOrder {
+  id: string;
+  relayer: string;
+  relayerUrl: string;
+  pair: string;
+  side: "buy" | "sell";
+  nonce: string;
+  pubKeyAx: bigint;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: bigint;
+  buyAmount: bigint;
+  maxFee: bigint;
+  expiry: number;
+  createdAt: number;
+}
+```
+
+## Usage pattern
+
+The orderbook is a **read-only convenience layer** — it never holds
+custody and cannot match. Submit orders directly to a `RelayerClient`
+chosen from the discovery list:
+
+```ts
+const [orderbookOrders, relayers] = await Promise.all([
+  orderbook.getOrders("ETH/USDC"),
+  loadRelayersWithApiInfo(network.contracts.relayerRegistry, provider),
+]);
+
+// Pick a relayer that's online and has the lowest fee.
+const target = relayers
+  .filter((r) => r.online)
+  .sort((a, b) => Number(a.fee) - Number(b.fee))[0];
+
+const client = new RelayerClient(target.url);
+await client.submitOrder(order, signature);
+```
+
+## Filtering by relayer
+
+```ts
+const pairs = await orderbook.getPairsForRelayer("0xabc...");
+// → ["ETH/USDC", "TON/USDT", ...]
+```
+
+Useful for relayer dashboards — show which pairs a given relayer is
+willing to match.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`isOnline()` returns false but `getStats()` succeeds">
+    `isOnline` only succeeds for `200 OK` on `/health`. Some deployments
+    expose `/api/health` instead — pass a base URL with the suffix or
+    bypass the check.
+  </Accordion>
+  <Accordion title="Stale `lastHeartbeat`">
+    Treat anything older than ~60s as offline. The shared orderbook
+    expires entries on its own schedule but display logic should not
+    trust the bare value.
+  </Accordion>
+</AccordionGroup>

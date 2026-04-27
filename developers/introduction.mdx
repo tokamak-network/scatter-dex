@@ -1,61 +1,108 @@
 ---
 title: Introduction
-description: "Build private, compliant trading on the zkScatter ZK stack."
+description: "Build private, compliant trading apps on the zkScatter ZK stack."
 ---
 
-zkScatter is a privacy-preserving DEX with compliant identity gating.
-Trades are matched off-chain by a relayer network and settled on-chain
-through ZK proofs over a commitment pool — orders, amounts, and trader
-identities never appear in plaintext on-chain.
+`@zkscatter/sdk` is the TypeScript toolkit for talking to every part of
+the zkScatter protocol — contracts, ZK proofs, relayer network, shared
+orderbook, and on-device note storage. **One package, one mental model**,
+ship a wallet on web, mobile, or Node.
 
-The same ZK core powers four persona apps:
-[Pro](https://pro.zkscatter.xyz),
-[Pay](https://pay.zkscatter.xyz),
-[Drop](https://drop.zkscatter.xyz),
-and Mobile.
+The same SDK powers the four reference apps shipped by Tokamak —
+[Pro](https://pro.zkscatter.xyz), [Pay](https://pay.zkscatter.xyz),
+[Drop](https://drop.zkscatter.xyz), and Mobile. Anything those apps do,
+your app can do, with the same primitives.
 
-## What you can build
+## What you can build with the SDK
 
 <CardGroup cols={2}>
   <Card title="A private trading UI" icon="chart-line" href="/quickstart">
-    Wrap the SDK to submit private limit orders against the shared
-    orderbook.
+    Connect a wallet, deposit, sign EdDSA orders, submit through a relayer,
+    settle with a Groth16 proof.
+  </Card>
+  <Card title="A payment app" icon="paper-plane" href="/guides/place-order">
+    Send stealth-addressed payouts in any whitelisted token. Recipients
+    claim later, gaslessly, against a half-proof commitment.
+  </Card>
+  <Card title="A token drop" icon="gift" href="/guides/claim">
+    Distribute to verified humans without doxxing claimers. The same
+    `claim` circuit powers airdrops and order payouts.
   </Card>
   <Card title="A relayer node" icon="server" href="/operate/run-a-relayer-node">
-    Match orders off-chain, generate ZK proofs, and earn fees.
-  </Card>
-  <Card title="Identity-gated drops" icon="shield-check" href="/guides/identity-gating">
-    Distribute tokens to verified humans without doxxing claimers.
-  </Card>
-  <Card title="Custom settlement flows" icon="cube" href="/contracts/private-settlement">
-    Compose `PrivateSettlement` and `CommitmentPool` directly.
+    Match orders off-chain, submit settlement proofs, charge a basis-point
+    fee, manage your bond and exit cool-down.
   </Card>
 </CardGroup>
 
-## How it works
+## What's in the box
+
+<CardGroup cols={2}>
+  <Card title="Contracts" icon="file-contract" href="/sdk/contracts">
+    `callDeposit`, `callSettleAuth`, `callClaimWithProof`, `callCancel` —
+    typed wrappers over `PrivateSettlement` and `CommitmentPool`. Plus
+    `ensureAllowance` with USDT-safe reset semantics.
+  </Card>
+  <Card title="ZK proofs" icon="shield-halved" href="/sdk/zk">
+    Web Worker prover, Poseidon hashing, EdDSA on Baby Jubjub, incremental
+    Merkle trees, stealth-address derivation, and circuit-specific builders
+    for `deposit`, `authorize`, `claim`, `cancel`.
+  </Card>
+  <Card title="Relayer client" icon="network-wired" href="/sdk/relayer">
+    Discover active relayers from the on-chain registry, probe their
+    `/api/info` endpoints, submit signed orders, track status, and run
+    operator actions (register, update, bond, exit).
+  </Card>
+  <Card title="Shared orderbook" icon="list-ol" href="/sdk/orderbook">
+    Read-only client for the cross-relayer order discovery service —
+    pair-filtered listings, relayer rosters, online checks.
+  </Card>
+  <Card title="Notes storage" icon="database" href="/sdk/notes">
+    Pluggable adapters for commitment-note persistence: in-memory for
+    tests, IndexedDB for browsers, SQLite/AsyncStorage on mobile.
+  </Card>
+  <Card title="React wallet" icon="react" href="/sdk/react">
+    `useWallet` and `<WalletProvider>` — `window.ethereum` detection,
+    chain/account tracking, vendor labels (MetaMask, Rabby, Coinbase).
+  </Card>
+</CardGroup>
+
+## How a trade flows
 
 <Steps>
-  <Step title="Order">
-    A user signs an EdDSA order locally. Side, amount, and identity
-    stay on the device.
+  <Step title="Deposit">
+    The user signs a deposit ZK proof on-device. `CommitmentPool.deposit`
+    inserts a Poseidon commitment hiding the owner secret, token, and amount.
+  </Step>
+  <Step title="Authorize">
+    The user generates a half-proof of their order: an EdDSA signature
+    over `(side, amounts, expiry, relayer)`, plus a Groth16 proof binding
+    it to a leaf in the commitment tree.
   </Step>
   <Step title="Match">
-    A relayer matches against the shared orderbook off-chain and
-    produces a half-proof per side (~15K constraints).
+    A relayer matches the order against the shared orderbook and produces
+    the counterparty's half-proof. Both halves go on-chain through
+    `PrivateSettlement.settleAuth`.
   </Step>
-  <Step title="Settle">
-    `PrivateSettlement` verifies the proof and writes a commitment to
-    the pool. Claims happen later, gaslessly.
+  <Step title="Claim">
+    The buyer's payout arrives at a stealth address as a new commitment.
+    They claim later — any time, gaslessly — by proving knowledge of the
+    spending key.
   </Step>
 </Steps>
 
-## Next steps
+## Where to go next
 
 <CardGroup cols={2}>
-  <Card title="Quickstart" icon="bolt" href="/quickstart">
-    Submit your first private order in under 5 minutes.
+  <Card title="Install the SDK" icon="download" href="/installation">
+    npm, pnpm, or yarn. Peer-dep ethers — no bundled runtime.
   </Card>
-  <Card title="Read the paper" icon="book" href="https://github.com/tokamak-network">
-    Half-proof authorization, commitment-pool settlement, zk-X509.
+  <Card title="Run the quickstart" icon="bolt" href="/quickstart">
+    From `npm install` to settled trade in under 10 minutes.
+  </Card>
+  <Card title="Read the architecture" icon="book" href="/concepts/architecture">
+    Half-proof authorization, commitment-pool settlement, relayer economy.
+  </Card>
+  <Card title="Browse the SDK reference" icon="code" href="/sdk/overview">
+    Module-by-module surface — every export, every signature.
   </Card>
 </CardGroup>

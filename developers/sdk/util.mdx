@@ -1,0 +1,81 @@
+---
+title: util
+description: "HTTP and IndexedDB primitives shared across modules."
+---
+
+```ts
+import { timeoutSignal, safeJson } from "@zkscatter/sdk/util";
+import { openIDB } from "@zkscatter/sdk/util";
+```
+
+These are minimal helpers used internally by the SDK. They're exported
+because they're useful in the same patterns you'll find yourself
+repeating.
+
+## timeoutSignal
+
+```ts
+function timeoutSignal(timeoutMs: number, extra?: AbortSignal): AbortSignal
+```
+
+Compose a timeout with an optional caller signal:
+
+```ts
+const signal = timeoutSignal(5000, userAbort.signal);
+
+await fetch(url, { signal });
+```
+
+Aborts when **either** the timeout fires or the caller's signal aborts.
+
+## safeJson
+
+```ts
+async function safeJson<T = unknown>(res: Response): Promise<T | null>
+```
+
+Parse a `Response` body as JSON, returning `null` on any failure
+(non-JSON content, parse error, network drop after headers). Useful
+when probing untrusted endpoints:
+
+```ts
+const res = await fetch(`${url}/api/info`, { signal: timeoutSignal(3000) });
+const info = await safeJson<RelayerApiInfo>(res);
+if (!info) return { online: false };
+```
+
+## openIDB
+
+```ts
+interface OpenIDBOptions {
+  dbName: string;
+  version: number;
+  upgrade: (db: IDBDatabase) => void;
+}
+
+function openIDB(opts: OpenIDBOptions): Promise<IDBDatabase | null>
+```
+
+SSR-safe IndexedDB open. Returns `null` if `indexedDB` is unavailable
+(server, private mode in some browsers, certain WebViews) so callers
+can fall back rather than crash:
+
+```ts
+const db = await openIDB({
+  dbName: "myapp",
+  version: 1,
+  upgrade: (db) => {
+    db.createObjectStore("notes", { keyPath: "id" });
+  },
+});
+
+if (!db) {
+  // fall back to in-memory storage
+}
+```
+
+## When to bypass
+
+These helpers are not load-bearing. If your app already has equivalents
+(Axios, ky, `idb` library), use those — the SDK's internals don't care
+which HTTP/storage layer you wrap them in.

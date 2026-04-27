@@ -1,0 +1,103 @@
+---
+title: Installation
+description: "Install @zkscatter/sdk and configure peer dependencies."
+---
+
+## Install the package
+
+<CodeGroup>
+
+```bash npm
+npm install @zkscatter/sdk ethers
+```
+
+```bash pnpm
+pnpm add @zkscatter/sdk ethers
+```
+
+```bash yarn
+yarn add @zkscatter/sdk ethers
+```
+
+</CodeGroup>
+
+`ethers@^6` is a peer dependency — install it yourself if your app does
+not already depend on it.
+
+`react@^19` is an **optional** peer; only required if you import from
+`@zkscatter/sdk/react`.
+
+## Subpath exports
+
+The SDK exposes platform-agnostic core through the root entrypoint and
+puts DOM- or React-only modules behind subpaths so a Node consumer that
+omits `lib.dom` from `tsconfig` does not pick them up by accident.
+
+| Subpath | Platform | Content |
+| --- | --- | --- |
+| `@zkscatter/sdk` | universal | network types, ABIs, helpers, pool events |
+| `@zkscatter/sdk/core` | universal | same as root, explicit form |
+| `@zkscatter/sdk/contracts` | universal | typed transaction builders |
+| `@zkscatter/sdk/zk` | browser / RN | Groth16 prover, Poseidon, EdDSA, Merkle, stealth |
+| `@zkscatter/sdk/relayer` | universal | relayer registry, HTTP client, operator actions |
+| `@zkscatter/sdk/orderbook` | universal | shared orderbook HTTP client |
+| `@zkscatter/sdk/notes` | universal | pluggable note storage adapters |
+| `@zkscatter/sdk/react` | browser only | `<WalletProvider>` + `useWallet` |
+| `@zkscatter/sdk/util` | universal | HTTP / IndexedDB primitives |
+
+## Next.js integration
+
+If you reference the SDK by `file:` path inside this monorepo, add it to
+`transpilePackages` so Next.js compiles its TypeScript source:
+
+```ts next.config.ts
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  transpilePackages: ["@zkscatter/sdk"],
+};
+
+export default nextConfig;
+```
+
+## Web Worker assets
+
+The proving stack runs inside a Web Worker and lazy-loads `.wasm` /
+`.zkey` artifacts at runtime. Copy the assets into your `public/` (or
+serve them from a CDN) and pass URLs into the circuit functions:
+
+```
+public/zk/deposit.wasm
+public/zk/deposit_final.zkey
+public/zk/authorize.wasm
+public/zk/authorize_final.zkey
+public/zk/claim.wasm
+public/zk/claim_final.zkey
+public/zk/cancel.wasm
+public/zk/cancel_final.zkey
+```
+
+The reference apps copy these from `frontend/public/zk` and
+`apps/pro/public/zk`. Mobile uses `RNFS`-style native loaders — see
+the mobile reference app for the pattern.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Cannot find module '@zkscatter/sdk'`">
+    Verify the package is installed and your bundler resolves
+    `package.json#exports`. Next.js: confirm `transpilePackages` is set
+    if consuming from a workspace `file:` path.
+  </Accordion>
+  <Accordion title="`window is not defined` (SSR)">
+    Importing from `@zkscatter/sdk/react` or `/zk` from a server component
+    will fail. Mark the file `"use client"` or move the import behind a
+    dynamic import with `ssr: false`.
+  </Accordion>
+  <Accordion title="`Could not load wasm`">
+    The Web Worker cannot fetch `/zk/*.wasm`. Confirm files exist in
+    `public/zk/`, the dev server is serving them with the correct MIME
+    type (`application/wasm`), and the URL you passed to the prover
+    matches.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,108 @@
+---
+title: Proof system
+description: "Groth16 over BN254, four circuits, ~15K constraints per side."
+---
+
+zkScatter uses Groth16 proofs over the BN254 pairing-friendly curve
+(scalar field modulus exposed as `FIELD_MODULUS` from `@zkscatter/sdk/zk`).
+This page maps each circuit to the SDK function that drives it.
+
+## Circuits
+
+| Circuit | When | Public inputs (high level) | Constraints |
+|---|---|---|---|
+| `deposit` | User deposits into the pool | new commitment, token, amount | small (~5K) |
+| `authorize` | User signs an order | order hash, nullifier, claims root, new commitment | ~15K |
+| `claim` | Recipient claims a payout | claims root, nullifier, recipient | small (~3K) |
+| `cancel` | Maker cancels an active order | old nullifier, new commitment, commitment root | medium (~10K) |
+
+All circuits share the same Poseidon-on-BN254 hash, EdDSA-on-Baby-Jubjub
+signature scheme, and depth-20 incremental Merkle tree.
+
+## Domain tags
+
+To prevent hash collisions across roles, every Poseidon use is prefixed
+with a domain tag:
+
+```ts
+import {
+  TAG_ESCROW_NULL,
+  TAG_NONCE_NULL,
+  TAG_CLAIM_NULL,
+  TAG_COMMITMENT_V2,
+} from "@zkscatter/sdk/zk";
+```
+
+These constants are consensus-critical — never recompute them locally.
+
+## Proving stack
+
+Proofs run inside a Web Worker so the UI thread stays responsive:
+
+```
+┌─────────────────────────┐
+│ React component         │
+│   ↓ generateXxxProof()  │
+└─────────────────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│ Web Worker (workerRuntime)│
+│   ├── circomlibjs (Poseidon, EdDSA)│
+│   ├── snarkjs (groth16.fullProve)  │
+│   └── zkeyCache (IndexedDB)        │
+└─────────────────────────┘
+```
+
+The first proof of a session pays a one-time cost: ~50–150 ms for the
+Poseidon table build, plus the `.zkey` download (cached in IndexedDB
+via `zkeyCache`). Subsequent proofs reuse both.
+
+Use `warmupPoseidon()` early in the page lifecycle to amortize the
+table build off the critical path.
+
+## Circuit assets
+
+Every `generateXxxProof` accepts a `CircuitAssets` argument:
+
+```ts
+type CircuitAssets = {
+  wasm: string | ArrayBuffer;
+  zkey: string | ArrayBuffer;
+};
+```
+
+Pass URLs (`/zk/deposit.wasm`) or pre-fetched `ArrayBuffer`s. URLs hit
+the `zkeyCache` first; cache miss falls back to network fetch.
+
+## Performance budget
+
+Measured on M1 MacBook (Chrome 120, prod build):
+
+| Operation | Cold | Warm |
+|---|---|---|
+| Poseidon table build | ~120 ms | 0 (cached singleton) |
+| Deposit proof | ~600 ms | ~400 ms |
+| Authorize proof | ~3.5 s | ~2.8 s |
+| Claim proof | ~250 ms | ~180 ms |
+| Cancel proof | ~1.5 s | ~1.2 s |
+
+Mobile is ~3–5× slower depending on device class. The native prover in
+`mobile/native-prover` short-circuits the Web Worker path on iOS/Android
+for ~2× speedup on authorize.
+
+## Instrumentation
+
+Wrap any prove call with `timeProve` to emit `zk-perf:prove` events:
+
+```ts
+import { timeProve } from "@zkscatter/sdk/zk";
+
+const result = await timeProve("authorize", () =>
+  generateAuthorizeProof(input, assets),
+);
+// → window.dispatchEvent(new CustomEvent("zk-perf:prove", { detail: { circuit, ms } }))
+```
+
+Drop a listener in your analytics layer to track real-world prover
+latency.

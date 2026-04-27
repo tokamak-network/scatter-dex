@@ -1,0 +1,172 @@
+---
+title: Run a relayer node
+description: "Register, run, manage, and exit a zkScatter relayer."
+---
+
+A relayer matches orders off-chain, generates the counterparty
+half-proof, and submits `settleAuth` transactions on-chain in exchange
+for a basis-point fee. This page covers the SDK side — operator
+on-chain actions and HTTP-API expectations. The matcher logic itself
+lives in `relayer/` of the monorepo.
+
+## Operator lifecycle
+
+<Steps>
+  <Step title="Register">
+    Post a bond, set a fee, publish your URL.
+  </Step>
+  <Step title="Operate">
+    Run a matcher service, expose the standard HTTP endpoints, settle
+    matched orders.
+  </Step>
+  <Step title="Update">
+    Change URL, fee, profile metadata as needed.
+  </Step>
+  <Step title="Exit">
+    Request exit, wait the cool-down, withdraw the bond.
+  </Step>
+</Steps>
+
+## Register
+
+```ts
+import {
+  registerRelayer,
+  MAX_RELAYER_FEE_BPS,
+} from "@zkscatter/sdk/relayer";
+
+await registerRelayer(
+  network.contracts.relayerRegistry,
+  {
+    url: "https://relayer.example.com",
+    feeBps: 30,                   // 0.30 %, must be ≤ MAX_RELAYER_FEE_BPS
+    bondEth: "1.0",               // sent as msg.value
+  },
+  signer,
+);
+```
+
+The contract enforces a minimum bond — read `registry.minBond()` first
+and budget for slashing risk on top.
+
+## Update info
+
+```ts
+import { updateRelayerInfo } from "@zkscatter/sdk/relayer";
+
+await updateRelayerInfo(
+  network.contracts.relayerRegistry,
+  { url: "https://new.example.com", feeBps: 25 },
+  signer,
+);
+// Both `registerRelayer` and `updateRelayerInfo` validate `feeBps`
+// against `MAX_RELAYER_FEE_BPS` (500 = 5%) before prompting the wallet.
+```
+
+URL changes propagate to apps on their next `loadRelayersWithApiInfo`
+refresh — typically within 60s.
+
+## Add bond
+
+```ts
+import { addRelayerBond } from "@zkscatter/sdk/relayer";
+
+await addRelayerBond(network.contracts.relayerRegistry, "0.5", signer);
+```
+
+More bond = more apps willing to route through you, since slashable
+collateral signals reliability. There's no on-chain ranking — apps
+choose their own policy.
+
+## Read your status
+
+```ts
+import { loadOperatorRow } from "@zkscatter/sdk/relayer";
+
+const row = await loadOperatorRow(
+  network.contracts.relayerRegistry,
+  account,
+  readProvider,
+);
+// row.status: "active" | "cooldown" | "offline" | "unregistered"
+// row.exitRequestedAt + EXIT_COOLDOWN_SECONDS = unix seconds when bond becomes withdrawable
+```
+
+Surface this in your operator dashboard.
+
+## Exit
+
+```ts
+import {
+  requestRelayerExit,
+  executeRelayerExit,
+  EXIT_COOLDOWN_SECONDS,
+} from "@zkscatter/sdk/relayer";
+
+await requestRelayerExit(network.contracts.relayerRegistry, signer);
+// wait EXIT_COOLDOWN_SECONDS (7 days) for any outstanding obligations
+await executeRelayerExit(network.contracts.relayerRegistry, signer);
+// bond returned to operator address
+```
+
+While in cool-down your relayer should stop accepting new orders but
+continue honoring matched ones — otherwise the bond is at risk.
+
+## HTTP API contract
+
+Apps using the SDK's `RelayerClient` expect these endpoints:
+
+| Endpoint | Purpose | Notes |
+|---|---|---|
+| `GET /api/info` | Identity + fee + capabilities | Used for liveness probe |
+| `POST /api/orders` | Submit signed order | Body: `{ order, signature, feeMode }` |
+| `GET /api/orders/:address` | Active orders for a maker | Pagination optional |
+| `GET /api/history/:address` | Settled / cancelled history | `?limit=&offset=` |
+| `GET /api/claims/:address` | Pending stealth payouts | One row per claim entry |
+
+Reference implementation: `relayer/src/http/` in the monorepo.
+
+### `/api/info` shape
+
+```ts
+{
+  name: string,
+  version: string,
+  address: string,        // operator address
+  fee: number,            // bps, must match on-chain
+  orderCount: number,
+  settlement: string,     // contract address, must match the chain it's serving
+  profile?: RelayerProfile,
+}
+```
+
+`profile` will be sanitized client-side by `sanitizeProfile` — keep it
+honest, no HTML, https URLs only.
+
+## Operating posture
+
+- **Run two replicas behind a load balancer** — health checks should
+  return non-200 the moment matching is impaired so apps switch to
+  another relayer.
+- **Surface latency in `/api/info`** — apps can use this for routing.
+- **Pre-warm Poseidon and the prover zkey on boot** — cold-start
+  match latency tanks user experience.
+- **Watch reorg depth** — submit settlements only after enough
+  confirmations on the leaves you're proving against, otherwise your
+  proofs go stale.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Bond too low` on register">
+    Below the contract minimum. Read `registry.minBond()` first.
+  </Accordion>
+  <Accordion title="`Already registered`">
+    The signer's address is already in the registry. Use `updateRelayerInfo`
+    or exit first.
+  </Accordion>
+  <Accordion title="`executeExit` reverts with `Cooldown`">
+    Less than 7 days since `requestExit`. Wait or query `loadOperatorRow`
+    for `exitAvailableAt`.
+  </Accordion>
+</AccordionGroup>

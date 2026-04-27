@@ -1,0 +1,123 @@
+---
+title: react
+description: "Wallet provider and useWallet hook for browser apps."
+---
+
+```tsx
+import { WalletProvider, useWallet } from "@zkscatter/sdk/react";
+```
+
+This module is browser-only — it touches `window.ethereum`. Mark
+client components with `"use client"` in Next.js.
+
+## WalletProvider
+
+```tsx
+"use client";
+
+import { WalletProvider } from "@zkscatter/sdk/react";
+import { network } from "@/lib/network";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return <WalletProvider network={network}>{children}</WalletProvider>;
+}
+```
+
+Mount once near the root of your app. The provider:
+
+- Detects injected `window.ethereum` (MetaMask, Rabby, Coinbase Wallet,
+  Frame, …).
+- Watches `accountsChanged` and `chainChanged`.
+- Wraps the injection in an ethers `BrowserProvider` and `Signer`.
+- Falls back to a read-only `JsonRpcProvider` from `network.rpcUrl`
+  when no wallet is present.
+
+## useWallet
+
+```ts
+const {
+  account,        // string | null
+  chainId,        // number | null
+  signer,         // ethers.Signer | null
+  provider,       // ethers.BrowserProvider | null
+  readProvider,   // ethers.JsonRpcProvider — always present
+  walletName,     // "MetaMask" | "Rabby" | ... | null
+  connectError,   // string | null
+  connect,        // () => Promise<void>
+  disconnect,     // () => void
+} = useWallet();
+```
+
+### Connect button
+
+```tsx
+"use client";
+
+import { useWallet } from "@zkscatter/sdk/react";
+
+export function ConnectButton() {
+  const { account, walletName, connect, disconnect, connectError } = useWallet();
+
+  if (account) {
+    return (
+      <button onClick={disconnect}>
+        {walletName} • {account.slice(0, 6)}…{account.slice(-4)}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <button onClick={connect}>Connect wallet</button>
+      {connectError && <p style={{ color: "red" }}>{connectError}</p>}
+    </>
+  );
+}
+```
+
+### Chain enforcement
+
+The hook does not auto-switch chains. Read `chainId` and prompt the
+user via `provider.send("wallet_switchEthereumChain", […])` if it
+mismatches `network.chainId`:
+
+```ts
+import { toBeHex } from "ethers";
+
+if (chainId !== network.chainId && provider) {
+  await provider.send("wallet_switchEthereumChain", [
+    { chainId: toBeHex(network.chainId) },
+  ]);
+}
+```
+
+## Outside React
+
+For non-React contexts (Node scripts, mobile, vanilla JS), bypass this
+module. Build a `Signer` directly:
+
+```ts
+import { ethers } from "ethers";
+import { getReadProvider } from "@zkscatter/sdk";
+
+const wallet = new ethers.Wallet(privateKey, getReadProvider(rpcUrl));
+// pass `wallet` as the signer to any callXxx function
+```
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`useWallet must be used inside <WalletProvider>`">
+    The hook is called from a tree without the provider mounted. Verify
+    the component is rendered under your root `<Providers>` and is a
+    client component.
+  </Accordion>
+  <Accordion title="`window.ethereum` is undefined">
+    No injected wallet. Show a "Get a wallet" call-to-action.
+    `connectError` will surface this for you.
+  </Accordion>
+  <Accordion title="Account switch doesn't update UI">
+    Confirm `<WalletProvider>` mounts above the consumer. The provider
+    listens to `accountsChanged` once on mount.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,137 @@
+---
+title: notes
+description: "Pluggable note storage adapters."
+---
+
+```ts
+import {
+  createMemoryNoteAdapter,
+  createIndexedDbAdapter,
+  type NoteStorageAdapter,
+  type StoredNote,
+} from "@zkscatter/sdk/notes";
+```
+
+A **note** is the secret preimage of a commitment: owner secret, token,
+amount, salt, and Baby Jubjub pubkey. Lose the note, lose the funds.
+The storage adapters give you a typed persistence layer with
+hex ↔ bigint serialization at the boundary.
+
+## Interface
+
+```ts
+interface NoteStorageAdapter {
+  ready(): Promise<void>;
+  loadAll(): Promise<StoredNote[]>;
+  put(note: StoredNote): Promise<void>;
+  remove(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+interface StoredNote {
+  id: string;             // your choice — usually the commitment hex
+  label: string;          // human-friendly tag for the UI
+  symbol: string;         // token symbol
+  amount: string;         // display string (decimals already applied)
+  note: CommitmentNote;   // bigint preimage
+  commitment: bigint;     // Poseidon hash of the note
+  leafIndex: number;      // position in the on-chain pool
+  txHash?: string;
+  chainId?: number;
+  createdAt: number;
+}
+```
+
+## Memory adapter
+
+```ts
+const notes = createMemoryNoteAdapter();
+await notes.ready();
+await notes.put(stored);
+```
+
+In-process — wiped on reload. Use for tests, SSR, and CLI tools.
+
+## IndexedDB adapter
+
+```ts
+const notes = createIndexedDbAdapter({
+  dbName: "zkscatter",
+  storeName: "notes",
+  version: 1,
+});
+
+await notes.ready();
+await notes.put(stored);
+const all = await notes.loadAll();
+```
+
+The adapter handles `idle → ready` setup, schema migrations, and
+graceful degradation on browsers without IndexedDB (returns an empty
+list rather than throwing).
+
+## Lifecycle
+
+A typical browser app wires storage like this:
+
+```tsx
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { createIndexedDbAdapter, type StoredNote } from "@zkscatter/sdk/notes";
+
+export function useNotes() {
+  const adapter = useMemo(() => createIndexedDbAdapter(), []);
+  const [notes, setNotes] = useState<StoredNote[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      await adapter.ready();
+      const loaded = await adapter.loadAll();
+      if (alive) setNotes(loaded);
+    })();
+    return () => { alive = false };
+  }, [adapter]);
+
+  return {
+    notes,
+    add: async (n: StoredNote) => {
+      await adapter.put(n);
+      setNotes((prev) => [...prev, n]);
+    },
+    remove: async (id: string) => {
+      await adapter.remove(id);
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+    },
+  };
+}
+```
+
+## Mobile / React Native
+
+There's no built-in adapter for AsyncStorage / SQLite — implement the
+`NoteStorageAdapter` interface against whatever native storage your app
+uses. The mobile reference app in `mobile/src/services/NoteStorageService.ts`
+is a complete example.
+
+## Recovery from seed
+
+If a user loses their notes, you can rebuild by:
+
+1. Re-derive their EdDSA pubkey via `deriveEdDSAKey`.
+2. Stream `CommitmentInserted` events with `loadCommitmentInsertedHistory`.
+3. For each commitment, recompute `Poseidon(ownerSecret, token, amount,
+   salt, pubKey)` for plausible `(token, amount, salt)` candidates and
+   compare.
+
+In practice you keep a small "salt index" alongside notes in IndexedDB
+so recovery doesn't require brute force.
+
+## Hardening
+
+- Encrypt the IndexedDB blob if your threat model includes physical
+  device access — wrap `put`/`loadAll` with a passphrase-derived AES
+  key.
+- Clear notes on account switch — leftover notes from a previous
+  account are confusing at best, leakage at worst.

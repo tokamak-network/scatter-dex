@@ -1,0 +1,107 @@
+---
+title: Connect a wallet
+description: "Wire up @zkscatter/sdk/react and gate UI behind connection state."
+---
+
+## Mount the provider
+
+```tsx app/providers.tsx
+"use client";
+
+import { WalletProvider } from "@zkscatter/sdk/react";
+import { network } from "@/lib/network";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return <WalletProvider network={network}>{children}</WalletProvider>;
+}
+```
+
+```tsx app/layout.tsx
+import { Providers } from "./providers";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body><Providers>{children}</Providers></body>
+    </html>
+  );
+}
+```
+
+## A connect button
+
+```tsx components/ConnectButton.tsx
+"use client";
+
+import { useWallet } from "@zkscatter/sdk/react";
+
+export function ConnectButton() {
+  const { account, walletName, connect, disconnect, connectError } = useWallet();
+
+  if (!account) {
+    return (
+      <div>
+        <button onClick={connect}>Connect wallet</button>
+        {connectError && <p>{connectError}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={disconnect}>
+      {walletName ?? "Wallet"} · {account.slice(0, 6)}…{account.slice(-4)}
+    </button>
+  );
+}
+```
+
+## Gating writes behind a connected signer
+
+```tsx
+const { signer } = useWallet();
+
+if (!signer) {
+  return <ConnectButton />;
+}
+
+// safe to send transactions
+```
+
+`signer` is `null` when:
+
+- No wallet is injected.
+- The user hasn't connected yet.
+- The user disconnected mid-session.
+
+`readProvider` is **always** non-null — use it for view calls and event
+subscriptions even when the user is not connected.
+
+## Enforcing the right chain
+
+```tsx
+import { toBeHex } from "ethers";
+
+const { chainId, provider } = useWallet();
+
+if (chainId && chainId !== network.chainId && provider) {
+  await provider.send("wallet_switchEthereumChain", [
+    { chainId: toBeHex(network.chainId) },
+  ]);
+}
+```
+
+If the chain isn't yet added to the wallet, catch the error and call
+`wallet_addEthereumChain` with full network parameters.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="useWallet returns `null` even after connect">
+    `<WalletProvider>` is mounted *below* the consumer in the tree.
+    Move it up (typically into `app/layout.tsx`).
+  </Accordion>
+  <Accordion title="`connect` throws `User rejected the request`">
+    Surface this through `connectError` — the user explicitly declined
+    the popup. Don't auto-retry.
+  </Accordion>
+</AccordionGroup>
