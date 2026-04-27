@@ -31,6 +31,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { generateMetaAddress, MetaAddress } from '../lib/stealth';
 import { eqAddr } from '../lib/address';
+import { SECURE_OPTS } from '../lib/secureStore';
 
 const BASE_KEY = 'scatterdex_stealth_identity_v1';
 const MIGRATION_MARKER = 'scatterdex_stealth_migrated_v2';
@@ -48,9 +49,7 @@ function keyFor(address: string): string {
 }
 
 const persist = (address: string, identity: MetaAddress) =>
-  SecureStore.setItemAsync(keyFor(address), JSON.stringify(identity), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  });
+  SecureStore.setItemAsync(keyFor(address), JSON.stringify(identity), SECURE_OPTS);
 
 /**
  * SecureStore key the legacy single-wallet KeySecurityService writes the
@@ -103,9 +102,7 @@ async function migrateLegacyIfNeeded(address: string): Promise<void> {
   const newKey = keyFor(address);
   const existing = await SecureStore.getItemAsync(newKey);
   if (!existing) {
-    await SecureStore.setItemAsync(newKey, legacy, {
-      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-    });
+    await SecureStore.setItemAsync(newKey, legacy, SECURE_OPTS);
   }
 
   await SecureStore.setItemAsync(MIGRATION_MARKER, 'done');

@@ -17,6 +17,7 @@ import { ethers } from 'ethers';
 import type { WalletMeta, WalletSecret, WalletSource } from '../types/wallet';
 import { PinService } from './PinService';
 import { PinPromptBus } from './PinPrompt';
+import { SECURE_OPTS } from '../lib/secureStore';
 
 const WALLET_KEY = 'scatterdex_wallet_pk';
 const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';
@@ -26,8 +27,6 @@ const AUTH_ENABLED_KEY = 'scatterdex_biometric_enabled';
 const WALLETS_INDEX_KEY = 'scatterdex_wallets_index';
 const ACTIVE_WALLET_ID_KEY = 'scatterdex_wallets_active_id';
 const WALLET_SECRET_PREFIX = 'scatterdex_wallet_secret_';
-
-const SECURE_OPTS = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY } as const;
 
 function generateWalletId(): string {
   const bytes = new Uint8Array(16);

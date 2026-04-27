@@ -41,6 +41,7 @@ import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { eqAddr } from '../lib/address';
+import { SECURE_OPTS } from '../lib/secureStore';
 
 const V1_IDS_KEY = 'scatterdex_pending_claim_ids';
 const V1_META_PREFIX = 'scatterdex_pending_claim_meta_';
@@ -58,8 +59,6 @@ const V2_MIGRATION_MARKER = 'scatterdex_pending_claims_migrated_v2';
  * against.
  */
 const LEGACY_BUILTIN_ADDRESS_KEY = 'scatterdex_wallet_address';
-
-const SECURE_OPTS = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY } as const;
 
 export interface PendingClaim {
   id: string;              // stable, locally-generated

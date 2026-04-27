@@ -16,14 +16,11 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { scrypt, hexlify, randomBytes, getBytes } from 'ethers';
+import { SECURE_OPTS } from '../lib/secureStore';
 
 const KEY_SALT = 'scatterdex_pin_salt';
 const KEY_HASH = 'scatterdex_pin_hash';
 const KEY_FAILS = 'scatterdex_pin_fails';
-
-const SECURE_OPTS: SecureStore.SecureStoreOptions = {
-  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-};
 
 export const PIN_LENGTH = 6;
 export const PIN_MAX_FAILURES = 5;
