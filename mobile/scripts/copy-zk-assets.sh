@@ -33,11 +33,8 @@ REQUIRED_CIRCUITS=(deposit claim authorize cancel)
 # Subset the native prover crate currently registers. Adding a circuit
 # here also requires a matching `rust_witness::witness!(name)` +
 # `set_circom_circuits!` entry in mobile/native-prover/src/lib.rs and
-# a `CIRCUITS` row in mobile/src/services/NativeProverService.ts. Right
-# now the crate only wires `authorize` — the cancel flow lives entirely
-# on the WebView path. When the cancel native witness lands, append it
-# here in the same change.
-NATIVE_CIRCUITS=(authorize)
+# a `CIRCUITS` row in mobile/src/services/NativeProverService.ts.
+NATIVE_CIRCUITS=(authorize cancel)
 
 echo "=== Copying ZK circuit assets for mobile ==="
 

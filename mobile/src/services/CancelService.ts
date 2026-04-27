@@ -11,6 +11,7 @@
  */
 import { ethers } from 'ethers';
 import { ZKBridgeService } from './ZKBridgeService';
+import { generateNativeProof } from './NativeProverService';
 import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
@@ -184,24 +185,35 @@ export const CancelService = {
         sigR8y: sig.R8y,
       };
 
-      let wasmB64: string;
-      let zkeyB64: string;
-      try {
-        const wasmStart = Date.now();
-        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/cancel.wasm'));
-        console.log('[CancelService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
-        const zkeyStart = Date.now();
-        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/cancel_final.zkey'));
-        console.log('[CancelService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
-      } catch (e) {
-        console.error('[CancelService] circuit asset load failed', e);
-        throw new Error('Cancel circuit files not found. Run `npm run copy:circuits` after building the circuits.');
-      }
-
+      let proofResult;
       const proofStart = Date.now();
-      console.log('[CancelService] generateProof call dispatching to WebView');
-      const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
-      console.log('[CancelService] generateProof returned', { ms: Date.now() - proofStart });
+      try {
+        console.log('[CancelService] generateProof native dispatch');
+        proofResult = await generateNativeProof('cancel', circuitInputs);
+        console.log('[CancelService] generateProof native returned', { ms: Date.now() - proofStart });
+      } catch (e) {
+        // Native module unavailable (Expo Go, missing arm64 jniLib) or
+        // proving failed — fall back to the WebView path so the user
+        // can still cancel. Logs the cause so the regression is visible.
+        console.warn('[CancelService] native proof unavailable, falling back to WebView:', e);
+        let wasmB64: string;
+        let zkeyB64: string;
+        try {
+          const wasmStart = Date.now();
+          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/cancel.wasm'));
+          console.log('[CancelService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
+          const zkeyStart = Date.now();
+          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/cancel_final.zkey'));
+          console.log('[CancelService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
+        } catch (loadErr) {
+          console.error('[CancelService] circuit asset load failed', loadErr);
+          throw new Error('Cancel circuit files not found. Run `npm run copy:circuits` after building the circuits.');
+        }
+        const fallbackStart = Date.now();
+        console.log('[CancelService] generateProof WebView dispatch');
+        proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
+        console.log('[CancelService] generateProof WebView returned', { ms: Date.now() - fallbackStart });
+      }
       const proof = formatProofForSolidity(proofResult.proof);
 
       onProgress({ step: 'submitting' });

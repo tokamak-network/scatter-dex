@@ -262,11 +262,13 @@ pub use circom::{
 mod witness {
     rust_witness::witness!(multiplier2);
     rust_witness::witness!(authorize);
+    rust_witness::witness!(cancel);
 }
 
 crate::set_circom_circuits! {
     ("multiplier2_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::multiplier2_witness)),
     ("authorize_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::authorize_witness)),
+    ("cancel_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::cancel_witness)),
 }
 
 #[cfg(test)]
@@ -283,6 +285,125 @@ mod circom_tests {
         assert!(result.is_ok());
         let proof = result.unwrap();
         assert!(verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod cancel_circom_test {
+    //! End-to-end Groth16 proving + verification of `cancel.circom` using the
+    //! same primitives the mobile client uses on the FFI hot path
+    //! (`poseidon_hash`, `derive_eddsa_key`, `sign_eddsa`). Catches three
+    //! regression classes pre-device:
+    //!   1. zkey/wasm drift — building inputs from the circuit's spec and
+    //!      proving against the bundled zkey would fail if either side
+    //!      moved.
+    //!   2. `circom-prover`'s `RustWitness` path requires every input value
+    //!      to be a JSON array of decimal strings. A regression in the
+    //!      mobile-side `wrapSingletons`/`decimalize` would silently drop
+    //!      witness inputs and emit all-zero public signals.
+    //!   3. EdDSA / Poseidon vendoring — if `babyjubjub-rs` or
+    //!      `light-poseidon` ever stopped matching circomlibjs, the EdDSA
+    //!      verify constraint inside `cancel.circom` would fail and the
+    //!      proof gen would panic before producing a witness.
+    use crate::circom::{generate_circom_proof, verify_circom_proof, ProofLib};
+    use crate::{derive_eddsa_key, poseidon_hash, sign_eddsa};
+
+    const ZKEY_PATH: &str = "./test-vectors/circom/cancel_final.zkey";
+
+    fn ph(args: &[&str]) -> String {
+        poseidon_hash(args.iter().map(|s| (*s).to_string()).collect()).expect("poseidon_hash")
+    }
+
+    #[test]
+    fn cancel_proof_round_trips() {
+        // Tag constants — must match `circuits/tags.circom` and
+        // `mobile/src/lib/zk/tags.ts`. Hardcoded here on purpose: drift in
+        // either source should make this test fail loudly.
+        const TAG_COMMITMENT_V2: &str = "3";
+        const TAG_ESCROW_NULL: &str = "0";
+        const TAG_NONCE_NULL: &str = "1";
+        const DEPTH: usize = 20;
+
+        // Same priv key as the EdDSA vector tests above — gives a stable
+        // (Ax, Ay) so any regression in `derive_eddsa_key` surfaces here too.
+        const PRIV_HEX: &str =
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        let key = derive_eddsa_key(PRIV_HEX.into()).expect("derive");
+        let ax = key.pub_key_ax;
+        let ay = key.pub_key_ay;
+
+        // Trivial private witness. balance must fit 128 bits (cancel.circom
+        // §4b). Token can be any field elt — no range check.
+        let secret = "11111";
+        let salt = "22222";
+        let nonce = "33333";
+        let token = "44444";
+        let balance = "55555";
+        let fresh_salt = "66666";
+        let submitter = "777777";
+
+        // commitment = Poseidon(TAG_V2, secret, token, balance, salt, Ax, Ay)
+        let old_commit = ph(&[TAG_COMMITMENT_V2, secret, token, balance, salt, &ax, &ay]);
+        let new_commit = ph(&[TAG_COMMITMENT_V2, secret, token, balance, fresh_salt, &ax, &ay]);
+        let old_nullifier = ph(&[TAG_ESCROW_NULL, secret, salt]);
+        let old_nonce_nullifier = ph(&[TAG_NONCE_NULL, secret, nonce]);
+
+        // Sign cancelMsg = Poseidon(oldNonceNullifier, submitter).
+        let cancel_msg = ph(&[&old_nonce_nullifier, submitter]);
+        let sig = sign_eddsa(PRIV_HEX.into(), cancel_msg).expect("sign");
+
+        // Merkle path: leaf at index 0, every sibling is the all-zero
+        // subtree hash for that level. zero_hashes[0] == "0" matches
+        // ZEROS[0] in mobile/src/lib/merkleTree.ts and the contract's
+        // `_zeros(0)`.
+        let mut zero_hashes: Vec<String> = vec!["0".to_string()];
+        for d in 0..DEPTH {
+            let z = zero_hashes[d].clone();
+            zero_hashes.push(ph(&[&z, &z]));
+        }
+        let mut root = old_commit.clone();
+        for d in 0..DEPTH {
+            root = ph(&[&root, &zero_hashes[d]]);
+        }
+        let path: Vec<String> = (0..DEPTH).map(|d| zero_hashes[d].clone()).collect();
+        let path_idx: Vec<&str> = vec!["0"; DEPTH];
+
+        // RustWitness path requires every value to be a JSON array of
+        // decimal strings — singletons must still be wrapped (mirrors
+        // NativeProverService.wrapSingletons in the mobile client).
+        let inputs = serde_json::json!({
+            "commitmentRoot":     [root],
+            "oldNullifier":       [old_nullifier],
+            "oldNonceNullifier":  [old_nonce_nullifier.clone()],
+            "newCommitment":      [new_commit],
+            "submitter":          [submitter],
+            "secret":             [secret],
+            "salt":               [salt],
+            "nonce":              [nonce],
+            "token":              [token],
+            "balance":            [balance],
+            "freshSalt":          [fresh_salt],
+            "path":               path,
+            "pathIdx":            path_idx,
+            "pubKeyAx":           [ax],
+            "pubKeyAy":           [ay],
+            "sigS":               [sig.s],
+            "sigR8x":             [sig.r8x],
+            "sigR8y":             [sig.r8y],
+        })
+        .to_string();
+
+        let proof = generate_circom_proof(ZKEY_PATH.to_string(), inputs, ProofLib::Arkworks)
+            .expect("cancel proof gen");
+
+        // Public signals order must match cancel.circom main {public [...]}:
+        //   [commitmentRoot, oldNullifier, oldNonceNullifier, newCommitment, submitter]
+        assert_eq!(proof.inputs.len(), 5, "expected 5 public signals");
+        assert_eq!(proof.inputs[2], old_nonce_nullifier);
+        assert_eq!(proof.inputs[4], submitter);
+
+        verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
+            .expect("cancel proof verify");
     }
 }
 
