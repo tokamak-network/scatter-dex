@@ -61,7 +61,21 @@ export function AdvancedSettings() {
           </span>
           <button
             type="button"
-            onClick={resetRecipients}
+            onClick={() => {
+              // Single empty row is the default — no work to lose,
+              // skip the prompt. Confirm only when the user has
+              // actually built up a multi-recipient list.
+              if (
+                recipients.length > 1 ||
+                recipients[0]?.address.trim() !== "" ||
+                recipients[0]?.amount.trim() !== ""
+              ) {
+                if (!window.confirm("Reset recipients? Any addresses and amounts you've entered will be cleared.")) {
+                  return;
+                }
+              }
+              resetRecipients();
+            }}
             className="text-[11px] text-[var(--color-text-subtle)] hover:text-[var(--color-primary)]"
           >
             Reset
