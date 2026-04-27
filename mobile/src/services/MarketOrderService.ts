@@ -23,7 +23,7 @@ import { getCommitmentLeaves } from '../lib/commitmentScan';
 import type { SwapRoute } from '../lib/dex-aggregator';
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
-import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { generateNativeProof } from './NativeProverService';
 import { formatProofForSolidity } from '../lib/proofFormat';
 import { buildPoseidonMerkleTree } from '../lib/merkleTree';
 
@@ -237,16 +237,10 @@ export const MarketOrderService = {
         claimCount: '1',
       };
 
-      let wasmB64: string;
-      let zkeyB64: string;
-      try {
-        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
-        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
-      } catch {
-        throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
-      }
-
-      const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
+      const proofStart = Date.now();
+      console.log('[MarketOrderService] generateProof native dispatch');
+      const proofResult = await generateNativeProof('authorize', circuitInputs);
+      console.log('[MarketOrderService] generateProof native returned', { ms: Date.now() - proofStart });
       const proof = formatProofForSolidity(proofResult.proof);
 
       onProgress({ step: 'submitting' });
