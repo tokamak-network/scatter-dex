@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Stat } from "../components/Stat";
+
+const COOLDOWN_REMAINING_MOCK = "5d 14h 02m";
 
 export default function ProfilePage() {
   const [name, setName] = useState("Acme Relayer");
@@ -132,9 +135,9 @@ function BondPanel() {
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
       <h2 className="mb-4 font-semibold">Bond</h2>
       <div className="grid grid-cols-3 gap-4">
-        <Stat label="Current bond" value="0.10 ETH" sub="≈ $310" />
-        <Stat label="Minimum bond" value="0.10 ETH" sub="Set by governance" />
-        <Stat label="Slashed to date" value="0 ETH" sub="No incidents" />
+        <Stat compact label="Current bond" value="0.10 ETH" sub="≈ $310" />
+        <Stat compact label="Minimum bond" value="0.10 ETH" sub="Set by governance" />
+        <Stat compact label="Slashed to date" value="0 ETH" sub="No incidents" />
       </div>
       <div className="mt-5 flex items-end gap-3">
         <Field label="Add bond">
@@ -164,7 +167,6 @@ function BondPanel() {
 
 function ExitPanel() {
   const [exitState, setExitState] = useState<"active" | "cooldown" | "ready">("active");
-  const cooldownRemaining = "5d 14h 02m";
 
   if (exitState === "active") {
     return (
@@ -190,7 +192,7 @@ function ExitPanel() {
         <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Cool-down in progress</h2>
         <p className="mb-4 text-sm text-[var(--color-text-muted)]">
           Exit requested. Bond will be withdrawable in{" "}
-          <span className="font-mono font-semibold text-[var(--color-text)]">{cooldownRemaining}</span>.
+          <span className="font-mono font-semibold text-[var(--color-text)]">{COOLDOWN_REMAINING_MOCK}</span>.
           The relayer is no longer accepting new orders.
         </p>
         <button
@@ -226,15 +228,6 @@ function ExitPanel() {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
-      <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{sub}</div>
-    </div>
-  );
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Stat } from "../components/Stat";
 
 type Window = "24h" | "7d" | "30d" | "all";
 type Metric = "settlements" | "successRate" | "volume";
@@ -141,16 +142,6 @@ export default function LeaderboardPage() {
         Ranking served from the shared indexer. Wired through SDK{" "}
         <code className="font-mono">loadActiveRelayers()</code> + indexer in v1.1.
       </p>
-    </div>
-  );
-}
-
-function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
-      <div className="mt-1 text-xs text-[var(--color-text-muted)]">{sub}</div>
     </div>
   );
 }

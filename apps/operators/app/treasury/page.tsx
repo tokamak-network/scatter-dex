@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Stat } from "../components/Stat";
 
 interface TokenBalance {
   symbol: string;
@@ -134,12 +135,3 @@ export default function TreasuryPage() {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
-      <div className="mt-1 text-xs text-[var(--color-text-muted)]">{sub}</div>
-    </div>
-  );
-}

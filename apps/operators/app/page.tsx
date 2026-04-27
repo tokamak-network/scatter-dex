@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Stat } from "./components/Stat";
 
 export default function Landing() {
   return (
@@ -237,12 +238,3 @@ function Compare({ label, mid, us }: { label: string; mid?: boolean; us?: boolea
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-left">
-      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
-      <div className="mt-1 text-xs text-[var(--color-text-muted)]">{sub}</div>
-    </div>
-  );
-}
