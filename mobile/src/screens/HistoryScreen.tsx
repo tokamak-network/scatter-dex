@@ -506,9 +506,14 @@ export default function HistoryScreen() {
       }
     };
     void refresh();
-    // One-shot prune of >1d-old terminal rows — keeps the list bounded
-    // without scheduling its own interval.
-    void PendingOrdersService.prune(account).catch(() => 0);
+    // Backfill must run before prune — prune deletes terminal rows older
+    // than 1 day, which would hide exactly the stuck rows the backfill
+    // needs to find.
+    void PendingOrdersService.cleanupStuckChangeNotes(account)
+      .catch(() => 0)
+      .finally(() => {
+        void PendingOrdersService.prune(account).catch(() => 0);
+      });
     const unsub = PendingOrdersService.subscribe((wallet) => {
       if (wallet === account.toLowerCase()) void refresh();
     });

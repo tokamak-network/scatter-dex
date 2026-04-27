@@ -19,8 +19,10 @@
  */
 import * as SQLite from 'expo-sqlite';
 import { AppState, AppStateStatus } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RelayerApiService, AuthorizeOrderStatusResponse } from './RelayerApiService';
 import { TradeHistoryStorage } from './TradeHistoryStorage';
+import { NoteStorageService } from './NoteStorageService';
 
 const DB_NAME = 'scatterdex_trade_history.db';
 
@@ -44,6 +46,10 @@ export const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set([
 export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'settled', 'failed', 'dead_letter', 'cancelled', 'expired',
 ]);
+
+const NON_SETTLED_TERMINAL: readonly string[] = [...TERMINAL_STATUSES].filter(
+  (s) => s !== 'settled',
+);
 
 /** Polling cadence. Two phases so the happy path feels instant but idle
  *  orders don't hammer the relayer for minutes. Per design §3.2. */
@@ -292,6 +298,16 @@ async function pollOnce(): Promise<void> {
   }
 }
 
+async function dropChangeNoteForOrder(wallet: string, orderHash: string): Promise<boolean> {
+  const trade = await TradeHistoryStorage.getById(wallet, orderHash);
+  if (!trade?.changeNoteId) return false;
+  await NoteStorageService.deleteNote(wallet, trade.changeNoteId);
+  // deleteNote doesn't broadcast on its own; subscribers (History screen)
+  // need this to drop the phantom row without waiting for next mount.
+  NoteStorageService.emitNotesChanged(wallet);
+  return true;
+}
+
 async function applyStatus(
   db: SQLite.SQLiteDatabase,
   row: Row,
@@ -348,6 +364,19 @@ async function applyStatus(
       }
     } catch (err) {
       console.warn('[PendingOrders] settle backfill failed:', err);
+    }
+  }
+
+  // Roll back the speculative change note OrderService inserted at submit
+  // time, otherwise it lingers as a phantom balance in the Active tab.
+  if (resp.status !== 'settled' && TERMINAL_STATUSES.has(resp.status)) {
+    try {
+      const summary = JSON.parse(row.order_summary) as PendingOrderSummary;
+      if (summary.orderHash) {
+        await dropChangeNoteForOrder(row.wallet_address, summary.orderHash);
+      }
+    } catch (err) {
+      console.warn('[PendingOrders] phantom-change-note cleanup failed:', err);
     }
   }
 
@@ -527,6 +556,50 @@ export const PendingOrdersService = {
            ORDER BY submitted_at DESC`;
     const rows = await db.getAllAsync<Row>(sql, normalize(walletAddress));
     return rows.map(rowToOrder);
+  },
+
+  // Backfill rollback for installs predating the applyStatus rollback path.
+  // applyStatus only rolls back on the status *transition*, so rows that
+  // were already terminal at upgrade time never get cleaned. Run-once per
+  // wallet via AsyncStorage marker.
+  async cleanupStuckChangeNotes(walletAddress: string): Promise<number> {
+    const wallet = normalize(walletAddress);
+    const markerKey = `phantom-note-cleanup:v1:${wallet}`;
+    if (await AsyncStorage.getItem(markerKey)) return 0;
+
+    const db = await getDb();
+    const placeholders = NON_SETTLED_TERMINAL.map(() => '?').join(',');
+    const rows = await db.getAllAsync<{ order_summary: string }>(
+      `SELECT order_summary
+         FROM pending_orders
+        WHERE wallet_address = ?
+          AND last_polled_status IN (${placeholders})`,
+      wallet,
+      ...NON_SETTLED_TERMINAL,
+    );
+
+    // Chunk to bound parallel SecureStore + AsyncStorage writes (deleteNote
+    // is internally serialized via the index lock). Mirrors POLL_CHUNK_SIZE
+    // used by the live poll fan-out.
+    let dropped = 0;
+    for (let i = 0; i < rows.length; i += POLL_CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + POLL_CHUNK_SIZE);
+      const results = await Promise.all(
+        chunk.map(async (r) => {
+          try {
+            const summary = JSON.parse(r.order_summary) as PendingOrderSummary;
+            if (!summary.orderHash) return false;
+            return await dropChangeNoteForOrder(wallet, summary.orderHash);
+          } catch (err) {
+            console.warn('[PendingOrders] stuck-change-note cleanup row failed:', err);
+            return false;
+          }
+        }),
+      );
+      dropped += results.filter(Boolean).length;
+    }
+    await AsyncStorage.setItem(markerKey, String(Date.now()));
+    return dropped;
   },
 
   /** Remove terminal rows older than a day so the list doesn't grow
