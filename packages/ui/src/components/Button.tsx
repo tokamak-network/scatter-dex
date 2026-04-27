@@ -1,18 +1,42 @@
-"use client";
+import type {
+  AnchorHTMLAttributes,
+  ButtonHTMLAttributes,
+  ReactNode,
+} from "react";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
-
-export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "danger"
+  | "ghost"
+  | "inverse"
+  | "inverse-outline";
 export type ButtonSize = "sm" | "md" | "lg";
 
-interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+type CommonProps = {
   variant?: ButtonVariant;
   size?: ButtonSize;
   /** When true, the button renders full-width (e.g. modal action
    *  rows where the button takes the entire footer). */
   block?: boolean;
   children: ReactNode;
-}
+};
+
+type ButtonAsButton = CommonProps &
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> & {
+    href?: undefined;
+    type?: "button" | "submit" | "reset";
+  };
+
+type ButtonAsAnchor = CommonProps &
+  Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "children" | "href"> & {
+    /** When set, the component renders an `<a>` instead of a `<button>`.
+     *  Useful for navigation CTAs that want button styling but need a
+     *  real anchor (right-click, middle-click, copy URL, etc.). */
+    href: string;
+  };
+
+type ButtonProps = ButtonAsButton | ButtonAsAnchor;
 
 const VARIANT_CLS: Record<ButtonVariant, string> = {
   primary:
@@ -23,6 +47,12 @@ const VARIANT_CLS: Record<ButtonVariant, string> = {
     "bg-[var(--color-danger)] text-white hover:opacity-90 disabled:opacity-40",
   ghost:
     "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40",
+  // `inverse` = primary on a dark surface (e.g. inside a coloured CTA
+  // box). `inverse-outline` = secondary on the same surface.
+  inverse:
+    "bg-white text-[var(--color-primary)] hover:bg-white/90 disabled:opacity-40",
+  "inverse-outline":
+    "border border-white/30 text-white hover:bg-white/10 disabled:opacity-40",
 };
 
 const SIZE_CLS: Record<ButtonSize, string> = {
@@ -37,21 +67,24 @@ const RADIUS_CLS: Record<ButtonSize, string> = {
   lg: "rounded-lg",
 };
 
-/** Primitive button with the four variants used across the apps:
- *  primary call-to-action, secondary outline, destructive (cancel /
- *  delete), and a ghost row-action. Keeps the modal action footers
- *  and inline list actions visually consistent. */
-export function Button({
+/** Compose just the className for a button-styled element without
+ *  rendering one. Use this when the call site needs to keep its own
+ *  element — most importantly Next.js `<Link>` for internal routes,
+ *  which gets prefetch and client-side navigation that a plain `<a>`
+ *  would lose. */
+export function buttonClassName({
   variant = "primary",
   size = "md",
   block,
   className,
-  type,
-  children,
-  ...rest
-}: ButtonProps) {
-  const cls = [
-    "font-medium transition-colors",
+}: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  block?: boolean;
+  className?: string;
+} = {}): string {
+  return [
+    "inline-flex items-center justify-center gap-1.5 font-medium transition-colors",
     VARIANT_CLS[variant],
     SIZE_CLS[size],
     RADIUS_CLS[size],
@@ -60,8 +93,33 @@ export function Button({
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/** Primitive button with the variants used across the apps:
+ *  primary call-to-action, secondary outline, destructive (cancel /
+ *  delete), a ghost row-action, and the inverse pair for dark
+ *  surfaces (e.g. footer CTA boxes). Renders an `<a>` when `href` is
+ *  passed — use this for **external** URLs (where you want a plain
+ *  anchor anyway). For internal Next routes, render `<Link>` directly
+ *  with `className={buttonClassName(...)}` so prefetch and client-
+ *  side navigation aren't lost. */
+export function Button(props: ButtonProps) {
+  const { variant, size, block, className, children, ...rest } = props;
+  const cls = buttonClassName({ variant, size, block, className });
+
+  if ("href" in props && props.href !== undefined) {
+    const { href, ...anchorRest } =
+      rest as AnchorHTMLAttributes<HTMLAnchorElement> & { href: string };
+    return (
+      <a href={href} className={cls} {...anchorRest}>
+        {children}
+      </a>
+    );
+  }
+
+  const { type, ...buttonRest } = rest as ButtonHTMLAttributes<HTMLButtonElement>;
   return (
-    <button type={type ?? "button"} className={cls} {...rest}>
+    <button type={type ?? "button"} className={cls} {...buttonRest}>
       {children}
     </button>
   );
