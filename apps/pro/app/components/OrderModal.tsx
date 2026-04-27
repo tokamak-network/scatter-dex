@@ -14,6 +14,8 @@ import { useEdDSAKey } from "../lib/eddsaKey";
 import { getAuthorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
+import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
+import { computeCommitment } from "@zkscatter/sdk/zk";
 import type { VaultNote } from "../lib/vault";
 import {
   delaySeconds,
@@ -245,6 +247,7 @@ export function OrderModal({
   const { add: addOrder } = useOrders();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const commitmentTree = useCommitmentTree();
   const toast = useToast();
   // Pull the active pair object + advanced settings from the
   // trade-form context. The `pair` prop is the display string and
@@ -386,8 +389,12 @@ export function OrderModal({
         releaseTime: nowSec + BigInt(delaySeconds(recipients[i]!)),
       }));
 
-      // Single-leaf-at-0 empty Merkle tree — see lib/emptyTreeProof.ts.
-      const { merkleProof, leafIndex } = await buildEmptyTreeProof(note.note);
+      const commitment = await computeCommitment(note.note);
+      const { merkleProof, leafIndex } = await getMerkleProofWithFallback(
+        commitmentTree,
+        commitment,
+        () => buildEmptyTreeProof(note.note),
+      );
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       const nonce = randomFieldElement();
@@ -472,7 +479,7 @@ export function OrderModal({
   }, [
     side, pair, price, size, account, note,
     activePair, recipients, expiryKey, maxFeeBps,
-    deriveEdDSA, addOrder, toast,
+    deriveEdDSA, addOrder, toast, commitmentTree,
   ]);
 
   const busy =

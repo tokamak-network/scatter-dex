@@ -8,7 +8,7 @@
  *  precomputed zero-node table is identical to the one the Solidity
  *  contract publishes — change one, change both. */
 
-import { poseidonHash } from "./commitment";
+import { getPoseidonModule, poseidonHash, poseidonHashWith } from "./commitment";
 
 /** Precomputed zero hashes from `IncrementalMerkleTree.sol._zeros()`.
  *  `ZEROS[i]` is `Poseidon(ZEROS[i-1], ZEROS[i-1])`. Used as the
@@ -100,5 +100,66 @@ export class IncrementalMerkleTree {
     const tree = new IncrementalMerkleTree(depth);
     for (const leaf of leaves) await tree.insert(leaf);
     return tree;
+  }
+
+  /** Inclusion proof for a leaf at the given index. Walks the tree
+   *  level by level: at each level, the sibling is the hash of the
+   *  sibling subtree's leaves (computed on demand) when those leaves
+   *  exist, otherwise the precomputed `ZEROS[i]`. Cost: O(N) hashes
+   *  per call in the worst case (sibling subtree is fully populated).
+   *  Memory stays at O(N) — the O(2^depth) a fully-padded tree would
+   *  require is the alternative.
+   *
+   *  TODO(perf): cache the layer arrays to drop per-proof cost to
+   *  O(log N). Acceptable at projected near-term scale (~hundreds
+   *  of commitments); revisit before mainnet.
+   *
+   *  Returns the same `MerkleProof` shape every spend circuit
+   *  consumes (`{ root, pathElements, pathIndices }`). Throws when
+   *  `leafIndex` is outside the inserted range. */
+  async proof(leafIndex: number): Promise<{
+    root: bigint;
+    pathElements: bigint[];
+    pathIndices: number[];
+  }> {
+    if (leafIndex < 0 || leafIndex >= this._leaves.length) {
+      throw new Error(
+        `IncrementalMerkleTree.proof: leafIndex ${leafIndex} out of range (0..${this._leaves.length - 1})`,
+      );
+    }
+
+    // Fetch the Poseidon module once so the level loop hashes
+    // synchronously — `await poseidonHash` per node would queue a
+    // microtask per hash and dominate the cost.
+    const poseidon = await getPoseidonModule();
+
+    // `levelLeaves` starts as the leaf layer; each iteration replaces
+    // it with the next layer up, computing only the prefix actually
+    // backed by inserted leaves. The right-side gap is filled by
+    // `ZEROS[level]` whenever the sibling falls outside.
+    let levelLeaves: bigint[] = this._leaves.slice();
+    const pathElements: bigint[] = [];
+    const pathIndices: number[] = [];
+
+    let idx = leafIndex;
+    for (let level = 0; level < this.depth; level++) {
+      const isRight = idx % 2;
+      const siblingIdx = isRight ? idx - 1 : idx + 1;
+      const sibling =
+        siblingIdx < levelLeaves.length ? levelLeaves[siblingIdx]! : ZEROS[level]!;
+      pathElements.push(sibling);
+      pathIndices.push(isRight);
+
+      const next: bigint[] = new Array(Math.ceil(levelLeaves.length / 2));
+      for (let i = 0; i < levelLeaves.length; i += 2) {
+        const left = levelLeaves[i]!;
+        const right = i + 1 < levelLeaves.length ? levelLeaves[i + 1]! : ZEROS[level]!;
+        next[i >> 1] = poseidonHashWith(poseidon, [left, right]);
+      }
+      levelLeaves = next;
+      idx = idx >> 1;
+    }
+
+    return { root: this._root, pathElements, pathIndices };
   }
 }
