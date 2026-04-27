@@ -1,4 +1,5 @@
 import type { NoteStorageAdapter, StoredNote } from "./types";
+import { openIDB } from "../util/idb";
 
 const DEFAULT_DB_NAME = "zkscatter-notes";
 const DEFAULT_STORE = "notes";
@@ -130,31 +131,11 @@ export function createIndexedDbNoteAdapter(
 
   function openDb(): Promise<IDBDatabase | null> {
     if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve) => {
-      if (typeof indexedDB === "undefined") {
-        warnOnce("indexedDB unavailable in this runtime");
-        resolve(null);
-        return;
-      }
-      let req: IDBOpenDBRequest;
-      try {
-        req = indexedDB.open(dbName, version);
-      } catch (e) {
-        warnOnce("indexedDB.open threw", e);
-        resolve(null);
-        return;
-      }
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(storeName)) {
-          db.createObjectStore(storeName, { keyPath: "id" });
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => {
-        warnOnce("indexedDB.open errored", req.error);
-        resolve(null);
-      };
+    dbPromise = openIDB({
+      dbName,
+      version,
+      stores: [{ name: storeName, keyPath: "id" }],
+      onWarn: warnOnce,
     });
     return dbPromise;
   }

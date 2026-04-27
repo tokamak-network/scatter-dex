@@ -11,6 +11,7 @@
  *  resolved within the same package). */
 
 import { warmupPoseidon } from "./commitment";
+import { openIDB } from "../util/idb";
 
 const DB_NAME = "zk-asset-cache";
 const STORE = "blobs";
@@ -40,22 +41,13 @@ let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve) => {
-    if (typeof indexedDB === "undefined") {
-      resolve(null);
-      return;
-    }
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      // Guarded so a future version bump that adds a new store won't
-      // throw `ConstraintError` here for profiles where `blobs` already
-      // exists from a prior version.
-      if (!req.result.objectStoreNames.contains(STORE)) {
-        req.result.createObjectStore(STORE, { keyPath: "url" });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
+  // No `onWarn`: the asset cache silently degrades to memory-only +
+  // canonical URL on any IDB failure — that's the documented
+  // contract of this module, not a bug to surface to the console.
+  dbPromise = openIDB({
+    dbName: DB_NAME,
+    version: DB_VERSION,
+    stores: [{ name: STORE, keyPath: "url" }],
   });
   return dbPromise;
 }

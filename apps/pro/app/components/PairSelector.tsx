@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { LAUNCH_PAIRS } from "@zkscatter/sdk";
 import { useTradeForm } from "../lib/tradeForm";
+import { useOutsideClick } from "../lib/useOutsideClick";
 
 /** Workbench header pair selector — flat dropdown with Featured at
  *  top + All pairs below. With 4 tokens / 7 pairs, quote-market
@@ -17,22 +18,8 @@ export function PairSelector() {
 
   const featured = useMemo(() => LAUNCH_PAIRS.filter((p) => p.featured), []);
   const rest = useMemo(() => LAUNCH_PAIRS.filter((p) => !p.featured), []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
 
   const pick = (display: string) => {
     setPairBy(display);
