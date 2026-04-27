@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Button, TokamakMark } from "@zkscatter/ui";
+import { TokamakMark, buttonClassName } from "@zkscatter/ui";
 
 export function Nav() {
   return (
@@ -32,9 +32,9 @@ export function Nav() {
           >
             GitHub
           </a>
-          <Button href="/apps" size="sm">
+          <Link href="/apps" className={buttonClassName({ size: "sm" })}>
             Launch app
-          </Button>
+          </Link>
         </nav>
       </div>
     </header>

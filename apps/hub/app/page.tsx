@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Lock, ShieldCheck, Zap } from "lucide-react";
-import { Button } from "@zkscatter/ui";
+import { Button, buttonClassName } from "@zkscatter/ui";
 import { USER_APPS, OPERATOR_APPS } from "./lib/apps";
 import { AppCard } from "./components/AppCard";
 
@@ -53,13 +53,16 @@ function Hero() {
           your users. Four apps, one shared core.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
-          <Button href="#apps" size="lg">
+          <Link href="#apps" className={buttonClassName({ size: "lg" })}>
             Explore the apps
             <ArrowRight className="h-4 w-4" />
-          </Button>
-          <Button href="#developers" variant="secondary" size="lg">
+          </Link>
+          <Link
+            href="#developers"
+            className={buttonClassName({ variant: "secondary", size: "lg" })}
+          >
             Build with us
-          </Button>
+          </Link>
         </div>
       </div>
     </Section>
@@ -334,9 +337,12 @@ function FooterCTA() {
           Pick the app shaped for you, or build your own on the same ZK core.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button href="/apps" variant="inverse" size="lg">
+          <Link
+            href="/apps"
+            className={buttonClassName({ variant: "inverse", size: "lg" })}
+          >
             Try the apps
-          </Button>
+          </Link>
           <Button
             href="https://docs.zkscatter.xyz"
             target="_blank"

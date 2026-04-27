@@ -1,5 +1,3 @@
-"use client";
-
 import type {
   AnchorHTMLAttributes,
   ButtonHTMLAttributes,
@@ -69,23 +67,23 @@ const RADIUS_CLS: Record<ButtonSize, string> = {
   lg: "rounded-lg",
 };
 
-/** Primitive button with the variants used across the apps:
- *  primary call-to-action, secondary outline, destructive (cancel /
- *  delete), a ghost row-action, and the inverse pair for dark
- *  surfaces (e.g. footer CTA boxes). Renders an `<a>` when `href` is
- *  passed so navigation CTAs keep button styling without losing
- *  anchor semantics. */
-export function Button(props: ButtonProps) {
-  const {
-    variant = "primary",
-    size = "md",
-    block,
-    className,
-    children,
-    ...rest
-  } = props;
-
-  const cls = [
+/** Compose just the className for a button-styled element without
+ *  rendering one. Use this when the call site needs to keep its own
+ *  element — most importantly Next.js `<Link>` for internal routes,
+ *  which gets prefetch and client-side navigation that a plain `<a>`
+ *  would lose. */
+export function buttonClassName({
+  variant = "primary",
+  size = "md",
+  block,
+  className,
+}: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  block?: boolean;
+  className?: string;
+} = {}): string {
+  return [
     "inline-flex items-center justify-center gap-1.5 font-medium transition-colors",
     VARIANT_CLS[variant],
     SIZE_CLS[size],
@@ -95,6 +93,19 @@ export function Button(props: ButtonProps) {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/** Primitive button with the variants used across the apps:
+ *  primary call-to-action, secondary outline, destructive (cancel /
+ *  delete), a ghost row-action, and the inverse pair for dark
+ *  surfaces (e.g. footer CTA boxes). Renders an `<a>` when `href` is
+ *  passed — use this for **external** URLs (where you want a plain
+ *  anchor anyway). For internal Next routes, render `<Link>` directly
+ *  with `className={buttonClassName(...)}` so prefetch and client-
+ *  side navigation aren't lost. */
+export function Button(props: ButtonProps) {
+  const { variant, size, block, className, children, ...rest } = props;
+  const cls = buttonClassName({ variant, size, block, className });
 
   if ("href" in props && props.href !== undefined) {
     const { href, ...anchorRest } =
