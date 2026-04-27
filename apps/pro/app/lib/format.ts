@@ -37,3 +37,26 @@ export function formatWhen(ts: number): string {
 export function formatField(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
 }
+
+/** USD value with 2-decimal precision and en-US locale grouping
+ *  (`$1,234.50`). Returns `—` when the input isn't a finite number
+ *  so callers can pass `null` / `NaN` straight through without a
+ *  guard. */
+export function formatUsd(v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return "—";
+  return `$${v.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
+}
+
+/** Parse a display number that may carry comma thousands separators
+ *  (`"1,234.56"` → `1234.56`). Returns `NaN` when input is empty,
+ *  whitespace-only, or otherwise unparseable — callers should
+ *  `Number.isFinite()` the result before using it. Assumes en-US
+ *  convention (dot as decimal separator). */
+export function parseLooseNumber(s: string): number {
+  const trimmed = s.trim();
+  if (trimmed === "") return NaN;
+  return Number(trimmed.replace(/,/g, ""));
+}
