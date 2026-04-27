@@ -9,6 +9,7 @@ import { OrdersProvider } from "./lib/orders";
 import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
+import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
@@ -24,9 +25,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <WalletProvider network={DEMO_NETWORK}>
-          <EdDSAKeyProvider>
-            <RelayersProvider>
-              <VaultProvider>
+          <ActiveNetworkProvider>
+            <EdDSAKeyProvider>
+              <RelayersProvider>
+                <VaultProvider>
                 <OrdersProvider>
                   <TradeFormProvider>
                   <ToastProvider>
@@ -55,10 +57,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     </footer>
                   </ToastProvider>
                   </TradeFormProvider>
-                </OrdersProvider>
-              </VaultProvider>
-            </RelayersProvider>
-          </EdDSAKeyProvider>
+                  </OrdersProvider>
+                </VaultProvider>
+              </RelayersProvider>
+            </EdDSAKeyProvider>
+          </ActiveNetworkProvider>
         </WalletProvider>
       </body>
     </html>

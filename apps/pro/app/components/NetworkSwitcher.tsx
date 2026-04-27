@@ -2,18 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Pill, StatusDot } from "@zkscatter/ui";
-import { NETWORKS, DEMO_NETWORK } from "../lib/network";
+import { NETWORKS } from "../lib/network";
+import { useActiveNetwork } from "../lib/activeNetwork";
 
-/** Header network switcher. Today the list is fixed (Sepolia today,
- *  Mainnet "soon") and DEMO_NETWORK is the canonical active config —
- *  but the picker shape is what the future multi-chain re-init hooks
- *  will consume, so the migration to a state-driven active network
- *  is a one-prop change.
+/** Header network switcher. Reads/writes the active network from
+ *  `ActiveNetworkProvider`; clicking a selectable entry triggers
+ *  per-chain re-init in downstream consumers (today: VaultProvider's
+ *  IndexedDB adapter; later: WalletProvider RPC + DepositModal token
+ *  list as the network roster grows beyond one entry).
  *
  *  The "soon" entry renders as a non-clickable greyed item so users
  *  can see the launch roadmap without us needing a separate roadmap
  *  page. */
 export function NetworkSwitcher() {
+  const { network, setNetwork } = useActiveNetwork();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -37,7 +39,7 @@ export function NetworkSwitcher() {
     <div ref={wrapRef} className="relative inline-block">
       <Pill onClick={() => setOpen((v) => !v)}>
         <StatusDot kind="online" />
-        <span>{DEMO_NETWORK.name ?? "Network"}</span>
+        <span>{network.name ?? "Network"}</span>
         <span aria-hidden="true" className="text-[var(--color-text-subtle)]">
           ▾
         </span>
@@ -48,7 +50,7 @@ export function NetworkSwitcher() {
           className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
         >
           {NETWORKS.map((n) => {
-            const active = n.config.chainId === DEMO_NETWORK.chainId;
+            const active = n.config.chainId === network.chainId;
             return (
               <button
                 key={n.config.chainId}
@@ -56,7 +58,10 @@ export function NetworkSwitcher() {
                 role="option"
                 aria-selected={active}
                 disabled={!n.available}
-                onClick={() => setOpen(false)}
+                onClick={() => {
+                  if (n.available) setNetwork(n.config);
+                  setOpen(false);
+                }}
                 className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm ${
                   n.available
                     ? "hover:bg-[var(--color-bg)]"
