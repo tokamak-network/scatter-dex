@@ -302,6 +302,9 @@ async function dropChangeNoteForOrder(wallet: string, orderHash: string): Promis
   const trade = await TradeHistoryStorage.getById(wallet, orderHash);
   if (!trade?.changeNoteId) return false;
   await NoteStorageService.deleteNote(wallet, trade.changeNoteId);
+  // deleteNote doesn't broadcast on its own; subscribers (History screen)
+  // need this to drop the phantom row without waiting for next mount.
+  NoteStorageService.emitNotesChanged(wallet);
   return true;
 }
 
@@ -575,19 +578,26 @@ export const PendingOrdersService = {
       ...NON_SETTLED_TERMINAL,
     );
 
-    const results = await Promise.all(
-      rows.map(async (r) => {
-        try {
-          const summary = JSON.parse(r.order_summary) as PendingOrderSummary;
-          if (!summary.orderHash) return false;
-          return await dropChangeNoteForOrder(wallet, summary.orderHash);
-        } catch (err) {
-          console.warn('[PendingOrders] stuck-change-note cleanup row failed:', err);
-          return false;
-        }
-      }),
-    );
-    const dropped = results.filter(Boolean).length;
+    // Chunk to bound parallel SecureStore + AsyncStorage writes (deleteNote
+    // is internally serialized via the index lock). Mirrors POLL_CHUNK_SIZE
+    // used by the live poll fan-out.
+    let dropped = 0;
+    for (let i = 0; i < rows.length; i += POLL_CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + POLL_CHUNK_SIZE);
+      const results = await Promise.all(
+        chunk.map(async (r) => {
+          try {
+            const summary = JSON.parse(r.order_summary) as PendingOrderSummary;
+            if (!summary.orderHash) return false;
+            return await dropChangeNoteForOrder(wallet, summary.orderHash);
+          } catch (err) {
+            console.warn('[PendingOrders] stuck-change-note cleanup row failed:', err);
+            return false;
+          }
+        }),
+      );
+      dropped += results.filter(Boolean).length;
+    }
     await AsyncStorage.setItem(markerKey, String(Date.now()));
     return dropped;
   },
