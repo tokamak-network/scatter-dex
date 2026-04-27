@@ -86,9 +86,9 @@ export function AdvancedSettings() {
         )}
         <p className="text-[11px] text-[var(--color-text-subtle)]">
           Up to 16 recipients in one private order. Empty address = your
-          own wallet. Stealth mode is wired but uses a placeholder
-          recipient until the SDK stealth-derive integration ships;
-          regular mode is fully active.
+          own wallet. Stealth mode derives a fresh one-time recipient
+          from the recipient&apos;s meta-address (<code>st:eth:0x…</code>) per
+          order — only the recipient can spend it.
         </p>
       </section>
 
