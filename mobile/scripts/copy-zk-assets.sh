@@ -29,12 +29,12 @@ ASSETS_ZK="$MOBILE_DIR/assets/zk"
 ASSETS_ZK_NATIVE="$MOBILE_DIR/assets/zk-native"
 NATIVE_TEST_VECTORS="$MOBILE_DIR/native-prover/test-vectors/circom"
 
-REQUIRED_CIRCUITS=(deposit claim authorize cancel)
+REQUIRED_CIRCUITS=(deposit claim authorize cancel withdraw)
 # Subset the native prover crate currently registers. Adding a circuit
 # here also requires a matching `rust_witness::witness!(name)` +
 # `set_circom_circuits!` entry in mobile/native-prover/src/lib.rs and
 # a `CIRCUITS` row in mobile/src/services/NativeProverService.ts.
-NATIVE_CIRCUITS=(authorize cancel claim deposit)
+NATIVE_CIRCUITS=(authorize cancel claim deposit withdraw)
 
 echo "=== Copying ZK circuit assets for mobile ==="
 

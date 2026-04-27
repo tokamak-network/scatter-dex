@@ -25,7 +25,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 // dedupe via the rustInstalled flag inside the package).
 import { generateCircomProof, ProofLib } from 'mopro-ffi';
 
-export type NativeCircuit = 'authorize' | 'cancel' | 'claim' | 'deposit';
+export type NativeCircuit = 'authorize' | 'cancel' | 'claim' | 'deposit' | 'withdraw';
 
 // Each entry maps to (a) the bundled asset module the JS side `require`s
 // and (b) the basename `set_circom_circuits!` expects on the Rust side.
@@ -47,6 +47,10 @@ const CIRCUITS: Record<NativeCircuit, { asset: number; filename: string }> = {
   deposit: {
     asset: require('../../assets/zk-native/deposit_final.zkey'),
     filename: 'deposit_final.zkey',
+  },
+  withdraw: {
+    asset: require('../../assets/zk-native/withdraw_final.zkey'),
+    filename: 'withdraw_final.zkey',
   },
 };
 
