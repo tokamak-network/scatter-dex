@@ -2,6 +2,16 @@ export type AppSurface = "web" | "mobile";
 export type AppAudience = "user" | "operator";
 export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
 
+/** Per-app URL with env override. `NEXT_PUBLIC_*_URL` lets local
+ *  dev (`apps/hub` on :4000) point at the sibling apps running on
+ *  :4001–:4004 without editing source. Production deploys leave
+ *  the env unset and fall through to the canonical zkscatter.xyz
+ *  subdomains. */
+const appUrl = (id: string, fallback: string): string => {
+  const key = `NEXT_PUBLIC_${id.toUpperCase()}_URL` as const;
+  return process.env[key] ?? fallback;
+};
+
 export type AppEntry = {
   id: AppId;
   name: string;
@@ -34,7 +44,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://pro.zkscatter.xyz",
+    href: appUrl("pro", "https://pro.zkscatter.xyz"),
     cta: "Open Pro",
     accent: "var(--color-accent-pro)",
   },
@@ -51,7 +61,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://pay.zkscatter.xyz",
+    href: appUrl("pay", "https://pay.zkscatter.xyz"),
     cta: "Open Pay",
     accent: "var(--color-accent-pay)",
   },
@@ -68,7 +78,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://drop.zkscatter.xyz",
+    href: appUrl("drop", "https://drop.zkscatter.xyz"),
     cta: "Open Drop",
     accent: "var(--color-accent-drop)",
   },
@@ -85,7 +95,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "mobile",
     audience: "user",
-    href: "/apps#mobile",
+    href: "/mobile",
     cta: "Get the app",
     accent: "var(--color-accent-mobile)",
   },
@@ -102,7 +112,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "operator",
-    href: "https://relayer.zkscatter.xyz",
+    href: appUrl("relayer", "https://relayer.zkscatter.xyz"),
     cta: "Open Relayer",
     accent: "var(--color-accent-relayer)",
   },

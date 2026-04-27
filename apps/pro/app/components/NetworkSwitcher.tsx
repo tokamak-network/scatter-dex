@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Pill, StatusDot } from "@zkscatter/ui";
 import { NETWORKS } from "../lib/network";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useOutsideClick } from "../lib/useOutsideClick";
+import { useListboxNav } from "../lib/useListboxNav";
 
 /** Header network switcher. Reads/writes the active network from
  *  `ActiveNetworkProvider`; clicking a selectable entry triggers
@@ -12,15 +13,26 @@ import { useOutsideClick } from "../lib/useOutsideClick";
  *  IndexedDB adapter; later: WalletProvider RPC + DepositModal token
  *  list as the network roster grows beyond one entry).
  *
- *  The "soon" entry renders as a non-clickable greyed item so users
- *  can see the launch roadmap without us needing a separate roadmap
- *  page. */
+ *  Keyboard / focus: see `useListboxNav`. The "soon" entry renders
+ *  greyed and disabled so users see the roadmap from the picker. */
 export function NetworkSwitcher() {
   const { network, setNetwork } = useActiveNetwork();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
   useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
+
+  // Pill from `@zkscatter/ui` doesn't forward `ref` to its inner
+  // button, so the trigger-focus-restore part of `useListboxNav`
+  // doesn't fire here — `triggerRef.current` stays null and the
+  // hook's `?.focus()` on close becomes a no-op. Keyboard nav
+  // inside the listbox still works. Promote Pill to forward a ref
+  // when the trigger-focus-restore matters here.
+  const activeIndex = useMemo(
+    () => NETWORKS.findIndex((n) => n.config.chainId === network.chainId),
+    [network.chainId],
+  );
+  const listbox = useListboxNav({ open, optionCount: NETWORKS.length, activeIndex });
 
   return (
     <div ref={wrapRef} className="relative inline-block">
@@ -34,13 +46,15 @@ export function NetworkSwitcher() {
       {open && (
         <div
           role="listbox"
+          onKeyDown={listbox.listKeyDown}
           className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
         >
-          {NETWORKS.map((n) => {
+          {NETWORKS.map((n, i) => {
             const active = n.config.chainId === network.chainId;
             return (
               <button
                 key={n.config.chainId}
+                ref={(el) => listbox.optionRef(i, el)}
                 type="button"
                 role="option"
                 aria-selected={active}
@@ -49,7 +63,7 @@ export function NetworkSwitcher() {
                   if (n.available) setNetwork(n.config);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm ${
+                className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm focus:bg-[var(--color-bg)] focus:outline-none ${
                   n.available
                     ? "hover:bg-[var(--color-bg)]"
                     : "opacity-50"
