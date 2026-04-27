@@ -12,6 +12,8 @@ import { MyPositionPanel } from "../components/MyPositionPanel";
 import { PairSelector } from "../components/PairSelector";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { DEMO_NETWORK } from "../lib/network";
+import { useReferencePrice } from "../lib/useReferencePrice";
+import { formatUsd, parseLooseNumber } from "../lib/format";
 
 const MOCK_ORDERBOOK = {
   asks: [
@@ -169,20 +171,7 @@ export default function Workbench() {
 
           <AdvancedSettings />
 
-          <div className="mt-4 rounded-md border border-[var(--color-success-soft)] bg-[var(--color-success-soft)] p-3 text-xs">
-            <div className="flex justify-between">
-              <span>Estimated fill</span>
-              <span className="font-mono">$4,205.30</span>
-            </div>
-            <div className="flex justify-between">
-              <span>vs Uniswap quote</span>
-              <span className="font-mono">$4,176.10</span>
-            </div>
-            <div className="mt-1 flex justify-between font-medium text-[var(--color-success)]">
-              <span>Slippage saved</span>
-              <span>−0.7% (≈ $58.40)</span>
-            </div>
-          </div>
+          <FillEstimate side={side} price={price} size={size} baseSymbol={pair.base} quoteSymbol={pair.quote} />
           <div className="mt-3 text-xs text-[var(--color-text-muted)]">
             Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement. Proof generation is ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on mobile.
           </div>
@@ -297,4 +286,82 @@ function OrderbookStatus({
     return <span className="text-[var(--color-text-subtle)]">Loading…</span>;
   }
   return <span className="text-[var(--color-success)]">Live</span>;
+}
+
+/** Renders the order's estimated fill alongside a CoinGecko spot
+ *  reference for the base token. Slippage saved is signed for the
+ *  side: a sell that goes off above spot is "saved" (you sold for
+ *  more); a buy that fills below spot is "saved" (you paid less).
+ *  Falls back to a neutral box when reference unavailable so the
+ *  workbench doesn't claim numbers it can't back. */
+function FillEstimate({
+  side,
+  price,
+  size,
+  baseSymbol,
+  quoteSymbol,
+}: {
+  side: "sell" | "buy";
+  price: string;
+  size: string;
+  baseSymbol: string;
+  quoteSymbol: string;
+}) {
+  const ref = useReferencePrice(baseSymbol);
+  const priceNum = parseLooseNumber(price);
+  const sizeNum = parseLooseNumber(size);
+  const fillUsd = Number.isFinite(priceNum) && Number.isFinite(sizeNum) ? priceNum * sizeNum : null;
+  const refUsd = ref.usd !== null && Number.isFinite(sizeNum) ? ref.usd * sizeNum : null;
+
+  // savings sign convention: positive when the user comes out
+  // ahead of spot. Sell: fill > spot is good. Buy: fill < spot is good.
+  const savings =
+    fillUsd !== null && refUsd !== null
+      ? side === "sell"
+        ? fillUsd - refUsd
+        : refUsd - fillUsd
+      : null;
+  const savingsPct = savings !== null && refUsd ? (savings / refUsd) * 100 : null;
+  const positive = savings !== null && savings > 0;
+
+  return (
+    <div
+      className={`mt-4 rounded-md border p-3 text-xs ${
+        positive
+          ? "border-[var(--color-success-soft)] bg-[var(--color-success-soft)]"
+          : "border-[var(--color-border)] bg-[var(--color-bg)]"
+      }`}
+    >
+      <div className="flex justify-between">
+        <span>Estimated fill</span>
+        <span className="font-mono">{formatUsd(fillUsd)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span>vs spot ({baseSymbol})</span>
+        <span className="font-mono">{ref.loading ? "…" : formatUsd(refUsd)}</span>
+      </div>
+      {savings !== null && refUsd !== null ? (
+        <div
+          className={`mt-1 flex justify-between font-medium ${
+            positive ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"
+          }`}
+        >
+          <span>{positive ? "Better than spot" : "Worse than spot"}</span>
+          <span>
+            {savings >= 0 ? "+" : "−"}
+            {Math.abs(savingsPct ?? 0).toFixed(2)}% ({savings >= 0 ? "+" : "−"}
+            {formatUsd(Math.abs(savings))})
+          </span>
+        </div>
+      ) : (
+        <div className="mt-1 text-[10px] text-[var(--color-text-subtle)]">
+          {ref.loading
+            ? "Fetching spot price…"
+            : ref.error
+              ? "Spot price unavailable — proceed at your stated price."
+              : `Spot reference for ${baseSymbol} not in feed (priced in ${quoteSymbol}).`}
+        </div>
+      )}
+    </div>
+  );
 }
