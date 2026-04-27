@@ -15,6 +15,8 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { ethers } from 'ethers';
 
 import type { WalletMeta, WalletSecret, WalletSource } from '../types/wallet';
+import { PinService } from './PinService';
+import { PinPromptBus } from './PinPrompt';
 
 const WALLET_KEY = 'scatterdex_wallet_pk';
 const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';
@@ -191,7 +193,49 @@ export const KeySecurityService = {
     return LocalAuthentication.isEnrolledAsync();
   },
 
+  /** Auth gate. Order of preference:
+   *  1. If app PIN is enrolled and user has biometric toggled on AND
+   *     device biometric is available → try BiometricPrompt first (fast
+   *     path); on success, return true. On failure/cancel, fall through
+   *     to PIN — this matches the iOS/Android system pattern of "biometric
+   *     first, PIN as fallback".
+   *  2. If PIN is enrolled (with or without biometric) → ask the
+   *     `<PinPromptHost />` modal for PIN entry and verify against the
+   *     scrypt hash. Lockout (5 fails) is enforced inside PinService.
+   *  3. If PIN is NOT enrolled — legacy biometric-only path. Kept so
+   *     existing installs keep working until the user enrolls a PIN
+   *     from Settings (or the upcoming forced-enrollment migration).
+   *
+   *  All gated actions go through this single function so the auth
+   *  policy lives in one place. */
   async authenticate(reason: string = 'Authenticate to access your wallet'): Promise<boolean> {
+    // Two SecureStore reads on every gated call — parallelize to halve
+    // the gate's fixed cost (~10-15ms each on Android per read).
+    const [pinEnrolled, useBio] = await Promise.all([
+      PinService.isEnrolled(),
+      this.isBiometricEnabled(),
+    ]);
+    if (pinEnrolled) {
+      if (useBio && (await this.isBiometricAvailable())) {
+        const bio = await LocalAuthentication.authenticateAsync({
+          promptMessage: reason,
+          fallbackLabel: 'Use PIN',
+          // Disable the OS device-passcode fallback now that we have an
+          // app PIN; the user's mental model is "biometric or app PIN",
+          // not "biometric or device passcode".
+          disableDeviceFallback: true,
+        });
+        if (bio.success) return true;
+        // any non-success (cancelled, lockout, fallback button) drops
+        // through to the in-app PIN entry below.
+      }
+      const res = await PinPromptBus.request({ kind: 'verify', reason });
+      if (!res.ok) return false;
+      return PinService.verify(res.pin);
+    }
+
+    // Legacy path — no app PIN yet.
+    if (!useBio) return true;
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: reason,
       fallbackLabel: 'Use passcode',
@@ -202,7 +246,10 @@ export const KeySecurityService = {
 
   async isBiometricEnabled(): Promise<boolean> {
     const val = await SecureStore.getItemAsync(AUTH_ENABLED_KEY);
-    return val === 'true';
+    // Default ON: a fresh install with biometric hardware should already
+    // be guarding key access on the first prompt, not silently passing
+    // through until the user finds the toggle.
+    return val !== 'false';
   },
 
   async setBiometricEnabled(enabled: boolean): Promise<void> {
@@ -210,7 +257,6 @@ export const KeySecurityService = {
   },
 
   async _biometricGate(reason: string): Promise<boolean> {
-    if (!(await this.isBiometricEnabled())) return true;
     return this.authenticate(reason);
   },
 
