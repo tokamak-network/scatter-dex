@@ -7,10 +7,12 @@ export type OperatorStatus = "active" | "cooldown" | "offline";
 
 export interface OperatorIdentity {
   name: string;
-  /** 0x-prefixed checksummed EOA. */
+  /** 0x-prefixed EOA. May be lowercase or EIP-55 mixed-case;
+   *  display helpers should not depend on the casing — use
+   *  `shortenAddress` for rendering. */
   address: string;
-  /** HTTPS endpoint published on-chain. Optional — pre-registration
-   *  state has none. */
+  /** Endpoint URL published on-chain. Untrusted input — validate
+   *  with `safeOperatorUrl` before rendering as an `<a href>`. */
   url?: string;
   status: OperatorStatus;
 }
@@ -35,4 +37,21 @@ export function operatorInitials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   const letters = parts.map((w) => w.charAt(0).toUpperCase()).join("");
   return letters || "?";
+}
+
+const ALLOWED_URL_PROTOCOLS = new Set(["https:", "http:"]);
+
+/** Parse and validate an operator-published URL before it touches
+ *  an `<a href>`. Returns the URL when the scheme is in the
+ *  allowlist (https/http only — `javascript:` / `data:` rejected),
+ *  otherwise null. The published URL is operator-controlled and
+ *  must be treated as untrusted. */
+export function safeOperatorUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return ALLOWED_URL_PROTOCOLS.has(u.protocol) ? u.toString() : null;
+  } catch {
+    return null;
+  }
 }

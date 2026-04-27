@@ -2,12 +2,10 @@ import Link from "next/link";
 import {
   MOCK_OPERATOR,
   operatorInitials,
+  safeOperatorUrl,
   shortenAddress,
   type OperatorStatus,
 } from "../lib/mockOperator";
-
-const INITIALS = operatorInitials(MOCK_OPERATOR.name);
-const SHORT_ADDRESS = shortenAddress(MOCK_OPERATOR.address);
 
 /** Top-of-page identity banner for operator-scoped views
  *  (`/dashboard`, `/profile`, `/treasury`, `/orders`). Makes it
@@ -19,12 +17,17 @@ const SHORT_ADDRESS = shortenAddress(MOCK_OPERATOR.address);
  *  Excluded from `/`, `/register`, `/leaderboard` — those are
  *  network-wide / pre-registration views. */
 export function OperatorIdentityBar() {
+  // Derived from `op` inside the body so they stay correct once the
+  // identity becomes dynamic via a `useOperator()` hook in v1.1.
   const op = MOCK_OPERATOR;
+  const initials = operatorInitials(op.name);
+  const shortAddress = shortenAddress(op.address);
+  const safeUrl = safeOperatorUrl(op.url);
   return (
     <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
       <div className="flex min-w-0 items-center gap-3">
         <span className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-soft)] font-mono text-xs font-semibold text-[var(--color-primary)]">
-          {INITIALS}
+          {initials}
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -32,20 +35,30 @@ export function OperatorIdentityBar() {
             <StatusDot status={op.status} />
           </div>
           <div className="truncate text-xs text-[var(--color-text-muted)]">
-            <span className="font-mono" title={op.address}>{SHORT_ADDRESS}</span>
-            {op.url && (
+            <span className="font-mono" title={op.address}>{shortAddress}</span>
+            {safeUrl ? (
               <>
                 {" · "}
                 <a
-                  href={op.url}
+                  href={safeUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-[var(--color-text)] hover:underline"
                 >
-                  {op.url.replace(/^https?:\/\//, "")}
+                  {safeUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                 </a>
               </>
-            )}
+            ) : op.url ? (
+              <>
+                {" · "}
+                <span
+                  className="text-[var(--color-warning)]"
+                  title="Endpoint URL has an unsupported scheme; not rendered as a link."
+                >
+                  endpoint url invalid
+                </span>
+              </>
+            ) : null}
           </div>
         </div>
       </div>
