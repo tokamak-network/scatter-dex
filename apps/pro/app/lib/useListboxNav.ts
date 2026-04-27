@@ -52,8 +52,14 @@ export function useListboxNav({ open, optionCount, activeIndex }: Options): List
 
   useEffect(() => {
     if (open) {
-      const target =
-        optionRefs.current[activeIndex >= 0 ? activeIndex : 0] ?? null;
+      // Prefer the active option, but skip past it if disabled
+      // (e.g. a soon-to-launch entry) so focus lands somewhere
+      // the user can actually act on.
+      const start = activeIndex >= 0 ? activeIndex : 0;
+      let target = optionRefs.current[start];
+      if (!target || target.disabled) {
+        target = optionRefs.current.find((el) => el && !el.disabled) ?? null;
+      }
       target?.focus();
       wasOpenRef.current = true;
       return;
@@ -80,15 +86,33 @@ export function useListboxNav({ open, optionCount, activeIndex }: Options): List
     e.preventDefault();
     if (optionCount <= 0) return;
     const last = optionCount - 1;
+    const isFocusable = (idx: number): boolean => {
+      const el = optionRefs.current[idx];
+      // Treat null refs (slot not mounted) and `disabled` buttons
+      // (e.g. NetworkSwitcher's "soon" entry) as un-focusable —
+      // calling .focus() on them is a no-op and would trap nav.
+      return !!el && !el.disabled;
+    };
+    // Find the next focusable index starting at `start`, walking
+    // by `step` (+1 / -1), wrapping around. Bail out if we make a
+    // full loop without finding one.
+    const seek = (start: number, step: 1 | -1): number => {
+      let i = start;
+      for (let n = 0; n < optionCount; n++) {
+        if (isFocusable(i)) return i;
+        i = (i + step + optionCount) % optionCount;
+      }
+      return -1;
+    };
     const current = optionRefs.current.findIndex(
       (el) => el === document.activeElement,
     );
     let next: number;
-    if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = last;
-    else if (e.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % optionCount;
-    else next = current <= 0 ? last : current - 1;
-    optionRefs.current[next]?.focus();
+    if (e.key === "Home") next = seek(0, 1);
+    else if (e.key === "End") next = seek(last, -1);
+    else if (e.key === "ArrowDown") next = seek(current < 0 ? 0 : (current + 1) % optionCount, 1);
+    else next = seek(current <= 0 ? last : current - 1, -1);
+    if (next >= 0) optionRefs.current[next]?.focus();
   };
 
   return { triggerRef, optionRef, listKeyDown };

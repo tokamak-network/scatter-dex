@@ -6,10 +6,21 @@ export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
  *  dev (`apps/hub` on :4000) point at the sibling apps running on
  *  :4001–:4004 without editing source. Production deploys leave
  *  the env unset and fall through to the canonical zkscatter.xyz
- *  subdomains. */
-const appUrl = (id: string, fallback: string): string => {
-  const key = `NEXT_PUBLIC_${id.toUpperCase()}_URL` as const;
-  return process.env[key] ?? fallback;
+ *  subdomains.
+ *
+ *  Each entry must reference its env var statically — Next.js only
+ *  inlines `NEXT_PUBLIC_*` keys it can see literally, and this
+ *  module is imported by a client component (`apps/Recommender`).
+ *  A dynamic `process.env[key]` lookup would silently always
+ *  return `undefined` in the browser bundle, defeating the
+ *  override. */
+const APP_URLS: Record<AppId, string> = {
+  pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://pro.zkscatter.xyz",
+  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://pay.zkscatter.xyz",
+  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://drop.zkscatter.xyz",
+  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://relayer.zkscatter.xyz",
+  // Mobile is an in-hub marketing route, not a separate app server.
+  mobile: "/mobile",
 };
 
 export type AppEntry = {
@@ -44,7 +55,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: appUrl("pro", "https://pro.zkscatter.xyz"),
+    href: APP_URLS.pro,
     cta: "Open Pro",
     accent: "var(--color-accent-pro)",
   },
@@ -61,7 +72,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: appUrl("pay", "https://pay.zkscatter.xyz"),
+    href: APP_URLS.pay,
     cta: "Open Pay",
     accent: "var(--color-accent-pay)",
   },
@@ -78,7 +89,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: appUrl("drop", "https://drop.zkscatter.xyz"),
+    href: APP_URLS.drop,
     cta: "Open Drop",
     accent: "var(--color-accent-drop)",
   },
@@ -112,7 +123,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "operator",
-    href: appUrl("relayer", "https://relayer.zkscatter.xyz"),
+    href: APP_URLS.relayer,
     cta: "Open Relayer",
     accent: "var(--color-accent-relayer)",
   },
