@@ -16,6 +16,7 @@ import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
 import { computeCommitment } from "@zkscatter/sdk/zk";
+import { formatTokenAmount } from "../lib/format";
 import type { VaultNote } from "../lib/vault";
 import {
   delaySeconds,
@@ -109,16 +110,6 @@ interface ResolvedClaim {
   ephemeralPubKey?: string;
 }
 
-function formatTokenAmount(amount: bigint, decimals: number): string {
-  if (decimals <= 0) return amount.toString();
-  const divisor = 10n ** BigInt(decimals);
-  const whole = amount / divisor;
-  const frac = amount % divisor;
-  if (frac === 0n) return whole.toString();
-  // Trim trailing zeros for readability ("1.5" not "1.500000").
-  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
-  return fracStr.length > 0 ? `${whole}.${fracStr}` : whole.toString();
-}
 
 function resolveClaims(
   rows: readonly RecipientRow[],

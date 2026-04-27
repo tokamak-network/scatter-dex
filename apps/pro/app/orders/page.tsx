@@ -6,6 +6,8 @@ import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
+import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
+import { formatWhen } from "../lib/format";
 
 const SEED_ORDERS: OrderRecord[] = [
   { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205",  size: "2.0",  status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
@@ -23,18 +25,6 @@ const FILTERS: Array<{ key: StatusFilter; label: string }> = [
   { key: "cancelled", label: "Cancelled" },
 ];
 
-function formatWhen(ts: number): string {
-  const d = new Date(ts);
-  return (
-    d.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "UTC",
-    }) + " UTC"
-  );
-}
 
 export default function Orders() {
   const { orders } = useOrders();
@@ -42,7 +32,23 @@ export default function Orders() {
   const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<OrderRecord | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
+
+  // Resolve the live order each render so status transitions
+  // (matching → claimable, etc.) reflect in the open drawer
+  // without forcing the user to close and reopen. Falls back to
+  // the captured pointer if the order disappears from the list
+  // (rare — keeps the drawer from blanking mid-interaction).
+  const liveDrawerTarget = useMemo(
+    () =>
+      drawerTarget ? all.find((o) => o.id === drawerTarget.id) ?? drawerTarget : null,
+    [all, drawerTarget],
+  );
+  const drawerCanCancel =
+    liveDrawerTarget?.status === "matching" && realIds.has(liveDrawerTarget.id);
+  const drawerCanClaim =
+    liveDrawerTarget?.status === "claimable" && !!liveDrawerTarget.claim;
 
   const visible = useMemo(
     () => (filter === "all" ? all : all.filter((o) => o.status === filter)),
@@ -105,7 +111,19 @@ export default function Orders() {
           </thead>
           <tbody>
             {visible.map((o) => (
-              <tr key={o.id} className="border-t border-[var(--color-border)]">
+              <tr
+                key={o.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setDrawerTarget(o)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDrawerTarget(o);
+                  }
+                }}
+                className="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-primary)]"
+              >
                 <td className="px-5 py-3 font-mono text-xs">{o.label}</td>
                 <td className="px-5 py-3">{o.side === "sell" ? "Sell" : "Buy"}</td>
                 <td className="px-5 py-3">{o.pair}</td>
@@ -113,7 +131,7 @@ export default function Orders() {
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
                 <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
-                <td className="px-5 py-3 text-right">
+                <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   {o.status === "matching" && realIds.has(o.id) && (
                     <button
                       onClick={() => setCancelTarget(o)}
@@ -146,6 +164,27 @@ export default function Orders() {
         open={!!cancelTarget}
         order={cancelTarget}
         onClose={() => setCancelTarget(null)}
+      />
+      <OrderDetailDrawer
+        open={!!liveDrawerTarget}
+        order={liveDrawerTarget}
+        onClose={() => setDrawerTarget(null)}
+        onCancel={
+          drawerCanCancel
+            ? () => {
+                if (liveDrawerTarget) setCancelTarget(liveDrawerTarget);
+                setDrawerTarget(null);
+              }
+            : undefined
+        }
+        onClaim={
+          drawerCanClaim
+            ? () => {
+                if (liveDrawerTarget) setClaimTarget(liveDrawerTarget);
+                setDrawerTarget(null);
+              }
+            : undefined
+        }
       />
     </div>
   );
