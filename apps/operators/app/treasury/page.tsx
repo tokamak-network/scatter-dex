@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Stat } from "../components/Stat";
+import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 
 interface TokenBalance {
   symbol: string;
@@ -38,13 +39,13 @@ export default function TreasuryPage() {
 
   return (
     <div className="space-y-10">
+      <OperatorIdentityBar />
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Treasury</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Fee revenue accrued in the FeeVault contract for relayer{" "}
-            <span className="font-mono text-[var(--color-text)]">0xA1…f4</span>.
-            Withdraw any time — gas paid by you.
+            Fee revenue accrued in the FeeVault contract. Withdraw any time —
+            gas paid by you.
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-[var(--color-primary)] hover:underline">

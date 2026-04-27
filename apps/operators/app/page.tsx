@@ -8,17 +8,18 @@ export default function Landing() {
       <section className="pt-12 text-center">
         <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
           <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)]" />
-          Permissionless · Bond-secured · MEV-resistant
+          Settlement rail · Encrypted order flow · Per-fill bps
         </div>
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
-          Earn fees routing private orders.
+          Run the settlement rail for private order flow.
           <br />
-          <span className="text-[var(--color-primary)]">No proprietary stack to run.</span>
+          <span className="text-[var(--color-primary)]">You can&apos;t front-run — that&apos;s the feature.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
-          Run a zkScatter relayer with the open-source node. Stake a small bond,
-          publish a fee, and start collecting per-trade revenue from privacy-seeking
-          OTC desks, payroll teams, and DAOs.
+          You don&apos;t see amounts. You don&apos;t sandwich. You don&apos;t get gated.
+          You earn deterministic on-chain bps per fill, fund the protocol
+          treasury at the rate governance set, and exit with your bond on
+          7 days notice.
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
@@ -47,19 +48,46 @@ export default function Landing() {
         </p>
         <div className="grid grid-cols-3 gap-4">
           <PersonaCard
-            badge="Validator / staker"
-            title="You already operate node infra"
-            body="Idle bandwidth and a 24/7 box are most of the cost. Adding a relayer is a small marginal lift for a new fee stream."
+            badge="Validator with idle gas budget"
+            title="You already pay for a 24/7 box"
+            body="The settlement tx is cheap; the operating cost is the node and the gas float. Relayer fee turns that float into a recurring revenue line — not block-lottery MEV income."
           />
           <PersonaCard
-            badge="Market maker"
-            title="You quote on-chain liquidity"
-            body="Routing your own orders through your own relayer captures the relayer fee instead of paying it to a third party."
+            badge="OTC desk with captive flow"
+            title="You route your own customers"
+            body="Operating your own relayer means the bps your clients pay comes back to you, not to a third party. Your orderbook is your moat — Scatter is the on-chain settlement rail underneath it."
           />
           <PersonaCard
-            badge="Privacy infra DAO"
-            title="You run RPCs, sequencers, or bridges"
-            body="A relayer is the same operational profile, with a clear revenue contract from day one."
+            badge="Regulated-jurisdiction operator"
+            title="You need compliance you can show an auditor"
+            body="zk-X509 IdentityGate verifies users and operators against registered CAs (KISA-path included). Sanctions checks are on-chain. You operate a privacy network that's also defensible in front of a regulator."
+          />
+        </div>
+      </section>
+
+      {/* What you don't do */}
+      <section>
+        <h2 className="mb-2 text-center text-2xl font-semibold">The deal: what you don't do</h2>
+        <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
+          Scatter relayers aren't searchers. The protocol pays you bps in
+          exchange for these constraints — and that constraint set is exactly
+          why privacy-seeking flow trusts the rail.
+        </p>
+        <div className="grid grid-cols-3 gap-4">
+          <PersonaCard
+            badge="No sandwich"
+            title="You can't see amounts or sides"
+            body="Order payloads are zk-encrypted before they reach you. The settlement contract verifies the proof — you can't reorder for MEV because you don't know what you're reordering."
+          />
+          <PersonaCard
+            badge="No vendor lock-in"
+            title="Endpoint, fee, exit are yours"
+            body="Your URL and fee are your on-chain config. You change either with one tx. Exit the registry and after a 7-day cool-down your bond returns — no foundation handshake to leave."
+          />
+          <PersonaCard
+            badge="No opaque take-rate"
+            title="Platform fee is on-chain, capped"
+            body="The protocol skims a configurable platform fee on relayer claims (capped at 50% by contract; default sub-10% via governance). You always know what you net, and the cap means it can't surprise you."
           />
         </div>
       </section>
@@ -93,8 +121,10 @@ export default function Landing() {
       <section>
         <h2 className="mb-2 text-center text-2xl font-semibold">Why operate on Scatter</h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
-          Other private trading networks gate operator slots, take a cut, or
-          require proprietary hardware. Scatter is open and contract-priced.
+          Other private trading networks gate operator slots, require
+          proprietary hardware, or hide the take-rate. Scatter is open and
+          contract-priced — the platform fee that funds the protocol treasury
+          is on-chain and configurable by governance.
         </p>
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           <table className="w-full text-sm">
@@ -109,7 +139,7 @@ export default function Landing() {
             <tbody>
               <Compare label="Permissionless registration" us />
               <Compare label="Bond-secured slashing protections" us />
-              <Compare label="No revenue share to a foundation" mid us />
+              <Compare label="On-chain, capped platform fee (no opaque take-rate)" us />
               <Compare label="Open-source node binary" mid us />
               <Compare label="Per-trade fee published on-chain" us />
             </tbody>

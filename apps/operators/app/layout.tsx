@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { MOCK_OPERATOR, shortenAddress } from "./lib/mockOperator";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -29,8 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/leaderboard" className="hover:text-[var(--color-text)]">Leaderboard</Link>
               <Link href="/profile" className="hover:text-[var(--color-text)]">Profile</Link>
               <Link href="/register" className="hover:text-[var(--color-text)]">Register</Link>
-              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-                Relayer · 0xA1…f4
+              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs" title={MOCK_OPERATOR.address}>
+                Relayer · {shortenAddress(MOCK_OPERATOR.address)}
               </span>
             </nav>
           </div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 
 type OrderStatus = "pending" | "settled" | "expired" | "cancelled";
 
@@ -39,6 +40,7 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-8">
+      <OperatorIdentityBar />
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Routed orders</h1>
