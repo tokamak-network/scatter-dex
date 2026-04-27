@@ -160,6 +160,20 @@ function resolveClaims(
   // Trim once; reuse for both validation and build.
   const trimmedAddrs = rows.map((r) => r.address.trim());
 
+  // Block stealth rows beyond row 0 until per-recipient claim
+  // history surfaces (A.3). The OrderRecord only carries one
+  // ephemeralPubKey today; persisting only the first would
+  // permanently strand funds for stealth rows 2+ since the key
+  // isn't recoverable from chain. Single-stealth and multi-regular
+  // remain fully functional.
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i]!.mode === "stealth") {
+      throw new Error(
+        `Recipient #${i + 1} uses stealth, but multi-recipient stealth orders aren't supported yet (the ephemeralPubKey for rows 2+ would be lost). Move the stealth row to position 1, or use regular addresses for the others.`,
+      );
+    }
+  }
+
   // Validate recipient addresses up front so a typo doesn't surface
   // mid-prove with a cryptic BigInt parse error. Stealth rows must
   // carry a well-formed meta-address; regular rows must be a 0x…
@@ -417,10 +431,10 @@ export function OrderModal({
       // OrderRecord — sufficient to drive the single-recipient claim
       // flow that today's UI exercises. Multi-claim history surfaces
       // when a per-recipient drawer / inbox lands.
-      // Persist the first claim only — multi-recipient stealth orders
-      // currently lose ephemeralPubKey for rows 2+. Surfacing the
-      // full per-recipient list happens when the claim-history /
-      // inbox UI lands (A.3 in the punch list).
+      // Persist the first claim only — `resolveClaims` rejects any
+      // non-first stealth row, so the persisted ephemeralPubKey (if
+      // present) is the order's only stealth recipient. Per-recipient
+      // claim history lands with A.3.
       const firstClaim = claims[0]!;
       const firstEphemeralPubKey = resolved[0]!.ephemeralPubKey;
       const order = addOrder({
