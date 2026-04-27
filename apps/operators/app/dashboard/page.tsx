@@ -111,7 +111,7 @@ function BondCard({ operator }: { operator: OperatorState }) {
 
 function FeeCard({ operator }: { operator: OperatorState }) {
   const ph = operatorPlaceholder(operator);
-  if (ph) return <Stat label="Per-trade fee" value={ph.value} sub="Set during registration" />;
+  if (ph) return <Stat label="Per-trade fee" value={ph.value} sub={ph.sub} />;
   const row = operator.row!;
   return <Stat label="Per-trade fee" value={`${row.feeBps} bps`} sub={`= ${(row.feeBps / 100).toFixed(2)}% per fill`} />;
 }
@@ -120,12 +120,20 @@ function RegisteredCard({ operator }: { operator: OperatorState }) {
   const ph = operatorPlaceholder(operator);
   if (ph) return <Stat label="Registered" value={ph.value} sub={ph.sub} />;
   const row = operator.row!;
-  const date = new Date(row.registeredAt * 1000);
-  const ageDays = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+  // Locale-stable ISO formatting — `toLocaleDateString` would
+  // disagree between server and client and trip Next's hydration
+  // mismatch warning. The date-using branch only renders post-
+  // mount (gated by `account`), so `Date.now()` is safe here.
+  const value = formatIsoDate(row.registeredAt);
+  const ageDays = Math.floor((Date.now() - row.registeredAt * 1000) / (1000 * 60 * 60 * 24));
   const sub = row.exitRequestedAt > 0
-    ? `Exit requested ${new Date(row.exitRequestedAt * 1000).toLocaleDateString()}`
+    ? `Exit requested ${formatIsoDate(row.exitRequestedAt)}`
     : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
-  return <Stat label="Registered" value={date.toLocaleDateString()} sub={sub} />;
+  return <Stat label="Registered" value={value} sub={sub} />;
+}
+
+function formatIsoDate(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 }
 
 function HealthCard({

@@ -47,11 +47,28 @@ export function OperatorProvider({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
+    // Clear the previous row up front so identity bar / dashboard
+    // don't briefly display the prior account's URL or status
+    // while the new fetch is in flight on an account switch.
+    setRow(null);
     setLoading(true);
     setError(null);
     loadOperatorRow(DEMO_NETWORK.contracts.relayerRegistry, account, readProvider)
       .then((r) => { if (!cancelled) setRow(r); })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+      .catch((e) => {
+        if (cancelled) return;
+        // ethers v6 contract-call exceptions carry richer fields
+        // than the bare Error message — `shortMessage` is the
+        // user-facing summary, `reason` the parsed revert reason.
+        // Fall through to `message` / `String(e)` so unknown
+        // shapes still surface something rather than swallowing.
+        const e6 = e as { shortMessage?: string; reason?: string };
+        const msg = e instanceof Error
+          ? e6.shortMessage ?? e6.reason ?? e.message
+          : String(e);
+        setError(msg);
+        console.error("Failed to load operator row", e);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [account, registryDeployed, readProvider, tick]);
