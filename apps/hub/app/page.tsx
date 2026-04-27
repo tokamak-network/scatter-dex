@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Lock, ShieldCheck, Zap } from "lucide-react";
+import { Button } from "@zkscatter/ui";
 import { USER_APPS, OPERATOR_APPS } from "./lib/apps";
 import { AppCard } from "./components/AppCard";
 
@@ -52,19 +53,13 @@ function Hero() {
           your users. Four apps, one shared core.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
-          <Link
-            href="#apps"
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-5 py-2.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-          >
+          <Button href="#apps" size="lg">
             Explore the apps
             <ArrowRight className="h-4 w-4" />
-          </Link>
-          <Link
-            href="#developers"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border-strong)] px-5 py-2.5 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-muted)]"
-          >
+          </Button>
+          <Button href="#developers" variant="secondary" size="lg">
             Build with us
-          </Link>
+          </Button>
         </div>
       </div>
     </Section>
@@ -231,23 +226,24 @@ function Developers() {
             network, and the shared orderbook. Used by every persona app.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <a
+            <Button
               href="https://docs.zkscatter.xyz"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-5 py-2.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+              size="lg"
             >
               Open developer docs
               <ArrowRight className="h-4 w-4" />
-            </a>
-            <a
+            </Button>
+            <Button
               href="https://github.com/tokamak-network"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border-strong)] px-5 py-2.5 text-sm font-medium hover:bg-[var(--color-surface-muted)]"
+              variant="secondary"
+              size="lg"
             >
               GitHub
-            </a>
+            </Button>
           </div>
         </div>
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-primary)] p-6 text-sm text-white shadow-sm">
@@ -338,20 +334,18 @@ function FooterCTA() {
           Pick the app shaped for you, or build your own on the same ZK core.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link
-            href="/apps"
-            className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-[var(--color-primary)] hover:bg-white/90"
-          >
+          <Button href="/apps" variant="inverse" size="lg">
             Try the apps
-          </Link>
-          <a
+          </Button>
+          <Button
             href="https://docs.zkscatter.xyz"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-md border border-white/30 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10"
+            variant="inverse-outline"
+            size="lg"
           >
             Read the docs
-          </a>
+          </Button>
         </div>
       </div>
     </Section>
