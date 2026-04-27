@@ -77,12 +77,15 @@ export function parseMetaAddress(metaAddress: string): {
   };
 }
 
-/** Quick check that a string is at least shaped like a meta-address. */
+const META_ADDRESS_RE = /^st:eth:0x[0-9a-fA-F]{132}$/;
+
+/** Check that a string is shaped like a meta-address: the
+ *  `st:eth:0x` prefix plus 132 hex characters (66 + 66 bytes
+ *  compressed). Hex-strict — non-hex characters fail here instead
+ *  of bubbling up later as a less-friendly `hexToBytes` error from
+ *  `parseMetaAddress` / `generateStealthAddress`. */
 export function isMetaAddress(input: string): boolean {
-  return (
-    input.startsWith("st:eth:0x") &&
-    input.replace("st:eth:0x", "").length === 132
-  );
+  return META_ADDRESS_RE.test(input);
 }
 
 /** Output of `generateStealthAddress`. */

@@ -27,6 +27,12 @@ export interface OrderClaim {
   /** Index of this claim in the settlement's claims tree (0 for
    *  the demo's single-claim distribution). */
   leafIndex: number;
+  /** Compressed secp256k1 ephemeral public key from
+   *  `generateStealthAddress`, when the recipient was derived from
+   *  a meta-address. The recipient needs this to derive their
+   *  stealth private key (`deriveStealthPrivateKey`). Absent when
+   *  the recipient is a regular wallet address. */
+  ephemeralPubKey?: string;
 }
 
 /** A submitted private limit order. Phase 3c stores everything in
