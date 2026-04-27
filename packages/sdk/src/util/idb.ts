@@ -8,7 +8,7 @@
 interface OpenIDBOptions {
   /** IDB database name. */
   dbName: string;
-  /** Schema version. Bump when `objectStores` changes shape. */
+  /** Schema version. Bump when `stores` changes shape. */
   version: number;
   /** Object store schema applied inside `onupgradeneeded`. Each
    *  entry creates the store if missing (idempotent across versions
@@ -65,6 +65,14 @@ export function openIDB(opts: OpenIDBOptions): Promise<IDBDatabase | null> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => {
       opts.onWarn?.("indexedDB.open errored", req.error);
+      resolve(null);
+    };
+    // Fires when another tab / worker holds the prior version's
+    // connection open during a version upgrade. Without this
+    // handler the promise would hang forever — settle as a graceful
+    // degradation instead.
+    req.onblocked = () => {
+      opts.onWarn?.("indexedDB.open blocked by another connection");
       resolve(null);
     };
   });

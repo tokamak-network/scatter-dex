@@ -22,7 +22,11 @@ export function useOutsideClick({ enabled, ref, onClose }: Options): void {
   useEffect(() => {
     if (!enabled) return;
     const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
+      // Guard against an unmounted (or not-yet-attached) ref:
+      // `null?.contains(...)` is `undefined` and the negation
+      // would dismiss on every click. Skip the dismissal entirely
+      // when the wrapping element isn't in the DOM.
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
