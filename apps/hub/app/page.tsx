@@ -3,6 +3,9 @@ import { ArrowRight, Lock, ShieldCheck, Zap } from "lucide-react";
 import { Button, buttonClassName } from "@zkscatter/ui";
 import { USER_APPS, OPERATOR_APPS } from "./lib/apps";
 import { AppCard } from "./components/AppCard";
+import { Section } from "./components/Section";
+import { FeatureCard } from "./components/FeatureCard";
+import { EyebrowLabel, SectionHeading } from "./components/SectionHeader";
 
 export default function HomePage() {
   return (
@@ -16,22 +19,6 @@ export default function HomePage() {
       <Proof />
       <FooterCTA />
     </>
-  );
-}
-
-function Section({
-  id,
-  className = "",
-  children,
-}: {
-  id?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section id={id} className={`mx-auto max-w-6xl px-6 py-20 ${className}`}>
-      {children}
-    </section>
   );
 }
 
@@ -72,17 +59,17 @@ function Hero() {
 function Why() {
   const items = [
     {
-      Icon: Lock,
+      icon: Lock,
       title: "Privacy by ZK",
       body: "Groth16 proofs over a commitment pool. Order amounts and trader identities are never revealed on-chain.",
     },
     {
-      Icon: ShieldCheck,
+      icon: ShieldCheck,
       title: "Compliant by zk-X509",
       body: "Multi-CA identity gating attests jurisdiction and KYC status — without exposing who the trader is.",
     },
     {
-      Icon: Zap,
+      icon: Zap,
       title: "Gasless & MEV-free",
       body: "A relayer network matches orders off-chain and submits settlement so users pay nothing and front-runners see nothing.",
     },
@@ -90,9 +77,7 @@ function Why() {
   return (
     <Section id="technology" className="border-t border-[var(--color-border)]">
       <div className="mb-10 flex items-end justify-between">
-        <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-          Why zkScatter
-        </h2>
+        <SectionHeading>Why zkScatter</SectionHeading>
         <a
           href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/research/PAPER.md"
           target="_blank"
@@ -103,16 +88,17 @@ function Why() {
         </a>
       </div>
       <div className="grid gap-5 md:grid-cols-3">
-        {items.map(({ Icon, title, body }) => (
-          <div
-            key={title}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
-          >
-            <Icon className="h-5 w-5 text-[var(--color-text)]" />
-            <div className="mt-4 text-lg font-semibold">{title}</div>
-            <p className="mt-2 text-sm text-[var(--color-text-muted)]">{body}</p>
-          </div>
+        {items.map((i) => (
+          <FeatureCard key={i.title} {...i} />
         ))}
+      </div>
+      <div className="mt-8">
+        <Link
+          href="/technology"
+          className="text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          Full architecture →
+        </Link>
       </div>
     </Section>
   );
@@ -122,12 +108,8 @@ function AppsRouter() {
   return (
     <Section id="apps" className="border-t border-[var(--color-border)]">
       <div className="mb-10 max-w-2xl">
-        <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
-          For end-users
-        </div>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight md:text-4xl">
-          Built for your role
-        </h2>
+        <EyebrowLabel>For end-users</EyebrowLabel>
+        <SectionHeading className="mt-2">Built for your role</SectionHeading>
         <p className="mt-3 text-[var(--color-text-muted)]">
           Same ZK core, different surface. Pick the app shaped to your job.
         </p>
@@ -153,12 +135,8 @@ function OperatorsRouter() {
   return (
     <Section className="border-t border-[var(--color-border)]">
       <div className="mb-10 max-w-2xl">
-        <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
-          For operators
-        </div>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight md:text-4xl">
-          Run the network
-        </h2>
+        <EyebrowLabel>For operators</EyebrowLabel>
+        <SectionHeading className="mt-2">Run the network</SectionHeading>
         <p className="mt-3 text-[var(--color-text-muted)]">
           The four user apps run on a permissionless relayer network. Match
           orders, generate ZK proofs, earn fees.
@@ -176,37 +154,30 @@ function OperatorsRouter() {
 function HowItWorks() {
   const steps = [
     {
-      n: "01",
+      eyebrow: "01",
       title: "Order",
       body: "User signs an EdDSA order locally. Amount, side, and identity stay on the device.",
     },
     {
-      n: "02",
+      eyebrow: "02",
       title: "Match",
       body: "A relayer matches against the shared orderbook off-chain and produces a half-proof per side (~15K constraints).",
     },
     {
-      n: "03",
+      eyebrow: "03",
       title: "Settle",
       body: "PrivateSettlement verifies the proof and writes a commitment to the pool. Claims happen later, gaslessly.",
     },
   ];
   return (
     <Section className="border-t border-[var(--color-border)]">
-      <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">How it works</h2>
+      <SectionHeading>How it works</SectionHeading>
       <p className="mt-3 max-w-2xl text-[var(--color-text-muted)]">
         Three steps. No mempool exposure. No identity leak.
       </p>
       <div className="mt-10 grid gap-5 md:grid-cols-3">
         {steps.map((s) => (
-          <div
-            key={s.n}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
-          >
-            <div className="font-mono text-xs text-[var(--color-text-subtle)]">{s.n}</div>
-            <div className="mt-2 text-lg font-semibold">{s.title}</div>
-            <p className="mt-2 text-sm text-[var(--color-text-muted)]">{s.body}</p>
-          </div>
+          <FeatureCard key={s.eyebrow} {...s} />
         ))}
       </div>
     </Section>
@@ -218,12 +189,10 @@ function Developers() {
     <Section id="developers" className="border-t border-[var(--color-border)]">
       <div className="grid gap-12 md:grid-cols-2">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
-            For developers
-          </div>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+          <EyebrowLabel>For developers</EyebrowLabel>
+          <SectionHeading className="mt-3">
             Build private, compliant trading in an afternoon.
-          </h2>
+          </SectionHeading>
           <p className="mt-4 text-[var(--color-text-muted)]">
             One TypeScript SDK across contracts, ZK circuits, the relayer
             network, and the shared orderbook. Used by every persona app.
@@ -294,9 +263,7 @@ function Proof() {
     <Section id="research" className="border-t border-[var(--color-border)]">
       <div className="grid gap-10 md:grid-cols-[1fr_auto] md:items-end">
         <div className="max-w-2xl">
-          <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-            Backed by published research.
-          </h2>
+          <SectionHeading>Backed by published research.</SectionHeading>
           <p className="mt-3 text-[var(--color-text-muted)]">
             Half-proof authorization, commitment-pool settlement, and zk-X509
             identity gating — designed and analyzed in the open.
@@ -330,9 +297,7 @@ function FooterCTA() {
   return (
     <Section className="border-t border-[var(--color-border)]">
       <div className="rounded-2xl bg-[var(--color-primary)] px-8 py-14 text-center text-white">
-        <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-          Ship privacy without losing compliance.
-        </h2>
+        <SectionHeading>Ship privacy without losing compliance.</SectionHeading>
         <p className="mx-auto mt-3 max-w-xl text-white/70">
           Pick the app shaped for you, or build your own on the same ZK core.
         </p>
