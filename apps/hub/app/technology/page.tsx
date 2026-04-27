@@ -223,6 +223,8 @@ function RelayerNetwork() {
       </div>
       <Button
         href="https://relayer.zkscatter.xyz"
+        target="_blank"
+        rel="noopener noreferrer"
         variant="secondary"
         size="md"
         className="mt-8"
@@ -307,7 +309,7 @@ function FooterCTA() {
 
 function Th({ children }: { children: React.ReactNode }) {
   return (
-    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider">
+    <th scope="col" className="px-4 py-3 text-xs font-semibold uppercase tracking-wider">
       {children}
     </th>
   );
