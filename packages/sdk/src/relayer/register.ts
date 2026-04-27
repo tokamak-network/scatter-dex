@@ -92,49 +92,51 @@ function callExceptionErrorName(err: unknown): string | null {
 }
 
 /** Static error-code → copy table. Hoisted to module scope so it
- *  isn't reallocated on every `explainRegisterError` call.
+ *  isn't reallocated on every `explainRegistryError` call.
  *  `InsufficientBond` is handled separately because it interpolates
- *  the per-call `minBond`. */
-const STATIC_REGISTER_ERROR_COPY: Record<string, string> = {
+ *  the per-call `minBond`. Covers every revert custom error the
+ *  registry can raise across register / updateInfo / addBond /
+ *  requestExit / executeExit, plus the local validation strings
+ *  the SDK helpers throw for invalid input. */
+const STATIC_REGISTRY_ERROR_COPY: Record<string, string> = {
   NotVerified: "zk-X509 identity not verified. Register your identity first.",
   AlreadyRegistered: "This address is already registered as a relayer.",
+  NotRegistered: "This address is not registered as a relayer.",
+  RelayerNotActive: "Relayer is not active. Re-register before performing this action.",
+  AlreadyExiting: "An exit is already in progress. Wait for the cool-down to complete.",
+  ExitNotRequested: "Request an exit before executing it.",
+  CooldownNotPassed: "Exit cool-down has not finished yet. Wait until the timer ends.",
   FeeTooHigh: `Fee too high. Maximum: ${MAX_RELAYER_FEE_BPS} bps (${MAX_RELAYER_FEE_BPS / 100}%).`,
   InvalidFee: `Fee must be an integer between 0 and ${MAX_RELAYER_FEE_BPS} bps.`,
   InvalidBond: "Invalid bond amount. Enter a valid ETH value.",
 };
 
-const REGISTER_ERROR_CODES = [
-  "NotVerified",
-  "AlreadyRegistered",
-  "InsufficientBond",
-  "FeeTooHigh",
-  "InvalidFee",
-  "InvalidBond",
-] as const;
+const REGISTRY_ERROR_CODES = Object.keys(STATIC_REGISTRY_ERROR_COPY).concat(["InsufficientBond"]);
 
-function copyForRegisterError(code: string, minBond: bigint): string | null {
+function copyForRegistryError(code: string, minBond: bigint): string | null {
   if (code === "InsufficientBond") {
     return `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`;
   }
-  return STATIC_REGISTER_ERROR_COPY[code] ?? null;
+  return STATIC_REGISTRY_ERROR_COPY[code] ?? null;
 }
 
-/** Map known contract custom errors (decoded by ethers from the
+/** Map known registry custom errors (decoded by ethers from the
  *  ABI fragments on `RELAYER_REGISTRY_ABI`) and local validation
- *  errors thrown from `registerRelayer` to user-friendly copy.
- *  Falls back to the raw message when no rule matches so callers
- *  don't swallow unexpected errors. */
-export function explainRegisterError(err: unknown, minBond: bigint): string {
+ *  errors thrown from any registry write helper to user-friendly
+ *  copy. Falls back to the raw message when no rule matches so
+ *  callers don't swallow unexpected errors. `minBond` is only used
+ *  when the error is `InsufficientBond`; pass `0n` if unknown. */
+export function explainRegistryError(err: unknown, minBond: bigint): string {
   const named = callExceptionErrorName(err);
   if (named) {
-    const copy = copyForRegisterError(named, minBond);
+    const copy = copyForRegistryError(named, minBond);
     if (copy) return copy;
   }
 
   const raw = err instanceof Error ? err.message : String(err);
-  for (const code of REGISTER_ERROR_CODES) {
+  for (const code of REGISTRY_ERROR_CODES) {
     if (raw.includes(code)) {
-      const copy = copyForRegisterError(code, minBond);
+      const copy = copyForRegistryError(code, minBond);
       if (copy) return copy;
     }
   }

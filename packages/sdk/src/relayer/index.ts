@@ -4,3 +4,4 @@ export * from "./client";
 export * from "./registry";
 export * from "./register";
 export * from "./operator";
+export * from "./operator-actions";
