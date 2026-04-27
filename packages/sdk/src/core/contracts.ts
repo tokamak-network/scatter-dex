@@ -12,6 +12,7 @@ export const RELAYER_REGISTRY_ABI = [
   "function relayers(address) external view returns (string url, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
+  "function identityRegistry() external view returns (address)",
 ] as const;
 
 export const IDENTITY_GATE_ABI = [
