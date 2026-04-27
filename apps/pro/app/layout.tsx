@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                               <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
                                 <Link href="/" className="flex items-center gap-2 font-semibold">
                                   <TokamakMark />
-                                  Scatter <span className="text-xs font-medium text-[var(--color-text-muted)]">Pro</span>
+                                  Scatter Pro
                                 </Link>
                                 <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
@@ -59,7 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             </header>
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-                              Scatter Pro · Powered by zkScatter · Tokamak Network · KISA-registered relayers
+                              Scatter Pro · Powered by zkScatter · Tokamak Network
                             </footer>
                           </ToastProvider>
                         </TradeFormProvider>
