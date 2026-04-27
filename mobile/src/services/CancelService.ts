@@ -11,7 +11,7 @@
  */
 import { ethers } from 'ethers';
 import { ZKBridgeService } from './ZKBridgeService';
-import { generateNativeProof } from './NativeProverService';
+import { generateNativeProof, SnarkjsLikeProofResult } from './NativeProverService';
 import { EdDSAKeyService } from './EdDSAKeyService';
 import { NoteStorageService, StoredNote } from './NoteStorageService';
 import { ConfigService } from './ConfigService';
@@ -185,7 +185,7 @@ export const CancelService = {
         sigR8y: sig.R8y,
       };
 
-      let proofResult;
+      let proofResult: SnarkjsLikeProofResult;
       const proofStart = Date.now();
       try {
         console.log('[CancelService] generateProof native dispatch');
@@ -195,7 +195,12 @@ export const CancelService = {
         // Native module unavailable (Expo Go, missing arm64 jniLib) or
         // proving failed — fall back to the WebView path so the user
         // can still cancel. Logs the cause so the regression is visible.
-        console.warn('[CancelService] native proof unavailable, falling back to WebView:', e);
+        // Pull `shortMessage` / `reason` first when present (ethers /
+        // mopro errors set those before `message`) so the warn line is
+        // a one-liner instead of a giant call stack dump.
+        const errAny = e as { shortMessage?: string; reason?: string; message?: string };
+        const msg = errAny?.shortMessage ?? errAny?.reason ?? errAny?.message ?? String(e);
+        console.warn(`[CancelService] native proof unavailable (${msg}), falling back to WebView:`, e);
         let wasmB64: string;
         let zkeyB64: string;
         try {
