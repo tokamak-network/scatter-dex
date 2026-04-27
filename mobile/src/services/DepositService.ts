@@ -26,6 +26,7 @@ import {
 import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { generateNativeProof, SnarkjsLikeProofResult } from './NativeProverService';
 import { formatProofForSolidity } from '../lib/proofFormat';
 
 export type DepositStep =
@@ -171,29 +172,45 @@ export const DepositService = {
         pubKeyAy: keyPair.pubKeyAy,
       };
 
-      // Load circuit files as base64
-      // Note: these require() calls must match actual asset files
-      // TODO: deposit.wasm and deposit_final.zkey must be placed in assets/zk/
-      let wasmB64: string;
-      let zkeyB64: string;
+      // Native proof first (mopro-ffi / arkworks). Falls through to
+      // WebView (snarkjs in HiddenWebView) only when the FFI throws —
+      // Expo Go runs and missing arm64 jniLib both end up there.
+      let proofResult: SnarkjsLikeProofResult;
+      const proofStart = Date.now();
       try {
-        wasmB64 = await loadCircuitFileB64(
-          require('../../assets/zk/deposit.wasm'),
-        );
-        zkeyB64 = await loadCircuitFileB64(
-          require('../../assets/zk/deposit_final.zkey'),
-        );
-      } catch {
-        throw new Error(
-          'Deposit circuit files not found. Run the build script to place deposit.wasm and deposit_final.zkey in assets/zk/',
-        );
+        console.log('[DepositService] generateProof native dispatch');
+        proofResult = await generateNativeProof('deposit', circuitInputs);
+        console.log('[DepositService] generateProof native returned', { ms: Date.now() - proofStart });
+      } catch (e) {
+        // ethers / mopro errors set `shortMessage` / `reason` before
+        // `message` — pull those first so the warn is a one-liner
+        // even when the underlying error has a giant stack.
+        const errAny = e as { shortMessage?: string; reason?: string; message?: string };
+        const msg = errAny?.shortMessage ?? errAny?.reason ?? errAny?.message ?? String(e);
+        console.warn(`[DepositService] native proof unavailable (${msg}), falling back to WebView:`, e);
+        let wasmB64: string;
+        let zkeyB64: string;
+        try {
+          const wasmStart = Date.now();
+          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/deposit.wasm'));
+          console.log('[DepositService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
+          const zkeyStart = Date.now();
+          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/deposit_final.zkey'));
+          console.log('[DepositService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
+        } catch (loadError) {
+          const loadErrAny = loadError as { shortMessage?: string; reason?: string; message?: string };
+          const loadMsg = loadErrAny?.shortMessage ?? loadErrAny?.reason ?? loadErrAny?.message ?? String(loadError);
+          console.error('[DepositService] failed to load deposit circuit assets for WebView fallback:', loadError);
+          throw new Error(
+            `Deposit circuit files could not be loaded from assets/zk/ (underlying error: ${loadMsg}). ` +
+              'Ensure the deposit circuit assets are present and try running `npm run copy:circuits`.',
+          );
+        }
+        const fallbackStart = Date.now();
+        console.log('[DepositService] generateProof WebView dispatch');
+        proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
+        console.log('[DepositService] generateProof WebView returned', { ms: Date.now() - fallbackStart });
       }
-
-      const proofResult = await ZKBridgeService.generateProof(
-        circuitInputs,
-        wasmB64,
-        zkeyB64,
-      );
 
       const proof = formatProofForSolidity(proofResult.proof);
       console.log('[DepositService] proof generated', {
