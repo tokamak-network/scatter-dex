@@ -1,28 +1,32 @@
+"use client";
+
 import Link from "next/link";
-import {
-  MOCK_OPERATOR,
-  operatorInitials,
-  safeOperatorUrl,
-  shortenAddress,
-  type OperatorStatus,
-} from "../lib/mockOperator";
+import { shortAddr } from "@zkscatter/sdk/react";
+import type { OperatorStatus } from "@zkscatter/sdk/relayer";
+import { addressInitials, safeOperatorUrl } from "../lib/operatorDisplay";
+import { useOperator } from "../lib/useOperator";
 
 /** Top-of-page identity banner for operator-scoped views
- *  (`/dashboard`, `/profile`, `/treasury`, `/orders`). Makes it
- *  unambiguous which relayer the page's data belongs to —
- *  particularly important since the same UI is multi-tenant: every
- *  visitor sees a per-operator scope once their wallet is wired up
- *  (mock identity in v1).
- *
- *  Excluded from `/`, `/register`, `/leaderboard` — those are
- *  network-wide / pre-registration views. */
+ *  (`/dashboard`, `/profile`, `/treasury`, `/orders`). Renders the
+ *  connected operator's address + on-chain status; falls back to a
+ *  "connect wallet" prompt when no account is available so the
+ *  surface is unambiguous about which relayer is in scope. */
 export function OperatorIdentityBar() {
-  // Derived from `op` inside the body so they stay correct once the
-  // identity becomes dynamic via a `useOperator()` hook in v1.1.
-  const op = MOCK_OPERATOR;
-  const initials = operatorInitials(op.name);
-  const shortAddress = shortenAddress(op.address);
-  const safeUrl = safeOperatorUrl(op.url);
+  const { account, row, registryDeployed, loading } = useOperator();
+
+  if (!account) {
+    return (
+      <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-3 text-sm text-[var(--color-text-muted)]">
+        <span>Connect a wallet to load your operator data.</span>
+        <span className="text-xs">Use the &ldquo;Connect wallet&rdquo; pill in the header.</span>
+      </div>
+    );
+  }
+
+  const safeUrl = safeOperatorUrl(row?.url);
+  const initials = addressInitials(account);
+  const status: OperatorStatus = row?.status ?? "unregistered";
+
   return (
     <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
       <div className="flex min-w-0 items-center gap-3">
@@ -31,11 +35,11 @@ export function OperatorIdentityBar() {
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold">{op.name}</span>
-            <StatusDot status={op.status} />
+            <span className="font-semibold">Operator {shortAddr(account)}</span>
+            <IdentityBadge registryDeployed={registryDeployed} loading={loading} status={status} />
           </div>
           <div className="truncate text-xs text-[var(--color-text-muted)]">
-            <span className="font-mono" title={op.address}>{shortAddress}</span>
+            <span className="font-mono" title={account}>{shortAddr(account)}</span>
             {safeUrl ? (
               <>
                 {" · "}
@@ -48,7 +52,7 @@ export function OperatorIdentityBar() {
                   {safeUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                 </a>
               </>
-            ) : op.url ? (
+            ) : row?.url ? (
               <>
                 {" · "}
                 <span
@@ -73,12 +77,29 @@ export function OperatorIdentityBar() {
   );
 }
 
-function StatusDot({ status }: { status: OperatorStatus }) {
-  const config = {
-    active:   { dot: "bg-[var(--color-success)]", text: "Active" },
-    cooldown: { dot: "bg-[var(--color-warning)]", text: "In cool-down" },
-    offline:  { dot: "bg-[var(--color-text-subtle)]", text: "Offline" },
-  }[status];
+const STATUS_CONFIG: Record<OperatorStatus, { dot: string; text: string }> = {
+  active:       { dot: "bg-[var(--color-success)]",      text: "Active" },
+  cooldown:     { dot: "bg-[var(--color-warning)]",      text: "In cool-down" },
+  offline:      { dot: "bg-[var(--color-text-subtle)]",  text: "Offline" },
+  unregistered: { dot: "bg-[var(--color-text-subtle)]",  text: "Not registered" },
+};
+
+function IdentityBadge({
+  registryDeployed,
+  loading,
+  status,
+}: {
+  registryDeployed: boolean;
+  loading: boolean;
+  status: OperatorStatus;
+}) {
+  if (!registryDeployed) {
+    return <span className="text-[10px] text-[var(--color-warning)]">registry not deployed</span>;
+  }
+  if (loading) {
+    return <span className="text-[10px] text-[var(--color-text-subtle)]">loading…</span>;
+  }
+  const config = STATUS_CONFIG[status];
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
       <span className={`h-1.5 w-1.5 rounded-full ${config.dot}`} />
