@@ -28,9 +28,9 @@ interface RecentWithdrawal {
 }
 
 const recentWithdrawals: RecentWithdrawal[] = [
-  { id: "w_2026_04_25", token: "USDC", amount: "1,200.00", txHash: "0x9a…f1", at: "2026-04-25 18:02" },
-  { id: "w_2026_04_18", token: "USDC", amount: "980.55",   txHash: "0x4c…b7", at: "2026-04-18 09:14" },
-  { id: "w_2026_04_11", token: "WETH", amount: "0.420",    txHash: "0xee…23", at: "2026-04-11 22:48" },
+  { id: "w_2026_04_25", token: "USDC", amount: "1,200.00", txHash: "0x9a3f2c1d8e7b4a0f9c5d6e8a1b2c3d4e5f6789a0b1c2d3e4f5a6b7c8d9e0f1a2", at: "2026-04-25 18:02" },
+  { id: "w_2026_04_18", token: "USDC", amount: "980.55",   txHash: "0x4c1b7e9f2a8d6c0b3e5a7f9d1c2b4e6a8d0f2c4b6e8a0d2c4f6b8e0a2d4c6f8b", at: "2026-04-18 09:14" },
+  { id: "w_2026_04_11", token: "WETH", amount: "0.420",    txHash: "0xee23f1a8b9c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1", at: "2026-04-11 22:48" },
 ];
 
 export default function TreasuryPage() {
@@ -79,7 +79,8 @@ export default function TreasuryPage() {
             <tbody>
               {balances.map((b) => {
                 const isPending = pendingToken === b.symbol;
-                const empty = b.accumulated === "0" || b.accumulated === "0.0";
+                const accumulatedAmount = Number(b.accumulated.replaceAll(",", ""));
+                const empty = !Number.isFinite(accumulatedAmount) || accumulatedAmount <= 0;
                 return (
                   <tr key={b.symbol} className="border-t border-[var(--color-border)]">
                     <td className="px-5 py-3 font-medium">{b.symbol}</td>
@@ -89,7 +90,10 @@ export default function TreasuryPage() {
                     <td className="px-5 py-3 text-right">
                       <button
                         disabled={empty || isPending}
-                        onClick={() => setPendingToken(b.symbol)}
+                        onClick={() => {
+                          setPendingToken(b.symbol);
+                          setTimeout(() => setPendingToken(null), 1500);
+                        }}
                         className="rounded-lg bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-subtle)]"
                       >
                         {isPending ? "Pending…" : "Withdraw"}
@@ -125,7 +129,7 @@ export default function TreasuryPage() {
                 rel="noopener noreferrer"
                 className="font-mono text-xs text-[var(--color-primary)] hover:underline"
               >
-                {w.txHash} ↗
+                {`${w.txHash.slice(0, 6)}…${w.txHash.slice(-4)}`} ↗
               </a>
             </div>
           ))}

@@ -49,7 +49,7 @@ export default function Dashboard() {
           {recentSettlements.map((s) => (
             <Link
               key={s.id}
-              href={`/orders?settlement=${s.id}`}
+              href="/orders"
               className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0 hover:bg-[var(--color-primary-soft)]"
             >
               <div>

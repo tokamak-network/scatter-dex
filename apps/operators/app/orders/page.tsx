@@ -43,8 +43,8 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold">Routed orders</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Live feed of orders flowing through this relayer. Click a row to inspect
-            the signed payload, claim status, and settlement transaction.
+            Live feed of orders flowing through this relayer. Per-order detail
+            (signed payload, claim status, settlement tx) ships in v1.1.
           </p>
         </div>
         <Link

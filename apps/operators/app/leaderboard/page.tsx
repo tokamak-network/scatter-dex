@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Stat } from "../components/Stat";
 
 type Window = "24h" | "7d" | "30d" | "all";
@@ -63,10 +63,26 @@ const METRICS: { key: Metric; label: string }[] = [
   { key: "volume",      label: "Volume" },
 ];
 
+function parseVolume(v: string): number {
+  const n = parseFloat(v);
+  if (v.endsWith("M")) return n * 1_000_000;
+  if (v.endsWith("K")) return n * 1_000;
+  return n;
+}
+
+function metricValue(row: Row, metric: Metric): number {
+  if (metric === "settlements") return row.settlements;
+  if (metric === "successRate") return row.successRate;
+  return parseVolume(row.volumeUsd);
+}
+
 export default function LeaderboardPage() {
   const [window, setWindow] = useState<Window>("7d");
   const [metric, setMetric] = useState<Metric>("settlements");
-  const rows = ROWS[window];
+  const rows = useMemo(() => {
+    const sorted = [...ROWS[window]].sort((a, b) => metricValue(b, metric) - metricValue(a, metric));
+    return sorted.map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [window, metric]);
   const me = rows.find((r) => r.isMe);
 
   return (
@@ -129,9 +145,9 @@ export default function LeaderboardPage() {
                 </td>
                 <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{r.address}</td>
                 <td className="px-5 py-3 text-right">{(r.feeBps / 100).toFixed(2)}%</td>
-                <td className="px-5 py-3 text-right font-mono">{r.settlements.toLocaleString()}</td>
-                <td className="px-5 py-3 text-right font-mono">{r.successRate.toFixed(1)}%</td>
-                <td className="px-5 py-3 text-right font-mono">${r.volumeUsd}</td>
+                <td className={`px-5 py-3 text-right font-mono ${metric === "settlements" ? "font-semibold text-[var(--color-text)]" : ""}`}>{r.settlements.toLocaleString()}</td>
+                <td className={`px-5 py-3 text-right font-mono ${metric === "successRate" ? "font-semibold text-[var(--color-text)]" : ""}`}>{r.successRate.toFixed(1)}%</td>
+                <td className={`px-5 py-3 text-right font-mono ${metric === "volume" ? "font-semibold text-[var(--color-text)]" : ""}`}>${r.volumeUsd}</td>
               </tr>
             ))}
           </tbody>
