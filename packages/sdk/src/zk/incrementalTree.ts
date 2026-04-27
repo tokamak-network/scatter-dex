@@ -101,4 +101,57 @@ export class IncrementalMerkleTree {
     for (const leaf of leaves) await tree.insert(leaf);
     return tree;
   }
+
+  /** Inclusion proof for a leaf at the given index. Walks the tree
+   *  level by level: at each level, the sibling is the hash of the
+   *  sibling subtree's leaves (computed on demand) when those leaves
+   *  exist, otherwise the precomputed `ZEROS[i]`. Cost: O(N) hashes
+   *  per call in the worst case (sibling subtree is fully populated).
+   *  Apps that proof-frequently should consider caching layer slices
+   *  — this method is O(N) by design to keep memory at O(N) instead
+   *  of the O(2^depth) a fully-padded tree would require.
+   *
+   *  Returns the same `MerkleProof` shape every spend circuit
+   *  consumes (`{ root, pathElements, pathIndices }`). Throws when
+   *  `leafIndex` is outside the inserted range. */
+  async proof(leafIndex: number): Promise<{
+    root: bigint;
+    pathElements: bigint[];
+    pathIndices: number[];
+  }> {
+    if (leafIndex < 0 || leafIndex >= this._leaves.length) {
+      throw new Error(
+        `IncrementalMerkleTree.proof: leafIndex ${leafIndex} out of range (0..${this._leaves.length - 1})`,
+      );
+    }
+
+    // `levelLeaves` starts as the leaf layer; each iteration replaces
+    // it with the next layer up, computing only the prefix actually
+    // backed by inserted leaves. The right-side gap is filled by
+    // `ZEROS[level]` whenever the sibling falls outside.
+    let levelLeaves: bigint[] = this._leaves.slice();
+    const pathElements: bigint[] = [];
+    const pathIndices: number[] = [];
+
+    let idx = leafIndex;
+    for (let level = 0; level < this.depth; level++) {
+      const isRight = idx % 2;
+      const siblingIdx = isRight ? idx - 1 : idx + 1;
+      const sibling =
+        siblingIdx < levelLeaves.length ? levelLeaves[siblingIdx]! : ZEROS[level]!;
+      pathElements.push(sibling);
+      pathIndices.push(isRight);
+
+      const next: bigint[] = new Array(Math.ceil(levelLeaves.length / 2));
+      for (let i = 0; i < levelLeaves.length; i += 2) {
+        const left = levelLeaves[i]!;
+        const right = i + 1 < levelLeaves.length ? levelLeaves[i + 1]! : ZEROS[level]!;
+        next[i >> 1] = await poseidonHash([left, right]);
+      }
+      levelLeaves = next;
+      idx = idx >> 1;
+    }
+
+    return { root: this._root, pathElements, pathIndices };
+  }
 }

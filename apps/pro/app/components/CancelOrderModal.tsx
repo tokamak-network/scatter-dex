@@ -13,6 +13,8 @@ import { useEdDSAKey } from "../lib/eddsaKey";
 import { useRelayers } from "../lib/relayers";
 import { getCancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
+import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
+import { computeCommitment } from "@zkscatter/sdk/zk";
 import { dispatchCancel } from "../lib/dispatch";
 import { PreSignPreview } from "./PreSignPreview";
 import { abortableSleep, assertNotAborted, isAbortError } from "../lib/abort";
@@ -35,6 +37,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const { markCancelled } = useOrders();
   const { notes } = useVault();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const commitmentTree = useCommitmentTree();
   const { selected: selectedRelayer } = useRelayers();
   const { signer } = useWallet();
   const toast = useToast();
@@ -94,15 +97,17 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       const eddsaKey = await deriveEdDSA();
       assertNotAborted(ctrl.signal);
 
-      // Empty-tree merkle proof — same demo shortcut as OrderModal.
-      // Real proof against the on-chain pool root lands with the
-      // incremental-tree migration.
-      const { merkleProof } = await buildEmptyTreeProof(note.note);
+      const commitment = await computeCommitment(note.note);
+      const { merkleProof, leafIndex } = await getMerkleProofWithFallback(
+        commitmentTree,
+        commitment,
+        () => buildEmptyTreeProof(note.note),
+      );
       assertNotAborted(ctrl.signal);
 
       const input: CancelProofInput = {
         note: note.note,
-        leafIndex: 0,
+        leafIndex,
         merkleProof,
         nonce: order.nonce,
         eddsaPrivateKey: eddsaKey.privateKey,
@@ -154,7 +159,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast]);
+  }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast, commitmentTree]);
 
   if (!order) return null;
 
