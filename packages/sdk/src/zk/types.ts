@@ -17,10 +17,16 @@ export interface Groth16Proof {
 
 /** Output of one proof job. `publicSignals` carries the public
  *  inputs in circuit-declared order so callers can splice them into
- *  the verifier call. */
+ *  the verifier call. `meta` is an optional side-channel for private
+ *  outputs the worker computed but the circuit doesn't expose as a
+ *  public signal — e.g. cancel's `freshSalt`, which the rotated note
+ *  needs persisted client-side but the on-chain call doesn't take.
+ *  Field-element values; same BigInt structuredClone path as the
+ *  proof itself. Workers that don't need the channel just omit it. */
 export interface ProveResult {
   proof: Groth16Proof;
   publicSignals: readonly bigint[];
+  meta?: Readonly<Record<string, bigint>>;
 }
 
 /** Optional knobs for a single prove call. Every implementation must

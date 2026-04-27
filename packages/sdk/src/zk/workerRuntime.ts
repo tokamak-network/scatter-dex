@@ -4,10 +4,14 @@ import type { Groth16Proof } from "./types";
 /** What a circuit-specific worker file plugs into `setupProverWorker`. */
 export interface ProverWorkerHandlers {
   /** Run the proof for one job. May throw — the runtime turns that
-   *  into a `{ type: "error" }` message back to the main thread. */
+   *  into a `{ type: "error" }` message back to the main thread.
+   *  `meta` is an optional side-channel for private outputs the
+   *  circuit doesn't expose as a public signal (e.g. cancel's
+   *  `freshSalt`). See `ProveResult.meta`. */
   prove(req: ProverWorkerRequest): Promise<{
     proof: Groth16Proof;
     publicSignals: readonly bigint[];
+    meta?: Readonly<Record<string, bigint>>;
   }>;
   /** Optional asset / Poseidon warmup, run once before the worker
    *  signals "ready". Errors here are reported as a worker-scope
@@ -100,6 +104,7 @@ export function setupProverWorker(handlers: ProverWorkerHandlers): {
         jobId: req.jobId,
         proof: result.proof,
         publicSignals: result.publicSignals,
+        ...(result.meta && { meta: result.meta }),
       };
       post(out);
     } catch (e) {

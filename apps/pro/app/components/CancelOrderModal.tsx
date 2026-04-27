@@ -122,11 +122,9 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       assertNotAborted(ctrl.signal);
 
       // SDK helper assembles the rich `CancelProofResult` from the
-      // worker's slim `{ proof, publicSignals }` envelope. freshSalt
-      // is private and not yet plumbed back through the worker
-      // protocol — see `assembleCancelProofResult` for the limitation;
-      // `callCancel` doesn't read it, but vault rotation persistence
-      // is gated on the follow-up that adds a `meta` channel.
+      // worker envelope. `freshSalt` arrives via the `meta` channel
+      // (see `cancel.worker.ts`) and is needed for vault-rotation
+      // persistence; `callCancel` itself doesn't read it.
       const cancelProof = assembleCancelProofResult(proveResult);
 
       setPhase({ kind: "submitting" });
