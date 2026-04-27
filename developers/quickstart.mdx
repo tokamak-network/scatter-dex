@@ -1,0 +1,106 @@
+---
+title: Quickstart
+description: "Submit your first private order on Sepolia in under 5 minutes."
+---
+
+<Note>
+  This guide targets `@zkscatter/sdk` Phase 1+. Phase 0 ships types
+  and ABIs only — see [SDK overview](/sdk/overview) for the current
+  surface.
+</Note>
+
+## 1. Install
+
+<CodeGroup>
+
+```bash npm
+npm install @zkscatter/sdk viem
+```
+
+```bash pnpm
+pnpm add @zkscatter/sdk viem
+```
+
+```bash yarn
+yarn add @zkscatter/sdk viem
+```
+
+</CodeGroup>
+
+## 2. Configure a network
+
+```ts
+import { createScatterClient, SEPOLIA } from "@zkscatter/sdk";
+
+const client = createScatterClient({
+  network: SEPOLIA,
+  rpcUrl: process.env.RPC_URL!,
+});
+```
+
+## 3. Authorize an order
+
+Generate a half-proof locally. Nothing is sent over the wire yet.
+
+```ts
+const proof = await client.zk.generateAuthorizeProof({
+  side: "buy",
+  base: "USDC",
+  quote: "WETH",
+  amount: 1000_000000n, // 1000 USDC
+  price: 3500_000000n,
+});
+```
+
+## 4. Submit through a relayer
+
+The relayer matches your order, settles on-chain, and returns the
+fill receipt.
+
+```ts
+const fill = await client.relayer.submit(proof);
+console.log(fill.txHash);
+// → 0x… (settled on Sepolia)
+```
+
+<Check>
+  That's it. Your order was matched off-chain, settled through
+  `PrivateSettlement`, and never exposed your identity or amount in
+  the mempool.
+</Check>
+
+## What just happened?
+
+<AccordionGroup>
+  <Accordion title="Where did the proof come from?">
+    `generateAuthorizeProof` runs the `authorize.circom` circuit
+    (~15K constraints) locally and returns a Groth16 proof plus
+    public signals.
+  </Accordion>
+  <Accordion title="Who is the relayer?">
+    A registered node from `RelayerRegistry`. Anyone can run one —
+    see [Run a relayer node](/operate/run-a-relayer-node).
+  </Accordion>
+  <Accordion title="What got written on-chain?">
+    A commitment to the trade — not the trade itself. The
+    `CommitmentPool` is an incremental Merkle tree; trader and
+    amount are hidden.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Listen to fills" icon="ear" href="/guides/listen-to-fills">
+    Subscribe to `Settled` events and reconcile order state.
+  </Card>
+  <Card title="Add identity gating" icon="shield" href="/guides/identity-gating">
+    Restrict who can submit orders via zk-X509 attestations.
+  </Card>
+  <Card title="Run your own relayer" icon="server" href="/operate/run-a-relayer-node">
+    Match orders, earn fees, control your own latency.
+  </Card>
+  <Card title="SDK reference" icon="book" href="/sdk/overview">
+    Every module, every function.
+  </Card>
+</CardGroup>

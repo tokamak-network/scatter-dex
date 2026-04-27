@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./tokens/pro.css": "./src/tokens/pro.css",
     "./tokens/pay.css": "./src/tokens/pay.css",
-    "./tokens/drop.css": "./src/tokens/drop.css"
+    "./tokens/drop.css": "./src/tokens/drop.css",
+    "./tokens/hub.css": "./src/tokens/hub.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

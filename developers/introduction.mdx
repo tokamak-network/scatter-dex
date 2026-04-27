@@ -1,0 +1,61 @@
+---
+title: Introduction
+description: "Build private, compliant trading on the zkScatter ZK stack."
+---
+
+zkScatter is a privacy-preserving DEX with compliant identity gating.
+Trades are matched off-chain by a relayer network and settled on-chain
+through ZK proofs over a commitment pool — orders, amounts, and trader
+identities never appear in plaintext on-chain.
+
+The same ZK core powers four persona apps:
+[Pro](https://pro.zkscatter.xyz),
+[Pay](https://pay.zkscatter.xyz),
+[Drop](https://drop.zkscatter.xyz),
+and Mobile.
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="A private trading UI" icon="chart-line" href="/quickstart">
+    Wrap the SDK to submit private limit orders against the shared
+    orderbook.
+  </Card>
+  <Card title="A relayer node" icon="server" href="/operate/run-a-relayer-node">
+    Match orders off-chain, generate ZK proofs, and earn fees.
+  </Card>
+  <Card title="Identity-gated drops" icon="shield-check" href="/guides/identity-gating">
+    Distribute tokens to verified humans without doxxing claimers.
+  </Card>
+  <Card title="Custom settlement flows" icon="cube" href="/contracts/private-settlement">
+    Compose `PrivateSettlement` and `CommitmentPool` directly.
+  </Card>
+</CardGroup>
+
+## How it works
+
+<Steps>
+  <Step title="Order">
+    A user signs an EdDSA order locally. Side, amount, and identity
+    stay on the device.
+  </Step>
+  <Step title="Match">
+    A relayer matches against the shared orderbook off-chain and
+    produces a half-proof per side (~15K constraints).
+  </Step>
+  <Step title="Settle">
+    `PrivateSettlement` verifies the proof and writes a commitment to
+    the pool. Claims happen later, gaslessly.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Submit your first private order in under 5 minutes.
+  </Card>
+  <Card title="Read the paper" icon="book" href="https://github.com/tokamak-network">
+    Half-proof authorization, commitment-pool settlement, zk-X509.
+  </Card>
+</CardGroup>

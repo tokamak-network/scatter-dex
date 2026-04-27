@@ -1,0 +1,112 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "zkScatter",
+  "description": "Build private, compliant trading on the zkScatter ZK stack.",
+  "colors": {
+    "primary": "#0b1220",
+    "light": "#0ea5e9",
+    "dark": "#0b1220"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/send-private-order",
+              "guides/listen-to-fills",
+              "guides/run-a-relayer",
+              "guides/identity-gating"
+            ]
+          },
+          {
+            "group": "SDK reference",
+            "pages": [
+              "sdk/overview",
+              "sdk/contracts",
+              "sdk/orderbook",
+              "sdk/relayer",
+              "sdk/zk",
+              "sdk/react",
+              "sdk/util",
+              "sdk/types"
+            ]
+          },
+          {
+            "group": "Contracts",
+            "pages": [
+              "contracts/overview",
+              "contracts/private-settlement",
+              "contracts/commitment-pool",
+              "contracts/relayer-registry",
+              "contracts/identity-gate"
+            ]
+          },
+          {
+            "group": "Circuits",
+            "pages": [
+              "circuits/overview",
+              "circuits/authorize",
+              "circuits/cancel",
+              "circuits/claim",
+              "circuits/withdraw",
+              "circuits/deposit"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "operate/run-a-relayer-node",
+              "operate/monitoring",
+              "operate/fees-and-slashing"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/tokamak-network",
+          "icon": "github"
+        },
+        {
+          "anchor": "zkScatter",
+          "href": "https://zkscatter.xyz",
+          "icon": "house"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Apps",
+        "href": "https://zkscatter.xyz/apps"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "GitHub",
+      "href": "https://github.com/tokamak-network"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tokamak-network",
+      "x": "https://x.com/tokamak_network"
+    }
+  }
+}
