@@ -1,6 +1,7 @@
 "use client";
 
 import { useTradeForm, type RecipientRow } from "../lib/tradeForm";
+import { useConfirm } from "../lib/useConfirm";
 import { Button } from "@zkscatter/ui";
 
 const EXPIRY_PRESETS: Array<{ key: "15m" | "1h" | "4h" | "24h" | "7d"; label: string }> = [
@@ -25,6 +26,7 @@ export function AdvancedSettings() {
     expiry, setExpiry,
     maxFeeBps, setMaxFeeBps,
   } = useTradeForm();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   if (!advancedOpen) {
     return (
@@ -61,18 +63,22 @@ export function AdvancedSettings() {
           </span>
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
               // Single empty row is the default — no work to lose,
               // skip the prompt. Confirm only when the user has
               // actually built up a multi-recipient list.
-              if (
+              const hasInput =
                 recipients.length > 1 ||
                 recipients[0]?.address.trim() !== "" ||
-                recipients[0]?.amount.trim() !== ""
-              ) {
-                if (!window.confirm("Reset recipients? Any addresses and amounts you've entered will be cleared.")) {
-                  return;
-                }
+                recipients[0]?.amount.trim() !== "";
+              if (hasInput) {
+                const ok = await confirm({
+                  title: "Reset recipients?",
+                  message: "Any addresses and amounts you've entered will be cleared.",
+                  confirmLabel: "Reset",
+                  danger: true,
+                });
+                if (!ok) return;
               }
               resetRecipients();
             }}
@@ -150,6 +156,7 @@ export function AdvancedSettings() {
           Hard cap. Relayers compete below this — quoted fee shown at submit.
         </p>
       </section>
+      {confirmDialog}
     </div>
   );
 }

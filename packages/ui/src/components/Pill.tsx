@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 export type StatusDotKind = "online" | "warn" | "muted" | "danger";
 
@@ -27,20 +27,25 @@ interface PillProps {
   /** When set, the pill renders as a `<button>`. */
   onClick?: () => void;
   title?: string;
+  /** Forwarded to the inner `<button>` when `onClick` is set, so
+   *  callers can wire focus management (e.g. listbox-nav focus
+   *  restore on close). Named off React's `ref` slot so this stays
+   *  a normal prop and works on any host React version. */
+  buttonRef?: Ref<HTMLButtonElement>;
   children: ReactNode;
 }
 
 /** Small rounded pill used in the workbench header (relayer,
  *  wallet, network, etc.). Clickable when `onClick` is provided;
  *  otherwise a static `<span>`. */
-export function Pill({ onClick, title, children }: PillProps) {
+export function Pill({ onClick, title, buttonRef, children }: PillProps) {
   const className = onClick
     ? "inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
     : "inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs";
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} title={title} className={className}>
+      <button ref={buttonRef} type="button" onClick={onClick} title={title} className={className}>
         {children}
       </button>
     );

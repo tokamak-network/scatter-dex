@@ -22,12 +22,6 @@ export function NetworkSwitcher() {
   const close = useCallback(() => setOpen(false), []);
   useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
 
-  // Pill from `@zkscatter/ui` doesn't forward `ref` to its inner
-  // button, so the trigger-focus-restore part of `useListboxNav`
-  // doesn't fire here — `triggerRef.current` stays null and the
-  // hook's `?.focus()` on close becomes a no-op. Keyboard nav
-  // inside the listbox still works. Promote Pill to forward a ref
-  // when the trigger-focus-restore matters here.
   const activeIndex = useMemo(
     () => NETWORKS.findIndex((n) => n.config.chainId === network.chainId),
     [network.chainId],
@@ -36,7 +30,7 @@ export function NetworkSwitcher() {
 
   return (
     <div ref={wrapRef} className="relative inline-block">
-      <Pill onClick={() => setOpen((v) => !v)}>
+      <Pill onClick={() => setOpen((v) => !v)} buttonRef={listbox.triggerRef}>
         <StatusDot kind="online" />
         <span>{network.name ?? "Network"}</span>
         <span aria-hidden="true" className="text-[var(--color-text-subtle)]">

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@zkscatter/ui";
 import { stealthWallet, type MetaAddress } from "@zkscatter/sdk/zk";
 import { useMetaAddress } from "../lib/metaAddress";
+import { useConfirm } from "../lib/useConfirm";
 
 interface DerivedClaim {
   ephemeralPubKey: string;
@@ -55,6 +56,7 @@ function IdentitySection({
   onClear: () => void;
 }) {
   const [showSecrets, setShowSecrets] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   if (!keys) {
     return (
@@ -91,10 +93,14 @@ function IdentitySection({
         <Button
           size="sm"
           variant="secondary"
-          onClick={() => {
-            if (window.confirm("Wiping the meta-address makes incoming stealth funds unrecoverable from this device. Proceed?")) {
-              onClear();
-            }
+          onClick={async () => {
+            const ok = await confirm({
+              title: "Wipe meta-address?",
+              message: "Incoming stealth funds for this meta-address become unrecoverable from this device. Make sure you've backed up the spending and viewing keys first.",
+              confirmLabel: "Wipe",
+              danger: true,
+            });
+            if (ok) onClear();
           }}
         >
           Clear
@@ -112,6 +118,7 @@ function IdentitySection({
           </p>
         </div>
       )}
+      {confirmDialog}
     </section>
   );
 }
