@@ -62,7 +62,10 @@ export async function registerRelayer(
   params: RegisterRelayerParams,
   signer: ethers.Signer,
 ): Promise<ethers.TransactionResponse> {
-  if (!Number.isInteger(params.feeBps) || params.feeBps < 0 || params.feeBps > 500) {
+  if (!Number.isInteger(params.feeBps) || params.feeBps < 0) {
+    throw new Error("InvalidFee");
+  }
+  if (params.feeBps > 500) {
     throw new Error("FeeTooHigh");
   }
   let bond: bigint;
@@ -73,19 +76,36 @@ export async function registerRelayer(
   return registry.register(params.url, BigInt(params.feeBps), { value: bond }) as Promise<ethers.TransactionResponse>;
 }
 
-/** Map known contract revert reasons (raised as plain strings by
- *  the registry's `require()` checks) to user-friendly copy. Falls
- *  back to the raw message when no rule matches so callers don't
- *  swallow unexpected errors. */
+/** Read the named error off ethers v6 contract-call exceptions
+ *  when the ABI carries the matching error fragment. Falls back to
+ *  null so callers can substring-match the message instead. */
+function callExceptionErrorName(err: unknown): string | null {
+  if (typeof err !== "object" || err === null) return null;
+  const e = err as { revert?: { name?: string } | null; errorName?: string };
+  return e.revert?.name ?? e.errorName ?? null;
+}
+
+/** Map known contract custom errors (decoded by ethers from the
+ *  ABI fragments on `RELAYER_REGISTRY_ABI`) and local validation
+ *  errors thrown from `registerRelayer` to user-friendly copy.
+ *  Falls back to the raw message when no rule matches so callers
+ *  don't swallow unexpected errors. */
 export function explainRegisterError(err: unknown, minBond: bigint): string {
+  const copyByCode: Record<string, string> = {
+    NotVerified: "zk-X509 identity not verified. Register your identity first.",
+    AlreadyRegistered: "This address is already registered as a relayer.",
+    InsufficientBond: `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`,
+    FeeTooHigh: "Fee too high. Maximum: 500 bps (5%).",
+    InvalidFee: "Fee must be an integer between 0 and 500 bps.",
+    InvalidBond: "Invalid bond amount. Enter a valid ETH value.",
+  };
+
+  const named = callExceptionErrorName(err);
+  if (named && copyByCode[named]) return copyByCode[named];
+
   const raw = err instanceof Error ? err.message : String(err);
-  const rules: Array<[needle: string, copy: string]> = [
-    ["NotVerified", "zk-X509 identity not verified. Register your identity first."],
-    ["AlreadyRegistered", "This address is already registered as a relayer."],
-    ["InsufficientBond", `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`],
-    ["FeeTooHigh", "Fee too high. Maximum: 500 bps (5%)."],
-    ["InvalidBond", "Invalid bond amount. Enter a valid ETH value."],
-  ];
-  for (const [needle, copy] of rules) if (raw.includes(needle)) return copy;
+  for (const [code, copy] of Object.entries(copyByCode)) {
+    if (raw.includes(code)) return copy;
+  }
   return raw;
 }

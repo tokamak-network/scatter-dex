@@ -36,7 +36,12 @@ export default function RegisterPage() {
   const deployed = isConfiguredAddress(DEMO_NETWORK.contracts.relayerRegistry);
 
   const refreshStatus = useCallback(async () => {
-    if (!account || !deployed || wrongChain) return;
+    // Reads use `readProvider` (RPC for DEMO_NETWORK), which works
+    // regardless of the wallet's connected chain — only the submit
+    // step needs to gate on `wrongChain`. The pre-flight section
+    // should reflect real on-chain identity/registration state
+    // even while the user is on the wrong network.
+    if (!account || !deployed) return;
     setPhase("checking");
     try {
       const next = await loadRegistrationStatus(
@@ -50,7 +55,7 @@ export default function RegisterPage() {
       setErrorMsg(err instanceof Error ? err.message : "Failed to read registry");
       setPhase("error");
     }
-  }, [account, deployed, wrongChain, readProvider]);
+  }, [account, deployed, readProvider]);
 
   useEffect(() => {
     refreshStatus();
@@ -68,8 +73,11 @@ export default function RegisterPage() {
       );
       const receipt = await tx.wait();
       setTxHash(receipt?.hash ?? tx.hash);
+      // Mirror the just-confirmed registration into local status
+      // so subsequent renders treat the operator as already-active
+      // without overwriting the success phase via refreshStatus().
+      setStatus((prev) => (prev ? { ...prev, alreadyRegistered: true } : prev));
       setPhase("success");
-      refreshStatus();
     } catch (err) {
       setErrorMsg(explainRegisterError(err, status?.minBond ?? 0n));
       setPhase("error");
