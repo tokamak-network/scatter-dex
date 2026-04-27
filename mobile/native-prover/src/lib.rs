@@ -263,12 +263,14 @@ mod witness {
     rust_witness::witness!(multiplier2);
     rust_witness::witness!(authorize);
     rust_witness::witness!(cancel);
+    rust_witness::witness!(claim);
 }
 
 crate::set_circom_circuits! {
     ("multiplier2_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::multiplier2_witness)),
     ("authorize_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::authorize_witness)),
     ("cancel_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::cancel_witness)),
+    ("claim_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::claim_witness)),
 }
 
 #[cfg(test)]
@@ -404,6 +406,93 @@ mod cancel_circom_test {
 
         verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
             .expect("cancel proof verify");
+    }
+}
+
+#[cfg(test)]
+mod claim_circom_test {
+    //! End-to-end Groth16 proving + verification of `claim.circom` using
+    //! the same primitives the mobile client uses on the FFI hot path.
+    //! Same regression-class catches as the cancel test:
+    //!   1. zkey/wasm drift between `circuits/build/` and what the
+    //!      native prover bundles.
+    //!   2. `circom-prover`'s `RustWitness` JSON-shape requirement
+    //!      (every input value an array of decimal strings).
+    //!   3. Poseidon vendoring — `light-poseidon` vs circomlibjs.
+    use crate::circom::{generate_circom_proof, verify_circom_proof, ProofLib};
+    use crate::poseidon_hash;
+
+    const ZKEY_PATH: &str = "./test-vectors/circom/claim_final.zkey";
+
+    fn ph(args: &[&str]) -> String {
+        poseidon_hash(args.iter().map(|s| (*s).to_string()).collect()).expect("poseidon_hash")
+    }
+
+    #[test]
+    fn claim_proof_round_trips() {
+        // Tag must match `circuits/tags.circom` and
+        // `mobile/src/lib/zk/tags.ts`. Hardcoded so a drift on either
+        // side surfaces here loudly.
+        const TAG_CLAIM_NULL: &str = "2";
+        // claim.circom main is `Claim(4)` — depth 4 means the claims
+        // tree holds up to 16 leaves per side.
+        const DEPTH: usize = 4;
+
+        // Trivial public + private witness. `releaseTime` is just a
+        // field elt as far as the circuit is concerned.
+        let secret = "11111";
+        let leaf_index = "0";
+        let amount = "55555";
+        let token = "44444";
+        let recipient = "777777";
+        let release_time = "1700000000";
+
+        // leaf = Poseidon(secret, recipient, token, amount, releaseTime)
+        let leaf = ph(&[secret, recipient, token, amount, release_time]);
+        // nullifier = Poseidon(TAG_CLAIM_NULL, secret, leafIndex)
+        let nullifier = ph(&[TAG_CLAIM_NULL, secret, leaf_index]);
+
+        // Single-leaf depth-4 claims tree. leaf at index 0, every
+        // sibling is the all-zero subtree hash for that level. Same
+        // construction as the cancel test's commitment merkle path.
+        let mut zero_hashes: Vec<String> = vec!["0".to_string()];
+        for d in 0..DEPTH {
+            let z = zero_hashes[d].clone();
+            zero_hashes.push(ph(&[&z, &z]));
+        }
+        let mut root = leaf.clone();
+        for d in 0..DEPTH {
+            root = ph(&[&root, &zero_hashes[d]]);
+        }
+        let path: Vec<String> = (0..DEPTH).map(|d| zero_hashes[d].clone()).collect();
+        let path_idx: Vec<&str> = vec!["0"; DEPTH];
+
+        let inputs = serde_json::json!({
+            "claimsRoot":   [root],
+            "nullifier":    [nullifier.clone()],
+            "amount":       [amount],
+            "token":        [token],
+            "recipient":    [recipient],
+            "releaseTime":  [release_time],
+            "secret":       [secret],
+            "leafIndex":    [leaf_index],
+            "pathElements": path,
+            "pathIndices":  path_idx,
+        })
+        .to_string();
+
+        let proof = generate_circom_proof(ZKEY_PATH.to_string(), inputs, ProofLib::Arkworks)
+            .expect("claim proof gen");
+
+        // Public-signal order must match claim.circom main {public [...]}:
+        //   [claimsRoot, nullifier, amount, token, recipient, releaseTime]
+        assert_eq!(proof.inputs.len(), 6, "expected 6 public signals");
+        assert_eq!(proof.inputs[1], nullifier);
+        assert_eq!(proof.inputs[2], amount);
+        assert_eq!(proof.inputs[4], recipient);
+
+        verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
+            .expect("claim proof verify");
     }
 }
 

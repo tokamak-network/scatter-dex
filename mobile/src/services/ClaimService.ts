@@ -17,6 +17,7 @@ import { TAG_CLAIM_NULL } from '../lib/zk/tags';
 import { CLAIMS_TREE_DEPTH } from '../lib/zk/constants';
 import { toBytes32Hex } from '../lib/format';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { generateNativeProof, SnarkjsLikeProofResult } from './NativeProverService';
 import { formatProofForSolidity } from '../lib/proofFormat';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
 
@@ -136,16 +137,30 @@ export const ClaimService = {
       pathIndices,
     };
 
-    let wasmB64: string;
-    let zkeyB64: string;
+    let proofResult: SnarkjsLikeProofResult;
+    const proofStart = Date.now();
     try {
-      wasmB64 = await loadCircuitFileB64(require('../../assets/zk/claim.wasm'));
-      zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/claim_final.zkey'));
-    } catch {
-      throw new Error('Claim circuit files not found in assets/zk/.');
+      console.log('[ClaimService] generateProof native dispatch');
+      proofResult = await generateNativeProof('claim', circuitInputs);
+      console.log('[ClaimService] generateProof native returned', { ms: Date.now() - proofStart });
+    } catch (e) {
+      // Native module unavailable (Expo Go, missing arm64 jniLib) or
+      // proving failed — fall back to the WebView path so the user
+      // can still claim. `shortMessage` / `reason` come first because
+      // ethers / mopro errors set those before `message`.
+      const errAny = e as { shortMessage?: string; reason?: string; message?: string };
+      const msg = errAny?.shortMessage ?? errAny?.reason ?? errAny?.message ?? String(e);
+      console.warn(`[ClaimService] native proof unavailable (${msg}), falling back to WebView:`, e);
+      let wasmB64: string;
+      let zkeyB64: string;
+      try {
+        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/claim.wasm'));
+        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/claim_final.zkey'));
+      } catch {
+        throw new Error('Claim circuit files not found in assets/zk/.');
+      }
+      proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
     }
-
-    const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
     const proof = formatProofForSolidity(proofResult.proof);
 
     return {

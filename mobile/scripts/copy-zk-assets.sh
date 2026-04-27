@@ -34,7 +34,7 @@ REQUIRED_CIRCUITS=(deposit claim authorize cancel)
 # here also requires a matching `rust_witness::witness!(name)` +
 # `set_circom_circuits!` entry in mobile/native-prover/src/lib.rs and
 # a `CIRCUITS` row in mobile/src/services/NativeProverService.ts.
-NATIVE_CIRCUITS=(authorize cancel)
+NATIVE_CIRCUITS=(authorize cancel claim)
 
 echo "=== Copying ZK circuit assets for mobile ==="
 
