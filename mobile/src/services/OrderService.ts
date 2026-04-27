@@ -679,6 +679,9 @@ export const OrderService = {
             buyAmount: buyAmount.toString(),
             maxFeeBps,
             orderHash,
+            nonce: nonce.toString(),
+            pubKeyAx: keyPair.pubKeyAx,
+            sourceNoteId: note.id,
           },
         });
       } catch (err) {

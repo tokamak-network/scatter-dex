@@ -157,6 +157,12 @@ export const CancelService = {
       const sig = await ZKBridgeService.signEdDSA(keyPair.privateKeyHex, cancelMsg);
 
       onProgress({ step: 'generating_proof' });
+      console.log('[CancelService] generating_proof start', {
+        leafIndex: note.leafIndex,
+        oldNullifier: oldNullifier.slice(0, 16) + '…',
+        oldNonceNullifier: oldNonceNullifier.slice(0, 16) + '…',
+        newCommitment: newCommitment.slice(0, 16) + '…',
+      });
       const circuitInputs: Record<string, string | string[]> = {
         commitmentRoot,
         oldNullifier,
@@ -181,13 +187,21 @@ export const CancelService = {
       let wasmB64: string;
       let zkeyB64: string;
       try {
+        const wasmStart = Date.now();
         wasmB64 = await loadCircuitFileB64(require('../../assets/zk/cancel.wasm'));
+        console.log('[CancelService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
+        const zkeyStart = Date.now();
         zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/cancel_final.zkey'));
-      } catch {
+        console.log('[CancelService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
+      } catch (e) {
+        console.error('[CancelService] circuit asset load failed', e);
         throw new Error('Cancel circuit files not found. Run `npm run copy:circuits` after building the circuits.');
       }
 
+      const proofStart = Date.now();
+      console.log('[CancelService] generateProof call dispatching to WebView');
       const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
+      console.log('[CancelService] generateProof returned', { ms: Date.now() - proofStart });
       const proof = formatProofForSolidity(proofResult.proof);
 
       onProgress({ step: 'submitting' });
@@ -196,6 +210,7 @@ export const CancelService = {
       //   [3] newCommitment  [4] submitter
       const ps = proofResult.publicSignals;
       const settlement = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, signer);
+      console.log('[CancelService] submitting cancelPrivate', { settlementAddr, signals: ps.map((v) => String(v).slice(0, 12)) });
       const tx = await settlement.cancelPrivate({
         proofA: proof.a,
         proofB: proof.b,
@@ -205,7 +220,9 @@ export const CancelService = {
         oldNonceNullifier: toBytes32Hex(ps[2]),
         newCommitment: toBytes32Hex(ps[3]),
       });
+      console.log('[CancelService] cancelPrivate tx sent', { hash: tx.hash });
       const receipt = await tx.wait();
+      console.log('[CancelService] cancelPrivate tx mined', { blockNumber: receipt?.blockNumber });
 
       onProgress({ step: 'rotating_note' });
       // If the event isn't present (RPC lag, wrong filter), -1 lets a later
@@ -244,6 +261,7 @@ export const CancelService = {
       return tx.hash;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Cancel failed';
+      console.error('[CancelService] failed', { message, raw: err });
       onProgress({ step: 'error', error: message });
       return null;
     }

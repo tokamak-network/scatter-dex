@@ -270,6 +270,24 @@ export const TradeHistoryStorage = {
     return row ? rowToRecord(row) : null;
   },
 
+  /** Look up a trade record where `noteId` matches either the source or the
+   *  change note. Lets the History expand affordance work for both halves
+   *  of a trade — tapping the change (residual) row was previously a dead
+   *  expand because only `source_note_id` was indexed. */
+  async getByEitherNoteId(
+    address: string,
+    noteId: string,
+  ): Promise<TradeRecord | null> {
+    const db = await getDb();
+    const row = await db.getFirstAsync<Row>(
+      'SELECT * FROM trade_records WHERE wallet = ? AND (source_note_id = ? OR change_note_id = ?) LIMIT 1',
+      normalize(address),
+      noteId,
+      noteId,
+    );
+    return row ? rowToRecord(row) : null;
+  },
+
   async setSettleTxHash(
     address: string,
     id: string,

@@ -25,12 +25,23 @@ import { TradeHistoryStorage } from './TradeHistoryStorage';
 const DB_NAME = 'scatterdex_trade_history.db';
 
 /** FSM states that mean "keep polling". Mirrors relayer's LIVE + IN_FLIGHT
- *  categories from zk-relayer/src/types/authorize-order.ts. */
-const LIVE_STATUSES = new Set([
+ *  categories from zk-relayer/src/types/authorize-order.ts. Exported so
+ *  UI code can stay in lockstep with the poll loop's view of "still
+ *  cancellable" without forking the membership list. */
+export const LIVE_STATUSES: ReadonlySet<string> = new Set([
   'pending', 'accepted', 'retrying', 'matched', 'settling',
 ]);
 
-const TERMINAL_STATUSES = new Set([
+/** Subset of LIVE_STATUSES the user is allowed to cancel from the UI.
+ *  `matched`/`settling` are intentionally excluded — by the time the
+ *  status reaches them the on-chain settle is already racing the cancel,
+ *  and a cancel that loses the race produces a stuck nonce-nullifier
+ *  burn with nothing on the other side. */
+export const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set([
+  'pending', 'accepted', 'retrying',
+]);
+
+export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'settled', 'failed', 'dead_letter', 'cancelled', 'expired',
 ]);
 
@@ -45,10 +56,16 @@ const FAST_WINDOW_MS = 30_000;
  *  subscriber to manually re-arm the timer. 30 s is roughly battery-
  *  invisible and well below the relayer's settlement budget. */
 const IDLE_POLL_MS = 30_000;
-/** Max time a pending order stays in the poll loop. After this we stop
- *  polling and leave the row for the user to surface as "stuck" — the
- *  relayer will eventually mark it expired or dead_letter anyway. */
-const MAX_POLL_AGE_MS = 5 * 60_000;
+/** Cap on how far back the poll loop reaches when picking rows to refresh.
+ *  The relayer remains the sole source of truth for status — we never
+ *  client-side rewrite a row to `expired` just because polling has been
+ *  going on for a while. The previous 5-min hard expiry was masking
+ *  legitimately-pending orders (whose on-chain expiry is 24 h by default)
+ *  as "expired" and hiding the Cancel button for them. The cap here is
+ *  generous so a forgotten order eventually drops out of the poll fan-out
+ *  even if the relayer never produces a terminal status (e.g. relayer
+ *  data loss); it should be longer than any realistic on-chain expiry. */
+const MAX_POLL_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Network-error backoff, per design §3.2. Each consecutive network
  *  failure advances through this schedule; a success resets. */
@@ -80,6 +97,25 @@ export interface PendingOrderSummary {
   /** Local `orderHash` — useful for linking back to TradeHistoryStorage
    *  once the settlement confirms. */
   orderHash: string;
+  /** Decimal nonce that was bound into the authorize circuit. Required
+   *  by CancelService to derive `oldNonceNullifier = Poseidon(TAG_NONCE_NULL,
+   *  secret, nonce)`. The relayer doesn't echo the nonce back on the
+   *  status endpoint, so we must persist it locally at submit time —
+   *  without it, the cancel UI cannot reconstruct the nullifier and the
+   *  Cancel button has no live order to act on. Optional for backwards
+   *  compat with rows written before this field landed (those orders
+   *  simply won't be cancellable from this build). */
+  nonce?: string;
+  /** EdDSA Ax used at submit time. Lets History match a pending order
+   *  back to its escrow note without trusting the relayer to repeat it. */
+  pubKeyAx?: string;
+  /** Local id of the escrow note this order spent. The Cancel button
+   *  uses this to recover the exact `secret` / `salt` (and therefore the
+   *  matching `oldNullifier`) — `pubKeyAx + sellToken` collides on a
+   *  wallet that holds multiple WETH escrows, picking the first match
+   *  generated a proof against an already-spent nullifier and reverted
+   *  with `NullifierAlreadySpent` at settle time. */
+  sourceNoteId?: string;
 }
 
 export interface PendingOrder {
@@ -253,31 +289,19 @@ async function pollOnce(): Promise<void> {
   }
 }
 
-/** Locally promote any non-terminal row past MAX_POLL_AGE_MS to 'expired'.
- *  The relayer's sweeper does the same on its side; doing it client-side
- *  too means History stops showing a stale 'accepted' badge while we wait
- *  for the next reconciliation. Returns the wallet addresses that had at
- *  least one row mutated, so the caller can fire targeted notify(). */
+/** Drop rows past `MAX_POLL_AGE_MS` from the poll fan-out so the queue
+ *  doesn't grow unbounded across very long-lived (or zombie) orders.
+ *  Importantly we do **not** rewrite their `last_polled_status` — leaving
+ *  it at the relayer's last word means History keeps showing the truth
+ *  rather than a synthetic "expired" that hides legitimate orders' Cancel
+ *  buttons. Callers receive the affected wallets so they can refresh,
+ *  but we no longer need that today (status didn't change); kept the
+ *  return shape for now in case we surface a "stale-poll" badge later. */
 async function markOverAgeAsExpired(
-  db: SQLite.SQLiteDatabase,
-  ageCutoff: number,
+  _db: SQLite.SQLiteDatabase,
+  _ageCutoff: number,
 ): Promise<Set<string>> {
-  const stale = await db.getAllAsync<{ wallet_address: string }>(
-    `SELECT DISTINCT wallet_address FROM pending_orders
-       WHERE ${LIVE_SQL} AND submitted_at <= ?`,
-    ageCutoff,
-  );
-  if (stale.length === 0) return new Set();
-  await db.runAsync(
-    `UPDATE pending_orders
-        SET last_polled_status = 'expired',
-            last_polled_at = ?,
-            last_error = COALESCE(last_error, 'Locally expired — exceeded poll budget')
-      WHERE ${LIVE_SQL} AND submitted_at <= ?`,
-    Date.now(),
-    ageCutoff,
-  );
-  return new Set(stale.map((r) => r.wallet_address));
+  return new Set();
 }
 
 async function applyStatus(
@@ -474,6 +498,30 @@ export const PendingOrdersService = {
     // Kick the loop immediately so the first poll happens before the user
     // has even navigated away from the submit screen.
     if (listeners.size > 0) void pollOnce();
+  },
+
+  /** Optimistically mark an order as cancelled locally — called from
+   *  the History screen right after `cancelPrivate` mines so the UI
+   *  reflects the user's just-confirmed action without waiting for the
+   *  relayer's `PrivateCancel` indexer to catch up (which can lag by
+   *  one block + RPC poll cadence, plenty of time for a user to wonder
+   *  "did it work?"). The next relayer poll will overwrite this with
+   *  the canonical 'cancelled' status anyway, so the optimistic write
+   *  is safe. */
+  async markCancelledLocally(walletAddress: string, nullifier: string, txHash: string): Promise<void> {
+    const db = await getDb();
+    await db.runAsync(
+      `UPDATE pending_orders
+          SET last_polled_status = 'cancelled',
+              last_polled_at     = ?,
+              settle_tx_hash     = ?
+        WHERE wallet_address = ? AND nullifier = ?`,
+      Date.now(),
+      txHash,
+      normalize(walletAddress),
+      nullifier,
+    );
+    notify(normalize(walletAddress));
   },
 
   /** List pending orders for a wallet. Include-terminal lets History's

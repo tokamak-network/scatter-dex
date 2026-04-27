@@ -251,11 +251,13 @@ contract DeployLocal is Script {
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
         address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
         address authorizeVerifier = _deployCode("AuthorizeVerifier.sol:Groth16Verifier");
+        address cancelVerifier = _deployCode("CancelVerifier.sol:Groth16Verifier");
         _authorizeVerifier = authorizeVerifier;
         console.log("WithdrawVerifier:", withdrawVerifier);
         console.log("ClaimVerifier:", claimVerifier);
         console.log("DepositVerifier:", depositVerifier);
         console.log("AuthorizeVerifier:", authorizeVerifier);
+        console.log("CancelVerifier:", cancelVerifier);
 
         pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
         console.log("CommitmentPool:", address(pool));
@@ -270,6 +272,14 @@ contract DeployLocal is Script {
         // AuthorizeVerifierNotSet (selector 0x7d234657).
         privateSettlement.setAuthorizeVerifier(authorizeVerifier);
         console.log("AuthorizeVerifier wired into PrivateSettlement");
+        // cancelPrivate is gated the same way — without setCancelVerifier
+        // every cancel reverts with `CancelVerifierNotSet()` (selector
+        // 0xe5b08665), even though the user's wallet signed a perfectly
+        // valid cancel.circom proof. Wiring it here keeps the local stack
+        // self-contained for History → Pending → Cancel Order to work
+        // end-to-end against a freshly-spun-up anvil.
+        privateSettlement.setCancelVerifier(cancelVerifier);
+        console.log("CancelVerifier wired into PrivateSettlement");
         console.log("PrivateSettlement:", address(privateSettlement));
     }
 }
