@@ -265,6 +265,7 @@ mod witness {
     rust_witness::witness!(cancel);
     rust_witness::witness!(claim);
     rust_witness::witness!(deposit);
+    rust_witness::witness!(withdraw);
 }
 
 crate::set_circom_circuits! {
@@ -273,6 +274,7 @@ crate::set_circom_circuits! {
     ("cancel_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::cancel_witness)),
     ("claim_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::claim_witness)),
     ("deposit_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::deposit_witness)),
+    ("withdraw_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::withdraw_witness)),
 }
 
 #[cfg(test)]
@@ -560,6 +562,103 @@ mod deposit_circom_test {
 
         verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
             .expect("deposit proof verify");
+    }
+}
+
+#[cfg(test)]
+mod withdraw_circom_test {
+    //! End-to-end Groth16 proving + verification of `withdraw.circom`.
+    //! Exercises the full-withdraw path (changeAmount = 0 so the
+    //! `newCommitment` public signal is forced to 0) — that's the
+    //! shortest deterministic witness; partial withdrawals follow the
+    //! same shape with a non-zero change commitment.
+    use crate::circom::{generate_circom_proof, verify_circom_proof, ProofLib};
+    use crate::{derive_eddsa_key, poseidon_hash};
+
+    const ZKEY_PATH: &str = "./test-vectors/circom/withdraw_final.zkey";
+
+    fn ph(args: &[&str]) -> String {
+        poseidon_hash(args.iter().map(|s| (*s).to_string()).collect()).expect("poseidon_hash")
+    }
+
+    #[test]
+    fn withdraw_proof_round_trips() {
+        const TAG_COMMITMENT_V2: &str = "3";
+        const TAG_ESCROW_NULL: &str = "0";
+        const DEPTH: usize = 20;
+        const PRIV_HEX: &str =
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+        let key = derive_eddsa_key(PRIV_HEX.into()).expect("derive");
+        let ax = key.pub_key_ax;
+        let ay = key.pub_key_ay;
+
+        // Trivial private witness for a full-withdrawal:
+        //   amount == withdrawAmount → changeAmount = 0 →
+        //   expected newCommitment = 0 (per the circuit's IsZero gate).
+        let owner_secret = "11111";
+        let salt = "22222";
+        let new_salt = "33333"; // unused when changeAmount==0 but still bound
+        let token = "44444";
+        let amount = "55555";
+        let withdraw_amount = amount; // full
+        let recipient = "777777";
+        let relayer = "888888";
+
+        // commitment = Poseidon(TAG_V2, ownerSecret, token, amount, salt, Ax, Ay)
+        let commitment = ph(&[TAG_COMMITMENT_V2, owner_secret, token, amount, salt, &ax, &ay]);
+        // nullifierHash = Poseidon(TAG_ESCROW_NULL, ownerSecret, salt)
+        let nullifier_hash = ph(&[TAG_ESCROW_NULL, owner_secret, salt]);
+        // tokenHash = Poseidon(token) — arity 1
+        let token_hash = ph(&[token]);
+
+        // depth-20 zero-sibling Merkle path with the leaf at index 0.
+        let mut zero_hashes: Vec<String> = vec!["0".to_string()];
+        for d in 0..DEPTH {
+            let z = zero_hashes[d].clone();
+            zero_hashes.push(ph(&[&z, &z]));
+        }
+        let mut root = commitment.clone();
+        for d in 0..DEPTH {
+            root = ph(&[&root, &zero_hashes[d]]);
+        }
+        let path: Vec<String> = (0..DEPTH).map(|d| zero_hashes[d].clone()).collect();
+        let path_idx: Vec<&str> = vec!["0"; DEPTH];
+
+        let inputs = serde_json::json!({
+            "root":           [root],
+            "nullifierHash":  [nullifier_hash.clone()],
+            "newCommitment":  ["0"],
+            "tokenHash":      [token_hash],
+            "withdrawAmount": [withdraw_amount],
+            "recipient":      [recipient],
+            "relayer":        [relayer],
+            "ownerSecret":    [owner_secret],
+            "token":          [token],
+            "amount":         [amount],
+            "salt":           [salt],
+            "newSalt":        [new_salt],
+            "pathElements":   path,
+            "pathIndices":    path_idx,
+            "pubKeyAx":       [ax],
+            "pubKeyAy":       [ay],
+        })
+        .to_string();
+
+        let proof = generate_circom_proof(ZKEY_PATH.to_string(), inputs, ProofLib::Arkworks)
+            .expect("withdraw proof gen");
+
+        // Public signals from `withdraw.circom main {public [...]}`:
+        //   [root, nullifierHash, newCommitment, tokenHash,
+        //    withdrawAmount, recipient, relayer]
+        assert_eq!(proof.inputs.len(), 7, "expected 7 public signals");
+        assert_eq!(proof.inputs[1], nullifier_hash);
+        assert_eq!(proof.inputs[2], "0", "newCommitment is 0 on full withdraw");
+        assert_eq!(proof.inputs[5], recipient);
+        assert_eq!(proof.inputs[6], relayer);
+
+        verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
+            .expect("withdraw proof verify");
     }
 }
 
