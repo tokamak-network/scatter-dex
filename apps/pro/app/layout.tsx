@@ -46,6 +46,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   Scatter Pro
                                 </Link>
                                 <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">
+                                  <a
+                                    href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
+                                    className="hover:text-[var(--color-text)]"
+                                  >
+                                    ← All apps
+                                  </a>
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>

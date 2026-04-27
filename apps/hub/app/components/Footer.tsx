@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { TokamakMark } from "@zkscatter/ui";
 import { CurrentYear } from "./CurrentYear";
+import { APP_BY_ID } from "../lib/apps";
 
 type FooterLink = { label: string; href: string };
 
@@ -20,18 +21,18 @@ export function Footer() {
         <FooterCol
           title="Apps"
           links={[
-            { label: "Pro", href: "https://pro.zkscatter.xyz" },
-            { label: "Pay", href: "https://pay.zkscatter.xyz" },
-            { label: "Drop", href: "https://drop.zkscatter.xyz" },
-            { label: "Mobile", href: "/apps#mobile" },
+            { label: "Pro", href: APP_BY_ID.pro.href },
+            { label: "Pay", href: APP_BY_ID.pay.href },
+            { label: "Drop", href: APP_BY_ID.drop.href },
+            { label: "Mobile", href: "/mobile" },
           ]}
         />
         <FooterCol
           title="Operators"
           links={[
-            { label: "Relayers", href: "https://relayer.zkscatter.xyz" },
+            { label: "Relayers", href: APP_BY_ID.relayer.href },
             { label: "Run a node", href: "https://docs.zkscatter.xyz/operate/run-a-relayer-node" },
-            { label: "Leaderboard", href: "https://relayer.zkscatter.xyz/leaderboard" },
+            { label: "Leaderboard", href: `${APP_BY_ID.relayer.href}/leaderboard` },
           ]}
         />
         <FooterCol

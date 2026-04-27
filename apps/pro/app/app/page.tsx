@@ -173,7 +173,9 @@ export default function Workbench() {
 
           <FillEstimate side={side} price={price} size={size} baseSymbol={pair.base} quoteSymbol={pair.quote} />
           <div className="mt-3 text-xs text-[var(--color-text-muted)]">
-            Launch event: 0% fee until Dec 31, 2026 (normally 0.02%) + $0.01 settlement. Proof generation is ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on mobile.
+            Launch event: 0% trading fee until Dec 31, 2026. Proof
+            generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
+            mobile. Post-launch fee schedule set by governance.
           </div>
           <Button onClick={() => setOrderOpen(true)} block size="lg" className="mt-4">
             Sign &amp; submit

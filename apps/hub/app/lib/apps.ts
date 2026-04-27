@@ -2,6 +2,27 @@ export type AppSurface = "web" | "mobile";
 export type AppAudience = "user" | "operator";
 export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
 
+/** Per-app URL with env override. `NEXT_PUBLIC_*_URL` lets local
+ *  dev (`apps/hub` on :4000) point at the sibling apps running on
+ *  :4001–:4004 without editing source. Production deploys leave
+ *  the env unset and fall through to the canonical zkscatter.xyz
+ *  subdomains.
+ *
+ *  Each entry must reference its env var statically — Next.js only
+ *  inlines `NEXT_PUBLIC_*` keys it can see literally, and this
+ *  module is imported by a client component (`apps/Recommender`).
+ *  A dynamic `process.env[key]` lookup would silently always
+ *  return `undefined` in the browser bundle, defeating the
+ *  override. */
+const APP_URLS: Record<AppId, string> = {
+  pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://pro.zkscatter.xyz",
+  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://pay.zkscatter.xyz",
+  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://drop.zkscatter.xyz",
+  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://relayer.zkscatter.xyz",
+  // Mobile is an in-hub marketing route, not a separate app server.
+  mobile: "/mobile",
+};
+
 export type AppEntry = {
   id: AppId;
   name: string;
@@ -34,7 +55,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://pro.zkscatter.xyz",
+    href: APP_URLS.pro,
     cta: "Open Pro",
     accent: "var(--color-accent-pro)",
   },
@@ -51,7 +72,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://pay.zkscatter.xyz",
+    href: APP_URLS.pay,
     cta: "Open Pay",
     accent: "var(--color-accent-pay)",
   },
@@ -68,7 +89,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "user",
-    href: "https://drop.zkscatter.xyz",
+    href: APP_URLS.drop,
     cta: "Open Drop",
     accent: "var(--color-accent-drop)",
   },
@@ -85,7 +106,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "mobile",
     audience: "user",
-    href: "/apps#mobile",
+    href: "/mobile",
     cta: "Get the app",
     accent: "var(--color-accent-mobile)",
   },
@@ -102,7 +123,7 @@ export const APPS: AppEntry[] = [
     ],
     surface: "web",
     audience: "operator",
-    href: "https://relayer.zkscatter.xyz",
+    href: APP_URLS.relayer,
     cta: "Open Relayer",
     accent: "var(--color-accent-relayer)",
   },

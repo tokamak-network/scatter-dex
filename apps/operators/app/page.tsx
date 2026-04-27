@@ -156,7 +156,7 @@ export default function Landing() {
         <div className="grid grid-cols-3 gap-4">
           <Stat label="Minimum bond" value="0.1 ETH" sub="Recoverable on exit" />
           <Stat label="Default fee" value="30 bps" sub="0.30% per settled trade" />
-          <Stat label="Pilot fill rate" value="~92%" sub="Across active relayers" />
+          <Stat label="Exit cool-down" value="7 days" sub="Bond locked until elapsed" />
         </div>
       </section>
 

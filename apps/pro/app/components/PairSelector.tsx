@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { LAUNCH_PAIRS } from "@zkscatter/sdk";
 import { useTradeForm } from "../lib/tradeForm";
 import { useOutsideClick } from "../lib/useOutsideClick";
+import { useListboxNav } from "../lib/useListboxNav";
 
 /** Workbench header pair selector — flat dropdown with Featured at
  *  top + All pairs below. With 4 tokens / 7 pairs, quote-market
@@ -12,69 +13,35 @@ import { useOutsideClick } from "../lib/useOutsideClick";
  *  `pairsByMarket()` helper in the SDK is still available for the
  *  day token count grows past ~15 and grouping pays for itself.
  *
- *  Keyboard: ArrowDown/Up walk through the flat option list (the
- *  Featured/All split is purely visual), Enter/Space pick, Escape
- *  closes (handled by `useOutsideClick`). */
+ *  Keyboard / focus: see `useListboxNav`. */
 export function PairSelector() {
   const { pair, setPairBy } = useTradeForm();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  // Tracks the open→close transition so we can restore focus to
-  // the trigger when the listbox dismisses (Escape, outside click,
-  // or pick) — without this, focus drops to `<body>` after the
-  // listbox unmounts and keyboard users lose their place.
-  const wasOpenRef = useRef(false);
 
   const featured = useMemo(() => LAUNCH_PAIRS.filter((p) => p.featured), []);
   const rest = useMemo(() => LAUNCH_PAIRS.filter((p) => !p.featured), []);
   // Flat ordering for keyboard nav — featured rows come first, then
-  // the "All pairs" rows. Index in this list maps 1:1 to `optionRefs`.
+  // the "All pairs" rows. Index in this list maps 1:1 to the option
+  // refs the listbox hook stashes.
   const flat = useMemo(() => [...featured, ...rest], [featured, rest]);
+  const activeIndex = useMemo(
+    () => flat.findIndex((p) => p.display === pair.display),
+    [flat, pair.display],
+  );
   const close = useCallback(() => setOpen(false), []);
   useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
-
-  // On open, land focus on the currently-active pair so ArrowDown
-  // moves to the next neighbour rather than restarting the list.
-  // On close (after having been open) restore focus to the trigger
-  // so keyboard users land back where they invoked the listbox.
-  useEffect(() => {
-    if (open) {
-      const activeIdx = flat.findIndex((p) => p.display === pair.display);
-      const target = optionRefs.current[activeIdx >= 0 ? activeIdx : 0];
-      target?.focus();
-      wasOpenRef.current = true;
-      return;
-    }
-    if (wasOpenRef.current) {
-      wasOpenRef.current = false;
-      triggerRef.current?.focus();
-    }
-  }, [open, flat, pair.display]);
+  const listbox = useListboxNav({ open, optionCount: flat.length, activeIndex });
 
   const pick = (display: string) => {
     setPairBy(display);
     setOpen(false);
   };
 
-  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
-    e.preventDefault();
-    const current = optionRefs.current.findIndex((el) => el === document.activeElement);
-    const last = flat.length - 1;
-    let next: number;
-    if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = last;
-    else if (e.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % (last + 1);
-    else next = current <= 0 ? last : current - 1;
-    optionRefs.current[next]?.focus();
-  };
-
   return (
     <div ref={wrapRef} className="relative inline-block">
       <button
-        ref={triggerRef}
+        ref={listbox.triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-sm font-medium hover:border-[var(--color-primary)]"
@@ -89,7 +56,7 @@ export function PairSelector() {
       {open && (
         <div
           role="listbox"
-          onKeyDown={onListKeyDown}
+          onKeyDown={listbox.listKeyDown}
           className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
         >
           {featured.length > 0 && (
@@ -103,7 +70,7 @@ export function PairSelector() {
                   display={p.display}
                   active={p.display === pair.display}
                   featured
-                  buttonRef={(el) => { optionRefs.current[i] = el; }}
+                  buttonRef={(el) => listbox.optionRef(i, el)}
                   onClick={() => pick(p.display)}
                 />
               ))}
@@ -118,7 +85,7 @@ export function PairSelector() {
               key={p.display}
               display={p.display}
               active={p.display === pair.display}
-              buttonRef={(el) => { optionRefs.current[featured.length + i] = el; }}
+              buttonRef={(el) => listbox.optionRef(featured.length + i, el)}
               onClick={() => pick(p.display)}
             />
           ))}
