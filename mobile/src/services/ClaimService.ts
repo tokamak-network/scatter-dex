@@ -4,7 +4,8 @@
  * 플로우:
  * 1. Claim 데이터 입력 (주문 파일에서 가져옴)
  * 2. 온체인 클레임 상태 확인 (claimNullifier 사용 여부)
- * 3. ZK claim proof 생성 (ZKBridgeService → WebView)
+ * 3. ZK claim proof 생성 — 우선 native (mopro-ffi / arkworks),
+ *    실패 시 WebView (`ZKBridgeService.generateProof`) 로 폴백
  * 4. 릴레이어 또는 직접 온체인 제출
  */
 import { ethers } from 'ethers';
@@ -17,6 +18,7 @@ import { TAG_CLAIM_NULL } from '../lib/zk/tags';
 import { CLAIMS_TREE_DEPTH } from '../lib/zk/constants';
 import { toBytes32Hex } from '../lib/format';
 import { loadCircuitFileB64 } from '../lib/circuitLoader';
+import { generateNativeProof, SnarkjsLikeProofResult } from './NativeProverService';
 import { formatProofForSolidity } from '../lib/proofFormat';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
 
@@ -136,16 +138,47 @@ export const ClaimService = {
       pathIndices,
     };
 
-    let wasmB64: string;
-    let zkeyB64: string;
+    let proofResult: SnarkjsLikeProofResult;
+    const proofStart = Date.now();
     try {
-      wasmB64 = await loadCircuitFileB64(require('../../assets/zk/claim.wasm'));
-      zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/claim_final.zkey'));
-    } catch {
-      throw new Error('Claim circuit files not found in assets/zk/.');
+      console.log('[ClaimService] generateProof native dispatch');
+      proofResult = await generateNativeProof('claim', circuitInputs);
+      console.log('[ClaimService] generateProof native returned', { ms: Date.now() - proofStart });
+    } catch (e) {
+      // Native module unavailable (Expo Go, missing arm64 jniLib) or
+      // proving failed — fall back to the WebView path so the user
+      // can still claim. `shortMessage` / `reason` come first because
+      // ethers / mopro errors set those before `message`.
+      const errAny = e as { shortMessage?: string; reason?: string; message?: string };
+      const msg = errAny?.shortMessage ?? errAny?.reason ?? errAny?.message ?? String(e);
+      console.warn(`[ClaimService] native proof unavailable (${msg}), falling back to WebView:`, e);
+      let wasmB64: string;
+      let zkeyB64: string;
+      try {
+        const wasmStart = Date.now();
+        wasmB64 = await loadCircuitFileB64(require('../../assets/zk/claim.wasm'));
+        console.log('[ClaimService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
+        const zkeyStart = Date.now();
+        zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/claim_final.zkey'));
+        console.log('[ClaimService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
+      } catch (loadError) {
+        // Re-surface the underlying load failure (Asset.fromModule
+        // null, copyAsync EACCES, etc.) so a missing circuit asset is
+        // diagnosable instead of a flat "files not found" line. Same
+        // shape the CancelService fallback uses.
+        const loadErrAny = loadError as { shortMessage?: string; reason?: string; message?: string };
+        const loadMsg = loadErrAny?.shortMessage ?? loadErrAny?.reason ?? loadErrAny?.message ?? String(loadError);
+        console.error('[ClaimService] failed to load claim circuit assets for WebView fallback:', loadError);
+        throw new Error(
+          `Claim circuit files could not be loaded from assets/zk/ (underlying error: ${loadMsg}). ` +
+            'Ensure the claim circuit assets are present and try running `npm run copy:circuits`.',
+        );
+      }
+      const fallbackStart = Date.now();
+      console.log('[ClaimService] generateProof WebView dispatch');
+      proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
+      console.log('[ClaimService] generateProof WebView returned', { ms: Date.now() - fallbackStart });
     }
-
-    const proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
     const proof = formatProofForSolidity(proofResult.proof);
 
     return {
