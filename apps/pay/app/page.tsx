@@ -10,13 +10,13 @@ export default function Landing() {
           Powered by zkScatter · Tokamak Network
         </div>
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
-          Pay your team in one transaction.
+          Send payroll, grants, and bonuses
           <br />
-          <span className="text-[var(--color-primary)]">They can&apos;t see each other&apos;s amounts.</span>
+          <span className="text-[var(--color-primary)]">without leaking who got what.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
-          Private payroll and vendor payouts for crypto-native companies and DAOs.
-          Send to 100 people in a single on-chain transaction — recipients only see their own amount,
+          One-to-many private payouts for crypto-native companies and DAOs.
+          Send to 100 people in a single on-chain transaction — each recipient sees only their own amount,
           and you get an audit-ready accounting export.
         </p>
         <div className="mt-8 flex justify-center gap-3">
@@ -38,27 +38,33 @@ export default function Landing() {
         </p>
       </section>
 
-      {/* Who is this for */}
+      {/* Use cases */}
       <section>
-        <h2 className="mb-2 text-center text-2xl font-semibold">Who is this for?</h2>
+        <h2 className="mb-2 text-center text-2xl font-semibold">Built for one-to-many payouts</h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
-          You&apos;re probably the right user if any of these sounds familiar.
+          Anywhere you send money to multiple people and the per-recipient amount is sensitive.
+          One-to-one vendor invoices live in a separate product.
         </p>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <PersonaCard
-            badge="Finance ops"
-            title="You run payroll for a 5–50 person crypto company"
-            body="Today you batch transfers in Safe + a spreadsheet, and every payday your whole team's salary is public on-chain."
+            badge="Payroll"
+            title="Monthly salaries"
+            body="Run payroll for 5–50 people without publishing every salary on-chain. Sign once, recipients claim privately."
           />
           <PersonaCard
-            badge="DAO operator"
-            title="You distribute grants or contributor pay"
-            body="You want recipients to receive funds without leaking who got how much — both for negotiation power and culture."
+            badge="Grants"
+            title="DAO grants"
+            body="Pay grant recipients from a Snapshot result or working group. Per-grant amounts stay private between treasury and recipient."
           />
           <PersonaCard
-            badge="Agency / studio"
-            title="You settle multiple vendors monthly"
-            body="Vendors learning each other's rates damages your negotiating position. You also need a clean export for your accountant."
+            badge="Bonus"
+            title="Bonuses & incentives"
+            body="One-off bonus rounds where size differences would create friction. Recipients only see their own amount."
+          />
+          <PersonaCard
+            badge="Contractors"
+            title="Contractor batch"
+            body="Settle a wave of freelancers at once without leaking per-contractor rates to the rest of the cohort."
           />
         </div>
       </section>
@@ -107,10 +113,10 @@ export default function Landing() {
             </thead>
             <tbody>
               <Compare label="Recipients can't see each other's amounts" us />
-              <Compare label="One on-chain transaction" left us />
+              <Compare label="One on-chain transaction for N recipients" left us />
               <Compare label="Gasless claim for recipients" us />
+              <Compare label="Templates for payroll / grants / bonuses" us />
               <Compare label="Audit-grade signed export" us />
-              <Compare label="Recurring payouts" mid us />
             </tbody>
           </table>
         </div>
@@ -135,7 +141,7 @@ export default function Landing() {
             features={["Everything in Free", "CSV + Safe import", "Email notifications"]}
             featured
           />
-          <PriceCard plan="Business" price="$79" per="/mo" sub="Unlimited + recurring + Safe deep integration" features={["Everything in Team", "Recurring payouts", "Audit-grade PDF export", "Priority support"]} />
+          <PriceCard plan="Business" price="$79" per="/mo" sub="Unlimited + Safe deep integration" features={["Everything in Team", "Multi-sig approvals", "Audit-grade PDF export", "Priority support"]} />
         </div>
         <p className="mt-3 text-center text-xs text-[var(--color-text-muted)]">
           Plus 0.05% of payout value per run (capped at $20). Enterprise / white-label available.
