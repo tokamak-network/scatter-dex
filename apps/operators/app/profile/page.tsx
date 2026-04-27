@@ -120,16 +120,118 @@ export default function ProfilePage() {
         )}
       </section>
 
+      <BondPanel />
+      <ExitPanel />
+    </div>
+  );
+}
+
+function BondPanel() {
+  const [topUp, setTopUp] = useState("0.05");
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+      <h2 className="mb-4 font-semibold">Bond</h2>
+      <div className="grid grid-cols-3 gap-4">
+        <Stat label="Current bond" value="0.10 ETH" sub="≈ $310" />
+        <Stat label="Minimum bond" value="0.10 ETH" sub="Set by governance" />
+        <Stat label="Slashed to date" value="0 ETH" sub="No incidents" />
+      </div>
+      <div className="mt-5 flex items-end gap-3">
+        <Field label="Add bond">
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={topUp}
+              onChange={(e) => setTopUp(e.target.value)}
+              className="w-32 rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+            />
+            <span className="text-sm text-[var(--color-text-muted)]">ETH</span>
+          </div>
+        </Field>
+        <button className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]">
+          Top up
+        </button>
+      </div>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+        Calls <code className="font-mono">RelayerRegistry.addBond()</code>. Larger bonds
+        increase trust signaling but lock more capital.
+      </p>
+    </section>
+  );
+}
+
+function ExitPanel() {
+  const [exitState, setExitState] = useState<"active" | "cooldown" | "ready">("active");
+  const cooldownRemaining = "5d 14h 02m";
+
+  if (exitState === "active") {
+    return (
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
         <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
         <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-          Stops accepting orders and starts the cool-down. Bond becomes withdrawable
-          after the cool-down completes.
+          Stops accepting orders and starts a 7-day cool-down. Bond becomes
+          withdrawable after the cool-down. You can re-register after exit.
         </p>
-        <button className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]">
+        <button
+          onClick={() => setExitState("cooldown")}
+          className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
+        >
           Request exit
         </button>
       </section>
+    );
+  }
+
+  if (exitState === "cooldown") {
+    return (
+      <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-6">
+        <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Cool-down in progress</h2>
+        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+          Exit requested. Bond will be withdrawable in{" "}
+          <span className="font-mono font-semibold text-[var(--color-text)]">{cooldownRemaining}</span>.
+          The relayer is no longer accepting new orders.
+        </p>
+        <button
+          disabled
+          className="cursor-not-allowed rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-text-subtle)]"
+        >
+          Withdraw bond (cool-down active)
+        </button>
+        <button
+          onClick={() => setExitState("ready")}
+          className="ml-3 text-xs text-[var(--color-text-muted)] underline"
+        >
+          (demo) jump to ready state
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] p-6">
+      <h2 className="mb-2 font-semibold text-[var(--color-success)]">Bond ready to withdraw</h2>
+      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+        Cool-down complete. Withdrawing returns 0.10 ETH to your operator address
+        and removes you from the active relayer set.
+      </p>
+      <button className="rounded-lg bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+        Execute exit · withdraw 0.10 ETH
+      </button>
+      <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+        Calls <code className="font-mono">RelayerRegistry.executeExit()</code>.
+      </p>
+    </section>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
+      <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{sub}</div>
     </div>
   );
 }

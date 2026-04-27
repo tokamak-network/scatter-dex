@@ -129,6 +129,50 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Setup */}
+      <section>
+        <h2 className="mb-2 text-center text-2xl font-semibold">Run the node</h2>
+        <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
+          The relayer node is open-source. Single Docker image, single config file.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+            <div className="mb-2 font-semibold">Quick start</div>
+            <pre className="overflow-x-auto rounded-lg bg-[var(--color-bg)] p-4 text-xs leading-relaxed">
+{`docker run -d \\
+  --name scatter-relayer \\
+  -p 8080:8080 \\
+  -e RPC_URL=$RPC_URL \\
+  -e OPERATOR_KEY=$OPERATOR_KEY \\
+  -e REGISTRY_ADDR=$REGISTRY_ADDR \\
+  ghcr.io/tokamak-network/scatter-relayer:latest`}
+            </pre>
+            <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+              Health probe: <code className="font-mono">GET /api/info</code>.
+              Submission endpoint: <code className="font-mono">POST /api/orders</code>.
+            </p>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+            <div className="mb-2 font-semibold">Operator guide</div>
+            <ul className="space-y-2 text-sm text-[var(--color-text-muted)]">
+              <li>· Hardware: 2 vCPU, 4 GB RAM, 50 GB SSD</li>
+              <li>· Trusted RPC with archive support recommended</li>
+              <li>· HTTPS termination required for registration</li>
+              <li>· Prometheus metrics at <code className="font-mono">/metrics</code></li>
+              <li>· Logs to stdout, structured JSON</li>
+            </ul>
+            <a
+              href="https://github.com/tokamak-network/scatter-dex"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-block text-sm font-medium text-[var(--color-primary)] hover:underline"
+            >
+              Read the operator guide →
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* Final CTA */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-primary-soft)] to-[var(--color-surface)] p-10 text-center">
         <h2 className="text-2xl font-semibold">Ready to operate?</h2>
