@@ -8,7 +8,17 @@ import {
   useMemo,
   useState,
 } from "react";
-import { generateMetaAddress, type MetaAddress } from "@zkscatter/sdk/zk";
+import { generateMetaAddress, isMetaAddress, type MetaAddress } from "@zkscatter/sdk/zk";
+
+const HEX_64_RE = /^[0-9a-fA-F]{64}$/;
+
+function isValidImport(keys: MetaAddress): boolean {
+  return (
+    HEX_64_RE.test(keys.spendingKey) &&
+    HEX_64_RE.test(keys.viewingKey) &&
+    isMetaAddress(keys.metaAddress)
+  );
+}
 
 const STORAGE_KEY = "zkscatter-pro-meta-address-v1";
 
@@ -20,8 +30,10 @@ interface MetaAddressState {
    *  keys whose stealth addresses may already be in flight. */
   generate(): MetaAddress;
   /** Bring an existing keypair (e.g. exported from another device).
-   *  No format validation here beyond presence — `parseMetaAddress`
-   *  validates downstream when the keys are actually used. */
+   *  Validates each private key is 64 hex chars and the meta-address
+   *  is well-formed before persisting — throws otherwise so the
+   *  caller surfaces a clear error instead of storing garbage that
+   *  fails later inside `stealthWallet`. */
   importKeys(keys: MetaAddress): void;
   /** Wipe local storage. Stealth funds already received against the
    *  cleared keys become unrecoverable from this device. */
@@ -85,6 +97,11 @@ export function MetaAddressProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const importKeys = useCallback((next: MetaAddress) => {
+    if (!isValidImport(next)) {
+      throw new Error(
+        "Invalid meta-address keypair. Expected 64-hex spending/viewing keys and a well-formed st:eth:0x… meta-address.",
+      );
+    }
     setKeys(next);
     writeStored(next);
   }, []);

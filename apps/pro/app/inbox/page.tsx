@@ -180,7 +180,7 @@ function ReceiveSection({
           onChange={(e) => setInput(e.target.value)}
           rows={2}
           placeholder="0x02… (compressed secp256k1)"
-          className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs"
         />
       </label>
 
@@ -235,5 +235,7 @@ function Field({ label, value, secret }: { label: string; value: string; secret?
 
 function copy(text: string): void {
   if (typeof navigator === "undefined" || !navigator.clipboard) return;
-  void navigator.clipboard.writeText(text);
+  // Catch the rejection (denied permission, insecure context) so it
+  // doesn't surface as an unhandled promise rejection in DevTools.
+  void navigator.clipboard.writeText(text).catch(() => {});
 }
