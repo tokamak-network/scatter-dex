@@ -19,14 +19,19 @@ import { PinService } from './PinService';
 import { PinPromptBus } from './PinPrompt';
 import { SECURE_OPTS } from '../lib/secureStore';
 
-const WALLET_KEY = 'scatterdex_wallet_pk';
-const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';
+// Secret keys — every get/set/delete MUST pass SECURE_OPTS so the
+// Keychain access class is consistent across reads and writes.
+const WALLET_KEY = 'scatterdex_wallet_pk';                 // legacy private-key mirror
+const MNEMONIC_KEY = 'scatterdex_wallet_mnemonic';         // legacy mnemonic mirror
+const WALLET_SECRET_PREFIX = 'scatterdex_wallet_secret_';  // per-wallet { privateKey, mnemonic? }
+
+// Non-secret keys — public addresses / pointers / toggles. Default
+// SecureStore options are fine; do NOT promote to SECURE_OPTS unless
+// the access semantics actually need to change.
 const ADDRESS_KEY = 'scatterdex_wallet_address';
 const AUTH_ENABLED_KEY = 'scatterdex_biometric_enabled';
-
 const WALLETS_INDEX_KEY = 'scatterdex_wallets_index';
 const ACTIVE_WALLET_ID_KEY = 'scatterdex_wallets_active_id';
-const WALLET_SECRET_PREFIX = 'scatterdex_wallet_secret_';
 
 function generateWalletId(): string {
   const bytes = new Uint8Array(16);
@@ -52,7 +57,7 @@ async function writeIndex(list: WalletMeta[]): Promise<void> {
 }
 
 async function readSecret(id: string): Promise<WalletSecret | null> {
-  const raw = await SecureStore.getItemAsync(`${WALLET_SECRET_PREFIX}${id}`);
+  const raw = await SecureStore.getItemAsync(`${WALLET_SECRET_PREFIX}${id}`, SECURE_OPTS);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as WalletSecret;
@@ -70,7 +75,7 @@ async function writeSecret(id: string, secret: WalletSecret): Promise<void> {
 }
 
 async function deleteSecret(id: string): Promise<void> {
-  await SecureStore.deleteItemAsync(`${WALLET_SECRET_PREFIX}${id}`);
+  await SecureStore.deleteItemAsync(`${WALLET_SECRET_PREFIX}${id}`, SECURE_OPTS);
 }
 
 async function runMigration(): Promise<void> {
@@ -79,8 +84,8 @@ async function runMigration(): Promise<void> {
 
   const [legacyAddr, legacyPk, legacyMnemonic] = await Promise.all([
     SecureStore.getItemAsync(ADDRESS_KEY),
-    SecureStore.getItemAsync(WALLET_KEY),
-    SecureStore.getItemAsync(MNEMONIC_KEY),
+    SecureStore.getItemAsync(WALLET_KEY, SECURE_OPTS),
+    SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTS),
   ]);
 
   if (!legacyAddr || !legacyPk) {
@@ -121,14 +126,14 @@ async function mirrorLegacyFromSecret(secret: WalletSecret, address: string): Pr
     SecureStore.setItemAsync(ADDRESS_KEY, address),
     secret.mnemonic
       ? SecureStore.setItemAsync(MNEMONIC_KEY, secret.mnemonic, SECURE_OPTS)
-      : SecureStore.deleteItemAsync(MNEMONIC_KEY),
+      : SecureStore.deleteItemAsync(MNEMONIC_KEY, SECURE_OPTS),
   ]);
 }
 
 async function clearLegacy(): Promise<void> {
   await Promise.all([
-    SecureStore.deleteItemAsync(WALLET_KEY),
-    SecureStore.deleteItemAsync(MNEMONIC_KEY),
+    SecureStore.deleteItemAsync(WALLET_KEY, SECURE_OPTS),
+    SecureStore.deleteItemAsync(MNEMONIC_KEY, SECURE_OPTS),
     SecureStore.deleteItemAsync(ADDRESS_KEY),
   ]);
 }
