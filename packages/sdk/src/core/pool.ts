@@ -11,7 +11,17 @@ export interface CommitmentInsertedRow {
   leafIndex: number;
 }
 
-/** Read every `CommitmentInserted` event the contract has emitted,
+/** Optional block range for incremental hydration. Without bounds
+ *  the helper queries the whole event history, which is fine on
+ *  fresh testnets but can hit RPC log limits as the pool grows.
+ *  Apps that know a deploy block (or want to chunk) supply
+ *  `fromBlock` / `toBlock`. */
+export interface CommitmentInsertedHistoryOptions {
+  fromBlock?: ethers.BlockTag;
+  toBlock?: ethers.BlockTag;
+}
+
+/** Read `CommitmentInserted` events the contract has emitted,
  *  ordered by `leafIndex` (i.e. insertion order). The pool inserts
  *  monotonically, so this is also the order an
  *  `IncrementalMerkleTree` should be fed.
@@ -21,10 +31,13 @@ export interface CommitmentInsertedRow {
 export async function loadCommitmentInsertedHistory(
   provider: ethers.Provider,
   poolAddress: string,
+  options?: CommitmentInsertedHistoryOptions,
 ): Promise<CommitmentInsertedRow[]> {
   const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
   const logs = (await contract.queryFilter(
     contract.filters.CommitmentInserted(),
+    options?.fromBlock,
+    options?.toBlock,
   )) as ethers.EventLog[];
 
   const rows = logs.map<CommitmentInsertedRow>((ev) => ({

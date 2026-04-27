@@ -46,11 +46,29 @@ interface CommitmentTreeState {
   tryProofFor(commitment: bigint): Promise<MerkleProof | null>;
 }
 
+/** Thrown when the active network has a real CommitmentPool but
+ *  the commitment isn't (yet) in the tree — usually means the
+ *  deposit's log hasn't been processed, the tree is mid-sync, or
+ *  the user spent before reconciliation. Safer than silently
+ *  generating an empty-tree proof whose root would mismatch the
+ *  pool's `getLastRoot()` at settle time. */
+export class CommitmentProofUnavailableError extends Error {
+  readonly code = "COMMITMENT_PROOF_UNAVAILABLE";
+  constructor(readonly commitment: bigint, message?: string) {
+    super(
+      message ??
+        `Commitment ${commitment.toString().slice(0, 16)}… is not yet in the on-chain tree. Wait for the deposit to confirm and the tree to sync.`,
+    );
+    this.name = "CommitmentProofUnavailableError";
+  }
+}
+
 /** Resolve a Merkle proof for a note's commitment: prefer the
- *  on-chain tree (live mode), fall back to the empty-tree shortcut
- *  for the demo path. Both produce the `MerkleProof` shape every
- *  spend circuit consumes — only the root differs. Centralised
- *  here so OrderModal / CancelOrderModal don't drift. */
+ *  on-chain tree, fall back to the empty-tree shortcut **only in
+ *  demo mode**. In live mode a missing commitment throws so the UI
+ *  surfaces "wait for confirmation" instead of producing an
+ *  invalid-root proof that would fail at settle time.
+ *  Centralised here so OrderModal / CancelOrderModal don't drift. */
 export async function getMerkleProofWithFallback(
   tree: CommitmentTreeState,
   commitment: bigint,
@@ -58,6 +76,7 @@ export async function getMerkleProofWithFallback(
 ): Promise<{ merkleProof: MerkleProof; leafIndex: number }> {
   const live = await tree.tryProofFor(commitment);
   if (live) return { merkleProof: live, leafIndex: tree.findIndex(commitment) };
+  if (tree.mode === "live") throw new CommitmentProofUnavailableError(commitment);
   const empty = await fallback();
   return { merkleProof: empty.merkleProof, leafIndex: empty.leafIndex };
 }
@@ -102,35 +121,51 @@ export function CommitmentTreeProvider({ children }: { children: React.ReactNode
 
     let cancelled = false;
 
-    void (async () => {
+    // All tree mutations chain on `chain` so concurrent insert()
+    // calls — historical hydration races against an early live
+    // event, or two events landing in the same tick — are
+    // serialised. `IncrementalMerkleTree.insert` mutates
+    // `filledSubtrees` interleaved with awaits, so concurrent
+    // inserts would corrupt the tree.
+    let chain: Promise<void> = Promise.resolve();
+
+    chain = chain.then(async () => {
       try {
-        // Pull historical events first; helper returns rows already
-        // sorted by leafIndex (the order tree.insert relies on).
         const past = await loadCommitmentInsertedHistory(readProvider, poolAddress);
         if (cancelled) return;
-
         for (const row of past) {
           if (cancelled) return;
           const idx = await treeRef.current.insert(row.commitment);
+          // Validate that what insert() returned matches the event's
+          // own leafIndex. A divergence means the RPC dropped a log
+          // or returned them out of order — generating proofs against
+          // a corrupted tree would silently fail at settle time, so
+          // refuse to mark `ready` and surface the discrepancy.
+          if (idx !== row.leafIndex) {
+            throw new Error(
+              `[commitmentTree] hydrate mismatch at idx ${row.leafIndex}: insert returned ${idx}. RPC may have returned an incomplete log set; refresh to retry.`,
+            );
+          }
           indexRef.current.set(row.commitment.toString(), idx);
         }
         if (cancelled) return;
         setLeafCount(treeRef.current.nextIndex);
         setReady(true);
-          } catch (err) {
-        // Surface the failure but keep `ready=false` so spend flows
-        // don't accidentally use an empty tree as if it were truth.
-        // Operators can refresh; future iterations may retry.
+      } catch (err) {
+        // Keep `ready=false` so spend flows don't accidentally use
+        // an empty tree as if it were truth. Operators can refresh;
+        // future iterations may retry.
         console.error("[commitmentTree] history fetch failed:", err);
       }
-    })();
+    });
 
     const unsubscribe = subscribeCommitmentInserted(readProvider, poolAddress, (row) => {
       if (cancelled) return;
-      void (async () => {
-        // If the event arrives out-of-order with respect to our
-        // local nextIndex (rare under normal RPC ordering), drop it
-        // — the historical refetch on the next mount will reconcile.
+      chain = chain.then(async () => {
+        if (cancelled) return;
+        // Out-of-order arrival (rare under normal RPC ordering) —
+        // drop with a warning. Historical refetch on the next mount
+        // will reconcile.
         if (row.leafIndex !== treeRef.current.nextIndex) {
           console.warn(
             `[commitmentTree] skipping out-of-order event: expected idx ${treeRef.current.nextIndex}, got ${row.leafIndex}`,
@@ -140,7 +175,7 @@ export function CommitmentTreeProvider({ children }: { children: React.ReactNode
         const idx = await treeRef.current.insert(row.commitment);
         indexRef.current.set(row.commitment.toString(), idx);
         setLeafCount(treeRef.current.nextIndex);
-          })();
+      });
     });
 
     return () => {

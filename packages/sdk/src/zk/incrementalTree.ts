@@ -8,7 +8,7 @@
  *  precomputed zero-node table is identical to the one the Solidity
  *  contract publishes — change one, change both. */
 
-import { poseidonHash } from "./commitment";
+import { getPoseidonModule, poseidonHash, poseidonHashWith } from "./commitment";
 
 /** Precomputed zero hashes from `IncrementalMerkleTree.sol._zeros()`.
  *  `ZEROS[i]` is `Poseidon(ZEROS[i-1], ZEROS[i-1])`. Used as the
@@ -107,9 +107,12 @@ export class IncrementalMerkleTree {
    *  sibling subtree's leaves (computed on demand) when those leaves
    *  exist, otherwise the precomputed `ZEROS[i]`. Cost: O(N) hashes
    *  per call in the worst case (sibling subtree is fully populated).
-   *  Apps that proof-frequently should consider caching layer slices
-   *  — this method is O(N) by design to keep memory at O(N) instead
-   *  of the O(2^depth) a fully-padded tree would require.
+   *  Memory stays at O(N) — the O(2^depth) a fully-padded tree would
+   *  require is the alternative.
+   *
+   *  TODO(perf): cache the layer arrays to drop per-proof cost to
+   *  O(log N). Acceptable at projected near-term scale (~hundreds
+   *  of commitments); revisit before mainnet.
    *
    *  Returns the same `MerkleProof` shape every spend circuit
    *  consumes (`{ root, pathElements, pathIndices }`). Throws when
@@ -124,6 +127,11 @@ export class IncrementalMerkleTree {
         `IncrementalMerkleTree.proof: leafIndex ${leafIndex} out of range (0..${this._leaves.length - 1})`,
       );
     }
+
+    // Fetch the Poseidon module once so the level loop hashes
+    // synchronously — `await poseidonHash` per node would queue a
+    // microtask per hash and dominate the cost.
+    const poseidon = await getPoseidonModule();
 
     // `levelLeaves` starts as the leaf layer; each iteration replaces
     // it with the next layer up, computing only the prefix actually
@@ -146,7 +154,7 @@ export class IncrementalMerkleTree {
       for (let i = 0; i < levelLeaves.length; i += 2) {
         const left = levelLeaves[i]!;
         const right = i + 1 < levelLeaves.length ? levelLeaves[i + 1]! : ZEROS[level]!;
-        next[i >> 1] = await poseidonHash([left, right]);
+        next[i >> 1] = poseidonHashWith(poseidon, [left, right]);
       }
       levelLeaves = next;
       idx = idx >> 1;
