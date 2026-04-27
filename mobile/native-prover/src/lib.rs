@@ -264,6 +264,7 @@ mod witness {
     rust_witness::witness!(authorize);
     rust_witness::witness!(cancel);
     rust_witness::witness!(claim);
+    rust_witness::witness!(deposit);
 }
 
 crate::set_circom_circuits! {
@@ -271,6 +272,7 @@ crate::set_circom_circuits! {
     ("authorize_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::authorize_witness)),
     ("cancel_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::cancel_witness)),
     ("claim_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::claim_witness)),
+    ("deposit_final.zkey", circom_prover::witness::WitnessFn::RustWitness(witness::deposit_witness)),
 }
 
 #[cfg(test)]
@@ -493,6 +495,71 @@ mod claim_circom_test {
 
         verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
             .expect("claim proof verify");
+    }
+}
+
+#[cfg(test)]
+mod deposit_circom_test {
+    //! End-to-end Groth16 proving + verification of `deposit.circom`.
+    //! Same regression-class catches as the cancel / claim tests.
+    //! Notably, `deposit.circom` enforces `BabyCheck(pubKeyAx, pubKeyAy)`
+    //! plus a small-subgroup exclusion, so a synthetic `(Ax, Ay)` would
+    //! fail the constraint even before the merkle / commitment checks —
+    //! we reuse the deterministic Phase B priv-key vector (which yields
+    //! a known on-curve, prime-order pubkey) to avoid that landmine.
+    use crate::circom::{generate_circom_proof, verify_circom_proof, ProofLib};
+    use crate::{derive_eddsa_key, poseidon_hash};
+
+    const ZKEY_PATH: &str = "./test-vectors/circom/deposit_final.zkey";
+
+    fn ph(args: &[&str]) -> String {
+        poseidon_hash(args.iter().map(|s| (*s).to_string()).collect()).expect("poseidon_hash")
+    }
+
+    #[test]
+    fn deposit_proof_round_trips() {
+        const TAG_COMMITMENT_V2: &str = "3";
+        // Same priv as the EdDSA / cancel tests — gives a stable
+        // on-curve pubkey that passes BabyCheck + the small-subgroup
+        // exclusion.
+        const PRIV_HEX: &str =
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+        let key = derive_eddsa_key(PRIV_HEX.into()).expect("derive");
+        let ax = key.pub_key_ax;
+        let ay = key.pub_key_ay;
+
+        let secret = "11111";
+        let salt = "22222";
+        let token = "44444";
+        let amount = "55555";
+
+        // commitment = Poseidon(TAG_V2, secret, token, amount, salt, Ax, Ay)
+        let commitment = ph(&[TAG_COMMITMENT_V2, secret, token, amount, salt, &ax, &ay]);
+
+        let inputs = serde_json::json!({
+            "commitment": [commitment.clone()],
+            "token":      [token],
+            "amount":     [amount],
+            "secret":     [secret],
+            "salt":       [salt],
+            "pubKeyAx":   [ax],
+            "pubKeyAy":   [ay],
+        })
+        .to_string();
+
+        let proof = generate_circom_proof(ZKEY_PATH.to_string(), inputs, ProofLib::Arkworks)
+            .expect("deposit proof gen");
+
+        // Public-signal order from `deposit.circom main {public [...]}`:
+        //   [commitment, token, amount]
+        assert_eq!(proof.inputs.len(), 3, "expected 3 public signals");
+        assert_eq!(proof.inputs[0], commitment);
+        assert_eq!(proof.inputs[1], token);
+        assert_eq!(proof.inputs[2], amount);
+
+        verify_circom_proof(ZKEY_PATH.to_string(), proof, ProofLib::Arkworks)
+            .expect("deposit proof verify");
     }
 }
 
