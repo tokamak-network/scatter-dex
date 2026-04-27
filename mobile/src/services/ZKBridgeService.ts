@@ -50,10 +50,22 @@ function toDecimal(s: string): string {
 }
 
 class ZKBridgeServiceImpl {
-  private readonly nativeReady: boolean = !!_native.poseidonHash;
+  // Readiness means *every* helper this façade exposes is bound, not
+  // just `poseidonHash`. A partial bind (e.g. mopro renames `signEddsa`
+  // and we miss the rebind) would otherwise let App.tsx report "ready"
+  // and then crash much later inside `signEdDSA`. The error string
+  // names the specific missing functions so the boot UI can be
+  // diagnostic instead of vague.
+  private readonly missingNativeHelpers: Array<keyof NativeFns> = (
+    Object.keys(_native) as Array<keyof NativeFns>
+  ).filter((name) => !_native[name]);
+  private readonly nativeReady: boolean = this.missingNativeHelpers.length === 0;
   private readonly readyStatus: ZKReadyStatus = this.nativeReady
     ? { status: 'ready' }
-    : { status: 'failed', error: 'mopro-ffi native module not bound' };
+    : {
+        status: 'failed',
+        error: `mopro-ffi native module missing required helpers: ${this.missingNativeHelpers.join(', ')}`,
+      };
 
   /** True once the native helpers are bound — i.e. always, on any
    *  build that ships the mopro-ffi jniLib. Kept as a method for

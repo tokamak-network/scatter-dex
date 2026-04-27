@@ -41,8 +41,10 @@ yarn-error.*
 /android
 
 # Legacy WebView ZK engine bundle (Phase C-5 removed the WebView path).
-# Kept here so a stale local checkout's `.build/` doesn't get committed.
+# Kept ignored so a stale local checkout's `.build/` or generated
+# `assets/zk-webview.html` doesn't get committed by accident.
 .build/
+assets/zk-webview.html
 
 # Legacy WebView circuit binaries — `assets/zk-native/*.zkey` is tracked
 # (the APK ships them); these `assets/zk/` paths are leftovers from the
