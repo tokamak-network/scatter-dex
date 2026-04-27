@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Logo } from "./Logo";
+import { TokamakMark } from "@zkscatter/ui";
 
 export function Nav() {
   return (
@@ -9,7 +9,7 @@ export function Nav() {
           href="/"
           className="flex items-center gap-2 font-semibold tracking-tight text-[var(--color-primary)]"
         >
-          <Logo size={22} />
+          <TokamakMark height={22} />
           <span className="text-[var(--color-text)]">zkScatter</span>
         </Link>
         <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">

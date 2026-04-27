@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Logo } from "./Logo";
+import { TokamakMark } from "@zkscatter/ui";
 import { CurrentYear } from "./CurrentYear";
 
 type FooterLink = { label: string; href: string };
@@ -10,7 +10,7 @@ export function Footer() {
       <div className="mx-auto grid max-w-6xl gap-10 px-6 py-12 md:grid-cols-5">
         <div className="md:col-span-1">
           <div className="flex items-center gap-2 font-semibold text-[var(--color-primary)]">
-            <Logo size={20} />
+            <TokamakMark height={20} />
             <span className="text-[var(--color-text)]">zkScatter</span>
           </div>
           <p className="mt-3 text-sm text-[var(--color-text-muted)]">

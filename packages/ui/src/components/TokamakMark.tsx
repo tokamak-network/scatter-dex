@@ -1,14 +1,32 @@
-/** Official Tokamak Network symbol. Painted in this app's primary
- *  colour via the CSS variable, so switching the theme palette
- *  switches the logo automatically. Source SVG from
- *  tokamak.network; brand colour `#2A72E5` swapped for
- *  `currentColor` so the same SVG markup can be reused across
- *  apps. Replace the SVG markup here when the official brand
- *  SVG drops. */
+import type { CSSProperties } from "react";
+
 const VIEWBOX_WIDTH = 36;
 const VIEWBOX_HEIGHT = 24;
 
-export function TokamakMark({ height = VIEWBOX_HEIGHT }: { height?: number }) {
+interface TokamakMarkProps {
+  /** Glyph height in pixels. Width derives from the SVG aspect
+   *  ratio so the symbol never distorts. Defaults to the SVG's
+   *  intrinsic 24px. */
+  height?: number;
+  /** Optional override class. The default
+   *  `text-[var(--color-primary)]` ties the glyph to the host
+   *  app's primary palette via `currentColor`; pass a different
+   *  Tailwind class (e.g. `text-white`) when rendering on a dark
+   *  surface where primary would clash. */
+  className?: string;
+  style?: CSSProperties;
+}
+
+/** Official Tokamak Network symbol. The fill is `currentColor` so
+ *  the glyph inherits the parent's CSS `color` — apps recolour by
+ *  swapping the wrapping class. Source SVG from tokamak.network;
+ *  brand colour `#2A72E5` swapped for `currentColor`. Replace the
+ *  paths here when the official brand SVG drops. */
+export function TokamakMark({
+  height = VIEWBOX_HEIGHT,
+  className = "text-[var(--color-primary)]",
+  style,
+}: TokamakMarkProps) {
   const width = (height * VIEWBOX_WIDTH) / VIEWBOX_HEIGHT;
   return (
     <svg
@@ -18,7 +36,8 @@ export function TokamakMark({ height = VIEWBOX_HEIGHT }: { height?: number }) {
       fill="currentColor"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
-      className="text-[var(--color-primary)]"
+      className={className}
+      style={style}
     >
       <path d="M0.551196 8.60858C0.440796 8.95898 0.304797 9.4318 0.216797 9.7902C0.277608 9.54236 0.390929 9.31046 0.549097 9.1102C0.707264 8.90993 0.906588 8.74596 1.13359 8.62939C1.5799 8.05462 2.15209 7.58987 2.80615 7.27089C3.46021 6.9519 4.1787 6.78719 4.9064 6.7894V6.7758C2.1968 5.9974 1.356 6.8886 1.1208 7.3078C0.898239 7.72513 0.708081 8.15892 0.552002 8.60539" />
       <path d="M3.35917 4.44479L2.95917 4.82719C3.41757 4.45119 4.17356 4.53839 5.33756 5.10319C5.58991 4.65111 5.91018 4.24046 6.28717 3.88559C5.73517 3.48559 5.17596 3.1328 4.82076 3.2976C4.30557 3.64361 3.81651 4.02704 3.35756 4.44479" />
