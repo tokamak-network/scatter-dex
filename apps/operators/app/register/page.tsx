@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
-  explainRegisterError,
+  explainRegistryError,
   loadRegistrationStatus,
   MAX_RELAYER_FEE_BPS,
   registerRelayer,
@@ -80,7 +80,7 @@ export default function RegisterPage() {
       setStatus((prev) => (prev ? { ...prev, alreadyRegistered: true } : prev));
       setPhase("success");
     } catch (err) {
-      setErrorMsg(explainRegisterError(err, status?.minBond ?? 0n));
+      setErrorMsg(explainRegistryError(err, status?.minBond ?? 0n));
       setPhase("error");
     }
   };

@@ -1,23 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useWallet } from "@zkscatter/sdk/react";
+import {
+  addRelayerBond,
+  EXIT_COOLDOWN_SECONDS,
+  executeRelayerExit,
+  MAX_RELAYER_FEE_BPS,
+  requestRelayerExit,
+  updateRelayerInfo,
+} from "@zkscatter/sdk/relayer";
 import { Stat } from "../components/Stat";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
+import { DEMO_NETWORK } from "../lib/network";
+import { useOperator, type OperatorState } from "../lib/useOperator";
+import { useRegistryWrite, type WritePhase } from "../lib/useRegistryWrite";
 
-const COOLDOWN_REMAINING_MOCK = "5d 14h 02m";
+const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
 export default function ProfilePage() {
-  const [name, setName] = useState("Acme Relayer");
-  const [description, setDescription] = useState(
-    "Privacy-first routing for OTC desks and DAOs. Operated from us-east-1 with hot failover.",
-  );
-  const [contact, setContact] = useState("ops@acme-relayer.xyz");
-  const [website, setWebsite] = useState("https://acme-relayer.xyz");
-  const [socialX, setSocialX] = useState("@acme_relayer");
-  const [url, setUrl] = useState("https://relayer.acme-relayer.xyz");
-  const [feeBps, setFeeBps] = useState("30");
-  const [saved, setSaved] = useState(false);
+  const operator = useOperator();
+  const { registryDeployed: deployed } = operator;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -28,118 +32,128 @@ export default function ProfilePage() {
         </Link>
         <h1 className="mt-2 text-2xl font-semibold">Relayer profile</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Public information traders see when picking a relayer. Endpoint and fee
-          are recorded on-chain; the rest is signed metadata served from your node.
+          Endpoint and fee are recorded on-chain; bond + exit cool-down are
+          managed below. Off-chain metadata (display name, description, social
+          links) ships when the relayer-node config flow lands.
         </p>
       </header>
 
-      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h2 className="mb-4 font-semibold">On-chain settings</h2>
-        <p className="mb-4 text-xs text-[var(--color-text-muted)]">
-          Updating these fields submits a transaction to{" "}
-          <code className="font-mono">RelayerRegistry.update()</code>.
-        </p>
-        <div className="grid grid-cols-2 gap-5">
-          <Field label="Endpoint URL">
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
-            />
-          </Field>
-          <Field label="Fee (bps)">
-            <input
-              type="number"
-              min="0"
-              max="500"
-              value={feeBps}
-              onChange={(e) => setFeeBps(e.target.value)}
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-            />
-          </Field>
+      {!deployed && (
+        <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm">
+          RelayerRegistry not yet deployed on {DEMO_NETWORK.name}. The forms below
+          are wired through the SDK and will submit real transactions once a
+          registry address is configured.
         </div>
-      </section>
+      )}
 
-      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h2 className="mb-4 font-semibold">Operator metadata</h2>
-        <p className="mb-4 text-xs text-[var(--color-text-muted)]">
-          Served from your node's <code className="font-mono">/api/info</code>. Sanitized
-          client-side before display — keep it short and accurate.
-        </p>
-        <div className="space-y-5">
-          <Field label="Display name">
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={48}
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-            />
-          </Field>
-          <Field label="Description">
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={240}
-              rows={3}
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-            />
-          </Field>
-          <div className="grid grid-cols-3 gap-5">
-            <Field label="Contact">
-              <input
-                type="text"
-                value={contact}
-                onChange={(e) => setContact(e.target.value)}
-                className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-              />
-            </Field>
-            <Field label="Website">
-              <input
-                type="url"
-                value={website}
-                onChange={(e) => setWebsite(e.target.value)}
-                className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-              />
-            </Field>
-            <Field label="X / Twitter">
-              <input
-                type="text"
-                value={socialX}
-                onChange={(e) => setSocialX(e.target.value)}
-                className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-              />
-            </Field>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setSaved(true)}
-          className="mt-6 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-        >
-          Save metadata
-        </button>
-        {saved && (
-          <span className="ml-3 text-xs text-[var(--color-success)]">Saved (mock)</span>
-        )}
-      </section>
-
-      <BondPanel />
-      <ExitPanel />
+      <OnChainSettings operator={operator} />
+      <BondPanel operator={operator} />
+      <ExitPanel operator={operator} />
     </div>
   );
 }
 
-function BondPanel() {
+function OnChainSettings({ operator }: { operator: OperatorState }) {
+  const { signer } = useWallet();
+  const { row, refresh, registryDeployed } = operator;
+  // updateInfo can't raise InsufficientBond, so omit minBond — passing
+  // the operator's current bond would give wrong copy if the helper
+  // is later reused for a path that does raise it.
+  const write = useRegistryWrite({ onSuccess: refresh });
+
+  const [url, setUrl] = useState("");
+  const [feeBps, setFeeBps] = useState("");
+  const seeded = useRef(false);
+
+  // Seed the form from the on-chain row exactly once, after the
+  // first successful read. We don't re-sync on subsequent refreshes
+  // because that would silently clobber any in-progress edits when
+  // the user-driven `refresh()` resolves.
+  useEffect(() => {
+    if (!row || seeded.current) return;
+    setUrl(row.url);
+    setFeeBps(String(row.feeBps));
+    seeded.current = true;
+  }, [row]);
+
+  const onSave = () => {
+    if (!signer) return;
+    write.run(() => updateRelayerInfo(REGISTRY, { url, feeBps: Number(feeBps) }, signer));
+  };
+
+  const dirty = !!row && (url !== row.url || feeBps !== String(row.feeBps));
+  const disabled =
+    !signer || !registryDeployed || !row || row.status !== "active" ||
+    !dirty || write.phase.kind === "submitting";
+
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+      <h2 className="mb-4 font-semibold">On-chain settings</h2>
+      <p className="mb-4 text-xs text-[var(--color-text-muted)]">
+        Updating these fields submits a transaction to{" "}
+        <code className="font-mono">RelayerRegistry.updateInfo()</code>.
+      </p>
+      <div className="grid grid-cols-2 gap-5">
+        <Field label="Endpoint URL">
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
+          />
+        </Field>
+        <Field label="Fee (bps)">
+          <input
+            type="number"
+            min={0}
+            max={MAX_RELAYER_FEE_BPS}
+            value={feeBps}
+            onChange={(e) => setFeeBps(e.target.value)}
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+          />
+        </Field>
+      </div>
+
+      <WriteResult phase={write.phase} />
+
+      <button
+        onClick={onSave}
+        disabled={disabled}
+        className="mt-5 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {write.phase.kind === "submitting" ? "Saving…" : "Save on-chain settings"}
+      </button>
+    </section>
+  );
+}
+
+function BondPanel({ operator }: { operator: OperatorState }) {
+  const { signer } = useWallet();
+  const { row, refresh, registryDeployed } = operator;
+  const write = useRegistryWrite({ onSuccess: refresh });
+
   const [topUp, setTopUp] = useState("0.05");
+
+  const onTopUp = () => {
+    if (!signer) return;
+    write.run(() => addRelayerBond(REGISTRY, topUp, signer));
+  };
+
+  const disabled =
+    !signer || !registryDeployed || !row || row.status !== "active" ||
+    write.phase.kind === "submitting";
+
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
       <h2 className="mb-4 font-semibold">Bond</h2>
-      <div className="grid grid-cols-3 gap-4">
-        <Stat compact label="Current bond" value="0.10 ETH" sub="≈ $310" />
-        <Stat compact label="Minimum bond" value="0.10 ETH" sub="Set by governance" />
-        <Stat compact label="Slashed to date" value="0 ETH" sub="No incidents" />
+      <div className="grid grid-cols-2 gap-4">
+        <Stat
+          compact
+          label="Current bond"
+          value={row ? `${row.bondEth} ETH` : "—"}
+          sub={row ? `Status: ${row.status}` : "Connect wallet to load"}
+        />
+        <Stat compact label="Slashed to date" value="—" sub="Indexer pending" />
       </div>
       <div className="mt-5 flex items-end gap-3">
         <Field label="Add bond">
@@ -155,10 +169,15 @@ function BondPanel() {
             <span className="text-sm text-[var(--color-text-muted)]">ETH</span>
           </div>
         </Field>
-        <button className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]">
-          Top up
+        <button
+          onClick={onTopUp}
+          disabled={disabled}
+          className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {write.phase.kind === "submitting" ? "Submitting…" : "Top up"}
         </button>
       </div>
+      <WriteResult phase={write.phase} />
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">
         Calls <code className="font-mono">RelayerRegistry.addBond()</code>. Larger bonds
         increase trust signaling but lock more capital.
@@ -167,10 +186,19 @@ function BondPanel() {
   );
 }
 
-function ExitPanel() {
-  const [exitState, setExitState] = useState<"active" | "cooldown" | "ready">("active");
+function ExitPanel({ operator }: { operator: OperatorState }) {
+  const { signer } = useWallet();
+  const { row, refresh, registryDeployed, account, loading } = operator;
+  const write = useRegistryWrite({ onSuccess: refresh });
 
-  if (exitState === "active") {
+  // Render an explicit placeholder for each "can't act yet" state
+  // instead of disappearing — same convention BondCard / FeeCard
+  // / RegisteredCard follow on the dashboard.
+  if (!account) return <ExitHint>Connect a wallet to manage exit and bond.</ExitHint>;
+  if (!registryDeployed) return <ExitHint>Registry not deployed on {DEMO_NETWORK.name}.</ExitHint>;
+  if (loading || !row) return <ExitHint>Reading registry…</ExitHint>;
+
+  if (row.status === "active") {
     return (
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
         <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
@@ -179,57 +207,140 @@ function ExitPanel() {
           withdrawable after the cool-down. You can re-register after exit.
         </p>
         <button
-          onClick={() => setExitState("cooldown")}
-          className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
+          onClick={() => signer && write.run(() => requestRelayerExit(REGISTRY, signer))}
+          disabled={!signer || write.phase.kind === "submitting"}
+          className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Request exit
+          {write.phase.kind === "submitting" ? "Submitting…" : "Request exit"}
         </button>
+        <WriteResult phase={write.phase} />
       </section>
     );
   }
 
-  if (exitState === "cooldown") {
+  if (row.status === "cooldown") {
     return (
-      <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-6">
-        <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Cool-down in progress</h2>
-        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-          Exit requested. Bond will be withdrawable in{" "}
-          <span className="font-mono font-semibold text-[var(--color-text)]">{COOLDOWN_REMAINING_MOCK}</span>.
-          The relayer is no longer accepting new orders.
-        </p>
-        <button
-          disabled
-          className="cursor-not-allowed rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-text-subtle)]"
-        >
-          Withdraw bond (cool-down active)
-        </button>
-        <button
-          onClick={() => setExitState("ready")}
-          className="ml-3 text-xs text-[var(--color-text-muted)] underline"
-        >
-          (demo) jump to ready state
-        </button>
-      </section>
+      <CooldownPanel
+        row={row}
+        signer={signer}
+        phase={write.phase}
+        onExecute={() => signer && write.run(() => executeRelayerExit(REGISTRY, signer))}
+      />
     );
   }
 
+  if (row.status === "unregistered") {
+    return (
+      <ExitHint>
+        Not registered yet. <Link href="/register" className="font-medium text-[var(--color-primary)] hover:underline">Register a relayer →</Link> to enable exit and bond management.
+      </ExitHint>
+    );
+  }
+  return <ExitHint>Relayer is offline. Re-register before performing further actions.</ExitHint>;
+}
+
+function ExitHint({ children }: { children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] p-6">
-      <h2 className="mb-2 font-semibold text-[var(--color-success)]">Bond ready to withdraw</h2>
-      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-        Cool-down complete. Withdrawing returns 0.10 ETH to your operator address
-        and removes you from the active relayer set.
-      </p>
-      <button className="rounded-lg bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white hover:opacity-90">
-        Execute exit · withdraw 0.10 ETH
-      </button>
-      <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-        Calls <code className="font-mono">RelayerRegistry.executeExit()</code>.
-      </p>
+    <section className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-text-muted)]">
+      {children}
     </section>
   );
 }
 
+function CooldownPanel({
+  row,
+  signer,
+  phase,
+  onExecute,
+}: {
+  row: NonNullable<OperatorState["row"]>;
+  signer: ReturnType<typeof useWallet>["signer"];
+  phase: WritePhase;
+  onExecute: () => void;
+}) {
+  const readyAtSeconds = row.exitRequestedAt + EXIT_COOLDOWN_SECONDS;
+  // `now` stays undefined on the SSR pass so we don't bake the
+  // server's clock into the markup (Next would flag a hydration
+  // mismatch). The effect populates it on mount and ticks once a
+  // minute — minutes is the smallest displayed unit, finer ticks
+  // would waste renders.
+  const [now, setNow] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    setNow(Math.floor(Date.now() / 1000));
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (now === undefined) {
+    return (
+      <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-6 text-sm text-[var(--color-text-muted)]">
+        Loading cool-down…
+      </section>
+    );
+  }
+
+  const remaining = readyAtSeconds - now;
+  const ready = remaining <= 0;
+
+  return (
+    <section className={`rounded-xl border p-6 ${ready ? "border-[var(--color-success)] bg-[var(--color-success-soft)]" : "border-[var(--color-warning)] bg-[var(--color-warning-soft)]"}`}>
+      <h2 className={`mb-2 font-semibold ${ready ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}>
+        {ready ? "Bond ready to withdraw" : "Cool-down in progress"}
+      </h2>
+      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+        {ready
+          ? `Cool-down complete. Withdrawing returns ${row.bondEth} ETH and removes you from the active relayer set.`
+          : <>Exit requested. Bond will be withdrawable in <span className="font-mono font-semibold text-[var(--color-text)]">{formatRemaining(remaining)}</span>. The relayer is no longer accepting new orders.</>}
+      </p>
+      <button
+        onClick={onExecute}
+        disabled={!signer || !ready || phase.kind === "submitting"}
+        className="rounded-lg bg-[var(--color-success)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {phase.kind === "submitting"
+          ? "Submitting…"
+          : ready ? `Execute exit · withdraw ${row.bondEth} ETH` : "Withdraw bond (cool-down active)"}
+      </button>
+      <WriteResult phase={phase} />
+    </section>
+  );
+}
+
+function formatRemaining(totalSeconds: number): string {
+  const s = Math.max(0, totalSeconds);
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  return `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function WriteResult({ phase }: { phase: WritePhase }) {
+  if (phase.kind === "error") {
+    return (
+      <div className="mt-3 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-xs text-[var(--color-danger)]">
+        {phase.msg}
+      </div>
+    );
+  }
+  if (phase.kind === "success") {
+    return (
+      <div className="mt-3 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-xs">
+        <span className="font-medium text-[var(--color-success)]">Confirmed.</span>{" "}
+        {phase.txHash && (
+          <a
+            href={`${DEMO_NETWORK.explorerBase}/tx/${phase.txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-[var(--color-text-muted)] hover:underline"
+          >
+            {phase.txHash.slice(0, 10)}…
+          </a>
+        )}
+      </div>
+    );
+  }
+  return null;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
