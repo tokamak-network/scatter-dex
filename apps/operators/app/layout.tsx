@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { MOCK_OPERATOR, shortenAddress } from "./lib/mockOperator";
-import { TokamakMark } from "./components/TokamakMark";
+import { TokamakMark } from "@zkscatter/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {

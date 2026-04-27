@@ -12,8 +12,7 @@ import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { MetaAddressProvider } from "./lib/metaAddress";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
-import { TokamakMark } from "./components/TokamakMark";
-import { ToastProvider } from "@zkscatter/ui";
+import { TokamakMark, ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 

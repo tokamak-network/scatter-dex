@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { TokamakMark } from "./components/TokamakMark";
+import { TokamakMark } from "@zkscatter/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
