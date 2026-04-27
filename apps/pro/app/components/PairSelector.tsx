@@ -19,7 +19,13 @@ export function PairSelector() {
   const { pair, setPairBy } = useTradeForm();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Tracks the open→close transition so we can restore focus to
+  // the trigger when the listbox dismisses (Escape, outside click,
+  // or pick) — without this, focus drops to `<body>` after the
+  // listbox unmounts and keyboard users lose their place.
+  const wasOpenRef = useRef(false);
 
   const featured = useMemo(() => LAUNCH_PAIRS.filter((p) => p.featured), []);
   const rest = useMemo(() => LAUNCH_PAIRS.filter((p) => !p.featured), []);
@@ -31,12 +37,20 @@ export function PairSelector() {
 
   // On open, land focus on the currently-active pair so ArrowDown
   // moves to the next neighbour rather than restarting the list.
-  // Defer to the next tick so the listbox has rendered.
+  // On close (after having been open) restore focus to the trigger
+  // so keyboard users land back where they invoked the listbox.
   useEffect(() => {
-    if (!open) return;
-    const activeIdx = flat.findIndex((p) => p.display === pair.display);
-    const target = optionRefs.current[activeIdx >= 0 ? activeIdx : 0];
-    target?.focus();
+    if (open) {
+      const activeIdx = flat.findIndex((p) => p.display === pair.display);
+      const target = optionRefs.current[activeIdx >= 0 ? activeIdx : 0];
+      target?.focus();
+      wasOpenRef.current = true;
+      return;
+    }
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      triggerRef.current?.focus();
+    }
   }, [open, flat, pair.display]);
 
   const pick = (display: string) => {
@@ -60,6 +74,7 @@ export function PairSelector() {
   return (
     <div ref={wrapRef} className="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-sm font-medium hover:border-[var(--color-primary)]"
@@ -88,7 +103,7 @@ export function PairSelector() {
                   display={p.display}
                   active={p.display === pair.display}
                   featured
-                  ref={(el) => { optionRefs.current[i] = el; }}
+                  buttonRef={(el) => { optionRefs.current[i] = el; }}
                   onClick={() => pick(p.display)}
                 />
               ))}
@@ -103,7 +118,7 @@ export function PairSelector() {
               key={p.display}
               display={p.display}
               active={p.display === pair.display}
-              ref={(el) => { optionRefs.current[featured.length + i] = el; }}
+              buttonRef={(el) => { optionRefs.current[featured.length + i] = el; }}
               onClick={() => pick(p.display)}
             />
           ))}
@@ -118,13 +133,18 @@ interface PairRowProps {
   active: boolean;
   featured?: boolean;
   onClick: () => void;
-  ref?: React.Ref<HTMLButtonElement>;
+  /** Forwarded to the underlying `<button>` so the parent can stash
+   *  it in an `optionRefs` array for keyboard nav. Renamed from
+   *  the React-special `ref` so this stays a normal prop and
+   *  doesn't depend on whether the host React version exposes ref
+   *  directly on function components. */
+  buttonRef?: React.Ref<HTMLButtonElement>;
 }
 
-function PairRow({ display, active, featured, onClick, ref }: PairRowProps) {
+function PairRow({ display, active, featured, onClick, buttonRef }: PairRowProps) {
   return (
     <button
-      ref={ref}
+      ref={buttonRef}
       type="button"
       role="option"
       aria-selected={active}
