@@ -23,7 +23,7 @@ All routes use mock data. No SDK calls yet.
 
 ```bash
 npm install
-npm run dev   # http://localhost:3002
+npm run dev   # http://localhost:4002
 ```
 
 ## Domain (planned)
