@@ -95,12 +95,14 @@ function Why() {
         <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
           Why zkScatter
         </h2>
-        <Link
-          href="#developers"
+        <a
+          href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/research/PAPER.md"
+          target="_blank"
+          rel="noopener noreferrer"
           className="text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
           Read the paper →
-        </Link>
+        </a>
       </div>
       <div className="grid gap-5 md:grid-cols-3">
         {items.map(({ Icon, title, body }) => (
@@ -232,7 +234,7 @@ function Developers() {
             <a
               href="https://docs.zkscatter.xyz"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-5 py-2.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
             >
               Open developer docs
@@ -241,7 +243,7 @@ function Developers() {
             <a
               href="https://github.com/tokamak-network"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border-strong)] px-5 py-2.5 text-sm font-medium hover:bg-[var(--color-surface-muted)]"
             >
               GitHub
@@ -254,26 +256,27 @@ function Developers() {
           </div>
           <pre className="overflow-x-auto font-mono text-[13px] leading-relaxed text-white/90">
 {`import {
-  createScatterClient,
-  SEPOLIA,
+  PRIVATE_SETTLEMENT_IFACE,
+  chainName,
+  parseTokenList,
+  type NetworkConfig,
 } from "@zkscatter/sdk";
 
-const client = createScatterClient({
-  network: SEPOLIA,
-  rpcUrl: process.env.RPC_URL,
-});
+const network: NetworkConfig = {
+  chainId: 11155111,
+  rpcUrl: process.env.RPC_URL!,
+  contracts: { /* ... */ },
+  tokens: parseTokenList(
+    "0x...:USDC:6,0x...:WETH:18",
+  ),
+};
 
-const fill = await client.relayer.submit(
-  await client.zk.generateAuthorizeProof({
-    side: "buy",
-    base: "USDC",
-    quote: "WETH",
-    amount: 1000_000000n,
-    price: 3500_000000n,
-  }),
-);
+chainName(network.chainId);
+// → "Sepolia"
 
-console.log(fill.txHash);`}
+PRIVATE_SETTLEMENT_IFACE.parseLog(log);
+// decode Settled events without
+// re-instantiating ethers.`}
           </pre>
         </div>
       </div>
@@ -302,7 +305,7 @@ function Proof() {
           <a
             href="https://github.com/tokamak-network"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="mt-5 inline-flex text-sm font-medium text-[var(--color-text)] hover:underline"
           >
             Read the whitepaper →
@@ -344,7 +347,7 @@ function FooterCTA() {
           <a
             href="https://docs.zkscatter.xyz"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="rounded-md border border-white/30 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10"
           >
             Read the docs

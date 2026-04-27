@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
+import { CurrentYear } from "./CurrentYear";
 
 type FooterLink = { label: string; href: string };
 
@@ -52,7 +53,7 @@ export function Footer() {
         />
       </div>
       <div className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-        © {new Date().getFullYear()} zkScatter · Tokamak Network
+        © <CurrentYear /> zkScatter · Tokamak Network
       </div>
     </footer>
   );
@@ -80,11 +81,12 @@ function FooterLinkItem({ link }: { link: FooterLink }) {
   const className =
     "text-[var(--color-text-muted)] hover:text-[var(--color-text)]";
   if (isExternal) {
+    const isMailto = link.href.startsWith("mailto:");
     return (
       <a
         href={link.href}
-        target={link.href.startsWith("mailto:") ? undefined : "_blank"}
-        rel="noreferrer"
+        target={isMailto ? undefined : "_blank"}
+        rel={isMailto ? undefined : "noopener noreferrer"}
         className={className}
       >
         {link.label}

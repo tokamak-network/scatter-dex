@@ -13,7 +13,9 @@ function recommend(goal: Goal | null, platform: Platform | null): AppEntry {
   if (goal === "trade") return APP_BY_ID.pro;
   if (goal === "pay") return APP_BY_ID.pay;
   if (goal === "distribute") return APP_BY_ID.drop;
-  return APP_BY_ID.mobile;
+  // goal === "explore" — pro is the broadest web entry; mobile-or-either
+  // visitors get the all-in-one Mobile app.
+  return platform === "web" ? APP_BY_ID.pro : APP_BY_ID.mobile;
 }
 
 export function Recommender({ className = "" }: { className?: string }) {

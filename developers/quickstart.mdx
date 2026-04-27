@@ -1,12 +1,13 @@
 ---
 title: Quickstart
-description: "Submit your first private order on Sepolia in under 5 minutes."
+description: "Wire @zkscatter/sdk into a TypeScript project in under 5 minutes."
 ---
 
 <Note>
-  This guide targets `@zkscatter/sdk` Phase 1+. Phase 0 ships types
-  and ABIs only — see [SDK overview](/sdk/overview) for the current
-  surface.
+  `@zkscatter/sdk` is in **Phase 0** — it ships network configs, contract
+  ABIs/Interfaces, and a few helpers. The proof-generation and relayer
+  client surfaces ship in subsequent phases. This page reflects what
+  works today.
 </Note>
 
 ## 1. Install
@@ -14,93 +15,111 @@ description: "Submit your first private order on Sepolia in under 5 minutes."
 <CodeGroup>
 
 ```bash npm
-npm install @zkscatter/sdk viem
+npm install @zkscatter/sdk
 ```
 
 ```bash pnpm
-pnpm add @zkscatter/sdk viem
+pnpm add @zkscatter/sdk
 ```
 
 ```bash yarn
-yarn add @zkscatter/sdk viem
+yarn add @zkscatter/sdk
 ```
 
 </CodeGroup>
 
-## 2. Configure a network
+The SDK is a peer of `ethers` — it does not bundle one. Install
+`ethers` (or `viem`) yourself if your app does not already depend on
+either.
+
+## 2. Reach the core surface
+
+Everything platform-agnostic ships from the root entrypoint:
 
 ```ts
-import { createScatterClient, SEPOLIA } from "@zkscatter/sdk";
+import {
+  PRIVATE_SETTLEMENT_ABI,
+  PRIVATE_SETTLEMENT_IFACE,
+  COMMITMENT_POOL_ABI,
+  ERC20_ABI,
+  chainName,
+  parseTokenList,
+  explorerLink,
+  type NetworkConfig,
+  type TokenInfo,
+} from "@zkscatter/sdk";
+```
 
-const client = createScatterClient({
-  network: SEPOLIA,
+DOM-only modules (Web Worker proof types, the React hook) live behind
+their own subpaths so a Node/SSR consumer that omits `lib.dom` from
+`tsconfig` does not pick them up by accident:
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk/zk";
+import { /* ... */ } from "@zkscatter/sdk/relayer";
+import { /* ... */ } from "@zkscatter/sdk/react";
+```
+
+## 3. Resolve a network
+
+```ts
+const network: NetworkConfig = {
+  chainId: 11155111,
   rpcUrl: process.env.RPC_URL!,
-});
+  contracts: {
+    privateSettlement: "0x...",
+    commitmentPool: "0x...",
+    relayerRegistry: "0x...",
+    identityGate: "0x...",
+  },
+  tokens: parseTokenList(
+    "0x...:USDC:6,0x...:WETH:18",
+  ),
+};
+
+console.log(chainName(network.chainId));
+// → "Sepolia"
+
+console.log(
+  explorerLink(network, "tx", "0xdead..."),
+);
+// → "https://sepolia.etherscan.io/tx/0xdead..."
 ```
 
-## 3. Authorize an order
+## 4. Decode a settlement event
 
-Generate a half-proof locally. Nothing is sent over the wire yet.
+The pre-parsed `Interface` lets you decode logs without re-instantiating
+ethers:
 
 ```ts
-const proof = await client.zk.generateAuthorizeProof({
-  side: "buy",
-  base: "USDC",
-  quote: "WETH",
-  amount: 1000_000000n, // 1000 USDC
-  price: 3500_000000n,
+import { PRIVATE_SETTLEMENT_IFACE } from "@zkscatter/sdk";
+
+const log = /* an ethers Log from the PrivateSettlement contract */;
+
+const parsed = PRIVATE_SETTLEMENT_IFACE.parseLog({
+  topics: [...log.topics],
+  data: log.data,
 });
-```
 
-## 4. Submit through a relayer
-
-The relayer matches your order, settles on-chain, and returns the
-fill receipt.
-
-```ts
-const fill = await client.relayer.submit(proof);
-console.log(fill.txHash);
-// → 0x… (settled on Sepolia)
+if (parsed?.name === "Settled") {
+  const [commitment, relayer] = parsed.args;
+  // ...
+}
 ```
 
 <Check>
-  That's it. Your order was matched off-chain, settled through
-  `PrivateSettlement`, and never exposed your identity or amount in
-  the mempool.
+  That covers the Phase 0 surface. The full proof-and-submit flow —
+  including the half-proof authorization, relayer submission, and
+  on-chain settlement — ships in Phase 1.
 </Check>
-
-## What just happened?
-
-<AccordionGroup>
-  <Accordion title="Where did the proof come from?">
-    `generateAuthorizeProof` runs the `authorize.circom` circuit
-    (~15K constraints) locally and returns a Groth16 proof plus
-    public signals.
-  </Accordion>
-  <Accordion title="Who is the relayer?">
-    A registered node from `RelayerRegistry`. Anyone can run one —
-    see [Run a relayer node](/operate/run-a-relayer-node).
-  </Accordion>
-  <Accordion title="What got written on-chain?">
-    A commitment to the trade — not the trade itself. The
-    `CommitmentPool` is an incremental Merkle tree; trader and
-    amount are hidden.
-  </Accordion>
-</AccordionGroup>
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Listen to fills" icon="ear" href="/guides/listen-to-fills">
-    Subscribe to `Settled` events and reconcile order state.
+  <Card title="SDK README" icon="book" href="https://github.com/tokamak-network">
+    Module-by-module rundown of what Phase 0 ships and what is planned.
   </Card>
-  <Card title="Add identity gating" icon="shield" href="/guides/identity-gating">
-    Restrict who can submit orders via zk-X509 attestations.
-  </Card>
-  <Card title="Run your own relayer" icon="server" href="/operate/run-a-relayer-node">
-    Match orders, earn fees, control your own latency.
-  </Card>
-  <Card title="SDK reference" icon="book" href="/sdk/overview">
-    Every module, every function.
+  <Card title="zkScatter apps" icon="grid" href="https://zkscatter.xyz/apps">
+    See the SDK in production behind Pro, Pay, Drop, and Mobile.
   </Card>
 </CardGroup>

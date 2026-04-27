@@ -41,5 +41,8 @@ the Mintlify dashboard.
 - **Imperative voice**: "Install the SDK", not "You can install".
 - **Every code block runs**: paste-and-go, including imports.
 - **Errors get a section**: every guide ends with "Common errors".
-- **Version everything**: pin `@zkscatter/sdk@X.Y.Z` in examples.
+- **Version when stable**: once the SDK is published to npm, pin
+  `@zkscatter/sdk@X.Y.Z` in examples that depend on a specific surface.
+  Pre-publish, leave examples unpinned and rely on the Phase note at
+  the top of each page.
 - **No "simply", "just", "easy"**: condescending when something fails.

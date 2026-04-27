@@ -18,7 +18,7 @@ export function Nav() {
           <a
             href="https://docs.zkscatter.xyz"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="hover:text-[var(--color-text)]"
           >
             Developers
@@ -27,7 +27,7 @@ export function Nav() {
           <a
             href="https://github.com/tokamak-network"
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="hover:text-[var(--color-text)]"
           >
             GitHub

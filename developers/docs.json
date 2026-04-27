@@ -8,7 +8,6 @@
     "light": "#0ea5e9",
     "dark": "#0b1220"
   },
-  "favicon": "/favicon.svg",
   "navigation": {
     "tabs": [
       {
@@ -19,57 +18,6 @@
             "pages": [
               "introduction",
               "quickstart"
-            ]
-          },
-          {
-            "group": "Guides",
-            "pages": [
-              "guides/send-private-order",
-              "guides/listen-to-fills",
-              "guides/run-a-relayer",
-              "guides/identity-gating"
-            ]
-          },
-          {
-            "group": "SDK reference",
-            "pages": [
-              "sdk/overview",
-              "sdk/contracts",
-              "sdk/orderbook",
-              "sdk/relayer",
-              "sdk/zk",
-              "sdk/react",
-              "sdk/util",
-              "sdk/types"
-            ]
-          },
-          {
-            "group": "Contracts",
-            "pages": [
-              "contracts/overview",
-              "contracts/private-settlement",
-              "contracts/commitment-pool",
-              "contracts/relayer-registry",
-              "contracts/identity-gate"
-            ]
-          },
-          {
-            "group": "Circuits",
-            "pages": [
-              "circuits/overview",
-              "circuits/authorize",
-              "circuits/cancel",
-              "circuits/claim",
-              "circuits/withdraw",
-              "circuits/deposit"
-            ]
-          },
-          {
-            "group": "Operate",
-            "pages": [
-              "operate/run-a-relayer-node",
-              "operate/monitoring",
-              "operate/fees-and-slashing"
             ]
           }
         ]
