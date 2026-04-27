@@ -8,6 +8,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HiddenWebView from './src/components/HiddenWebView';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import PinPromptHost from './src/components/PinPromptHost';
 import TabNavigator from './src/navigation/TabNavigator';
 import { WalletProvider, useWallet } from './src/contexts/WalletContext';
 import { ZKBridgeService } from './src/services/ZKBridgeService';
@@ -122,6 +123,10 @@ export default function App() {
               </View>
             )}
           </View>
+          {/* Mounted as a sibling to the navigator so the PIN modal floats
+              above every screen — services trigger it through
+              `PinPromptBus.request(...)` and await the user's input. */}
+          <PinPromptHost />
         </WalletProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

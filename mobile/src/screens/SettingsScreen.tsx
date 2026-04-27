@@ -12,6 +12,8 @@ import { colors, layout, shadowSubtle } from '../styles/theme';
 import ScreenHeader from '../components/ScreenHeader';
 import { useWallet } from '../contexts/WalletContext';
 import { KeySecurityService } from '../services/KeySecurityService';
+import { PinService } from '../services/PinService';
+import { PinPromptBus } from '../services/PinPrompt';
 import { NetworkService, NetworkConfig } from '../services/NetworkService';
 import { buildPayload, probeHttp, probeHttpWrapped, probeWarmupThenPost, probeWs, type ProbeResult } from '../lib/netProbe';
 import { RelayerApiService } from '../services/RelayerApiService';
@@ -107,6 +109,13 @@ export default function SettingsScreen() {
   const [netTesting, setNetTesting] = useState(false);
   const [netTestResult, setNetTestResult] = useState<string | null>(null);
 
+  const [pinEnrolled, setPinEnrolled] = useState(false);
+
+  const refreshPinState = useCallback(async () => {
+    try { setPinEnrolled(await PinService.isEnrolled()); }
+    catch { /* ignore */ }
+  }, []);
+
   // Load biometric setting on mount
   useEffect(() => {
     let cancelled = false;
@@ -116,6 +125,7 @@ export default function SettingsScreen() {
         if (!cancelled) {
           setToggles((prev) => ({ ...prev, biometrics: biometricEnabled }));
         }
+        if (!cancelled) await refreshPinState();
       } catch { /* ignore */ }
       finally {
         if (!cancelled) setLoadingToggles(false);
@@ -167,6 +177,63 @@ export default function SettingsScreen() {
       }
     }
   }, [toggles]);
+
+  const enrollNewPin = useCallback(async (reason: string, successTitle: string, successBody: string) => {
+    const r = await PinPromptBus.request({ kind: 'enroll', reason });
+    if (!r.ok) return;
+    try {
+      await PinService.enroll(r.pin);
+      await refreshPinState();
+      Alert.alert(successTitle, successBody);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update PIN');
+    }
+  }, [refreshPinState]);
+
+  const handlePinSetup = useCallback(() => enrollNewPin(
+    'Pick a 6-digit PIN. You will need this to authorize wallet operations.',
+    'PIN set',
+    'Your wallet will now require this PIN to authorize sensitive actions.',
+  ), [enrollNewPin]);
+
+  const handlePinChange = useCallback(async () => {
+    // Verify the existing PIN first so a stolen-but-unlocked phone can't
+    // silently rotate the PIN out from under the owner.
+    const verify = await PinPromptBus.request({
+      kind: 'verify',
+      reason: 'Enter your current PIN to continue.',
+    });
+    if (!verify.ok) return;
+    if (!(await PinService.verify(verify.pin))) {
+      Alert.alert('Wrong PIN', 'Current PIN did not match.');
+      return;
+    }
+    await enrollNewPin('Pick a new 6-digit PIN.', 'PIN updated', 'Your new PIN is now active.');
+  }, [enrollNewPin]);
+
+  const handlePinRemove = useCallback(async () => {
+    Alert.alert(
+      'Remove PIN?',
+      'Wallet operations will fall back to biometric only (if enabled). Anyone who can unlock the device will be able to authorize transactions.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: async () => {
+          const verify = await PinPromptBus.request({
+            kind: 'verify',
+            reason: 'Enter your PIN to confirm removal.',
+          });
+          if (!verify.ok) return;
+          const ok = await PinService.verify(verify.pin);
+          if (!ok) {
+            Alert.alert('Wrong PIN', 'PIN did not match.');
+            return;
+          }
+          await PinService.clear();
+          await refreshPinState();
+        }},
+      ],
+    );
+  }, [refreshPinState]);
 
   const handleStealthManagement = useCallback(async () => {
     if (!account) {
@@ -630,6 +697,46 @@ export default function SettingsScreen() {
               </TouchableOpacity>
             </View>
           ))}
+          {/* App-level PIN — verifies before key access. When biometric
+              is on AND enrolled, biometric prompts first and PIN is the
+              fallback; when biometric is off, PIN is the only gate. */}
+          {!pinEnrolled ? (
+            <TouchableOpacity style={s.linkRow} onPress={handlePinSetup} activeOpacity={0.7}>
+              <View style={s.linkLeft}>
+                <View style={[s.linkIcon, s.linkIconPrimary]}>
+                  <Text style={s.linkIconText}>🔢</Text>
+                </View>
+                <View>
+                  <Text style={s.linkLabel}>Set up PIN</Text>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                    6 digits — required to authorize key access.
+                  </Text>
+                </View>
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity style={s.linkRow} onPress={handlePinChange} activeOpacity={0.7}>
+                <View style={s.linkLeft}>
+                  <View style={[s.linkIcon, s.linkIconPrimary]}>
+                    <Text style={s.linkIconText}>🔢</Text>
+                  </View>
+                  <Text style={s.linkLabel}>Change PIN</Text>
+                </View>
+                <Text style={s.chevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={handlePinRemove} activeOpacity={0.7}>
+                <View style={s.linkLeft}>
+                  <View style={[s.linkIcon, s.linkIconDanger]}>
+                    <Text style={s.linkIconText}>⛔</Text>
+                  </View>
+                  <Text style={[s.linkLabel, { color: colors.danger }]}>Remove PIN</Text>
+                </View>
+                <Text style={s.chevron}>›</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* EdDSA Key Management */}
