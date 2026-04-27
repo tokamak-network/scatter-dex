@@ -239,13 +239,13 @@ function fireNotesChanged(address: string) {
 
 /**
  * Field elements here (`id`, `commitment`, `secret`, `salt`,
- * `pubKeyAx`, `pubKeyAy`) are stored as **base-10 decimal strings**,
- * matching what the WebView bridge returns (`F.toString(hash, 10)`
- * in `build-zk-webview.mjs`). This is the canonical on-device form;
- * convert to 0x-bytes32 via `toBytes32Hex` only at contract-call
- * boundaries. Previous revisions of this type labeled these "hex",
- * which was misleading — callers that assumed 0x-prefixed ids would
- * silently produce the wrong preimages.
+ * `pubKeyAx`, `pubKeyAy`) are stored as **base-10 decimal strings** —
+ * the canonical on-device form for everything downstream of
+ * `light-poseidon` / `babyjubjub-rs`. Convert to 0x-bytes32 via
+ * `toBytes32Hex` only at contract-call boundaries. Previous revisions
+ * of this type labeled these "hex", which was misleading — callers
+ * that assumed 0x-prefixed ids would silently produce the wrong
+ * preimages.
  */
 export interface StoredNote {
   /** commitment as decimal string — unique identifier */

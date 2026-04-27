@@ -3,8 +3,6 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "build:zk": "node scripts/build-zk-webview.mjs",
-    "prebuild:zk": "mkdir -p .build",
     "copy:circuits": "bash scripts/copy-zk-assets.sh",
     "start": "expo start",
     "android": "expo run:android",

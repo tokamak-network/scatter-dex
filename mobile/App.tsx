@@ -6,7 +6,6 @@ import { StatusBar } from 'expo-status-bar';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import HiddenWebView from './src/components/HiddenWebView';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import PinPromptHost from './src/components/PinPromptHost';
 import TabNavigator from './src/navigation/TabNavigator';
@@ -96,7 +95,6 @@ export default function App() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <WalletProvider>
-          <HiddenWebView />
           <View style={styles.root}>
             <StatusBar style="dark" />
             {zkBoot.phase === 'ready' ? (
