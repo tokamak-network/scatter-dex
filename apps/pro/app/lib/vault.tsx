@@ -14,7 +14,7 @@ import {
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
-import { DEMO_NETWORK } from "./network";
+import { useActiveNetwork } from "./activeNetwork";
 
 /** A note in the user's local vault. The full `CommitmentNote` is
  *  carried so spending circuits (authorize / claim) can spend this
@@ -63,29 +63,49 @@ function deriveLabelCounter(notes: readonly VaultNote[]): number {
 }
 
 export function VaultProvider({ children }: { children: React.ReactNode }) {
+  const { network } = useActiveNetwork();
+  const chainId = network.chainId;
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
+  // Carries over across chain switches: hydration uses
+  // `Math.max(current, deriveLabelCounter(loaded))` so labels are
+  // monotonic per-provider lifetime — never resetting prevents a
+  // duplicate-`lot-N` race when `add()` fires during the new
+  // chain's hydrate window.
   const labelCounter = useRef(0);
-  // Single adapter instance per provider lifetime — closing the IDB
-  // connection on every render would re-open it on every hook call.
-  const adapterRef = useRef<NoteStorageAdapter | null>(null);
-  if (adapterRef.current === null) {
-    // Lazy-init guarded by ref so SSR doesn't trigger the IDB open
-    // path (the adapter handles `typeof indexedDB === "undefined"`
-    // internally, but skipping the call is cleaner).
-    adapterRef.current = createIndexedDbNoteAdapter({
-      // Per-chain DB so notes from one network don't leak into a
-      // different one when the user switches.
-      dbName: `zkscatter-notes-${DEMO_NETWORK.chainId}`,
-    });
-  }
 
-  // Hydrate on mount. Cancellation guards a fast unmount (HMR, route
-  // swap during initial fetch) from setting state on a dead provider.
+  // Adapter is keyed on the active chainId — per-chain DB so notes
+  // from one network don't leak into another when the user switches.
+  // `useMemo` (not `useRef`) so each chainId gets its own stable
+  // instance and `add` / `remove` callbacks close over the correct
+  // one. An in-flight `add()` started under chain A keeps writing
+  // to chain A's adapter even if chainId flips mid-await — without
+  // this binding, the dereference `adapterRef.current` would land
+  // on chain B's IDB after the swap. The SDK adapter is SSR-safe
+  // (no IDB call until the first method invocation).
+  const adapter = useMemo<NoteStorageAdapter>(
+    () => createIndexedDbNoteAdapter({ dbName: `zkscatter-notes-${chainId}` }),
+    [chainId],
+  );
+
+  // Hydrate on mount + on every chainId change. Cancellation guards
+  // a fast unmount (HMR, route swap during initial fetch) and a
+  // rapid network switch (user toggles twice before the first load
+  // resolves) from setting state on a dead adapter.
+  const isFirstHydrateRef = useRef(true);
   useEffect(() => {
-    const adapter = adapterRef.current!;
     let cancelled = false;
+    // On a real chainId change (not the initial mount) reset visible
+    // state so the prior chain's notes don't bleed into the new
+    // chain's "loading" view. Skip on first hydrate — the initial
+    // values are already empty and a redundant set would flash.
+    // labelCounter is intentionally NOT reset (see ref comment).
+    if (!isFirstHydrateRef.current) {
+      setNotes([]);
+      setLoaded(false);
+    }
+    isFirstHydrateRef.current = false;
     void (async () => {
       try {
         const list = await adapter.loadAll();
@@ -96,7 +116,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         // flip the vault order and any pre-hydration `add()` would
         // straddle the boundary.
         const filtered = list
-          .filter((n) => n.chainId === undefined || n.chainId === DEMO_NETWORK.chainId)
+          .filter((n) => n.chainId === undefined || n.chainId === chainId)
           .sort((a, b) => b.createdAt - a.createdAt);
         // Merge with anything `add()` may have inserted before
         // hydration completed. Without this, a deposit fired during
@@ -123,11 +143,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-    // TODO(multi-chain): when a runtime network switcher lands,
-    // re-create `adapterRef` keyed on chainId so the per-chain DB
-    // name follows the active network. Today DEMO_NETWORK.chainId
-    // is fixed at module-load.
-  }, []);
+  }, [adapter, chainId]);
 
   const add = useCallback(
     async (n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">) => {
@@ -137,7 +153,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         id: newId(),
         label: `lot-${seq}`,
         createdAt: Date.now(),
-        chainId: DEMO_NETWORK.chainId,
+        chainId,
         // `-1` until the deposit's `CommitmentInserted` event is
         // reconciled. Spending paths that need a real index must
         // wait until then; the empty-tree shortcut treats it as 0.
@@ -147,18 +163,23 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       // logged inside the adapter and we still surface the note in
       // the UI (memory tier holds it), but the user wouldn't see a
       // confusing "added then disappeared on refresh" if the adapter
-      // had thrown.
-      await adapterRef.current!.put(note);
+      // had thrown. `adapter` is closed-over from the memo; if
+      // chainId flips mid-await, this still writes to the chain
+      // the call started on.
+      await adapter.put(note);
       setNotes((prev) => [note, ...prev]);
       return note;
     },
-    [],
+    [adapter, chainId],
   );
 
-  const remove = useCallback(async (id: string) => {
-    await adapterRef.current!.remove(id);
-    setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
-  }, []);
+  const remove = useCallback(
+    async (id: string) => {
+      await adapter.remove(id);
+      setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
+    },
+    [adapter],
+  );
 
   const value = useMemo<VaultState>(
     () => ({ notes, loaded, add, remove }),
