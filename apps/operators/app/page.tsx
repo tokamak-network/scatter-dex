@@ -60,7 +60,7 @@ export default function Landing() {
           <PersonaCard
             badge="Regulated-jurisdiction operator"
             title="You need compliance you can show an auditor"
-            body="zk-X509 IdentityGate verifies users and operators against registered CAs (KISA-path included). Sanctions checks are on-chain. You operate a privacy network that's also defensible in front of a regulator."
+            body="zk-X509 IdentityGate verifies users and operators against registered CAs. Sanctions checks are on-chain. You operate a privacy network that's also defensible in front of a regulator. Specific CA integrations ship as governance approves them."
           />
         </div>
       </section>
