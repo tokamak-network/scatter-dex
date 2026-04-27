@@ -139,11 +139,19 @@ function noteToActivity(
  *  layout can't accommodate 66 chars on one line. */
 function CopyableHash({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
+  // Clear the "copied" cue ~1.5s after it lights up. Using an effect
+  // (rather than a raw setTimeout in the press handler) means a quick
+  // navigation away mid-cue doesn't fire setState on an unmounted
+  // component.
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
   const onCopy = useCallback(async () => {
     try {
       await Clipboard.setStringAsync(value);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard occasionally rejects on locked screens — silently
       // ignore; the user can long-press the text and copy manually.
@@ -210,7 +218,18 @@ const CANCEL_STEP_LABELS: Record<CancelProgress['step'], string> = {
 };
 
 function PendingOrderRow({ order, expanded, onToggle, onCancel, cancelling, cancelStep }: PendingOrderRowProps) {
-  const { sellTokenSymbol, buyTokenSymbol, sellAmount, buyAmount, maxFeeBps, orderHash } = order.orderSummary;
+  const {
+    sellTokenSymbol, buyTokenSymbol,
+    sellAmount, buyAmount,
+    maxFeeBps, orderHash,
+    sellTokenDecimals, buyTokenDecimals,
+  } = order.orderSummary;
+  // Older `pending_orders` rows pre-date the decimals fields and would
+  // otherwise render USDC amounts as `0.000000000001`. Default to 18
+  // (WETH-shaped) when the field is absent — that keeps the same
+  // "wrong but consistent" reading rather than NaN'ing the row.
+  const sellDecs = sellTokenDecimals ?? 18;
+  const buyDecs = buyTokenDecimals ?? 18;
   const { label, tone } = formatPendingStatus(order.lastPolledStatus, order.attempt);
   const isStuck = order.error && (order.lastPolledStatus === 'failed' || order.lastPolledStatus === 'dead_letter');
   return (
@@ -266,19 +285,19 @@ function PendingOrderRow({ order, expanded, onToggle, onCancel, cancelling, canc
           <View style={s.detailRow}>
             <Text style={s.detailLabel}>Sell</Text>
             <Text style={s.detailValue}>
-              {ethers.formatUnits(sellAmount, 18)} {sellTokenSymbol}
+              {formatAmount(sellAmount, sellDecs)} {sellTokenSymbol}
             </Text>
           </View>
           <View style={s.detailRow}>
             <Text style={s.detailLabel}>Buy</Text>
             <Text style={s.detailValue}>
-              {ethers.formatUnits(buyAmount, 18)} {buyTokenSymbol}
+              {formatAmount(buyAmount, buyDecs)} {buyTokenSymbol}
             </Text>
           </View>
           <View style={s.detailRow}>
             <Text style={s.detailLabel}>Max fee</Text>
             <Text style={s.detailValue}>
-              {ethers.formatUnits(computeRelayFeeWei(BigInt(buyAmount), maxFeeBps), 18)} {buyTokenSymbol}
+              {formatAmount(computeRelayFeeWei(BigInt(buyAmount), maxFeeBps).toString(), buyDecs)} {buyTokenSymbol}
             </Text>
           </View>
           {order.attempt > 0 && (
@@ -699,19 +718,48 @@ export default function HistoryScreen() {
   }, [asyncPending]);
 
   // Map note.commitment → its in-flight order, used by `noteToActivity`
-  // to colour the status badge. We match by (pubKeyAx, sellToken) — the
-  // same heuristic the cancel handler uses, since the relayer status row
-  // doesn't carry a back-reference to the commitment.
+  // to colour the status badge. Prefer `orderId` (the underlying
+  // nullifier we set in `pendingOrders`) when the order carries a
+  // `sourceNoteId`, otherwise fall back to a `(pubKeyAx, sellToken)`
+  // heuristic that's only correct on wallets with a single matching
+  // escrow — same precedence the cancel handler uses, so the badge and
+  // the Cancel button can never disagree about which order is which.
   const orderStatuses = useMemo(() => {
+    const sourceNoteToOrder = new Map<string, OrderStatus>();
+    for (const o of asyncPending) {
+      if (!LIVE_STATUSES.has(o.lastPolledStatus)) continue;
+      const sid = o.orderSummary.sourceNoteId;
+      if (!sid) continue;
+      const projected: OrderStatus = {
+        sellToken: o.orderSummary.sellToken,
+        buyToken: o.orderSummary.buyToken,
+        sellAmount: o.orderSummary.sellAmount,
+        buyAmount: o.orderSummary.buyAmount,
+        nonce: o.orderSummary.nonce,
+        pubKeyAx: o.orderSummary.pubKeyAx,
+        status: o.lastPolledStatus as OrderStatus['status'],
+        submittedAt: o.submittedAt,
+        settleTxHash: o.settleTxHash ?? undefined,
+        orderId: o.nullifier,
+      };
+      sourceNoteToOrder.set(sid, projected);
+    }
     const map = new Map<string, OrderStatus>();
     for (const note of allNotes) {
-      const match = pendingOrders.find(
-        (o) => o.pubKeyAx === note.pubKeyAx && eqToken(o.sellToken, note.token),
+      const exact = sourceNoteToOrder.get(note.id);
+      if (exact) {
+        map.set(note.commitment, exact);
+        continue;
+      }
+      const heuristic = pendingOrders.find(
+        (o) => !o.orderId || !sourceNoteToOrder.has(o.orderId)
+          ? o.pubKeyAx === note.pubKeyAx && eqToken(o.sellToken, note.token)
+          : false,
       );
-      if (match) map.set(note.commitment, match);
+      if (heuristic) map.set(note.commitment, heuristic);
     }
     return map;
-  }, [allNotes, pendingOrders]);
+  }, [allNotes, pendingOrders, asyncPending]);
 
   // Source-note IDs whose trade has reached a terminal lifecycle
   // (settled / cancelled / expired / failed / dead_letter), plus the
@@ -782,25 +830,6 @@ export default function HistoryScreen() {
         return b.createdAt - a.createdAt;
       });
   }, [allNotes, orderStatuses, changeNoteIds, closedLabelByNoteId]);
-
-  // Notes for which a *cancellable* relayer order exists. `waiting`
-  // statusType alone is not enough — it also fires for `cancelled`/`expired`
-  // orders, so the UI would otherwise offer cancellation for dead orders.
-  // We gate on the presence of a pending order matching the note by
-  // pubKeyAx + sellToken (same match the cancel handler uses).
-  const cancellableNoteIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const note of allNotes) {
-      const hasPending = pendingOrders.some(
-        (o) =>
-          o.pubKeyAx === note.pubKeyAx
-          && eqToken(o.sellToken, note.token)
-          && !!o.nonce,
-      );
-      if (hasPending) ids.add(note.id);
-    }
-    return ids;
-  }, [allNotes, pendingOrders]);
 
   // Filter by tab and search
   const filteredActivities = useMemo<typeof activities>(() => {

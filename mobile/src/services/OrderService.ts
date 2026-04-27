@@ -682,6 +682,8 @@ export const OrderService = {
             nonce: nonce.toString(),
             pubKeyAx: keyPair.pubKeyAx,
             sourceNoteId: note.id,
+            sellTokenDecimals: sellDecimals,
+            buyTokenDecimals: buyDecimals,
           },
         });
       } catch (err) {

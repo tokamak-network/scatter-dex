@@ -116,6 +116,12 @@ export interface PendingOrderSummary {
    *  generated a proof against an already-spent nullifier and reverted
    *  with `NullifierAlreadySpent` at settle time. */
   sourceNoteId?: string;
+  /** Decimals for `sellToken` / `buyToken`, captured at submit time so
+   *  the Pending tab can format `sellAmount` / `buyAmount` correctly for
+   *  non-18-decimal tokens (e.g. USDC=6). Without these the History row
+   *  rendered USDC values as `0.000000000001 USDC`. */
+  sellTokenDecimals?: number;
+  buyTokenDecimals?: number;
 }
 
 export interface PendingOrder {
@@ -231,18 +237,15 @@ async function pollOnce(): Promise<void> {
   pollActive = true;
   try {
     const db = await getDb();
-    const ageCutoff = Date.now() - MAX_POLL_AGE_MS;
-    // Two queries instead of one in-JS filter: the SQL pulls only rows
-    // we'll actually poll, and a separate pass marks anything that aged
-    // out as locally 'expired' so the UI no longer renders it as
-    // perpetually 'accepted'. Using the SQL filter keeps the row pull
-    // tight when many terminal/over-age rows accumulate.
-    const expiredWallets = await markOverAgeAsExpired(db, ageCutoff);
+    // Pull only rows we'll actually poll: still LIVE per the relayer's
+    // FSM and submitted within the poll-age window. Status itself stays
+    // the relayer's call — we never rewrite a row to 'expired' locally,
+    // since that masked legitimately-pending orders whose on-chain
+    // expiry hadn't elapsed yet.
     const rows = await db.getAllAsync<Row>(
       `SELECT * FROM pending_orders WHERE ${LIVE_SQL} AND submitted_at > ?`,
-      ageCutoff,
+      Date.now() - MAX_POLL_AGE_MS,
     );
-    for (const w of expiredWallets) notify(w);
     if (rows.length === 0) return;
 
     // Chunk the fan-out so a queue of 50 in-flight orders doesn't open
@@ -287,21 +290,6 @@ async function pollOnce(): Promise<void> {
   } finally {
     pollActive = false;
   }
-}
-
-/** Drop rows past `MAX_POLL_AGE_MS` from the poll fan-out so the queue
- *  doesn't grow unbounded across very long-lived (or zombie) orders.
- *  Importantly we do **not** rewrite their `last_polled_status` — leaving
- *  it at the relayer's last word means History keeps showing the truth
- *  rather than a synthetic "expired" that hides legitimate orders' Cancel
- *  buttons. Callers receive the affected wallets so they can refresh,
- *  but we no longer need that today (status didn't change); kept the
- *  return shape for now in case we surface a "stale-poll" badge later. */
-async function markOverAgeAsExpired(
-  _db: SQLite.SQLiteDatabase,
-  _ageCutoff: number,
-): Promise<Set<string>> {
-  return new Set();
 }
 
 async function applyStatus(
