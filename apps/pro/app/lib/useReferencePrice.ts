@@ -60,7 +60,12 @@ export function useReferencePrice(symbol: string | null | undefined): ReferenceP
     }
 
     let cancelled = false;
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+    // Clear `usd` on every refetch so callers can't compute deltas
+    // against the previous symbol's spot price during the in-flight
+    // window. Without this the workbench would briefly show
+    // "Better/Worse than spot" using a stale ETH price after the
+    // user switched to BTC.
+    setState({ usd: null, loading: true, error: null });
 
     void (async () => {
       try {

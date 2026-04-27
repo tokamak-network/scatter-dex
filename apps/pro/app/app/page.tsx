@@ -294,6 +294,8 @@ function OrderbookStatus({
  *  more); a buy that fills below spot is "saved" (you paid less).
  *  Falls back to a neutral box when reference unavailable so the
  *  workbench doesn't claim numbers it can't back. */
+const USD_QUOTES = new Set(["USDC", "USDT", "DAI"]);
+
 function FillEstimate({
   side,
   price,
@@ -310,18 +312,34 @@ function FillEstimate({
   const ref = useReferencePrice(baseSymbol);
   const priceNum = parseLooseNumber(price);
   const sizeNum = parseLooseNumber(size);
-  const fillUsd = Number.isFinite(priceNum) && Number.isFinite(sizeNum) ? priceNum * sizeNum : null;
-  const refUsd = ref.usd !== null && Number.isFinite(sizeNum) ? ref.usd * sizeNum : null;
 
-  // savings sign convention: positive when the user comes out
-  // ahead of spot. Sell: fill > spot is good. Buy: fill < spot is good.
+  // The fill display assumes the quote token is USD-equivalent.
+  // For a USD-pegged stable (USDC/USDT/DAI) `price * size` IS a
+  // USD value and can be compared against the spot. For ETH/BTC
+  // and similar non-USD quotes, `price * size` is in BTC units and
+  // the comparison would be silently wrong — fall through to the
+  // "not in feed" line instead.
+  const isQuoteUsd = USD_QUOTES.has(quoteSymbol.toUpperCase());
+  const fillUsd =
+    isQuoteUsd && Number.isFinite(priceNum) && Number.isFinite(sizeNum)
+      ? priceNum * sizeNum
+      : null;
+  const refUsd =
+    !ref.loading && !ref.error && ref.usd !== null && Number.isFinite(sizeNum)
+      ? ref.usd * sizeNum
+      : null;
+
+  // savings sign convention: positive when the user comes out ahead
+  // of spot. Sell: fill > spot is good. Buy: fill < spot is good.
+  // Require refUsd > 0 (not just non-null) so a zero-size order
+  // doesn't divide by zero in the percentage line.
   const savings =
-    fillUsd !== null && refUsd !== null
+    fillUsd !== null && refUsd !== null && refUsd > 0
       ? side === "sell"
         ? fillUsd - refUsd
         : refUsd - fillUsd
       : null;
-  const savingsPct = savings !== null && refUsd ? (savings / refUsd) * 100 : null;
+  const savingsPct = savings !== null && refUsd && refUsd > 0 ? (savings / refUsd) * 100 : null;
   const positive = savings !== null && savings > 0;
 
   return (
@@ -355,11 +373,13 @@ function FillEstimate({
         </div>
       ) : (
         <div className="mt-1 text-[10px] text-[var(--color-text-subtle)]">
-          {ref.loading
-            ? "Fetching spot price…"
-            : ref.error
-              ? "Spot price unavailable — proceed at your stated price."
-              : `Spot reference for ${baseSymbol} not in feed (priced in ${quoteSymbol}).`}
+          {!isQuoteUsd
+            ? `${quoteSymbol} quote not in USD — spot comparison disabled.`
+            : ref.loading
+              ? "Fetching spot price…"
+              : ref.error
+                ? "Spot price unavailable — proceed at your stated price."
+                : `Spot reference for ${baseSymbol} not in feed.`}
         </div>
       )}
     </div>

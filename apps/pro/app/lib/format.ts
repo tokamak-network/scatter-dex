@@ -51,10 +51,12 @@ export function formatUsd(v: number | null): string {
 }
 
 /** Parse a display number that may carry comma thousands separators
- *  (`"1,234.56"` → `1234.56`). Returns `NaN` when input is empty
- *  or otherwise unparseable; callers should `Number.isFinite()`
- *  the result. Assumes en-US convention (dot as decimal separator)
- *  — matches every numeric input in the app. */
+ *  (`"1,234.56"` → `1234.56`). Returns `NaN` when input is empty,
+ *  whitespace-only, or otherwise unparseable — callers should
+ *  `Number.isFinite()` the result before using it. Assumes en-US
+ *  convention (dot as decimal separator). */
 export function parseLooseNumber(s: string): number {
-  return Number(s.replace(/,/g, ""));
+  const trimmed = s.trim();
+  if (trimmed === "") return NaN;
+  return Number(trimmed.replace(/,/g, ""));
 }
