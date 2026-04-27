@@ -1068,7 +1068,7 @@ const FfiConverterMapStringArrayString = new FfiConverterMap(
  */
 function uniffiEnsureInitialized() {
   // HACK (spike): contract version 29 to match mopro-ffi 0.3.5's uniffi 0.29.
-  // ubrn 0.31.0-2 emits 30 here; the dylib reports 29.
+  // ubrn 0.31.0-2 emits 30; the dylib reports 29.
   const bindingsContractVersion = 29;
   const scaffoldingContractVersion =
     nativeModule().ubrn_ffi_native_prover_uniffi_contract_version();

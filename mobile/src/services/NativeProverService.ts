@@ -1,19 +1,20 @@
 /**
- * NativeProverService — thin wrapper over mopro-ffi's `generateCircomProof`
- * for the authorize circuit.
+ * NativeProverService — wraps mopro-ffi's `generateCircomProof` for the
+ * Groth16 circuits we ship.
  *
  * Why this exists: the WebView path (ZKBridgeService + snarkjs inside
  * HiddenWebView) spikes the WebKit process CPU for ~1–2s per proof, and
  * on the iOS Simulator this starves the shared dispatch queue so that
  * every HTTP call dispatched right after the proof aborts at its
- * deadline — see the `OrderService` diagnostic logs in PR #408 and the
+ * deadline — see the OrderService diagnostic logs in PR #408 and the
  * abort chain in #401/#404/#407. Running the prover as native code
  * removes the burst (arkworks/groth16 runs on a native thread) and with
  * it the NSURLSession stall.
  *
- * Scope: authorize only. Deposit/claim/cancel still route through the
- * WebView until this path is validated end-to-end; the router lives in
- * `ZKBridgeService.generateProof`.
+ * Phase C migration: each circuit is added as a separate entry in
+ * `CIRCUITS` below as the Rust witness/zkey lands and is verified end-
+ * to-end. Callers that don't have a native entry fall back to the
+ * WebView path through `ZKBridgeService.generateProof`.
  */
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -24,19 +25,33 @@ import * as FileSystem from 'expo-file-system/legacy';
 // dedupe via the rustInstalled flag inside the package).
 import { generateCircomProof, ProofLib } from 'mopro-ffi';
 
-// `set_circom_circuits!` in `mobile/native-prover/src/lib.rs` keys the
-// witness function on this exact basename — expo-asset's hashed filename
-// fails the `Path::file_name()` match, so we copy under the original.
-const ZKEY_FILENAME = 'authorize_final.zkey';
+export type NativeCircuit = 'authorize' | 'cancel';
 
-let cachedZkeyPath: string | null = null;
+// Each entry maps to (a) the bundled asset module the JS side `require`s
+// and (b) the basename `set_circom_circuits!` expects on the Rust side.
+// expo-asset hashes the filename when bundling, so we always copy under
+// the canonical `<name>_final.zkey` name before crossing the FFI.
+const CIRCUITS: Record<NativeCircuit, { asset: number; filename: string }> = {
+  authorize: {
+    asset: require('../../assets/zk-native/authorize_final.zkey'),
+    filename: 'authorize_final.zkey',
+  },
+  cancel: {
+    asset: require('../../assets/zk-native/cancel_final.zkey'),
+    filename: 'cancel_final.zkey',
+  },
+};
 
-/** Resolves the bundled zkey to a plain filesystem path the Rust side can
+const cachedZkeyPaths: Partial<Record<NativeCircuit, string>> = {};
+
+/** Resolves a bundled zkey to a plain filesystem path the Rust side can
  *  `std::fs::File::open`. The FFI path must not have a `file://` prefix —
  *  Rust's File::open rejects URI-form paths. */
-async function resolveAuthorizeZkeyPath(): Promise<string> {
-  if (cachedZkeyPath) return cachedZkeyPath;
-  const asset = Asset.fromModule(require('../../assets/zk-native/authorize_final.zkey'));
+async function resolveZkeyPath(circuit: NativeCircuit): Promise<string> {
+  const cached = cachedZkeyPaths[circuit];
+  if (cached) return cached;
+  const { asset: assetModule, filename } = CIRCUITS[circuit];
+  const asset = Asset.fromModule(assetModule);
   await asset.downloadAsync();
   // Require `localUri` specifically. `asset.uri` may still hold an
   // `http(s)://` (Metro dev server) or `asset:/` (Android asset
@@ -45,12 +60,9 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   const uri = asset.localUri;
   if (!uri || !uri.startsWith('file://')) {
     throw new Error(
-      `${ZKEY_FILENAME} asset has no local file URI after downloadAsync (got ${String(uri)})`,
+      `${filename} asset has no local file URI after downloadAsync (got ${String(uri)})`,
     );
   }
-  // expo's `documentDirectory` is `null` until the FS module finishes
-  // initializing; bail with a clear message rather than concatenating a
-  // literal `nullauthorize_final.zkey` path that mopro will then reject.
   const docDir = FileSystem.documentDirectory;
   if (!docDir) throw new Error('expo-file-system documentDirectory unavailable');
   // Bust the destination cache when the bundled asset changes. expo-asset
@@ -58,22 +70,22 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   // filename with that hash means a `copy:circuits` rebuild lands as a
   // fresh file on next launch instead of silently reusing the previous
   // zkey. (Without this we shipped working WebView/native paths against
-  // a verifier that had already moved on, and every authorize order
-  // reverted with `InvalidProof()` 0x09bde339 at settle time.) Falling
-  // back to the bare filename only if the asset has no hash keeps the
-  // path stable for environments where expo-asset hasn't populated it.
+  // a verifier that had already moved on, and every authorize/cancel
+  // proof reverted with `InvalidProof()` 0x09bde339 at settle time.)
+  // Falling back to the bare filename only if the asset has no hash keeps
+  // the path stable for environments where expo-asset hasn't populated it.
   const tag = asset.hash ? `.${asset.hash}` : '';
-  const destPath = `${docDir}${ZKEY_FILENAME}${tag}`;
+  const destPath = `${docDir}${filename}${tag}`;
   const destInfo = await FileSystem.getInfoAsync(destPath);
   if (!destInfo.exists) {
-    // expo-file-system on Android requires URI-form paths (with the
-    // `file://` scheme) for `copyAsync`; iOS accepts both. Strip the
-    // scheme only when the resulting plain path crosses the FFI to Rust,
-    // which uses `std::fs::File::open` and rejects URI-form input.
+    // expo-file-system on Android requires URI-form paths (`file://`)
+    // for copyAsync; iOS accepts both. Strip the scheme only after the
+    // copy succeeds, since Rust's `File::open` rejects URI-form input.
     await FileSystem.copyAsync({ from: uri, to: destPath });
   }
-  cachedZkeyPath = destPath.replace(/^file:\/\//, '');
-  return cachedZkeyPath;
+  const fsPath = destPath.replace(/^file:\/\//, '');
+  cachedZkeyPaths[circuit] = fsPath;
+  return fsPath;
 }
 
 /** circom-prover (the arkworks backend mopro uses) only parses decimal
@@ -211,24 +223,22 @@ function appendProveLog(record: Record<string, unknown>): void {
     });
 }
 
-/** Runs Groth16 proving for the `authorize` circuit natively. Input is
- *  the same JSON shape snarkjs takes on the WebView side, so callers
- *  don't need to branch. */
-export async function generateAuthorizeProof(
+/** Runs Groth16 proving natively for one of the supported circuits.
+ *  Input is the same JSON shape snarkjs takes on the WebView side, so
+ *  callers don't need to branch. Throws if the circuit isn't bundled. */
+export async function generateNativeProof(
+  circuit: NativeCircuit,
   inputs: Record<string, unknown>,
 ): Promise<SnarkjsLikeProofResult> {
-  const zkeyPath = await resolveAuthorizeZkeyPath();
+  const zkeyPath = await resolveZkeyPath(circuit);
   const normalized = normalizeInputs(inputs);
   const t0 = Date.now();
-  // Arkworks is the only proof backend bundled today. Rapidsnark is
-  // available as an alternative but not wired in — keep a single path
-  // until benchmarks show it's worth the extra binary size.
   let res: ReturnType<typeof generateCircomProof>;
   try {
     res = generateCircomProof(zkeyPath, JSON.stringify(normalized), ProofLib.Arkworks);
   } catch (e: any) {
     appendProveLog({
-      kind: 'authorize.error',
+      kind: `${circuit}.error`,
       zkeyPath,
       inputKeys: redactInputsForLog(normalized),
       error: { name: e?.name, message: e?.message, str: String(e) },
@@ -237,7 +247,7 @@ export async function generateAuthorizeProof(
   }
   const elapsedMs = Date.now() - t0;
   appendProveLog({
-    kind: 'authorize.ok',
+    kind: `${circuit}.ok`,
     elapsedMs,
     zkeyPath,
     inputKeys: redactInputsForLog(normalized),
@@ -260,4 +270,13 @@ export async function generateAuthorizeProof(
     publicSignals: res.inputs,
     elapsedMs,
   };
+}
+
+/** Backwards-compat wrapper kept while existing callers still target the
+ *  authorize-specific entrypoint. New code should call `generateNativeProof`
+ *  directly with an explicit circuit name. */
+export async function generateAuthorizeProof(
+  inputs: Record<string, unknown>,
+): Promise<SnarkjsLikeProofResult> {
+  return generateNativeProof('authorize', inputs);
 }
