@@ -1,0 +1,66 @@
+import { ethers } from "ethers";
+import { FEE_VAULT_ABI, FEE_VAULT_IFACE } from "../core/contracts";
+import type { TokenInfo } from "../core/tokens";
+import { callExceptionErrorName } from "./errors";
+
+export interface FeeVaultBalance {
+  token: TokenInfo;
+  /** Operator's claimable balance in the token's smallest unit. */
+  balance: bigint;
+}
+
+/** Read every passed token's claimable balance for `operator` in
+ *  one shot. Caller decides which tokens to query — typically the
+ *  network's `tokens` whitelist — so this stays a pure batched
+ *  read with no contract-side enumeration assumed. Tokens with a
+ *  zero address (unconfigured slot) are skipped. */
+export async function loadFeeVaultBalances(
+  feeVaultAddress: string,
+  operator: string,
+  tokens: TokenInfo[],
+  provider: ethers.Provider,
+): Promise<FeeVaultBalance[]> {
+  const vault = new ethers.Contract(feeVaultAddress, FEE_VAULT_ABI, provider);
+  const queryable = tokens.filter((t) => /^0x[0-9a-fA-F]{40}$/.test(t.address));
+  return Promise.all(
+    queryable.map(async (token): Promise<FeeVaultBalance> => {
+      const balance = (await vault.balances(operator, token.address)) as bigint;
+      return { token, balance };
+    }),
+  );
+}
+
+/** Submit `claim(token)` to pull the operator's accrued balance
+ *  for a single token. Reverts with `NothingToClaim` when the
+ *  balance is zero — gate the button on a non-zero balance read
+ *  so the wallet prompt never lands on a guaranteed-fail tx. */
+export async function claimRelayerFees(
+  feeVaultAddress: string,
+  tokenAddress: string,
+  signer: ethers.Signer,
+): Promise<ethers.TransactionResponse> {
+  const vault = new ethers.Contract(feeVaultAddress, FEE_VAULT_IFACE, signer);
+  return vault.claim(tokenAddress) as Promise<ethers.TransactionResponse>;
+}
+
+const FEE_VAULT_ERROR_COPY: Record<string, string> = {
+  NothingToClaim: "Nothing to claim — this token has no accrued balance.",
+  ZeroAddress: "Invalid token address.",
+  InsufficientTokenBalance: "Vault is short on tokens. Try again later or contact the operator team.",
+  NotAuthorized: "This wallet is not authorized for that action.",
+};
+
+const FEE_VAULT_ERROR_CODES = Object.keys(FEE_VAULT_ERROR_COPY);
+
+/** Map FeeVault custom-error reverts to user-facing copy. Falls
+ *  back to the raw message so unexpected errors still surface. */
+export function explainFeeVaultError(err: unknown): string {
+  const named = callExceptionErrorName(err);
+  if (named && FEE_VAULT_ERROR_COPY[named]) return FEE_VAULT_ERROR_COPY[named];
+
+  const raw = err instanceof Error ? err.message : String(err);
+  for (const code of FEE_VAULT_ERROR_CODES) {
+    if (raw.includes(code)) return FEE_VAULT_ERROR_COPY[code];
+  }
+  return raw;
+}
