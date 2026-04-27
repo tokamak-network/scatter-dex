@@ -7,6 +7,7 @@ import { useWallet } from "@zkscatter/sdk/react";
 import {
   explainRegisterError,
   loadRegistrationStatus,
+  MAX_RELAYER_FEE_BPS,
   registerRelayer,
   type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
@@ -138,12 +139,12 @@ export default function RegisterPage() {
             />
           </Field>
 
-          <Field label="Per-trade fee" hint={`Basis points. ${feeBps} bps = ${feePct}% per settled order. Max 500 bps.`}>
+          <Field label="Per-trade fee" hint={`Basis points. ${feeBps} bps = ${feePct}% per settled order. Max ${MAX_RELAYER_FEE_BPS} bps.`}>
             <div className="flex items-center gap-2">
               <input
                 type="number"
-                min="0"
-                max="500"
+                min={0}
+                max={MAX_RELAYER_FEE_BPS}
                 value={feeBps}
                 onChange={(e) => setFeeBps(e.target.value)}
                 className="w-32 rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
@@ -161,7 +162,7 @@ export default function RegisterPage() {
             <div className="flex items-center gap-2">
               <input
                 type="number"
-                min="0"
+                min={status?.minBondEth ?? "0"}
                 step="0.01"
                 value={bondEth}
                 onChange={(e) => setBondEth(e.target.value)}

@@ -1,6 +1,12 @@
 import { ethers } from "ethers";
 import { IDENTITY_GATE_IFACE, RELAYER_REGISTRY_IFACE } from "../core/contracts";
 
+/** Maximum per-trade fee a relayer may register, in basis points.
+ *  Mirrors `RelayerRegistry.MAX_FEE` (50 bps) — kept in sync here so
+ *  the SDK can reject invalid input before a wallet prompt and so
+ *  consumer apps don't redeclare the magic number. */
+export const MAX_RELAYER_FEE_BPS = 500;
+
 export interface RegistrationStatus {
   isVerified: boolean;
   /** Unix seconds the identity verification expires at; `0` when
@@ -65,7 +71,7 @@ export async function registerRelayer(
   if (!Number.isInteger(params.feeBps) || params.feeBps < 0) {
     throw new Error("InvalidFee");
   }
-  if (params.feeBps > 500) {
+  if (params.feeBps > MAX_RELAYER_FEE_BPS) {
     throw new Error("FeeTooHigh");
   }
   let bond: bigint;
@@ -85,27 +91,52 @@ function callExceptionErrorName(err: unknown): string | null {
   return e.revert?.name ?? e.errorName ?? null;
 }
 
+/** Static error-code → copy table. Hoisted to module scope so it
+ *  isn't reallocated on every `explainRegisterError` call.
+ *  `InsufficientBond` is handled separately because it interpolates
+ *  the per-call `minBond`. */
+const STATIC_REGISTER_ERROR_COPY: Record<string, string> = {
+  NotVerified: "zk-X509 identity not verified. Register your identity first.",
+  AlreadyRegistered: "This address is already registered as a relayer.",
+  FeeTooHigh: `Fee too high. Maximum: ${MAX_RELAYER_FEE_BPS} bps (${MAX_RELAYER_FEE_BPS / 100}%).`,
+  InvalidFee: `Fee must be an integer between 0 and ${MAX_RELAYER_FEE_BPS} bps.`,
+  InvalidBond: "Invalid bond amount. Enter a valid ETH value.",
+};
+
+const REGISTER_ERROR_CODES = [
+  "NotVerified",
+  "AlreadyRegistered",
+  "InsufficientBond",
+  "FeeTooHigh",
+  "InvalidFee",
+  "InvalidBond",
+] as const;
+
+function copyForRegisterError(code: string, minBond: bigint): string | null {
+  if (code === "InsufficientBond") {
+    return `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`;
+  }
+  return STATIC_REGISTER_ERROR_COPY[code] ?? null;
+}
+
 /** Map known contract custom errors (decoded by ethers from the
  *  ABI fragments on `RELAYER_REGISTRY_ABI`) and local validation
  *  errors thrown from `registerRelayer` to user-friendly copy.
  *  Falls back to the raw message when no rule matches so callers
  *  don't swallow unexpected errors. */
 export function explainRegisterError(err: unknown, minBond: bigint): string {
-  const copyByCode: Record<string, string> = {
-    NotVerified: "zk-X509 identity not verified. Register your identity first.",
-    AlreadyRegistered: "This address is already registered as a relayer.",
-    InsufficientBond: `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`,
-    FeeTooHigh: "Fee too high. Maximum: 500 bps (5%).",
-    InvalidFee: "Fee must be an integer between 0 and 500 bps.",
-    InvalidBond: "Invalid bond amount. Enter a valid ETH value.",
-  };
-
   const named = callExceptionErrorName(err);
-  if (named && copyByCode[named]) return copyByCode[named];
+  if (named) {
+    const copy = copyForRegisterError(named, minBond);
+    if (copy) return copy;
+  }
 
   const raw = err instanceof Error ? err.message : String(err);
-  for (const [code, copy] of Object.entries(copyByCode)) {
-    if (raw.includes(code)) return copy;
+  for (const code of REGISTER_ERROR_CODES) {
+    if (raw.includes(code)) {
+      const copy = copyForRegisterError(code, minBond);
+      if (copy) return copy;
+    }
   }
   return raw;
 }
