@@ -509,6 +509,8 @@ export default function HistoryScreen() {
     // One-shot prune of >1d-old terminal rows — keeps the list bounded
     // without scheduling its own interval.
     void PendingOrdersService.prune(account).catch(() => 0);
+    // Backfill: drop change notes for orders already terminal at upgrade.
+    void PendingOrdersService.cleanupStuckChangeNotes(account).catch(() => 0);
     const unsub = PendingOrdersService.subscribe((wallet) => {
       if (wallet === account.toLowerCase()) void refresh();
     });

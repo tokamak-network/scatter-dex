@@ -255,6 +255,17 @@ export const TradeHistoryStorage = {
     return rows.map(rowToRecord);
   },
 
+  /** Primary-key lookup by `id` (= `orderHash`). */
+  async getById(address: string, id: string): Promise<TradeRecord | null> {
+    const db = await getDb();
+    const row = await db.getFirstAsync<Row>(
+      'SELECT * FROM trade_records WHERE wallet = ? AND id = ? LIMIT 1',
+      normalize(address),
+      id,
+    );
+    return row ? rowToRecord(row) : null;
+  },
+
   /** Find the trade record whose `sourceNoteId` matches — lets the
    *  History screen show trade details for a Spent note. */
   async getBySourceNoteId(
