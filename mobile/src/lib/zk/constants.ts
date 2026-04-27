@@ -1,7 +1,25 @@
 /**
- * Re-export of the zk-engine circuit parameters so non-engine callers
- * (services, hooks) can import from the stable `lib/zk` path without
- * reaching into `zk-engine`. Single source of truth lives in
- * `zk-engine/constants.ts` — update there.
+ * Shared ZK circuit parameters.
+ *
+ * These values must stay in sync with the compiled circuits:
+ *   - circuits/settle.circom (commitTreeDepth=20, maxClaimsPerSide=16, claimsTreeDepth=4)
+ *   - circuits/authorize.circom (same parameters)
+ *   - circuits/claim.circom (claimsTreeDepth=4)
+ *   - contracts/src/zk/IncrementalMerkleTree.sol (levels=20)
+ *
+ * Changing any of these requires recompiling the circuits and re-running
+ * the trusted setup ceremony.
+ *
+ * Originally lived under `mobile/src/zk-engine/` alongside the WebView
+ * snarkjs bundle; Phase C-5 removed that bundle, so the only surviving
+ * piece of `zk-engine` (these three constants) moved here.
  */
-export { COMMIT_TREE_DEPTH, MAX_CLAIMS_PER_SIDE, CLAIMS_TREE_DEPTH } from '../../zk-engine/constants';
+
+/** Depth of the on-chain commitment Merkle tree (2^20 ≈ 1M leaves). */
+export const COMMIT_TREE_DEPTH = 20;
+
+/** Maximum number of claim leaves per side in a single settlement. */
+export const MAX_CLAIMS_PER_SIDE = 16;
+
+/** Depth of the per-settlement claims Merkle tree (2^4 = 16 leaves). */
+export const CLAIMS_TREE_DEPTH = 4;
