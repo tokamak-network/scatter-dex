@@ -2,7 +2,7 @@
  *  echoing the donut-shaped chamber the project is named after.
  *  Painted in this app's primary colour via the CSS variable, so
  *  switching the theme palette switches the logo automatically.
- *  Replace the path data here when the official brand SVG drops. */
+ *  Replace the SVG markup here when the official brand SVG drops. */
 export function TokamakMark({ size = 24 }: { size?: number }) {
   return (
     <svg
