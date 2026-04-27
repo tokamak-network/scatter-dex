@@ -6,6 +6,7 @@
 // 5–9 s mobile.
 
 import {
+  CANCEL_META_FRESH_SALT,
   generateCancelProof,
   setupProverWorker,
   warmProverAssets,
@@ -39,7 +40,11 @@ setupProverWorker({
 
     return withCachedAssets(CIRCUIT_ASSETS, async (urls) => {
       const result = await generateCancelProof(input, urls);
-      return { proof: result.proof, publicSignals: result.publicSignals };
+      return {
+        proof: result.proof,
+        publicSignals: result.publicSignals,
+        meta: { [CANCEL_META_FRESH_SALT]: result.freshSalt },
+      };
     });
   },
 });

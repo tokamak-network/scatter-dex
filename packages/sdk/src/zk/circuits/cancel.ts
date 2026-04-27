@@ -82,19 +82,23 @@ export const CANCEL_PUBLIC_SIGNALS = [
   "relayer",
 ] as const;
 
+/** Meta-channel key under which `cancel.worker` returns the
+ *  private freshSalt to `assembleCancelProofResult`. */
+export const CANCEL_META_FRESH_SALT = "freshSalt" as const;
+
 /** Reconstruct a rich `CancelProofResult` from the slim
- *  `{ proof, publicSignals }` envelope a Web Worker passes back.
- *  The cancel circuit's private `freshSalt` is *not* in
- *  `publicSignals`; it isn't needed by the on-chain `cancelPrivate`
+ *  `{ proof, publicSignals, meta? }` envelope a Web Worker passes
+ *  back. The cancel circuit's private `freshSalt` is *not* in
+ *  `publicSignals` — it isn't needed by the on-chain `cancelPrivate`
  *  call (the contract doesn't take it), but vault rotation
- *  persistence (writing the rotated note with the new salt) is
- *  blocked until the worker protocol gains a `meta` channel —
- *  callers that need rotation must produce the proof on-thread.
- *  Until then this returns `freshSalt: 0n` and that path is gated
- *  off in apps. */
+ *  persistence (writing the rotated note with the new salt) needs
+ *  it. The worker carries it back through the `meta` channel; if a
+ *  worker omits it, this returns `freshSalt: 0n` and rotation
+ *  persistence stays gated off in the caller. */
 export function assembleCancelProofResult(envelope: {
   proof: Groth16Proof;
   publicSignals: readonly bigint[];
+  meta?: Readonly<Record<string, bigint>>;
 }): CancelProofResult {
   const ps = envelope.publicSignals;
   // Validate against the circuit's full public-signal count (not
@@ -113,7 +117,7 @@ export function assembleCancelProofResult(envelope: {
     oldNullifier: ps[1]!,
     oldNonceNullifier: ps[2]!,
     newCommitment: ps[3]!,
-    freshSalt: 0n,
+    freshSalt: envelope.meta?.[CANCEL_META_FRESH_SALT] ?? 0n,
   };
 }
 

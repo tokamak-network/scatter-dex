@@ -34,6 +34,8 @@ export type ProverWorkerResponse =
       jobId: number;
       proof: Groth16Proof;
       publicSignals: readonly bigint[];
+      /** See `ProveResult.meta`. */
+      meta?: Readonly<Record<string, bigint>>;
     }
   | {
       type: "error";
@@ -202,7 +204,11 @@ export function createWebWorkerProver(opts: WebWorkerProverOpts): Prover {
         }
         if (msg.type === "result" && msg.jobId === jobId) {
           settle();
-          resolve({ proof: msg.proof, publicSignals: msg.publicSignals });
+          resolve({
+            proof: msg.proof,
+            publicSignals: msg.publicSignals,
+            ...(msg.meta && { meta: msg.meta }),
+          });
           return;
         }
         if (msg.type === "error" && msg.jobId === jobId) {
