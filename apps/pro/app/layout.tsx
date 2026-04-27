@@ -12,6 +12,7 @@ import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { MetaAddressProvider } from "./lib/metaAddress";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
+import { TokamakMark } from "./components/TokamakMark";
 import { ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
@@ -42,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                               <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
                                 <Link href="/" className="flex items-center gap-2 font-semibold">
-                                  <span className="inline-block h-6 w-6 rounded bg-[var(--color-primary)]" />
+                                  <TokamakMark />
                                   Scatter <span className="text-xs font-medium text-[var(--color-text-muted)]">Pro</span>
                                 </Link>
                                 <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">

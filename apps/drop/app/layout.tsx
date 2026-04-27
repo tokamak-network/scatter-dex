@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { TokamakMark } from "./components/TokamakMark";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
             <Link href="/" className="flex items-center gap-2 font-semibold">
-              <span className="inline-block h-6 w-6 rounded bg-[var(--color-primary)]" />
+              <TokamakMark />
               Scatter Drop
             </Link>
             <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
