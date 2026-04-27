@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@zkscatter/sdk": "file:../../packages/sdk",
     "@zkscatter/ui": "file:../../packages/ui",
     "lucide-react": "^1.7.0",
     "next": "16.2.1",

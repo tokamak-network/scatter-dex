@@ -2,3 +2,4 @@ export * from "./types";
 export * from "./profile";
 export * from "./client";
 export * from "./registry";
+export * from "./register";

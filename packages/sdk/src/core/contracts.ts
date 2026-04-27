@@ -12,6 +12,21 @@ export const RELAYER_REGISTRY_ABI = [
   "function relayers(address) external view returns (string url, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
+  "function identityRegistry() external view returns (address)",
+  // Custom-error fragments — needed for ethers v6 to decode reverts
+  // by name. Without them, registry reverts arrive as raw selector
+  // hex and `explainRegisterError`'s name match silently misses.
+  "error AlreadyRegistered()",
+  "error NotRegistered()",
+  "error InsufficientBond()",
+  "error ExitNotRequested()",
+  "error CooldownNotPassed()",
+  "error AlreadyExiting()",
+  "error ZeroAddress()",
+  "error RelayerNotActive()",
+  "error BondTransferFailed()",
+  "error FeeTooHigh()",
+  "error NotVerified()",
 ] as const;
 
 export const IDENTITY_GATE_ABI = [
