@@ -6,6 +6,7 @@ import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
+import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
 
 const SEED_ORDERS: OrderRecord[] = [
   { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205",  size: "2.0",  status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
@@ -42,7 +43,13 @@ export default function Orders() {
   const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<OrderRecord | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
+
+  const drawerCanCancel =
+    drawerTarget?.status === "matching" && realIds.has(drawerTarget.id);
+  const drawerCanClaim =
+    drawerTarget?.status === "claimable" && !!drawerTarget.claim;
 
   const visible = useMemo(
     () => (filter === "all" ? all : all.filter((o) => o.status === filter)),
@@ -105,7 +112,11 @@ export default function Orders() {
           </thead>
           <tbody>
             {visible.map((o) => (
-              <tr key={o.id} className="border-t border-[var(--color-border)]">
+              <tr
+                key={o.id}
+                onClick={() => setDrawerTarget(o)}
+                className="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]"
+              >
                 <td className="px-5 py-3 font-mono text-xs">{o.label}</td>
                 <td className="px-5 py-3">{o.side === "sell" ? "Sell" : "Buy"}</td>
                 <td className="px-5 py-3">{o.pair}</td>
@@ -113,7 +124,7 @@ export default function Orders() {
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
                 <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
-                <td className="px-5 py-3 text-right">
+                <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   {o.status === "matching" && realIds.has(o.id) && (
                     <button
                       onClick={() => setCancelTarget(o)}
@@ -146,6 +157,27 @@ export default function Orders() {
         open={!!cancelTarget}
         order={cancelTarget}
         onClose={() => setCancelTarget(null)}
+      />
+      <OrderDetailDrawer
+        open={!!drawerTarget}
+        order={drawerTarget}
+        onClose={() => setDrawerTarget(null)}
+        onCancel={
+          drawerCanCancel
+            ? () => {
+                if (drawerTarget) setCancelTarget(drawerTarget);
+                setDrawerTarget(null);
+              }
+            : undefined
+        }
+        onClaim={
+          drawerCanClaim
+            ? () => {
+                if (drawerTarget) setClaimTarget(drawerTarget);
+                setDrawerTarget(null);
+              }
+            : undefined
+        }
       />
     </div>
   );
