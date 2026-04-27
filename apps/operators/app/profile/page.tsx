@@ -56,7 +56,10 @@ export default function ProfilePage() {
 function OnChainSettings({ operator }: { operator: OperatorState }) {
   const { signer } = useWallet();
   const { row, refresh, registryDeployed } = operator;
-  const write = useRegistryWrite({ onSuccess: refresh, minBond: row?.bond });
+  // updateInfo can't raise InsufficientBond, so omit minBond — passing
+  // the operator's current bond would give wrong copy if the helper
+  // is later reused for a path that does raise it.
+  const write = useRegistryWrite({ onSuccess: refresh });
 
   const [url, setUrl] = useState("");
   const [feeBps, setFeeBps] = useState("");
@@ -185,10 +188,15 @@ function BondPanel({ operator }: { operator: OperatorState }) {
 
 function ExitPanel({ operator }: { operator: OperatorState }) {
   const { signer } = useWallet();
-  const { row, refresh, registryDeployed } = operator;
+  const { row, refresh, registryDeployed, account, loading } = operator;
   const write = useRegistryWrite({ onSuccess: refresh });
 
-  if (!registryDeployed || !row) return null;
+  // Render an explicit placeholder for each "can't act yet" state
+  // instead of disappearing — same convention BondCard / FeeCard
+  // / RegisteredCard follow on the dashboard.
+  if (!account) return <ExitHint>Connect a wallet to manage exit and bond.</ExitHint>;
+  if (!registryDeployed) return <ExitHint>Registry not deployed on {DEMO_NETWORK.name}.</ExitHint>;
+  if (loading || !row) return <ExitHint>Reading registry…</ExitHint>;
 
   if (row.status === "active") {
     return (
@@ -221,17 +229,20 @@ function ExitPanel({ operator }: { operator: OperatorState }) {
     );
   }
 
-  // status === "offline" or "unregistered"
   if (row.status === "unregistered") {
     return (
-      <section className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-text-muted)]">
+      <ExitHint>
         Not registered yet. <Link href="/register" className="font-medium text-[var(--color-primary)] hover:underline">Register a relayer →</Link> to enable exit and bond management.
-      </section>
+      </ExitHint>
     );
   }
+  return <ExitHint>Relayer is offline. Re-register before performing further actions.</ExitHint>;
+}
+
+function ExitHint({ children }: { children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-text-muted)]">
-      Relayer is offline. Re-register before performing further actions.
+      {children}
     </section>
   );
 }
@@ -248,15 +259,25 @@ function CooldownPanel({
   onExecute: () => void;
 }) {
   const readyAtSeconds = row.exitRequestedAt + EXIT_COOLDOWN_SECONDS;
-  // Tick every minute — countdown's smallest displayed unit is
-  // minutes, so a finer tick wastes renders. Branch is gated on
-  // `status === "cooldown"` so this only runs while the panel is
-  // mounted; cleared as soon as the user lands on the dashboard.
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  // `now` stays undefined on the SSR pass so we don't bake the
+  // server's clock into the markup (Next would flag a hydration
+  // mismatch). The effect populates it on mount and ticks once a
+  // minute — minutes is the smallest displayed unit, finer ticks
+  // would waste renders.
+  const [now, setNow] = useState<number | undefined>(undefined);
   useEffect(() => {
+    setNow(Math.floor(Date.now() / 1000));
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  if (now === undefined) {
+    return (
+      <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-6 text-sm text-[var(--color-text-muted)]">
+        Loading cool-down…
+      </section>
+    );
+  }
 
   const remaining = readyAtSeconds - now;
   const ready = remaining <= 0;

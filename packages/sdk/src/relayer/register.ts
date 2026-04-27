@@ -106,6 +106,7 @@ const STATIC_REGISTRY_ERROR_COPY: Record<string, string> = {
   AlreadyExiting: "An exit is already in progress. Wait for the cool-down to complete.",
   ExitNotRequested: "Request an exit before executing it.",
   CooldownNotPassed: "Exit cool-down has not finished yet. Wait until the timer ends.",
+  BondTransferFailed: "Bond transfer failed during exit. Try again, or check that your address can receive ETH.",
   FeeTooHigh: `Fee too high. Maximum: ${MAX_RELAYER_FEE_BPS} bps (${MAX_RELAYER_FEE_BPS / 100}%).`,
   InvalidFee: `Fee must be an integer between 0 and ${MAX_RELAYER_FEE_BPS} bps.`,
   InvalidBond: "Invalid bond amount. Enter a valid ETH value.",

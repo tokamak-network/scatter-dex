@@ -30,8 +30,11 @@ interface UseRegistryWriteOpts {
   /** Fires after a transaction confirms. Typical use: invalidate
    *  `useOperator()` so the panel reflects the new on-chain row. */
   onSuccess?: () => void;
-  /** `InsufficientBond` error copy interpolates this. Pass the
-   *  current `row.bond` when known; defaults to `0n`. */
+  /** Registry's required minimum bond (i.e. `RelayerRegistry.minBond()`,
+   *  surfaced as `RegistrationStatus.minBond`). Used only to render
+   *  the `InsufficientBond` revert message, which states the
+   *  *required* minimum — not the operator's currently-posted
+   *  bond. Defaults to `0n` when unknown. */
   minBond?: bigint;
 }
 
