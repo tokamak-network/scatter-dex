@@ -36,7 +36,7 @@ lives in `docs/product/PRO_REPOSITION.md` §7–§8.
 
 ```bash
 npm install
-npm run dev   # http://localhost:3003
+npm run dev   # http://localhost:4003
 ```
 
 ## Domain (planned)
