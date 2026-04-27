@@ -235,8 +235,16 @@ export default function TradeScreen() {
       // Clears a stuck submitting flag. In-flight network / prover work
       // is not cancelled — the Alert copy below makes that explicit.
       setSubmitting(false);
+      // Drop the previous submit's per-step progress trail so the
+      // form returns to its blank state and the user doesn't read the
+      // stale log as "still running" on the next attempt.
+      setStepLog([]);
     };
-    if (isDefaultForm && !error && !submitting) return;
+    // Treat a populated `stepLog` as a non-default state too, otherwise
+    // Reset is a silent no-op when the form is empty but the step
+    // history from the previous submit is still on screen — exactly
+    // the "stale log" the user wants to clear.
+    if (isDefaultForm && !error && !submitting && stepLog.length === 0) return;
     const msg = submitting
       ? 'This clears the amount and claim rows. It will NOT cancel an in-flight submission — any already-sent request may still complete.'
       : 'This clears the amount and claim rows. Token pair, fee, and expiry stay as-is.';
@@ -244,7 +252,7 @@ export default function TradeScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: doReset },
     ]);
-  }, [amount, price, claimRows, error, submitting]);
+  }, [amount, price, claimRows, error, submitting, stepLog]);
   // Address-book picker target: which claim row the next picked address
   // should land in. `null` = picker closed.
   const [pickerForRow, setPickerForRow] = useState<number | null>(null);
@@ -672,7 +680,11 @@ export default function TradeScreen() {
             // trade: scatter (same-token) settles on-chain immediately →
             // Spent shows the source note; cross-token waits for a match
             // → Pending shows the escrow waiting for a counterparty.
-            const initialTab = isScatterMode ? 'spent' : 'pending';
+            // Same-token scatter settles on-chain immediately, so the
+            // user wants to see the resulting "Settled" trade — that
+            // lives on the Closed tab now (formerly Spent, broadened to
+            // include cancelled / expired / failed lifecycle ends).
+            const initialTab = isScatterMode ? 'closed' : 'pending';
             Alert.alert(
               'Order submitted',
               p.orderId

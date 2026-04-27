@@ -72,7 +72,24 @@ export interface OrderStatus {
   nonce?: string;
   pubKeyAx?: string;
   pubKeyAy?: string;
-  status: 'pending' | 'matched' | 'settled' | 'cancelled' | 'expired';
+  /** Legacy enum (`pending|matched|settled|cancelled|expired`) plus the
+   *  async-settlement FSM additions (`accepted|settling|retrying|failed|
+   *  dead_letter`). Kept as a single union so HistoryScreen can project
+   *  `PendingOrder.lastPolledStatus` straight in without an unsafe cast.
+   *  Field semantics are documented in
+   *  zk-relayer/src/types/authorize-order.ts and
+   *  docs/design/async-settlement-protocol.md §2.3. */
+  status:
+    | 'pending'
+    | 'matched'
+    | 'accepted'
+    | 'settling'
+    | 'retrying'
+    | 'settled'
+    | 'failed'
+    | 'dead_letter'
+    | 'cancelled'
+    | 'expired';
   submittedAt?: number;
   settleTxHash?: string;
   crossRelayer?: boolean;

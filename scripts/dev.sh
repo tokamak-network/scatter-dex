@@ -235,7 +235,11 @@ if [ "$MOCK_MODE" = true ]; then
   # `--hardfork prague` enables Pectra-era features — notably EIP-7702
   # batch delegation, which the frontend uses to collapse the deposit
   # popup chain into one tx when the wallet supports it.
-  anvil --silent --hardfork prague &
+  # `--host 0.0.0.0` so a USB-tethered Android device on the same LAN can
+  # reach anvil at the Mac's 192.168.x.y address (default bind is
+  # 127.0.0.1 only). adb-reverse to localhost works too, but a LAN bind is
+  # the no-trick path users reach for first.
+  anvil --silent --hardfork prague --host 0.0.0.0 &
   last_pid=$!
   PIDS+=("$last_pid")
   if ! wait_for "$RPC_URL" "anvil" 10; then

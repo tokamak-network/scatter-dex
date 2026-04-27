@@ -53,7 +53,17 @@ async function resolveAuthorizeZkeyPath(): Promise<string> {
   // literal `nullauthorize_final.zkey` path that mopro will then reject.
   const docDir = FileSystem.documentDirectory;
   if (!docDir) throw new Error('expo-file-system documentDirectory unavailable');
-  const destPath = `${docDir}${ZKEY_FILENAME}`;
+  // Bust the destination cache when the bundled asset changes. expo-asset
+  // hashes assets with a stable content hash; tagging the destination
+  // filename with that hash means a `copy:circuits` rebuild lands as a
+  // fresh file on next launch instead of silently reusing the previous
+  // zkey. (Without this we shipped working WebView/native paths against
+  // a verifier that had already moved on, and every authorize order
+  // reverted with `InvalidProof()` 0x09bde339 at settle time.) Falling
+  // back to the bare filename only if the asset has no hash keeps the
+  // path stable for environments where expo-asset hasn't populated it.
+  const tag = asset.hash ? `.${asset.hash}` : '';
+  const destPath = `${docDir}${ZKEY_FILENAME}${tag}`;
   const destInfo = await FileSystem.getInfoAsync(destPath);
   if (!destInfo.exists) {
     // expo-file-system on Android requires URI-form paths (with the

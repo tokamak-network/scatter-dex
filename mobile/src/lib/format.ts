@@ -16,9 +16,13 @@ export function formatBalance(value: string): string {
   return truncated;
 }
 
-/** Format wei to human-readable with string truncation (no float precision loss). */
-export function formatAmount(wei: string): string {
-  const formatted = ethers.formatEther(wei);
+/** Format wei to human-readable with string truncation (no float precision loss).
+ *  Pass `decimals` to render a non-18-decimal token (e.g. USDC=6) at the
+ *  right magnitude — without it a USDC `1_000_000` (= 1 USDC) would render
+ *  as `0.000000000001` because `formatEther` assumes 18. Defaults to 18 so
+ *  existing call sites that work in WETH-land keep their behavior. */
+export function formatAmount(wei: string, decimals: number = 18): string {
+  const formatted = ethers.formatUnits(wei, decimals);
   const dotIdx = formatted.indexOf('.');
   if (dotIdx === -1) return formatted;
   const truncated = formatted.slice(0, dotIdx + 5);
