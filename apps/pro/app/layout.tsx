@@ -10,6 +10,7 @@ import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
+import { MetaAddressProvider } from "./lib/metaAddress";
 import { ToastProvider } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
@@ -26,9 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
-            <EdDSAKeyProvider>
-              <RelayersProvider>
-                <VaultProvider>
+            <MetaAddressProvider>
+              <EdDSAKeyProvider>
+                <RelayersProvider>
+                  <VaultProvider>
                 <OrdersProvider>
                   <TradeFormProvider>
                   <ToastProvider>
@@ -45,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                           <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                           <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                           <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
+                          <Link href="/inbox" className="hover:text-[var(--color-text)]">Inbox</Link>
                           <NetworkSwitcher />
                           <RelayerPill />
                           <ConnectWalletPill />
@@ -57,10 +60,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     </footer>
                   </ToastProvider>
                   </TradeFormProvider>
-                  </OrdersProvider>
-                </VaultProvider>
-              </RelayersProvider>
-            </EdDSAKeyProvider>
+                    </OrdersProvider>
+                  </VaultProvider>
+                </RelayersProvider>
+              </EdDSAKeyProvider>
+            </MetaAddressProvider>
           </ActiveNetworkProvider>
         </WalletProvider>
       </body>
