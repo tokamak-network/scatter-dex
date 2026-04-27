@@ -126,17 +126,26 @@ export default function PinPromptHost() {
     >
       <View style={s.wrap}>
         <View style={s.body}>
-          <Text style={s.title}>{title}</Text>
+          <Text style={s.title} accessibilityRole="header">{title}</Text>
           {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
-          <View style={s.dots}>
+          <View
+            style={s.dots}
+            accessible
+            accessibilityLiveRegion="polite"
+            accessibilityLabel={`PIN entry, ${entry.length} of ${PIN_LENGTH} digits entered`}
+          >
             {Array.from({ length: PIN_LENGTH }).map((_, i) => (
               <View
                 key={i}
                 style={[s.dot, i < entry.length && s.dotFilled]}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
               />
             ))}
           </View>
-          {error ? <Text style={s.error}>{error}</Text> : <View style={s.errorPlaceholder} />}
+          {error
+            ? <Text style={s.error} accessibilityLiveRegion="assertive">{error}</Text>
+            : <View style={s.errorPlaceholder} />}
           <View style={s.pad}>
             {KEYPAD.map((row, ri) => (
               <View key={ri} style={s.row}>
@@ -150,6 +159,12 @@ export default function PinPromptHost() {
                       pressed && d !== '' && s.keyPressed,
                     ]}
                     disabled={d === ''}
+                    accessibilityRole={d === '' ? undefined : 'button'}
+                    accessibilityLabel={
+                      d === '' ? undefined : d === '⌫' ? 'Backspace' : `Digit ${d}`
+                    }
+                    accessibilityElementsHidden={d === ''}
+                    importantForAccessibility={d === '' ? 'no' : 'yes'}
                   >
                     <Text style={s.keyText}>{d}</Text>
                   </Pressable>
@@ -157,7 +172,12 @@ export default function PinPromptHost() {
               </View>
             ))}
           </View>
-          <Pressable onPress={cancel} style={s.cancel}>
+          <Pressable
+            onPress={cancel}
+            style={s.cancel}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel PIN entry"
+          >
             <Text style={s.cancelText}>Cancel</Text>
           </Pressable>
         </View>

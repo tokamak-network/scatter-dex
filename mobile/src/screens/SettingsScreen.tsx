@@ -122,10 +122,14 @@ export default function SettingsScreen() {
     const load = async () => {
       try {
         const biometricEnabled = await KeySecurityService.isBiometricEnabled();
-        if (!cancelled) {
-          setToggles((prev) => ({ ...prev, biometrics: biometricEnabled }));
-        }
-        if (!cancelled) await refreshPinState();
+        if (cancelled) return;
+        setToggles((prev) => ({ ...prev, biometrics: biometricEnabled }));
+        // Inline the read instead of going through `refreshPinState` so
+        // we can re-check `cancelled` after the await — otherwise the
+        // setter inside `refreshPinState` can fire after unmount.
+        const enrolled = await PinService.isEnrolled();
+        if (cancelled) return;
+        setPinEnrolled(enrolled);
       } catch { /* ignore */ }
       finally {
         if (!cancelled) setLoadingToggles(false);

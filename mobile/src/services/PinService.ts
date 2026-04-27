@@ -61,8 +61,15 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 export const PinService = {
   async isEnrolled(): Promise<boolean> {
-    const salt = await SecureStore.getItemAsync(KEY_SALT, SECURE_OPTS);
-    return Boolean(salt);
+    // Treat enrollment as "both salt AND hash present". A partial write
+    // (or partial clear) would otherwise route gated actions to the
+    // PIN path while making verify() unable to succeed — locking the
+    // user out if biometric is also off/unavailable.
+    const [salt, hash] = await Promise.all([
+      SecureStore.getItemAsync(KEY_SALT, SECURE_OPTS),
+      SecureStore.getItemAsync(KEY_HASH, SECURE_OPTS),
+    ]);
+    return Boolean(salt && hash);
   },
 
   async enroll(pin: string): Promise<void> {
@@ -86,22 +93,28 @@ export const PinService = {
       SecureStore.getItemAsync(KEY_SALT, SECURE_OPTS),
       SecureStore.getItemAsync(KEY_HASH, SECURE_OPTS),
     ]);
-    const fails = failsRaw ? parseInt(failsRaw, 10) : 0;
-    if (Number.isFinite(fails) && fails >= PIN_MAX_FAILURES) return false;
+    // Normalize a corrupted counter (`'NaN'`, `'abc'`, missing) back to
+    // 0 — otherwise the lockout check would be skipped and the
+    // increment would write `'NaN'` again, permanently disabling
+    // lockout.
+    const parsed = failsRaw ? parseInt(failsRaw, 10) : 0;
+    const fails = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    if (fails >= PIN_MAX_FAILURES) return false;
     if (!saltHex || !expected) return false;
     const got = await hashPin(pin, saltHex);
     if (constantTimeEqual(got, expected)) {
       await SecureStore.setItemAsync(KEY_FAILS, '0', SECURE_OPTS);
       return true;
     }
-    await SecureStore.setItemAsync(KEY_FAILS, String(fails + 1), SECURE_OPTS);
+    const nextFails = Math.min(fails + 1, PIN_MAX_FAILURES);
+    await SecureStore.setItemAsync(KEY_FAILS, String(nextFails), SECURE_OPTS);
     return false;
   },
 
   async getFailureCount(): Promise<number> {
     const v = await SecureStore.getItemAsync(KEY_FAILS, SECURE_OPTS);
     const n = v ? parseInt(v, 10) : 0;
-    return Number.isFinite(n) ? n : 0;
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
   },
 
   async isLockedOut(): Promise<boolean> {
