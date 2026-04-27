@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pill, StatusDot } from "@zkscatter/ui";
 import { NETWORKS } from "../lib/network";
 import { useActiveNetwork } from "../lib/activeNetwork";
+import { useOutsideClick } from "../lib/useOutsideClick";
 
 /** Header network switcher. Reads/writes the active network from
  *  `ActiveNetworkProvider`; clicking a selectable entry triggers
@@ -18,22 +19,8 @@ export function NetworkSwitcher() {
   const { network, setNetwork } = useActiveNetwork();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
 
   return (
     <div ref={wrapRef} className="relative inline-block">
