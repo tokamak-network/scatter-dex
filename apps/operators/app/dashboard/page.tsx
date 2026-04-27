@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import { Stat } from "../components/Stat";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
+import { SectionHeader } from "../components/SectionHeader";
+import { useOperator, type OperatorState } from "../lib/useOperator";
 
 const recentSettlements = [
   { id: "s_2026_04_27_a", pair: "USDC/WETH", volume: "82,400", fee: "24.72", at: "2026-04-27 09:14", status: "settled" },
@@ -10,6 +14,8 @@ const recentSettlements = [
 ];
 
 export default function Dashboard() {
+  const operator = useOperator();
+
   return (
     <div className="space-y-10">
       <OperatorIdentityBar />
@@ -28,15 +34,26 @@ export default function Dashboard() {
         </Link>
       </section>
 
-      <section className="grid grid-cols-4 gap-4">
-        <Stat label="Fee revenue (24h)" value="$348.21" sub="↑ 12% vs prior day" />
-        <Stat label="Settled orders (24h)" value="61" sub="of 64 routed" />
-        <Stat label="Avg settle latency" value="2.4s" sub="p50, last 1k orders" />
-        <Stat label="Bond posted" value="0.10 ETH" sub="≈ $310 at current price" />
+      <section>
+        <SectionHeader title="On-chain" badge="live" />
+        <div className="grid grid-cols-3 gap-4">
+          <BondCard operator={operator} />
+          <FeeCard operator={operator} />
+          <RegisteredCard operator={operator} />
+        </div>
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Health</h2>
+        <SectionHeader title="Operations" badge="mock" hint="Wired in once the indexer ships" />
+        <div className="grid grid-cols-3 gap-4">
+          <Stat label="Fee revenue (24h)" value="$348.21" sub="↑ 12% vs prior day" />
+          <Stat label="Settled orders (24h)" value="61" sub="of 64 routed" />
+          <Stat label="Avg settle latency" value="2.4s" sub="p50, last 1k orders" />
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader title="Health" badge="mock" />
         <div className="grid grid-cols-3 gap-4">
           <HealthCard label="Node status" value="Healthy" tone="success" sub="Uptime 14d 6h" />
           <HealthCard label="RPC backend" value="OK" tone="success" sub="p95 latency 86ms" />
@@ -45,7 +62,7 @@ export default function Dashboard() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recent settlements</h2>
+        <SectionHeader title="Recent settlements" badge="mock" />
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           {recentSettlements.map((s) => (
             <Link
@@ -67,6 +84,48 @@ export default function Dashboard() {
       </section>
     </div>
   );
+}
+
+/** Render the same loading / unconnected / undeployed / error
+ *  placeholder text across every on-chain card so a wallet that
+ *  errored on registry read shows a useful sub everywhere, not
+ *  just on the bond card. Returns null when the row is fully
+ *  loaded — caller renders the live value. */
+function operatorPlaceholder(state: OperatorState): { value: string; sub: string } | null {
+  if (!state.account) return { value: "—", sub: "Connect wallet to load" };
+  if (!state.registryDeployed) return { value: "—", sub: "Registry not deployed" };
+  if (state.loading) return { value: "…", sub: "Reading registry" };
+  if (state.error) return { value: "—", sub: `Read error: ${state.error}` };
+  if (!state.row || state.row.status === "unregistered") {
+    return { value: "—", sub: "Not registered yet" };
+  }
+  return null;
+}
+
+function BondCard({ operator }: { operator: OperatorState }) {
+  const ph = operatorPlaceholder(operator);
+  if (ph) return <Stat label="Bond posted" value={ph.value} sub={ph.sub} />;
+  const row = operator.row!;
+  return <Stat label="Bond posted" value={`${row.bondEth} ETH`} sub={`Status: ${row.status}`} />;
+}
+
+function FeeCard({ operator }: { operator: OperatorState }) {
+  const ph = operatorPlaceholder(operator);
+  if (ph) return <Stat label="Per-trade fee" value={ph.value} sub="Set during registration" />;
+  const row = operator.row!;
+  return <Stat label="Per-trade fee" value={`${row.feeBps} bps`} sub={`= ${(row.feeBps / 100).toFixed(2)}% per fill`} />;
+}
+
+function RegisteredCard({ operator }: { operator: OperatorState }) {
+  const ph = operatorPlaceholder(operator);
+  if (ph) return <Stat label="Registered" value={ph.value} sub={ph.sub} />;
+  const row = operator.row!;
+  const date = new Date(row.registeredAt * 1000);
+  const ageDays = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+  const sub = row.exitRequestedAt > 0
+    ? `Exit requested ${new Date(row.exitRequestedAt * 1000).toLocaleDateString()}`
+    : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
+  return <Stat label="Registered" value={date.toLocaleDateString()} sub={sub} />;
 }
 
 function HealthCard({
