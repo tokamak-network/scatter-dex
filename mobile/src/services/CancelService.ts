@@ -21,7 +21,6 @@ import { PRIVATE_SETTLEMENT_ABI, COMMITMENT_POOL_ABI } from '../lib/contracts';
 import { getCommitmentLeaves } from '../lib/commitmentScan';
 import { TAG_COMMITMENT_V2, TAG_ESCROW_NULL, TAG_NONCE_NULL } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
-import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
 import { toBytes32Hex } from '../lib/format';
@@ -185,40 +184,10 @@ export const CancelService = {
         sigR8y: sig.R8y,
       };
 
-      let proofResult: SnarkjsLikeProofResult;
       const proofStart = Date.now();
-      try {
-        console.log('[CancelService] generateProof native dispatch');
-        proofResult = await generateNativeProof('cancel', circuitInputs);
-        console.log('[CancelService] generateProof native returned', { ms: Date.now() - proofStart });
-      } catch (e) {
-        // Native module unavailable (Expo Go, missing arm64 jniLib) or
-        // proving failed — fall back to the WebView path so the user
-        // can still cancel. Logs the cause so the regression is visible.
-        // Pull `shortMessage` / `reason` first when present (ethers /
-        // mopro errors set those before `message`) so the warn line is
-        // a one-liner instead of a giant call stack dump.
-        const errAny = e as { shortMessage?: string; reason?: string; message?: string };
-        const msg = errAny?.shortMessage ?? errAny?.reason ?? errAny?.message ?? String(e);
-        console.warn(`[CancelService] native proof unavailable (${msg}), falling back to WebView:`, e);
-        let wasmB64: string;
-        let zkeyB64: string;
-        try {
-          const wasmStart = Date.now();
-          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/cancel.wasm'));
-          console.log('[CancelService] wasm loaded', { ms: Date.now() - wasmStart, kb: Math.round(wasmB64.length / 1024) });
-          const zkeyStart = Date.now();
-          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/cancel_final.zkey'));
-          console.log('[CancelService] zkey loaded', { ms: Date.now() - zkeyStart, kb: Math.round(zkeyB64.length / 1024) });
-        } catch (loadErr) {
-          console.error('[CancelService] circuit asset load failed', loadErr);
-          throw new Error('Cancel circuit files not found. Run `npm run copy:circuits` after building the circuits.');
-        }
-        const fallbackStart = Date.now();
-        console.log('[CancelService] generateProof WebView dispatch');
-        proofResult = await ZKBridgeService.generateProof(circuitInputs, wasmB64, zkeyB64);
-        console.log('[CancelService] generateProof WebView returned', { ms: Date.now() - fallbackStart });
-      }
+      console.log('[CancelService] generateProof native dispatch');
+      const proofResult: SnarkjsLikeProofResult = await generateNativeProof('cancel', circuitInputs);
+      console.log('[CancelService] generateProof native returned', { ms: Date.now() - proofStart });
       const proof = formatProofForSolidity(proofResult.proof);
 
       onProgress({ step: 'submitting' });

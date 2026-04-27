@@ -28,7 +28,6 @@ import { TAG_COMMITMENT_V2 } from '../lib/zk/tags';
 import { generateRandomField } from '../lib/crypto';
 import { buildPoseidonMerkleTree, getMerkleProofFromTree } from '../lib/merkleTree';
 import { getCommitmentLeaves } from '../lib/commitmentScan';
-import { loadCircuitFileB64 } from '../lib/circuitLoader';
 import { formatProofForSolidity } from '../lib/proofFormat';
 
 // authorize.circom tree depths (must match circuits/authorize.circom).
@@ -425,31 +424,9 @@ export const OrderService = {
       // burst at all (see PR #409). Root cause is somewhere in the RN
       // fetch / NSURLSession layer; investigation continues.
       //
-      // Falls back to the WebView path if the native module is missing
-      // (e.g. running in Expo Go, which can't load custom native code).
-      let proofResult: { proof: any; publicSignals: string[]; elapsedMs: number };
-      try {
-        const { generateAuthorizeProof } = await import('./NativeProverService');
-        proofResult = await generateAuthorizeProof(circuitInputs);
-        console.log('[OrderService] native proof ok', { ms: proofResult.elapsedMs });
-      } catch (e: any) {
-        console.log('[OrderService] native proof unavailable, falling back to WebView', {
-          err: e?.message || String(e),
-        });
-        let wasmB64: string;
-        let zkeyB64: string;
-        try {
-          wasmB64 = await loadCircuitFileB64(require('../../assets/zk/authorize.wasm'));
-          zkeyB64 = await loadCircuitFileB64(require('../../assets/zk/authorize_final.zkey'));
-        } catch {
-          throw new Error('Authorize circuit files not found. Run npm run copy:circuits.');
-        }
-        proofResult = await ZKBridgeService.generateProof(
-          circuitInputs,
-          wasmB64,
-          zkeyB64,
-        );
-      }
+      const { generateAuthorizeProof } = await import('./NativeProverService');
+      const proofResult = await generateAuthorizeProof(circuitInputs);
+      console.log('[OrderService] native proof ok', { ms: proofResult.elapsedMs });
       const solidityProof = formatProofForSolidity(proofResult.proof);
 
       // ─── Step 7: Submit to /api/authorize-orders ──────

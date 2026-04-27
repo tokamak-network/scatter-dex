@@ -430,34 +430,13 @@ class ZKBridgeServiceImpl {
     return result.hash;
   }
 
-  /**
-   * Groth16 proof 생성 (wasm/zkey를 base64로 전달)
-   * 대형 회로는 60초 타임아웃
-   */
-  async generateProof(
-    circuitInputs: Record<string, any>,
-    wasmB64: string,
-    zkeyB64: string,
-  ): Promise<{
-    proof: any;
-    publicSignals: string[];
-    elapsedMs: number;
-  }> {
-    return this.sendCommand('generate_proof', {
-      circuitInputs,
-      wasmB64,
-      zkeyB64,
-    }, 120000); // 2분 타임아웃
-  }
-
-  async verifyProof(vkey: any, publicSignals: string[], proof: any): Promise<boolean> {
-    const result = await this.sendCommand('verify_proof', {
-      vkey,
-      publicSignals,
-      proof,
-    }, 30000);
-    return result.valid;
-  }
+  // Groth16 proof generation lived here (snarkjs in HiddenWebView)
+  // until Phase C-4. Every circuit consumer now goes through
+  // `NativeProverService.generateNativeProof` (mopro-ffi / arkworks),
+  // so the WebView prover code path — including the 14MB+ base64
+  // wasm/zkey transfer over the RN bridge — is gone. Poseidon and
+  // EdDSA helpers above still backstop their native counterparts via
+  // the WebView, so the HiddenWebView component itself remains.
 }
 
 export const ZKBridgeService = new ZKBridgeServiceImpl();

@@ -11,10 +11,11 @@
  * removes the burst (arkworks/groth16 runs on a native thread) and with
  * it the NSURLSession stall.
  *
- * Phase C migration: each circuit is added as a separate entry in
- * `CIRCUITS` below as the Rust witness/zkey lands and is verified end-
- * to-end. Callers that don't have a native entry fall back to the
- * WebView path through `ZKBridgeService.generateProof`.
+ * Phase C migration is complete: every circuit shipped in
+ * `circuits/build/` is wired here. The WebView prover path that
+ * `ZKBridgeService.generateProof` used to host was removed in
+ * Phase C-4 — there's no fallback; an FFI-side failure surfaces
+ * directly to the caller.
  */
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
