@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Stat } from "../components/Stat";
+import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 
 const recentSettlements = [
   { id: "s_2026_04_27_a", pair: "USDC/WETH", volume: "82,400", fee: "24.72", at: "2026-04-27 09:14", status: "settled" },
@@ -11,12 +12,12 @@ const recentSettlements = [
 export default function Dashboard() {
   return (
     <div className="space-y-10">
+      <OperatorIdentityBar />
       <section className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Operator dashboard</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Live view of fills, fee revenue, and node health for relayer{" "}
-            <span className="font-mono text-[var(--color-text)]">0xA1…f4</span>.
+            Live view of fills, fee revenue, and node health.
           </p>
         </div>
         <Link

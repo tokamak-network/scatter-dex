@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Stat } from "../components/Stat";
+import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 
 const COOLDOWN_REMAINING_MOCK = "5d 14h 02m";
 
@@ -20,6 +21,7 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
+      <OperatorIdentityBar />
       <header>
         <Link href="/dashboard" className="text-xs text-[var(--color-text-muted)] hover:underline">
           ← Dashboard
