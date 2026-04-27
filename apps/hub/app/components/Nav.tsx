@@ -14,7 +14,7 @@ export function Nav() {
         </Link>
         <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
           <Link href="/apps" className="hover:text-[var(--color-text)]">Apps</Link>
-          <Link href="/#technology" className="hover:text-[var(--color-text)]">Technology</Link>
+          <Link href="/technology" className="hover:text-[var(--color-text)]">Technology</Link>
           <a
             href="https://docs.zkscatter.xyz"
             target="_blank"
