@@ -58,12 +58,18 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
       const list = await loadWalletBook();
       setEntries(list);
       setCorrupt(null);
+      setError(null);
     } catch (e) {
       if (e instanceof WalletBookCorruptError) {
         setCorrupt(e);
         setEntries([]);
       } else {
-        throw e;
+        // Permission revoked, IO failure — surface as a recoverable UI
+        // error instead of letting it bubble to an unhandled rejection.
+        // The corrupt banner stays clean (different remedy) and entries
+        // reset to empty so a stale list doesn't linger.
+        setEntries([]);
+        setError(e instanceof Error ? e.message : "Failed to load address book");
       }
     } finally {
       setLoaded(true);

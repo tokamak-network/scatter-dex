@@ -9,6 +9,10 @@ import { useFolderStorage } from "../_lib/folderStorage";
 export function FolderPill() {
   const { available, ready, folderName, restoring, select } = useFolderStorage();
 
+  // `available === null` is the "still probing" window; render
+  // nothing rather than an unsupported state we don't yet know is
+  // accurate.
+  if (available === null) return null;
   if (!available) return null;
   if (restoring) {
     return (

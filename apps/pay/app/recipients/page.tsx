@@ -51,8 +51,8 @@ export default function RecipientsPage() {
         )}
       </div>
 
-      {!folder.available && <UnsupportedBanner />}
-      {folder.available && !folder.ready && !folder.restoring && (
+      {folder.available === false && <UnsupportedBanner />}
+      {folder.available === true && !folder.ready && !folder.restoring && (
         <PickFolderBanner onPick={() => void folder.select()} />
       )}
       {folder.ready && book.corrupt && <CorruptBanner message={book.corrupt.message} />}
@@ -186,9 +186,23 @@ function RecipientForm({
   async function submit() {
     setSubmitting(true);
     try {
+      // Trim before passing — keeps the input echoed by the form
+      // identical to what we send to the SDK, instead of relying on
+      // the SDK's internal normalisation.
+      const trimmedLabel = label.trim();
+      const trimmedMemo = memo.trim();
       const ok = isNew
-        ? Boolean(await book.add({ label, address, memo: memo || undefined }))
-        : await book.update(initial!.id, { label, memo: memo || undefined });
+        ? Boolean(
+            await book.add({
+              label: trimmedLabel,
+              address,
+              memo: trimmedMemo || undefined,
+            }),
+          )
+        : await book.update(initial!.id, {
+            label: trimmedLabel,
+            memo: trimmedMemo || undefined,
+          });
       if (ok) onClose();
     } finally {
       setSubmitting(false);

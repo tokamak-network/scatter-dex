@@ -167,9 +167,13 @@ export default function NewPayout() {
 
   const addressBookHint = !folder.ready
     ? "Pick a notes folder to load your address book."
-    : walletBook.entries.length === 0
-      ? "Add recipients in /recipients first."
-      : null;
+    : !walletBook.loaded
+      ? "Loading your address book…"
+      : walletBook.corrupt
+        ? "Address book file is corrupt — repair it from /recipients."
+        : walletBook.entries.length === 0
+          ? "Add recipients in /recipients first."
+          : null;
 
   useEffect(() => {
     setClaimFrom(today());
@@ -203,18 +207,25 @@ export default function NewPayout() {
 
   function appendFromAddressBook(picked: WalletEntry[]) {
     if (picked.length === 0) return;
-    const seen = new Set(
-      csv
-        .split("\n")
-        .map((l) => l.split(",")[1]?.trim().toLowerCase())
-        .filter(Boolean),
-    );
+    // Reuse the wizard's already-parsed `rows` so we don't re-derive
+    // the address column from raw CSV (which would shift if a future
+    // template adds quoted fields). `eqAddr` handles checksum / case.
+    const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
     const rowsToAdd = picked
       .filter((e) => !seen.has(e.address.toLowerCase()))
-      .map((e) => `${e.label},${e.address},`);
+      .map((e) => `${csvSafeLabel(e.label)},${e.address},`);
     if (rowsToAdd.length === 0) return;
     const trimmed = csv.trimEnd();
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
+  }
+
+  // Strip CSV-breaking characters from a free-form label so a comma
+  // or newline in the address-book entry doesn't shift columns.
+  // The wizard's CSV parser is `line.split(",")` (no quoting), so the
+  // simplest correctness guarantee is "labels can't contain commas
+  // or newlines."
+  function csvSafeLabel(label: string): string {
+    return label.replace(/[,\n\r]/g, " ").trim();
   }
 
   function pickTemplate(id: TemplateId) {

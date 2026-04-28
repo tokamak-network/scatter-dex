@@ -18,8 +18,11 @@ import {
 } from "@zkscatter/sdk/storage";
 
 interface FolderStorageState {
-  /** Whether the host browser supports the File System Access API. */
-  available: boolean;
+  /** Whether the host browser supports the File System Access API.
+   *  `null` while the post-mount probe is still pending — UI should
+   *  treat this as "we don't know yet" instead of "unsupported", or
+   *  the unsupported banner flashes for a frame on every load. */
+  available: boolean | null;
   /** True once a folder has been successfully picked or restored. */
   ready: boolean;
   /** Display name of the picked folder, or null. */
@@ -52,7 +55,7 @@ export function FolderStorageProvider({ children }: { children: React.ReactNode 
   // / not available" state and the post-mount effect populates the
   // real values. Otherwise Next would emit a hydration mismatch
   // because the server can't see the client's prior session.
-  const [available, setAvailable] = useState(false);
+  const [available, setAvailable] = useState<boolean | null>(null);
   const [ready, setReady] = useState(false);
   const [folderName, setFolderName] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
