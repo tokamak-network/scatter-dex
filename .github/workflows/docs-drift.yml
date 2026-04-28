@@ -32,13 +32,18 @@ on:
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Match ci.yml's pattern — keep main runs from cancelling each other
+  # (the green-on-tip signal must survive concurrent landings).
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   drift:
     name: docs / drift + build
     runs-on: ubuntu-latest
+    # Drift check + next build runs in well under 5 min on warm cache;
+    # 15 caps a runaway typedoc/Next process so it doesn't burn an hour.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +51,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          # `setup-node` will hash these lockfiles and cache the npm
+          # registry tarballs. Cold install ~120s; warm ~30s. The
+          # zk-relayer lockfile is intentionally excluded — that job
+          # deletes it as part of the npm bug #4828 workaround below.
+          cache: npm
+          cache-dependency-path: |
+            packages/types/package-lock.json
+            packages/sdk/package-lock.json
+            apps/docs/package-lock.json
 
       # `packages/types` is a `file:` dep of every consumer below and
       # has a `prepare` script that runs `tsc`. Build it first so
@@ -67,6 +81,9 @@ jobs:
       # Same npm CLI bug #4828 workaround as the existing relayer job
       # in `.github/workflows/ci.yml` — caching trips the optional-dep
       # pruning. Clean install is the only reliable workaround.
+      # TODO: extract to a composite action under `.github/actions/`
+      # once a third caller appears (or when removing the workaround
+      # becomes a single PR).
       - name: Install zk-relayer (clean)
         working-directory: zk-relayer
         run: |
@@ -87,21 +104,19 @@ jobs:
           if ! git diff --exit-code -- \
               apps/docs/public/openapi/relayer.yaml \
               developers/sdk/api/; then
-            echo ""
-            echo "::error::Auto-generated docs are out of sync with the source."
-            echo ""
-            echo "  Run these locally and commit the regenerated files:"
-            echo "    (cd zk-relayer  && npm run openapi)"
-            echo "    (cd apps/docs   && npm run api)"
-            echo ""
+            # Print the file-level summary first so it's visible above
+            # the GitHub Actions error annotation that follows.
             git --no-pager diff --stat -- \
               apps/docs/public/openapi/relayer.yaml \
               developers/sdk/api/
+            echo ""
+            echo "::error::Auto-generated docs are out of sync with the source. Run \`(cd zk-relayer && npm run openapi)\` and \`(cd apps/docs && npm run api)\` locally, then commit the regenerated files."
             exit 1
           fi
 
       # Skip the wrapper `npm run build` (which would re-run `npm run
-      # api` we just ran above) and call Next directly.
-      - name: Build docs site
+      # api` we just ran above) and call Next directly. Catches mdx
+      # parse errors and broken imports the dev server tolerates.
+      - name: Build docs site (next build)
         working-directory: apps/docs
         run: npx next build
