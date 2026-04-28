@@ -52,7 +52,11 @@ export function WorkspaceBar() {
         a.click();
         a.remove();
       } finally {
-        // Defer revoke so Safari's async download kickoff doesn't race.
+        // Defer the revoke so Safari (which kicks the download off
+        // asynchronously after `a.click()`) doesn't race the URL
+        // going away. The `try/finally` also catches any throw
+        // between `createObjectURL` and the click — without it the
+        // URL would leak on the error path.
         setTimeout(() => URL.revokeObjectURL(url), 0);
       }
       setStatus({
