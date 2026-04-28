@@ -1,0 +1,1466 @@
+---
+title: Whitepaper
+description: "zkScatter — a private settlement network for compliant on-chain finance."
+---
+
+# zkScatter — Private Settlement Network for Compliant On-Chain Finance
+
+> **Working draft v0.1 · 2026-04**
+>
+> Describes the deployed protocol: half-proof authorization, witness-
+> free relayer matching, multi-CA identity gate, and TON-denominated
+> relayer bond. Items in §10 ("Next research") — peer-to-peer relayer
+> gossip, reputation-based accountability, and post-quantum migration
+> — are scoped
+> designs and not yet on-chain.
+
+---
+
+## Abstract
+
+The promise of public blockchains was global, programmable settlement —
+yet the institutional capital that would benefit most cannot move
+on-chain because **every trade, every salary, every vesting unlock is
+permanently broadcast in plaintext**. Mixers obscure deposits but offer
+no matching primitive. Privacy-preserving DEX proposals (Renegade,
+Penumbra, Aztec) each trade off liveness, compliance, or matching
+expressiveness; none compose with the asynchronous, regulator-aware
+flows institutions need.
+
+zkScatter is a **private settlement network**: a single zero-knowledge
+primitive that powers OTC trading, decentralized exchanges, vesting,
+payroll, and royalty distribution on the same shared infrastructure.
+Its core invention is the **half-proof**: each side of a transfer
+independently proves authorization on their own device — browser or
+mobile app — and an off-chain
+relayer joins the two proofs into a single on-chain settlement —
+without ever seeing the witness data. A multi-CA identity gate keeps
+participation policy modular; a witness-free relayer network scales
+matching without trusting operators with secrets.
+
+This document specifies the protocol, presents its security and
+privacy properties, and quantifies the cost on Ethereum mainnet
+(at recent typical mainnet base fees, every operation lands well
+under $1; full gas table in §9.1). It also
+identifies the markets that cannot move on-chain today — and demonstrates
+how zkScatter's primitive opens each of them.
+
+---
+
+## 0. What zkScatter is NOT
+
+Before specifying what zkScatter does, it helps to clear up four
+common misreadings.
+
+- **It is not a mixer.** Mixers (Tornado Cash, classic Aztec Connect)
+  obscure deposit-withdrawal links but offer no matching primitive
+  and no compliance hook. zkScatter performs constrained two-or-more-
+  party value movement under a regulator-aware identity gate; the
+  privacy is a *property of the settlement primitive*, not a coin
+  feature.
+
+- **It is not an L2.** zkScatter is a contract suite that runs on
+  any EVM chain — Ethereum L1, Optimism, Arbitrum, Base, Polygon,
+  app-chains. There is no zkScatter sequencer, no zkScatter
+  rollup, no zkScatter token (TON bond is Tokamak Network's
+  general-purpose token, not a zkScatter native asset).
+
+- **It is not custodial.** No relayer, indexer, or operator ever
+  holds user secrets, balances, or signing material. The relayer
+  sees a `proof + publicSignals` blob and submits it; the contract
+  is the settlement engine. A relayer that vanishes overnight cannot
+  steal a single token.
+
+- **It is not a permissioned chain or a single-application DEX.**
+  The protocol is one primitive (the half-proof) with composable
+  applications built on top — OTC venue, payments app, drop tool,
+  payroll service, RWA settlement layer. Anyone can deploy a new
+  application by configuring identity gates and registering relayers
+  for their target audience.
+
+What it *is* — a privacy-preserving settlement network usable across
+the full class of constrained value-movement flows — is the rest of
+this document.
+
+---
+
+## 1. The Settlement Gap
+
+### 1.1 Where blockchain stops at the institutional door
+
+Public ledgers solve global custody and atomic settlement, but they
+expose three properties institutions cannot accept:
+
+- **Counterparty graph.** Every trade between two addresses is a
+  permanent edge in a public graph. One linked KYC event reveals the
+  full history of every linked address.
+- **Position transparency.** A market maker's resting limit orders
+  expose their inventory and intent. Institutional desks treat this
+  as proprietary information; chain-level visibility breaches their
+  fiduciary duty.
+- **Pre-trade leakage.** Mempool observation of pending swaps lets
+  searchers front-run, sandwich, and back-run any non-trivial flow.
+  Public DEXes leak as much as ~$300M/year to MEV; blockdeals (>$1M
+  notional) leak even more in percentage terms.
+
+The result: the segments of finance with the most economic gravity —
+OTC blocks, vesting unlocks, treasury rebalancing, payroll, royalty
+distributions, RWA settlement — stay off-chain or revert to centralised
+intermediaries.
+
+### 1.2 Concrete markets locked out today
+
+| Market | Annual volume | Why it can't move on-chain |
+|---|---|---|
+| Crypto OTC desks | $1T+ | Block visibility leaks the trade before the desk can hedge |
+| Token vesting | ~40% of all token issuance ($tens of billions) | Every cliff date and trickle becomes a public liquidation calendar |
+| DAO / Web3 payroll | $10B+ | Employee compensation visible to anyone monitoring the contract |
+| Royalty / dividend distribution | Multi-billion | Recipients' aggregated income exposed to competitors |
+| Tokenised RWA settlement | $10T projected by 2027 (BlackRock, Franklin) | Institutional clients require non-public settlement records by mandate |
+
+These markets share one need: **a settlement primitive that hides what
+institutions consider material, while remaining auditable to a
+designated regulator**. Existing tools provide neither half cleanly.
+
+### 1.3 Why "privacy as a coin" is not the answer
+
+Mixer-style protocols (Tornado Cash, Aztec Connect's predecessor) tried
+to bolt anonymity onto value transfer. They failed three tests:
+
+1. **No matching.** A mixer obscures a deposit-then-withdraw, but a
+   trade requires *two parties to find each other and agree on a
+   price*. Matching has to happen *inside* the privacy boundary;
+   mixers do not provide it.
+2. **No auditability.** Regulators cannot distinguish legitimate
+   privacy use from sanctions evasion. The result was wholesale
+   prohibition (Tornado Cash sanctions, August 2022).
+3. **No accountability.** Mixers shift trust to no one, but
+   institutions cannot operate in a system where misbehaviour has no
+   consequence — they need a counterparty that is *legally
+   identifiable* to law enforcement, not just cryptographically
+   anonymous.
+
+A useful settlement network has to provide privacy **for the user**
+while maintaining accountability **for the intermediary**.
+
+---
+
+## 2. Why Existing Privacy DEX Designs Fall Short
+
+| Design | Privacy | Matching | Compliance | Liveness | Linkability surface |
+|---|---|---|---|---|---|
+| Uniswap | None | On-chain AMM | None | Sync | N/A — fully public |
+| Tornado Cash | Set-anonymity | None | Sanctioned | Async | Empty (deposit only) |
+| Renegade (MPC) | Cryptographic | MPC, in-protocol | None | **Both parties online** | Empty |
+| Penumbra | Cryptographic | Batch solver | None | Same-block | Per-batch leakage |
+| Aztec | UTXO note privacy | **No DEX primitive** | Limited | Sync | Pubkey hash |
+| CoW Protocol | Solver-private | Off-chain solver | Solver-trusted | Sync | None (but solvers see plaintext) |
+| **zkScatter** | **Cryptographic** | **Half-proof** | **Modular zk-X509** | **Async** | **Empty per-trader** |
+
+Each prior design fails on at least one axis institutions require:
+
+- **MPC (Renegade)** assumes both parties are online simultaneously —
+  fundamentally wrong for limit orders that rest for hours or days.
+  The MPC dance also leaks partial witness data to the counterparty.
+- **Solver-batch (Penumbra, CoW)** moves trust to a small set of
+  solvers who see the plaintext intent. For OTC blocks where intent
+  is the proprietary asset, this is unacceptable.
+- **UTXO-only (Aztec)** provides note privacy but no matching
+  primitive. Building a DEX on Aztec re-introduces the centralised
+  matcher problem.
+- **Mixers (Tornado, Railgun)** have no concept of two-party transfer
+  with mutual constraints (price, expiry, fee).
+- **Public DEXes** are not in this race at all.
+
+The architectural gap is consistent: **no prior system gives a
+trustless cross-constraint check between two independently-prepared,
+independently-signed, asynchronously-submitted private orders**. That
+gap is the half-proof.
+
+---
+
+## 3. zkScatter — One Primitive, Many Markets
+
+### 3.1 The unifying observation
+
+A trade between two parties, a vesting payment from a sponsor to a
+recipient, a payroll batch from an employer to staff, a royalty stream
+from a project to fans — these all reduce to the same object:
+
+> **Authorise a constrained value movement, in private, with proofs
+> that any third party can verify on-chain.**
+
+The constraint set differs:
+
+- **OTC / DEX**: token A exits maker, token B enters maker, price
+  matches taker's mirror.
+- **Vesting / Payroll**: many recipients receive token X over a
+  schedule; recipients are committed up-front but not revealed until
+  claim.
+- **Royalty / dividend**: one issuer, many recipients, claim window
+  enforced.
+
+zkScatter expresses each constraint set as a circuit family, but the
+**half-proof + commitment pool + relayer + identity gate** machinery
+is shared. One protocol, an open set of markets — anything that
+reduces to "constrained, two-or-more-party value movement with
+auditable proof of authorization" plugs into the same primitive.
+
+### 3.2 Reference flows shipped today
+
+The five flows below are the **documented reference applications**
+shipped with the SDK — not the boundary of the primitive. They were
+chosen because they cover the structural axes the protocol needs to
+support (one-sided vs two-sided, sync vs async, single-recipient vs
+multi-recipient, with vs without external DEX). New flows that share
+those axes (insurance payouts, cross-border remittance, subscription
+billing, confidential bond settlement, RWA secondary markets, carbon
+retirement, private NFT sales, …) compose from the same building
+blocks without protocol changes.
+
+| Flow | Authorise circuit | Matching | Settlement |
+|---|---|---|---|
+| **OTC trade (Pro)** | `authorize.circom` × 2 | Relayer pairs maker + taker | `settleAuth(maker, taker, fees)` |
+| **Private payment (Pay)** | `authorize.circom` (1-sided self-pay) + claims tree | Sender authors recipient list | `settleAuth(sender, sender, fees)` |
+| **Identity-gated drop** | Distributor's `authorize` + bulk claims root | None — distributor pre-commits | `settleAuth` once + N independent `claimWithProof` |
+| **Vesting / payroll** | Same as drop, with `releaseTime` per claim | None | Recipients claim after each unlock |
+| **DEX swap (router)** | `authorize` + DEX call | Relayer routes through whitelisted DEX | `settleWithDex` |
+
+The same depositor can participate in any of these without
+re-onboarding. The same relayer matches all of them.
+
+### 3.3 What each persona sees
+
+- **A trader on Pro** signs an EdDSA limit order locally on their
+  device (web or mobile) and goes offline. Matching and on-chain
+  settlement happen entirely without their participation — a relayer
+  pairs them with a counterparty whenever one appears (minutes,
+  hours, days later). When the trader returns at their convenience,
+  the fill is already on-chain as a commitment at a stealth address
+  only they can decrypt; they generate a local `claim` proof to
+  withdraw the ERC-20 tokens to a wallet of their choice.
+- **A treasurer on Pay** uploads a CSV of recipient meta-addresses
+  and amounts; the SDK chunks the list into claims-tree batches sized
+  to fit the protocol's per-circuit cap and the treasurer signs once
+  per batch. Recipients claim independently when they like.
+- **A drop creator on Drop** publishes a single Merkle root of
+  recipient commitments. Recipients verify their inclusion off-chain,
+  attest identity through the gate, and claim — without ever revealing
+  whose drop it was on the chain.
+- **An institution running RWA settlement** matches its custodian's
+  trade desk over the relayer network. The trade settles atomically.
+  Regulatory auditors (FINMA, SEC, FSC, etc.) reach the records
+  through the relayer's KYC obligations under the dual-CA model;
+  the chain itself does not expose counterparty identity.
+
+---
+
+## 4. Technical Foundations
+
+zkScatter rests on five inventions. Each addresses a specific failure
+of prior privacy DEX designs.
+
+### 4.1 The half-proof
+
+**Problem.** A two-party trade with cryptographic privacy traditionally
+required *one* of:
+
+1. A monolithic proof over both witnesses (forces both parties online,
+   leaks partial witness through the joint MPC).
+2. A trusted matcher that sees both witnesses and produces a single
+   proof (re-introduces a custodian).
+
+**Solution.** Each side independently proves their own half:
+
+> A user proves they own a leaf in the commitment tree, that the leaf
+> hashes to a known root, that they know the EdDSA private key bound
+> to the leaf, and that they have signed an order hash committing to
+> a price, expiry, fee cap, and counterparty relayer address.
+
+The proof publishes a fixed set of public signals — **but no
+witness**. The relayer collects two such proofs (maker + taker), checks
+their public signals match (token sides flipped, prices compatible,
+relayer address matches), and submits both proofs in a single
+`PrivateSettlement.settleAuth(maker, taker, fees)` call.
+
+The on-chain verifier:
+
+1. Verifies both Groth16 proofs.
+2. Checks the cross-constraints between maker and taker public signals
+   (price, tokens, fees) in Solidity arithmetic — too cheap for a
+   ZK circuit to do, ironically, but trivial in EVM.
+3. Burns both nullifiers; mints both payout commitments.
+
+Crucially: **the relayer never sees ownerSecret, salt, EdDSA private
+key, or claim secrets**. They see two `proof + publicSignals` blobs,
+pair them, submit. This is the zkScatter relayer-witness-free property.
+
+### 4.2 Empty linkability surface
+
+**Problem.** Most prior privacy-pool designs include a *trader-stable*
+public signal — a pubkey hash, an identity commitment, a rolling
+nullifier prefix. Any such signal lets chain analytics cluster trades
+of the same trader; one external linkage (a KYC withdrawal, a
+sanctions list match) then unmasks the entire cluster. This is how
+Tornado Cash users were progressively deanonymised.
+
+**Solution.** No public signal in the `authorize` circuit's output
+is *passively* aggregatable into a per-trader cluster:
+
+- Nullifiers are derived as `Poseidon(TAG_ESCROW_NULL, ownerSecret,
+  leafIndex)` — every leaf has its own distinct one, no rolling
+  prefix.
+- The `pubKeyBind` public signal is `Poseidon(pubKeyAx, pubKeyAy,
+  nullifier)`. It is **uncomputable** by an external observer
+  because they do not have the trader's BabyJub pubkey. Each order
+  publishes a different `pubKeyBind` (different nullifier each time),
+  so chain analytics cannot cluster orders by trader.
+- Order hashes include the relayer address, expiry, and a fresh
+  random `nonce`, so two orders from the same trader to the same
+  relayer for the same pair produce different hashes.
+
+**Compliance hook (intentional):** a relayer who has handled an
+order *and recorded the trader's pubkey at submission* CAN recompute
+`pubKeyBind` for any later nullifier they observe. This is the
+designed handoff point for legitimate auditing — the relayer has
+KYC'd the trader through the dual-CA model (§4.5), so the relayer
+can answer subpoena-grade discovery for the orders they served. The
+chain still gives no per-trader cluster to anyone outside that
+relayer, including other relayers.
+
+The result: **chain-analytics-resistant for external observers,
+auditable through a relayer's records**. A single KYC linkage at,
+say, an exchange withdrawal exposes one order, not a portfolio —
+and the relayer who served the order is a regulated entity with its
+own identity and obligations.
+
+### 4.3 Asynchronous matching
+
+**Problem.** MPC-based privacy DEXes require both parties online
+simultaneously. Most institutional limit orders are asynchronous by
+nature (rest for hours, fill against incoming flow).
+
+**Solution.** The two half-proofs are *independent* — there is no
+joint witness, no cryptographic dance between maker and taker.
+
+```
+Time t=0:    Maker signs authorize proof, sends to relayer, goes offline.
+Time t=1h:   Taker signs authorize proof, sends to (any) relayer.
+Time t=1h+ε: Relayer matches maker + taker proofs, submits settleAuth.
+Time t=∞:    Either party returns and claims their stealth payout.
+```
+
+The cryptographic guarantees are unchanged. The only extra constraint
+is the maker's `expiry` field — after which their proof is unusable
+and the funds remain spendable as a `cancelPrivate` rollover.
+
+### 4.4 Witness-free relayer
+
+**Problem.** Even non-MPC private DEXes have historically given the
+matcher access to witness data: the matcher needs to compute fees,
+verify balances, or co-sign settlement.
+
+**Solution.** zkScatter's relayer holds *only*:
+
+- The two parties' `proof + publicSignals` (no witness).
+- The order hash and signature.
+- Routing metadata (target relayer address, fee bucket).
+
+The relayer cannot produce a valid alternate settlement — every public
+signal is bound by the circuit and the on-chain verifier rejects
+mismatches. The relayer cannot front-run by submitting to a different
+target — the `relayer` field is a public input bound by the proof.
+The relayer cannot replace the recipient — claim destinations are
+committed in the `claimsRoot`, also a public signal.
+
+What a malicious relayer *can* do:
+
+1. **Refuse to match** — a liveness attack. Today, a user resubmits
+   the order to a different operator listed in `RelayerRegistry`;
+   the order's `nonce` is unspent so the second attempt verifies
+   normally. The peer-to-peer gossip protocol in §10.1 will reduce
+   this to "another node sees it automatically".
+2. **Censor selectively** — same mitigation as above. The dispute
+   registry (§10.1) will additionally make the censorship pattern
+   visible across the federation.
+3. **Take their fee** — that is the system working correctly.
+
+### 4.5 Dual-CA identity
+
+**Problem.** Compliance and privacy traditionally fight. Bolting KYC
+on top of a privacy pool either reveals identity to everyone (defeating
+privacy) or to no one (defeating compliance).
+
+**Solution.** Independent identity gates, configured per deployment
+to match the application's policy:
+
+```
+User identity gate(s)   ← gate pool-boundary crossings
+  └── zk-X509 attestation (CA list is per-deployment)
+      ↳ Required from each party to a value movement at the point
+        they touch the pool:
+          - sender (depositor / `authorize` signer / `cancel` signer)
+          - recipient (any address that calls `claimWithProof`)
+        A deployment may use a single User IdentityGate covering
+        both roles, or **split into separate Sender / Recipient
+        gates** when the two roles need different CAs (e.g., a
+        payroll deployment where the employer is institution-KYC'd
+        and the employee is retail-KYC'd; an OTC venue where one
+        side must be an accredited investor and the other need
+        not be). The user proves they hold a valid X.509 cert from
+        a CA the gate accepts, without revealing the cert body.
+        Trade matching (`settleAuth`) is identity-agnostic — only
+        pool-boundary entries (deposit) and exits (claim) are gated.
+
+Relayer IdentityGate    ← gates RelayerRegistry.register
+  └── zk-X509 attestation (separate CA list)
+      ↳ Relayer operators must be a registered legal entity from
+        a CA the deployment accepts. Their on-chain identity is
+        *legally* discoverable through subpoena to the CA.
+        Operating a relayer carries an **explicit duty to cooperate
+        with lawful regulatory inquiries** (record-keeping, AML/CTF
+        reporting, subpoena response) — submission of the
+        Relayer-CA attestation is the on-chain acknowledgement of
+        that duty.
+```
+
+**Default vs override.** Out of the box, the User-side gate is
+expected to be configured with **per-jurisdiction national KYC
+CAs** — South Korea's FSC-approved CA, Singapore's MAS-permitted
+identity providers, EU MiCA-compliant CAs, etc. — so a generic
+deployment behaves as "verify under your country's KYC framework
+to participate". Applications with a specialty audience override
+the default by registering a different CA list (an
+accredited-investor attestation provider for an OTC desk, a
+company-internal CA for a corporate payroll service, an
+institutional-only CA for a B2B settlement venue, …). The protocol
+imposes no jurisdiction; the deployment operator decides which
+CA(s) to accept for each role and registers them on-chain.
+
+The user is **cryptographically anonymous on-chain**; the relayer is
+**legally identifiable through its CA**. Law enforcement
+investigating illicit flow does not break user privacy — they engage
+the registered relayer, who provides the records they keep under
+their compliance obligation. The relayer is the **single point of
+institutional contact**, like a regulated broker.
+
+### 4.6 zk-X509: how an attestation is produced and consumed
+
+The identity attestation primitive is **zk-X509** — a
+zero-knowledge proof that the holder possesses a valid X.509
+certificate from a permitted issuer, without revealing the
+certificate body. The user-facing flow is:
+
+<Steps>
+  <Step title="Obtain the X.509 certificate off-chain">
+    The user goes through their CA's existing onboarding (KYC under
+    a regulator-approved identity provider, for example). The CA
+    issues a standard X.509 certificate — exactly the same artefact
+    used in TLS, document signing, and other PKI applications. No
+    zkScatter-specific identity is created.
+  </Step>
+  <Step title="Generate a zk-X509 proof locally">
+    The user's wallet runs the `zk-X509` circuit over the
+    certificate. The circuit checks: (a) the certificate's signature
+    chain validates against the issuing CA's public key; (b) the
+    certificate's `notAfter` field is later than `now`; (c) the
+    certificate's subject binds to the user's wallet address (or to
+    a hash thereof, depending on policy). The circuit emits a
+    minimum-disclosure public witness: `(certificate-issuer-hash,
+    bound-address, validity-window)`.
+  </Step>
+  <Step title="Submit the attestation on-chain">
+    The wallet calls `IdentityRegistry.attest(proof, publicSignals)`
+    on a registry the gate accepts. The registry verifies the
+    Groth16 proof, checks the issuer hash against its allowlist,
+    and stores `verifiedUntil[address] = validityWindow`.
+  </Step>
+  <Step title="Subsequent gate checks read the registry">
+    `CommitmentPool.deposit` and `PrivateSettlement.claimWithProof`
+    call `IdentityGate.isVerified(address)` — the gate aggregates
+    across all registered CA registries (any one returning `true`
+    is enough). The actual zk-X509 proof is only run *once per
+    validity window*, not per transaction.
+  </Step>
+</Steps>
+
+What stays hidden: the certificate body, the human's name, address,
+date of birth, and any other PII fields. What is published: which
+**CA** verified them and when their attestation expires.
+
+The crucial property: the **CA is identifiable, the user is not**.
+A regulated CA can be subpoenaed to map the on-chain bound address
+back to the human under court order; the chain itself never sees
+that mapping.
+
+> Implementation note: the contract surface (`IIdentityRegistry`
+> interface, `IdentityGate` aggregator) is live today; the
+> client-side proof-generation SDK module ships with §10.3.
+
+---
+
+## 5. System Architecture
+
+### 5.1 Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  User wallet (web app or native mobile)                      │
+│  - generateAuthorizeProof / claim / cancel proofs            │
+│  - manages note storage (IndexedDB / SQLite)                 │
+│  - never online during matching                              │
+└────────────────────────┬────────────────────────────────────┘
+                         │ HTTPS (proof + publicSignals)
+                         ▼
+┌────────────────────────────────────────────────────────────┐
+│  Relayer (witness-free)                                     │
+│  - matches authorize proofs across pairs                    │
+│  - settles via `settleAuth` (or `settleWithDex` for routes) │
+│  - cross-relayer discovery via shared orderbook service     │
+│    (peer-to-peer gossip planned — §10.1)                    │
+└──────┬─────────────────────────────────────────────────────┘
+       │ tx (proof, no witness)
+       ▼
+┌────────────────────────────────────────────────────────────┐
+│  On-chain settlement                                        │
+│  ├─ CommitmentPool       ← Poseidon Merkle tree (depth 20) │
+│  ├─ PrivateSettlement    ← settleAuth, claim, cancel       │
+│  ├─ RelayerRegistry      ← TON-bonded ops, 7d cool-down    │
+│  ├─ IdentityGate × 2     ← multi-CA aggregator             │
+│  └─ FeeVault             ← per-relayer accrued fees         │
+└────────────────────────────────────────────────────────────┘
+```
+
+All components are EVM contracts. **The protocol is deployable on
+Ethereum mainnet, on any L2 (Optimism, Arbitrum, Base, Polygon, etc.),
+or on any EVM-compatible chain — operators choose per deployment**.
+The same contracts, the same SDK, and the same relayer image work on
+all of them; only the `chainId` and contract addresses change. No
+sequencer, no specialised node, no L2-specific code path. The
+relayer network is the only off-chain layer, and it is
+permissionlessly joinable.
+
+### 5.2 Cryptographic primitives
+
+| Primitive | Construction | Notes |
+|---|---|---|
+| Proof system | Groth16 over BN254 | Pre-existing trusted setup ceremony per circuit |
+| Hash | Poseidon | 254-bit output; circomlib reference impl |
+| Authorisation signature | EdDSA on Baby Jubjub | Derived from wallet ECDSA via deterministic message |
+| Tree | Incremental Merkle (Poseidon) | Depth is a deployment parameter, currently sized for the high-1M leaf range before rotation; the SDK exposes the active depth as `COMMIT_TREE_DEPTH` |
+| Identity attestation | zk-X509 | Per-CA; aggregated by `IdentityGate` (client SDK ships with §10.3) |
+| Stealth address | EIP-5564 (opt-in) | ECDH on secp256k1 |
+
+### 5.3 Threat model
+
+We assume:
+
+1. **At least one available relayer** for liveness — but **no
+   honest relayer** for privacy or correctness. A single
+   non-malicious relayer is enough to settle a trade; *every*
+   relayer can be malicious and the cryptographic invariants
+   (no witness leakage, no unauthorised spend, correct cross-
+   constraint) still hold. Liveness gracefully degrades to "wait
+   for another operator to come online".
+2. **Honest user device** for privacy. Wallet compromise is a wallet
+   problem, not a protocol problem. Mobile builds use OS biometrics +
+   secure enclave for local key storage.
+3. **Honest CA root** for compliance — the user trusts that the CAs
+   listed in the user gate validate identities responsibly. zkScatter
+   does not introduce new CAs; it composes existing legal/regulatory
+   identity infrastructure.
+4. **Honest verifier deploy** — the on-chain verifier contracts were
+   correctly compiled from the audited circuits. Verifier upgrades go
+   through a 24-hour timelock.
+5. **Cryptographic assumptions hold for the deployed lifetime** —
+   discrete log on BN254, hash collision-resistance of Poseidon. We
+   address the post-quantum migration in §10.
+
+**What we do *not* defend against** — explicit gaps so deployers
+calibrate the surrounding controls:
+
+- **Wallet / device compromise.** A user whose device is rooted
+  and whose secret notes are exfiltrated has lost the funds.
+  zkScatter pushes the wallet layer to use OS-level secure
+  enclaves and biometric unlock, but it cannot police a malware-
+  ridden host.
+- **CA-level breach.** If a CA in the user gate issues fraudulent
+  certificates, attackers can pass identity attestation. Mitigation
+  belongs at the CA itself (HSM key custody, audit) and at the
+  governance layer (a deployment can revoke a compromised CA).
+- **RPC / front-end manipulation.** A malicious RPC node can lie
+  about chain state to a wallet that does not cross-check. Wallets
+  should pin a multi-RPC quorum or run their own node when the
+  threat model demands it.
+- **Side-channel attacks on proof generation.** Timing or power-
+  analysis attacks on the prover could leak witness bits. The
+  reference SDK runs proving in a constant-time WebAssembly
+  worker, but constant-time is best-effort, not formally verified.
+- **Out-of-band linkage.** If a user posts their stealth meta-
+  address publicly with their real name, no protocol can re-hide
+  the linkage. Operational hygiene at the application layer is
+  required.
+- **Coordinated relayer cartel collusion.** A cartel of all
+  active relayers refusing to match an order produces a liveness
+  failure (not a privacy or correctness failure). The federation
+  (§10.1) and reputation system (§10.2) are the long-term
+  mitigation; the short-term fallback is permissionless relayer
+  registration so a new operator can step in.
+- **Sanctions list staleness.** If the on-chain `sanctionsList`
+  is updated less frequently than the upstream source, recently
+  sanctioned addresses can transact for the gap window. The
+  governance layer's update cadence is the operational lever.
+
+### 5.4 Implementation status
+
+The architecture above is the protocol's design surface. Some
+parts are live on-chain today, others are scoped designs landing
+across the §10 ("Next research") items. The split:
+
+| Mechanism | Status |
+|---|---|
+| Half-proof authorize / settle / cancel / claim circuits + verifiers | ✅ Live |
+| `CommitmentPool` Poseidon Merkle tree (depth 20) | ✅ Live |
+| `PrivateSettlement` (`settleAuth`, `settleWithDex`, `claimWithProof`, `claimWithProofBatch`, `cancelPrivate`) | ✅ Live |
+| `RelayerRegistry` — TON-bonded ops, 7-day exit cool-down, 5 % `MAX_FEE` cap | ✅ Live |
+| Relayer-CA `IdentityGate` enforced at `RelayerRegistry.register` | ✅ Live |
+| Automatic sanctions screening at every fund-touching entry point (§7.4) | ✅ Live |
+| `FeeVault` accrual + flat-rate platform-fee skim on relayer claim | ✅ Live |
+| Stealth addresses (EIP-5564) — opt-in | ✅ Live |
+| User-CA `IdentityGate` enforced at `deposit` / `claimWithProof` (sender + recipient gating) | ⏳ Wires in alongside the zk-X509 client SDK (§10.3) |
+| zk-X509 client-side attestation generation in the SDK | ⏳ §10.3 |
+| Peer-to-peer relayer gossip (Waku v2) replacing the shared-orderbook service | ⏳ §10.1 |
+| Dispute Registry (record-only, reputation-based; no slashing) | ⏳ §10.2 |
+| Post-quantum primitives (STARK / Dilithium / Kyber) | ⏳ §10.4 |
+
+What this means in practice today: the cryptographic privacy
+guarantees of §7, the relayer-witness-free property of §4.4, and
+the automatic sanctions enforcement of §7.4 are **active on the
+deployed contracts**. The user-side identity-gate hook lands with
+the zk-X509 client release; until then, applications that need a
+live identity gate run a thin off-chain attestation check at the
+front-end before letting the user deposit.
+
+### 5.5 Deployments
+
+Reference deployments published by Tokamak Network. Operators of
+specialty deployments (institutional venues, payroll services,
+RWA settlement layers) deploy their own gate / registry instances
+with the CA and treasury policy their application needs.
+
+| Network | Status | Notes |
+|---|---|---|
+| Sepolia (Ethereum testnet) | ✅ Live (reference) | The four reference apps (Pro, Pay, Drop, Mobile) target this deployment for development and integration testing. Contract addresses are exposed via `NetworkConfig` in `@zkscatter/sdk`. |
+| Ethereum L1 | 🚧 Audit pending | Mainnet deployment scheduled after the second-round audit. |
+| Optimism / Arbitrum / Base | 🚧 Planned | Same contracts, separate deployment. Order of rollout follows audit clearance. |
+| Polygon zkEVM / OP Stack subnets | 🚧 Planned | Suitable for institutional / regulated subnets where the deployment operator wants their own gate policy. |
+| Other EVM chains | 🛠 Permissionless | Anyone can deploy the contract suite to a new EVM chain; the SDK consumes whatever `NetworkConfig` the deployer ships. |
+
+The current canonical contract addresses are tracked in
+`packages/sdk/src/core/network.ts`; updates to deployment status
+land there first and propagate to docs through the auto-generated
+SDK reference (§ Reference, **`NetworkConfig`**). Apps integrating
+the SDK pin the network config they target rather than the docs
+copy, so addresses cannot drift between published whitepaper and
+production code.
+
+---
+
+## 6. Protocols
+
+This section walks through the five user-facing flows. Each flow
+references concrete contract entry points in the zkScatter SDK and
+on-chain contracts.
+
+### 6.1 Deposit
+
+```
+1. User picks a (token, amount).
+2. Wallet samples random ownerSecret, salt; derives BabyJub pubkey
+   from EdDSA key.
+3. commitment = Poseidon(ownerSecret, token, amount, salt, pubX, pubY)
+4. Wallet generates a deposit proof binding (commitment, token, amount).
+5. Wallet calls CommitmentPool.deposit(proofA, proofB, proofC,
+                                       commitment, token, amount).
+6. Pool transfers ERC-20 in, inserts the leaf, emits CommitmentInserted.
+```
+
+Cost: ≈250K gas (proof verification + 1 SLOAD/SSTORE per tree level).
+
+### 6.2 Authorise (half-proof)
+
+```
+1. User specifies (sellAmount, buyToken, buyAmount, maxFee, expiry,
+                   relayer, claims[])
+2. Wallet computes orderHash = Poseidon(sellToken, buyToken,
+                                         sellAmount, buyAmount,
+                                         maxFee, expiry, nonce,
+                                         claimsRoot, relayer).
+3. Wallet signs orderHash with EdDSA private key.
+4. Wallet generates Groth16 proof over `authorize.circom`.
+5. Public signals (15): pubKeyBind, commitmentRoot, nullifier,
+                   nonceNullifier, newCommitment, sellToken,
+                   buyToken, sellAmount, buyAmount, maxFee, expiry,
+                   claimsRoot, totalLocked, relayer, orderHash.
+                   The contract uses sellToken/buyToken/sellAmount/
+                   buyAmount/maxFee/expiry/relayer to enforce
+                   cross-constraints between maker and taker.
+6. Wallet POSTs (proof, publicSignals, orderData, signature) to relayer.
+7. Wallet goes offline.
+```
+
+Proof time: ≈3.5s on M1 MacBook, ≈8s on mid-range mobile. The wasm +
+zkey artefacts (≈15MB combined) are cached in IndexedDB after first run.
+
+### 6.3 Settle (settleAuth)
+
+The relayer's responsibility starts when it has *two* compatible
+authorize proofs (maker + taker) for the same pair. It assembles
+`SettleAuthParams` and calls:
+
+```solidity
+PrivateSettlement.settleAuth(SettleAuthParams memory p)
+```
+
+The contract:
+
+1. Verifies both Groth16 proofs.
+2. Checks `block.timestamp ≤ min(maker.expiry, taker.expiry)`.
+3. Checks both `commitmentRoot` values are recent.
+4. Checks `maker.sellToken == taker.buyToken && vice versa`.
+5. Checks `maker.sellAmount × maker.buyPrice == taker.sellAmount × taker.buyPrice` (price match).
+6. Checks fees: `actualFee ≤ min(maker.maxFee, taker.maxFee)` and `relayer == registered`.
+7. Burns `maker.nullifier`, `taker.nullifier`, both `nonceNullifier`s.
+8. Inserts `maker.newCommitment`, `taker.newCommitment` (residual change).
+9. Records `maker.claimsRoot`, `taker.claimsRoot` for later claims.
+10. Transfers fees to `FeeVault[relayer][token]`.
+11. Emits `PrivateSettledAuth`.
+
+Cost: ≈400K gas (two Groth16 verifications + tree inserts + fee
+transfers).
+
+### 6.4 Claim
+
+A claim spends a slot of a settled order's `claimsRoot`. The
+recipient may or may not be the original maker — if a stealth
+address was specified, only the stealth address's spending key
+holder can claim.
+
+```
+1. Recipient (or their wallet) discovers the claim — either by
+   relayer notification, by self-scanning CommitmentInserted events,
+   or by drop coordinator handoff.
+2. Recipient generates a `claim` Groth16 proof showing knowledge of
+   the spending key for the slot, and that releaseTime ≤ block.time.
+3. Wallet calls PrivateSettlement.claimWithProof(...).
+4. Contract verifies the proof, burns the claim's nullifier, transfers
+   token to recipient's address.
+```
+
+A batch variant `claimWithProofBatch` accepts multiple claims
+atomically. The cap (`MAX_CLAIM_BATCH_SIZE`) is gas-bounded, not
+protocol-bounded — the value is tuned to the host chain's block gas
+limit and updated as that limit evolves.
+
+Cost per claim: ≈180K gas. Per claim in a batch: ≈90K gas.
+
+### 6.5 Cancel
+
+If a maker's order has not matched and they want to abort, they roll
+the leaf forward by spending it into a new identical commitment with
+a fresh salt:
+
+```
+1. Wallet generates a `cancel` proof: knows the leaf, knows the
+   maker's EdDSA key, knows the original orderHash, and produces
+   newCommitment = Poseidon(ownerSecret, token, amount, freshSalt, pubX, pubY).
+2. Wallet calls PrivateSettlement.cancelPrivate(proof, ...).
+3. Contract burns the original nullifier and `nonceNullifier`, inserts
+   newCommitment.
+```
+
+The relayer learns of the cancellation through the `PrivateCancel`
+event and removes the order from its book. Cost: ≈300K gas.
+
+### 6.6 DEX route (settleWithDex)
+
+A user with a balance in zkScatter can route through a whitelisted
+external DEX (Uniswap, 1inch) without revealing their identity:
+
+```
+1. User signs an `authorize` proof to themselves with `relayer` ==
+   relayer's address; the "trade" is sell tokenA → buy tokenB at
+   their own price.
+2. Relayer calls PrivateSettlement.settleWithDex(proof, dexRouter,
+                                                  dexCalldata, ...)
+3. Contract:
+   a. Verifies the proof.
+   b. Withdraws tokenA from the pool.
+   c. Calls dexRouter (whitelisted) with calldata.
+   d. Receives tokenB; checks output ≥ promised buyAmount.
+   e. Inserts new tokenB commitment for the user.
+   f. Emits SettledWithDex.
+```
+
+The user's identity is never revealed to the DEX; the DEX sees the
+relayer's address as the swap originator. This makes zkScatter a
+**privacy-routing layer** for any existing public DEX.
+
+### 6.7 Fee economics
+
+zkScatter's fee model is intentionally **flat and transparent** —
+no priority auctions, no dynamic surcharges, no hidden routing
+margin.
+
+**1. Per-trade relayer fee.** Each registered relayer publishes a
+single `fee` rate (basis points; `MAX_FEE = 500`, i.e. 5% absolute
+cap) in `RelayerRegistry`. The fee is **deducted from the user's
+buy-side token at settlement** — the trader pays for matching out
+of the asset they receive, not out of pocket. The `maxFee` field
+in the user's signed order caps the rate they accept; if the
+registered relayer rate exceeds it, the proof's cross-constraint
+fails and the trade does not settle.
+
+**2. FeeVault accrual.** Settlement transfers the deducted token
+amount into `FeeVault[relayer][token]`. Relayers do not receive
+funds in their EOA per trade; they accrue and `claim()` periodically.
+This batches gas and gives operators a clean accounting boundary.
+
+**3. Protocol fee on claim.** When a relayer calls `FeeVault.claim()`,
+the contract splits the accrued balance:
+
+```
+relayerAmount = balance × (10000 - platformFeeBps) / 10000
+treasuryFee   = balance × platformFeeBps / 10000
+```
+
+`platformFeeBps` is set per deployment and capped at
+`MAX_PLATFORM_FEE = 5000` (50% absolute, with operational values
+expected to land far below). The treasury portion funds protocol
+maintenance, audits, and ecosystem grants.
+
+**4. End-to-end flow** for a 100 USDC trade against a relayer with
+30 bps fee and a deployment with 1500 bps platform fee:
+
+```
+maker pays:                100.00 USDC sell side
+matched buy amount:          ~ETH equivalent
+relayer fee deducted:         0.30 USDC equivalent (30 bps of trade)
+  ↓
+FeeVault[relayer][TOKEN_X] balance: +0.30
+  ↓ relayer claims later
+relayer wallet:               0.255 (85%)
+treasury:                     0.045 (15%)
+```
+
+**5. What this enables.** Flat-rate, in-asset fees mean the user
+sees the exact rate before signing, with no priority queue to
+out-bid; relayer competition happens at the registry's `fee` field
+level (lower fee → more flow); protocol revenue scales with
+volume without distorting individual trades.
+
+### 6.8 Worked example: an OTC trade end-to-end
+
+To make the abstract specification concrete, here is a single
+private OTC trade between two users, Alice and Bob, traced through
+every step.
+
+**Setup.** Alice has 1,000 USDC in her zkScatter pool balance
+(deposited earlier). Bob has 0.5 ETH. Alice wants to sell USDC
+for ETH at a 2,000 USDC/ETH rate. Both have valid User-CA
+attestations on file in the deployment's User IdentityGate; the
+deployment uses Relayer R-1 with a 30 bps flat fee.
+
+<Steps>
+  <Step title="Alice signs an order (off-chain, on her device)">
+    Alice's wallet samples a fresh `nonce` and `newSalt`, computes
+    her `claimsRoot` for the buy-side payout (one entry: `recipient
+    = stealth-address-she-derives-locally, token = ETH, amount =
+    0.5 ETH`), and runs `authorize.circom`:
+    
+    - witness: `(ownerSecret, salt, leafIndex, merkleProof,
+      eddsaPrivateKey, claims[])`
+    - public signals (15): `pubKeyBind, commitmentRoot, nullifier,
+      nonceNullifier, newCommitment, sellToken=USDC, buyToken=ETH,
+      sellAmount=1000e6, buyAmount=0.5e18, maxFee=50, expiry=now+24h,
+      claimsRoot, totalLocked=1000e6, relayer=R-1, orderHash`
+    
+    Alice EdDSA-signs `orderHash` and POSTs `(proof, publicSignals,
+    orderData, signature)` to relayer R-1's `/api/orders` endpoint.
+    Then she closes her browser.
+  </Step>
+  <Step title="R-1 stores Alice's order, waits for a counterparty">
+    R-1 verifies Alice's EdDSA signature against `pubKeyBind` and
+    parks the order in its in-memory orderbook. Cross-relayer
+    discovery announces the order to other relayers via the shared
+    orderbook service.
+  </Step>
+  <Step title="Bob signs the mirror order">
+    Some hours later, Bob (using a different device, possibly via
+    a different relayer's frontend) signs an `authorize` proof
+    selling 0.5 ETH for 1,000 USDC at the same rate, with relayer
+    R-1 bound (his frontend picked R-1 from the discovery feed).
+    Bob's witness is private to him; his public signals mirror
+    Alice's (`sellToken=ETH`, `buyToken=USDC`, amounts inverted,
+    same `relayer=R-1`).
+  </Step>
+  <Step title="R-1 matches and submits settleAuth">
+    R-1 sees Alice's and Bob's public-signal sets are compatible:
+    token sides flipped, prices identical, fees within both `maxFee`
+    caps, both `expiry` in the future, both bound to R-1. R-1
+    assembles `SettleAuthParams` and calls
+    `PrivateSettlement.settleAuth(maker=Alice, taker=Bob, fees)`.
+  </Step>
+  <Step title="The contract verifies and settles">
+    The settlement contract:
+    
+    - verifies both Groth16 proofs (Alice's and Bob's authorize
+      proofs);
+    - confirms `block.timestamp ≤ min(expiry_A, expiry_B)`;
+    - confirms `pool.isKnownRoot(commitmentRoot_A)` and
+      `pool.isKnownRoot(commitmentRoot_B)`;
+    - cross-checks token sides + price equality;
+    - confirms `actualFee ≤ min(maxFee_A, maxFee_B)`;
+    - confirms `msg.sender == R-1` (must be one of the bound
+      relayers);
+    - burns Alice's and Bob's `nullifier` and `nonceNullifier`;
+    - inserts Alice's `newCommitment` (her residual change, if any)
+      and Bob's `newCommitment` into the pool;
+    - records both `claimsRoot`s for later claims;
+    - transfers fees in-kind to `FeeVault[R-1][USDC]` (Alice's fee)
+      and `FeeVault[R-1][ETH]` (Bob's fee);
+    - emits `PrivateSettledAuth(makerNullifier, takerNullifier,
+      claimsRoot_A, claimsRoot_B, makerRelayer=R-1, takerRelayer=R-1,
+      submitter=R-1, feeTokenMaker, feeTokenTaker)`.
+  </Step>
+  <Step title="Alice and Bob claim later, at their own pace">
+    Whenever Alice next opens her wallet, the wallet scans
+    `CommitmentInserted` events, finds the leaf addressed to her
+    stealth address, generates a `claim` proof, and calls
+    `PrivateSettlement.claimWithProof(...)`. The contract
+    transfers 0.5 ETH (less Alice's fee) to her stealth address.
+    Bob does the same independently for his 1,000 USDC. Neither
+    needs the other to be online.
+  </Step>
+  <Step title="R-1 claims its accrued fees">
+    Periodically R-1 calls `FeeVault.claim(USDC)` and
+    `FeeVault.claim(ETH)`. The vault transfers the relayer's share
+    (e.g. 85 %) to R-1's wallet and the platform-fee share (e.g.
+    15 %) to the treasury.
+  </Step>
+</Steps>
+
+**What an external observer learned from the chain:**
+"At block N, relayer R-1 settled an OTC trade of 1,000 USDC for
+0.5 ETH at a 30 bps fee. Two leaves were spent; two new leaves
+were inserted. Some claims happened later." Nothing about Alice
+or Bob — not their addresses, not their balances, not whether
+they're related, not where their payouts ultimately landed.
+
+**What R-1 learned:** that the pubkey associated with Alice's
+order signed it (R-1 received the EdDSA signature) and the
+pubkey associated with Bob's order signed his. R-1 cannot link
+Alice's pubkey to her *other* trades unless Alice used R-1 for
+those too — and even then, R-1's record of Alice is bound to its
+own KYC of her, no one else's.
+
+---
+
+## 7. Privacy & Security Properties
+
+### 7.1 What an external observer sees
+
+A `settleAuth` transaction's calldata + emitted events expose:
+
+- Two nullifiers (random per-leaf, no clustering signal).
+- Two new commitments (random hashes).
+- The settled trade's **token pair, sell amount, buy amount, max
+  fee, expiry, and relayer address** — these are public signals of
+  each half-proof, needed by the contract to verify the maker/taker
+  cross-constraint (price match, fee cap, expiry, same relayer).
+- A claims root per side (commits to the payout distribution).
+- The total fee collected per side.
+- A block timestamp.
+
+The chain does **not** reveal:
+
+- **Who owned each leaf** (identity → leaf is severed by the deposit
+  proof; leaf → identity is severed by the nullifier randomness).
+- Which deposit a settled leaf came from (no per-trader-stable
+  signal in the public signals — see §7.2).
+- Whether the maker and taker are the same person (self-trade is
+  intentionally indistinguishable).
+- Where the residual change leaf or the payout commitments came to
+  rest in real-world wallets (only the recipient's `claim` proof
+  resolves that, off-chain).
+
+In short: **the trade itself is public (tokens, amounts, fees);
+the identities and balances of the participants are not**. This
+mirrors traditional dark-pool reporting — print the trade, conceal
+the parties — but with cryptographic enforcement instead of a
+trusted intermediary's policy.
+
+### 7.2 Privacy under partial deanonymization
+
+The empty-linkability surface (§4.2) means a single deanonymizing
+event — say, a KYC exchange withdrawal links a leaf to a real
+identity — exposes only that *single* leaf's history (the deposit
+transaction). It does not propagate to the trader's other leaves, to
+their counterparties, or to their downstream claims.
+
+This is qualitatively stronger than Tornado Cash, where one
+withdrawal-deposit linking deanonymized weeks of activity for users
+in the same anonymity set.
+
+### 7.3 Forward (post-quantum) privacy
+
+zkScatter's witness data is *never* on-chain — only commitments
+(hashes) and proofs are. A future quantum attacker who breaks the
+discrete log on BN254 can:
+
+- **Forge new authorize proofs**, allowing them to spend any leaf
+  whose pubkey they have observed.
+- **Compute viewing keys** from published stealth meta-addresses.
+- **Generate new fake cancellations / claims**.
+
+But they **cannot** recover the witness data of past settled trades —
+that data was never published. Past trades remain anonymous in
+perpetuity.
+
+This is a property no public DEX has. Uniswap's transaction history
+is plaintext today; a quantum attacker reading the chain in 2050 will
+still see every 2026 trade in full. zkScatter's 2026 trades are
+permanently sealed.
+
+### 7.4 Compliance properties
+
+- **No protocol backdoor**: there is no ZK trapdoor, no escrow key,
+  no "regulatory unmask" function.
+- **Per-relayer auditability**: each relayer keeps records of orders
+  it matched; subpoena-grade discovery flows through the relayer's
+  legal entity, not through the chain.
+- **Automatic on-chain sanctions enforcement**: every fund-touching
+  entry point screens against the configured `ISanctionsList`. There
+  is no relayer discretion — the contract reverts a transaction
+  involving a sanctioned address regardless of which relayer
+  submits it.
+
+  | Contract | Function | Screened address(es) |
+  |---|---|---|
+  | `CommitmentPool` | `deposit` | depositor (`msg.sender`) |
+  | `CommitmentPool` | `withdraw` | sender + recipient |
+  | `PrivateSettlement` | `settleAuth` | submitting relayer |
+  | `PrivateSettlement` | `settleWithDex` | submitter |
+  | `PrivateSettlement` | `claimWithProof` | recipient |
+
+  The list is governance-updatable behind a timelock; updates flow
+  in from OFAC / EU / UN feeds via the operator that owns the
+  `sanctionsList` slot. Relayers may additionally screen
+  client-side for UX (reject quickly instead of letting the chain
+  revert), but the canonical enforcement is the contract.
+- **Identity gate modularity**: deployments serving regulated venues
+  use a strict CA list; permissionless deployments use a permissive
+  one. Same protocol, same code, different gate.
+
+### 7.5 MEV resistance
+
+The relayer submits the settlement as a single transaction with both
+proofs. A searcher in the mempool can decode the calldata to read
+token pair, amounts, fee, and expiry (these are public signals of
+the proofs — see §7.1) — but **none of the standard MEV strategies
+apply**:
+
+- **Cannot front-run the trade**: the proof commits to specific
+  amounts and a specific `commitmentRoot`. A searcher's transaction
+  cannot alter the trade outcome and cannot extract value from the
+  proof itself.
+- **Cannot sandwich**: there is no slippage variable. The proof's
+  buy / sell amounts are fixed, not "at least X", so flanking
+  trades on a public AMM around it cannot widen the spread the
+  user pays.
+- **Cannot censor for ransom**: the relayer that signed the
+  settlement has already collected the trade. Holding the tx in a
+  private mempool only delays — does not extract.
+- **Reordering is useless**: the proof references a recent
+  `commitmentRoot`. Whether the tx lands at block N or N+1, the
+  same root is still considered "known" by the contract.
+
+What a searcher *can* do is observe trade volume aggregates (token
+pair × amount, anonymously). This is the same exposure traditional
+dark-pool prints provide — material for market-microstructure
+analysis, not a profitable extraction.
+
+---
+
+## 8. Compliance Model
+
+### 8.1 The dual-CA architecture
+
+Two on-chain `IdentityGate` contracts hold separate CA lists:
+
+```
+User IdentityGate (zk-X509 attestations)
+  ├── Permitted CA #1 (e.g., MiCA-compliant European KYC provider)
+  ├── Permitted CA #2 (e.g., Korean regulator-approved CA)
+  └── ... (more)
+
+Relayer IdentityGate (zk-X509 attestations)
+  ├── Permitted CA #1 (e.g., Singapore MAS-licensed entity)
+  ├── Permitted CA #2 (e.g., Switzerland FINMA-licensed entity)
+  └── ... (more)
+```
+
+The two lists are independently governed. A jurisdiction may add a
+permitted CA for users (allowing residents to deposit) while keeping
+relayer registration restricted to operators with their own
+authorisation. This separation lets the protocol serve users in one
+jurisdiction while routing through operators in another, without
+compromising either side's compliance posture.
+
+### 8.2 The chain of legal accountability
+
+```
+illicit deposit → user attestation (CA can identify) → user gate accepts
+                                            │
+                                            ▼
+trade   → relayer (legal entity) matches → on-chain settlement
+                  │                                    │
+                  ▼                                    ▼
+relayer keeps records of orders it matched   public chain shows
+            │                                  ↑                  │
+            └───────  audit / subpoena  ───────┘                  ▼
+                                                  Tornado-style anonymity:
+                                                  no chain, no operator,
+                                                  nowhere to subpoena.
+```
+
+The relayer is the *legally accountable party*. They are KYC'd via
+their own CA, they keep records mandated by their jurisdiction's MSB
+license (or equivalent), and they are subject to the same AML/CTF
+duties as a regulated exchange. The user's identity stays
+cryptographically hidden from the chain and from the relayer (the
+relayer sees a proof, not a witness) — but is recoverable through
+the user's own CA when properly compelled.
+
+This is the architecture that distinguishes zkScatter from Tornado
+Cash: **there is always a regulated entity downstream**.
+
+### 8.3 Participant eligibility & duties
+
+| Role | Eligibility (technical) | On-chain prerequisite | Off-chain duty |
+|---|---|---|---|
+| **User — sender / depositor** | Holds a valid X.509 attestation from a User-CA listed in the User IdentityGate | `IdentityGate.isVerified(msg.sender) == true` at `deposit` | Standard end-user obligations under the issuing CA's terms |
+| **User — recipient / claimer** | Same as above (the recipient's own User-CA attestation) | `IdentityGate.isVerified(recipient) == true` at `claimWithProof` | Same |
+| **Relayer / operator** | Holds a valid X.509 attestation from a Relayer-CA listed in the Relayer IdentityGate; posts the required TON bond | `register(url, fee)` succeeds against `RelayerRegistry` (CA + bond gates both pass) | **Mandatory duty to cooperate with lawful regulatory inquiries** — record-keeping of orders matched, AML/CTF reporting per the operator's home jurisdiction, subpoena response, sanctions screening at submission |
+
+The *user-side* attestation is required at every pool boundary
+crossing (deposit, withdraw, claim). The *relayer-side* attestation
+is required once at registration, with the duty of cooperation
+running continuously thereafter — failure to meet it is a matter for
+the relayer's licensing authority, not a chain-level event.
+
+In short: **distinct CA chains for distinct roles, with policy set
+at deployment time**. The default posture is per-country KYC —
+each user (sender or recipient) verifies under their own
+jurisdiction's accepted CA, and each relayer under a CA that
+recognises it as a regulated legal entity. Specialty deployments
+override the default to fit their target audience: an
+accredited-investor venue registers a qualified-investor CA, a
+corporate payroll service registers an internal HR-system CA, a
+cross-border RWA settlement layer accepts a curated list of
+multi-jurisdiction CAs. Same protocol code, different CA
+configurations.
+
+### 8.4 What this enables
+
+- **Mainnet-deployable in regulated jurisdictions**: South Korea,
+  Singapore, Switzerland, EU under MiCA — the legal substance of the
+  protocol matches existing law for OTC desks and crypto MSBs.
+- **Institutional onboarding**: an asset manager can route block
+  trades through a relayer they have a master service agreement with,
+  exactly as they do for traditional dark pools.
+- **Automatic sanctions enforcement**: OFAC / EU / UN list updates
+  flow into the `sanctionsList` contract on a timelock. Every
+  fund-touching entry point in `CommitmentPool` and
+  `PrivateSettlement` screens against the list automatically — no
+  relayer discretion required (§7.4).
+
+---
+
+## 9. Performance and Cost
+
+### 9.1 On-chain gas (Ethereum mainnet)
+
+Costs scale linearly with the prevailing base fee. Recent mainnet
+activity has settled in the **0.3–2 gwei** range with occasional
+multi-tens-of-gwei spikes during congestion. The table below gives
+the per-operation gas usage and converts it at three reference base
+fees so readers can interpolate for the conditions of the day
+(ETH = $3,000):
+
+| Operation | Gas | @ 0.3 gwei | @ 2 gwei | @ 30 gwei (peak) |
+|---|---|---|---|---|
+| Deposit | 250K | $0.22 | $1.50 | $22 |
+| Authorize proof submit (off-chain) | 0 | $0 | $0 | $0 |
+| Settle (`settleAuth`) | 400K | $0.36 | $2.40 | $36 |
+| Claim (single) | 180K | $0.16 | $1.08 | $16 |
+| Claim (batched, gas-bounded) | varies | ≈$0.08 / claim | ≈$0.55 / claim | ≈$8 / claim |
+| Cancel | 300K | $0.27 | $1.80 | $27 |
+| `settleWithDex` (incl. router) | 600K | $0.54 | $3.60 | $54 |
+
+At today's typical base fee, **every flow is sub-$1 on mainnet** —
+mainnet is a first-class target, not a fallback. Equally first-class
+is L2 deployment (Optimism, Arbitrum, Base, Polygon zkEVM, ...): the
+contracts compile and run unchanged, with per-tx cost in the
+fractions-of-a-cent range. Choosing where to deploy is a product
+question, not a protocol constraint.
+
+| Deployment | Best for |
+|---|---|
+| **Ethereum L1** | High-value institutional settlement, treasury moves, compliance audits where L1-anchored records matter |
+| **L2 (rollup)** | High-frequency / latency-sensitive flow, micropayments, retail-scale UX, app-chains aligned with a particular ecosystem |
+| **Other EVM chains** | Jurisdictional / regulated chain mandates (e.g. Polygon CDK / OP Stack subnets used by financial institutions) |
+
+### 9.2 Off-chain proof time
+
+| Circuit | Cold (incl. zkey load) | Warm |
+|---|---|---|
+| `deposit` | 0.6s | 0.4s |
+| `authorize` | 3.5s | 2.8s |
+| `claim` | 0.25s | 0.18s |
+| `cancel` | 1.5s | 1.2s |
+
+Mobile (M1 iPad / Pixel 8): ~3-5x slower depending on device.
+
+### 9.3 SDK runtime
+
+The TypeScript SDK ships as platform-agnostic source. The browser
+proof Worker uses `snarkjs` + a `circomlibjs` Poseidon table;
+mobile uses a native Rust prover (`mobile/native-prover`) that
+delivers ~2x speedup on `authorize` over the Worker path.
+
+### 9.4 Throughput
+
+The off-chain bottleneck is per-relayer order ingestion (HTTP +
+shared-orderbook propagation), well under the chain's settlement
+ceiling. The on-chain bottleneck is `settleAuth`'s ≈400K gas — at
+mainnet's ~30M gas / 12s, the upper bound is ~62 settlements / s
+even if the entire block were dedicated to zkScatter; on L2 with
+~50M gas / 2s blocks, the ceiling is roughly 200 settlements / s.
+Real throughput is a product question, not a protocol limit. The
+peer-to-peer gossip protocol (§10.1) is designed to let unbounded
+relayers participate without coordination, removing the
+shared-orderbook service as the discovery bottleneck.
+
+---
+
+## 10. Next Research
+
+The work below is on the public roadmap. Each item has a written
+design and is being prototyped against the current mainline.
+
+### 10.1 Federated relayer protocol
+
+Today's relayer matching is a star topology: each relayer has its
+own orderbook, with a shared-orderbook service for cross-relayer
+discovery. The next protocol step replaces this with a fully
+peer-to-peer layer:
+
+- **Waku v2 gossip** for order announcements (`ORDER_ANNOUNCE` messages).
+- **Commit-reveal** match negotiation (modeled after the Steam
+  trading-bot ecosystem) so relayers cannot abort a match silently.
+- **Dispute registry** records cryptographic evidence of misbehaviour
+  on-chain; reputation is built off-chain from the event log.
+
+Spec: `docs/architecture/architecture-v2.md`,
+`docs/design/relayer-protocol/design.md`,
+`docs/design/dispute-registry/design.md`.
+
+### 10.2 Reputation-based accountability (Dispute Registry)
+
+zkScatter's enforcement model for relayer misbehavior is
+**reputation, not slashing**. The forthcoming `DisputeRegistry`
+contract is a **record-only** audit log — anyone holding
+cryptographic evidence of a misbehavior incident submits it; the
+contract verifies the evidence and emits an immutable event. There
+is no bond slashing, no challenge game, no governance penalty —
+the economic penalty comes from users moving away from
+low-reputation relayers, not from the contract.
+
+```
+misbehavior incident
+   ↓ cryptographic evidence (e.g., conflicting commit-reveal pair)
+DisputeRegistry.report(evidence)
+   ↓ contract verifies + emits event
+off-chain reputation indexer
+   ↓ aggregates events into per-relayer rating
+applications display the rating in the relayer picker
+   ↓
+users choose higher-rated relayers, avoid lower-rated ones
+   ↓
+low-rated relayers lose fee flow → self-slash economically
+```
+
+Two structural properties make this stronger than a slashable bond:
+
+1. **Relayers earn from user fees, not block rewards.** A public
+   misbehavior record drives users away → fees → 0 → the business
+   dies. The penalty scales with the relayer's revenue — large
+   operators have more to lose, small operators less.
+2. **Relayers are not anonymous** (dual-CA gates relayer
+   registration on legal-entity identity). Spinning up a new
+   anonymous identity to escape a bad reputation is months of
+   legal work, fresh CA attestation, fresh TON bond posting, and
+   fresh user trust-building. The effective re-entry cost exceeds
+   any slashable bond fraction the protocol could plausibly take.
+
+The combination gives misbehavior a sharper economic teeth than
+a contract-level slash would, without the dispute-game complexity
+that slashing systems force on every honest participant.
+
+### 10.3 Identity SDK (zk-X509 client)
+
+The zk-X509 client SDK module is on the near-term roadmap. Until
+then, the `IdentityGate` contracts are operational but apps assume
+the user has already attested via a separate flow.
+
+### 10.4 Post-quantum migration
+
+zkScatter's current cryptographic primitives are not quantum-safe:
+
+- Groth16 (BN254 pairings) → broken by Shor.
+- EdDSA on Baby Jubjub → broken by Shor.
+- ECDH stealth addresses → broken by Shor.
+
+Past trade data, however, is cryptographically sealed (§7.3) — only
+*future* settlements are at risk. The migration path is incremental:
+
+| Component | Today | PQ replacement |
+|---|---|---|
+| Proof system | Groth16 | STARK (FRI-based, hash-only) |
+| Authorisation signature | EdDSA | Falcon or Dilithium |
+| Stealth address | ECDH | Lattice KEM (e.g., Kyber) |
+| Hash | Poseidon | Same — Grover-resistant with 256-bit output |
+| Identity attestation | zk-X509 (RSA/ECDSA inside) | PQ-X509 (Dilithium inside) |
+
+The half-proof primitive itself is **algorithm-agnostic** —
+replacing the proof system does not require redesigning the
+protocol. The migration plan is to ship a hybrid mode (EdDSA +
+Dilithium dual-sign) once verifier precompiles and standardised
+PQ libraries are mature on EVM, with a hard cutover after the
+Q-day risk becomes operational.
+
+---
+
+## 11. Comparison with Prior Work
+
+### 11.1 Privacy DEXes
+
+| | Privacy | Async | Relayer-trustless | Compliance | Empty linkability |
+|---|---|---|---|---|---|
+| Renegade | MPC | Limited (sync MPC; recent designs add async hand-offs) | ❌ (counterparty sees partial witness during MPC) | ❌ | ✅ |
+| Penumbra | Yes | ❌ (batch) | ❌ (solver-trusted) | ❌ | ❌ |
+| Aztec | Note privacy | N/A | ❌ (no DEX primitive) | Partial | ❌ |
+| CoW Protocol | ❌ (solver-plaintext) | ❌ | ❌ (solver) | Solver-attested | N/A |
+| **zkScatter** | **Cryptographic** | **✅** | **✅** | **dual-CA** | **✅** |
+
+### 11.2 Privacy pools / mixers
+
+| | Matching | Compliance | Auditability |
+|---|---|---|---|
+| Tornado Cash | None | ❌ (sanctioned) | ❌ |
+| Aztec Connect (legacy) | None | ❌ | ❌ |
+| Railgun | None (custodial) | Partial | ❌ |
+| **zkScatter** | **Native** | **✅** | **✅ (per-relayer)** |
+
+### 11.3 RWA / institutional settlement
+
+zkScatter is closest in *intent* to traditional dark pools
+(LiquidNet, ITG POSIT) — but with cryptographic privacy that no
+traditional intermediary can violate, and on-chain finality that no
+traditional clearer can deny. Identity-aware infrastructures
+targeting institutions (Ondo's tokenised-yield rails, Concordium's
+identity-anchored L1) provide regulated onboarding but no privacy
+on the trade itself.
+
+zkScatter is the only design that gives **both** cryptographic
+privacy of the trade *and* legal accountability of the intermediary,
+on a permissionless EVM chain.
+
+---
+
+## 12. Limitations
+
+We document limitations honestly:
+
+1. **Gas cost variability.** Mainnet flows are sub-$1 at typical base
+   fees today (§9.1) but a sustained ~30 gwei congestion period
+   would push retail orders into uncomfortable territory. Apps with
+   cost-sensitive flow (micropayments, frequent rebalancing) can
+   deploy directly to L2 — the contracts are unchanged — so users
+   are insulated from L1 gas spikes without any protocol-level
+   compromise.
+2. **Relayer liveness.** A single relayer cannot match if no
+   counterparty appears. The federation (§10.1) bounds the worst case,
+   but extremely thin pairs may have multi-hour wait times.
+3. **Note management UX.** Users must keep their notes safe — losing
+   them loses the funds. The SDK's IndexedDB / SQLite adapters mitigate
+   this on devices but cross-device recovery is not yet a first-class
+   flow.
+4. **Identity gate dependence.** A compromised CA in the user gate
+   admits malicious depositors. Mitigations: multiple CAs (zkScatter
+   does not introduce new ones, but the gate aggregates them
+   conservatively); revocation handled at the CA layer.
+5. **Pre-quantum.** As §7.3 details, the protocol is not post-quantum
+   today. Past trades remain sealed even after Q-day, but new flows
+   require migration.
+
+---
+
+## 13. Conclusion
+
+The financial primitives that drive global capital — block trading,
+vesting, payroll, royalty distribution, RWA settlement — share one
+requirement: **the value movement must remain private to non-participants
+while remaining auditable by the legitimate authority**. Public
+blockchains do not provide that. Mixers cannot provide it. MPC-based
+privacy DEXes provide it only synchronously, narrowing the addressable
+market to almost nothing.
+
+zkScatter is the first system to offer a single primitive — the
+half-proof — that satisfies the requirement across the full class of
+constrained value-movement flows, with cryptographic privacy of the
+witness, on-chain enforcement of the cross-constraint, asynchronous
+matching, witness-free relayers, and a modular dual-CA compliance
+layer. The five reference flows shipped with the SDK (OTC, payments,
+drops, vesting, DEX routing) are the first applications, not the
+boundary; the same primitive composes naturally with insurance,
+remittance, subscription, RWA secondary, and any other flow that
+reduces to "authorise a constrained value movement, in private, with
+an auditable proof".
+
+The result is a settlement network that institutional capital can use
+on permissionless infrastructure, in jurisdictions that prohibit
+non-compliant mixers, today.
+
+---
+
+## 14. References
+
+| | |
+|---|---|
+| Patent (filed) | "Private Settlement System and Method Based on Two-Sided Independent Zero-Knowledge Proofs" — Tokamak Network, 2026 |
+| Source code | https://github.com/tokamak-network/scatter-dex |
+| Architecture v2 | `docs/architecture/architecture-v2.md` |
+| Half-proof design | `docs/design/circuit-split/design.md` |
+| Relayer protocol design | `docs/design/relayer-protocol/design.md` |
+| Dispute registry design | `docs/design/dispute-registry/design.md` |
+| Renegade | https://renegade.fi |
+| Penumbra | https://penumbra.zone |
+| Aztec | https://aztec.network |
+| CoW Protocol | https://cow.fi |
+| Groth16 | Groth, J. "On the Size of Pairing-Based Non-Interactive Arguments." EUROCRYPT 2016 |
+| Poseidon | Grassi et al. "Poseidon: A New Hash Function for Zero-Knowledge Proof Systems." USENIX 2021 |
+| EIP-5564 (stealth addresses) | https://eips.ethereum.org/EIPS/eip-5564 |
+| zk-X509 | "On Asynchronous Identity Verification with Zero-Knowledge X.509 Proofs" (forthcoming) |
+| NIST PQC | https://csrc.nist.gov/projects/post-quantum-cryptography |

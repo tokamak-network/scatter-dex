@@ -2,7 +2,8 @@ import "nextra-theme-docs/style.css";
 import "./globals.css";
 
 import { Footer, Layout, Navbar } from "nextra-theme-docs";
-import { Banner, Head } from "nextra/components";
+import { Head } from "nextra/components";
+import { Brand } from "../components/brand";
 import { getPageMap } from "nextra/page-map";
 import type { ReactNode } from "react";
 
@@ -22,7 +23,7 @@ export const metadata = {
 // theme toggle round out the navbar.
 const navbar = (
   <Navbar
-    logo={<span className="zs-brand">zkScatter Docs</span>}
+    logo={<Brand />}
     projectLink="https://github.com/tokamak-network/scatter-dex"
   />
 );
@@ -48,11 +49,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <Head />
       <body>
         <Layout
-          banner={
-            <Banner storageKey="zkscatter-docs-banner" dismissible>
-              Self-hosted preview — Nextra build of <code>developers/</code>.
-            </Banner>
-          }
           navbar={navbar}
           footer={footer}
           pageMap={pageMap}

@@ -26,6 +26,10 @@ const meta = {
   // ── Operate ─────────────────────────────────────────
   "-- operate": { type: "separator", title: "Operate" },
   operate: "Operator",
+
+  // ── Reference papers ────────────────────────────────
+  "-- papers": { type: "separator", title: "Papers" },
+  whitepaper: "Whitepaper",
 };
 
 export default meta;
