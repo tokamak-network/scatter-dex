@@ -16,6 +16,9 @@
         ],
         "pay": [
           "zkscatter-pay"
+        ],
+        "relayer": [
+          "zkscatter-relayer"
         ]
       }
     }
