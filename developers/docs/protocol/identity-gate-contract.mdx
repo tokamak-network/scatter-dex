@@ -1,11 +1,14 @@
 ---
 title: IdentityGate (contract)
-description: "On-chain checkpoint that gates deposits and claims via zk-X509 attestations."
+description: "Multi-CA aggregator that fronts the IIdentityRegistry interface for the protocol."
 ---
 
-`IdentityGate` is the policy contract every deposit and claim must
-clear. It stores attestation hashes per address and reverts when an
-unattested address attempts a gated operation.
+`IdentityGate` is the contract every flow consults to check whether a
+given address is identity-verified. It's a thin **aggregator** —
+verification logic itself lives in one or more underlying
+`IIdentityRegistry` instances (one per CA / attestation issuer); the
+gate combines their results so callers (`CommitmentPool`,
+`RelayerRegistry`) only need to know about a single address.
 
 > Conceptual overview: see [Architecture / Identity gate](/docs/concepts/identity-gate).
 > This page is the on-chain reference.
@@ -13,80 +16,103 @@ unattested address attempts a gated operation.
 ## Storage
 
 ```solidity
-struct Attestation {
-  bytes32 hash;            // hash of the zk-X509 proof inputs
-  uint64  validUntil;      // unix seconds; 0 = no expiry
-  uint16  policyId;        // which policy version this attestation satisfies
-}
+IIdentityRegistry[] public registries;          // ordered list of CAs
+mapping(address => bool) public registryExists; // dedupe set
 
-mapping(address => Attestation) public attestations;
-uint16 public currentPolicy;
+uint256 public constant MAX_REGISTRIES = 10;
 ```
+
+The gate itself has no per-user storage — every read fans out to the
+registered CAs.
 
 ## External entry points
 
-```solidity
-function attest(
-  Groth16Proof calldata zkProof,
-  bytes32      calldata attestationHash,
-  uint64       validUntil
-) external;
-
-function revoke(address user) external;   // governance / operator only
-
-function isValid(address user) external view returns (bool);
-function policyOf(address user) external view returns (uint16);
-function policyDescription() external view returns (string memory);
-```
-
-The verifier in `attest` is a Groth16 verifier specialized for the
-zk-X509 circuit — the user proves they hold a valid X.509 cert
-without revealing it.
-
-## Hooks for other contracts
-
-`CommitmentPool.deposit(...)` and `PrivateSettlement.claimWithProof(...)`
-both call `gate.requireValid(addr)` internally; the gate reverts
-with `IdentityRejected` if the address has no valid attestation.
+### Registry management (owner-only)
 
 ```solidity
-// Inside CommitmentPool.deposit:
-gate.requireValid(msg.sender);
+function addRegistry(address _registry) external;
+function removeRegistry(address _registry) external;
 
-// Inside PrivateSettlement.claimWithProof:
-gate.requireValid(inputs.recipient);
+function getRegistryCount() external view returns (uint256);
+function getRegistries() external view returns (address[] memory);
 ```
 
-`settleAuth` does **not** call the gate — once a balance is in the
-pool it can flow between users freely without re-attestation.
+`removeRegistry` keeps at least one entry (`NoRegistries` revert if
+you'd empty the gate); add/remove cycles use a swap-and-pop on the
+`registries` array.
+
+### `IIdentityRegistry` implementation
+
+```solidity
+function isVerified(address user) external view returns (bool);
+function verifiedUntil(address user) external view returns (uint64);
+function paused() external view returns (bool);
+```
+
+| Method | Behaviour |
+|---|---|
+| `isVerified(user)` | `true` if **any** registered CA returns `true`. Reverts in any one CA are caught and skipped — one misbehaving registry can't DoS the whole gate. |
+| `verifiedUntil(user)` | Latest expiry across all CAs (`0` = unverified everywhere). |
+| `paused()` | Conservative: returns `true` if any one CA is paused. Doesn't actually block `isVerified` (other CAs can still pass). |
+
+## Deployment pattern
+
+zkScatter's reference deployment uses **two separate gate instances**:
+
+| Instance | Wired into | What it gates |
+|---|---|---|
+| User `IdentityGate` | `CommitmentPool` (deposit + withdraw) | End-user deposits and withdrawals |
+| Relayer `IdentityGate` | `RelayerRegistry.identityRegistry` | Relayer registration |
+
+Each gate can hold its own list of CAs — e.g. relayer registration
+might require institutional KYC while user deposits accept retail
+attestations.
 
 ## Events
 
 ```solidity
-event Attested(address indexed user, bytes32 attestationHash, uint16 policyId, uint64 validUntil);
-event Revoked(address indexed user, uint16 policyId);
-event PolicyChanged(uint16 indexed oldPolicy, uint16 indexed newPolicy);
+event RegistryAdded(address indexed registry);
+event RegistryRemoved(address indexed registry);
 ```
 
-## Multiple gates
+## Errors
 
-Different deployments can wire different gates:
+| Error | When |
+|---|---|
+| `RegistryAddressZero` | `addRegistry(address(0))` or constructor with zero |
+| `RegistryAlreadyAdded` | Adding the same registry twice |
+| `RegistryNotFound` | `removeRegistry` for an address that isn't registered |
+| `NoRegistries` | `removeRegistry` would empty the list |
+| `TooManyRegistries` | More than `MAX_REGISTRIES` (10) |
+| `RenounceOwnershipDisabled` | `renounceOwnership()` is bricked to prevent lockout |
 
+## Where the underlying CAs come from
+
+The actual zk-X509 verification logic lives in the
+`IIdentityRegistry` instances the gate aggregates over —
+`zkX509IdentityRegistry`, sanctions wrappers, manual allowlists,
+etc. Each must implement:
+
+```solidity
+interface IIdentityRegistry {
+  function isVerified(address user) external view returns (bool);
+  function verifiedUntil(address user) external view returns (uint64);
+  function paused() external view returns (bool);
+}
 ```
-Pool A (retail)        → IdentityGate-A  (zk-X509 from MiCA-compliant KYC)
-Pool B (institutional) → IdentityGate-B  (qualified investor only)
-Pool C (sanctions only)→ IdentityGate-C  (OFAC screening, no KYC)
-```
 
-`NetworkConfig.contracts.identityGate` is the gate active for the
-deployment the SDK is configured against.
+The gate doesn't dictate which scheme they use; a CA could be a
+zk-X509 verifier, a curated manual allowlist, or a sanctions
+denial layer (note that "denial layers" are typically wired
+elsewhere — `CommitmentPool.sanctionsList` is its own slot).
 
 ## SDK status
 
 The `@zkscatter/sdk/identity` module — client-side zk-X509 proof
-generation — ships in **Phase 7**. Phase 0–3 of the SDK don't expose
-identity primitives; the gate is wired into the contracts but apps
-expect the user to have already attested via a separate flow.
+generation and `attest()` calldata — ships in **Phase 7**. Phase
+0–3 of the SDK don't expose identity primitives; the gate is wired
+into the contracts but apps expect the user to have already
+attested via a separate flow.
 
 ## Address by network
 

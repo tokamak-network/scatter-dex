@@ -9,31 +9,44 @@ and the SDK's `contracts` module wrap every entry point.
 
 ## External entry points
 
+The settle/cancel/swap entry points take struct params (full
+parameter shapes live in the contract source); claim takes positional
+args matching the verifier signature.
+
 ```solidity
-function settleAuth(
-  AuthSide calldata maker,
-  AuthSide calldata taker,
-  Fees     calldata fees
-) external;
+// Two-sided private settlement (relayer-only). Verifies maker + taker
+// half-proofs and writes both payout commitments atomically.
+function settleAuth(SettleAuthParams calldata p) external;
 
+// Single private settlement against a whitelisted external DEX router.
+function settleWithDex(SettleDexParams calldata p) external;
+
+// Cancel an active order — spends maker's leaf, writes a fresh
+// change commitment for the unspent balance.
+function cancelPrivate(CancelParams calldata p) external;
+
+// Claim a stealth-addressed payout. Verifier checks the `claim`
+// circuit; the contract enforces `releaseTime`.
 function claimWithProof(
-  Groth16Proof calldata proof,
-  ClaimInputs  calldata inputs
+  uint[2]    calldata proofA,
+  uint[2][2] calldata proofB,
+  uint[2]    calldata proofC,
+  bytes32             claimsRoot,
+  bytes32             claimNullifier,
+  uint256             amount,
+  address             token,
+  address             recipient,
+  uint256             releaseTime
 ) external;
 
-function claimWithProofBatch(
-  BatchClaimItem[] calldata items     // up to MAX_CLAIM_BATCH_SIZE = 20
-) external;
-
-function cancelPrivate(
-  Groth16Proof calldata proof,
-  CancelInputs calldata inputs
-) external;
+// Batch up to MAX_CLAIM_BATCH_SIZE claims atomically.
+function claimWithProofBatch(ClaimParams[] calldata claims) external;
 ```
 
 | Caller | Function | Outcome |
 |---|---|---|
 | Relayer | `settleAuth` | Verifies both half-proofs, advances both nullifiers, writes payout commitments |
+| Relayer / user | `settleWithDex` | Half-proof + DEX swap in one tx |
 | User | `claimWithProof` | Verifies claim circuit, transfers ERC-20 to recipient |
 | User | `claimWithProofBatch` | Atomic batch claim — any revert rolls everything back |
 | User | `cancelPrivate` | Spends maker's leaf, writes a fresh change leaf |
@@ -41,65 +54,83 @@ function cancelPrivate(
 ## Verifier wiring
 
 Each circuit has its own deployed Groth16 verifier. `PrivateSettlement`
-holds the verifier addresses in immutable storage and forwards proof
-verification:
+holds the verifier addresses in storage (immutable for `claim`,
+admin-settable behind owner for the rest):
 
 ```
 PrivateSettlement
-├── authorizeVerifier  (address)
-├── claimVerifier      (address)
-├── cancelVerifier     (address)
-└── depositVerifier    (called via CommitmentPool)
-```
+├── claimVerifier            (immutable)
+├── authorizeVerifier        (admin-settable via setAuthorizeVerifier)
+├── cancelVerifier           (admin-settable via setCancelVerifier)
+└── batchAuthorizeVerifier   (admin-settable via setBatchAuthorizeVerifier)
 
-Replacing a verifier requires deploying a fresh `PrivateSettlement` —
-intentional; verifier swaps are consensus-critical and shouldn't be
-governance-trivial.
+Deposit verifier lives on `CommitmentPool` and is called via that
+contract's `deposit` entry — settlement does not see it directly.
+```
 
 ## Events
 
 ```solidity
-event TradeSettled(
-  bytes32 indexed makerNullifier,
-  bytes32 indexed takerNullifier,
-  bytes32 makerNewCommitment,
-  bytes32 takerNewCommitment,
-  bytes32 claimsRoot,
-  address relayer,
-  uint256 makerFee,
-  uint256 takerFee
-);
-
-event ClaimedPrivate(
+event PrivateClaim(
+  bytes32 indexed claimsRoot,
   bytes32 indexed nullifier,
   address indexed recipient,
-  address token,
-  uint256 amount
+  address         token,
+  uint256         amount
 );
 
-event CancelPrivate(
-  bytes32 indexed nullifier,
-  bytes32 newCommitment
+event PrivateCancel(
+  bytes32 indexed escrowNullifier,
+  bytes32 indexed nonceNullifier,
+  bytes32         newCommitment,
+  address indexed relayer
 );
+
+event PrivateSettledAuth(
+  bytes32 indexed makerNullifier,
+  bytes32 indexed takerNullifier,
+  bytes32         claimsRootMaker,
+  bytes32         claimsRootTaker,
+  address indexed makerRelayer,
+  address         takerRelayer,
+  address         submitter,
+  uint96          feeTokenMaker,
+  uint96          feeTokenTaker
+);
+
+event SettledWithDex(/* …see contract source for full shape… */);
 ```
 
-The relayer indexer subscribes to `TradeSettled` to update order
-status; apps subscribe to `ClaimedPrivate` to mark local pending
-claims as fulfilled.
+The relayer indexer subscribes to `PrivateSettledAuth` to update
+order status; apps subscribe to `PrivateClaim` to mark local pending
+claims as fulfilled. Note Solidity's 3-indexed-fields cap — for
+`PrivateSettledAuth`, `takerRelayer` is non-indexed; consumers
+filtering by taker side either scan + filter post-hoc or build a
+secondary index off `submitter`.
 
 ## Errors
 
 | Error | When |
 |---|---|
-| `RelayerNotRegistered` | Submitted by an address not in `RelayerRegistry` |
+| `ContractPaused` | Any entry called while paused |
+| `UnknownRoot` | Half-proof references a root not in `recentRoots` |
+| `NullifierAlreadySpent` | One side already spent |
+| `InvalidProof` | Groth16 verifier rejected |
+| `NotActiveRelayer` | Submitted by an address not active in `RelayerRegistry` |
+| `NotMakerOrTakerRelayer` | Caller isn't the maker or taker relayer in the proof |
 | `OrderExpired` | `block.timestamp > expiry` on either half |
-| `NullifierReused` | One side already spent |
-| `BadMerkleRoot` | Half-proof references a root not in `recentRoots` |
-| `BadProof` | Groth16 verifier rejected |
-| `IdentityRejected` | `IdentityGate` denied the recipient on a claim |
-| `CooldownActive` | Claim attempted before `releaseTime` |
-
-The SDK surfaces these via `explainSettlementError()` (planned, Phase 8).
+| `NotYetReleasable` | Claim attempted before `releaseTime` |
+| `TokenNotWhitelisted` | Settlement involves a non-allowlisted token |
+| `TokenSidesMismatch` / `SellBuyTokenMismatch` | Maker / taker token sides don't pair |
+| `PriceMismatch` | Maker buy price ≠ taker sell price |
+| `FeeExceedsMax` | Per-side fee above the maker's `maxFee` |
+| `ClaimsCapExceeded` | More than `MAX_CLAIMS_PER_SIDE` claim entries |
+| `ExceedsTotalLocked` / `AmountOverflow` | Numeric guard rails |
+| `DuplicateClaimsRoot` / `ClaimsGroupAlreadyExists` / `ClaimsGroupNotFound` | Claims-root invariants |
+| `AuthorizeVerifierNotSet` / `CancelVerifierNotSet` | Verifier missing — admin misconfiguration |
+| `EmptyBatch` / `BatchTooLarge` | `claimWithProofBatch` arg shape |
+| `OnlyWETH` | Native-ETH settlement called with a non-WETH token |
+| `AddressSanctioned` | Sanctions list reject |
 
 ## Address by network
 

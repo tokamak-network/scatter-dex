@@ -12,31 +12,36 @@ settlement contract reads it on every match to gate caller eligibility.
 ```solidity
 struct Relayer {
   string  url;             // /api/info endpoint
-  uint16  fee;             // basis points
-  uint96  bond;            // staked native (or future TON) amount
-  uint64  registeredAt;    // unix seconds
-  uint64  exitRequestedAt; // unix seconds; 0 if not exiting
+  uint256 fee;             // basis points (capped at MAX_FEE = 500 bps)
+  uint256 bond;            // staked native amount, in wei
+  uint256 registeredAt;    // unix seconds, 0 = never registered
+  uint256 exitRequestedAt; // unix seconds, 0 = not in cool-down
   bool    active;
 }
 
 mapping(address => Relayer) public relayers;
-address[] public registered;
+address[] public relayerList;            // every address that's ever been added
+uint256 public minBond;                  // governance-settable minimum
+uint256 public constant EXIT_COOLDOWN = 7 days;
+uint256 public constant MAX_FEE = 500;   // 5% absolute cap
+IIdentityRegistry public immutable identityRegistry;
+address public treasury;
 ```
 
 ## Lifecycle
 
 <Steps>
   <Step title="Register">
-    `register(url, feeBps)` with `msg.value` ≥ `minBond()`. Operator
-    must hold a valid `IdentityGate` attestation. Sets `registeredAt`,
+    `register(url, fee)` with `msg.value` ≥ `minBond()`. Operator must
+    hold a valid `IdentityGate` attestation. Sets `registeredAt`,
     `active = true`.
   </Step>
   <Step title="Operate">
-    `updateInfo(url, feeBps)` to change endpoint or fee.
+    `updateInfo(url, fee)` to change endpoint or fee.
     `addBond()` with `msg.value` to top up bond.
   </Step>
   <Step title="Exit">
-    `requestExit()` — flips `exitRequestedAt = now`. Operator stays
+    `requestExit()` — sets `exitRequestedAt = now`. Operator stays
     `active = true` during the cool-down so in-flight matches still
     settle.
   </Step>
@@ -49,41 +54,70 @@ address[] public registered;
 ## External entry points
 
 ```solidity
-function register(string calldata url, uint16 feeBps) external payable;
-function updateInfo(string calldata url, uint16 feeBps) external;
+function register(string calldata url, uint256 fee) external payable;
+function updateInfo(string calldata url, uint256 fee) external;
 function addBond() external payable;
 function requestExit() external;
 function executeExit() external;
 
 function relayers(address operator) external view returns (Relayer memory);
-function registeredCount() external view returns (uint256);
-function isActive(address operator) external view returns (bool);
-function minBond() external view returns (uint256);
+function getRelayerCount() external view returns (uint256);
+function getActiveRelayers() external view returns (address[] memory);
+function isActiveRelayer(address operator) external view returns (bool);
+function getFee(address operator) external view returns (uint256);
+function getSettlementInfo(address operator)
+  external view
+  returns (bool isActive, uint256 fee, address treasury_);
 ```
 
 ## Events
 
 ```solidity
-event Registered(address indexed operator, string url, uint16 fee, uint256 bond);
-event InfoUpdated(address indexed operator, string url, uint16 fee);
-event BondAdded(address indexed operator, uint256 amount, uint256 newBond);
-event ExitRequested(address indexed operator, uint64 cooldownEndsAt);
-event Exited(address indexed operator, uint256 bondReturned);
+event RelayerRegistered(
+  address indexed relayer, string url, uint256 fee, uint256 bond
+);
+event RelayerUpdated(
+  address indexed relayer, string url, uint256 fee
+);
+event BondAdded(
+  address indexed relayer, uint256 amount
+);
+event ExitRequested(
+  address indexed relayer, uint256 exitAfter
+);
+event RelayerExited(
+  address indexed relayer, uint256 bondReturned
+);
+
+// Governance
+event TreasuryUpdated(address oldTreasury, address newTreasury);
+event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
 ```
+
+## Errors
+
+| Error | When |
+|---|---|
+| `AlreadyRegistered` | `register` called by an already-active operator |
+| `NotRegistered` | Action requires an existing entry |
+| `RelayerNotActive` | Operator was deactivated (e.g. completed exit) |
+| `NotVerified` | `IdentityRegistry.isVerified(msg.sender)` is `false` |
+| `InsufficientBond` | `msg.value < minBond` on register |
+| `FeeTooHigh` | Fee > `MAX_FEE` (500 bps) |
+| `AlreadyExiting` | `requestExit` while already in cool-down |
+| `ExitNotRequested` | `executeExit` before `requestExit` |
+| `CooldownNotPassed` | `executeExit` before `EXIT_COOLDOWN` elapsed |
+| `BondTransferFailed` | Operator EOA can't receive ETH on exit |
+| `ZeroAddress` | Required address arg is `address(0)` |
 
 ## Slashing
 
-Verifiable misbehaviour reduces the bond:
-
-| Trigger | Slash |
-|---|---|
-| Submitting a settlement that fails proof verification | gas reimbursement |
-| Front-running an order to a different relayer | full match fee × multiplier |
-| Censoring an order then submitting it past expiry | configurable |
-
-Slashing is governance-driven; the registry exposes
-`slash(operator, amount, reason)` only to a privileged role
-(governance multisig).
+The current registry **does not implement slashing**. Bonds are
+posted on registration and returned in full on exit (after the
+7-day cool-down) — there is no `slash()` entry point and no
+governance hook to forfeit bond. If a slashing mechanism is needed
+(verifiable misbehaviour, censorship penalties), it would land in a
+future contract version.
 
 ## SDK helpers
 

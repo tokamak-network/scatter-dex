@@ -7,46 +7,83 @@ description: "On-chain Poseidon Merkle tree of commitments — the protocol's ce
 It maintains an append-only Merkle tree of Poseidon commitments and
 a nullifier set — together they're the protocol's authoritative state.
 
-## Storage
+## State
 
-| Slot | Field | Purpose |
+| Field | Type | Purpose |
 |---|---|---|
-| Tree | `bytes32[2^20]` | Leaves; `2^20 = 1_048_576` capacity |
-| Tree state | `uint256 nextLeafIndex` | Next free position |
-| Tree root | `bytes32 currentRoot` | Latest Poseidon root |
-| Nullifiers | `mapping(bytes32 => bool) spent` | Replay protection |
-| Roots history | `bytes32[N] recentRoots` | For proofs against recent state |
+| Tree | inherited from `IncrementalMerkleTree` | Append-only Poseidon Merkle tree |
+| `nullifiers` | `mapping(uint256 => bool)` | Replay protection (`true` = spent) |
+| `whitelistedTokens` | `mapping(address => bool)` | Per-token deposit allowlist |
+| `paused` | `bool` | Emergency pause (deposits + withdrawals blocked) |
+| `authorizedSettlement` | `address` | Only this address can call `insertCommitment` |
+| `pendingSettlement` / `pendingSettlementActivateAt` | `address` / `uint256` | 24h timelock on settlement-address changes |
+| `withdrawVerifier` | `IVerifier (immutable)` | Groth16 verifier for `withdraw` |
+| `depositVerifier` | `IDepositVerifier (immutable)` | Groth16 verifier for `deposit` |
+| `sanctionsList` | `ISanctionsList` | Optional address screening |
 
 ## External entry points
 
 ```solidity
-// Deposit a fresh commitment. Verifier checks zk-deposit proof.
+// Deposit. Verifier checks the zk-deposit proof; the commitment must
+// already encode `(token, amount)` exactly.
 function deposit(
-  address token,
-  uint256 amount,
-  bytes32 commitment,
-  Groth16Proof calldata proof
+  uint[2]    calldata proofA,
+  uint[2][2] calldata proofB,
+  uint[2]    calldata proofC,
+  uint256             commitment,
+  address             token,
+  uint256             amount
 ) external;
 
+// Settlement-only entry: insert change leaves emitted by `settleAuth`
+// or `cancelPrivate`. Reverts unless `msg.sender == authorizedSettlement`.
+function insertCommitment(uint256 commitment) external returns (uint32);
+
 // Read state.
-function root() external view returns (bytes32);
-function isKnownRoot(bytes32 r) external view returns (bool);
-function isSpent(bytes32 nullifier) external view returns (bool);
-function leafIndex() external view returns (uint256);
+function getLastRoot() external view returns (uint256);
+function isKnownRoot(uint256 r) external view returns (bool);
+function nextIndex() external view returns (uint32);
+function nullifiers(uint256 nullifier) external view returns (bool);
 ```
 
-`PrivateSettlement` calls into the pool with restricted hooks for
-nullifier marking and commitment insertion — those aren't external.
+`PrivateSettlement` is the only contract allowed to call
+`insertCommitment` and `transferToSettlement` — the wiring is set
+through a 24h timelock for upgrades.
 
 ## Events
 
 ```solidity
-event CommitmentInserted(uint256 indexed leafIndex, bytes32 commitment);
-event NullifierUsed(bytes32 indexed nullifier);
+event CommitmentInserted(
+  uint256 indexed commitment,
+  uint32          leafIndex,
+  uint256         timestamp
+);
+
+event Withdrawal(
+  address indexed recipient,
+  uint256         nullifierHash,
+  uint256         newCommitment,
+  uint256         amount
+);
 ```
 
 The SDK subscribes to `CommitmentInserted` to maintain a local
 incremental tree — see [Subscribe to pool events](/docs/guides/subscribe-pool-events).
+
+## Errors
+
+| Error | When |
+|---|---|
+| `ContractPaused` | Deposit / withdraw attempted while paused |
+| `TokenNotWhitelisted` | `deposit` with a token not in the allowlist |
+| `ZeroCommitment` / `ZeroAmount` / `ZeroAddress` | Required arg is zero |
+| `FieldElementOutOfRange` | `commitment` or `amount` exceeds BN254 scalar field |
+| `InvalidProof` | Groth16 verifier rejected |
+| `NullifierAlreadySpent` | Withdraw attempted on a spent leaf |
+| `UnknownRoot` | Withdraw proof references a root not in `recentRoots` |
+| `FeeOnTransferTokenUnsupported` | Token rebased / charged a fee on the transfer |
+| `NotAuthorizedSettlement` | Only `PrivateSettlement` may call `insertCommitment` |
+| `AddressSanctioned` | Sanctions list reject |
 
 ## Tree parameters
 
@@ -55,10 +92,7 @@ incremental tree — see [Subscribe to pool events](/docs/guides/subscribe-pool-
 | Depth | 20 | `COMMIT_TREE_DEPTH` constant in SDK |
 | Capacity | `2^20 = 1,048,576` | Soft limit before rotation needed |
 | Hash | Poseidon over BN254 | `circomlibjs` impl in SDK |
-| Zero leaf | `0` | Pre-computed zero subtrees match on-chain |
-
-When the tree fills, the protocol either deploys a new pool address
-or migrates via a coordinated reset — see governance docs.
+| Field modulus | BN254 scalar | `FIELD_MODULUS` constant in SDK |
 
 ## Reorg safety
 
@@ -74,11 +108,7 @@ import { subscribeCommitmentInserted } from "@zkscatter/sdk";
 
 ## Address by network
 
-The deployed address is part of `NetworkConfig.contracts.commitmentPool`
-in the SDK. Each network has one canonical pool per asset class
-(retail / institutional / etc.) — multiple pools can coexist on the
-same chain with separate identity gates.
-
-> The full ABI ships as `COMMITMENT_POOL_ABI` from `@zkscatter/sdk`
-> with a pre-parsed `Interface` at `COMMITMENT_POOL_IFACE`. See
-> [SDK reference / core](/sdk/core).
+`NetworkConfig.contracts.commitmentPool` in the SDK. ABI ships as
+`COMMITMENT_POOL_ABI` from `@zkscatter/sdk` with a pre-parsed
+`Interface` at `COMMITMENT_POOL_IFACE`. See
+[SDK reference / core](/sdk/core).

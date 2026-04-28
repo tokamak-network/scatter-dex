@@ -69,12 +69,13 @@ export const RelayerInfoResponseSchema = z
       description:
         "Address of the `PrivateSettlement` contract this relayer submits to.",
     }),
-    profile: RelayerProfileSchema,
+    profile: RelayerProfileSchema.optional(),
   })
   .meta({
     id: "RelayerApiInfo",
     description:
-      "Identity, fee, capabilities, and pending-queue depth. Apps probe this on relayer discovery to filter out offline operators.",
+      "Identity, fee, capabilities, and pending-queue depth. Apps probe this on relayer discovery to filter out offline operators.\n\n" +
+      "Note: this schema mirrors what `zk-relayer/src/routes/info.ts` actually returns today. The SDK's `RelayerApiInfo` type uses a single `settlement` field instead of the separate `commitmentPool` + `privateSettlement` fields below — that drift is tracked separately and will be reconciled with an SDK type update.",
   });
 
 export type RelayerInfoResponse = z.infer<typeof RelayerInfoResponseSchema>;

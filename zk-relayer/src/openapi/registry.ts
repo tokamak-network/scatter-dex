@@ -3,7 +3,8 @@
  * Builds the spec by combining hand-written path metadata (summary,
  * tags, error codes) with the zod schemas under `./schemas/*`. Keep
  * one entry per route here — the build script (scripts/build-openapi.mjs)
- * turns this into `developers/openapi/relayer.yaml`. */
+ * turns this into `apps/docs/public/openapi/relayer.yaml` so the docs
+ * site can render it without a separate build step. */
 import { createDocument } from "zod-openapi";
 import { RelayerInfoResponseSchema } from "./schemas/info.js";
 

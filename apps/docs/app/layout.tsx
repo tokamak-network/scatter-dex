@@ -27,10 +27,16 @@ const navbar = (
   />
 );
 
+// Static — `new Date().getFullYear()` in the render path triggers
+// a hydration mismatch warning if the server renders Dec-31 and the
+// client hydrates Jan-1 (or vice-versa across timezones). Bumped
+// once per calendar year by hand; the cost is one diff a year.
+const COPYRIGHT_YEAR = 2026;
+
 const footer = (
   <Footer>
     <span className="zs-footer-text">
-      © {new Date().getFullYear()} Tokamak Network · zkScatter
+      © {COPYRIGHT_YEAR} Tokamak Network · zkScatter
     </span>
   </Footer>
 );

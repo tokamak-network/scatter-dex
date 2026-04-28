@@ -80,10 +80,16 @@ components:
         - orderCount
         - commitmentPool
         - privateSettlement
-        - profile
       additionalProperties: false
-      description: Identity, fee, capabilities, and pending-queue depth. Apps probe this on relayer
-        discovery to filter out offline operators.
+      description: >-
+        Identity, fee, capabilities, and pending-queue depth. Apps probe this on relayer discovery
+        to filter out offline operators.
+
+
+        Note: this schema mirrors what `zk-relayer/src/routes/info.ts` actually returns today. The
+        SDK's `RelayerApiInfo` type uses a single `settlement` field instead of the separate
+        `commitmentPool` + `privateSettlement` fields below — that drift is tracked separately and
+        will be reconciled with an SDK type update.
     RelayerProfile:
       type: object
       properties:
