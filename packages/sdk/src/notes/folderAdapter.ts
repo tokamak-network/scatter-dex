@@ -15,13 +15,18 @@
  * readable on the frontend side after a Pay write.
  */
 
-import type { CommitmentNote } from "../zk/commitment";
 import {
   hasFolder,
   listFiles,
   removeFile,
   saveFile,
 } from "../storage/folder";
+import {
+  bigintToHex,
+  notePreimageFromHex,
+  notePreimageToHex,
+  type NotePreimageHex,
+} from "../util/format";
 import type { NoteStorageAdapter, StoredNote } from "./types";
 
 const NOTE_PREFIX = "zkscatter-note-";
@@ -44,14 +49,9 @@ interface FileShape {
   txHash?: string;
   chainId?: number;
   createdAt: string | number;
-  note: {
-    ownerSecret: string;
-    token: string;
-    amount: string;
-    salt: string;
-    pubKeyAx?: string;
-    pubKeyAy?: string;
-  };
+  /** Reuses the SDK-wide hex shape so v1 records (missing pubKeys)
+   *  type-check the same way they do on the IDB side. */
+  note: NotePreimageHex;
 }
 
 /** Build a folder-backed `NoteStorageAdapter`. Throws on `put`,
@@ -243,38 +243,22 @@ function serialize(n: StoredNote): FileShape & { warning: string } {
     label: n.label,
     symbol: n.symbol,
     amount: n.amount,
-    commitment: "0x" + n.commitment.toString(16),
+    commitment: bigintToHex(n.commitment),
     leafIndex: n.leafIndex,
     txHash: n.txHash,
     chainId: n.chainId,
     createdAt: new Date(n.createdAt).toISOString(),
-    note: {
-      ownerSecret: "0x" + n.note.ownerSecret.toString(16),
-      token: "0x" + n.note.token.toString(16),
-      amount: "0x" + n.note.amount.toString(16),
-      salt: "0x" + n.note.salt.toString(16),
-      pubKeyAx: "0x" + n.note.pubKeyAx.toString(16),
-      pubKeyAy: "0x" + n.note.pubKeyAy.toString(16),
-    },
+    note: notePreimageToHex(n.note),
     warning: "Keep this file secret. Anyone with this data can withdraw your funds.",
   };
 }
 
 function deserialize(parsed: FileShape): StoredNote {
   if (!parsed?.note) throw new Error("Missing note preimage");
-  if (!parsed.note.pubKeyAx || !parsed.note.pubKeyAy) {
-    throw new Error(
-      "Note missing pubKeyAx/pubKeyAy — v1 note that cannot be used with v2 circuits. Re-deposit required.",
-    );
-  }
-  const note: CommitmentNote = {
-    ownerSecret: BigInt(parsed.note.ownerSecret),
-    token: BigInt(parsed.note.token),
-    amount: BigInt(parsed.note.amount),
-    salt: BigInt(parsed.note.salt),
-    pubKeyAx: BigInt(parsed.note.pubKeyAx),
-    pubKeyAy: BigInt(parsed.note.pubKeyAy),
-  };
+  // `notePreimageFromHex` carries the canonical v1 → "re-deposit
+  // required" error so the wording stays consistent with the IDB
+  // adapter and any future consumer.
+  const note = notePreimageFromHex(parsed.note);
   const commitment = BigInt(parsed.commitment);
   // `id` is content-addressed — a record written by Pay and the
   // same commitment written by frontend resolve to the same id, so
