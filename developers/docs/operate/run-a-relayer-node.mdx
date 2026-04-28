@@ -46,8 +46,14 @@ await registerRelayer(
 );
 ```
 
-The contract enforces a minimum bond — read `registry.minBond()` first
-and budget for slashing risk on top.
+The contract enforces a minimum bond — read `registry.minBond()`
+first. The bond is returned in full on exit (after the 7-day
+cool-down); the protocol does not slash it. Apps still favour
+higher-bonded operators because bond size signals operational
+commitment. (SDK note: the parameter is named `bondEth` for legacy
+reasons — it forwards `msg.value` to the contract. The TON
+migration is a separate PR; until it lands, the deployed bond
+asset is whatever the contract was deployed with.)
 
 ## Update info
 
@@ -74,9 +80,11 @@ import { addRelayerBond } from "@zkscatter/sdk/relayer";
 await addRelayerBond(network.contracts.relayerRegistry, "0.5", signer);
 ```
 
-More bond = more apps willing to route through you, since slashable
-collateral signals reliability. There's no on-chain ranking — apps
-choose their own policy.
+More bond = stronger commitment signal, which apps factor into
+their own ranking. There's no on-chain ranking and no on-chain
+slashing; the bond is locked collateral that returns in full on
+exit (after the 7-day cool-down). Reputation enforcement happens
+off-chain via the planned Dispute Registry — see whitepaper §10.2.
 
 ## Read your status
 

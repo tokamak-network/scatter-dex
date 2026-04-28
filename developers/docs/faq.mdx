@@ -55,8 +55,9 @@ description: "Common questions about zkScatter, the SDK, and operator setup."
   </Accordion>
   <Accordion title="What happens if my server goes down mid-match?">
     The order's `nonce` stays valid until expiry — apps will retry
-    against another relayer. Repeated failures don't slash bond
-    automatically; only verifiable bad behaviour does.
+    against another relayer. The contract has no slashing path —
+    repeated failures show up as a degraded reputation rating
+    (planned Dispute Registry), and apps route around you.
   </Accordion>
   <Accordion title="How does exit work?">
     `requestExit()` flips you into a 7-day cool-down. Stop accepting

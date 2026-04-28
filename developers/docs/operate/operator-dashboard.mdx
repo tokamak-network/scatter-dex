@@ -21,7 +21,9 @@ The SDK ships every primitive needed — this page assembles them.
     `TradeSettled` events.
   </Card>
   <Card title="Bond posture" icon="server">
-    Current bond, slashing history, headroom over `minBond`.
+    Current bond, headroom over `minBond`. (No slashing history —
+    the registry does not slash; reputation events live in the
+    Dispute Registry once it ships.)
   </Card>
 </CardGroup>
 
@@ -68,14 +70,20 @@ const contract = new ethers.Contract(
   readProvider,
 );
 
-const filter = contract.filters.TradeSettled(null, null, null, null, null, operatorAddress);
-contract.on(filter, (makerNull, takerNull, makerCmt, takerCmt, claimsRoot, relayer, makerFee, takerFee) => {
+// PrivateSettledAuth indexes 3 fields: makerNullifier, takerNullifier,
+// makerRelayer. Filter by the relayer address (5th positional, 3rd
+// indexed) to scope to your own settlements where you matched as
+// the maker-side relayer.
+const filter = contract.filters.PrivateSettledAuth(null, null, operatorAddress);
+contract.on(filter, (makerNull, takerNull, makerRelayer, claimsRootMaker, claimsRootTaker, takerRelayer, submitter, feeTokenMaker, feeTokenTaker) => {
   // append to UI
 });
 ```
 
-Filtering by the operator address as the 6th `TradeSettled` indexed
-arg gives you the firehose of your own settlements.
+For settlements where you were the *taker* relayer, scan and
+filter post-hoc on `takerRelayer` (non-indexed by Solidity's
+3-indexed cap) or maintain your own secondary index keyed on
+`submitter`.
 
 ## Fee adjustments
 
@@ -102,7 +110,7 @@ function BondPosture({ row, minBond }: { row: OperatorRow; minBond: bigint }) {
       <div>Current bond: {row.bondEth} ETH</div>
       <div>Minimum: {ethers.formatEther(minBond)} ETH</div>
       <div>Headroom: {(ratio - 1).toFixed(2)}× over minimum</div>
-      {ratio < 1.5 && <Warning>Top up — single slash could drop you below minimum</Warning>}
+      {ratio < 1.5 && <Warning>Bond is close to `minBond` — apps doing operator filtering may rank operators with thinner bond margins lower</Warning>}
     </div>
   );
 }

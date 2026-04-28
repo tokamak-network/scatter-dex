@@ -1,12 +1,15 @@
 ---
 title: Bond management
-description: "Top up, slash protection, and withdrawal mechanics for a relayer's bond."
+description: "Top up, exit cool-down, and withdrawal mechanics for a relayer's bond."
 ---
 
 Every active relayer has a bond locked in `RelayerRegistry`. Apps
-prefer routing to higher-bonded operators (signals reliability), and
-the bond is slashable for verifiable misbehaviour. This page covers
-operator-side bond mechanics.
+prefer routing to higher-bonded operators (signals operational
+commitment), and the bond is **returned in full on exit** — there is
+no on-chain slashing in this contract. Accountability for misbehaviour
+runs through the planned Dispute Registry + reputation indexer
+([whitepaper §10.2](/docs/whitepaper)). This page covers operator-side
+bond mechanics.
 
 ## Sizing the bond
 
@@ -22,7 +25,7 @@ const registry = new ethers.Contract(
   readProvider,
 );
 const min = await registry.minBond();
-console.log(`min bond: ${ethers.formatEther(min)} ETH`);
+console.log(`min bond: ${ethers.formatEther(min)}`);
 ```
 
 Practical sizing (over the minimum):
@@ -30,8 +33,13 @@ Practical sizing (over the minimum):
 | Volume tier | Recommended bond | Rationale |
 |---|---|---|
 | Hobbyist | `minBond` | Just to stay registered |
-| Production | 2× `minBond` | Headroom for one slash incident |
+| Production | 2–3× `minBond` | Visible commitment to apps doing operator filtering |
 | Institutional | 5–10× `minBond` | Apps prefer high-bond operators; signals long-term commitment |
+
+The bond is **fully refunded** on exit (after the 7-day cool-down) —
+there is no slash path that reduces it. The "tier" guidance is purely
+about reputation signalling: a higher bond visibly distinguishes
+operators that intend to stay around.
 
 ## Topping up
 
@@ -40,33 +48,49 @@ import { addRelayerBond } from "@zkscatter/sdk/relayer";
 
 const tx = await addRelayerBond(
   network.contracts.relayerRegistry,
-  "0.5",     // ETH amount as decimal string (TON in future)
+  "0.5",     // amount as a decimal string in the bond asset
   signer,
 );
 await tx.wait();
 ```
 
-`addBond` accepts any positive amount. There's no upper limit.
+`addBond` accepts any positive amount. There's no upper limit. (SDK
+note: the parameter name is `bondEth` for legacy reasons — the
+current contract uses `msg.value`. The TON-bond migration is a
+separate PR; the deployed bond asset is whatever the contract was
+deployed with.)
 
-## What can slash
+## Accountability — reputation, not slashing
 
-Slashing is **verifiable misbehaviour**, not "you went offline". The
-governance multisig calls `slash(operator, amount, reason)` only when:
+The contract has no `slash()` entry point and no governance hook to
+forfeit bond. Instead, accountability is wired through the planned
+Dispute Registry:
 
-1. **Bad proof submission** — relayer submitted `settleAuth` with a
-   proof that fails verification. The transaction reverts on-chain;
-   gas reimbursement is slashed.
+1. **Bad proof submission** — `settleAuth` with a proof that fails
+   verification reverts on-chain. The relayer pays gas and gains
+   nothing. No bond consequence; the failed tx is the penalty.
 2. **Order theft** — relayer received an order signed against them
-   but routed it to another operator (or kept matching shares).
-3. **Censoring** — measurable refusal to match an order, then submitting
-   it after expiry to lock the user's `nonce`.
+   but routed it to another operator. Cryptographic evidence (signed
+   orderHash + competing settlement) goes into the Dispute Registry;
+   a public misbehaviour record drops the relayer's reputation
+   rating, which apps surface in their picker. User flow shifts to
+   competitors → fees decline → effective economic penalty.
+3. **Censoring / locking** — measurable refusal to match an order,
+   then submitting it after expiry to spoil the user's `nonce`.
+   Same dispute path: evidence on-chain, rating down, fees down.
+4. **Going offline** — liveness only. Apps route around to another
+   operator. No reputation impact (offline is an availability
+   issue, not misbehaviour).
 
-Going offline doesn't slash — that's a liveness issue, not a safety
-one. Apps will simply route around you.
+The *combined* effect — public misbehaviour record + KYC'd legal
+identity (operators cannot anonymously re-register) + lost user
+flow — exceeds any slashable bond fraction the contract could
+plausibly take. See whitepaper §10.2 for the full rationale.
 
 ## Exit cool-down
 
-`requestExit()` flips you into a 7-day cool-down (`EXIT_COOLDOWN_SECONDS`):
+`requestExit()` flips you into a 7-day cool-down
+(`EXIT_COOLDOWN_SECONDS`):
 
 <Steps>
   <Step title="Stop accepting new orders">
@@ -74,11 +98,14 @@ one. Apps will simply route around you.
     "exiting" message in `/api/info`.
   </Step>
   <Step title="Wait 7 days">
-    During this window, slashing is still possible — bad behaviour
-    pre-cool-down still counts.
+    During this window, the registry still considers the operator
+    `active = true`, so any matched orders that were accepted before
+    `requestExit()` can still settle. New disputes filed during the
+    cool-down still affect the off-chain reputation score, but do
+    not reduce the bond.
   </Step>
   <Step title="Execute exit">
-    `executeRelayerExit(...)` returns the (possibly slashed) bond and
+    `executeRelayerExit(...)` returns the **full** bond and
     deactivates the registry entry.
   </Step>
 </Steps>
@@ -108,10 +135,12 @@ if (Math.floor(Date.now() / 1000) < unlockAt) {
 
 ## Re-registration
 
-After `executeExit`, you can `register(...)` again with a fresh bond.
-Your prior `Slashed` events are public history — large operators
-typically want to avoid an exit/re-enter cycle since it surfaces as a
-trust signal.
+After `executeExit`, you can `register(...)` again with a fresh
+bond. Your prior `Disputed` events (when the Dispute Registry
+ships) are public history — large operators typically want to
+avoid an exit/re-enter cycle since rebuilding rating under a new
+legal identity is expensive (fresh CA attestation, fresh KYC
+process, fresh user trust-building).
 
 ## Common errors
 
@@ -129,8 +158,8 @@ trust signal.
     and wait.
   </Accordion>
   <Accordion title="`BondTransferFailed` on exit">
-    The operator EOA can't receive ETH (e.g. it's a contract without
-    a payable receive). Set up a payable receiver or hand off the
-    transfer manually.
+    The operator EOA can't receive the bond asset (e.g. it's a
+    contract without a payable receive). Set up a payable receiver
+    or hand off the transfer manually.
   </Accordion>
 </AccordionGroup>

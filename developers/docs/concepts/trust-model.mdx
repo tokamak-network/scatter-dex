@@ -37,15 +37,20 @@ sees what it needs.
 | Match counterparties | ❌ | ✅ | ❌ | ❌ |
 | Submit `settleAuth` | ❌ | ✅ | — | ❌ |
 | Verify proofs | ❌ | ❌ | ✅ | — |
-| Slash a relayer's bond | ❌ | ❌ | ✅ | ❌ |
 | See plaintext amounts | ✅ (own only) | ❌ | ❌ | ❌ |
 
 ## Trust assumptions
 
 - **Liveness, not safety**: a malicious relayer can refuse to match
   your order, but cannot steal funds or fake settlements.
-- **Bond-backed**: relayers post slashable ETH bonds (TON in future).
-  Verifiable misbehaviour reduces the bond.
+- **Reputation-backed**: relayers post a TON bond at registration
+  (returned in full on exit). The protocol does **not** slash the
+  bond — accountability runs through a planned Dispute Registry
+  that records cryptographic evidence of misbehaviour, an off-chain
+  reputation indexer that aggregates the events, and frontends that
+  display the rating in the relayer picker. Lost fees from
+  user-side avoidance carry the economic weight a slashed bond
+  would. See whitepaper §10.2 for the full rationale.
 - **No trusted setup beyond Groth16**: the per-circuit zkey is from a
   ceremony; the protocol doesn't add new trusted parties on top.
 - **Identity gate is policy**: the gate is one place — change it and
