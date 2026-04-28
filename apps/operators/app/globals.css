@@ -1,6 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
+/* Tailwind v4 scans only the current project by default, so
+ * utilities used inside the workspace-linked `@zkscatter/ui`
+ * package (e.g. `AppShellHeader`'s `gap-x-4`, `flex-wrap`) get
+ * tree-shaken out unless we point the source scanner at it. */
+@source "../../../../packages/ui/src";
+
 @theme inline {
   --color-bg: #f7f8fb;
   --color-surface: #ffffff;
