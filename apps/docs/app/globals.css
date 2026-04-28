@@ -94,10 +94,15 @@
   display: inline-flex;
   align-items: baseline;
   gap: 0.25rem;
+  color: #0c4a6e;
+}
+
+.dark .zs-brand {
+  color: #38bdf8;
 }
 
 .zs-brand-mark {
-  color: var(--zs-icon-fg);
+  color: inherit;
   flex-shrink: 0;
 }
 
