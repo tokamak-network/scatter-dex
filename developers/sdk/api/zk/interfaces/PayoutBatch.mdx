@@ -1,0 +1,13 @@
+# Interface: PayoutBatch
+
+One settle-sized batch of claims. The caller plugs `claims`
+ into `AuthorizeProofInput.claims` and `totalAmount` into both
+ `sellAmount` and `buyAmount` (self-pay USDC → USDC pattern).
+ Each batch needs its own `AuthorizeProofInput` and signature.
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="totalamount"></a> `totalAmount` | `bigint` | Sum of `amount` across `claims`. |
+| <a id="claims"></a> `claims` | [`ClaimEntry`](ClaimEntry.mdx)[] | Up to [MAX\_CLAIMS\_PER\_SIDE](../variables/MAX_CLAIMS_PER_SIDE.mdx) fully-formed entries, ready to pass straight to `generateAuthorizeProof`. |

@@ -19,6 +19,9 @@
 | [ClaimProofResult](interfaces/ClaimProofResult.mdx) | Output of `generateClaimProof`. Convenience fields duplicate signals from `publicSignals` so callers building `claim` calldata don't have to re-derive them. |
 | [CircuitAssets](interfaces/CircuitAssets.mdx) | Wasm + zkey assets for a single circuit. snarkjs accepts URLs, ArrayBuffers, or Uint8Arrays for both — pass whatever the host has already loaded. |
 | [DepositProofResult](interfaces/DepositProofResult.mdx) | - |
+| [PayoutRecipient](interfaces/PayoutRecipient.mdx) | Recipient line for a multi-recipient payout. The token is shared across the whole payout — see [SplitPayoutOpts.token](interfaces/SplitPayoutOpts.mdx#token). |
+| [SplitPayoutOpts](interfaces/SplitPayoutOpts.mdx) | - |
+| [PayoutBatch](interfaces/PayoutBatch.mdx) | One settle-sized batch of claims. The caller plugs `claims` into `AuthorizeProofInput.claims` and `totalAmount` into both `sellAmount` and `buyAmount` (self-pay USDC → USDC pattern). Each batch needs its own `AuthorizeProofInput` and signature. |
 | [CommitmentNote](interfaces/CommitmentNote.mdx) | A commitment note — the secret material backing one escrow entry. |
 | [MerkleProof](interfaces/MerkleProof.mdx) | Merkle inclusion proof for a commitment in the on-chain pool. |
 | [PoseidonModule](interfaces/PoseidonModule.mdx) | Opaque Poseidon module handle. Hot loops (e.g. building a depth-20 Merkle tree → 1M+ hashes) should fetch this once via `getPoseidonModule()` and call `poseidonHashWith(p, inputs)` synchronously inside the loop, rather than awaiting `poseidonHash` per hash and paying 1M microtasks. |
@@ -79,6 +82,7 @@
 | [singleClaimTree](functions/singleClaimTree.mdx) | Build a 16-leaf claims tree with a single entry at `leafIndex`, rest zero-padded. The shape every single-claim flow needs; centralised so the inline poseidonHash + Array(16).fill(0n) pattern lives in one place. |
 | [generateClaimProof](functions/generateClaimProof.mdx) | Generate a Groth16 claim proof for one slot of a settlement. |
 | [generateDepositProof](functions/generateDepositProof.mdx) | Generate a Groth16 deposit proof for a `CommitmentNote`. |
+| [splitPayout](functions/splitPayout.mdx) | Chunk a recipient list into batches that fit the protocol's `MAX_CLAIMS_PER_SIDE` cap (16). Order is preserved — recipient `i` always lands in batch `floor(i / 16)` — and per-claim secrets are drawn for any recipient that didn't supply one. |
 | [getPoseidonModule](functions/getPoseidonModule.mdx) | Get (and lazily build) the cached Poseidon module. The in-flight Promise is memoized so concurrent callers share one initialization. |
 | [warmupPoseidon](functions/warmupPoseidon.mdx) | Eagerly build the Poseidon round-constant table so the first proof job doesn't pay the build cost on the user's hot path. Worker `preload` hooks should call this on startup. |
 | [poseidonHash](functions/poseidonHash.mdx) | Generic Poseidon hash — convenient for one-off calls. Awaits the cached module each call, so use `poseidonHashWith` inside hot loops instead. |

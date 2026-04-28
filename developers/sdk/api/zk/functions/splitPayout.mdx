@@ -1,0 +1,27 @@
+# Function: splitPayout()
+
+```ts
+function splitPayout(recipients, opts): PayoutBatch[];
+```
+
+Chunk a recipient list into batches that fit the protocol's
+ `MAX_CLAIMS_PER_SIDE` cap (16). Order is preserved — recipient
+ `i` always lands in batch `floor(i / 16)` — and per-claim
+ secrets are drawn for any recipient that didn't supply one.
+
+ This is a pure helper. The caller still selects which note(s)
+ to spend per batch, manages the residual change UTXO, and
+ drives N proofs / N signatures. splitPayout only
+ exists so apps don't re-implement chunking + secret-generation
+ on top of `generateAuthorizeProof`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `recipients` | [`PayoutRecipient`](../interfaces/PayoutRecipient.mdx)[] |
+| `opts` | [`SplitPayoutOpts`](../interfaces/SplitPayoutOpts.mdx) |
+
+## Returns
+
+[`PayoutBatch`](../interfaces/PayoutBatch.mdx)[]

@@ -1,0 +1,107 @@
+name: Docs drift
+
+# Catches the "code changed, regenerated docs not committed" failure
+# mode (PR #475 ran into 28 of these). Two auto-generated artefacts:
+#   - `developers/sdk/api/**` from TypeDoc reading `packages/sdk/src/`
+#   - `apps/docs/public/openapi/relayer.yaml` from zod schemas in
+#     `zk-relayer/src/openapi/schemas/`
+#
+# The job regenerates both, then `git diff --exit-code` on the
+# committed files. Any divergence fails the build with a clear hint
+# at the missing `npm run …` step. Also runs `next build` so an
+# mdx error or broken import surfaces before merge.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "developers/**"
+      - "packages/sdk/src/**"
+      - "packages/sdk/package.json"
+      - "packages/sdk/package-lock.json"
+      - "packages/sdk/tsconfig.json"
+      - "packages/types/**"
+      - "zk-relayer/src/openapi/**"
+      - "zk-relayer/src/routes/info.ts"
+      - "zk-relayer/scripts/build-openapi.mjs"
+      - "zk-relayer/package.json"
+      - "zk-relayer/package-lock.json"
+      - ".github/workflows/docs-drift.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  drift:
+    name: docs / drift + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # `packages/types` is a `file:` dep of every consumer below and
+      # has a `prepare` script that runs `tsc`. Build it first so
+      # downstream `npm ci` calls don't trip on a missing `dist/`.
+      - name: Build packages/types
+        working-directory: packages/types
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc
+
+      - name: Install packages/sdk
+        working-directory: packages/sdk
+        run: npm ci --no-audit --no-fund
+
+      - name: Install apps/docs
+        working-directory: apps/docs
+        run: npm ci --no-audit --no-fund
+
+      # Same npm CLI bug #4828 workaround as the existing relayer job
+      # in `.github/workflows/ci.yml` — caching trips the optional-dep
+      # pruning. Clean install is the only reliable workaround.
+      - name: Install zk-relayer (clean)
+        working-directory: zk-relayer
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --no-audit --no-fund
+
+      - name: Regenerate OpenAPI yaml from zod schemas
+        working-directory: zk-relayer
+        run: npm run openapi
+
+      - name: Regenerate TypeDoc SDK reference
+        working-directory: apps/docs
+        run: npm run api
+
+      - name: Check for drift
+        run: |
+          set -e
+          if ! git diff --exit-code -- \
+              apps/docs/public/openapi/relayer.yaml \
+              developers/sdk/api/; then
+            echo ""
+            echo "::error::Auto-generated docs are out of sync with the source."
+            echo ""
+            echo "  Run these locally and commit the regenerated files:"
+            echo "    (cd zk-relayer  && npm run openapi)"
+            echo "    (cd apps/docs   && npm run api)"
+            echo ""
+            git --no-pager diff --stat -- \
+              apps/docs/public/openapi/relayer.yaml \
+              developers/sdk/api/
+            exit 1
+          fi
+
+      # Skip the wrapper `npm run build` (which would re-run `npm run
+      # api` we just ran above) and call Next directly.
+      - name: Build docs site
+        working-directory: apps/docs
+        run: npx next build

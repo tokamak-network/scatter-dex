@@ -11,6 +11,7 @@
 | Interface | Description |
 | ------ | ------ |
 | [FeeVaultBalance](interfaces/FeeVaultBalance.mdx) | - |
+| [IdentityVerification](interfaces/IdentityVerification.mdx) | - |
 | [UpdateRelayerInfoParams](interfaces/UpdateRelayerInfoParams.mdx) | - |
 | [OperatorRow](interfaces/OperatorRow.mdx) | - |
 | [RegistrationStatus](interfaces/RegistrationStatus.mdx) | - |
@@ -41,9 +42,12 @@
 
 | Function | Description |
 | ------ | ------ |
+| [callExceptionErrorName](functions/callExceptionErrorName.mdx) | Read the named error off ethers v6 contract-call exceptions when the ABI carries the matching error fragment. Falls back to null so callers can substring-match the message instead. Shared by every per-contract `explainXxxError` in the relayer module. |
+| [unwrapEthersError](functions/unwrapEthersError.mdx) | Best-effort unwrap of an ethers v6 error to a human-readable string. v6 surfaces the user-facing summary on `shortMessage`, the decoded revert reason on `reason`, and the underlying provider error on `info.error.message`. Fall through these in priority order before landing on the raw `Error.message` so callers (read-side error banners, write-side `explainXxxError`) always have the most descriptive string available. |
 | [loadFeeVaultBalances](functions/loadFeeVaultBalances.mdx) | Read every passed token's claimable balance for `operator` in one shot. Caller decides which tokens to query — typically the network's `tokens` whitelist — so this stays a pure batched read with no contract-side enumeration assumed. Tokens whose address is the zero sentinel (unconfigured slot in a partially deployed network config) are skipped. |
 | [claimRelayerFees](functions/claimRelayerFees.mdx) | Submit `claim(token)` to pull the operator's accrued balance for a single token. Reverts with `NothingToClaim` when the balance is zero — gate the button on a non-zero balance read so the wallet prompt never lands on a guaranteed-fail tx. |
-| [explainFeeVaultError](functions/explainFeeVaultError.mdx) | Map FeeVault custom-error reverts to user-facing copy. Falls back to the unwrapped v6 message so unexpected errors still surface a useful string instead of `[object Object]`. |
+| [explainFeeVaultError](functions/explainFeeVaultError.mdx) | Map FeeVault custom-error reverts to user-facing copy. Falls back to the unwrapped ethers v6 message so unexpected errors still surface a useful string instead of `[object Object]`. |
+| [loadIdentityVerification](functions/loadIdentityVerification.mdx) | Read an account's verification status from an arbitrary IdentityGate contract. zkScatter's Dual-CA architecture deploys one gate per CA (User CA = privacy-preserving, Relayer CA = full-disclosure), so callers pass the gate address explicitly rather than letting the SDK guess one. Pure read. |
 | [updateRelayerInfo](functions/updateRelayerInfo.mdx) | Submit `updateInfo(url, fee)` — operator-self-service edit of endpoint URL + per-trade fee. Validates the fee range up front for the same UX reason `registerRelayer` does. |
 | [addRelayerBond](functions/addRelayerBond.mdx) | Submit `addBond()` with the given top-up as `msg.value`. Rejects zero / negative amounts before a wallet prompt. |
 | [requestRelayerExit](functions/requestRelayerExit.mdx) | Submit `requestExit()` — flips the operator into the cool-down window. New orders stop routing immediately; bond becomes withdrawable via `executeRelayerExit` after `EXIT_COOLDOWN_SECONDS`. |
