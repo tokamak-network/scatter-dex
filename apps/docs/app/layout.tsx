@@ -22,18 +22,14 @@ export const metadata = {
 // theme toggle round out the navbar.
 const navbar = (
   <Navbar
-    logo={
-      <span style={{ fontWeight: 700, letterSpacing: "-0.01em" }}>
-        zkScatter Docs
-      </span>
-    }
+    logo={<span className="zs-brand">zkScatter Docs</span>}
     projectLink="https://github.com/tokamak-network/scatter-dex"
   />
 );
 
 const footer = (
   <Footer>
-    <span style={{ fontSize: "0.85rem", opacity: 0.7 }}>
+    <span className="zs-footer-text">
       © {new Date().getFullYear()} Tokamak Network · zkScatter
     </span>
   </Footer>

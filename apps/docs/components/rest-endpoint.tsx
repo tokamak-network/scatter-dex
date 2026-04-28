@@ -14,6 +14,7 @@ import * as React from "react";
 import {
   exampleFromSchema,
   inlineSchema,
+  operationSlug,
   refName,
   type OpenApiDoc,
   type OpenApiOperation,
@@ -22,38 +23,32 @@ import {
   type OpenApiRef,
 } from "../lib/openapi";
 
-const METHOD_COLOR: Record<string, string> = {
-  get: "var(--zs-method-get, #16a34a)",
-  post: "var(--zs-method-post, #2563eb)",
-  put: "var(--zs-method-put, #ca8a04)",
-  delete: "var(--zs-method-delete, #dc2626)",
-  patch: "var(--zs-method-patch, #7c3aed)",
-};
-
 interface Props {
   doc: OpenApiDoc;
   method: string;
   path: string;
   op: OpenApiOperation;
   serverUrl?: string;
+  /** Optional precomputed slug — falls back to `operationSlug()`. */
+  slug?: string;
 }
 
-export function RestEndpoint({ doc, method, path, op, serverUrl }: Props) {
+export function RestEndpoint({ doc, method, path, op, serverUrl, slug }: Props) {
   const M = method.toUpperCase();
-  const slug = `${method}-${path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`.toLowerCase();
-  const requestSchema =
-    op.requestBody?.content?.["application/json"]?.schema;
+  const id = slug ?? operationSlug(method, path);
+  const requestSchema = op.requestBody?.content?.["application/json"]?.schema;
   const responses = Object.entries(op.responses ?? {});
 
+  // Hoisted once: success-response schema for the Example block.
+  const successSchema = responses.find(([s]) => s.startsWith("2"))?.[1]
+    ?.content?.["application/json"]?.schema;
+
   return (
-    <section id={slug} className="zs-rest-endpoint">
+    <section id={id} className="zs-rest-endpoint">
       <header className="zs-rest-head">
         <h2 className="zs-rest-title">{op.summary ?? `${M} ${path}`}</h2>
         <div className="zs-rest-line">
-          <span
-            className="zs-rest-method"
-            style={{ background: METHOD_COLOR[method] ?? "#475569" }}
-          >
+          <span className="zs-rest-method" data-method={method}>
             {M}
           </span>
           <code className="zs-rest-path">{path}</code>
@@ -77,18 +72,11 @@ export function RestEndpoint({ doc, method, path, op, serverUrl }: Props) {
         <Block title="Responses">
           {responses.map(([status, res]) => {
             const schema = res.content?.["application/json"]?.schema;
+            const tone = status.startsWith("2") ? "ok" : "err";
             return (
               <div key={status} className="zs-rest-response">
                 <div className="zs-rest-status">
-                  <span
-                    className="zs-rest-status-pill"
-                    style={{
-                      background: status.startsWith("2")
-                        ? "rgba(34,197,94,0.12)"
-                        : "rgba(239,68,68,0.12)",
-                      color: status.startsWith("2") ? "#16a34a" : "#dc2626",
-                    }}
-                  >
+                  <span className="zs-rest-status-pill" data-tone={tone}>
                     {status}
                   </span>
                   <span className="zs-rest-status-desc">
@@ -107,18 +95,7 @@ export function RestEndpoint({ doc, method, path, op, serverUrl }: Props) {
           method={M}
           url={`${serverUrl ?? "https://relayer.example.com"}${path}`}
         />
-        {responses.find(([s]) => s.startsWith("2"))?.[1]?.content?.[
-          "application/json"
-        ]?.schema && (
-          <ResponseSample
-            doc={doc}
-            schema={
-              responses.find(([s]) => s.startsWith("2"))![1].content![
-                "application/json"
-              ].schema
-            }
-          />
-        )}
+        {successSchema && <ResponseSample doc={doc} schema={successSchema} />}
       </Block>
     </section>
   );
@@ -134,7 +111,7 @@ function Block({
   return (
     <div className="zs-rest-block">
       <h3 className="zs-rest-block-title">{title}</h3>
-      <div>{children}</div>
+      {children}
     </div>
   );
 }
@@ -201,17 +178,14 @@ function SchemaTree({
   }
   const required = new Set(s.required ?? []);
   return (
-    <div
-      className="zs-rest-params"
-      style={depth > 0 ? { marginLeft: "0.75rem", paddingLeft: "0.75rem", borderLeft: "2px solid var(--zs-step-rail)" } : undefined}
-    >
+    <div className="zs-rest-params" data-depth={depth}>
       {ref && depth === 0 && (
         <div className="zs-rest-schema-name">{ref}</div>
       )}
       {Object.entries(s.properties).map(([name, prop]) => {
         const propSchema = inlineSchema(doc, prop);
         const isObject =
-          propSchema?.type === "object" && propSchema.properties;
+          propSchema?.type === "object" && !!propSchema.properties;
         return (
           <div key={name} className="zs-rest-param">
             <div className="zs-rest-param-head">
@@ -231,8 +205,8 @@ function SchemaTree({
                 example: <code>{JSON.stringify(propSchema.example)}</code>
               </p>
             )}
-            {isObject && (
-              <SchemaTree doc={doc} schema={prop} depth={depth + 1} />
+            {isObject && propSchema && (
+              <SchemaTree doc={doc} schema={propSchema} depth={depth + 1} />
             )}
           </div>
         );

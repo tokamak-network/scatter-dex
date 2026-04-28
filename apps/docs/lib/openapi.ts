@@ -99,17 +99,23 @@ export function listOperations(
   return out;
 }
 
+/* Per-doc memoization. The keys live in WeakMaps so they GC with the
+ * doc — important when the dev server hot-reloads a fresh spec. */
+const exampleCache = new WeakMap<OpenApiDoc, Map<string, unknown>>();
+
 /* Resolve a local `$ref` into the actual schema. We only handle
  * `#/components/schemas/...` since that's what zod-openapi emits;
  * `$ref` pointing outside the doc returns null and the caller
- * surfaces a placeholder rather than crashing. */
+ * surfaces a placeholder rather than crashing.
+ *
+ * Plain prefix slice — no regex per call. */
+const REF_PREFIX = "#/components/schemas/";
 export function resolveRef(
   doc: OpenApiDoc,
   ref: string,
 ): OpenApiSchema | null {
-  const m = /^#\/components\/schemas\/(.+)$/.exec(ref);
-  if (!m) return null;
-  return doc.components?.schemas?.[m[1]!] ?? null;
+  if (!ref.startsWith(REF_PREFIX)) return null;
+  return doc.components?.schemas?.[ref.slice(REF_PREFIX.length)] ?? null;
 }
 
 /* Walk a schema, inlining `$ref`s. Apps/docs don't need a full
@@ -128,12 +134,39 @@ export function inlineSchema(
 
 /* Generate a synthetic example object from a schema by walking
  * `example` values on each property. Used by the "Response sample"
- * tab when no explicit example is supplied at the operation level. */
+ * block when no explicit example is supplied at the operation level.
+ *
+ * `$ref`-keyed results are memoized per doc so the same schema (e.g.
+ * `RelayerProfile` referenced by multiple operations) only walks
+ * once. Caches GC with the doc via `WeakMap`. */
 export function exampleFromSchema(
   doc: OpenApiDoc,
   schema: OpenApiSchema | OpenApiRef | null | undefined,
 ): unknown {
-  const s = inlineSchema(doc, schema ?? undefined);
+  if (!schema) return null;
+  if ("$ref" in schema && schema.$ref) {
+    let cache = exampleCache.get(doc);
+    if (!cache) {
+      cache = new Map();
+      exampleCache.set(doc, cache);
+    }
+    const cached = cache.get(schema.$ref);
+    if (cached !== undefined) return cached;
+    const built = buildExample(doc, resolveRef(doc, schema.$ref));
+    cache.set(schema.$ref, built);
+    return built;
+  }
+  return buildExample(doc, schema as OpenApiSchema);
+}
+
+const TYPE_FALLBACK: Record<string, unknown> = {
+  string: "string",
+  integer: 0,
+  number: 0,
+  boolean: false,
+};
+
+function buildExample(doc: OpenApiDoc, s: OpenApiSchema | null): unknown {
   if (!s) return null;
   if (s.example !== undefined) return s.example;
   if (s.type === "object" && s.properties) {
@@ -147,10 +180,7 @@ export function exampleFromSchema(
     return [exampleFromSchema(doc, s.items)];
   }
   if (s.enum && s.enum.length) return s.enum[0];
-  // Type fallbacks — never `undefined` so JSON.stringify keeps the key.
-  if (s.type === "string") return "string";
-  if (s.type === "integer" || s.type === "number") return 0;
-  if (s.type === "boolean") return false;
+  if (s.type && s.type in TYPE_FALLBACK) return TYPE_FALLBACK[s.type];
   return null;
 }
 
@@ -162,4 +192,13 @@ export function refName(schema: OpenApiSchema | OpenApiRef | undefined): string 
     return m?.[1] ?? null;
   }
   return null;
+}
+
+/* Stable in-page anchor for an operation. Shared by the per-page TOC
+ * grid, the `RestEndpoint` card it scrolls to, and any cross-doc
+ * link generators. Drift between the producers used to be a real
+ * source of broken anchors. */
+export function operationSlug(method: string, path: string): string {
+  const cleaned = path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+  return `${method}-${cleaned}`.toLowerCase();
 }

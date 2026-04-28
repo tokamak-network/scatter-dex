@@ -16,6 +16,8 @@ export function CardGroup({
     <div
       className="zs-card-grid"
       style={{
+        // Only legitimately-dynamic style on the page — `cols` is
+        // author-provided per CardGroup.
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
       }}
     >
@@ -56,6 +58,16 @@ export function Card({
   return inner;
 }
 
+/* `Steps` numbers each direct child by injecting `__index` via
+ * `cloneElement`. Context would be cleaner but server components
+ * can't `createContext`, and forcing the whole MDX subtree to "use
+ * client" just for step numbering is the wrong tradeoff. */
+interface StepProps {
+  title?: React.ReactNode;
+  children?: React.ReactNode;
+  __index?: number;
+}
+
 export function Steps({ children }: { children: React.ReactNode }) {
   let i = 0;
   return (
@@ -63,43 +75,30 @@ export function Steps({ children }: { children: React.ReactNode }) {
       {React.Children.toArray(children)
         .filter(Boolean)
         .map((child) => {
-          if (
-            React.isValidElement(child) &&
-            (child.type as { displayName?: string })?.displayName === "Step"
-          ) {
-            i += 1;
-            return React.cloneElement(child as React.ReactElement<StepProps>, {
-              __index: i,
-            });
-          }
-          return child;
+          if (!React.isValidElement(child)) return child;
+          i += 1;
+          return React.cloneElement(child as React.ReactElement<StepProps>, {
+            __index: i,
+          });
         })}
     </ol>
   );
 }
 
-interface StepProps {
-  title?: React.ReactNode;
-  children?: React.ReactNode;
-  __index?: number;
+export function Step({ title, children, __index }: StepProps) {
+  return (
+    <li className="zs-step">
+      <span className="zs-step-bullet" aria-hidden>
+        {__index ?? "•"}
+      </span>
+      {title && <div className="zs-step-title">{title}</div>}
+      <div>{children}</div>
+    </li>
+  );
 }
 
-export const Step: React.FC<StepProps> & { displayName?: string } =
-  function Step({ title, children, __index }: StepProps) {
-    return (
-      <li className="zs-step">
-        <span className="zs-step-bullet" aria-hidden>
-          {__index ?? "•"}
-        </span>
-        {title && <div className="zs-step-title">{title}</div>}
-        <div>{children}</div>
-      </li>
-    );
-  };
-Step.displayName = "Step";
-
 export function AccordionGroup({ children }: { children: React.ReactNode }) {
-  return <div style={{ margin: "1rem 0" }}>{children}</div>;
+  return <div className="zs-accordion-group">{children}</div>;
 }
 
 export function Accordion({
@@ -117,21 +116,22 @@ export function Accordion({
   );
 }
 
+const CALLOUT_VARIANTS = {
+  info: { cls: "zs-callout", icon: Info },
+  success: { cls: "zs-callout zs-callout--success", icon: CheckCircle2 },
+  warn: { cls: "zs-callout zs-callout--warn", icon: AlertTriangle },
+} as const;
+
+type CalloutVariant = keyof typeof CALLOUT_VARIANTS;
+
 function Callout({
   variant = "info",
   children,
 }: {
-  variant?: "info" | "success" | "warn";
+  variant?: CalloutVariant;
   children: React.ReactNode;
 }) {
-  const cls =
-    variant === "success"
-      ? "zs-callout zs-callout--success"
-      : variant === "warn"
-        ? "zs-callout zs-callout--warn"
-        : "zs-callout";
-  const Icn =
-    variant === "success" ? CheckCircle2 : variant === "warn" ? AlertTriangle : Info;
+  const { cls, icon: Icn } = CALLOUT_VARIANTS[variant];
   return (
     <div className={cls}>
       <span className="zs-callout-icon" aria-hidden>

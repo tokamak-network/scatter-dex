@@ -48,6 +48,17 @@
   --zs-badge-fg: #38bdf8;
 }
 
+/* Brand + footer typography (used by app/layout.tsx). */
+.zs-brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zs-footer-text {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
 /* ─────────────────────────────────────────────────────────────────
  * Card
  * ───────────────────────────────────────────────────────────────── */
@@ -157,6 +168,10 @@ a.zs-card-link:focus-visible .zs-card {
  * Accordion
  * ───────────────────────────────────────────────────────────────── */
 
+.zs-accordion-group {
+  margin: 1rem 0;
+}
+
 .zs-accordion {
   border: 1px solid var(--zs-card-border);
   border-radius: 0.625rem;
@@ -245,6 +260,21 @@ a.zs-card-link:focus-visible .zs-card {
 
 .zs-page-header {
   margin-bottom: 1.5rem;
+}
+
+.zs-page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.zs-page-header-desc {
+  font-size: 1.05rem;
+  opacity: 0.7;
+  margin: 0.25rem 0 0;
+  line-height: 1.5;
 }
 
 .zs-section-badge {
@@ -440,6 +470,13 @@ header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
   gap: 0.85rem;
 }
 
+.zs-rest-toc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
 .zs-rest-list {
   display: flex;
   flex-direction: column;
@@ -483,6 +520,7 @@ header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
   padding: 0.18rem 0.5rem;
   border-radius: 0.3rem;
   font-family: inherit;
+  background: #475569;          /* fallback when method unknown */
 }
 
 .zs-rest-method-sm {
@@ -492,11 +530,14 @@ header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
   text-align: center;
 }
 
-.zs-rest-method-sm[data-method="get"] { background: #16a34a; color: white; }
-.zs-rest-method-sm[data-method="post"] { background: #2563eb; color: white; }
-.zs-rest-method-sm[data-method="put"] { background: #ca8a04; color: white; }
-.zs-rest-method-sm[data-method="delete"] { background: #dc2626; color: white; }
-.zs-rest-method-sm[data-method="patch"] { background: #7c3aed; color: white; }
+/* Single source of truth for HTTP method colours — `data-method` on
+ * either size variant resolves through the same attribute selectors.
+ * No JS-side METHOD_COLOR map needed. */
+.zs-rest-method[data-method="get"]    { background: #16a34a; }
+.zs-rest-method[data-method="post"]   { background: #2563eb; }
+.zs-rest-method[data-method="put"]    { background: #ca8a04; }
+.zs-rest-method[data-method="delete"] { background: #dc2626; }
+.zs-rest-method[data-method="patch"]  { background: #7c3aed; }
 
 .zs-rest-path {
   font-size: 0.95rem;
@@ -533,6 +574,17 @@ header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+}
+
+/* Nested SchemaTree gets a left rail + indent so the hierarchy reads
+ * — `[data-depth]` is set by the recursive component, no inline
+ * styles needed. */
+.zs-rest-params[data-depth="1"],
+.zs-rest-params[data-depth="2"],
+.zs-rest-params[data-depth="3"] {
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--zs-step-rail);
 }
 
 .zs-rest-param {
@@ -638,6 +690,18 @@ header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
   font-weight: 700;
   padding: 0.15rem 0.55rem;
   border-radius: 0.3rem;
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+}
+
+.zs-rest-status-pill[data-tone="ok"] {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.zs-rest-status-pill[data-tone="err"] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
 }
 
 .zs-rest-status-desc {
