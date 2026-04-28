@@ -16,6 +16,7 @@
     "./orderbook": "./src/orderbook/index.ts",
     "./contracts": "./src/contracts/index.ts",
     "./notes": "./src/notes/index.ts",
+    "./storage": "./src/storage/index.ts",
     "./util": "./src/util/index.ts"
   },
   "scripts": {
