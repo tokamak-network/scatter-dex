@@ -1,7 +1,14 @@
 /**
- * Workspace backup — export every `zkscatter-*` file in the active
- * folder into a single JSON bundle, and reverse the process on
- * import.
+ * Workspace backup — export every UTF-8 `zkscatter-*` file in the
+ * active folder into a single JSON bundle, and reverse the process
+ * on import.
+ *
+ * **Text-only, by design.** Files are read via `File.text()` and
+ * persisted in `bundle.files` as strings, so the bundle only
+ * round-trips UTF-8 text. All workspace members today are JSON /
+ * JSON-Lines, which fits cleanly. A future binary member (raw key
+ * material, sealed blobs) would need a base64 encoding pass —
+ * `WorkspaceBackup` would bump to `version: 2` at that point.
  *
  * Use case: the operator wants to copy a workspace to a new device,
  * keep an off-disk archive, or migrate the folder schema. The bundle
@@ -26,9 +33,10 @@ import {
 /** Files that match this prefix are considered workspace-managed.
  *  Anything else in the folder (the user's own notes, manual
  *  artefacts) is left alone by both export and import. The match is
- *  by prefix rather than `.json` extension on purpose: the workspace
- *  may grow non-JSON members (binary keys, CSV exports) under the
- *  same naming convention. */
+ *  by prefix rather than `.json` extension on purpose so a future
+ *  text-format member (CSV, JSON-Lines) under the same naming
+ *  convention is covered without changing this predicate. Binary
+ *  members would still require a format bump — see the file header. */
 const WORKSPACE_FILE_PREFIX = "zkscatter-";
 
 const BACKUP_VERSION = 1 as const;
