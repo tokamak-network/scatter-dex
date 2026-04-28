@@ -1,0 +1,13 @@
+# Function: warmupPoseidon()
+
+```ts
+function warmupPoseidon(): Promise<void>;
+```
+
+Eagerly build the Poseidon round-constant table so the first
+ proof job doesn't pay the build cost on the user's hot path.
+ Worker `preload` hooks should call this on startup.
+
+## Returns
+
+`Promise`\<`void`\>

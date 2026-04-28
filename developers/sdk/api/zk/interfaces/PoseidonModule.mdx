@@ -1,0 +1,34 @@
+# Interface: PoseidonModule()
+
+Opaque Poseidon module handle. Hot loops (e.g. building a
+ depth-20 Merkle tree → 1M+ hashes) should fetch this once via
+ `getPoseidonModule()` and call `poseidonHashWith(p, inputs)`
+ synchronously inside the loop, rather than awaiting
+ `poseidonHash` per hash and paying 1M microtasks.
+
+```ts
+PoseidonModule(inputs): unknown;
+```
+
+Opaque Poseidon module handle. Hot loops (e.g. building a
+ depth-20 Merkle tree → 1M+ hashes) should fetch this once via
+ `getPoseidonModule()` and call `poseidonHashWith(p, inputs)`
+ synchronously inside the loop, rather than awaiting
+ `poseidonHash` per hash and paying 1M microtasks.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `inputs` | `bigint`[] |
+
+## Returns
+
+`unknown`
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="f"></a> `F` | \{ `toObject`: `bigint`; \} |
+| `F.toObject` | `bigint` |

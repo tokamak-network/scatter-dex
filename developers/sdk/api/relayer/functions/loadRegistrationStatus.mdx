@@ -1,0 +1,24 @@
+# Function: loadRegistrationStatus()
+
+```ts
+function loadRegistrationStatus(
+   registryAddress, 
+   account, 
+provider): Promise<RegistrationStatus>;
+```
+
+Read the prerequisite state for relayer registration: identity
+ verification, prior active-relayer status, and the registry's
+ current minimum bond. Pure read.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `account` | `string` |
+| `provider` | `Provider` |
+
+## Returns
+
+`Promise`\<[`RegistrationStatus`](../interfaces/RegistrationStatus.mdx)\>

@@ -1,0 +1,167 @@
+# Class: RelayerClient
+
+Thin HTTP client for one relayer's API. No retry, no caching;
+ callers compose those concerns. Errors throw with the relayer's
+ `error` body field when present, falling back to the HTTP
+ status line. Every method accepts an optional `signal` so
+ callers can cancel from a UI's `AbortController`.
+
+## Constructors
+
+### Constructor
+
+```ts
+new RelayerClient(baseUrl, opts?): RelayerClient;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `baseUrl` | `string` |
+| `opts` | `ClientOpts` |
+
+#### Returns
+
+`RelayerClient`
+
+## Methods
+
+### getInfo()
+
+```ts
+getInfo(signal?): Promise<RelayerApiInfo>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<[`RelayerApiInfo`](../interfaces/RelayerApiInfo.mdx)\>
+
+***
+
+### submitOrder()
+
+```ts
+submitOrder(
+   order, 
+   signature, 
+   feeMode?, 
+   signal?): Promise<{
+  status: string;
+  txHash?: string;
+  nonce?: string;
+}>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `order` | [`OrderData`](../interfaces/OrderData.mdx) |
+| `signature` | `string` |
+| `feeMode?` | `"cover_taker"` |
+| `signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<\{
+  `status`: `string`;
+  `txHash?`: `string`;
+  `nonce?`: `string`;
+\}\>
+
+***
+
+### getOrders()
+
+```ts
+getOrders(address, signal?): Promise<RelayerOrder[]>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `address` | `string` |
+| `signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<[`RelayerOrder`](../interfaces/RelayerOrder.mdx)[]\>
+
+***
+
+### getOrderHistory()
+
+```ts
+getOrderHistory(address, opts?): Promise<OrderHistoryResponse>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `address` | `string` |
+| `opts` | \{ `status?`: `string`; `limit?`: `number`; `offset?`: `number`; `signal?`: `AbortSignal`; \} |
+| `opts.status?` | `string` |
+| `opts.limit?` | `number` |
+| `opts.offset?` | `number` |
+| `opts.signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<[`OrderHistoryResponse`](../interfaces/OrderHistoryResponse.mdx)\>
+
+***
+
+### getOrderDetail()
+
+```ts
+getOrderDetail(
+   address, 
+   nonce, 
+signal?): Promise<RelayerOrder>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `address` | `string` |
+| `nonce` | `string` |
+| `signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<[`RelayerOrder`](../interfaces/RelayerOrder.mdx)\>
+
+***
+
+### cancelOrder()
+
+```ts
+cancelOrder(
+   address, 
+   nonce, 
+   signature, 
+signal?): Promise<void>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `address` | `string` |
+| `nonce` | `number` |
+| `signature` | `string` |
+| `signal?` | `AbortSignal` |
+
+#### Returns
+
+`Promise`\<`void`\>

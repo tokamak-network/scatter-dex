@@ -1,0 +1,19 @@
+# Function: computeCommitment()
+
+```ts
+function computeCommitment(note): Promise<bigint>;
+```
+
+v2 commitment:
+ Poseidon(TAG_COMMITMENT_V2, ownerSecret, token, amount, salt,
+          pubKeyAx, pubKeyAy)
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `note` | [`CommitmentNote`](../interfaces/CommitmentNote.mdx) |
+
+## Returns
+
+`Promise`\<`bigint`\>

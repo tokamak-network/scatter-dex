@@ -1,0 +1,71 @@
+---
+title: FAQ
+description: "Common questions about zkScatter, the SDK, and operator setup."
+---
+
+## Protocol
+
+<AccordionGroup>
+  <Accordion title="Is zkScatter a DEX?">
+    Not exclusively. zkScatter is a privacy-preserving settlement
+    protocol — OTC trading is one flow on top, alongside private
+    payments and identity-gated drops. See [Architecture](/docs/concepts/architecture).
+  </Accordion>
+  <Accordion title="Are stealth addresses required?">
+    No — they're opt-in. Recipients can take payouts at a regular
+    wallet address or a stealth address (EIP-5564). The on-chain
+    `claim` circuit is the same either way. See [Stealth addresses](/docs/concepts/stealth-addresses).
+  </Accordion>
+  <Accordion title="What chain does zkScatter deploy to?">
+    EVM-based — production target is Ethereum mainnet, with reference
+    deployments on Sepolia for development. The same SDK works on any
+    EVM chain a relayer chooses to serve.
+  </Accordion>
+</AccordionGroup>
+
+## SDK
+
+<AccordionGroup>
+  <Accordion title="Why TypeScript only?">
+    TypeScript covers the four reference apps (Pro, Pay, Drop, Mobile)
+    and gives us strong type-checking against the contract ABIs and
+    ZK proof inputs. Other-language SDKs are easy to generate from
+    the relayer's [OpenAPI spec](/sdk/rest/relayer) when needed.
+  </Accordion>
+  <Accordion title="Can I use the SDK in Node?">
+    Yes for `core`, `contracts`, `relayer`, `orderbook`, `notes`. The
+    `zk` module assumes a browser / RN runtime for proof generation;
+    Node usage requires polyfilling `crypto.getRandomValues`. See the
+    [compatibility matrix](/sdk/overview).
+  </Accordion>
+  <Accordion title="How do I keep notes safe?">
+    Use the IndexedDB adapter in browsers and AsyncStorage / SQLite
+    on mobile. Encrypt at rest if your threat model includes physical
+    device access. See [Persist notes](/docs/guides/persist-notes).
+  </Accordion>
+</AccordionGroup>
+
+## Operator
+
+<AccordionGroup>
+  <Accordion title="How much bond do I need to register a relayer?">
+    Read `RelayerRegistry.minBond()` on the chain you're serving. The
+    contract enforces a minimum; running with more makes apps more
+    likely to route through you. See [Run a relayer node](/docs/operate/run-a-relayer-node).
+  </Accordion>
+  <Accordion title="What happens if my server goes down mid-match?">
+    The order's `nonce` stays valid until expiry — apps will retry
+    against another relayer. Repeated failures don't slash bond
+    automatically; only verifiable bad behaviour does.
+  </Accordion>
+  <Accordion title="How does exit work?">
+    `requestExit()` flips you into a 7-day cool-down. Stop accepting
+    new orders during this window, then call `executeExit()` to
+    withdraw your bond.
+  </Accordion>
+</AccordionGroup>
+
+## Found a gap?
+
+Open an issue on [GitHub](https://github.com/tokamak-network/scatter-dex/issues)
+or DM the team — we add answers here as questions come up.

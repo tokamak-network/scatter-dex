@@ -1,0 +1,21 @@
+# Function: randomFieldElement()
+
+```ts
+function randomFieldElement(): bigint;
+```
+
+Generate a cryptographically random field element strictly less
+ than the BN254 scalar modulus. Uses `crypto.getRandomValues`
+ (`globalThis.crypto` works in browser, Node 19+, Deno, Bun).
+
+ Sampling: top byte is masked with `0x3f` so the candidate is at
+ most 254 bits (since `FIELD_MODULUS < 2^254`). The do-while
+ rejects the ~24% of candidates that still land in `[FIELD_MODULUS,
+ 2^254)`, leaving a uniform distribution over `[0, FIELD_MODULUS)`
+ with no modulo bias. We pay slightly more rejections than the
+ legacy `0x1f` mask did, but get a full ~254 bits of entropy
+ rather than ~253.
+
+## Returns
+
+`bigint`

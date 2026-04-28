@@ -1,0 +1,143 @@
+---
+title: Operator dashboard
+description: "Build an operator-facing UI: registry status, queue depth, fee stats, exit controls."
+---
+
+If you're running a relayer, your operator dashboard is the control
+panel: register, monitor, top up bond, change fee, request exit.
+The SDK ships every primitive needed — this page assembles them.
+
+## What to surface
+
+<CardGroup cols={2}>
+  <Card title="Registry status" icon="shield-check">
+    Active / cooldown / offline / unregistered. Bond, fee, registered-at.
+  </Card>
+  <Card title="Queue depth" icon="list-ol">
+    Pending authorize orders the matcher is holding. From `/api/info`.
+  </Card>
+  <Card title="Settlement throughput" icon="chart-line">
+    Trades settled per hour, fees collected. Subscribe to
+    `TradeSettled` events.
+  </Card>
+  <Card title="Bond posture" icon="server">
+    Current bond, slashing history, headroom over `minBond`.
+  </Card>
+</CardGroup>
+
+## Read everything in one shot
+
+```ts
+import {
+  loadOperatorRow,
+  RelayerClient,
+} from "@zkscatter/sdk/relayer";
+
+const [row, info] = await Promise.all([
+  loadOperatorRow(
+    network.contracts.relayerRegistry,
+    operatorAddress,
+    readProvider,
+  ),
+  new RelayerClient("https://my-relayer.example.com").getInfo(),
+]);
+
+// row.status: "active" | "cooldown" | "offline" | "unregistered"
+// row.bondEth: human-readable bond
+// info.orderCount: pending queue depth
+```
+
+Drive the UI off `row.status`:
+
+| Status | UI affordances |
+|---|---|
+| `unregistered` | Register form (URL + fee + bond) |
+| `active` | Update info / Add bond / Request exit |
+| `cooldown` | Show cool-down timer; disable updates |
+| `offline` | Show "re-register" CTA |
+
+## Settlement event feed
+
+```ts
+import { ethers } from "ethers";
+import { PRIVATE_SETTLEMENT_IFACE } from "@zkscatter/sdk";
+
+const contract = new ethers.Contract(
+  network.contracts.privateSettlement,
+  PRIVATE_SETTLEMENT_IFACE,
+  readProvider,
+);
+
+const filter = contract.filters.TradeSettled(null, null, null, null, null, operatorAddress);
+contract.on(filter, (makerNull, takerNull, makerCmt, takerCmt, claimsRoot, relayer, makerFee, takerFee) => {
+  // append to UI
+});
+```
+
+Filtering by the operator address as the 6th `TradeSettled` indexed
+arg gives you the firehose of your own settlements.
+
+## Fee adjustments
+
+```ts
+import { updateRelayerInfo } from "@zkscatter/sdk/relayer";
+
+await updateRelayerInfo(
+  network.contracts.relayerRegistry,
+  { url: row.url, feeBps: 25 },     // 0.25 %
+  signer,
+);
+```
+
+Fee changes propagate to apps on their next `loadRelayersWithApiInfo`
+refresh — typically within 60s.
+
+## Bond posture widget
+
+```tsx
+function BondPosture({ row, minBond }: { row: OperatorRow; minBond: bigint }) {
+  const ratio = Number((row.bond * 1000n) / minBond) / 1000;
+  return (
+    <div>
+      <div>Current bond: {row.bondEth} ETH</div>
+      <div>Minimum: {ethers.formatEther(minBond)} ETH</div>
+      <div>Headroom: {(ratio - 1).toFixed(2)}× over minimum</div>
+      {ratio < 1.5 && <Warning>Top up — single slash could drop you below minimum</Warning>}
+    </div>
+  );
+}
+```
+
+## Exit flow UI
+
+```tsx
+import { requestRelayerExit, executeRelayerExit, EXIT_COOLDOWN_SECONDS } from "@zkscatter/sdk/relayer";
+
+function ExitFlow({ row }: { row: OperatorRow }) {
+  if (row.status === "active") {
+    return <button onClick={() => requestRelayerExit(/* ... */)}>Request exit (7-day cool-down)</button>;
+  }
+  if (row.status === "cooldown") {
+    const unlockAt = row.exitRequestedAt + EXIT_COOLDOWN_SECONDS;
+    const remaining = unlockAt - Math.floor(Date.now() / 1000);
+    if (remaining > 0) {
+      return <div>Bond unlocks in {Math.ceil(remaining / 86400)} days</div>;
+    }
+    return <button onClick={() => executeRelayerExit(/* ... */)}>Withdraw bond</button>;
+  }
+  return null;
+}
+```
+
+## Reference implementation
+
+The Tokamak-shipped operator dashboard lives in `apps/operators/`
+under the monorepo. Patterns to copy:
+
+- `OperatorIdentityBar` — header showing status / address / bond
+- `useOperator` — hook wrapping `loadOperatorRow` with auto-refresh
+- `useRegistryWrite` — abstracts the four write operations with
+  toast feedback
+
+If you build your own, point at it via the registry's `url` field;
+apps don't care which dashboard implementation an operator uses.

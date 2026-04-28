@@ -1,0 +1,61 @@
+# core
+
+## Interfaces
+
+| Interface | Description |
+| ------ | ------ |
+| [ContractAddresses](interfaces/ContractAddresses.mdx) | Addresses of every core zkScatter contract on a given chain. |
+| [NetworkConfig](interfaces/NetworkConfig.mdx) | Everything an app needs to talk to one zkScatter deployment. |
+| [CommitmentInsertedRow](interfaces/CommitmentInsertedRow.mdx) | One `CommitmentInserted` event row, normalised to native bigints and a JS number for the leaf index. |
+| [CommitmentInsertedHistoryOptions](interfaces/CommitmentInsertedHistoryOptions.mdx) | Optional block range for incremental hydration. Without bounds the helper queries the whole event history, which is fine on fresh testnets but can hit RPC log limits as the pool grows. Apps that know a deploy block (or want to chunk) supply `fromBlock` / `toBlock`. |
+| [TokenInfo](interfaces/TokenInfo.mdx) | A token an app can offer in pickers, balances, orders. |
+| [WhitelistedToken](interfaces/WhitelistedToken.mdx) | A token an app can offer in pickers, balances, orders. |
+| [WhitelistedPair](interfaces/WhitelistedPair.mdx) | - |
+
+## Type Aliases
+
+| Type Alias | Description |
+| ------ | ------ |
+| [ExplorerEntity](type-aliases/ExplorerEntity.mdx) | - |
+| [QuoteMarket](type-aliases/QuoteMarket.mdx) | Markets a token can serve as the **quote** side of (Upbit-style market tabs). Used by pickers to group pairs by quote currency and by the orderbook UI to render a "USDC market / USDT market / ETH market" tab strip. |
+
+## Variables
+
+| Variable | Description |
+| ------ | ------ |
+| [ZERO\_ADDRESS](variables/ZERO_ADDRESS.mdx) | Canonical zero address — the placeholder a `NetworkConfig` uses for any contract slot that hasn't been deployed yet. Lowercase to match the case-insensitive comparison in `isConfiguredAddress`. |
+| [RELAYER\_REGISTRY\_ABI](variables/RELAYER_REGISTRY_ABI.mdx) | - |
+| [IDENTITY\_GATE\_ABI](variables/IDENTITY_GATE_ABI.mdx) | - |
+| [ERC20\_ABI](variables/ERC20_ABI.mdx) | - |
+| [MOCK\_TOKEN\_ABI](variables/MOCK_TOKEN_ABI.mdx) | - |
+| [PRIVATE\_SETTLEMENT\_ABI](variables/PRIVATE_SETTLEMENT_ABI.mdx) | - |
+| [COMMITMENT\_POOL\_ABI](variables/COMMITMENT_POOL_ABI.mdx) | - |
+| [FEE\_VAULT\_ABI](variables/FEE_VAULT_ABI.mdx) | - |
+| [RELAYER\_REGISTRY\_IFACE](variables/RELAYER_REGISTRY_IFACE.mdx) | - |
+| [IDENTITY\_GATE\_IFACE](variables/IDENTITY_GATE_IFACE.mdx) | - |
+| [ERC20\_IFACE](variables/ERC20_IFACE.mdx) | - |
+| [PRIVATE\_SETTLEMENT\_IFACE](variables/PRIVATE_SETTLEMENT_IFACE.mdx) | - |
+| [COMMITMENT\_POOL\_IFACE](variables/COMMITMENT_POOL_IFACE.mdx) | - |
+| [FEE\_VAULT\_IFACE](variables/FEE_VAULT_IFACE.mdx) | - |
+| [KNOWN\_CHAIN\_NAMES](variables/KNOWN_CHAIN_NAMES.mdx) | Display names for chains zkScatter cares about. Unknown chains fall through to `Chain <id>` so the UI never blanks out. |
+| [KNOWN\_EXPLORER\_BASES](variables/KNOWN_EXPLORER_BASES.mdx) | Block-explorer roots for chains zkScatter actually deploys to. Polygon / Arbitrum / Optimism appear in `KNOWN_CHAIN_NAMES` for display only; they intentionally have no explorer entry here so callers can show plain text instead of a broken link. |
+| [LAUNCH\_TOKENS](variables/LAUNCH_TOKENS.mdx) | Launch-token whitelist by symbol. Apps resolve to per-network addresses via `NetworkConfig.tokens`; this map stays the symbol-keyed source of marketing + UX metadata. |
+| [LAUNCH\_PAIRS](variables/LAUNCH_PAIRS.mdx) | Curated launch pair list. Pair listing is explicit (not all-pairs-of-tokens) so we control which markets exist on day 1. |
+
+## Functions
+
+| Function | Description |
+| ------ | ------ |
+| [isConfiguredAddress](functions/isConfiguredAddress.mdx) | Is this address slot actually wired to a deployed contract? |
+| [chainName](functions/chainName.mdx) | - |
+| [explorerLink](functions/explorerLink.mdx) | Build an explorer URL for a tx / address / block on the given network. Returns `undefined` when the network has no known explorer (e.g. localhost), which signals callers to render plain text instead of a link. |
+| [loadCommitmentInsertedHistory](functions/loadCommitmentInsertedHistory.mdx) | Read `CommitmentInserted` events the contract has emitted, ordered by `leafIndex` (i.e. insertion order). The pool inserts monotonically, so this is also the order an `IncrementalMerkleTree` should be fed. |
+| [subscribeCommitmentInserted](functions/subscribeCommitmentInserted.mdx) | Subscribe to live `CommitmentInserted` events. Returns an unsubscribe function — callers should detach in their effect cleanup. The callback receives the same `{ commitment, leafIndex }` shape as the historical loader for symmetry. |
+| [getReadProvider](functions/getReadProvider.mdx) | Build a read-only JsonRpcProvider for a chain's RPC. |
+| [parseTokenList](functions/parseTokenList.mdx) | Parse the compact `address:symbol:decimals,address:symbol:decimals,…` token list format used by env vars and config files. |
+| [withNativeEthAlias](functions/withNativeEthAlias.mdx) | Insert a synthetic "ETH" alias before the WETH entry, pointing at the same address. Returns a new array; the input is not mutated. |
+| [eqAddr](functions/eqAddr.mdx) | Lowercased-address comparison. Returns false when either side is null/undefined/empty so callers can pass optional config fields without a separate guard. Matches the existing `eqAddr` helper used by frontend/mobile/zk-relayer. |
+| [tokenMap](functions/tokenMap.mdx) | Map of lowercase address → non-native TokenInfo, for fast lookup in orderbook / history rows where you have an address and need the symbol+decimals. Native ETH alias is intentionally excluded so address-keyed lookups always resolve to the ERC-20 entry. |
+| [pairsByMarket](functions/pairsByMarket.mdx) | Group pairs by quote market for Upbit-style tabs. The returned map has stable insertion order matching the original pair list. |
+| [findPair](functions/findPair.mdx) | Find a pair entry by its display string. |
+| [tokensBySymbol](functions/tokensBySymbol.mdx) | Resolve a `{symbol → on-chain address}` map from a network's configured tokens. Apps thread this through the trade form so decimals + addresses come from real per-chain entries, not the placeholder `LAUNCH_TOKENS` defaults. |

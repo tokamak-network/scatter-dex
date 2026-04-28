@@ -1,0 +1,24 @@
+# Function: loadOperatorRow()
+
+```ts
+function loadOperatorRow(
+   registryAddress, 
+   account, 
+provider): Promise<OperatorRow>;
+```
+
+Read the on-chain registry row for `account`. Returns the full
+ set of operator-scoped state every dashboard / profile / treasury
+ page needs, plus a derived `status` for UI gating. Pure read.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `account` | `string` |
+| `provider` | `Provider` |
+
+## Returns
+
+`Promise`\<[`OperatorRow`](../interfaces/OperatorRow.mdx)\>

@@ -1,0 +1,21 @@
+# Function: getMerkleProof()
+
+```ts
+function getMerkleProof(layers, leafIndex): MerklePathProof;
+```
+
+Walk a `BuiltTree` from leaf to root, collecting siblings. The
+ returned `pathIndices[i]` is `1` when the original leaf is on
+ the right side of its sibling at level `i`, `0` otherwise —
+ matching the convention every Circom Merkle template uses.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `layers` | `bigint`[][] |
+| `leafIndex` | `number` |
+
+## Returns
+
+[`MerklePathProof`](../interfaces/MerklePathProof.mdx)

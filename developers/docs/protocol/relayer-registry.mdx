@@ -1,0 +1,142 @@
+---
+title: RelayerRegistry
+description: "On-chain directory of bonded relayer operators."
+---
+
+`RelayerRegistry` is the source of truth for who's allowed to submit
+`settleAuth` transactions. Apps read it for relayer discovery; the
+settlement contract reads it on every match to gate caller eligibility.
+
+## Storage
+
+```solidity
+struct Relayer {
+  string  url;             // /api/info endpoint
+  uint256 fee;             // basis points (capped at MAX_FEE = 500 bps)
+  uint256 bond;            // staked native amount, in wei
+  uint256 registeredAt;    // unix seconds, 0 = never registered
+  uint256 exitRequestedAt; // unix seconds, 0 = not in cool-down
+  bool    active;
+}
+
+mapping(address => Relayer) public relayers;
+address[] public relayerList;            // every address that's ever been added
+uint256 public minBond;                  // governance-settable minimum
+uint256 public constant EXIT_COOLDOWN = 7 days;
+uint256 public constant MAX_FEE = 500;   // 5% absolute cap
+IIdentityRegistry public immutable identityRegistry;
+address public treasury;
+```
+
+## Lifecycle
+
+<Steps>
+  <Step title="Register">
+    `register(url, fee)` with `msg.value` ≥ `minBond()`. Operator must
+    hold a valid `IdentityGate` attestation. Sets `registeredAt`,
+    `active = true`.
+  </Step>
+  <Step title="Operate">
+    `updateInfo(url, fee)` to change endpoint or fee.
+    `addBond()` with `msg.value` to top up bond.
+  </Step>
+  <Step title="Exit">
+    `requestExit()` — sets `exitRequestedAt = now`. Operator stays
+    `active = true` during the cool-down so in-flight matches still
+    settle.
+  </Step>
+  <Step title="Withdraw">
+    After `EXIT_COOLDOWN` (7 days), `executeExit()` returns the bond
+    and sets `active = false`.
+  </Step>
+</Steps>
+
+## External entry points
+
+```solidity
+function register(string calldata url, uint256 fee) external payable;
+function updateInfo(string calldata url, uint256 fee) external;
+function addBond() external payable;
+function requestExit() external;
+function executeExit() external;
+
+function relayers(address operator) external view returns (Relayer memory);
+function getRelayerCount() external view returns (uint256);
+function getActiveRelayers() external view returns (address[] memory);
+function isActiveRelayer(address operator) external view returns (bool);
+function getFee(address operator) external view returns (uint256);
+function getSettlementInfo(address operator)
+  external view
+  returns (bool isActive, uint256 fee, address treasury_);
+```
+
+## Events
+
+```solidity
+event RelayerRegistered(
+  address indexed relayer, string url, uint256 fee, uint256 bond
+);
+event RelayerUpdated(
+  address indexed relayer, string url, uint256 fee
+);
+event BondAdded(
+  address indexed relayer, uint256 amount
+);
+event ExitRequested(
+  address indexed relayer, uint256 exitAfter
+);
+event RelayerExited(
+  address indexed relayer, uint256 bondReturned
+);
+
+// Governance
+event TreasuryUpdated(address oldTreasury, address newTreasury);
+event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
+```
+
+## Errors
+
+| Error | When |
+|---|---|
+| `AlreadyRegistered` | `register` called by an already-active operator |
+| `NotRegistered` | Action requires an existing entry |
+| `RelayerNotActive` | Operator was deactivated (e.g. completed exit) |
+| `NotVerified` | `IdentityRegistry.isVerified(msg.sender)` is `false` |
+| `InsufficientBond` | `msg.value < minBond` on register |
+| `FeeTooHigh` | Fee > `MAX_FEE` (500 bps) |
+| `AlreadyExiting` | `requestExit` while already in cool-down |
+| `ExitNotRequested` | `executeExit` before `requestExit` |
+| `CooldownNotPassed` | `executeExit` before `EXIT_COOLDOWN` elapsed |
+| `BondTransferFailed` | Operator EOA can't receive ETH on exit |
+| `ZeroAddress` | Required address arg is `address(0)` |
+
+## Slashing
+
+The current registry **does not implement slashing**. Bonds are
+posted on registration and returned in full on exit (after the
+7-day cool-down) — there is no `slash()` entry point and no
+governance hook to forfeit bond. If a slashing mechanism is needed
+(verifiable misbehaviour, censorship penalties), it would land in a
+future contract version.
+
+## SDK helpers
+
+```ts
+import {
+  loadActiveRelayers,
+  loadRelayersWithApiInfo,
+  registerRelayer,
+  updateRelayerInfo,
+  addRelayerBond,
+  requestRelayerExit,
+  executeRelayerExit,
+  loadOperatorRow,
+} from "@zkscatter/sdk/relayer";
+```
+
+See [SDK reference / relayer](/sdk/relayer) for signatures.
+
+## Address by network
+
+`NetworkConfig.contracts.relayerRegistry`. ABI ships as
+`RELAYER_REGISTRY_ABI` / `RELAYER_REGISTRY_IFACE`.

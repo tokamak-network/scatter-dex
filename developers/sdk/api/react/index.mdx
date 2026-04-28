@@ -1,0 +1,15 @@
+# react
+
+## Interfaces
+
+| Interface | Description |
+| ------ | ------ |
+| [WalletState](interfaces/WalletState.mdx) | - |
+
+## Functions
+
+| Function | Description |
+| ------ | ------ |
+| [useWallet](functions/useWallet.mdx) | Read the wallet state. Throws when called outside a `<WalletProvider>` so missing-provider mistakes surface immediately instead of silently degrading. |
+| [WalletProvider](functions/WalletProvider.mdx) | - |
+| [shortAddr](functions/shortAddr.mdx) | Truncated address helper for display (`0xabcd…1234`). Returns empty string for empty input so callers can chain without guards. |

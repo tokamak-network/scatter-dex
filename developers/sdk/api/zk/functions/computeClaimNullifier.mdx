@@ -1,0 +1,18 @@
+# Function: computeClaimNullifier()
+
+```ts
+function computeClaimNullifier(secret, leafIndex): Promise<bigint>;
+```
+
+Claim nullifier: Poseidon(2, secret, leafIndex).
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `secret` | `bigint` |
+| `leafIndex` | `bigint` |
+
+## Returns
+
+`Promise`\<`bigint`\>

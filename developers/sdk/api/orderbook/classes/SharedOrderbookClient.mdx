@@ -1,0 +1,92 @@
+# Class: SharedOrderbookClient
+
+## Constructors
+
+### Constructor
+
+```ts
+new SharedOrderbookClient(baseUrl, opts?): SharedOrderbookClient;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `baseUrl` | `string` |
+| `opts` | `ClientOpts` |
+
+#### Returns
+
+`SharedOrderbookClient`
+
+## Methods
+
+### isOnline()
+
+```ts
+isOnline(): Promise<boolean>;
+```
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+***
+
+### getStats()
+
+```ts
+getStats(): Promise<SharedOrderbookStats | null>;
+```
+
+#### Returns
+
+`Promise`\<[`SharedOrderbookStats`](../interfaces/SharedOrderbookStats.mdx) \| `null`\>
+
+***
+
+### getRelayers()
+
+```ts
+getRelayers(): Promise<SharedRelayer[]>;
+```
+
+#### Returns
+
+`Promise`\<[`SharedRelayer`](../interfaces/SharedRelayer.mdx)[]\>
+
+***
+
+### getOrders()
+
+```ts
+getOrders(limit?): Promise<SharedOrder[]>;
+```
+
+#### Parameters
+
+| Parameter | Type | Default value |
+| ------ | ------ | ------ |
+| `limit` | `number` | `500` |
+
+#### Returns
+
+`Promise`\<[`SharedOrder`](../interfaces/SharedOrder.mdx)[]\>
+
+***
+
+### getOrdersByPair()
+
+```ts
+getOrdersByPair(pair): Promise<SharedOrder[]>;
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `pair` | `string` |
+
+#### Returns
+
+`Promise`\<[`SharedOrder`](../interfaces/SharedOrder.mdx)[]\>

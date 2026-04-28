@@ -1,0 +1,785 @@
+@import "tailwindcss";
+
+/* Tailwind v4: tell the compiler where to scan beyond the default
+ * `app/`/`components/` so the symlinked `content/` (developers/*.mdx)
+ * gets picked up too. */
+@source "../components/**/*.{ts,tsx}";
+@source "../content/**/*.{md,mdx}";
+
+/* ─────────────────────────────────────────────────────────────────
+ * zkScatter docs theme tokens
+ * Layered on top of nextra-theme-docs so its sidebar / TOC / search
+ * keep working — we only override what visibly matters.
+ * ───────────────────────────────────────────────────────────────── */
+
+:root {
+  --zs-card-border: rgba(15, 23, 42, 0.08);
+  --zs-card-border-hover: rgba(14, 165, 233, 0.4);
+  --zs-card-bg: rgba(255, 255, 255, 0.6);
+  --zs-card-bg-hover: rgba(255, 255, 255, 1);
+  --zs-icon-bg: rgba(14, 165, 233, 0.08);
+  --zs-icon-fg: #0284c7;
+  --zs-step-rail: rgba(15, 23, 42, 0.08);
+  --zs-callout-info-bg: rgba(14, 165, 233, 0.06);
+  --zs-callout-info-border: #0ea5e9;
+  --zs-callout-success-bg: rgba(34, 197, 94, 0.06);
+  --zs-callout-success-border: #22c55e;
+  --zs-callout-warn-bg: rgba(245, 158, 11, 0.07);
+  --zs-callout-warn-border: #f59e0b;
+  --zs-badge-bg: rgba(14, 165, 233, 0.08);
+  --zs-badge-fg: #0284c7;
+}
+
+.dark {
+  --zs-card-border: rgba(255, 255, 255, 0.08);
+  --zs-card-border-hover: rgba(56, 189, 248, 0.45);
+  --zs-card-bg: rgba(255, 255, 255, 0.02);
+  --zs-card-bg-hover: rgba(255, 255, 255, 0.04);
+  --zs-icon-bg: rgba(56, 189, 248, 0.1);
+  --zs-icon-fg: #38bdf8;
+  --zs-step-rail: rgba(255, 255, 255, 0.08);
+  --zs-callout-info-bg: rgba(56, 189, 248, 0.07);
+  --zs-callout-info-border: #38bdf8;
+  --zs-callout-success-bg: rgba(74, 222, 128, 0.06);
+  --zs-callout-success-border: #4ade80;
+  --zs-callout-warn-bg: rgba(251, 191, 36, 0.06);
+  --zs-callout-warn-border: #fbbf24;
+  --zs-badge-bg: rgba(56, 189, 248, 0.12);
+  --zs-badge-fg: #38bdf8;
+}
+
+/* Brand + footer typography (used by app/layout.tsx). */
+.zs-brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zs-footer-text {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Card
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--zs-card-border);
+  background: var(--zs-card-bg);
+  border-radius: 0.75rem;
+  padding: 1.1rem 1.2rem;
+  height: 100%;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+a.zs-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  height: 100%;
+}
+
+a.zs-card-link:hover .zs-card,
+a.zs-card-link:focus-visible .zs-card {
+  border-color: var(--zs-card-border-hover);
+  background: var(--zs-card-bg-hover);
+}
+
+.zs-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  background: var(--zs-icon-bg);
+  color: var(--zs-icon-fg);
+  margin-bottom: 0.4rem;
+}
+
+.zs-card-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.zs-card-body {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  opacity: 0.78;
+}
+
+/* Tighter when used inside CardGroup grids */
+.zs-card-grid {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1rem 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Steps
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-steps {
+  list-style: none;
+  padding-left: 0;
+  margin: 1.25rem 0;
+  border-left: 2px solid var(--zs-step-rail);
+  padding-inline-start: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.zs-step {
+  position: relative;
+}
+
+.zs-step-bullet {
+  position: absolute;
+  left: -2.6rem;
+  top: 0.05rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: var(--zs-icon-bg);
+  color: var(--zs-icon-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 2px solid var(--zs-card-bg-hover, white);
+}
+
+.zs-step-title {
+  font-weight: 600;
+  font-size: 0.98rem;
+  margin-bottom: 0.3rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Accordion
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-accordion-group {
+  margin: 1rem 0;
+}
+
+.zs-accordion {
+  border: 1px solid var(--zs-card-border);
+  border-radius: 0.625rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.55rem;
+  background: var(--zs-card-bg);
+}
+
+.zs-accordion[open] {
+  background: var(--zs-card-bg-hover);
+}
+
+.zs-accordion summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.zs-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.zs-accordion summary::before {
+  content: "›";
+  display: inline-block;
+  transition: transform 120ms ease;
+  color: var(--zs-icon-fg);
+}
+
+.zs-accordion[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.zs-accordion-body {
+  margin-top: 0.75rem;
+  font-size: 0.92rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Callouts (Note / Check / Warn)
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-callout {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.8rem 1rem;
+  border-radius: 0.5rem;
+  border-left: 3px solid var(--zs-callout-info-border);
+  background: var(--zs-callout-info-bg);
+  margin: 1rem 0;
+  font-size: 0.92rem;
+}
+
+.zs-callout--success {
+  border-left-color: var(--zs-callout-success-border);
+  background: var(--zs-callout-success-bg);
+}
+
+.zs-callout--warn {
+  border-left-color: var(--zs-callout-warn-border);
+  background: var(--zs-callout-warn-bg);
+}
+
+.zs-callout-icon {
+  flex-shrink: 0;
+  color: var(--zs-callout-info-border);
+  margin-top: 0.1rem;
+}
+
+.zs-callout--success .zs-callout-icon {
+  color: var(--zs-callout-success-border);
+}
+
+.zs-callout--warn .zs-callout-icon {
+  color: var(--zs-callout-warn-border);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Page header (section badge + title + subtitle)
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-page-header {
+  margin-bottom: 1.5rem;
+}
+
+.zs-page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.zs-page-header-desc {
+  font-size: 1.05rem;
+  opacity: 0.7;
+  margin: 0.25rem 0 0;
+  line-height: 1.5;
+}
+
+.zs-section-badge {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--zs-badge-fg);
+  background: var(--zs-badge-bg);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  margin-bottom: 0.6rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Copy page button
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--zs-card-border);
+  background: var(--zs-card-bg);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  color: inherit;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.zs-copy-btn:hover {
+  border-color: var(--zs-card-border-hover);
+  background: var(--zs-card-bg-hover);
+}
+
+/* CodeGroup (stacked variants — npm/pnpm/yarn etc.) — neutral wrapper. */
+.zs-codegroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 1rem 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Navbar layout override.
+ *
+ * Default Nextra layout: [logo + me-auto] [tabs] [search] [github].
+ * That spreads the tabs into the middle. We want them flush right
+ * next to the logo so the navbar reads:
+ *   [logo] [Document] [SDK Reference]   ............   [search] [github] [theme]
+ *
+ * Move `me-auto` from the logo wrapper onto the tabs container — the
+ * tabs then take over the role of pushing the trailing items right.
+ * Selectors target Nextra v4's escaped Tailwind class names. */
+
+/* Drop Tailwind's escaped-colon class selectors — Tailwind v4
+ * compilation strips them. Use Nextra-stable class names instead:
+ *  - the navbar's first <a> is the logo wrapper (had `me-auto`)
+ *  - the page-tab list lives in `.nextra-scrollbar` */
+
+header.nextra-navbar > nav > a:first-of-type {
+  margin-inline-end: 0 !important;
+}
+
+header.nextra-navbar > nav > div.nextra-scrollbar {
+  margin-inline-start: 1.25rem;
+  margin-inline-end: auto !important;
+}
+
+/* Tab labels styled as subtitles — slightly muted, subtle pill on
+ * the active one. Sits flush next to the logo. */
+header.nextra-navbar > nav > div.nextra-scrollbar > a {
+  font-size: 0.86rem;
+  font-weight: 500;
+  padding: 0.35rem 0.7rem;
+  border-radius: 0.4rem;
+  opacity: 0.7;
+}
+
+/* Active tab — bold + blue accent so it visibly reads as the
+ * current section. No background pill: the colour change alone
+ * does the work. */
+header.nextra-navbar > nav > div.nextra-scrollbar > a[aria-current="true"] {
+  color: var(--zs-icon-fg) !important;
+  font-weight: 700;
+  opacity: 1;
+}
+
+header.nextra-navbar > nav > div.nextra-scrollbar > a:hover {
+  opacity: 1;
+}
+
+/* Older custom-tab styles kept for legacy paths — harmless if
+ * unused. */
+
+.zs-tab {
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.5rem;
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.zs-tab:hover {
+  opacity: 1;
+  background: var(--zs-card-bg);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * REST API reference (Mintlify-style cards rendered from OpenAPI)
+ * ───────────────────────────────────────────────────────────────── */
+
+.zs-rest-page {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.zs-rest-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.zs-rest-page-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zs-rest-page-desc {
+  font-size: 1rem;
+  line-height: 1.55;
+  opacity: 0.78;
+  margin: 0;
+}
+
+.zs-rest-server {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--zs-card-border);
+  background: var(--zs-card-bg);
+  border-radius: 0.5rem;
+  font-size: 0.88rem;
+  margin-top: 0.4rem;
+}
+
+.zs-rest-server-label {
+  font-weight: 600;
+  color: var(--zs-icon-fg);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.zs-rest-server-url {
+  background: var(--zs-icon-bg);
+  color: var(--zs-icon-fg);
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.zs-rest-server-desc {
+  opacity: 0.65;
+  font-size: 0.82rem;
+}
+
+.zs-rest-toc-section {
+  margin: 1.4rem 0;
+}
+
+.zs-rest-toc-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.62;
+  margin: 0 0 0.65rem;
+}
+
+.zs-rest-toc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.85rem;
+}
+
+.zs-rest-toc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.zs-rest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.zs-rest-endpoint {
+  border: 1px solid var(--zs-card-border);
+  background: var(--zs-card-bg);
+  border-radius: 0.75rem;
+  padding: 1.4rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.zs-rest-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.zs-rest-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  margin: 0;
+}
+
+.zs-rest-line {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.zs-rest-method {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: white;
+  padding: 0.18rem 0.5rem;
+  border-radius: 0.3rem;
+  font-family: inherit;
+  background: #475569;          /* fallback when method unknown */
+}
+
+.zs-rest-method-sm {
+  font-size: 0.62rem;
+  padding: 0.1rem 0.4rem;
+  min-width: 3rem;
+  text-align: center;
+}
+
+/* Single source of truth for HTTP method colours — `data-method` on
+ * either size variant resolves through the same attribute selectors.
+ * No JS-side METHOD_COLOR map needed. */
+.zs-rest-method[data-method="get"]    { background: #16a34a; }
+.zs-rest-method[data-method="post"]   { background: #2563eb; }
+.zs-rest-method[data-method="put"]    { background: #ca8a04; }
+.zs-rest-method[data-method="delete"] { background: #dc2626; }
+.zs-rest-method[data-method="patch"]  { background: #7c3aed; }
+
+.zs-rest-path {
+  font-size: 0.95rem;
+  font-weight: 500;
+  background: var(--zs-icon-bg);
+  color: var(--zs-icon-fg);
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+}
+
+.zs-rest-description {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  opacity: 0.78;
+  margin: 0.2rem 0 0;
+}
+
+.zs-rest-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.zs-rest-block-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.62;
+  margin: 0;
+}
+
+.zs-rest-params {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* Nested SchemaTree gets a left rail + indent so the hierarchy reads
+ * — `[data-depth]` is set by the recursive component, no inline
+ * styles needed. */
+.zs-rest-params[data-depth="1"],
+.zs-rest-params[data-depth="2"],
+.zs-rest-params[data-depth="3"] {
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--zs-step-rail);
+}
+
+.zs-rest-param {
+  border-bottom: 1px dashed var(--zs-card-border);
+  padding-bottom: 0.55rem;
+}
+
+.zs-rest-param:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.zs-rest-param-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.2rem;
+}
+
+.zs-rest-param-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  background: transparent;
+  padding: 0;
+}
+
+.zs-rest-param-meta {
+  font-size: 0.75rem;
+  color: var(--zs-icon-fg);
+  background: var(--zs-icon-bg);
+  padding: 0.08rem 0.4rem;
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.zs-rest-param-loc {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+
+.zs-rest-required {
+  font-size: 0.7rem;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+  padding: 0.08rem 0.4rem;
+  border-radius: 0.25rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.zs-rest-param-desc {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  opacity: 0.78;
+  margin: 0;
+}
+
+.zs-rest-param-example {
+  font-size: 0.78rem;
+  opacity: 0.65;
+  margin: 0.2rem 0 0;
+}
+
+.zs-rest-param-example code {
+  background: transparent;
+  padding: 0;
+}
+
+.zs-rest-schema-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-bottom: 0.3rem;
+}
+
+.zs-rest-response {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--zs-card-border);
+}
+
+.zs-rest-response:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.zs-rest-status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.55rem;
+}
+
+.zs-rest-status-pill {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  border-radius: 0.3rem;
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+}
+
+.zs-rest-status-pill[data-tone="ok"] {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.zs-rest-status-pill[data-tone="err"] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.zs-rest-status-desc {
+  font-size: 0.88rem;
+  opacity: 0.78;
+}
+
+.zs-code-pre {
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--zs-card-border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  overflow-x: auto;
+  margin: 0.5rem 0 0;
+}
+
+.dark .zs-code-pre {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.zs-code-pre code {
+  background: transparent;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * MDX content polish — applies to every page rendered through Nextra
+ * (catch-all + TypeDoc-generated SDK ref). Targets `.nextra-content`
+ * descendants so we don't override Scalar / our custom REST cards.
+ * ───────────────────────────────────────────────────────────────── */
+
+.nextra-content table:not(.zs-rest-params table) {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 0.9rem;
+  border: 1px solid var(--zs-card-border);
+  border-radius: 0.625rem;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.nextra-content table:not(.zs-rest-params table) th {
+  background: var(--zs-card-bg);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--zs-card-border);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  color: var(--zs-icon-fg);
+}
+
+.nextra-content table:not(.zs-rest-params table) td {
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--zs-card-border);
+  vertical-align: top;
+}
+
+.nextra-content table:not(.zs-rest-params table) tr:last-child td {
+  border-bottom: none;
+}
+
+.nextra-content table:not(.zs-rest-params table) tr:hover td {
+  background: var(--zs-card-bg-hover);
+}
+
+.nextra-content table:not(.zs-rest-params table) code {
+  font-size: 0.85em;
+}
+
+/* Frame */
+.zs-frame {
+  border: 1px solid var(--zs-card-border);
+  border-radius: 0.625rem;
+  padding: 0.85rem 1rem;
+  margin: 1rem 0;
+  background: var(--zs-card-bg);
+}

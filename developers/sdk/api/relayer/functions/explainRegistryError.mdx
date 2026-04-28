@@ -1,0 +1,23 @@
+# Function: explainRegistryError()
+
+```ts
+function explainRegistryError(err, minBond): string;
+```
+
+Map known registry custom errors (decoded by ethers from the
+ ABI fragments on `RELAYER_REGISTRY_ABI`) and local validation
+ errors thrown from any registry write helper to user-friendly
+ copy. Falls back to the raw message when no rule matches so
+ callers don't swallow unexpected errors. `minBond` is only used
+ when the error is `InsufficientBond`; pass `0n` if unknown.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `err` | `unknown` |
+| `minBond` | `bigint` |
+
+## Returns
+
+`string`

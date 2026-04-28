@@ -1,0 +1,88 @@
+---
+title: Identity gate
+description: "Compliance without doxxing — zk-X509 attestations gate deposits and claims."
+---
+
+The identity gate (`IdentityGate` contract) is zkScatter's policy
+checkpoint. Every deposit and claim runs through it; trades and
+relayer matching do not. This keeps the privacy properties intact
+while letting operators enforce the compliance posture they need.
+
+## What it does
+
+```
+deposit:
+  user → CommitmentPool.deposit(...)
+       → IdentityGate.requireValid(user, attestation)
+       → if pass: insert commitment
+       → if fail: revert
+
+claim:
+  user → PrivateSettlement.claimWithProof(...)
+       → IdentityGate.requireValid(recipient, attestation)
+       → if pass: transfer ERC-20
+       → if fail: revert
+```
+
+Trades (`settleAuth`) skip the gate — once a balance is in the pool
+it can move between users freely without re-attestation.
+
+## What it doesn't do
+
+- Doesn't store identity on-chain — only attestation hashes
+- Doesn't link the on-chain address to the off-chain identity
+- Doesn't gate matching, settlement, or order book access
+
+The identity is proven once via zk-X509 (or whatever attestation
+scheme the operator picks); the resulting on-chain entry says only
+"this address satisfies policy X" without naming the human.
+
+## zk-X509
+
+zk-X509 lets a user prove they hold a valid X.509 certificate (e.g.
+from a KYC provider) without revealing the certificate body. The
+proof verifier runs on-chain via `IdentityGate.attest(zkProof,
+attestationHash)`.
+
+| Step | Where |
+|---|---|
+| User obtains X.509 cert | KYC / passport / institutional ID off-chain |
+| User runs zk-X509 prover | Locally — see SDK `identity` (Phase 7) |
+| Submits attestation | `IdentityGate.attest(...)` writes the hash |
+| Subsequent deposits/claims | Gate looks up address → attestation hash |
+
+Attestations expire — operators set the validity window per policy.
+
+## Composability
+
+Different deployments can run different identity policies on the same
+pool:
+
+```
+Pool A (retail)        → IdentityGate-A (zk-X509 from MiCA-compliant KYC)
+Pool B (institutional) → IdentityGate-B (qualified investor only)
+Pool C (sanctions only)→ IdentityGate-C (OFAC screening, no KYC)
+```
+
+The SDK's `NetworkConfig.contracts.identityGate` is the address of
+the gate active for that deployment. Apps surface its requirements
+via the gate's `policyDescription()` view (planned).
+
+## SDK integration
+
+Phase 0–3 of the SDK ship without identity primitives — the contract
+gate exists and is wired into deposit/claim, but the **client-side
+prover** (zk-X509 attestation generation) ships in Phase 7. Apps
+currently expect the user to have already attested via a separate
+flow.
+
+When Phase 7 lands, you'll see:
+
+```ts
+import { generateZkX509Attestation } from "@zkscatter/sdk/identity";
+
+const attestation = await generateZkX509Attestation(certificateBytes);
+await identityGate.attest(attestation);
+```
+
+Until then, the gate is a contract concern, not an SDK one.

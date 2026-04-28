@@ -1,0 +1,114 @@
+---
+title: CommitmentPool
+description: "On-chain Poseidon Merkle tree of commitments — the protocol's central state."
+---
+
+`CommitmentPool` is the contract every flow reads from and writes to.
+It maintains an append-only Merkle tree of Poseidon commitments and
+a nullifier set — together they're the protocol's authoritative state.
+
+## State
+
+| Field | Type | Purpose |
+|---|---|---|
+| Tree | inherited from `IncrementalMerkleTree` | Append-only Poseidon Merkle tree |
+| `nullifiers` | `mapping(uint256 => bool)` | Replay protection (`true` = spent) |
+| `whitelistedTokens` | `mapping(address => bool)` | Per-token deposit allowlist |
+| `paused` | `bool` | Emergency pause (deposits + withdrawals blocked) |
+| `authorizedSettlement` | `address` | Only this address can call `insertCommitment` |
+| `pendingSettlement` / `pendingSettlementActivateAt` | `address` / `uint256` | 24h timelock on settlement-address changes |
+| `withdrawVerifier` | `IVerifier (immutable)` | Groth16 verifier for `withdraw` |
+| `depositVerifier` | `IDepositVerifier (immutable)` | Groth16 verifier for `deposit` |
+| `sanctionsList` | `ISanctionsList` | Optional address screening |
+
+## External entry points
+
+```solidity
+// Deposit. Verifier checks the zk-deposit proof; the commitment must
+// already encode `(token, amount)` exactly.
+function deposit(
+  uint[2]    calldata proofA,
+  uint[2][2] calldata proofB,
+  uint[2]    calldata proofC,
+  uint256             commitment,
+  address             token,
+  uint256             amount
+) external;
+
+// Settlement-only entry: insert change leaves emitted by `settleAuth`
+// or `cancelPrivate`. Reverts unless `msg.sender == authorizedSettlement`.
+function insertCommitment(uint256 commitment) external returns (uint32);
+
+// Read state.
+function getLastRoot() external view returns (uint256);
+function isKnownRoot(uint256 r) external view returns (bool);
+function nextIndex() external view returns (uint32);
+function nullifiers(uint256 nullifier) external view returns (bool);
+```
+
+`PrivateSettlement` is the only contract allowed to call
+`insertCommitment` and `transferToSettlement` — the wiring is set
+through a 24h timelock for upgrades.
+
+## Events
+
+```solidity
+event CommitmentInserted(
+  uint256 indexed commitment,
+  uint32          leafIndex,
+  uint256         timestamp
+);
+
+event Withdrawal(
+  address indexed recipient,
+  uint256         nullifierHash,
+  uint256         newCommitment,
+  uint256         amount
+);
+```
+
+The SDK subscribes to `CommitmentInserted` to maintain a local
+incremental tree — see [Subscribe to pool events](/docs/guides/subscribe-pool-events).
+
+## Errors
+
+| Error | When |
+|---|---|
+| `ContractPaused` | Deposit / withdraw attempted while paused |
+| `TokenNotWhitelisted` | `deposit` with a token not in the allowlist |
+| `ZeroCommitment` / `ZeroAmount` / `ZeroAddress` | Required arg is zero |
+| `FieldElementOutOfRange` | `commitment` or `amount` exceeds BN254 scalar field |
+| `InvalidProof` | Groth16 verifier rejected |
+| `NullifierAlreadySpent` | Withdraw attempted on a spent leaf |
+| `UnknownRoot` | Withdraw proof references a root not in `recentRoots` |
+| `FeeOnTransferTokenUnsupported` | Token rebased / charged a fee on the transfer |
+| `NotAuthorizedSettlement` | Only `PrivateSettlement` may call `insertCommitment` |
+| `AddressSanctioned` | Sanctions list reject |
+
+## Tree parameters
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Depth | 20 | `COMMIT_TREE_DEPTH` constant in SDK |
+| Capacity | `2^20 = 1,048,576` | Soft limit before rotation needed |
+| Hash | Poseidon over BN254 | `circomlibjs` impl in SDK |
+| Field modulus | BN254 scalar | `FIELD_MODULUS` constant in SDK |
+
+## Reorg safety
+
+The pool emits leaves at insertion. Apps that build proofs against
+tree state should wait for confirmations before treating an inserted
+leaf as final — typical thresholds: 12 blocks on Sepolia, 32 on
+mainnet. The SDK exposes the raw event stream and leaves the
+threshold to the app:
+
+```ts
+import { subscribeCommitmentInserted } from "@zkscatter/sdk";
+```
+
+## Address by network
+
+`NetworkConfig.contracts.commitmentPool` in the SDK. ABI ships as
+`COMMITMENT_POOL_ABI` from `@zkscatter/sdk` with a pre-parsed
+`Interface` at `COMMITMENT_POOL_IFACE`. See
+[SDK reference / core](/sdk/core).

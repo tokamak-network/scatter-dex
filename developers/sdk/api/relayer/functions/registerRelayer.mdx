@@ -1,0 +1,25 @@
+# Function: registerRelayer()
+
+```ts
+function registerRelayer(
+   registryAddress, 
+   params, 
+signer): Promise<TransactionResponse>;
+```
+
+Submit `register(url, fee)` with the given bond as `msg.value`.
+ Validates the fee range and bond format up front so the user
+ sees a clean error before a wallet prompt. Returns the
+ transaction response; caller awaits `.wait()`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `params` | [`RegisterRelayerParams`](../interfaces/RegisterRelayerParams.mdx) |
+| `signer` | `Signer` |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

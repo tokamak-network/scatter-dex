@@ -1,0 +1,25 @@
+# Function: explorerLink()
+
+```ts
+function explorerLink(
+   network, 
+   entity, 
+   value): string | undefined;
+```
+
+Build an explorer URL for a tx / address / block on the given
+ network. Returns `undefined` when the network has no known
+ explorer (e.g. localhost), which signals callers to render plain
+ text instead of a link.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `network` | `Pick`\<[`NetworkConfig`](../interfaces/NetworkConfig.mdx), `"chainId"` \| `"explorerBase"`\> |
+| `entity` | [`ExplorerEntity`](../type-aliases/ExplorerEntity.mdx) |
+| `value` | `string` |
+
+## Returns
+
+`string` \| `undefined`

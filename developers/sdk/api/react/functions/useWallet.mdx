@@ -1,0 +1,13 @@
+# Function: useWallet()
+
+```ts
+function useWallet(): WalletState;
+```
+
+Read the wallet state. Throws when called outside a
+ `<WalletProvider>` so missing-provider mistakes surface
+ immediately instead of silently degrading.
+
+## Returns
+
+[`WalletState`](../interfaces/WalletState.mdx)

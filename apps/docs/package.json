@@ -1,0 +1,32 @@
+{
+  "name": "@zkscatter/docs",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Self-hosted developer docs site for @zkscatter/sdk. Nextra (Next.js) replacement for the Mintlify pipeline so we can serve docs from a private repo.",
+  "scripts": {
+    "dev": "next dev -p 4100",
+    "build": "npm run api && next build",
+    "start": "next start -p 4100",
+    "lint": "next lint",
+    "api": "typedoc --options ./typedoc.json && node scripts/write-api-meta.mjs"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.4",
+    "lucide-react": "^1.11.0",
+    "next": "16.2.1",
+    "nextra": "^4.2.17",
+    "nextra-theme-docs": "^4.2.17",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tailwindcss": "^4.2.4",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typedoc": "^0.28.19",
+    "typedoc-plugin-markdown": "^4.11.0",
+    "typescript": "^5"
+  }
+}

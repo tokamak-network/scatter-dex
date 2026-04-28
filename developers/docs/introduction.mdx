@@ -1,0 +1,134 @@
+---
+title: Introduction
+description: "Build private, compliant on-chain finance apps on the zkScatter ZK stack."
+---
+
+zkScatter is a **privacy-preserving settlement protocol** for compliant
+on-chain finance. The same primitives — a commitment pool, half-proof
+authorization, a relayer network, identity gating — power **OTC
+trading, private payments, and identity-gated distributions** on top of
+one shared engine.
+
+`@zkscatter/sdk` is the TypeScript toolkit for talking to every part of
+that protocol — contracts, ZK proofs, relayer network, shared
+orderbook, on-device note storage. **One package, one mental model**;
+ship a wallet on web, mobile, or Node.
+
+The same SDK powers the reference apps shipped by Tokamak —
+[Pro](https://pro.zkscatter.xyz) (OTC),
+[Pay](https://pay.zkscatter.xyz) (payments),
+[Drop](https://drop.zkscatter.xyz) (drops), and Mobile. Anything those
+apps do, your app can do, with the same primitives.
+
+## What you can build with the SDK
+
+<CardGroup cols={2}>
+  <Card title="A private OTC venue" icon="chart-line" href="/docs/quickstart">
+    Peer-to-peer order matching across a shared orderbook. EdDSA-signed
+    orders, dual half-proofs settle in one transaction.
+  </Card>
+  <Card title="A private payment app" icon="paper-plane" href="/docs/guides/place-order">
+    Send payouts in any whitelisted token. Recipients claim later,
+    gaslessly, at either a regular or stealth address (their choice).
+  </Card>
+  <Card title="An identity-gated drop" icon="gift" href="/docs/guides/claim">
+    Distribute to verified humans without doxxing claimers. The same
+    `claim` circuit powers airdrops and order payouts — batch up to 20.
+  </Card>
+  <Card title="A relayer node" icon="server" href="/docs/operate/run-a-relayer-node">
+    Match orders off-chain, submit settlement proofs, charge a basis-point
+    fee, manage your bond and exit cool-down.
+  </Card>
+  <Card title="A custom settlement flow" icon="cube" href="/docs/concepts/architecture">
+    Compose `PrivateSettlement` + `CommitmentPool` + `IdentityGate`
+    directly. The four reference apps are starting points, not the
+    boundary.
+  </Card>
+  <Card title="A KYC-gated app" icon="shield-check" href="/docs/concepts/architecture">
+    Reuse the zk-X509 identity layer. Prove "this user is verified"
+    without exposing who.
+  </Card>
+</CardGroup>
+
+## What's in the box
+
+<CardGroup cols={2}>
+  <Card title="Contracts" icon="file-contract" href="/sdk/contracts">
+    `callDeposit`, `callSettleAuth`, `callClaimWithProof`, `callCancel` —
+    typed wrappers over `PrivateSettlement` and `CommitmentPool`. Plus
+    `ensureAllowance` with USDT-safe reset semantics.
+  </Card>
+  <Card title="ZK proofs" icon="shield-halved" href="/sdk/zk">
+    Web Worker prover, Poseidon hashing, EdDSA on Baby Jubjub, incremental
+    Merkle trees, stealth-address derivation, and circuit-specific builders
+    for `deposit`, `authorize`, `claim`, `cancel`.
+  </Card>
+  <Card title="Relayer client" icon="network-wired" href="/sdk/relayer">
+    Discover active relayers from the on-chain registry, probe their
+    `/api/info` endpoints, submit signed orders, track status, and run
+    operator actions (register, update, bond, exit).
+  </Card>
+  <Card title="Shared orderbook" icon="list-ol" href="/sdk/orderbook">
+    Read-only client for the cross-relayer order discovery service —
+    pair-filtered listings, relayer rosters, online checks.
+  </Card>
+  <Card title="Notes storage" icon="database" href="/sdk/notes">
+    Pluggable adapters for commitment-note persistence: in-memory for
+    tests, IndexedDB for browsers, SQLite/AsyncStorage on mobile.
+  </Card>
+  <Card title="React wallet" icon="react" href="/sdk/react">
+    `useWallet` and `<WalletProvider>` — `window.ethereum` detection,
+    chain/account tracking, vendor labels (MetaMask, Rabby, Coinbase).
+  </Card>
+</CardGroup>
+
+## How the flows compose
+
+The same four steps cover every flow — what differs is *who* runs
+which step. Deposit and claim are universal; authorize/match changes
+shape per flow.
+
+<Steps>
+  <Step title="Deposit (universal)">
+    The user signs a deposit ZK proof on-device. `CommitmentPool.deposit`
+    inserts a Poseidon commitment hiding the owner secret, token, and
+    amount. Same call for OTC, payments, drops.
+  </Step>
+  <Step title="Authorize / Issue">
+    *OTC*: maker signs an EdDSA order + half-proof binding it to a leaf.
+    *Payment*: sender signs a one-sided spend committing to a recipient
+    address (regular or stealth — recipient's choice). *Drop*:
+    distributor publishes a claims root committing to each recipient's
+    address + amount.
+  </Step>
+  <Step title="Match / Submit">
+    *OTC*: a relayer pairs two compatible half-proofs and submits
+    `PrivateSettlement.settleAuth`. *Payment*: a relayer (or the
+    sender) submits the spend directly. *Drop*: no matching — recipients
+    claim independently.
+  </Step>
+  <Step title="Claim (universal)">
+    The recipient's payout sits in `CommitmentPool` as a new commitment
+    addressed to either a regular wallet or a stealth address (their
+    earlier choice). They claim later — any time, gaslessly — by
+    proving knowledge of the spending key. Up to 20 claims per
+    transaction.
+  </Step>
+</Steps>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Install the SDK" icon="download" href="/docs/installation">
+    npm, pnpm, or yarn. Peer-dep ethers — no bundled runtime.
+  </Card>
+  <Card title="Run the quickstart" icon="bolt" href="/docs/quickstart">
+    From `npm install` to settled trade in under 10 minutes.
+  </Card>
+  <Card title="Read the architecture" icon="book" href="/docs/concepts/architecture">
+    Half-proof authorization, commitment-pool settlement, relayer economy.
+  </Card>
+  <Card title="Browse the SDK reference" icon="code" href="/sdk/overview">
+    Module-by-module surface — every export, every signature.
+  </Card>
+</CardGroup>

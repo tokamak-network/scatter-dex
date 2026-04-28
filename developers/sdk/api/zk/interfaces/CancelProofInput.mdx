@@ -1,0 +1,13 @@
+# Interface: CancelProofInput
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="note"></a> `note` | [`CommitmentNote`](CommitmentNote.mdx) | The user's escrow commitment note (v2 — includes BabyJub pubkey). |
+| <a id="leafindex"></a> `leafIndex` | `number` | Index of this commitment's leaf in the on-chain Merkle tree. |
+| <a id="allleaves"></a> `allLeaves?` | `bigint`[] | All commitment leaves in the pool. Required when `merkleProof` is omitted. |
+| <a id="merkleproof"></a> `merkleProof?` | [`MerkleProof`](MerkleProof.mdx) | Pre-computed Merkle proof — recommended once the pool grows past a few thousand leaves; skipping the O(2^depth) rebuild is the difference between sub-second and multi-second cancel cost. |
+| <a id="nonce"></a> `nonce` | `bigint` | Nonce of the order being cancelled. |
+| <a id="eddsaprivatekey"></a> `eddsaPrivateKey` | `Uint8Array` | EdDSA private key bound into `note`'s commitment. Caller-owned; the prover wipes its own working copy after signing. |
+| <a id="relayer"></a> `relayer` | `string` | Address of the relayer that will submit the cancel tx — pinned in the cancel message so a different relayer can't replay it. |

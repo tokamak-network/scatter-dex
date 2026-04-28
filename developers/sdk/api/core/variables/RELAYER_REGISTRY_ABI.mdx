@@ -1,0 +1,5 @@
+# Variable: RELAYER\_REGISTRY\_ABI
+
+```ts
+const RELAYER_REGISTRY_ABI: readonly ["function register(string url, uint256 fee) external payable", "function requestExit() external", "function executeExit() external", "function updateInfo(string url, uint256 fee) external", "function addBond() external payable", "function isActiveRelayer(address relayer) external view returns (bool)", "function getActiveRelayers() external view returns (address[])", "function getRelayerCount() external view returns (uint256)", "function relayers(address) external view returns (string url, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)", "function treasury() external view returns (address)", "function minBond() external view returns (uint256)", "function identityRegistry() external view returns (address)", "error AlreadyRegistered()", "error NotRegistered()", "error InsufficientBond()", "error ExitNotRequested()", "error CooldownNotPassed()", "error AlreadyExiting()", "error ZeroAddress()", "error RelayerNotActive()", "error BondTransferFailed()", "error FeeTooHigh()", "error NotVerified()"];
+```

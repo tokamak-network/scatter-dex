@@ -1,0 +1,116 @@
+# zk
+
+## Classes
+
+| Class | Description |
+| ------ | ------ |
+| [IncrementalMerkleTree](classes/IncrementalMerkleTree.mdx) | - |
+
+## Interfaces
+
+| Interface | Description |
+| ------ | ------ |
+| [ClaimEntry](interfaces/ClaimEntry.mdx) | One claim distribution within an authorize proof — "send X of the buy token to recipient Y, releasable at time Z, secured by this per-claim secret." |
+| [AuthorizeProofInput](interfaces/AuthorizeProofInput.mdx) | Inputs to `generateAuthorizeProof`. |
+| [AuthorizeProofResult](interfaces/AuthorizeProofResult.mdx) | Output of `generateAuthorizeProof`. Public signals are returned as bigints in circuit-declared order so they plug into the Solidity verifier without further conversion. The named fields duplicate signals from `publicSignals` for ergonomic use when building the `settleAuth` calldata. |
+| [CancelProofInput](interfaces/CancelProofInput.mdx) | - |
+| [CancelProofResult](interfaces/CancelProofResult.mdx) | - |
+| [ClaimProofInput](interfaces/ClaimProofInput.mdx) | Inputs to `generateClaimProof`. The `secret` and `leafIndex` identify which slot in the settlement's claims tree this proof is releasing; the rest is exact-match material the circuit re-hashes to verify the leaf. |
+| [ClaimProofResult](interfaces/ClaimProofResult.mdx) | Output of `generateClaimProof`. Convenience fields duplicate signals from `publicSignals` so callers building `claim` calldata don't have to re-derive them. |
+| [CircuitAssets](interfaces/CircuitAssets.mdx) | Wasm + zkey assets for a single circuit. snarkjs accepts URLs, ArrayBuffers, or Uint8Arrays for both — pass whatever the host has already loaded. |
+| [DepositProofResult](interfaces/DepositProofResult.mdx) | - |
+| [CommitmentNote](interfaces/CommitmentNote.mdx) | A commitment note — the secret material backing one escrow entry. |
+| [MerkleProof](interfaces/MerkleProof.mdx) | Merkle inclusion proof for a commitment in the on-chain pool. |
+| [PoseidonModule](interfaces/PoseidonModule.mdx) | Opaque Poseidon module handle. Hot loops (e.g. building a depth-20 Merkle tree → 1M+ hashes) should fetch this once via `getPoseidonModule()` and call `poseidonHashWith(p, inputs)` synchronously inside the loop, rather than awaiting `poseidonHash` per hash and paying 1M microtasks. |
+| [EdDSAKeyPair](interfaces/EdDSAKeyPair.mdx) | - |
+| [EdDSASignature](interfaces/EdDSASignature.mdx) | - |
+| [BuiltTree](interfaces/BuiltTree.mdx) | A built Poseidon Merkle tree. `layers[0]` is the leaf layer (padded to `2^depth`); `layers[depth]` is the root layer (one element). Suitable input for `getMerkleProof`. |
+| [MerklePathProof](interfaces/MerklePathProof.mdx) | Inclusion proof for a single leaf in a `BuiltTree`. |
+| [MockProverOpts](interfaces/MockProverOpts.mdx) | - |
+| [SnarkjsRawProof](interfaces/SnarkjsRawProof.mdx) | Raw Groth16 proof shape returned by snarkjs. |
+| [ProveTiming](interfaces/ProveTiming.mdx) | - |
+| [Prover](interfaces/Prover.mdx) | Generates Groth16 proofs. |
+| [MetaAddress](interfaces/MetaAddress.mdx) | A meta-address pair the recipient publishes once. |
+| [StealthResult](interfaces/StealthResult.mdx) | Output of `generateStealthAddress`. |
+| [Groth16Proof](interfaces/Groth16Proof.mdx) | Groth16 proof in the shape every Solidity verifier expects: two G1 elements (a, c) and one G2 element (b). Tuples — not arrays — so positional access is type-checked at call sites. |
+| [ProveResult](interfaces/ProveResult.mdx) | Output of one proof job. `publicSignals` carries the public inputs in circuit-declared order so callers can splice them into the verifier call. `meta` is an optional side-channel for private outputs the worker computed but the circuit doesn't expose as a public signal — e.g. cancel's `freshSalt`, which the rotated note needs persisted client-side but the on-chain call doesn't take. Field-element values; same BigInt structuredClone path as the proof itself. Workers that don't need the channel just omit it. |
+| [ProveOpts](interfaces/ProveOpts.mdx) | Optional knobs for a single prove call. Every implementation must honor `signal` for cancellation; `onProgress` is best-effort. |
+| [ProveRequest](interfaces/ProveRequest.mdx) | A request to generate one proof. The `input` shape is per-circuit and validated by the implementation; this layer only carries it. |
+| [WebWorkerProverOpts](interfaces/WebWorkerProverOpts.mdx) | - |
+| [ProverWorkerHandlers](interfaces/ProverWorkerHandlers.mdx) | What a circuit-specific worker file plugs into `setupProverWorker`. |
+
+## Type Aliases
+
+| Type Alias | Description |
+| ------ | ------ |
+| [ZkCircuit](type-aliases/ZkCircuit.mdx) | Worker-safe so the same wrapper works inside `*-worker.ts`; only the main thread carries `window`, so the default reporter is gated behind it. Workers can override the reporter via `setProveReporter` to relay timings back to the main thread. |
+| [ProveReporter](type-aliases/ProveReporter.mdx) | - |
+| [CircuitId](type-aliases/CircuitId.mdx) | Identifier for a Groth16 circuit shipped with the protocol. Open string-literal union — the well-known names get IDE autocomplete, but any string is accepted so consumers shipping private circuits don't have to fork the SDK. (Type aliases can't be declaration-merged; widening via `(string & {})` is the workaround.) |
+| [ProverWorkerRequest](type-aliases/ProverWorkerRequest.mdx) | Wire-format messages exchanged with a prover Web Worker. |
+| [ProverWorkerResponse](type-aliases/ProverWorkerResponse.mdx) | - |
+
+## Variables
+
+| Variable | Description |
+| ------ | ------ |
+| [bytesToNumberBE](variables/bytesToNumberBE.mdx) | - |
+| [CANCEL\_PUBLIC\_SIGNALS](variables/CANCEL_PUBLIC_SIGNALS.mdx) | Cancel circuit's public-input order, in the same order the `.circom` declares them. Mirrored by the contract verifier's scalar arguments. Change one, change both — the constant lives here so consumers can't drift from it. |
+| [CANCEL\_META\_FRESH\_SALT](variables/CANCEL_META_FRESH_SALT.mdx) | Meta-channel key under which `cancel.worker` returns the private freshSalt to `assembleCancelProofResult`. |
+| [CLAIMS\_TREE\_SIZE](variables/CLAIMS_TREE_SIZE.mdx) | Number of leaves in the claims tree (`2 ^ CLAIMS_TREE_DEPTH`). Exported so consumers building single-entry trees inline don't recompute the same constant. |
+| [FIELD\_MODULUS](variables/FIELD_MODULUS.mdx) | BN254 scalar field modulus — every Poseidon output and every random field element must live below this. |
+| [COMMIT\_TREE\_DEPTH](variables/COMMIT_TREE_DEPTH.mdx) | Depth of the on-chain commitment Merkle tree (2^20 ≈ 1M leaves). |
+| [MAX\_CLAIMS\_PER\_SIDE](variables/MAX_CLAIMS_PER_SIDE.mdx) | Maximum number of claim leaves per side in a single settlement. |
+| [CLAIMS\_TREE\_DEPTH](variables/CLAIMS_TREE_DEPTH.mdx) | Depth of the per-settlement claims Merkle tree (2^4 = 16 leaves). |
+| [DEFAULT\_DERIVE\_MESSAGE](variables/DEFAULT_DERIVE_MESSAGE.mdx) | Default fixed message used by `deriveEdDSAKey` when callers don't pass their own. Keeping this stable across SDK versions matters: changing it would invalidate every existing user's EdDSA key. |
+| [TAG\_ESCROW\_NULL](variables/TAG_ESCROW_NULL.mdx) | Shared Poseidon domain-separation tags. |
+| [TAG\_NONCE\_NULL](variables/TAG_NONCE_NULL.mdx) | - |
+| [TAG\_CLAIM\_NULL](variables/TAG_CLAIM_NULL.mdx) | - |
+| [TAG\_COMMITMENT\_V2](variables/TAG_COMMITMENT_V2.mdx) | - |
+| [PRELOAD\_ERROR\_JOB\_ID](variables/PRELOAD_ERROR_JOB_ID.mdx) | Sentinel jobId used by preload-failure error messages. The main client uses this to surface init failures even when no job is in flight; a real prove jobId is always > 0. |
+
+## Functions
+
+| Function | Description |
+| ------ | ------ |
+| [hashAuthorizeOrder](functions/hashAuthorizeOrder.mdx) | Compute the order hash that the circuit and contract both sign over. Field order is consensus-critical: |
+| [generateAuthorizeProof](functions/generateAuthorizeProof.mdx) | Generate a Groth16 authorize proof for a private limit order. |
+| [assembleCancelProofResult](functions/assembleCancelProofResult.mdx) | Reconstruct a rich `CancelProofResult` from the slim `{ proof, publicSignals, meta? }` envelope a Web Worker passes back. The cancel circuit's private `freshSalt` is *not* in `publicSignals` — it isn't needed by the on-chain `cancelPrivate` call (the contract doesn't take it), but vault rotation persistence (writing the rotated note with the new salt) needs it. The worker carries it back through the `meta` channel; if a worker omits it, this returns `freshSalt: 0n` and rotation persistence stays gated off in the caller. |
+| [generateCancelProof](functions/generateCancelProof.mdx) | - |
+| [singleClaimTree](functions/singleClaimTree.mdx) | Build a 16-leaf claims tree with a single entry at `leafIndex`, rest zero-padded. The shape every single-claim flow needs; centralised so the inline poseidonHash + Array(16).fill(0n) pattern lives in one place. |
+| [generateClaimProof](functions/generateClaimProof.mdx) | Generate a Groth16 claim proof for one slot of a settlement. |
+| [generateDepositProof](functions/generateDepositProof.mdx) | Generate a Groth16 deposit proof for a `CommitmentNote`. |
+| [getPoseidonModule](functions/getPoseidonModule.mdx) | Get (and lazily build) the cached Poseidon module. The in-flight Promise is memoized so concurrent callers share one initialization. |
+| [warmupPoseidon](functions/warmupPoseidon.mdx) | Eagerly build the Poseidon round-constant table so the first proof job doesn't pay the build cost on the user's hot path. Worker `preload` hooks should call this on startup. |
+| [poseidonHash](functions/poseidonHash.mdx) | Generic Poseidon hash — convenient for one-off calls. Awaits the cached module each call, so use `poseidonHashWith` inside hot loops instead. |
+| [poseidonHashWith](functions/poseidonHashWith.mdx) | Synchronous Poseidon hash given an already-built module. Use inside hot loops where awaiting per call would dominate the cost. |
+| [randomFieldElement](functions/randomFieldElement.mdx) | Generate a cryptographically random field element strictly less than the BN254 scalar modulus. Uses `crypto.getRandomValues` (`globalThis.crypto` works in browser, Node 19+, Deno, Bun). |
+| [generateNote](functions/generateNote.mdx) | Build a fresh `CommitmentNote` bound to the caller's BabyJub signing pubkey. |
+| [computeCommitment](functions/computeCommitment.mdx) | v2 commitment: Poseidon(TAG_COMMITMENT_V2, ownerSecret, token, amount, salt, pubKeyAx, pubKeyAy) |
+| [computeNullifier](functions/computeNullifier.mdx) | Escrow nullifier (withdraw + settle): Poseidon(0, ownerSecret, salt). |
+| [computeNonceNullifier](functions/computeNonceNullifier.mdx) | Nonce nullifier (settle replay protection): Poseidon(1, ownerSecret, nonce). |
+| [computeClaimNullifier](functions/computeClaimNullifier.mdx) | Claim nullifier: Poseidon(2, secret, leafIndex). |
+| [computeTokenHash](functions/computeTokenHash.mdx) | Token hash for circuit public inputs: Poseidon(token). |
+| [toBytes32Hex](functions/toBytes32Hex.mdx) | Format a bigint as a 0x-prefixed bytes32 hex string. |
+| [warmupEddsa](functions/warmupEddsa.mdx) | Eagerly initialise the EdDSA + BabyJub tables. Worker `preload` hooks should call this on startup so the first signing job doesn't pay the build cost on the user's hot path. |
+| [deriveEdDSAKey](functions/deriveEdDSAKey.mdx) | Derive the EdDSA keypair from a wallet signature. |
+| [signEdDSA](functions/signEdDSA.mdx) | Sign a message (a field element — usually a Poseidon order hash) with EdDSA. |
+| [serializeKeyPair](functions/serializeKeyPair.mdx) | Serialize an EdDSA keypair to a JSON string for storage. The private key is hex-encoded; pubkey field elements are decimal strings (BigInt-safe). |
+| [deserializeKeyPair](functions/deserializeKeyPair.mdx) | Inverse of `serializeKeyPair`. Throws a single `"deserializeKeyPair: malformed JSON"` for any structural issue — invalid JSON, wrong shape, non-string fields, BigInt parse failure — so callers don't have to discriminate between the underlying parse / coercion errors. |
+| [buildMerkleTree](functions/buildMerkleTree.mdx) | Build a Poseidon Merkle tree of the given depth from `leaves`. The leaf array is padded with the leaf-level zero (`0n`) up to `2^depth`; internal zero values are derived by hashing the level below. |
+| [getMerkleProof](functions/getMerkleProof.mdx) | Walk a `BuiltTree` from leaf to root, collecting siblings. The returned `pathIndices[i]` is `1` when the original leaf is on the right side of its sibling at level `i`, `0` otherwise — matching the convention every Circom Merkle template uses. |
+| [createMockProver](functions/createMockProver.mdx) | A `Prover` that returns deterministic dummy proofs after a small delay. Useful for: - exercising UI flows without shipping circuit assets - integration tests that don't want to set up snarkjs - storybooks / visual regression |
+| [formatGroth16Proof](functions/formatGroth16Proof.mdx) | Convert snarkjs's raw proof shape to the SDK's `Groth16Proof` tuple (which mirrors what every Solidity verifier expects). |
+| [setProveReporter](functions/setProveReporter.mdx) | - |
+| [timeProve](functions/timeProve.mdx) | - |
+| [wipeBytes](functions/wipeBytes.mdx) | Best-effort overwrite of secret material in a Uint8Array. |
+| [generateMetaAddress](functions/generateMetaAddress.mdx) | Generate a fresh meta-address. The recipient stores all three fields: the spending/viewing private keys never leave the recipient, the meta-address can be shared publicly. |
+| [parseMetaAddress](functions/parseMetaAddress.mdx) | Parse a meta-address into the two compressed pubkeys. Throws on malformed input — the prefix and length checks catch the most common copy/paste mistakes. |
+| [isMetaAddress](functions/isMetaAddress.mdx) | Check that a string is shaped like a meta-address: the `st:eth:0x` prefix plus 132 hex characters (66 + 66 bytes compressed). Hex-strict — non-hex characters fail here instead of bubbling up later as a less-friendly `hexToBytes` error from `parseMetaAddress` / `generateStealthAddress`. |
+| [generateStealthAddress](functions/generateStealthAddress.mdx) | Sender side: build a one-time stealth address from a recipient's meta-address. Each call uses fresh ephemeral randomness; never reuse the returned `ephemeralPubKey` across recipients. |
+| [deriveStealthPrivateKey](functions/deriveStealthPrivateKey.mdx) | Recipient side: derive the spending private key for a stealth address that was generated against the recipient's meta-address. Mirror of the sender's ECDH — `v * R` produces the same shared secret as the sender's `r * V`. |
+| [stealthWallet](functions/stealthWallet.mdx) | Convenience: build an `ethers.Wallet` from the derived stealth private key. Pass a `provider` if you want to immediately read state / send transactions. |
+| [createWebWorkerProver](functions/createWebWorkerProver.mdx) | Build a `Prover` backed by a Web Worker. |
+| [setupProverWorker](functions/setupProverWorker.mdx) | Wire a Web Worker script to the SDK's prover protocol. |
+| [prefetchAssets](functions/prefetchAssets.mdx) | Best-effort prefetch — never throws so callers can `void prefetchAssets(...)` from a fire-and-forget context. |
+| [withCachedAssets](functions/withCachedAssets.mdx) | Resolve wasm + zkey to Blob URLs (or fall back to canonical), hand them to `run`, and revoke when `run` settles. `resolveAsset` always fulfils (errors fall back to the canonical URL with a no-op revoke), so a plain `Promise.all` is equivalent to and clearer than `Promise.allSettled` here. |
+| [warmProverAssets](functions/warmProverAssets.mdx) | Worker preload one-liner: resolves snarkjs + warms Poseidon + prefetches the circuit's wasm/zkey in parallel. Replaces the four near-identical preload bodies that lived in `*-worker.ts`. |

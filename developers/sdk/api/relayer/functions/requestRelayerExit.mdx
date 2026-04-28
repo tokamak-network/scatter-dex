@@ -1,0 +1,20 @@
+# Function: requestRelayerExit()
+
+```ts
+function requestRelayerExit(registryAddress, signer): Promise<TransactionResponse>;
+```
+
+Submit `requestExit()` — flips the operator into the cool-down
+ window. New orders stop routing immediately; bond becomes
+ withdrawable via `executeRelayerExit` after `EXIT_COOLDOWN_SECONDS`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `signer` | `Signer` |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

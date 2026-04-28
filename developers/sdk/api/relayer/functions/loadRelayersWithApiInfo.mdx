@@ -1,0 +1,24 @@
+# Function: loadRelayersWithApiInfo()
+
+```ts
+function loadRelayersWithApiInfo(
+   registryAddress, 
+   provider, 
+opts?): Promise<RelayerInfo[]>;
+```
+
+Combine on-chain registry data with a live `/api/info` probe per
+ relayer. Probes run in parallel; offline relayers come back
+ with `online: false` and `api: undefined`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `provider` | `Provider` |
+| `opts` | `LoadOpts` |
+
+## Returns
+
+`Promise`\<[`RelayerInfo`](../interfaces/RelayerInfo.mdx)[]\>

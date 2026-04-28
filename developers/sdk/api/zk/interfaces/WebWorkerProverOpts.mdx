@@ -1,0 +1,9 @@
+# Interface: WebWorkerProverOpts
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="createworker"></a> `createWorker` | () => `Worker` | Factory for the worker. Lazy so we don't spawn until the first prove (or `ready()`) call. |
+| <a id="label"></a> `label?` | `string` | Optional logger label used in fallback warnings and errors. |
+| <a id="fallbackprove"></a> `fallbackProve?` | (`req`, `opts?`) => `Promise`\<[`ProveResult`](ProveResult.mdx)\> | Main-thread fallback when the Worker constructor throws (most often: SSR, COOP/COEP misconfiguration, very old browsers). Without one, the prover surfaces the worker error to the caller. |

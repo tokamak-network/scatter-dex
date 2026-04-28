@@ -1,0 +1,17 @@
+# Function: computeNullifier()
+
+```ts
+function computeNullifier(note): Promise<bigint>;
+```
+
+Escrow nullifier (withdraw + settle): Poseidon(0, ownerSecret, salt).
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `note` | [`CommitmentNote`](../interfaces/CommitmentNote.mdx) |
+
+## Returns
+
+`Promise`\<`bigint`\>

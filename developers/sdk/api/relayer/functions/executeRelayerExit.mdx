@@ -1,0 +1,20 @@
+# Function: executeRelayerExit()
+
+```ts
+function executeRelayerExit(registryAddress, signer): Promise<TransactionResponse>;
+```
+
+Submit `executeExit()` — finalises the exit and returns the
+ bond. Will revert with `CooldownNotPassed` until the cool-down
+ window has elapsed; gate the button on `cooldownReadyAt`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `signer` | `Signer` |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

@@ -1,0 +1,23 @@
+# Interface: NetworkConfig
+
+Everything an app needs to talk to one zkScatter deployment.
+
+ Deliberately *passive* — the SDK never reads it from
+ `process.env` or `window.__ENV__`. The host app builds it from its
+ own config layer and passes it in.
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="chainid"></a> `chainId` | `number` | - |
+| <a id="name"></a> `name?` | `string` | Display name; falls back to `chainName(chainId)` when omitted. |
+| <a id="rpcurl"></a> `rpcUrl` | `string` | - |
+| <a id="explorerbase"></a> `explorerBase?` | `string` | Block explorer base URL (e.g. `https://sepolia.etherscan.io`). |
+| <a id="contracts"></a> `contracts` | [`ContractAddresses`](ContractAddresses.mdx) | - |
+| <a id="tokens"></a> `tokens` | [`TokenInfo`](TokenInfo.mdx)[] | - |
+| <a id="relayer"></a> `relayer?` | \{ `url`: `string`; \} | Default relayer URL used when the user hasn't picked one. |
+| `relayer.url` | `string` | - |
+| <a id="sharedorderbookurl"></a> `sharedOrderbookUrl?` | `string` | Shared orderbook service URL (cross-relayer order discovery). |
+| <a id="zkx509url"></a> `zkX509Url?` | `string` | zk-X509 verification flow URL. |
+| <a id="deployblock"></a> `deployBlock?` | `number` | Block to start event scans from (deploy block). 0 = full scan. |

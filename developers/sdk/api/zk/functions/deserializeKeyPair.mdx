@@ -1,0 +1,21 @@
+# Function: deserializeKeyPair()
+
+```ts
+function deserializeKeyPair(json): EdDSAKeyPair;
+```
+
+Inverse of `serializeKeyPair`. Throws a single
+ `"deserializeKeyPair: malformed JSON"` for any structural issue
+ — invalid JSON, wrong shape, non-string fields, BigInt parse
+ failure — so callers don't have to discriminate between the
+ underlying parse / coercion errors.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `json` | `string` |
+
+## Returns
+
+[`EdDSAKeyPair`](../interfaces/EdDSAKeyPair.mdx)

@@ -1,0 +1,12 @@
+# Function: getPoseidonModule()
+
+```ts
+function getPoseidonModule(): Promise<PoseidonModule>;
+```
+
+Get (and lazily build) the cached Poseidon module. The in-flight
+ Promise is memoized so concurrent callers share one initialization.
+
+## Returns
+
+`Promise`\<[`PoseidonModule`](../interfaces/PoseidonModule.mdx)\>

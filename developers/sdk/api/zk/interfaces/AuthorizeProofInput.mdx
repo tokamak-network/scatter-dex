@@ -1,0 +1,22 @@
+# Interface: AuthorizeProofInput
+
+Inputs to `generateAuthorizeProof`.
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="note"></a> `note` | [`CommitmentNote`](CommitmentNote.mdx) | Escrow note being spent (v2: includes BabyJub pubkey binding). |
+| <a id="leafindex"></a> `leafIndex` | `number` | Index of `note`'s commitment in the on-chain Merkle tree. |
+| <a id="allleaves"></a> `allLeaves?` | `bigint`[] | All commitment leaves in the pool. Required when `merkleProof` is omitted. |
+| <a id="merkleproof"></a> `merkleProof?` | [`MerkleProof`](MerkleProof.mdx) | Pre-computed Merkle proof for the note's commitment. When provided, the expensive O(2^COMMIT_TREE_DEPTH) tree rebuild is skipped — recommended for any pool past a few thousand leaves. Apps should maintain an incremental tree and supply this. |
+| <a id="sellamount"></a> `sellAmount` | `bigint` | How much of `note.token` to sell. Must be ≤ `note.amount`. |
+| <a id="buytoken"></a> `buyToken` | `string` | Counterparty's sell token. |
+| <a id="buyamount"></a> `buyAmount` | `bigint` | Minimum amount of `buyToken` we require — the price limit. |
+| <a id="maxfee"></a> `maxFee` | `bigint` | Relayer fee cap in basis points (100 = 1%). |
+| <a id="expiry"></a> `expiry` | `bigint` | Order expiry as unix seconds; settle checks `block.timestamp ≤ expiry`. |
+| <a id="nonce"></a> `nonce` | `bigint` | Replay-protection nonce — one per attempt. |
+| <a id="relayer"></a> `relayer` | `string` | Address of the relayer this proof is bound to. |
+| <a id="eddsaprivatekey"></a> `eddsaPrivateKey` | `Uint8Array` | Baby Jubjub private key (from `deriveEdDSAKey`). The local copy is wiped after signing. |
+| <a id="claims"></a> `claims` | [`ClaimEntry`](ClaimEntry.mdx)[] | Distribution of the proceeds. ≤ MAX_CLAIMS_PER_SIDE entries. |
+| <a id="newsalt"></a> `newSalt?` | `bigint` | Salt for the residual (change) commitment. The page that pre-computed `expectedChangeCommitment` for the note file MUST pass the same salt here, otherwise the on-chain new commitment will differ from the stored one and the change UTXO will be effectively unspendable. Omit when `sellAmount === note.amount` (fully spent — no change). When change > 0 and this is omitted, the prover generates a random fallback but does not surface it back — callers should not rely on that path. |

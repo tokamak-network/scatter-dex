@@ -1,0 +1,8 @@
+# Interface: MockProverOpts
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="latencyms"></a> `latencyMs?` | `number` | Latency for each `prove` call (ms). Defaults to 50 — enough to make spinners visible in tests without slowing them down. |
+| <a id="publicsignalscount"></a> `publicSignalsCount?` | `number` | Number of public signals to return per proof. Tests that inspect the count can override; default is one (the most common circuit shape). |

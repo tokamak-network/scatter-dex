@@ -1,0 +1,18 @@
+# Function: prefetchAssets()
+
+```ts
+function prefetchAssets(urls): Promise<void>;
+```
+
+Best-effort prefetch — never throws so callers can
+ `void prefetchAssets(...)` from a fire-and-forget context.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `urls` | readonly `string`[] |
+
+## Returns
+
+`Promise`\<`void`\>

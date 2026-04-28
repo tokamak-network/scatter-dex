@@ -1,0 +1,19 @@
+# Interface: ClaimProofInput
+
+Inputs to `generateClaimProof`. The `secret` and `leafIndex`
+ identify which slot in the settlement's claims tree this proof
+ is releasing; the rest is exact-match material the circuit
+ re-hashes to verify the leaf.
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="secret"></a> `secret` | `bigint` | Per-claim secret from the original `ClaimEntry`. |
+| <a id="recipient"></a> `recipient` | `bigint` | Recipient address as a uint256. |
+| <a id="token"></a> `token` | `bigint` | Token address as a uint256. |
+| <a id="amount"></a> `amount` | `bigint` | - |
+| <a id="releasetime"></a> `releaseTime` | `bigint` | Unix-seconds release time the original order set. |
+| <a id="leafindex"></a> `leafIndex` | `number` | Index of this claim within the settlement's 16-leaf tree. |
+| <a id="allclaimleaves"></a> `allClaimLeaves` | `bigint`[] | All 16 leaves of the claims tree (padded with `0n`). Used to re-derive `claimsRoot` and the inclusion proof. Ignored when `merkleProof` is supplied. |
+| <a id="merkleproof"></a> `merkleProof?` | [`MerkleProof`](MerkleProof.mdx) | Optional fast path: when supplied, `allClaimLeaves` is ignored and the circuit takes this proof's `pathElements` / `pathIndices` / `root` directly. |

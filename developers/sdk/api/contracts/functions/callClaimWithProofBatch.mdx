@@ -1,0 +1,23 @@
+# Function: callClaimWithProofBatch()
+
+```ts
+function callClaimWithProofBatch(
+   signer, 
+   settlementAddress, 
+items): Promise<TransactionResponse>;
+```
+
+Batch variant. Reverts atomically if any element is invalid;
+ caps at `MAX_CLAIM_BATCH_SIZE` (caller chunks larger sets).
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `signer` | `Signer` |
+| `settlementAddress` | `string` |
+| `items` | [`BatchClaimItem`](../interfaces/BatchClaimItem.mdx)[] |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

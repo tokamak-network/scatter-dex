@@ -1,0 +1,19 @@
+# Function: computeNonceNullifier()
+
+```ts
+function computeNonceNullifier(ownerSecret, nonce): Promise<bigint>;
+```
+
+Nonce nullifier (settle replay protection):
+ Poseidon(1, ownerSecret, nonce).
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `ownerSecret` | `bigint` |
+| `nonce` | `bigint` |
+
+## Returns
+
+`Promise`\<`bigint`\>

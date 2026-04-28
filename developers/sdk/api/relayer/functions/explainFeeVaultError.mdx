@@ -1,0 +1,19 @@
+# Function: explainFeeVaultError()
+
+```ts
+function explainFeeVaultError(err): string;
+```
+
+Map FeeVault custom-error reverts to user-facing copy. Falls
+ back to the unwrapped v6 message so unexpected errors still
+ surface a useful string instead of `[object Object]`.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `err` | `unknown` |
+
+## Returns
+
+`string`

@@ -1,0 +1,15 @@
+# Interface: ClaimCallInputs
+
+Public-input scalars the contract receives alongside the proof.
+ These MUST match the values the caller passed to
+ `generateClaimProof` — passing different scalars and the matching
+ proof together would fail on-chain verification.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="recipient"></a> `recipient` | `string` |
+| <a id="token"></a> `token` | `string` |
+| <a id="amount"></a> `amount` | `bigint` |
+| <a id="releasetime"></a> `releaseTime` | `bigint` |

@@ -1,0 +1,143 @@
+---
+title: Claim a payout
+description: "Convert a stealth-addressed pool commitment into an ERC-20 balance."
+---
+
+When your order matches (or a payment / drop is sent to you), the
+payout lands in `CommitmentPool` as a fresh commitment addressed to
+**either a regular wallet or a stealth address** — whichever you
+specified when the sender authorized the payout. Claim turns that
+commitment into a real on-chain transfer either way; only the spending
+key derivation differs (see [Stealth addresses](/docs/concepts/stealth-addresses)).
+
+Claims can be **locked** (have a `releaseTime` in the future) or
+**unlocked** (`releaseTime = 0`). Both use the same `claim` circuit.
+
+## Discover claimable commitments
+
+Two paths:
+
+**A) Through the relayer's order endpoint** — settled orders carry
+their claim distribution in the `RelayerOrder.claims` field. Walk the
+maker's order history (or the recipient-side view your relayer exposes)
+and flatten the claim arrays. Pair each entry with the local secret
+you generated in [Place an order](/docs/guides/place-order) — relayers do
+not see secrets.
+
+```ts
+const orders = await client.getOrderHistory(account);
+const fromOrders = orders.orders.flatMap((o) => o.claims ?? []);
+// Each entry: { claimHash, amount, releaseDelay } as the relayer sees it.
+// Reconcile with your local pending list (keyed by claimHash) to attach
+// the secret, ephemeralPubKey, and leafIndex you persisted at order time.
+```
+
+**B) Self-scan** — replay `CommitmentInserted` events and identify
+yours from `ephemeralPubKey` against your viewing key (see
+[Stealth addresses](/docs/concepts/stealth-addresses)).
+
+Either path, the local record you feed into `generateClaimProof` looks
+like:
+
+```ts
+// [{ commitment, leafIndex, secret, token, amount, releaseTime, ephemeralPubKey }]
+```
+
+`secret` is the random field element you generated for this claim
+entry at order-placement time and persisted alongside the order — the
+proof cannot be built without it.
+
+## Generate the claim proof
+
+```ts
+import {
+  generateClaimProof,
+  deriveStealthPrivateKey,
+} from "@zkscatter/sdk/zk";
+
+const spendingPriv = deriveStealthPrivateKey(
+  meta.spendingKey,
+  claim.ephemeralPubKey,
+);
+
+const claimResult = await generateClaimProof(
+  {
+    secret: claim.secret,
+    leafIndex: claim.leafIndex,
+    merkleProof,
+    recipient: account,            // where the unlocked tokens land
+    token: claim.token,
+    amount: claim.amount,
+    releaseTime: claim.releaseTime,
+    spendingPrivateKey: spendingPriv,
+  },
+  { wasm: "/zk/claim.wasm", zkey: "/zk/claim_final.zkey" },
+);
+```
+
+## Submit on-chain
+
+```ts
+import { callClaimWithProof } from "@zkscatter/sdk/contracts";
+
+const tx = await callClaimWithProof(
+  signer,
+  network.contracts.privateSettlement,
+  claimResult.proof,
+  {
+    recipient: account,
+    token: claim.token,
+    amount: claim.amount,
+    releaseTime: claim.releaseTime,
+  },
+);
+await tx.wait();
+```
+
+## Batch claims
+
+If a user has multiple unlocked claims, batch them:
+
+```ts
+import {
+  callClaimWithProofBatch,
+  MAX_CLAIM_BATCH_SIZE,   // 20
+} from "@zkscatter/sdk/contracts";
+
+const items = claims.slice(0, MAX_CLAIM_BATCH_SIZE).map((c) => ({
+  proof: c.proof,
+  inputs: { recipient: account, token: c.token, amount: c.amount, releaseTime: c.releaseTime },
+}));
+
+const tx = await callClaimWithProofBatch(
+  signer,
+  network.contracts.privateSettlement,
+  items,
+);
+```
+
+Atomic — any single revert rolls the whole batch back. Cap at 20 to
+keep gas in the typical block limit.
+
+## Locked claims
+
+A locked claim has `releaseTime > 0`. The proof is generatable
+immediately — but `claimWithProof` reverts until `block.timestamp >=
+releaseTime`. UI pattern: show "Claim available in 12h" and disable the
+button until the deadline.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Claim: nullifier reused`">
+    Already claimed. Remove the entry from your local pending list.
+  </Accordion>
+  <Accordion title="`Claim: not yet releasable`">
+    `block.timestamp < releaseTime`. Re-render with the unlock countdown.
+  </Accordion>
+  <Accordion title="Stealth address mismatch in proof">
+    `deriveStealthPrivateKey` was called with the wrong meta-address.
+    Confirm `viewingKey` and `spendingKey` came from the same
+    `generateMetaAddress` call.
+  </Accordion>
+</AccordionGroup>

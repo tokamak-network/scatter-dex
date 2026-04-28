@@ -1,0 +1,8 @@
+# Interface: EdDSAKeyPair
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="privatekey"></a> `privateKey` | `Uint8Array` | 32-byte Baby Jubjub private key (the keccak of the ECDSA sig). |
+| <a id="publickey"></a> `publicKey` | readonly \[`bigint`, `bigint`\] | Public point on Baby Jubjub: [Ax, Ay]. |

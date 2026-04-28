@@ -1,0 +1,53 @@
+# Interface: ProverWorkerHandlers
+
+What a circuit-specific worker file plugs into `setupProverWorker`.
+
+## Methods
+
+### prove()
+
+```ts
+prove(req): Promise<{
+  proof: Groth16Proof;
+  publicSignals: readonly bigint[];
+  meta?: Readonly<Record<string, bigint>>;
+}>;
+```
+
+Run the proof for one job. May throw — the runtime turns that
+ into a `{ type: "error" }` message back to the main thread.
+ `meta` is an optional side-channel for private outputs the
+ circuit doesn't expose as a public signal (e.g. cancel's
+ `freshSalt`). See `ProveResult.meta`.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `req` | [`ProverWorkerRequest`](../type-aliases/ProverWorkerRequest.mdx) |
+
+#### Returns
+
+`Promise`\<\{
+  `proof`: [`Groth16Proof`](Groth16Proof.mdx);
+  `publicSignals`: readonly `bigint`[];
+  `meta?`: `Readonly`\<`Record`\<`string`, `bigint`\>\>;
+\}\>
+
+***
+
+### preload()?
+
+```ts
+optional preload(): Promise<void>;
+```
+
+Optional asset / Poseidon warmup, run once before the worker
+ signals "ready". Errors here are reported as a worker-scope
+ error AND posted as a sentinel error message so the main
+ thread surfaces a clear failure instead of waiting forever
+ for a `ready` that never comes.
+
+#### Returns
+
+`Promise`\<`void`\>

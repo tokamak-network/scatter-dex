@@ -1,0 +1,14 @@
+# Interface: ContractAddresses
+
+Addresses of every core zkScatter contract on a given chain.
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="privatesettlement"></a> `privateSettlement` | `string` | PrivateSettlement: settles matched private orders + DEX swaps. |
+| <a id="commitmentpool"></a> `commitmentPool` | `string` | CommitmentPool: holds escrowed funds, anchors the merkle tree. |
+| <a id="identitygate"></a> `identityGate` | `string` | IdentityGate: zk-X509 verification status. |
+| <a id="relayerregistry"></a> `relayerRegistry` | `string` | RelayerRegistry: public relayer directory. |
+| <a id="feevault"></a> `feeVault?` | `string` | FeeVault (optional in test environments). |
+| <a id="weth"></a> `weth` | `string` | WETH address on the chain (also used as the native-ETH token slot). |

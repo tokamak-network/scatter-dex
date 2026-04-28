@@ -1,0 +1,15 @@
+# Interface: SharedOrderbookStats
+
+Shared orderbook — cross-relayer order discovery service.
+
+ Read-only client. Returns `null` / `[]` on transport / parse
+ failure so missing service surfaces as an empty state in the
+ UI rather than a thrown error.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="totalorders"></a> `totalOrders` | `number` |
+| <a id="pairs"></a> `pairs` | `number` |
+| <a id="relayers"></a> `relayers` | `number` |
