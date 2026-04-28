@@ -27,8 +27,21 @@ export class WalletBookCorruptError extends Error {
 export interface WalletEntry {
   id: string;
   label: string;
-  /** Lowercase 0x-prefixed address. Validated on add. */
+  /** Lowercase 0x-prefixed default address. Used when the run's
+   *  chain is not in `addressByChain`. Validated on add. */
   address: string;
+  /** Per-chain address override. Pay's wizard picks
+   *  `addressByChain[run.chainId] ?? address` so the same recipient
+   *  can be paid on Ethereum and a different L2 without two book
+   *  entries. Keys are numeric chain ids; values are lowercase
+   *  0x-prefixed addresses. Optional — most recipients use the same
+   *  address everywhere. */
+  addressByChain?: Record<number, string>;
+  /** Email Pay copies into the run record at send time so the run
+   *  stays valid even if the entry is later edited or removed. */
+  email?: string;
+  /** Discord handle for the same reason as `email`. */
+  discordHandle?: string;
   /** Optional free-form note (e.g. "engineering team / Q2"). */
   memo?: string;
   /** Unix seconds. */
@@ -45,6 +58,28 @@ function newId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Reject any key that is not the canonical decimal string of a
+ *  positive integer. `"0x1"` / `"1.0"` would pass a loose
+ *  `Number()` check but never match a numeric `chainId` lookup,
+ *  leaving an unreachable entry on disk. */
+function isCanonicalChainKey(key: string): boolean {
+  if (key.length === 0 || key.length > 12) return false;
+  const n = Number(key);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  return String(n) === key;
+}
+
+function isValidAddressByChain(v: unknown): boolean {
+  if (v === undefined) return true;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  for (const [chainKey, addr] of Object.entries(v as Record<string, unknown>)) {
+    if (!isCanonicalChainKey(chainKey)) return false;
+    if (typeof addr !== "string" || !ethers.isAddress(addr)) return false;
+    if (addr !== addr.toLowerCase()) return false;
+  }
+  return true;
+}
+
 function isValidEntry(e: unknown): e is WalletEntry {
   if (!e || typeof e !== "object") return false;
   const v = e as Record<string, unknown>;
@@ -55,8 +90,18 @@ function isValidEntry(e: unknown): e is WalletEntry {
     ethers.isAddress(v.address) &&
     v.address === (v.address as string).toLowerCase() &&
     typeof v.createdAt === "number" &&
-    (v.memo === undefined || typeof v.memo === "string")
+    (v.memo === undefined || typeof v.memo === "string") &&
+    (v.email === undefined || typeof v.email === "string") &&
+    (v.discordHandle === undefined || typeof v.discordHandle === "string") &&
+    isValidAddressByChain(v.addressByChain)
   );
+}
+
+/** Resolve the address Pay should use for a run on `chainId`.
+ *  Falls back to the entry's default `address` when no per-chain
+ *  override is set. */
+export function entryAddressForChain(entry: WalletEntry, chainId: number): string {
+  return entry.addressByChain?.[chainId] ?? entry.address;
 }
 
 /** Load the wallet book from the selected folder. Returns an empty
@@ -123,17 +168,42 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+function normaliseAddressByChain(
+  input: Record<number, string> | undefined,
+): Record<number, string> | undefined {
+  if (!input) return undefined;
+  const out: Record<number, string> = {};
+  for (const [chainKey, addr] of Object.entries(input)) {
+    // Accept the JS-numeric form (`{ 1: "0x..." }` reads back as
+    // `"1"`) but reject anything that wouldn't round-trip through a
+    // numeric lookup. JSON serialisation always emits the canonical
+    // form anyway — this guards hand-edited / programmatic input.
+    if (!isCanonicalChainKey(chainKey)) {
+      throw new Error(`Invalid chain id: ${chainKey}`);
+    }
+    if (!ethers.isAddress(addr)) {
+      throw new Error(`Invalid address for chain ${chainKey}: ${addr}`);
+    }
+    out[Number(chainKey)] = addr.toLowerCase();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Add a new entry. Throws when the address is invalid, the label is
  *  empty, or the address already exists in the book. */
 export async function addWallet(input: {
   label: string;
   address: string;
   memo?: string;
+  email?: string;
+  discordHandle?: string;
+  addressByChain?: Record<number, string>;
 }): Promise<WalletEntry> {
   if (!ethers.isAddress(input.address)) throw new Error("Invalid address");
   const label = input.label.trim();
   if (!label) throw new Error("Label is required");
   const address = input.address.toLowerCase();
+  const addressByChain = normaliseAddressByChain(input.addressByChain);
 
   return withLock(async () => {
     const entries = await loadWalletBook();
@@ -145,6 +215,9 @@ export async function addWallet(input: {
       label,
       address,
       memo: input.memo?.trim() || undefined,
+      email: input.email?.trim() || undefined,
+      discordHandle: input.discordHandle?.trim() || undefined,
+      addressByChain,
       createdAt: Math.floor(Date.now() / 1000),
     };
     await writeBook([...entries, entry]);
@@ -152,27 +225,42 @@ export async function addWallet(input: {
   });
 }
 
-/** Patch an existing entry's label or memo. The address is immutable
- *  (a different address means a different entry). */
+/** Patch an existing entry. The default `address` is immutable —
+ *  different identities should be separate entries — but per-chain
+ *  overrides, contact fields, label, and memo can all be updated. */
 export async function updateWallet(
   id: string,
-  patch: Partial<Pick<WalletEntry, "label" | "memo">>,
+  patch: Partial<
+    Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+      addressByChain?: Record<number, string>;
+    }
+  >,
 ): Promise<void> {
   if (patch.label !== undefined && !patch.label.trim()) {
     throw new Error("Label is required");
   }
+  const nextAddressByChain =
+    patch.addressByChain !== undefined
+      ? normaliseAddressByChain(patch.addressByChain)
+      : undefined;
+
   return withLock(async () => {
     const entries = await loadWalletBook();
-    const next = entries.map((e) =>
-      e.id === id
-        ? {
-            ...e,
-            label: patch.label !== undefined ? patch.label.trim() : e.label,
-            memo:
-              patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
-          }
-        : e,
-    );
+    const next = entries.map((e) => {
+      if (e.id !== id) return e;
+      return {
+        ...e,
+        label: patch.label !== undefined ? patch.label.trim() : e.label,
+        memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
+        email: patch.email !== undefined ? patch.email.trim() || undefined : e.email,
+        discordHandle:
+          patch.discordHandle !== undefined
+            ? patch.discordHandle.trim() || undefined
+            : e.discordHandle,
+        addressByChain:
+          patch.addressByChain !== undefined ? nextAddressByChain : e.addressByChain,
+      };
+    });
     await writeBook(next);
   });
 }
