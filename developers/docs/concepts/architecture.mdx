@@ -102,7 +102,7 @@ and settlement happen asynchronously.
 Relayers are bonded operators registered on `RelayerRegistry`. Each
 relayer:
 
-- Posts an ETH bond (slashable for malicious behavior).
+- Posts a TON bond (returned in full on exit; no on-chain slashing — accountability runs through the planned Dispute Registry + reputation indexer).
 - Sets a fee in basis points.
 - Runs a matcher service exposing `/api/info` and `/api/orders/:address`
   (history is the same endpoint with `?status=&limit=&offset=` query
