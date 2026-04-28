@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_TARGETS=(hub docs pro)
+ALL_TARGETS=(hub docs pro pay)
 # `"${@:-${ALL_TARGETS[@]}}"` collapses the default into one quoted
 # string when no args are passed, so an explicit branch is needed to
 # preserve word splitting for the array assignment.
@@ -23,6 +23,7 @@ declare -A APP_DIR=(
   [hub]="apps/hub"
   [docs]="apps/docs"
   [pro]="apps/pro"
+  [pay]="apps/pay"
 )
 
 # Production URLs baked into static exports at build time. `.env.local`
@@ -31,6 +32,12 @@ declare -A APP_DIR=(
 export NEXT_PUBLIC_HUB_URL="https://zkscatter-hub.web.app"
 export NEXT_PUBLIC_DOCS_URL="https://zkscatter-docs.web.app"
 export NEXT_PUBLIC_PRO_URL="https://zkscatter-pro.web.app"
+export NEXT_PUBLIC_PAY_URL="https://zkscatter-pay.web.app"
+# Pay reads its chain config from envs at build time. Default to
+# Sepolia for the public Firebase deploy so the chain pill / wrong-
+# chain banner show "Sepolia (testnet)" instead of falling back to
+# the localhost id 31337.
+export NEXT_PUBLIC_PAY_CHAIN_ID="11155111"
 
 for target in "${TARGETS[@]}"; do
   dir="${APP_DIR[$target]:-}"

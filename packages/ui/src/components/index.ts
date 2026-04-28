@@ -7,3 +7,4 @@ export * from "./ConnectWalletPill";
 export * from "./Toast";
 export * from "./TokamakMark";
 export * from "./useOutsideClick";
+export * from "./AppShellHeader";

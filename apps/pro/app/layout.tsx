@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
-import { RelayerPill } from "./components/RelayerPill";
+import { WrongChainBanner } from "./components/WrongChainBanner";
+import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { VaultProvider } from "./lib/vault";
 import { OrdersProvider } from "./lib/orders";
@@ -37,29 +38,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <OrdersProvider>
                         <TradeFormProvider>
                           <ToastProvider>
-                            <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-                              🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
-                            </div>
-                            <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-                              <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                                <Brand />
-                                <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">
-                                  <a
-                                    href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app"}
-                                    className="hover:text-[var(--color-text)]"
-                                  >
-                                    ← All apps
-                                  </a>
+                            <AppShellHeader
+                              brand={<Brand />}
+                              chainPill={<NetworkSwitcher />}
+                              walletSlot={<ConnectWalletPill />}
+                              hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app"}
+                              topRibbon={
+                                <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
+                                  🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
+                                </div>
+                              }
+                              navLinks={
+                                <>
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
                                   <Link href="/inbox" className="hover:text-[var(--color-text)]">Inbox</Link>
-                                  <NetworkSwitcher />
-                                  <RelayerPill />
-                                  <ConnectWalletPill />
-                                </nav>
-                              </div>
-                            </header>
+                                </>
+                              }
+                            />
+                            <WrongChainBanner />
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
                               Scatter Pro · Powered by zkScatter · Tokamak Network

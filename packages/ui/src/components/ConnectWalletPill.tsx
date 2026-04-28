@@ -1,6 +1,8 @@
 "use client";
 
+import { useCallback, useRef, useState } from "react";
 import { Pill, StatusDot } from "./Pill";
+import { useOutsideClick } from "./useOutsideClick";
 
 export interface ConnectWalletPillViewProps {
   /** True when a wallet is connected. Drives the connected vs.
@@ -49,28 +51,78 @@ export function ConnectWalletPillView({
     );
   }
 
+  return <ConnectedPill {...{ shortAccount, walletName, disconnect, wrongChain }} />;
+}
+
+interface ConnectedPillProps {
+  shortAccount: string;
+  walletName: string | null;
+  disconnect: () => void;
+  wrongChain: boolean;
+}
+
+/** Address pill with a click-to-open menu carrying the explicit
+ *  "Disconnect" action. Replaces the previous tiny `×` glyph that
+ *  was easy to miss. */
+function ConnectedPill({ shortAccount, walletName, disconnect, wrongChain }: ConnectedPillProps) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClick({ enabled: open, ref: wrapRef, onClose: close });
+
   return (
-    <Pill>
-      <StatusDot kind={wrongChain ? "warn" : "online"} />
-      {wrongChain ? (
-        <span className="text-[var(--color-warning)]">
-          Wrong chain — switch to {networkLabel}
-        </span>
-      ) : (
-        <span>{networkLabel}</span>
+    <div ref={wrapRef} className="relative inline-block">
+      <Pill onClick={() => setOpen((v) => !v)} title={walletName ?? "Wallet"}>
+        <StatusDot kind={wrongChain ? "warn" : "online"} />
+        <span className="font-mono">{shortAccount}</span>
+        <span aria-hidden="true" className="text-[var(--color-text-subtle)]">▾</span>
+      </Pill>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              disconnect();
+              close();
+            }}
+            className="block w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] hover:text-[var(--color-danger)] focus:bg-[var(--color-bg)] focus:outline-none"
+          >
+            Disconnect
+          </button>
+        </div>
       )}
-      <span aria-hidden="true" className="text-[var(--color-text-subtle)]">·</span>
-      <span title={walletName ?? "Wallet"} className="font-mono">
-        {shortAccount}
-      </span>
+    </div>
+  );
+}
+
+export interface WrongChainBannerViewProps {
+  wrongChain: boolean;
+  networkLabel: string;
+  switchChain: () => void;
+}
+
+/** Full-width banner shown directly below the header when the wallet
+ *  is connected to the wrong chain. Apps wire `switchChain` to the
+ *  same `connect` action that re-prompts the wallet for a chain
+ *  switch. */
+export function WrongChainBannerView({
+  wrongChain,
+  networkLabel,
+  switchChain,
+}: WrongChainBannerViewProps) {
+  if (!wrongChain) return null;
+  return (
+    <div className="bg-[var(--color-warning)]/10 px-6 py-2 text-center text-xs">
+      <span className="text-[var(--color-warning)]">
+        ⚠ Wrong chain — your wallet isn’t on {networkLabel}.
+      </span>{" "}
       <button
         type="button"
-        onClick={disconnect}
-        className="ml-1 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)]"
-        aria-label="Disconnect wallet"
+        onClick={switchChain}
+        className="font-medium text-[var(--color-warning)] underline underline-offset-2 hover:no-underline"
       >
-        ×
+        Switch to {networkLabel}
       </button>
-    </Pill>
+    </div>
   );
 }

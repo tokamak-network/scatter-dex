@@ -75,6 +75,27 @@
           ]
         }
       ]
+    },
+    {
+      "target": "pay",
+      "public": "apps/pay/out",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "**/*.@(js|css|woff2|woff|ttf|svg|png|jpg|jpeg|webp|ico)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+          ]
+        },
+        {
+          "source": "**/*.@(html|json)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+          ]
+        }
+      ]
     }
   ]
 }
