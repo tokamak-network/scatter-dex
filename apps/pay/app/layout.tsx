@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PayProviders } from "./_lib/providers";
-import { WalletButton } from "./_components/WalletButton";
+import { ConnectWalletPill } from "./_components/ConnectWalletPill";
 import { FolderPill } from "./_components/FolderPill";
 import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
-import { Pill, StatusDot } from "@zkscatter/ui";
+import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { chainName } from "@zkscatter/sdk";
 import { getNetworkConfig } from "./_lib/network";
 import "./globals.css";
@@ -21,31 +21,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <PayProviders>
-          <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-            🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.
-          </div>
-          <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
-              <div className="flex items-center gap-3">
-                <Brand />
-                <PayNetworkPill />
+          <AppShellHeader
+            brand={<Brand />}
+            chainPill={<PayNetworkPill />}
+            walletSlot={<ConnectWalletPill />}
+            hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
+            topRibbon={
+              <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
+                🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.
               </div>
-              <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
-                <a
-                  href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
-                  className="hover:text-[var(--color-text)]"
-                >
-                  ← All apps
-                </a>
+            }
+            navLinks={
+              <>
                 <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                 <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                 <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
                 <Link href="/recipients" className="hover:text-[var(--color-text)]">Recipients</Link>
-                <FolderPill />
-                <WalletButton />
-              </nav>
-            </div>
-          </header>
+              </>
+            }
+            navTrailing={<FolderPill />}
+          />
           <WrongChainBanner />
           <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
           <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">

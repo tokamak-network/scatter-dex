@@ -4,7 +4,7 @@ import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { Brand } from "./components/Brand";
-import { Pill, StatusDot } from "@zkscatter/ui";
+import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
 import { FeeVaultProvider } from "./lib/useFeeVault";
@@ -23,25 +23,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <WalletProvider network={DEMO_NETWORK}>
           <OperatorProvider>
             <FeeVaultProvider>
-            <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-              Operator preview — Sepolia testnet. Pages with mock data are tagged inline.
-            </div>
-            <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-              <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <Brand />
-                  <Pill title={DEMO_NETWORK.name ?? "Network"}>
-                    <StatusDot kind="online" />
-                    <span>{DEMO_NETWORK.name ?? "Network"}</span>
-                  </Pill>
+            <AppShellHeader
+              brand={<Brand />}
+              chainPill={
+                <Pill title={DEMO_NETWORK.name ?? "Network"}>
+                  <StatusDot kind="online" />
+                  <span>{DEMO_NETWORK.name ?? "Network"}</span>
+                </Pill>
+              }
+              walletSlot={<ConnectWalletPill />}
+              hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
+              topRibbon={
+                <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
+                  Operator preview — Sepolia testnet. Pages with mock data are tagged inline.
                 </div>
-                <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
-                  <a
-                    href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
-                    className="hover:text-[var(--color-text)]"
-                  >
-                    ← All apps
-                  </a>
+              }
+              navLinks={
+                <>
                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                   <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
@@ -49,10 +47,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Link href="/leaderboard" className="hover:text-[var(--color-text)]">Leaderboard</Link>
                   <Link href="/profile" className="hover:text-[var(--color-text)]">Profile</Link>
                   <Link href="/register" className="hover:text-[var(--color-text)]">Register</Link>
-                  <ConnectWalletPill />
-                </nav>
-              </div>
-            </header>
+                </>
+              }
+            />
             <WrongChainBanner />
             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
