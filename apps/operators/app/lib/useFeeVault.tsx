@@ -33,10 +33,19 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
+  // Drop stale balances the moment the operator account or
+  // configured vault changes, so an account switch never briefly
+  // renders the previous account's amounts before the new fetch
+  // resolves. Kept separate from the fetch effect below so that a
+  // user-driven `refresh()` (tick bump) doesn't flash the table to
+  // empty between fetches.
+  useEffect(() => {
+    setBalances([]);
+    setError(null);
+  }, [account, vaultAddress]);
+
   useEffect(() => {
     if (!account || !vaultDeployed || !vaultAddress) {
-      setBalances([]);
-      setError(null);
       setLoading(false);
       return;
     }

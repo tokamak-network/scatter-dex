@@ -83,6 +83,16 @@ export const FEE_VAULT_ABI = [
   "event PlatformSurplusFromDex(address indexed token, uint256 amount)",
   "event PlatformFeeFromRelayerClaim(address indexed token, uint256 amount, address indexed relayer)",
   "event PlatformRevenueWithdrawn(address indexed token, uint256 amount, address indexed to)",
+  // Error fragments — required for ethers v6 to decode `revert.name` /
+  // `errorName` on contract-call exceptions, which `explainFeeVaultError`
+  // uses to map reverts to friendly copy.
+  "error ZeroAddress()",
+  "error FeeTooHigh()",
+  "error NotAuthorized()",
+  "error NothingToClaim()",
+  "error InsufficientTokenBalance()",
+  "error NoFeeChangePending()",
+  "error FeeChangeNotReady()",
 ] as const;
 
 // Pre-parsed Interface objects — repeated `new ethers.Interface(...)`

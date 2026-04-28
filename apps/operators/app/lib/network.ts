@@ -15,6 +15,7 @@ export const DEMO_NETWORK: NetworkConfig = {
     commitmentPool: ZERO_ADDRESS,
     identityGate: ZERO_ADDRESS,
     relayerRegistry: ZERO_ADDRESS,
+    feeVault: ZERO_ADDRESS,
     weth: ZERO_ADDRESS,
   },
   tokens: [],
