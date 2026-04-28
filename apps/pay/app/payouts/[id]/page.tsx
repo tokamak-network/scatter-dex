@@ -2,178 +2,427 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useOutsideClick } from "@zkscatter/ui";
+import { shortAddr } from "@zkscatter/sdk/react";
+import {
+  indexLatestNotifications,
+  saveRun,
+  type NotificationChannel,
+  type NotificationLog,
+  type RecipientRow,
+  type RunRecord,
+} from "@zkscatter/sdk/storage";
+import { useFolderStorage } from "../../_lib/folderStorage";
+import { useRunRecord } from "../../_lib/runRecord";
 
-type Status = "claimed" | "available" | "locked";
+const SAMPLE_RUN_ID = "p_2026_04_payroll";
+const EMAIL: NotificationChannel = "email";
 
-interface Recipient {
-  name: string;
-  address: string;
-  amount: string;
-  status: Status;
-  when: string; // claimed-at if claimed, claim-from if locked
-}
-
-const recipients: Recipient[] = [
-  { name: "Alice", address: "0xab12…abcd", amount: "3,500", status: "claimed",   when: "Apr 1, 14:02" },
-  { name: "Bob",   address: "0xcd34…ef12", amount: "4,200", status: "claimed",   when: "Apr 1, 14:08" },
-  { name: "Carol", address: "0xef56…3456", amount: "3,800", status: "claimed",   when: "Apr 1, 15:21" },
-  { name: "Dan",   address: "0x7890…7890", amount: "5,000", status: "available", when: "—" },
-  { name: "Eve",   address: "0x1234…5678", amount: "4,500", status: "available", when: "—" },
-  { name: "Frank", address: "0x2468…1357", amount: "3,200", status: "locked",    when: "May 1, 00:00" },
-];
-
-const PAYOUT_LABEL = "April payroll";
-const PAYOUT_ID = "p_2026_04_payroll";
+type BusyKind = "send-all" | "resend" | "row" | "seed" | null;
 
 export default function PayoutDetail() {
   const params = useParams<{ id: string }>();
-  const id = params?.id ?? PAYOUT_ID;
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const id = params?.id;
+  const folder = useFolderStorage();
+  const run = useRunRecord(id);
+  const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [busy, setBusy] = useState<BusyKind>(null);
   const closeMenu = useCallback(() => setOpenMenu(null), []);
 
-  if (id !== PAYOUT_ID) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-          <Link href="/dashboard" className="hover:text-[var(--color-text)]">Payouts</Link>
-          <span>/</span>
-          <span className="font-mono text-xs">{id}</span>
-        </div>
-        <h1 className="text-2xl font-semibold">Payout not found</h1>
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Phase A only ships a sample run (<span className="font-mono">{PAYOUT_ID}</span>). Live
-          payout pages arrive in Phase B once the wizard is wired to the contract.
-        </p>
-        <Link
-          href="/dashboard"
-          className="inline-block rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
-        >
-          ← Back to dashboard
-        </Link>
-      </div>
+  const breadcrumb = (
+    <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+      <Link href="/dashboard" className="hover:text-[var(--color-text)]">Payouts</Link>
+      <span>/</span>
+      <span className="font-mono text-xs">{id ?? "—"}</span>
+    </div>
+  );
+
+  const shell = (children: ReactNode) => (
+    <div className="space-y-4">
+      {breadcrumb}
+      {children}
+    </div>
+  );
+
+  if (folder.available === false) return shell(<UnsupportedBanner />);
+
+  if (folder.available === true && !folder.ready) {
+    return shell(
+      folder.restoring ? (
+        <p className="text-sm text-[var(--color-text-muted)]">Restoring your notes folder…</p>
+      ) : (
+        <PickFolderBanner onPick={() => void folder.select()} />
+      ),
     );
   }
 
-  const claimed = recipients.filter((r) => r.status === "claimed").length;
-  const available = recipients.filter((r) => r.status === "available").length;
-  const locked = recipients.filter((r) => r.status === "locked").length;
-
-  function copyClaimLink(name: string) {
-    // Real link uses /claim/<id>#<secret>; demo just copies the run url.
-    const url = `${window.location.origin}/claim/${PAYOUT_ID}_${name.toLowerCase()}#demo-secret`;
-    navigator.clipboard.writeText(url);
-    setOpenMenu(null);
+  if (!run.loaded) {
+    return shell(<p className="text-sm text-[var(--color-text-muted)]">Loading run record…</p>);
   }
 
-  function emailPayslip(name: string) {
-    // Placeholder — Phase B wires this to Pay's notification service.
-    alert(`Sending payslip email to ${name}…`);
-    setOpenMenu(null);
+  if (run.corrupt) {
+    return shell(
+      <CorruptBanner message={run.corrupt.message} filename={`zkscatter-run-${id}.json`} />,
+    );
   }
 
-  function emailClaimLink(name: string) {
-    alert(`Re-sending claim link to ${name}…`);
-    setOpenMenu(null);
+  if (!run.record) {
+    return shell(
+      <>
+        <h1 className="text-2xl font-semibold">Run not found</h1>
+        <p className="text-sm text-[var(--color-text-muted)]">
+          No <span className="font-mono">zkscatter-run-{id}.json</span> in your notes folder.
+          Live run records arrive in Phase B once the wizard is wired to the contract — for now
+          you can seed the sample <span className="font-mono">{SAMPLE_RUN_ID}</span> run to see
+          the notification flow.
+        </p>
+        <div className="flex gap-2">
+          {id === SAMPLE_RUN_ID && (
+            <button
+              disabled={busy !== null}
+              onClick={async () => {
+                setBusy("seed");
+                try {
+                  await saveRun(buildSampleRun());
+                  await run.refresh();
+                } finally {
+                  setBusy(null);
+                }
+              }}
+              className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              {busy === "seed" ? "Seeding…" : "Seed sample run"}
+            </button>
+          )}
+          <Link
+            href="/dashboard"
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
+      </>,
+    );
   }
+
+  const record = run.record;
+  return shell(<PayoutBody
+    record={record}
+    busy={busy}
+    setBusy={setBusy}
+    openMenu={openMenu}
+    setOpenMenu={setOpenMenu}
+    closeMenu={closeMenu}
+    markSentBatch={run.markSentBatch}
+    markSent={run.markSent}
+    error={run.error}
+  />);
+}
+
+function PayoutBody({
+  record,
+  busy,
+  setBusy,
+  openMenu,
+  setOpenMenu,
+  closeMenu,
+  markSentBatch,
+  markSent,
+  error,
+}: {
+  record: RunRecord;
+  busy: BusyKind;
+  setBusy: Dispatch<SetStateAction<BusyKind>>;
+  openMenu: number | null;
+  setOpenMenu: Dispatch<SetStateAction<number | null>>;
+  closeMenu: () => void;
+  markSentBatch: (entries: { rowIndex: number; channel: NotificationChannel; toAddress: string }[]) => Promise<boolean>;
+  markSent: (input: { rowIndex: number; channel: NotificationChannel; toAddress: string }) => Promise<boolean>;
+  error: string | null;
+}) {
+  const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
+
+  const sendBatch = useCallback(
+    async (kind: Exclude<BusyKind, null | "row" | "seed">, predicate: (r: RecipientRow) => boolean) => {
+      const entries = record.recipients
+        .filter((r) => !!r.email && predicate(r))
+        .map((r) => ({ rowIndex: r.rowIndex, channel: EMAIL, toAddress: r.email! }));
+      if (entries.length === 0) return;
+      setBusy(kind);
+      try {
+        await markSentBatch(entries);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [record, markSentBatch, setBusy],
+  );
+
+  const onSendAll = () => sendBatch("send-all", (r) => !logsByRow.get(r.rowIndex)?.sentAt);
+  const onResendUnclaimed = () => sendBatch("resend", (r) => r.status !== "claimed");
+
+  const onMarkSentRow = useCallback(
+    async (row: RecipientRow) => {
+      if (!row.email) return;
+      setBusy("row");
+      try {
+        await markSent({ rowIndex: row.rowIndex, channel: EMAIL, toAddress: row.email });
+      } finally {
+        setBusy(null);
+      }
+      setOpenMenu(null);
+    },
+    [markSent, setBusy, setOpenMenu],
+  );
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-        <Link href="/dashboard" className="hover:text-[var(--color-text)]">Payouts</Link>
-        <span>/</span>
-        <span className="font-mono text-xs">{PAYOUT_ID}</span>
-      </div>
-
-      <header className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{PAYOUT_LABEL}</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Submitted Apr 1, 2026 · One on-chain tx · Stealth claim links · No expiry
-          </p>
+      <PayoutHeader record={record} />
+      <SummaryStats record={record} logsByRow={logsByRow} />
+      <NotificationsBar
+        record={record}
+        logsByRow={logsByRow}
+        busy={busy}
+        onSendAll={onSendAll}
+        onResendUnclaimed={onResendUnclaimed}
+      />
+      <RecipientTable
+        record={record}
+        logsByRow={logsByRow}
+        openMenuRow={openMenu}
+        setOpenMenu={setOpenMenu}
+        closeMenu={closeMenu}
+        busy={busy}
+        onMarkSent={onMarkSentRow}
+      />
+      {error && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          {error}
         </div>
-        <div className="flex gap-2">
-          <button className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm">
-            Remind unclaimed
-          </button>
-          <Link
-            href={`/payouts/new?clone=${PAYOUT_ID}`}
-            className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
-          >
-            Run again →
-          </Link>
-          <button className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm">
-            Export (CSV / PDF)
-          </button>
-        </div>
-      </header>
-
-      <section className="grid grid-cols-4 gap-4">
-        <Stat label="Total" value="$84,500" />
-        <Stat label="Claimed" value={`${claimed} / ${recipients.length}`} />
-        <Stat label="Available now" value={`${available}`} sub="not yet claimed" />
-        <Stat label="Locked" value={`${locked}`} sub="claim-from in future" />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-              <tr>
-                <th className="px-5 py-3 text-left">Name</th>
-                <th className="px-5 py-3 text-left">Stealth address</th>
-                <th className="px-5 py-3 text-right">Amount</th>
-                <th className="px-5 py-3 text-left">Status</th>
-                <th className="px-5 py-3 text-left">Claim from / claimed at</th>
-                <th className="px-5 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recipients.map((r) => (
-                <tr key={r.address} className="border-t border-[var(--color-border)]">
-                  <td className="px-5 py-3">{r.name}</td>
-                  <td className="px-5 py-3 font-mono text-xs">{r.address}</td>
-                  <td className="px-5 py-3 text-right font-mono">{r.amount} USDC</td>
-                  <td className="px-5 py-3">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-5 py-3 text-[var(--color-text-muted)]">{r.when}</td>
-                  <td className="px-5 py-3 text-right">
-                    <RowMenu
-                      open={openMenu === r.address}
-                      onOpen={() => setOpenMenu((cur) => (cur === r.address ? null : r.address))}
-                      onClose={closeMenu}
-                      onCopy={() => copyClaimLink(r.name)}
-                      onResend={() => emailClaimLink(r.name)}
-                      onPayslipEmail={() => emailPayslip(r.name)}
-                      payslipHref={`/payouts/${PAYOUT_ID}/payslip/${r.name.toLowerCase()}`}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-          Each recipient sees only their own amount when they claim. The on-chain transaction reveals only the
-          stealth addresses, not the mapping to names or per-recipient amounts. Claim links never expire.
-        </p>
-      </section>
+      )}
+      <p className="text-xs text-[var(--color-text-muted)]">
+        Email dispatch only stamps the local notification log — the actual send happens once the
+        Pay backend is wired in. Webhook fields (delivered / opened / clicked) are reserved in the
+        on-disk schema.
+      </p>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: Status }) {
-  if (status === "claimed") {
+function PayoutHeader({ record }: { record: RunRecord }) {
+  // ISO `YYYY-MM-DD HH:mm UTC` to avoid SSR / client locale mismatch
+  // (operators app uses the same pattern in `app/lib/format.ts`).
+  const submitted = formatUtcStamp(record.createdAt);
+  return (
+    <header className="flex items-end justify-between">
+      <div>
+        <h1 className="text-2xl font-semibold">{record.label}</h1>
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+          Submitted {submitted} · One on-chain tx · Stealth claim links · No expiry
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <Link
+          href={`/payouts/new?clone=${record.id}`}
+          className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
+        >
+          Run again →
+        </Link>
+        <button
+          disabled
+          title="Phase E"
+          className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm opacity-60"
+        >
+          Export (CSV / PDF)
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function SummaryStats({
+  record,
+  logsByRow,
+}: {
+  record: RunRecord;
+  logsByRow: Map<number, NotificationLog>;
+}) {
+  const total = record.recipients.length;
+  let claimed = 0;
+  let available = 0;
+  let locked = 0;
+  let notified = 0;
+  for (const r of record.recipients) {
+    if (r.status === "claimed") claimed++;
+    else if (r.status === "available") available++;
+    else locked++;
+    if (logsByRow.get(r.rowIndex)?.sentAt) notified++;
+  }
+  return (
+    <section className="grid grid-cols-5 gap-4">
+      <Stat label="Total" value={`${record.totalAmount} ${record.tokenSymbol}`} />
+      <Stat label="Claimed" value={`${claimed} / ${total}`} />
+      <Stat label="Available now" value={`${available}`} sub="not yet claimed" />
+      <Stat label="Locked" value={`${locked}`} sub="claim-from in future" />
+      <Stat label="Notified" value={`${notified} / ${total}`} />
+    </section>
+  );
+}
+
+function NotificationsBar({
+  record,
+  logsByRow,
+  busy,
+  onSendAll,
+  onResendUnclaimed,
+}: {
+  record: RunRecord;
+  logsByRow: Map<number, NotificationLog>;
+  busy: BusyKind;
+  onSendAll: () => void;
+  onResendUnclaimed: () => void;
+}) {
+  const total = record.recipients.length;
+  let sentCount = 0;
+  let unsentEmailable = 0;
+  let unclaimed = 0;
+  for (const r of record.recipients) {
+    const sent = !!logsByRow.get(r.rowIndex)?.sentAt;
+    if (sent) sentCount++;
+    if (r.email && !sent) unsentEmailable++;
+    if (r.status !== "claimed" && r.email) unclaimed++;
+  }
+  const isFirstSend = sentCount === 0;
+  const anyBusy = busy !== null;
+  const sendAllLabel = isFirstSend
+    ? "Send to all recipients"
+    : `Send to unsent (${unsentEmailable})`;
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+      <div className="flex-1 text-sm">
+        <div className="font-semibold">📧 Claim emails</div>
+        <div className="text-xs text-[var(--color-text-muted)]">
+          {isFirstSend
+            ? `Send each recipient their tokenized claim link. ${total} total.`
+            : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
+        </div>
+      </div>
+      <button
+        disabled={anyBusy || unsentEmailable === 0}
+        onClick={onSendAll}
+        className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+      >
+        {busy === "send-all" ? "Sending…" : sendAllLabel}
+      </button>
+      <button
+        disabled={anyBusy || isFirstSend || unclaimed === 0}
+        onClick={onResendUnclaimed}
+        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm disabled:opacity-40"
+      >
+        {busy === "resend" ? "Resending…" : `Resend to unclaimed (${unclaimed})`}
+      </button>
+    </section>
+  );
+}
+
+function RecipientTable({
+  record,
+  logsByRow,
+  openMenuRow,
+  setOpenMenu,
+  closeMenu,
+  busy,
+  onMarkSent,
+}: {
+  record: RunRecord;
+  logsByRow: Map<number, NotificationLog>;
+  openMenuRow: number | null;
+  setOpenMenu: Dispatch<SetStateAction<number | null>>;
+  closeMenu: () => void;
+  busy: BusyKind;
+  onMarkSent: (row: RecipientRow) => Promise<void>;
+}) {
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
+      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            <tr>
+              <th className="px-5 py-3 text-left">Name</th>
+              <th className="px-5 py-3 text-left">Stealth address</th>
+              <th className="px-5 py-3 text-right">Amount</th>
+              <th className="px-5 py-3 text-left">Claim status</th>
+              <th className="px-5 py-3 text-left">Notification</th>
+              <th className="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {record.recipients.map((r) => {
+              const log = logsByRow.get(r.rowIndex);
+              return (
+                <tr key={r.rowIndex} className="border-t border-[var(--color-border)]">
+                  <td className="px-5 py-3">{r.name}</td>
+                  <td className="px-5 py-3 font-mono text-xs">{shortAddr(r.address)}</td>
+                  <td className="px-5 py-3 text-right font-mono">
+                    {r.amount} {record.tokenSymbol}
+                  </td>
+                  <td className="px-5 py-3">
+                    <ClaimStatusBadge row={r} />
+                  </td>
+                  <td className="px-5 py-3">
+                    <NotificationStatus log={log} hasEmail={!!r.email} />
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    <RowMenu
+                      open={openMenuRow === r.rowIndex}
+                      onOpen={() =>
+                        setOpenMenu((cur) => (cur === r.rowIndex ? null : r.rowIndex))
+                      }
+                      onClose={closeMenu}
+                      onCopy={() => copyClaimLink(record, r)}
+                      onSend={() => void onMarkSent(r)}
+                      hasEmail={!!r.email}
+                      alreadySent={!!log?.sentAt}
+                      busy={busy !== null}
+                      payslipHref={`/payouts/${record.id}/payslip/${r.rowIndex}`}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+        Each recipient sees only their own amount when they claim. The on-chain transaction
+        reveals only the stealth addresses, not the mapping to names or per-recipient amounts.
+        Claim links never expire.
+      </p>
+    </section>
+  );
+}
+
+function ClaimStatusBadge({ row }: { row: RecipientRow }) {
+  if (row.status === "claimed") {
     return (
       <span className="rounded-full bg-[var(--color-success-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-success)]">
         Claimed
       </span>
     );
   }
-  if (status === "available") {
+  if (row.status === "available") {
     return (
       <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-primary)]">
         Available
@@ -187,17 +436,73 @@ function StatusBadge({ status }: { status: Status }) {
   );
 }
 
+// Stages later in the array win when populated. Bounce is a separate
+// error state and takes precedence over any in-flight delivery stage.
+const STATUS_STAGES: Array<{ key: keyof NotificationLog; label: ReactNode }> = [
+  { key: "sentAt",      label: <span className="text-xs text-[var(--color-primary)]">✉ Sent</span> },
+  { key: "deliveredAt", label: <span className="text-xs">📬 Delivered</span> },
+  { key: "openedAt",    label: <span className="text-xs">👁 Opened</span> },
+  { key: "clickedAt",   label: <span className="text-xs">🖱 Clicked</span> },
+  { key: "claimedAt",   label: <span className="text-xs text-[var(--color-success)]">✓ Claimed</span> },
+];
+
+function NotificationStatus({
+  log,
+  hasEmail,
+}: {
+  log: NotificationLog | undefined;
+  hasEmail: boolean;
+}) {
+  // `formatRelative` reads `Date.now()`, so it would render different
+  // strings on SSR vs first client paint. Gate behind `mounted` and
+  // fall back to the absolute UTC stamp until hydration completes.
+  const mounted = useMounted();
+  if (!hasEmail) {
+    return <span className="text-xs text-[var(--color-text-subtle)]">No email on file</span>;
+  }
+  if (!log?.sentAt) {
+    return <span className="text-xs text-[var(--color-text-muted)]">⏳ Not sent</span>;
+  }
+  if (log.bounceKind) {
+    return <span className="text-xs text-[var(--color-warning)]">⚠ Bounced</span>;
+  }
+  let stage = STATUS_STAGES[0]!;
+  for (const s of STATUS_STAGES) {
+    if (log[s.key]) stage = s;
+  }
+  if (stage.key === "sentAt") {
+    return (
+      <span className="text-xs text-[var(--color-primary)]">
+        ✉ Sent {mounted ? formatRelative(log.sentAt) : formatUtcStamp(log.sentAt)}
+      </span>
+    );
+  }
+  return <>{stage.label}</>;
+}
+
 interface RowMenuProps {
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
   onCopy: () => void;
-  onResend: () => void;
-  onPayslipEmail: () => void;
+  onSend: () => void;
+  hasEmail: boolean;
+  alreadySent: boolean;
+  busy: boolean;
   payslipHref: string;
 }
 
-function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, payslipHref }: RowMenuProps) {
+function RowMenu({
+  open,
+  onOpen,
+  onClose,
+  onCopy,
+  onSend,
+  hasEmail,
+  alreadySent,
+  busy,
+  payslipHref,
+}: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   useOutsideClick({ enabled: open, ref, onClose });
   return (
@@ -210,11 +515,19 @@ function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, pays
       </button>
       {open && (
         <div className="absolute right-0 z-10 mt-1 w-56 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
-          <button onClick={onCopy} className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]">
+          <button
+            onClick={onCopy}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+          >
             Copy claim link
           </button>
-          <button onClick={onResend} className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]">
-            Resend claim link
+          <button
+            disabled={!hasEmail || busy}
+            onClick={onSend}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+            title={!hasEmail ? "No email on file for this recipient" : undefined}
+          >
+            {alreadySent ? "Resend claim email" : "Send claim email"}
           </button>
           <Link
             href={payslipHref}
@@ -223,21 +536,124 @@ function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, pays
           >
             Print payslip (PDF)
           </Link>
-          <button onClick={onPayslipEmail} className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]">
-            Email payslip
-          </button>
         </div>
       )}
     </div>
   );
 }
 
-function Stat({ label, value, mono, sub }: { label: string; value: string; mono?: boolean; sub?: string }) {
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
-      <div className={`mt-1 text-lg font-semibold ${mono ? "font-mono" : ""}`}>{value}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
       {sub && <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   );
+}
+
+function PickFolderBanner({ onPick }: { onPick: () => void }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <h3 className="text-sm font-semibold">Pick a notes folder</h3>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Pay reads run records (and the address book) from a folder you choose. Pick once — the
+        browser remembers it across sessions.
+      </p>
+      <button
+        onClick={onPick}
+        className="mt-3 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+      >
+        Pick folder
+      </button>
+    </div>
+  );
+}
+
+function UnsupportedBanner() {
+  return (
+    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-4 text-sm text-[var(--color-warning)]">
+      <strong className="block">Browser doesn&apos;t support folder storage.</strong>
+      Pay&apos;s run records use the File System Access API. Chrome / Edge / Opera 86+ work; Firefox
+      and Safari don&apos;t expose it yet. <Link href="/" className="underline">Back home</Link>.
+    </div>
+  );
+}
+
+function CorruptBanner({ message, filename }: { message: string; filename: string }) {
+  return (
+    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-4 text-sm text-[var(--color-warning)]">
+      <strong className="block">Run record file is corrupt</strong>
+      <p className="mt-1">{message}</p>
+      <p className="mt-2 text-xs">
+        Open <span className="font-mono">{filename}</span> in a text editor to repair, or rename
+        it and re-seed the run.
+      </p>
+    </div>
+  );
+}
+
+function copyClaimLink(record: RunRecord, row: RecipientRow): void {
+  // Real claim URL is `/claim/<id>#<secret>`; the per-row secret is
+  // populated by the wizard on settle (Phase B). Fall back to a
+  // deterministic placeholder so demos work end-to-end until then.
+  const url = `${window.location.origin}/claim/${record.id}_${row.rowIndex}#demo-secret`;
+  void navigator.clipboard.writeText(url);
+}
+
+function formatRelative(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const diff = Math.floor(Date.now() / 1000) - unixSec;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/** Stable `YYYY-MM-DD HH:mm UTC` — used everywhere the markup is
+ *  pre-rendered on the server, where `toLocaleString` would disagree
+ *  with the client and trip Next's hydration warning. */
+function formatUtcStamp(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const iso = new Date(unixSec * 1000).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
+}
+
+function buildSampleRun(): RunRecord {
+  const now = Math.floor(Date.now() / 1000);
+  const settled = now - 3 * 86400;
+  return {
+    id: SAMPLE_RUN_ID,
+    label: "April payroll",
+    createdAt: settled,
+    settledAt: settled,
+    chainId: 1,
+    txHash: "0x" + "0".repeat(64),
+    tokenSymbol: "USDC",
+    tokenAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    totalAmount: "24,200",
+    recipients: [
+      { rowIndex: 0, name: "Alice", address: "0xab1200000000000000000000000000000000abcd", amount: "3,500", status: "claimed", claimedAt: settled + 7200, email: "alice@example.com" },
+      { rowIndex: 1, name: "Bob",   address: "0xcd3400000000000000000000000000000000ef12", amount: "4,200", status: "claimed", claimedAt: settled + 7800, email: "bob@example.com" },
+      { rowIndex: 2, name: "Carol", address: "0xef5600000000000000000000000000000000003456", amount: "3,800", status: "claimed", claimedAt: settled + 12060, email: "carol@example.com" },
+      { rowIndex: 3, name: "Dan",   address: "0x789000000000000000000000000000000000007890", amount: "5,000", status: "available", email: "dan@example.com" },
+      { rowIndex: 4, name: "Eve",   address: "0x123400000000000000000000000000000000005678", amount: "4,500", status: "available", email: "eve@example.com" },
+      { rowIndex: 5, name: "Frank", address: "0x246800000000000000000000000000000000001357", amount: "3,200", status: "locked", claimFrom: settled + 30 * 86400, email: "frank@example.com" },
+    ],
+    notifications: [],
+  };
 }
