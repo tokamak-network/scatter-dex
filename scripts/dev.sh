@@ -2,6 +2,11 @@
 # Requires bash 4+ for associative arrays (`declare -A`). macOS ships
 # /bin/bash 3.2; install bash via Homebrew (`brew install bash`) so
 # `/usr/bin/env bash` picks up the newer version on PATH.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "ERROR: scripts/dev.sh requires bash 4+." >&2
+  echo "Install a newer bash (for example: brew install bash) and ensure it is first on PATH." >&2
+  exit 1
+fi
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,7 +55,17 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --mock) MOCK_MODE=true; shift ;;
-    --apps) APPS_LIST="$2"; shift 2 ;;
+    --apps)
+      # Without this guard, `--apps` as the last arg or before another
+      # flag would silently consume the wrong value (or `shift 2` would
+      # error under `set -e`).
+      if [ -z "${2:-}" ] || [[ "$2" == --* ]]; then
+        echo "ERROR: --apps requires a comma-separated value (try --help)" >&2
+        exit 1
+      fi
+      APPS_LIST="$2"
+      shift 2
+      ;;
     --apps=*) APPS_LIST="${1#--apps=}"; shift ;;
     --help|-h) usage ;;
     *) echo "ERROR: unknown argument '$1' (try --help)" >&2; exit 1 ;;
@@ -643,7 +658,11 @@ else
   for app in "${APPS_TO_RUN[@]}"; do
     port="${APP_PORTS[$app]}"
     write_app_env "$ROOT_DIR/apps/$app"
-    ( cd "$ROOT_DIR/apps/$app" && npm run dev > "$LOG_DIR/app-$app.log" 2>&1 ) &
+    # `exec` makes the subshell *become* the npm process so `$!` is the
+    # real server PID. Without it, the subshell PID is captured and
+    # `cleanup()` would kill only the wrapper, leaving npm/next orphaned
+    # and the port wedged on the next run.
+    ( cd "$ROOT_DIR/apps/$app" && exec npm run dev > "$LOG_DIR/app-$app.log" 2>&1 ) &
     last_pid=$!
     PIDS+=("$last_pid")
     if ! wait_for "http://localhost:$port" "apps/$app" 30; then
@@ -671,7 +690,7 @@ if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
   echo "  Frontend:    http://localhost:3000"
 else
   for app in "${APPS_TO_RUN[@]}"; do
-    printf "  apps/%-7s http://localhost:%s\n" "$app:" "${APP_PORTS[$app]}"
+    printf "  apps/%-10s http://localhost:%s\n" "$app:" "${APP_PORTS[$app]}"
   done
 fi
 echo "  Relayer A:   http://localhost:3002"
