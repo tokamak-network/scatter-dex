@@ -9,6 +9,7 @@ export {
   removeFile,
   listFiles,
   clearPersistedFolder,
+  adoptHandle,
   type FolderFileEntry,
 } from "./folder";
 export * from "./walletBook";

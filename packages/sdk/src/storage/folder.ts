@@ -88,6 +88,19 @@ export function isFileSystemAvailable(): boolean {
   return typeof window !== "undefined" && "showDirectoryPicker" in window;
 }
 
+/** Adopt an externally-managed `FileSystemDirectoryHandle` into this
+ *  module's runtime state. Used by host apps that picked the folder
+ *  through their own UI (e.g. frontend's `selectNotesFolder`) so the
+ *  SDK's file I/O / wallet-book / folder note adapter see the same
+ *  handle without re-prompting the user.
+ *
+ *  Does NOT persist — callers that want the handle restored across
+ *  page loads should already have stored it themselves. Pass `null`
+ *  to clear the runtime handle without touching persistence. */
+export function adoptHandle(handle: FileSystemDirectoryHandle | null): void {
+  dirHandle = handle;
+}
+
 // Deduplicate concurrent restoreFolder calls (multiple pages mounting)
 let _restorePromise: Promise<boolean> | null = null;
 

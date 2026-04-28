@@ -6,6 +6,12 @@
 
 import type { CommitmentNote } from "./commitment";
 import { EXPECTED_CHAIN_ID } from "../config";
+// Bridge: when this module's `dirHandle` resolves, mirror it into
+// the SDK's storage module so `@zkscatter/sdk/storage` callers
+// (the wallet-book re-exported from the SDK, the folder note
+// adapter, anything else apps consume from the SDK) see the same
+// folder without re-prompting the user.
+import { adoptHandle as sdkAdoptHandle } from "@zkscatter/sdk/storage";
 
 export interface StoredNote {
   note: CommitmentNote;
@@ -114,6 +120,7 @@ async function _doRestore(): Promise<boolean> {
     const perm = await handle.queryPermission({ mode: "readwrite" });
     if (perm === "granted") {
       dirHandle = handle;
+      sdkAdoptHandle(handle);
       return true;
     }
 
@@ -122,6 +129,7 @@ async function _doRestore(): Promise<boolean> {
     const req = await handle.requestPermission({ mode: "readwrite" });
     if (req === "granted") {
       dirHandle = handle;
+      sdkAdoptHandle(handle);
       return true;
     }
   } catch {
@@ -140,6 +148,7 @@ export async function selectNotesFolder(): Promise<boolean> {
   } catch {
     return false; // user cancelled
   }
+  sdkAdoptHandle(dirHandle);
   // Persist separately — folder selection succeeds even if IDB fails
   try {
     await persistHandle(dirHandle);
