@@ -53,6 +53,8 @@ export function FolderPill() {
         }.`,
       });
     } catch (e) {
+      // Surface the full error to devtools before collapsing to a UI banner.
+      console.error("Workspace export failed:", e);
       setStatus({
         tone: "warn",
         text: e instanceof Error ? e.message : "Export failed",
@@ -83,6 +85,8 @@ export function FolderPill() {
           }. Reload the page to see the new runs.`,
         });
       } catch (err) {
+        // Surface the full error to devtools before collapsing to a UI banner.
+        console.error("Workspace import failed:", err);
         if (err instanceof WorkspaceBackupCorruptError) {
           setStatus({ tone: "warn", text: `Bundle is invalid: ${err.message}` });
         } else {
