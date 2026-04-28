@@ -22,6 +22,10 @@ export interface OperatorRow {
   exitRequestedAt: number;
   active: boolean;
   status: OperatorStatus;
+  /** Bond token address, or `ZeroAddress` for native (msg.value)
+   *  mode. Lets bond top-up UIs decide whether an `approve` step is
+   *  needed before `addBond`. */
+  bondToken: string;
 }
 
 function deriveStatus(active: boolean, registeredAt: number, exitRequestedAt: number): OperatorStatus {
@@ -39,7 +43,10 @@ export async function loadOperatorRow(
   provider: ethers.Provider,
 ): Promise<OperatorRow> {
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
-  const r = await registry.relayers(account);
+  const [r, bondToken] = await Promise.all([
+    registry.relayers(account),
+    registry.bondToken() as Promise<string>,
+  ]);
   const active = r.active as boolean;
   const registeredAt = Number(r.registeredAt);
   const exitRequestedAt = Number(r.exitRequestedAt);
@@ -53,5 +60,6 @@ export async function loadOperatorRow(
     exitRequestedAt,
     active,
     status: deriveStatus(active, registeredAt, exitRequestedAt),
+    bondToken,
   };
 }

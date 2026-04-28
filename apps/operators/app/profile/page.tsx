@@ -5,9 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   addRelayerBond,
+  approveBondToken,
   EXIT_COOLDOWN_SECONDS,
   executeRelayerExit,
+  loadBondAllowance,
   MAX_RELAYER_FEE_BPS,
+  NATIVE_BOND_TOKEN,
   requestRelayerExit,
   updateRelayerInfo,
 } from "@zkscatter/sdk/relayer";
@@ -130,20 +133,56 @@ function OnChainSettings({ operator }: { operator: OperatorState }) {
 }
 
 function BondPanel({ operator }: { operator: OperatorState }) {
-  const { signer } = useWallet();
+  const { signer, account, readProvider } = useWallet();
   const { row, refresh, registryDeployed } = operator;
   const write = useRegistryWrite({ onSuccess: refresh });
 
   const [topUp, setTopUp] = useState("0.05");
+  // Tracks the ERC20 approve step separately from the addBond write,
+  // so the button can label them distinctly. Native mode skips
+  // approving entirely and behaves exactly as before.
+  const [approving, setApproving] = useState(false);
 
-  const onTopUp = () => {
-    if (!signer) return;
-    write.run(() => addRelayerBond(REGISTRY, topUp, signer));
+  const isErc20 = !!row && row.bondToken !== NATIVE_BOND_TOKEN;
+
+  const onTopUp = async () => {
+    if (!signer || !row || !account) return;
+    if (isErc20) {
+      // Read live allowance just before submit so a recent approval
+      // (or revoke) on another tab is reflected without an extra
+      // long-lived state slot.
+      try {
+        setApproving(true);
+        const allowance = await loadBondAllowance(REGISTRY, row.bondToken, account, readProvider);
+        const needed = parseEth(topUp);
+        if (needed !== null && allowance < needed) {
+          const approveTx = await approveBondToken(row.bondToken, REGISTRY, topUp, signer);
+          await approveTx.wait();
+        }
+      } catch (err) {
+        // Surface approve failures through the same WriteResult banner.
+        // Re-throwing into write.run() would attempt the addBond anyway,
+        // which is wrong on a failed approval.
+        write.fail(err);
+        setApproving(false);
+        return;
+      } finally {
+        setApproving(false);
+      }
+    }
+    // Pass the bondToken explicitly so addRelayerBond doesn't have to
+    // re-read it from the registry — saves one RPC vs. the omit-arg path.
+    write.run(() => addRelayerBond(REGISTRY, topUp, signer, row.bondToken));
   };
 
+  const busy = approving || write.phase.kind === "submitting";
   const disabled =
-    !signer || !registryDeployed || !row || row.status !== "active" ||
-    write.phase.kind === "submitting";
+    !signer || !registryDeployed || !row || row.status !== "active" || busy;
+
+  const buttonLabel =
+    approving ? "Approving…" :
+    write.phase.kind === "submitting" ? "Submitting…" :
+    "Top up";
 
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -176,16 +215,34 @@ function BondPanel({ operator }: { operator: OperatorState }) {
           disabled={disabled}
           className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {write.phase.kind === "submitting" ? "Submitting…" : "Top up"}
+          {buttonLabel}
         </button>
       </div>
       <WriteResult phase={write.phase} />
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-        Calls <code className="font-mono">RelayerRegistry.addBond()</code>. Larger bonds
-        increase trust signaling but lock more capital.
+        {isErc20
+          ? <>Calls <code className="font-mono">ERC20.approve()</code> then <code className="font-mono">RelayerRegistry.addBond()</code>. Approval is skipped if existing allowance is sufficient.</>
+          : <>Calls <code className="font-mono">RelayerRegistry.addBond()</code>. Larger bonds increase trust signaling but lock more capital.</>}
       </p>
     </section>
   );
+}
+
+/** Parse a decimal-ETH string into 18-decimal base units, returning
+ *  null on bad input (so the caller can decide whether to halt or
+ *  fall through). Stays out of `useChainWrite` because it's only
+ *  used here. */
+function parseEth(input: string): bigint | null {
+  // Inline parse to avoid importing ethers in this consumer; matches
+  // ethers.parseEther's behavior for the inputs we accept.
+  if (!/^[0-9]*\.?[0-9]+$/.test(input)) return null;
+  const [whole, frac = ""] = input.split(".");
+  const fracPadded = (frac + "0".repeat(18)).slice(0, 18);
+  try {
+    return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || "0");
+  } catch {
+    return null;
+  }
 }
 
 function ExitPanel({ operator }: { operator: OperatorState }) {

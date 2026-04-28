@@ -142,6 +142,21 @@ export function needsBondApproval(status: RegistrationStatus, bondEth: string): 
   return status.bondAllowance < needed;
 }
 
+/** Read the operator's current ERC20 bond-token allowance to the
+ *  registry. Returns `0n` in native mode (no token to query). Useful
+ *  for top-up UIs that already know the bond token (e.g. via
+ *  `OperatorRow.bondToken`) but only need the live allowance. */
+export async function loadBondAllowance(
+  registryAddress: string,
+  bondToken: string,
+  account: string,
+  provider: ethers.Provider,
+): Promise<bigint> {
+  if (bondToken === NATIVE_BOND_TOKEN) return 0n;
+  const token = new ethers.Contract(bondToken, ERC20_ABI, provider);
+  return token.allowance(account, registryAddress) as Promise<bigint>;
+}
+
 /** Submit `ERC20.approve(registry, amount)` so the operator can
  *  subsequently `register` or `addBond` in ERC20 mode. Native-mode
  *  registries never need this. Returns the transaction response;
