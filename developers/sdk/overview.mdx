@@ -55,8 +55,11 @@ contract version it tracks alongside any breaking source changes.
 
 - All async APIs accept an optional `AbortSignal` (`signal?` parameter)
   for cancellation.
-- All bigint values use native `bigint`, not strings — the storage
-  adapters serialize at the boundary.
+- ZK and contract-layer numeric values use native `bigint` (commitments,
+  amounts in `callDeposit`, EdDSA coordinates, etc.). HTTP wire types
+  in `relayer` and `orderbook` use strings for amounts/nonces and
+  numbers for `maxFee`/`expiry`/`nonce` to match the relayer protocol.
+  Storage adapters serialize bigints at their boundary.
 - All ABIs are exposed as both raw strings (`*_ABI`) and pre-parsed
   ethers `Interface` objects (`*_IFACE`) — use the iface for
   decoding logs without re-parsing.

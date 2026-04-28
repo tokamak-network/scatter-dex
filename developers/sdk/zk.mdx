@@ -119,14 +119,16 @@ import {
 
 // One-shot from leaves:
 const tree = await buildMerkleTree(leaves, COMMIT_TREE_DEPTH);
-const proof = getMerkleProof(tree, leafIndex);
+// buildMerkleTree returns BuiltTree { root, layers }; getMerkleProof
+// walks the layer arrays — pass tree.layers, not the tree itself.
+const oneShotProof = getMerkleProof(tree.layers, leafIndex);
 
 // Incremental (matches on-chain contract):
 const inc = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
 await inc.insert(leaf);            // async — Poseidon hashing per level
 inc.root;                          // current root
 inc.nextIndex;                     // next free index
-const proof = await inc.proof(leafIndex);
+const incProof = await inc.proof(leafIndex);
 ```
 
 Use `IncrementalMerkleTree` when streaming `CommitmentInserted` events;
