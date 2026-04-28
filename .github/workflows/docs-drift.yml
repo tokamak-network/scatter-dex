@@ -30,6 +30,23 @@ on:
       - ".github/workflows/docs-drift.yml"
   push:
     branches: [main]
+    # Mirror the PR `paths` so a main push that touches contracts
+    # only / circuits only / etc. doesn't trigger this workflow —
+    # the regen artefacts can't possibly have changed in those cases.
+    paths:
+      - "apps/docs/**"
+      - "developers/**"
+      - "packages/sdk/src/**"
+      - "packages/sdk/package.json"
+      - "packages/sdk/package-lock.json"
+      - "packages/sdk/tsconfig.json"
+      - "packages/types/**"
+      - "zk-relayer/src/openapi/**"
+      - "zk-relayer/src/routes/info.ts"
+      - "zk-relayer/scripts/build-openapi.mjs"
+      - "zk-relayer/package.json"
+      - "zk-relayer/package-lock.json"
+      - ".github/workflows/docs-drift.yml"
 
 concurrency:
   # Match ci.yml's pattern — keep main runs from cancelling each other
@@ -78,17 +95,18 @@ jobs:
         working-directory: apps/docs
         run: npm ci --no-audit --no-fund
 
-      # Same npm CLI bug #4828 workaround as the existing relayer job
-      # in `.github/workflows/ci.yml` — caching trips the optional-dep
-      # pruning. Clean install is the only reliable workaround.
-      # TODO: extract to a composite action under `.github/actions/`
-      # once a third caller appears (or when removing the workaround
-      # becomes a single PR).
-      - name: Install zk-relayer (clean)
+      # Same npm CLI bug #4828 territory as the existing relayer job
+      # in `.github/workflows/ci.yml` — caching trips optional-dep
+      # pruning. Wipe `node_modules` to dodge the cache-restore path,
+      # but keep `package-lock.json` so `npm ci` installs deterministic
+      # versions. Without this, an upstream zod / zod-openapi minor
+      # release would re-emit the OpenAPI yaml with a different shape
+      # and produce a flaky drift failure on a clean PR.
+      - name: Install zk-relayer (clean node_modules, deterministic)
         working-directory: zk-relayer
         run: |
-          rm -rf node_modules package-lock.json
-          npm install --no-audit --no-fund
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
 
       - name: Regenerate OpenAPI yaml from zod schemas
         working-directory: zk-relayer
