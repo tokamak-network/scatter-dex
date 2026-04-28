@@ -1,47 +1,49 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { TokamakMark } from "@zkscatter/ui";
+import { PayProviders } from "./_lib/providers";
+import { WalletButton } from "./_components/WalletButton";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Scatter Pay — Private bulk payouts",
   description:
-    "Pay your team or vendors in one transaction. Recipients can't see each other's amounts.",
+    "Send payroll, grants, and bonuses without leaking who got what. One-to-many private payouts on zkScatter.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-          🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.
-        </div>
-        <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <Link href="/" className="flex items-center gap-2 font-semibold">
-              <TokamakMark />
-              Scatter Pay
-            </Link>
-            <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
-              <a
-                href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
-                className="hover:text-[var(--color-text)]"
-              >
-                ← All apps
-              </a>
-              <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
-              <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
-              <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
-              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-                Acme DAO · 0x12…ab
-              </span>
-            </nav>
+        <PayProviders>
+          <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
+            🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.
           </div>
-        </header>
-        <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
-        <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-          Scatter Pay · Powered by zkScatter · zk-X509 audit trail · Tokamak Network
-        </footer>
+          <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+              <Link href="/" className="flex items-center gap-2 font-semibold">
+                <TokamakMark />
+                Scatter Pay
+              </Link>
+              <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
+                <a
+                  href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
+                  className="hover:text-[var(--color-text)]"
+                >
+                  ← All apps
+                </a>
+                <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
+                <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
+                <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
+                <WalletButton />
+              </nav>
+            </div>
+          </header>
+          <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
+          <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
+            Scatter Pay · Powered by zkScatter · zk-X509 audit trail · Tokamak Network
+          </footer>
+        </PayProviders>
       </body>
     </html>
   );
