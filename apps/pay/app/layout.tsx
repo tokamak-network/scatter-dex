@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { TokamakMark } from "@zkscatter/ui";
 import { PayProviders } from "./_lib/providers";
 import { WalletButton } from "./_components/WalletButton";
 import { FolderPill } from "./_components/FolderPill";
+import { Brand } from "./_components/Brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,13 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
           <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-              <Link
-                href="/"
-                className="flex items-center gap-2 font-semibold tracking-tight text-[var(--color-primary)]"
-              >
-                <TokamakMark height={22} />
-                <span className="text-[var(--color-text)]">Scatter Pay</span>
-              </Link>
+              <Brand />
               <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
                 <a
                   href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
