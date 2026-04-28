@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
-import { TokamakMark } from "@zkscatter/ui";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
+import { Brand } from "./components/Brand";
 import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
 import { FeeVaultProvider } from "./lib/useFeeVault";
@@ -26,10 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
               <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                <Link href="/" className="flex items-center gap-2 font-semibold">
-                  <TokamakMark />
-                  Scatter Operators
-                </Link>
+                <Brand />
                 <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
                   <a
                     href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
