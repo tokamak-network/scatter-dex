@@ -67,10 +67,22 @@ export interface NotificationLog {
   lastRetryAt?: number;
 }
 
+export const RUN_CATEGORIES = ["payroll", "grants", "bonus", "contractor", "other"] as const;
+export type RunCategory = (typeof RUN_CATEGORIES)[number];
+
 export interface RunRecord {
   /** Stable id; also the filename suffix. URL-safe (no slashes). */
   id: string;
   label: string;
+  /** Lowercase 0x-prefixed wallet that submitted the settle tx.
+   *  Empty string for records written under v1 — those records are
+   *  migrated lazily on first read and the field stays empty until
+   *  the user re-edits them. The dashboard surfaces "(unknown wallet)"
+   *  for empty values. */
+  operatorAddress: string;
+  /** Wizard template the run was created from. Drives the dashboard
+   *  category tabs. v1 records default to `"other"` until edited. */
+  category: RunCategory;
   /** Unix seconds when the wizard was submitted. */
   createdAt: number;
   /** Unix seconds when the settle tx confirmed. */
@@ -85,14 +97,24 @@ export interface RunRecord {
   tokenAddress: string;
   /** Aggregate amount in display units. */
   totalAmount: string;
+  /** Wei paid for the settle tx (gas × price). Used by the dashboard's
+   *  "Saved on gas" stat to compare against the equivalent N-individual
+   *  transfer cost. Optional — old records and tx receipts that
+   *  failed to capture this leave it `undefined`. */
+  settleGasPaid?: string;
   recipients: RecipientRow[];
   notifications: NotificationLog[];
 }
 
+type RunFileVersion = 1 | 2;
+
 interface RunFile {
-  version: 1;
+  version: RunFileVersion;
   record: RunRecord;
 }
+
+const CURRENT_VERSION: RunFileVersion = 2;
+const RUN_CATEGORY_SET = new Set<string>(RUN_CATEGORIES);
 
 const RECIPIENT_STATUSES = new Set(["claimed", "available", "locked"]);
 const NOTIFICATION_CHANNELS = new Set(["email", "discord", "slack"]);
@@ -139,9 +161,9 @@ function isValidNotification(n: unknown): n is NotificationLog {
   return true;
 }
 
-function isValidRecord(r: unknown): r is RunRecord {
-  if (!r || typeof r !== "object") return false;
-  const v = r as Record<string, unknown>;
+/** Validate the v1 + v2 shared fields. v2-specific fields are
+ *  validated by `isValidRecord` after upgrade so v1 files still pass. */
+function hasValidCommonFields(v: Record<string, unknown>): boolean {
   if (typeof v.id !== "string") return false;
   if (typeof v.label !== "string") return false;
   if (typeof v.createdAt !== "number") return false;
@@ -154,6 +176,28 @@ function isValidRecord(r: unknown): r is RunRecord {
   if (!Array.isArray(v.recipients) || !v.recipients.every(isValidRecipient)) return false;
   if (!Array.isArray(v.notifications) || !v.notifications.every(isValidNotification)) return false;
   return true;
+}
+
+function isValidRecord(r: unknown): r is RunRecord {
+  if (!r || typeof r !== "object") return false;
+  const v = r as Record<string, unknown>;
+  if (!hasValidCommonFields(v)) return false;
+  if (typeof v.operatorAddress !== "string") return false;
+  if (typeof v.category !== "string" || !RUN_CATEGORY_SET.has(v.category)) return false;
+  if (!isOptionalString(v.settleGasPaid)) return false;
+  return true;
+}
+
+/** Promote a v1 record to v2 by filling the new fields with defaults.
+ *  `operatorAddress` stays empty (the dashboard renders "(unknown
+ *  wallet)") and `category` defaults to `"other"`. The next save
+ *  writes the upgraded shape to disk. */
+function upgradeV1Record(v: Record<string, unknown>): RunRecord {
+  return {
+    ...(v as object),
+    operatorAddress: "",
+    category: "other",
+  } as RunRecord;
 }
 
 function filenameFor(id: string): string {
@@ -171,6 +215,24 @@ function parseIdFromFilename(filename: string): string | null {
     RUN_FILE_PREFIX.length,
     filename.length - RUN_FILE_SUFFIX.length,
   );
+}
+
+/** Parse a `RunFile` payload, accepting both v1 (legacy, missing
+ *  `operatorAddress` / `category`) and v2 (current). v1 records are
+ *  promoted in-memory; the upgraded shape is persisted on the next
+ *  `saveRun`. Returns null when the shape is unrecognisable so the
+ *  caller can decide how to surface it (throw vs skip). */
+function parseRunFile(parsed: unknown): RunRecord | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const top = parsed as { version?: unknown; record?: unknown };
+  if (top.version !== 1 && top.version !== 2) return null;
+  if (!top.record || typeof top.record !== "object") return null;
+  const candidate = top.record as Record<string, unknown>;
+  if (top.version === 1) {
+    if (!hasValidCommonFields(candidate)) return null;
+    return upgradeV1Record(candidate);
+  }
+  return isValidRecord(top.record) ? top.record : null;
 }
 
 /** Load a single run record by id. Returns `null` when the file
@@ -192,33 +254,46 @@ export async function loadRun(id: string): Promise<RunRecord | null> {
     );
   }
 
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    (parsed as { version?: unknown }).version !== 1 ||
-    !isValidRecord((parsed as { record?: unknown }).record)
-  ) {
+  const record = parseRunFile(parsed);
+  if (!record) {
     throw new RunRecordCorruptError(
-      `${filenameFor(id)} has an unsupported shape (expected { version: 1, record: RunRecord })`,
+      `${filenameFor(id)} has an unsupported shape (expected { version: 1 | 2, record: RunRecord })`,
     );
   }
-  return (parsed as RunFile).record;
+  return record;
 }
 
-/** List every run record currently in the folder, newest first. Skips
- *  files that fail to parse rather than blowing up the dashboard —
- *  corrupt files are surfaced when the user opens that specific run. */
-export async function listRuns(): Promise<RunRecord[]> {
+/** Filter applied client-side after files are read off disk. Each
+ *  field is independently optional; omit a key to ignore that axis.
+ *  All comparisons against `operatorAddress` are case-insensitive. */
+export interface ListRunsFilter {
+  chainId?: number;
+  operatorAddress?: string;
+  category?: RunCategory;
+}
+
+/** List every run record in the folder, newest first. Skips files
+ *  that fail to parse rather than blowing up the dashboard — corrupt
+ *  files are surfaced when the user opens that specific run. */
+export async function listRuns(filter: ListRunsFilter = {}): Promise<RunRecord[]> {
   if (!hasFolder()) return [];
   const entries = await listFiles((name) => parseIdFromFilename(name) !== null);
+  const wantedOperator = filter.operatorAddress?.toLowerCase();
   const records: RunRecord[] = [];
   for (const entry of entries) {
     try {
       const text = await entry.read();
-      const parsed = JSON.parse(text) as RunFile;
-      if (parsed?.version === 1 && isValidRecord(parsed.record)) {
-        records.push(parsed.record);
+      const record = parseRunFile(JSON.parse(text));
+      if (!record) continue;
+      if (filter.chainId !== undefined && record.chainId !== filter.chainId) continue;
+      if (filter.category !== undefined && record.category !== filter.category) continue;
+      if (
+        wantedOperator !== undefined &&
+        record.operatorAddress.toLowerCase() !== wantedOperator
+      ) {
+        continue;
       }
+      records.push(record);
     } catch {
       // skip — caller's per-id `loadRun` will surface the error
     }
@@ -226,10 +301,11 @@ export async function listRuns(): Promise<RunRecord[]> {
   return records.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Persist (or replace) a run record. Caller-supplied `id` becomes the
- *  filename suffix — must be URL-safe. */
+/** Persist (or replace) a run record. Always writes the current
+ *  schema version, so a v1 record loaded → mutated → saved is
+ *  silently upgraded on disk. */
 export async function saveRun(record: RunRecord): Promise<void> {
-  const payload: RunFile = { version: 1, record };
+  const payload: RunFile = { version: CURRENT_VERSION, record };
   await saveFile(filenameFor(record.id), JSON.stringify(payload, null, 2));
 }
 
