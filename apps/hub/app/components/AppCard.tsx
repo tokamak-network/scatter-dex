@@ -2,45 +2,19 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SURFACE_LABEL, type AppEntry } from "../lib/apps";
 
+// Module-scope constants so React doesn't see new component identities
+// on each AppCard render. Defining the wrapper inline triggers a remount
+// of the entire subtree per render, dropping focus/animation state.
+const CARD_CLASS =
+  "group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition";
+const INTERACTIVE_CLASS =
+  " hover:border-[var(--color-border-strong)] hover:shadow-md";
+const DIMMED_CLASS = " opacity-70 cursor-not-allowed";
+
 export function AppCard({ app }: { app: AppEntry }) {
   const isExternal = /^https?:\/\//.test(app.href);
-  const cardClass =
-    "group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition";
-  const interactiveClass =
-    " hover:border-[var(--color-border-strong)] hover:shadow-md";
-  const dimmedClass = " opacity-70 cursor-not-allowed";
-  const Wrapper = ({ children }: { children: React.ReactNode }) => {
-    if (app.comingSoon) {
-      return (
-        <div
-          className={cardClass + dimmedClass}
-          aria-disabled
-          role="article"
-        >
-          {children}
-        </div>
-      );
-    }
-    if (isExternal) {
-      return (
-        <a
-          href={app.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cardClass + interactiveClass}
-        >
-          {children}
-        </a>
-      );
-    }
-    return (
-      <Link href={app.href} className={cardClass + interactiveClass}>
-        {children}
-      </Link>
-    );
-  };
-  return (
-    <Wrapper>
+  const body = (
+    <>
       <span
         className="absolute left-0 top-0 h-full w-1"
         style={{ background: app.accent }}
@@ -73,6 +47,30 @@ export function AppCard({ app }: { app: AppEntry }) {
         {app.comingSoon ? "Coming soon" : app.cta}
         {!app.comingSoon && <ArrowRight className="h-4 w-4" />}
       </div>
-    </Wrapper>
+    </>
+  );
+  if (app.comingSoon) {
+    return (
+      <div className={CARD_CLASS + DIMMED_CLASS} aria-disabled role="article">
+        {body}
+      </div>
+    );
+  }
+  if (isExternal) {
+    return (
+      <a
+        href={app.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={CARD_CLASS + INTERACTIVE_CLASS}
+      >
+        {body}
+      </a>
+    );
+  }
+  return (
+    <Link href={app.href} className={CARD_CLASS + INTERACTIVE_CLASS}>
+      {body}
+    </Link>
   );
 }

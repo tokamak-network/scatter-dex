@@ -34,16 +34,22 @@ for target in "${TARGETS[@]}"; do
   echo "==> Building $target ($dir)"
   # Temporarily move .env.local out of the way so prod env vars take effect
   # (Next loads .env.local at higher priority than .env.production).
+  # `trap ... EXIT` guarantees the file is restored even if `npm run
+  # build` fails or the user interrupts with Ctrl+C — otherwise the
+  # backup would be left behind, breaking local dev on the next run.
   ENV_LOCAL="$ROOT_DIR/$dir/.env.local"
   ENV_BACKUP=""
   if [ -f "$ENV_LOCAL" ]; then
     ENV_BACKUP="$ENV_LOCAL.firebase-deploy-bak"
     mv "$ENV_LOCAL" "$ENV_BACKUP"
+    trap 'if [ -n "${ENV_BACKUP:-}" ] && [ -f "$ENV_BACKUP" ]; then mv "$ENV_BACKUP" "$ENV_LOCAL"; fi' EXIT INT TERM
   fi
   ( cd "$dir" && npm run build )
   build_status=$?
   if [ -n "$ENV_BACKUP" ]; then
     mv "$ENV_BACKUP" "$ENV_LOCAL"
+    trap - EXIT INT TERM
+    ENV_BACKUP=""
   fi
   if [ "$build_status" -ne 0 ]; then
     exit "$build_status"

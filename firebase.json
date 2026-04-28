@@ -28,17 +28,17 @@
       "cleanUrls": true,
       "trailingSlash": false,
       "redirects": [
-        { "source": "/", "destination": "/docs/introduction", "type": 302 },
-        { "source": "/introduction", "destination": "/docs/introduction", "type": 302 },
-        { "source": "/installation", "destination": "/docs/installation", "type": 302 },
-        { "source": "/quickstart", "destination": "/docs/quickstart", "type": 302 },
-        { "source": "/faq", "destination": "/docs/faq", "type": 302 },
-        { "source": "/concepts/:path*", "destination": "/docs/concepts/:path*", "type": 302 },
-        { "source": "/guides/:path*", "destination": "/docs/guides/:path*", "type": 302 },
-        { "source": "/protocol/:path*", "destination": "/docs/protocol/:path*", "type": 302 },
-        { "source": "/operate/:path*", "destination": "/docs/operate/:path*", "type": 302 },
-        { "source": "/api/:path*", "destination": "/sdk/api/:path*", "type": 302 },
-        { "source": "/rest/:path*", "destination": "/sdk/rest/:path*", "type": 302 }
+        { "source": "/", "destination": "/docs/introduction", "type": 301 },
+        { "source": "/introduction", "destination": "/docs/introduction", "type": 301 },
+        { "source": "/installation", "destination": "/docs/installation", "type": 301 },
+        { "source": "/quickstart", "destination": "/docs/quickstart", "type": 301 },
+        { "source": "/faq", "destination": "/docs/faq", "type": 301 },
+        { "source": "/concepts/:path*", "destination": "/docs/concepts/:path*", "type": 301 },
+        { "source": "/guides/:path*", "destination": "/docs/guides/:path*", "type": 301 },
+        { "source": "/protocol/:path*", "destination": "/docs/protocol/:path*", "type": 301 },
+        { "source": "/operate/:path*", "destination": "/docs/operate/:path*", "type": 301 },
+        { "source": "/api/:path*", "destination": "/sdk/api/:path*", "type": 301 },
+        { "source": "/rest/:path*", "destination": "/sdk/rest/:path*", "type": 301 }
       ],
       "headers": [
         {
