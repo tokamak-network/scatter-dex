@@ -1,0 +1,149 @@
+name: Docs drift
+
+# Catches the "code changed, regenerated docs not committed" failure
+# mode (PR #475 ran into 28 of these). One auto-generated artefact
+# is checked here for drift:
+#
+#   - `apps/docs/public/openapi/relayer.yaml` — emitted by
+#     `zk-relayer/scripts/build-openapi.mjs` from the zod schemas
+#     under `zk-relayer/src/openapi/schemas/`. The yaml output is
+#     deterministic across Node versions, so a `git diff` between
+#     the committed copy and a fresh regen is a clean drift signal.
+#
+# The TypeDoc-emitted SDK reference under `developers/sdk/api/**`
+# is NOT committed — it's `.gitignore`d and regenerated as part of
+# `npm run build` in apps/docs (`build` is `npm run api && next
+# build`). TypeDoc categorises some internal re-exports differently
+# across Node majors, so committing it would produce flaky drift
+# failures. The build-time regen + `next build` step still surfaces
+# any mdx / import / type errors that would break the docs site,
+# which is what we actually care about.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "developers/**"
+      - "packages/sdk/src/**"
+      - "packages/sdk/package.json"
+      - "packages/sdk/package-lock.json"
+      - "packages/sdk/tsconfig.json"
+      - "packages/types/**"
+      - "zk-relayer/src/openapi/**"
+      - "zk-relayer/src/routes/info.ts"
+      - "zk-relayer/scripts/build-openapi.mjs"
+      - "zk-relayer/package.json"
+      - "zk-relayer/package-lock.json"
+      - ".github/workflows/docs-drift.yml"
+  push:
+    branches: [main]
+    # Mirror the PR `paths` so a main push that touches contracts
+    # only / circuits only / etc. doesn't trigger this workflow —
+    # the regen artefacts can't possibly have changed in those cases.
+    paths:
+      - "apps/docs/**"
+      - "developers/**"
+      - "packages/sdk/src/**"
+      - "packages/sdk/package.json"
+      - "packages/sdk/package-lock.json"
+      - "packages/sdk/tsconfig.json"
+      - "packages/types/**"
+      - "zk-relayer/src/openapi/**"
+      - "zk-relayer/src/routes/info.ts"
+      - "zk-relayer/scripts/build-openapi.mjs"
+      - "zk-relayer/package.json"
+      - "zk-relayer/package-lock.json"
+      - ".github/workflows/docs-drift.yml"
+
+concurrency:
+  # Match ci.yml's pattern — keep main runs from cancelling each other
+  # (the green-on-tip signal must survive concurrent landings).
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  drift:
+    name: docs / drift + build
+    runs-on: ubuntu-latest
+    # Drift check + next build runs in well under 5 min on warm cache;
+    # 15 caps a runaway typedoc/Next process so it doesn't burn an hour.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to 22 (current LTS) because TypeDoc's output is
+          # sensitive to the Node major version — local Node 22 emits
+          # different mdx than Node 20 for some re-exports (e.g. the
+          # internal `bytesToNumberBE` from @noble/curves), which
+          # produces phantom drift failures on a clean PR. Anyone
+          # running `npm run api` locally is almost certainly on
+          # Node 22 LTS, so match that.
+          node-version: 22
+          # `setup-node` hashes these lockfiles and caches the npm
+          # registry tarballs. Cold install ~120s; warm ~30s. The
+          # zk-relayer lockfile is excluded from the cache — its
+          # install path wipes `node_modules` to dodge npm bug #4828.
+          cache: npm
+          cache-dependency-path: |
+            packages/types/package-lock.json
+            packages/sdk/package-lock.json
+            apps/docs/package-lock.json
+
+      # `packages/types` is a `file:` dep of every consumer below and
+      # has a `prepare` script that runs `tsc`. Build it first so
+      # downstream `npm ci` calls don't trip on a missing `dist/`.
+      - name: Build packages/types
+        working-directory: packages/types
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc
+
+      - name: Install packages/sdk
+        working-directory: packages/sdk
+        run: npm ci --no-audit --no-fund
+
+      - name: Install apps/docs
+        working-directory: apps/docs
+        run: npm ci --no-audit --no-fund
+
+      # Same npm CLI bug #4828 territory as the existing relayer job
+      # in `.github/workflows/ci.yml` — caching trips optional-dep
+      # pruning. Wipe `node_modules` to dodge the cache-restore path,
+      # but keep `package-lock.json` so `npm ci` installs deterministic
+      # versions. Without this, an upstream zod / zod-openapi minor
+      # release would re-emit the OpenAPI yaml with a different shape
+      # and produce a flaky drift failure on a clean PR.
+      - name: Install zk-relayer (clean node_modules, deterministic)
+        working-directory: zk-relayer
+        run: |
+          rm -rf node_modules
+          npm ci --no-audit --no-fund
+
+      - name: Regenerate OpenAPI yaml from zod schemas
+        working-directory: zk-relayer
+        run: npm run openapi
+
+      - name: Check for OpenAPI drift
+        run: |
+          set -e
+          if ! git diff --exit-code -- apps/docs/public/openapi/relayer.yaml; then
+            # File-level summary first so it's visible above the
+            # GitHub Actions error annotation that follows.
+            git --no-pager diff --stat -- apps/docs/public/openapi/relayer.yaml
+            echo ""
+            echo "::error::OpenAPI yaml is out of sync with the relayer's zod schemas. Run \`(cd zk-relayer && npm run openapi)\` locally and commit the regenerated file."
+            exit 1
+          fi
+
+      # `npm run build` is `npm run api && next build` — the api step
+      # regenerates the TypeDoc SDK reference into the gitignored
+      # `developers/sdk/api/` so the next build can render it. mdx /
+      # import / type errors surface here even though the SDK ref is
+      # never committed.
+      - name: Build docs site
+        working-directory: apps/docs
+        run: npm run build

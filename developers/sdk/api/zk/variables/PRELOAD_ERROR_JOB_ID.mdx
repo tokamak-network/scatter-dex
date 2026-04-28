@@ -1,9 +1,0 @@
-# Variable: PRELOAD\_ERROR\_JOB\_ID
-
-```ts
-const PRELOAD_ERROR_JOB_ID: -1 = -1;
-```
-
-Sentinel jobId used by preload-failure error messages. The main
- client uses this to surface init failures even when no job is
- in flight; a real prove jobId is always > 0.

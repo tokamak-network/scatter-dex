@@ -1,8 +1,0 @@
-# Interface: AvailableBalanceOpts
-
-## Properties
-
-| Property | Type | Description |
-| ------ | ------ | ------ |
-| <a id="chainid"></a> `chainId?` | `number` | Optional: filter to a single chain. Notes without a chainId are treated as "any chain" so test/in-memory data still surfaces. |
-| <a id="spentids"></a> `spentIds?` | `ReadonlySet`\<`string`\> | Optional: ids of notes the caller knows are spent. The note adapter does not track nullifiers — apps that have observed on-chain spends should pass them here so the balance does not count notes that are dead in protocol state. |

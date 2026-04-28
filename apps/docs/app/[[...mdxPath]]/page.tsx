@@ -49,21 +49,18 @@ function deriveSection(mdxPath: string[] | undefined): string | null {
 
 export default async function Page(props: PageProps) {
   const params = await props.params;
+  // Let importPage's return type flow through — `Wrapper` expects
+  // the precise `Heading[]` shape Nextra emits for `toc`, and a
+  // local `as { toc: unknown }` cast strips that and breaks the
+  // `next build` type check.
   const result = await importPage(params.mdxPath);
-  const {
-    default: MDXContent,
-    toc,
-    metadata,
-  } = result as {
-    default: React.ComponentType<unknown>;
-    toc: unknown;
-    metadata: { title?: string; description?: string };
-  };
+  const { default: MDXContent, ...wrapperProps } = result;
 
   const section = deriveSection(params.mdxPath);
+  const { metadata } = result;
 
   return (
-    <Wrapper toc={toc} metadata={metadata}>
+    <Wrapper {...wrapperProps}>
       <DocsPageShell
         section={section ?? undefined}
         description={metadata?.description}

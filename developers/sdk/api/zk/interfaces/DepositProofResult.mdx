@@ -1,9 +1,0 @@
-# Interface: DepositProofResult
-
-## Properties
-
-| Property | Type | Description |
-| ------ | ------ | ------ |
-| <a id="commitment"></a> `commitment` | `bigint` | Poseidon commitment derived from the note. Returned alongside the proof so callers don't have to recompute it before sending the deposit transaction. |
-| <a id="proof"></a> `proof` | [`Groth16Proof`](Groth16Proof.mdx) | - |
-| <a id="publicsignals"></a> `publicSignals` | readonly `bigint`[] | Public signals from the prover, in circuit-declared order. The deposit circuit emits one signal — the commitment — but we return the full array so callers can plug the result straight into the SDK's `ProveResult` / `ProverWorkerResponse` shape without re-deriving it. |
