@@ -27,7 +27,7 @@ const SEPOLIA_TOKENS: TokenInfo[] = [
  *  is the only mainnet-readiness change needed in this file. */
 export const DEMO_NETWORK: NetworkConfig = {
   chainId: 11155111,
-  name: "Sepolia (testnet)",
+  name: "Sepolia",
   rpcUrl: "https://rpc.sepolia.org",
   explorerBase: "https://sepolia.etherscan.io",
   contracts: {
@@ -53,7 +53,7 @@ export interface NetworkChoice {
 }
 
 export const NETWORKS: readonly NetworkChoice[] = [
-  { config: DEMO_NETWORK, available: true, label: "Sepolia (testnet)" },
+  { config: DEMO_NETWORK, available: true, label: "Sepolia" },
   {
     // Mainnet config — same token list shape, real addresses TBD.
     // Disabled until contracts deploy; the switcher renders it grey

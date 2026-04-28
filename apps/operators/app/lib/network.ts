@@ -7,7 +7,7 @@ import { ZERO_ADDRESS, type NetworkConfig } from "@zkscatter/sdk";
  *  these addresses when contracts ship. */
 export const DEMO_NETWORK: NetworkConfig = {
   chainId: 11155111,
-  name: "Sepolia (testnet)",
+  name: "Sepolia",
   rpcUrl: "https://rpc.sepolia.org",
   explorerBase: "https://sepolia.etherscan.io",
   contracts: {
