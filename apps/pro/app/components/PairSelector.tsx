@@ -2,8 +2,8 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { LAUNCH_PAIRS } from "@zkscatter/sdk";
+import { useOutsideClick } from "@zkscatter/ui";
 import { useTradeForm } from "../lib/tradeForm";
-import { useOutsideClick } from "../lib/useOutsideClick";
 import { useListboxNav } from "../lib/useListboxNav";
 
 /** Workbench header pair selector — flat dropdown with Featured at

@@ -5,3 +5,4 @@ export * from "./EmptyState";
 export * from "./Pill";
 export * from "./Toast";
 export * from "./TokamakMark";
+export * from "./useOutsideClick";

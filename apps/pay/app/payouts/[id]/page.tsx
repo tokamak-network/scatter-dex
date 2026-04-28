@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useOutsideClick } from "@zkscatter/ui";
 
 type Status = "claimed" | "available" | "locked";
 
@@ -30,6 +31,7 @@ export default function PayoutDetail() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? PAYOUT_ID;
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const closeMenu = useCallback(() => setOpenMenu(null), []);
 
   if (id !== PAYOUT_ID) {
     return (
@@ -142,7 +144,7 @@ export default function PayoutDetail() {
                     <RowMenu
                       open={openMenu === r.address}
                       onOpen={() => setOpenMenu((cur) => (cur === r.address ? null : r.address))}
-                      onClose={() => setOpenMenu(null)}
+                      onClose={closeMenu}
                       onCopy={() => copyClaimLink(r.name)}
                       onResend={() => emailClaimLink(r.name)}
                       onPayslipEmail={() => emailPayslip(r.name)}
@@ -197,21 +199,7 @@ interface RowMenuProps {
 
 function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, payslipHref }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, onClose]);
+  useOutsideClick({ enabled: open, ref, onClose });
   return (
     <div ref={ref} className="relative inline-block text-left">
       <button

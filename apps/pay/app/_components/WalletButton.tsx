@@ -1,22 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { chainName, explorerLink } from "@zkscatter/sdk";
+import { useOutsideClick } from "@zkscatter/ui";
 import { getNetworkConfig } from "../_lib/network";
 
 export function WalletButton() {
   const { account, chainId, walletName, connect, disconnect, connectError } = useWallet();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClick({ enabled: open, ref, onClose: close });
 
   if (!account) {
     return (
