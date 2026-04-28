@@ -6,6 +6,13 @@ export type SettlementRole = "maker" | "taker";
 export interface RelayerSettlement {
   txHash: string;
   blockNumber: number;
+  /** Position within the block — combined with `logIndex` it
+   *  uniquely identifies a settlement, which lets React keys stay
+   *  stable when several settlements share a block and gives
+   *  generalized event-feed consumers a deterministic tiebreaker
+   *  for ordering events from the same block. */
+  transactionIndex: number;
+  logIndex: number;
   role: SettlementRole;
   /** Fee accrued to the relayer in this settlement, in the
    *  fee-token's smallest unit. */
@@ -26,8 +33,8 @@ export interface LoadSettlementsOpts {
    *  range (`"latest"` / `"finalized"` / `"safe"` / a block
    *  number / hex string / bigint). */
   toBlock?: ethers.BlockTag;
-  /** Cap on the number of events returned, sorted descending by
-   *  block number. Default: no cap. */
+  /** Cap on the number of events returned, sorted newest-first.
+   *  Default: no cap. */
   limit?: number;
 }
 
@@ -49,16 +56,25 @@ export async function loadRelayerSettlements(
     opts.toBlock,
   );
 
-  const events: RelayerSettlement[] = logs.map((log) => {
-    const e = log as ethers.EventLog;
-    return {
-      txHash: e.transactionHash,
-      blockNumber: e.blockNumber,
-      role: "maker",
-      fee: BigInt(e.args.feeTokenMaker),
-    };
-  });
+  // queryFilter returns `(EventLog | Log)[]` — the bare `Log` type
+  // is for filters that didn't carry an event fragment, which
+  // can't happen here since we built the filter via
+  // `contract.filters.PrivateSettledAuth(...)`. Guard anyway so a
+  // malformed RPC response doesn't blow up `.args` access.
+  const eventLogs = logs.filter((log): log is ethers.EventLog => "args" in log);
 
-  events.sort((a, b) => b.blockNumber - a.blockNumber);
-  return opts.limit != null ? events.slice(0, opts.limit) : events;
+  // queryFilter returns ascending (block, txIndex, logIndex);
+  // reversing in place yields newest-first with a stable tiebreak
+  // for events that share a block, without a custom comparator.
+  eventLogs.reverse();
+  const sliced = opts.limit != null ? eventLogs.slice(0, opts.limit) : eventLogs;
+
+  return sliced.map((e) => ({
+    txHash: e.transactionHash,
+    blockNumber: e.blockNumber,
+    transactionIndex: e.transactionIndex,
+    logIndex: e.index,
+    role: "maker",
+    fee: BigInt(e.args.feeTokenMaker),
+  }));
 }
