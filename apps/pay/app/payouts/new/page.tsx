@@ -7,6 +7,12 @@ import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import { randomFieldElement, splitPayout, type PayoutBatch } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import {
+  saveRun,
+  type RecipientRow,
+  type RunCategory,
+  type RunRecord,
+} from "@zkscatter/sdk/storage";
 import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "../../_lib/eddsaKey";
 import { useRelayers } from "../../_lib/relayers";
@@ -15,6 +21,7 @@ import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
 import { autoPickSourceNotes, type SourceNotesPick } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
 import { AddressBookPicker } from "../../_components/AddressBookPicker";
+import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import type { WalletEntry } from "@zkscatter/sdk/storage";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
@@ -152,7 +159,7 @@ export default function NewPayout() {
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
 
-  const { account } = useWallet();
+  const { account, chainId } = useWallet();
   const { notes, loaded: vaultLoaded } = useVault();
   const {
     relayers,
@@ -181,28 +188,48 @@ export default function NewPayout() {
 
   async function doSubmit() {
     setShowConfirm(false);
-    if (!isNetworkConfigured(getNetworkConfig())) {
-      // Pay's env hasn't been wired with deployed contract addresses
-      // — fall through to the demo result page so the wizard remains
-      // clickable end-to-end without a live deployment.
-      router.push("/payouts/detail?id=p_2026_04_payroll");
-      return;
-    }
     setSubmitting(true);
     try {
-      if (!tokenAddress) return;
-      await dryRunSettle({
-        batches,
+      // The dry-run is the only validation we have until the real
+      // settle path lands; skip it when the env hasn't been wired
+      // with deployed contract addresses so the wizard still
+      // produces a record end-to-end for demos.
+      if (isNetworkConfigured(getNetworkConfig()) && tokenAddress) {
+        await dryRunSettle({
+          batches,
+          tokenAddress,
+          account,
+          notes,
+          relayerAddress: relayer?.address,
+          eddsa,
+        });
+      }
+
+      if (!folder.ready) {
+        // No notes folder picked → can't persist the run record.
+        // Fall back to the sample so the dashboard still has
+        // something to render.
+        router.push("/payouts/detail?id=p_2026_04_payroll");
+        return;
+      }
+
+      const record = buildRunRecord({
+        templateId,
+        label,
+        token,
         tokenAddress,
-        account,
-        notes,
-        relayerAddress: relayer?.address,
-        eddsa,
+        operatorAddress: account,
+        chainId,
+        rows,
+        total,
+        claimFrom,
+        walletBook: walletBook.entries,
       });
+      await saveRun(record);
+      router.push(`/payouts/detail?id=${encodeURIComponent(record.id)}`);
     } finally {
       setSubmitting(false);
     }
-    router.push("/payouts/detail?id=p_2026_04_payroll");
   }
 
   function appendFromAddressBook(picked: WalletEntry[]) {
@@ -335,6 +362,8 @@ export default function NewPayout() {
         <span>/</span>
         <span>New</span>
       </div>
+
+      <WorkspaceBar />
 
       <Stepper step={step} onJump={setStep} />
 
@@ -1148,4 +1177,96 @@ function FundsRow({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
       <dd>{v}</dd>
     </div>
   );
+}
+
+/** Mint a URL-safe id derived from the timestamp + a random suffix.
+ *  Filenames key off this id (`zkscatter-run-<id>.json`) so collisions
+ *  between two settles in the same second would silently overwrite —
+ *  the random tail keeps each id unique without needing a registry
+ *  lookup. Uses `crypto.randomUUID()` when available; the fallback
+ *  produces the same `wk_<timestamp>_<rand>` shape the folder helper
+ *  uses for workspace ids. */
+function mintRunId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `p_${crypto.randomUUID()}`;
+  }
+  const ts = Date.now();
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `p_${ts}_${rand}`;
+}
+
+/** Format a JS number total back into the comma-separated display
+ *  string that `RunRecord.totalAmount` expects. Uses 2 fraction
+ *  digits like the wizard's review screen. */
+function formatTotal(n: number): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+/** Construct a `RunRecord` from the wizard's parsed state. The record
+ *  is the operator-side mirror of the settle tx — recipient names /
+ *  amounts / claim-from windows live here and never on-chain.
+ *
+ *  `txHash` is a placeholder until the real settle path lands; the
+ *  detail page reads but doesn't link to it yet, so a deterministic
+ *  zero hash is fine. `settleGasPaid` stays undefined for the same
+ *  reason. The dashboard tolerates both gaps. */
+function buildRunRecord(input: {
+  templateId: TemplateId;
+  label: string;
+  token: string;
+  tokenAddress: string | undefined;
+  operatorAddress: string | null;
+  chainId: number | null;
+  rows: Row[];
+  total: number;
+  claimFrom: string | undefined;
+  walletBook: WalletEntry[];
+}): RunRecord {
+  const now = Math.floor(Date.now() / 1000);
+  const claimFromUnix = input.claimFrom
+    ? Math.floor(new Date(input.claimFrom).getTime() / 1000)
+    : null;
+  const isFutureClaim = claimFromUnix !== null && claimFromUnix > now;
+
+  const bookByAddress = new Map<string, WalletEntry>();
+  for (const e of input.walletBook) bookByAddress.set(e.address.toLowerCase(), e);
+
+  const recipients: RecipientRow[] = input.rows.map((r, i) => {
+    const lower = r.address.toLowerCase();
+    const book = bookByAddress.get(lower);
+    return {
+      rowIndex: i,
+      name: r.name || book?.label || lower,
+      address: lower,
+      amount: r.amount,
+      // Brand-new runs have no claim activity yet; "available" is
+      // the right initial state for free-claim, "locked" while the
+      // wizard's claim-from is in the future.
+      status: isFutureClaim ? "locked" : "available",
+      ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
+      ...(book?.email ? { email: book.email } : {}),
+      ...(book?.discordHandle ? { discordHandle: book.discordHandle } : {}),
+    };
+  });
+
+  // RunCategory has an "other" bucket the wizard's TemplateId set
+  // doesn't include; the cast is safe because the four template ids
+  // are a subset of the category union.
+  const category: RunCategory = input.templateId;
+
+  return {
+    id: mintRunId(),
+    label: input.label,
+    operatorAddress: (input.operatorAddress ?? "").toLowerCase(),
+    category,
+    createdAt: now,
+    settledAt: now,
+    chainId: input.chainId ?? 0,
+    txHash: "0x" + "0".repeat(64),
+    tokenSymbol: input.token,
+    tokenAddress: input.tokenAddress ?? "",
+    totalAmount: formatTotal(input.total),
+    recipients,
+    notifications: [],
+  };
 }

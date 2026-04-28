@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PayProviders } from "./_lib/providers";
 import { ConnectWalletPill } from "./_components/ConnectWalletPill";
-import { FolderPill } from "./_components/FolderPill";
 import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
@@ -39,7 +38,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/recipients" className="hover:text-[var(--color-text)]">Recipients</Link>
               </>
             }
-            navTrailing={<FolderPill />}
           />
           <WrongChainBanner />
           <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>

@@ -23,6 +23,7 @@ import {
   type RecipientRow,
   type RunRecord,
 } from "@zkscatter/sdk/storage";
+import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { useRunRecord } from "../../_lib/runRecord";
 
@@ -72,6 +73,7 @@ function PayoutDetailInner() {
   const shell = (children: ReactNode) => (
     <div className="space-y-4">
       {breadcrumb}
+      <WorkspaceBar />
       {children}
     </div>
   );
@@ -79,13 +81,9 @@ function PayoutDetailInner() {
   if (folder.available === false) return shell(<UnsupportedBanner />);
 
   if (folder.available === true && !folder.ready) {
-    return shell(
-      folder.restoring ? (
-        <p className="text-sm text-[var(--color-text-muted)]">Restoring your notes folder…</p>
-      ) : (
-        <PickFolderBanner onPick={() => void folder.select()} />
-      ),
-    );
+    // WorkspaceBar (inside the shell) renders the Pick-folder CTA in
+    // both the unready and restoring states; nothing extra to show.
+    return shell(null);
   }
 
   if (!run.loaded) {
@@ -578,24 +576,6 @@ function Stat({
       <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
       {sub && <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{sub}</div>}
-    </div>
-  );
-}
-
-function PickFolderBanner({ onPick }: { onPick: () => void }) {
-  return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <h3 className="text-sm font-semibold">Pick a notes folder</h3>
-      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-        Pay reads run records (and the address book) from a folder you choose. Pick once — the
-        browser remembers it across sessions.
-      </p>
-      <button
-        onClick={onPick}
-        className="mt-3 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-      >
-        Pick folder
-      </button>
     </div>
   );
 }
