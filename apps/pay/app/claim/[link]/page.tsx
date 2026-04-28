@@ -21,15 +21,13 @@ export default function Claim({ params }: { params: Promise<{ link: string }> })
   const { account, connect, connectError } = useWallet();
   const [secret, setSecret] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [isAvailable, setIsAvailable] = useState<boolean>();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     setSecret(window.location.hash.replace(/^#/, "") || null);
+    setIsAvailable(new Date() >= new Date(DEMO_CLAIM.availableFrom));
   }, []);
-
-  const availableFrom = new Date(DEMO_CLAIM.availableFrom);
-  const now = new Date();
-  const isAvailable = now >= availableFrom;
 
   return (
     <div className="mx-auto max-w-md py-10">
@@ -69,7 +67,11 @@ export default function Claim({ params }: { params: Promise<{ link: string }> })
 
         {/* Availability */}
         <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
-          {isAvailable ? (
+          {isAvailable === undefined ? (
+            <span className="text-[var(--color-text-muted)]">
+              Checking availability…
+            </span>
+          ) : isAvailable ? (
             <span className="text-[var(--color-success)]">
               ✓ Available to claim now ({DEMO_CLAIM.availableFrom})
             </span>

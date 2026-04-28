@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Status = "claimed" | "available" | "locked";
 
@@ -29,6 +29,7 @@ const PAYOUT_ID = "p_2026_04_payroll";
 export default function PayoutDetail() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? PAYOUT_ID;
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   if (id !== PAYOUT_ID) {
     return (
@@ -56,8 +57,6 @@ export default function PayoutDetail() {
   const claimed = recipients.filter((r) => r.status === "claimed").length;
   const available = recipients.filter((r) => r.status === "available").length;
   const locked = recipients.filter((r) => r.status === "locked").length;
-
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   function copyClaimLink(name: string) {
     // Real link uses /claim/<id>#<secret>; demo just copies the run url.
@@ -143,6 +142,7 @@ export default function PayoutDetail() {
                     <RowMenu
                       open={openMenu === r.address}
                       onOpen={() => setOpenMenu((cur) => (cur === r.address ? null : r.address))}
+                      onClose={() => setOpenMenu(null)}
                       onCopy={() => copyClaimLink(r.name)}
                       onResend={() => emailClaimLink(r.name)}
                       onPayslipEmail={() => emailPayslip(r.name)}
@@ -188,15 +188,32 @@ function StatusBadge({ status }: { status: Status }) {
 interface RowMenuProps {
   open: boolean;
   onOpen: () => void;
+  onClose: () => void;
   onCopy: () => void;
   onResend: () => void;
   onPayslipEmail: () => void;
   payslipHref: string;
 }
 
-function RowMenu({ open, onOpen, onCopy, onResend, onPayslipEmail, payslipHref }: RowMenuProps) {
+function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, payslipHref }: RowMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
   return (
-    <div className="relative inline-block text-left">
+    <div ref={ref} className="relative inline-block text-left">
       <button
         onClick={onOpen}
         className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)]"

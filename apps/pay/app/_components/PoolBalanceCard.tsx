@@ -39,10 +39,11 @@ export function PoolBalanceCard() {
         const balances = await getAvailableBalance(adapter, { chainId });
         if (!cancelled) setState({ kind: "ready", balances });
       } catch (err) {
+        console.error("Failed to load pool balance", err);
         if (!cancelled) {
           setState({
             kind: "error",
-            message: err instanceof Error ? err.message : String(err),
+            message: err instanceof Error ? err.message : "Failed to load balance",
           });
         }
       }
@@ -65,14 +66,16 @@ export function PoolBalanceCard() {
         </div>
         <div className="flex gap-2">
           <button
-            disabled={state.kind === "disconnected"}
-            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+            disabled
+            title="Top up arrives in Phase B"
+            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white opacity-40"
           >
             Top up
           </button>
           <button
-            disabled={state.kind !== "ready" || state.balances.length === 0}
-            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+            disabled
+            title="Withdraw arrives in Phase B"
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm opacity-40"
           >
             Withdraw
           </button>
@@ -92,12 +95,12 @@ function Headline({ state }: { state: State }) {
       return <div className="mt-2 text-2xl font-semibold">— USDC</div>;
     case "ready": {
       const primary = state.balances.find((b) => b.symbol === PRIMARY_TOKEN_SYMBOL);
-      const value = primary
-        ? Number(ethers.formatUnits(primary.raw, decimalsFor(primary.symbol)))
-        : 0;
+      const display = primary
+        ? formatBalance(primary.raw, decimalsFor(primary.symbol))
+        : "0";
       return (
         <div className="mt-2 text-2xl font-semibold">
-          {value.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+          {display} USDC
         </div>
       );
     }
@@ -144,4 +147,15 @@ function Subline({ state }: { state: State }) {
 
 function decimalsFor(symbol: string): number {
   return LAUNCH_TOKENS[symbol]?.decimals ?? 18;
+}
+
+// Format without coercing through Number — preserves precision for
+// balances larger than Number.MAX_SAFE_INTEGER, then groups thousands
+// and trims fractional digits to two.
+function formatBalance(raw: bigint, decimals: number): string {
+  const fixed = ethers.formatUnits(raw, decimals);
+  const [intPart, fracRaw = ""] = fixed.split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const frac = fracRaw.slice(0, 2).replace(/0+$/, "");
+  return frac ? `${grouped}.${frac}` : grouped;
 }

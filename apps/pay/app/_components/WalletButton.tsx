@@ -94,7 +94,8 @@ function MenuItem({ children, onClick }: { children: React.ReactNode; onClick: (
 
 function ExplorerLink({ chainId, account }: { chainId: number | null; account: string }) {
   if (chainId === null) return null;
-  const href = explorerLink({ chainId }, "address", account);
+  const cfg = getNetworkConfig();
+  const href = explorerLink({ chainId, explorerBase: cfg.explorerBase }, "address", account);
   if (!href) return null;
   return (
     <a

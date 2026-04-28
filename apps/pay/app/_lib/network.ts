@@ -45,9 +45,9 @@ export function getNetworkConfig(): NetworkConfig {
   };
 }
 
-/** Whether the current network config is fully configured. Used by
- *  the layout to decide whether to render the real WalletProvider or
- *  a "configure your env" notice. */
+/** Whether the current network config has its core contracts wired up.
+ *  Phase B will use this to gate write actions (deposit / settle) until
+ *  the env is fully populated. */
 export function isNetworkConfigured(cfg: NetworkConfig): boolean {
   return (
     cfg.contracts.privateSettlement !== ZERO &&

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 type Row = { name: string; address: string; amount: string };
 
@@ -104,6 +105,14 @@ const REASON_PLACEHOLDER: Record<TemplateId, string> = {
   contractor: "INV-2026-04-*",
 };
 
+// `123,456.78` and `1_000` style separators are common in spreadsheets
+// — strip them before parseFloat so totals don't silently undercount.
+function parseAmount(input: string): number {
+  const cleaned = input.replace(/[,_\s]/g, "");
+  if (cleaned === "" || !/^-?\d+(\.\d+)?$/.test(cleaned)) return NaN;
+  return parseFloat(cleaned);
+}
+
 export default function NewPayout() {
   const [step, setStep] = useState(1);
   const [templateId, setTemplateId] = useState<TemplateId>("payroll");
@@ -116,13 +125,18 @@ export default function NewPayout() {
   const [stealth, setStealth] = useState(true);
   const [notify, setNotify] = useState(true);
   const [reason, setReason] = useState("");
-  const [claimFrom, setClaimFrom] = useState<string>(today());
+  const [claimFrom, setClaimFrom] = useState<string>();
   const [showConfirm, setShowConfirm] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    setClaimFrom(today());
+  }, []);
 
   function doSubmit() {
     setShowConfirm(false);
     // TODO Phase B: ensureAllowance + generateAuthorizeProof + callSettleAuth
-    window.location.assign("/payouts/p_2026_04_payroll");
+    router.push("/payouts/p_2026_04_payroll");
   }
 
   function pickTemplate(id: TemplateId) {
@@ -147,7 +161,10 @@ export default function NewPayout() {
   }, [csv]);
 
   const total = useMemo(
-    () => rows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0),
+    () => rows.reduce((sum, r) => {
+      const n = parseAmount(r.amount);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0),
     [rows],
   );
 
@@ -161,7 +178,8 @@ export default function NewPayout() {
         issues.push(`Duplicate address: ${r.address}`);
       }
       seen.add(r.address.toLowerCase());
-      if (!r.amount || isNaN(parseFloat(r.amount))) {
+      const n = parseAmount(r.amount);
+      if (!r.amount || !Number.isFinite(n) || n <= 0) {
         issues.push(`Invalid amount for ${r.name || r.address}`);
       }
     }
@@ -294,8 +312,8 @@ export default function NewPayout() {
               <Field label="Available to claim from">
                 <input
                   type="date"
-                  value={claimFrom}
-                  min={today()}
+                  value={claimFrom ?? ""}
+                  min={claimFrom ?? ""}
                   onChange={(e) => setClaimFrom(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
                 />
@@ -354,7 +372,7 @@ export default function NewPayout() {
               <Row k="Token" v={token} />
               <Row k="Recipients" v={`${rows.length}`} />
               <Row k="Total" v={`${total.toLocaleString()} ${token}`} />
-              <Row k="Available to claim from" v={claimFrom} />
+              <Row k="Available to claim from" v={claimFrom ?? "—"} />
               {template.reasonLabel && <Row k={template.reasonLabel} v={reason || "—"} />}
               <Row k="Stealth" v={stealth ? "Yes" : "No"} />
               <Row k="Notification" v={notify ? "Email + Discord" : "None"} />
