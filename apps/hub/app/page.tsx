@@ -136,8 +136,8 @@ function OperatorsRouter() {
         <EyebrowLabel>For operators</EyebrowLabel>
         <SectionHeading className="mt-2">Run the network</SectionHeading>
         <p className="mt-3 text-[var(--color-text-muted)]">
-          The four user apps run on a permissionless relayer network. Match
-          orders, generate ZK proofs, earn fees.
+          Every zkScatter user app runs on a permissionless relayer network.
+          Match orders, generate ZK proofs, earn fees.
         </p>
       </div>
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
