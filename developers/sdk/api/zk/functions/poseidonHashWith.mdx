@@ -1,0 +1,20 @@
+# Function: poseidonHashWith()
+
+```ts
+function poseidonHashWith(poseidon, inputs): bigint;
+```
+
+Synchronous Poseidon hash given an already-built module. Use
+ inside hot loops where awaiting per call would dominate the
+ cost.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `poseidon` | [`PoseidonModule`](../interfaces/PoseidonModule.mdx) |
+| `inputs` | `bigint`[] |
+
+## Returns
+
+`bigint`

@@ -1,0 +1,108 @@
+---
+title: PrivateSettlement
+description: "Verifies half-proofs and atomically settles trades, claims, and cancellations."
+---
+
+`PrivateSettlement` is the contract that turns ZK proofs into on-chain
+state changes. Apps don't usually call it directly — `RelayerClient`
+and the SDK's `contracts` module wrap every entry point.
+
+## External entry points
+
+```solidity
+function settleAuth(
+  AuthSide calldata maker,
+  AuthSide calldata taker,
+  Fees     calldata fees
+) external;
+
+function claimWithProof(
+  Groth16Proof calldata proof,
+  ClaimInputs  calldata inputs
+) external;
+
+function claimWithProofBatch(
+  BatchClaimItem[] calldata items     // up to MAX_CLAIM_BATCH_SIZE = 20
+) external;
+
+function cancelPrivate(
+  Groth16Proof calldata proof,
+  CancelInputs calldata inputs
+) external;
+```
+
+| Caller | Function | Outcome |
+|---|---|---|
+| Relayer | `settleAuth` | Verifies both half-proofs, advances both nullifiers, writes payout commitments |
+| User | `claimWithProof` | Verifies claim circuit, transfers ERC-20 to recipient |
+| User | `claimWithProofBatch` | Atomic batch claim — any revert rolls everything back |
+| User | `cancelPrivate` | Spends maker's leaf, writes a fresh change leaf |
+
+## Verifier wiring
+
+Each circuit has its own deployed Groth16 verifier. `PrivateSettlement`
+holds the verifier addresses in immutable storage and forwards proof
+verification:
+
+```
+PrivateSettlement
+├── authorizeVerifier  (address)
+├── claimVerifier      (address)
+├── cancelVerifier     (address)
+└── depositVerifier    (called via CommitmentPool)
+```
+
+Replacing a verifier requires deploying a fresh `PrivateSettlement` —
+intentional; verifier swaps are consensus-critical and shouldn't be
+governance-trivial.
+
+## Events
+
+```solidity
+event TradeSettled(
+  bytes32 indexed makerNullifier,
+  bytes32 indexed takerNullifier,
+  bytes32 makerNewCommitment,
+  bytes32 takerNewCommitment,
+  bytes32 claimsRoot,
+  address relayer,
+  uint256 makerFee,
+  uint256 takerFee
+);
+
+event ClaimedPrivate(
+  bytes32 indexed nullifier,
+  address indexed recipient,
+  address token,
+  uint256 amount
+);
+
+event CancelPrivate(
+  bytes32 indexed nullifier,
+  bytes32 newCommitment
+);
+```
+
+The relayer indexer subscribes to `TradeSettled` to update order
+status; apps subscribe to `ClaimedPrivate` to mark local pending
+claims as fulfilled.
+
+## Errors
+
+| Error | When |
+|---|---|
+| `RelayerNotRegistered` | Submitted by an address not in `RelayerRegistry` |
+| `OrderExpired` | `block.timestamp > expiry` on either half |
+| `NullifierReused` | One side already spent |
+| `BadMerkleRoot` | Half-proof references a root not in `recentRoots` |
+| `BadProof` | Groth16 verifier rejected |
+| `IdentityRejected` | `IdentityGate` denied the recipient on a claim |
+| `CooldownActive` | Claim attempted before `releaseTime` |
+
+The SDK surfaces these via `explainSettlementError()` (planned, Phase 8).
+
+## Address by network
+
+`NetworkConfig.contracts.privateSettlement` in the SDK. ABI ships as
+`PRIVATE_SETTLEMENT_ABI` and `PRIVATE_SETTLEMENT_IFACE` (pre-parsed)
+from `@zkscatter/sdk`. See [SDK reference / core](/sdk/core).

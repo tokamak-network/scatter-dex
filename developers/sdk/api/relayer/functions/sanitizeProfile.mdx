@@ -1,0 +1,25 @@
+# Function: sanitizeProfile()
+
+```ts
+function sanitizeProfile(input): RelayerProfile | undefined;
+```
+
+Sanitize the `profile` block returned by an arbitrary relayer's
+ `/api/info`. We trust nothing here: keep only known string
+ fields, enforce a length cap, reject URL fields whose scheme
+ isn't on the allowlist. Guards against:
+  - UI crashes from non-string fields breaking `.replace` etc.
+  - rendered-link XSS via `javascript:` / `data:` schemes
+  - DOS via huge strings
+
+ Returns `undefined` when the input isn't a plain object.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `input` | `unknown` |
+
+## Returns
+
+[`RelayerProfile`](../interfaces/RelayerProfile.mdx) \| `undefined`

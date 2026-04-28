@@ -1,0 +1,10 @@
+# Variable: EXIT\_COOLDOWN\_SECONDS
+
+```ts
+const EXIT_COOLDOWN_SECONDS: number;
+```
+
+Mirrors `RelayerRegistry.EXIT_COOLDOWN`. The contract exposes
+ it as a public constant; we mirror the value here so callers
+ can render the cool-down countdown without an extra RPC read.
+ Keep in sync if governance ever rewrites the constant.

@@ -1,0 +1,11 @@
+# Interface: RegistrationStatus
+
+## Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="isverified"></a> `isVerified` | `boolean` | - |
+| <a id="verifieduntil"></a> `verifiedUntil` | `number` | Unix seconds the identity verification expires at; `0` when not verified. |
+| <a id="alreadyregistered"></a> `alreadyRegistered` | `boolean` | - |
+| <a id="minbond"></a> `minBond` | `bigint` | - |
+| <a id="minbondeth"></a> `minBondEth` | `string` | `minBond` rendered as ETH for display, so callers don't need their own ethers dependency to print it. |

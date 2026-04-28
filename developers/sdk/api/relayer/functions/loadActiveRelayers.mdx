@@ -1,0 +1,19 @@
+# Function: loadActiveRelayers()
+
+```ts
+function loadActiveRelayers(registryAddress, provider): Promise<RelayerOnChain[]>;
+```
+
+Read the registry contract's active list and return the full
+ on-chain row for each. Pure read; no side effects.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `provider` | `Provider` |
+
+## Returns
+
+`Promise`\<[`RelayerOnChain`](../interfaces/RelayerOnChain.mdx)[]\>

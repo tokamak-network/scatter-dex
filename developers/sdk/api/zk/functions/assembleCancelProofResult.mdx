@@ -1,0 +1,28 @@
+# Function: assembleCancelProofResult()
+
+```ts
+function assembleCancelProofResult(envelope): CancelProofResult;
+```
+
+Reconstruct a rich `CancelProofResult` from the slim
+ `{ proof, publicSignals, meta? }` envelope a Web Worker passes
+ back. The cancel circuit's private `freshSalt` is *not* in
+ `publicSignals` — it isn't needed by the on-chain `cancelPrivate`
+ call (the contract doesn't take it), but vault rotation
+ persistence (writing the rotated note with the new salt) needs
+ it. The worker carries it back through the `meta` channel; if a
+ worker omits it, this returns `freshSalt: 0n` and rotation
+ persistence stays gated off in the caller.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `envelope` | \{ `proof`: [`Groth16Proof`](../interfaces/Groth16Proof.mdx); `publicSignals`: readonly `bigint`[]; `meta?`: `Readonly`\<`Record`\<`string`, `bigint`\>\>; \} |
+| `envelope.proof` | [`Groth16Proof`](../interfaces/Groth16Proof.mdx) |
+| `envelope.publicSignals` | readonly `bigint`[] |
+| `envelope.meta?` | `Readonly`\<`Record`\<`string`, `bigint`\>\> |
+
+## Returns
+
+[`CancelProofResult`](../interfaces/CancelProofResult.mdx)

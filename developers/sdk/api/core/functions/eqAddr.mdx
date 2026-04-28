@@ -1,0 +1,21 @@
+# Function: eqAddr()
+
+```ts
+function eqAddr(a, b): boolean;
+```
+
+Lowercased-address comparison. Returns false when either side is
+ null/undefined/empty so callers can pass optional config fields
+ without a separate guard. Matches the existing `eqAddr` helper
+ used by frontend/mobile/zk-relayer.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `a` | `string` \| `null` \| `undefined` |
+| `b` | `string` \| `null` \| `undefined` |
+
+## Returns
+
+`boolean`

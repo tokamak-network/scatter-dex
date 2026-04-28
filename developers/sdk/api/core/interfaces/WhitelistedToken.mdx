@@ -1,0 +1,21 @@
+# Interface: WhitelistedToken
+
+A token an app can offer in pickers, balances, orders.
+
+## Extends
+
+- [`TokenInfo`](TokenInfo.mdx)
+
+## Properties
+
+| Property | Type | Description | Inherited from |
+| ------ | ------ | ------ | ------ |
+| <a id="address"></a> `address` | `string` | On-chain ERC-20 address. For native ETH this is the WETH slot. | [`TokenInfo`](TokenInfo.mdx).[`address`](TokenInfo.mdx#address) |
+| <a id="symbol"></a> `symbol` | `string` | - | [`TokenInfo`](TokenInfo.mdx).[`symbol`](TokenInfo.mdx#symbol) |
+| <a id="decimals"></a> `decimals` | `number` | - | [`TokenInfo`](TokenInfo.mdx).[`decimals`](TokenInfo.mdx#decimals) |
+| <a id="isnative"></a> `isNative` | `boolean` | True for the synthetic "ETH" entry that wraps/unwraps via WETH. | [`TokenInfo`](TokenInfo.mdx).[`isNative`](TokenInfo.mdx#isnative) |
+| <a id="name"></a> `name` | `string` | Display name, e.g. "Ether", "USD Coin". | - |
+| <a id="baseinmarkets"></a> `baseInMarkets?` | [`QuoteMarket`](../type-aliases/QuoteMarket.mdx)[] | Quote markets in which this token serves as **base** — i.e. what tabs the pair `{this}/{quote}` appears under. Empty for tokens that only ever trade as the quote side. | - |
+| <a id="isquotemarket"></a> `isQuoteMarket?` | `boolean` | True for tokens we ourselves treat as a quote market tab. ETH / USDC / USDT for the launch lineup; TON is base-only. | - |
+| <a id="category"></a> `category` | `"base"` \| `"stable"` | Stable-of-stable hint — UI can render a different chip color for stables and warn on stable→stable trades. | - |
+| <a id="launchoffer"></a> `launchOffer?` | `boolean` | True when launch-event 0% fee applies. Today: all four tokens. | - |

@@ -1,0 +1,93 @@
+---
+title: Half-proof authorization
+description: "Each side proves alone, the contract joins on-chain."
+---
+
+A trade has two parties. zkScatter splits the proof so they don't
+have to be online together.
+
+## The split
+
+<Steps>
+  <Step title="Side A signs">
+    Generates a Groth16 proof binding their EdDSA-signed order to a
+    leaf in the commitment tree. Goes offline.
+  </Step>
+  <Step title="Side B signs">
+    Same — independently, possibly hours later.
+  </Step>
+  <Step title="Relayer joins">
+    Matches A's and B's orders, collects both proofs, submits to
+    `PrivateSettlement.settleAuth(makerProof, takerProof, ...)`.
+  </Step>
+  <Step title="Contract verifies">
+    Runs both Groth16 verifiers. Advances both nullifiers. Writes
+    payout commitments. Atomic — either the whole settlement lands
+    or nothing changes.
+  </Step>
+</Steps>
+
+## What each half-proof proves
+
+Per side:
+
+```
+Public inputs (visible to relayer + contract):
+  - commitmentRoot       (which tree state this proof was built against)
+  - nullifier            (this leaf is now spent)
+  - newCommitment        (residual change leaf)
+  - claimsRoot           (commitments to payout entries)
+  - orderHash            (the EdDSA-signed order summary)
+  - relayer              (which relayer this is bound to)
+  - pubKeyBind           (BabyJub pubkey of the maker)
+
+Witness (private):
+  - note preimage        (ownerSecret, token, amount, salt)
+  - merkleProof          (path + indices)
+  - eddsaSignature       (R8x, R8y, S over orderHash)
+  - claims[]             (recipient, secret, amount, releaseTime)
+```
+
+The circuit checks:
+
+1. The note hashes to a leaf in `commitmentRoot`.
+2. The EdDSA signature over `orderHash` validates against `pubKeyBind`.
+3. `nullifier = Poseidon(TAG_ESCROW_NULL, ownerSecret, leafIndex)` — unique per leaf.
+4. `newCommitment` is a fresh hash of the residual.
+5. `claimsRoot` correctly commits the claim distribution.
+6. `relayer` matches the input — orders bound to one relayer can't be replayed elsewhere.
+
+## Why split
+
+| Property | Without split (joint proof) | With split |
+|---|---|---|
+| Both parties online | required | not required |
+| Mobile-friendly | proving is heavy + concurrent | each side proves alone |
+| Failure mode | one drops → both retry | one drops → relayer routes again |
+| Proof size on-chain | smaller (1 proof) | 2× — but relayer batches |
+
+## Order hash
+
+The EdDSA signature covers a Poseidon hash over the order's public
+side:
+
+```
+orderHash = Poseidon(
+  sellToken, buyToken,
+  sellAmount, buyAmount,
+  maxFee, expiry, nonce,
+  claimsRoot,
+  relayer
+)
+```
+
+Including `claimsRoot` prevents a relayer from swapping the payout
+distribution after signing. Including `relayer` prevents replays
+across operators. See `hashAuthorizeOrder` in
+`@zkscatter/sdk/zk` for the canonical implementation.
+
+## Where this fits in the SDK
+
+- **Building the proof**: `generateAuthorizeProof(input, assets)` — see [Place an order](/docs/guides/place-order).
+- **Submitting on-chain**: `callSettleAuth(signer, settlementAddr, makerSide, takerSide, fees)` — relayers, not apps.
+- **Inspecting public signals**: `AuthorizeProofResult` exposes them as named bigint fields.

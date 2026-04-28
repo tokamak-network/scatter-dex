@@ -1,0 +1,9 @@
+# Variable: DEFAULT\_DERIVE\_MESSAGE
+
+```ts
+const DEFAULT_DERIVE_MESSAGE: "Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds." = "Sign to generate your zkScatter trading key.\n\nThis key is used to sign orders privately.\nIt does not grant access to your funds.";
+```
+
+Default fixed message used by `deriveEdDSAKey` when callers don't
+ pass their own. Keeping this stable across SDK versions matters:
+ changing it would invalidate every existing user's EdDSA key.

@@ -1,0 +1,23 @@
+# Function: generateNote()
+
+```ts
+function generateNote(
+   token, 
+   amount, 
+   pubKey): CommitmentNote;
+```
+
+Build a fresh `CommitmentNote` bound to the caller's BabyJub
+ signing pubkey.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `token` | `string` |
+| `amount` | `bigint` |
+| `pubKey` | readonly \[`bigint`, `bigint`\] |
+
+## Returns
+
+[`CommitmentNote`](../interfaces/CommitmentNote.mdx)

@@ -1,0 +1,10 @@
+# Variable: MAX\_RELAYER\_FEE\_BPS
+
+```ts
+const MAX_RELAYER_FEE_BPS: 500 = 500;
+```
+
+Maximum per-trade fee a relayer may register, in basis points.
+ Mirrors `RelayerRegistry.MAX_FEE` (50 bps) — kept in sync here so
+ the SDK can reject invalid input before a wallet prompt and so
+ consumer apps don't redeclare the magic number.

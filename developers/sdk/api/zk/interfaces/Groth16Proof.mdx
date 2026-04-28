@@ -1,0 +1,13 @@
+# Interface: Groth16Proof
+
+Groth16 proof in the shape every Solidity verifier expects:
+ two G1 elements (a, c) and one G2 element (b). Tuples — not
+ arrays — so positional access is type-checked at call sites.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="a"></a> `a` | readonly \[`bigint`, `bigint`\] |
+| <a id="b"></a> `b` | readonly \[readonly \[`bigint`, `bigint`\], readonly \[`bigint`, `bigint`\]\] |
+| <a id="c"></a> `c` | readonly \[`bigint`, `bigint`\] |

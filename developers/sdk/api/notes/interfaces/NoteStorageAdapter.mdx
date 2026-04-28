@@ -1,0 +1,87 @@
+# Interface: NoteStorageAdapter
+
+Storage adapter contract. Implementations: in-memory (tests / SSR),
+ IndexedDB (browser), and (future) AsyncStorage / SQLite for RN.
+
+## Methods
+
+### ready()
+
+```ts
+ready(): Promise<void>;
+```
+
+Resolve once the adapter is ready (e.g. IDB open completed).
+ Idempotent: subsequent calls return the same promise.
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### loadAll()
+
+```ts
+loadAll(): Promise<StoredNote[]>;
+```
+
+Load all notes, ordered oldest → newest by `createdAt`.
+
+#### Returns
+
+`Promise`\<[`StoredNote`](StoredNote.mdx)[]\>
+
+***
+
+### put()
+
+```ts
+put(note): Promise<void>;
+```
+
+Insert or update a note by id.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `note` | [`StoredNote`](StoredNote.mdx) |
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### remove()
+
+```ts
+remove(id): Promise<void>;
+```
+
+Remove by id. Idempotent — a missing id is a no-op.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `id` | `string` |
+
+#### Returns
+
+`Promise`\<`void`\>
+
+***
+
+### clear()
+
+```ts
+clear(): Promise<void>;
+```
+
+Remove every note. Used for "reset wallet" / "switch account".
+
+#### Returns
+
+`Promise`\<`void`\>

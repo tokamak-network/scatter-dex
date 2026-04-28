@@ -1,0 +1,13 @@
+# Function: warmupEddsa()
+
+```ts
+function warmupEddsa(): Promise<void>;
+```
+
+Eagerly initialise the EdDSA + BabyJub tables. Worker `preload`
+ hooks should call this on startup so the first signing job
+ doesn't pay the build cost on the user's hot path.
+
+## Returns
+
+`Promise`\<`void`\>

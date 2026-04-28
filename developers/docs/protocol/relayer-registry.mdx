@@ -1,0 +1,108 @@
+---
+title: RelayerRegistry
+description: "On-chain directory of bonded relayer operators."
+---
+
+`RelayerRegistry` is the source of truth for who's allowed to submit
+`settleAuth` transactions. Apps read it for relayer discovery; the
+settlement contract reads it on every match to gate caller eligibility.
+
+## Storage
+
+```solidity
+struct Relayer {
+  string  url;             // /api/info endpoint
+  uint16  fee;             // basis points
+  uint96  bond;            // staked native (or future TON) amount
+  uint64  registeredAt;    // unix seconds
+  uint64  exitRequestedAt; // unix seconds; 0 if not exiting
+  bool    active;
+}
+
+mapping(address => Relayer) public relayers;
+address[] public registered;
+```
+
+## Lifecycle
+
+<Steps>
+  <Step title="Register">
+    `register(url, feeBps)` with `msg.value` ≥ `minBond()`. Operator
+    must hold a valid `IdentityGate` attestation. Sets `registeredAt`,
+    `active = true`.
+  </Step>
+  <Step title="Operate">
+    `updateInfo(url, feeBps)` to change endpoint or fee.
+    `addBond()` with `msg.value` to top up bond.
+  </Step>
+  <Step title="Exit">
+    `requestExit()` — flips `exitRequestedAt = now`. Operator stays
+    `active = true` during the cool-down so in-flight matches still
+    settle.
+  </Step>
+  <Step title="Withdraw">
+    After `EXIT_COOLDOWN` (7 days), `executeExit()` returns the bond
+    and sets `active = false`.
+  </Step>
+</Steps>
+
+## External entry points
+
+```solidity
+function register(string calldata url, uint16 feeBps) external payable;
+function updateInfo(string calldata url, uint16 feeBps) external;
+function addBond() external payable;
+function requestExit() external;
+function executeExit() external;
+
+function relayers(address operator) external view returns (Relayer memory);
+function registeredCount() external view returns (uint256);
+function isActive(address operator) external view returns (bool);
+function minBond() external view returns (uint256);
+```
+
+## Events
+
+```solidity
+event Registered(address indexed operator, string url, uint16 fee, uint256 bond);
+event InfoUpdated(address indexed operator, string url, uint16 fee);
+event BondAdded(address indexed operator, uint256 amount, uint256 newBond);
+event ExitRequested(address indexed operator, uint64 cooldownEndsAt);
+event Exited(address indexed operator, uint256 bondReturned);
+```
+
+## Slashing
+
+Verifiable misbehaviour reduces the bond:
+
+| Trigger | Slash |
+|---|---|
+| Submitting a settlement that fails proof verification | gas reimbursement |
+| Front-running an order to a different relayer | full match fee × multiplier |
+| Censoring an order then submitting it past expiry | configurable |
+
+Slashing is governance-driven; the registry exposes
+`slash(operator, amount, reason)` only to a privileged role
+(governance multisig).
+
+## SDK helpers
+
+```ts
+import {
+  loadActiveRelayers,
+  loadRelayersWithApiInfo,
+  registerRelayer,
+  updateRelayerInfo,
+  addRelayerBond,
+  requestRelayerExit,
+  executeRelayerExit,
+  loadOperatorRow,
+} from "@zkscatter/sdk/relayer";
+```
+
+See [SDK reference / relayer](/sdk/relayer) for signatures.
+
+## Address by network
+
+`NetworkConfig.contracts.relayerRegistry`. ABI ships as
+`RELAYER_REGISTRY_ABI` / `RELAYER_REGISTRY_IFACE`.

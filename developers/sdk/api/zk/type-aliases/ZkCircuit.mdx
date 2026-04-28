@@ -1,0 +1,10 @@
+# Type Alias: ZkCircuit
+
+```ts
+type ZkCircuit = "authorize" | "cancel" | "claim" | "deposit" | "withdraw";
+```
+
+Worker-safe so the same wrapper works inside `*-worker.ts`; only
+ the main thread carries `window`, so the default reporter is gated
+ behind it. Workers can override the reporter via `setProveReporter`
+ to relay timings back to the main thread.

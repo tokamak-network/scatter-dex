@@ -1,0 +1,14 @@
+# Interface: CommitmentInsertedHistoryOptions
+
+Optional block range for incremental hydration. Without bounds
+ the helper queries the whole event history, which is fine on
+ fresh testnets but can hit RPC log limits as the pool grows.
+ Apps that know a deploy block (or want to chunk) supply
+ `fromBlock` / `toBlock`.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="fromblock"></a> `fromBlock?` | `any` |
+| <a id="toblock"></a> `toBlock?` | `any` |

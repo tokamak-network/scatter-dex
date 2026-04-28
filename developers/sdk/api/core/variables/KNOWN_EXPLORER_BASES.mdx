@@ -1,0 +1,10 @@
+# Variable: KNOWN\_EXPLORER\_BASES
+
+```ts
+const KNOWN_EXPLORER_BASES: Record<number, string>;
+```
+
+Block-explorer roots for chains zkScatter actually deploys to.
+ Polygon / Arbitrum / Optimism appear in `KNOWN_CHAIN_NAMES` for
+ display only; they intentionally have no explorer entry here so
+ callers can show plain text instead of a broken link.

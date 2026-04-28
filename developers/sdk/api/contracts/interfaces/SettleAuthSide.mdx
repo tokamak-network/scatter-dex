@@ -1,0 +1,18 @@
+# Interface: SettleAuthSide
+
+Per-side public material the contract re-checks against the
+ proof. The `proof` carries hashes only; these scalars match
+ the user-signed order.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="proof"></a> `proof` | [`AuthorizeProofResult`](../../zk/interfaces/AuthorizeProofResult.mdx) |
+| <a id="selltoken"></a> `sellToken` | `string` |
+| <a id="buytoken"></a> `buyToken` | `string` |
+| <a id="sellamount"></a> `sellAmount` | `bigint` |
+| <a id="buyamount"></a> `buyAmount` | `bigint` |
+| <a id="maxfee"></a> `maxFee` | `bigint` |
+| <a id="expiry"></a> `expiry` | `bigint` |
+| <a id="relayer"></a> `relayer` | `string` |

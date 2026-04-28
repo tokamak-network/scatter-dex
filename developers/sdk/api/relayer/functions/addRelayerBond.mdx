@@ -1,0 +1,23 @@
+# Function: addRelayerBond()
+
+```ts
+function addRelayerBond(
+   registryAddress, 
+   bondEth, 
+signer): Promise<TransactionResponse>;
+```
+
+Submit `addBond()` with the given top-up as `msg.value`.
+ Rejects zero / negative amounts before a wallet prompt.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `registryAddress` | `string` |
+| `bondEth` | `string` |
+| `signer` | `Signer` |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

@@ -1,0 +1,186 @@
+---
+title: Place an order
+description: "Build an authorize half-proof and submit it through a relayer."
+---
+
+Placing an order on zkScatter means:
+
+1. Picking an active relayer.
+2. Building a Merkle proof for the deposit you want to spend.
+3. Generating an `authorize` Groth16 proof binding an EdDSA-signed order
+   to that leaf.
+4. Submitting the proof + signature to the relayer's HTTP API.
+
+## 1. Pick a relayer
+
+```ts
+import { loadRelayersWithApiInfo } from "@zkscatter/sdk/relayer";
+
+const relayers = await loadRelayersWithApiInfo(
+  network.contracts.relayerRegistry,
+  readProvider,
+);
+
+const candidates = relayers.filter((r) => r.online && r.api);
+candidates.sort((a, b) => Number(a.fee) - Number(b.fee));
+
+const target = candidates[0];
+if (!target) throw new Error("No relayer online");
+```
+
+## 2. Build the Merkle proof
+
+Maintain an `IncrementalMerkleTree` fed by `CommitmentInserted` events:
+
+```ts
+import {
+  IncrementalMerkleTree,
+  COMMIT_TREE_DEPTH,
+  loadCommitmentInsertedHistory,
+} from "@zkscatter/sdk";
+
+const tree = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+const history = await loadCommitmentInsertedHistory(
+  readProvider,
+  network.contracts.commitmentPool,
+);
+for (const row of history) tree.insert(row.commitment);
+
+const merkleProof = tree.getProof(myStoredNote.leafIndex);
+```
+
+For long-lived sessions, persist the tree state and apply incremental
+updates from `subscribeCommitmentInserted`.
+
+## 3. Generate the authorize proof
+
+```ts
+import {
+  generateAuthorizeProof,
+  randomFieldElement,
+  deriveEdDSAKey,
+} from "@zkscatter/sdk/zk";
+
+const eddsa = await deriveEdDSAKey(signer);
+const nonce = randomFieldElement();
+
+// AuthorizeProofInput uses `note.token` for the sell side — there is
+// no separate `sellToken` field. `sellAmount` must be ≤ `note.amount`;
+// any residual is rolled into a change commitment using `newSalt`.
+const expiry = BigInt(Math.floor(Date.now() / 1000) + 600);
+
+const authResult = await generateAuthorizeProof(
+  {
+    note: myStoredNote.note,
+    leafIndex: myStoredNote.leafIndex,
+    merkleProof,
+    sellAmount: amountIn,
+    buyToken: tokenB,
+    buyAmount: amountOut,
+    maxFee,
+    expiry,
+    nonce,
+    relayer: target.address,
+    eddsaPrivateKey: eddsa.privateKey,
+    // `recipient` is the address that will be able to claim this
+    // payout. Pass either:
+    //   - a regular wallet address (account.toLowerCase()) when the
+    //     recipient prefers an audit trail or doesn't need unlinkability,
+    //   - a stealth address derived via `generateStealthAddress(meta)`
+    //     when unlinkability matters.
+    // The `claim` circuit verifies spending-key knowledge either way.
+    claims: [
+      {
+        secret: randomFieldElement(),
+        recipient: payoutRecipient,         // see comment above
+        token: tokenB,
+        amount: amountOut,
+        releaseTime: 0n,
+      },
+    ],
+    newSalt: randomFieldElement(),
+  },
+  { wasm: "/zk/authorize.wasm", zkey: "/zk/authorize_final.zkey" },
+);
+```
+
+## 4. Submit to the relayer
+
+```ts
+import { RelayerClient, type OrderData } from "@zkscatter/sdk/relayer";
+
+const client = new RelayerClient(target.url);
+
+// Wire-format payload — see sdk/relayer for the full type. `claims`
+// must be the exact distribution committed in the authorize proof's
+// claimsRoot; the relayer rejects any divergence.
+const order: OrderData = {
+  maker: account,
+  sellToken: tokenA,
+  buyToken: tokenB,
+  sellAmount: amountIn.toString(),
+  buyAmount: amountOut.toString(),
+  maxFee: Number(maxFee),
+  expiry: Number(expiry),
+  nonce: Number(nonce),
+  claims,
+};
+
+// `signature` is a relayer-protocol string committing to `order` —
+// see the relayer's `/api/info` for the format it accepts.
+const response = await client.submitOrder(order, signature, "cover_taker");
+
+if (response.status === "rejected") {
+  throw new Error("Relayer rejected order");
+}
+```
+
+## 5. Track status
+
+Poll or subscribe via the relayer's history endpoint:
+
+```ts
+const orders = await client.getOrders(account);
+const me = orders.find((o) => o.nonce === nonce.toString(16));
+// me.status: "queued" | "matched" | "settled" | "expired" | "cancelled"
+```
+
+When `me.status === "settled"`, the matched payout is now a commitment
+in the pool addressed to whatever `recipient` you set in the claim
+entry above (regular or stealth). See [Claim a payout](/docs/guides/claim).
+
+## Pre-flight UX
+
+Always run `pre-sign preview` before triggering the proof so the user
+sees what they're about to authorize:
+
+```tsx
+<PreSignPreview
+  sellToken={tokenA}
+  buyToken={tokenB}
+  sellAmount={amountIn}
+  buyAmount={amountOut}
+  expiry={expiry}
+  relayer={target.url}
+  fee={target.fee}
+/>
+```
+
+The `apps/pro` reference component has full styling — copy or adapt.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Bad merkle proof`">
+    Tree state diverged from on-chain. Reload `loadCommitmentInsertedHistory`
+    and re-derive the proof.
+  </Accordion>
+  <Accordion title="`Order expired` from the relayer">
+    Pick an `expiry` at least 2× your worst-case prove time. On mobile,
+    aim for 10 minutes minimum.
+  </Accordion>
+  <Accordion title="EdDSA signature rejected">
+    Verify `deriveEdDSAKey` was called with the same wallet that owns
+    the note. Account switches mid-flow desync the key.
+  </Accordion>
+</AccordionGroup>

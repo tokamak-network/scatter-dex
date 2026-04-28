@@ -1,0 +1,63 @@
+# Function: setupProverWorker()
+
+```ts
+function setupProverWorker(handlers): {
+  postProgress: void;
+};
+```
+
+Wire a Web Worker script to the SDK's prover protocol.
+
+ Usage from a circuit-specific worker file (consumer-owned):
+
+ ```ts
+ // apps/<name>/workers/deposit.worker.ts
+ import {
+   setupProverWorker,
+   warmupPoseidon,
+   generateDepositProof,
+ } from "@zkscatter/sdk/zk";
+
+ setupProverWorker({
+   preload: () => warmupPoseidon(),
+   prove: async (req) => {
+     const { proof, publicSignals } = await generateDepositProof(
+       req.input as never,
+       { wasm: "/zk/deposit.wasm", zkey: "/zk/deposit.zkey" },
+     );
+     return { proof, publicSignals };
+   },
+ });
+ ```
+
+ The runtime handles message decoding, request validation, and
+ error wrapping. Per-job progress messages can be sent with the
+ returned `postProgress` helper.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `handlers` | [`ProverWorkerHandlers`](../interfaces/ProverWorkerHandlers.mdx) |
+
+## Returns
+
+### postProgress()
+
+```ts
+postProgress(jobId, message): void;
+```
+
+Send a progress message to the main thread for a job in flight.
+ No-op outside a Web Worker context.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `jobId` | `number` |
+| `message` | `string` |
+
+#### Returns
+
+`void`

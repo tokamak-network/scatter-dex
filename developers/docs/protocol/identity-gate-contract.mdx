@@ -1,0 +1,94 @@
+---
+title: IdentityGate (contract)
+description: "On-chain checkpoint that gates deposits and claims via zk-X509 attestations."
+---
+
+`IdentityGate` is the policy contract every deposit and claim must
+clear. It stores attestation hashes per address and reverts when an
+unattested address attempts a gated operation.
+
+> Conceptual overview: see [Architecture / Identity gate](/docs/concepts/identity-gate).
+> This page is the on-chain reference.
+
+## Storage
+
+```solidity
+struct Attestation {
+  bytes32 hash;            // hash of the zk-X509 proof inputs
+  uint64  validUntil;      // unix seconds; 0 = no expiry
+  uint16  policyId;        // which policy version this attestation satisfies
+}
+
+mapping(address => Attestation) public attestations;
+uint16 public currentPolicy;
+```
+
+## External entry points
+
+```solidity
+function attest(
+  Groth16Proof calldata zkProof,
+  bytes32      calldata attestationHash,
+  uint64       validUntil
+) external;
+
+function revoke(address user) external;   // governance / operator only
+
+function isValid(address user) external view returns (bool);
+function policyOf(address user) external view returns (uint16);
+function policyDescription() external view returns (string memory);
+```
+
+The verifier in `attest` is a Groth16 verifier specialized for the
+zk-X509 circuit — the user proves they hold a valid X.509 cert
+without revealing it.
+
+## Hooks for other contracts
+
+`CommitmentPool.deposit(...)` and `PrivateSettlement.claimWithProof(...)`
+both call `gate.requireValid(addr)` internally; the gate reverts
+with `IdentityRejected` if the address has no valid attestation.
+
+```solidity
+// Inside CommitmentPool.deposit:
+gate.requireValid(msg.sender);
+
+// Inside PrivateSettlement.claimWithProof:
+gate.requireValid(inputs.recipient);
+```
+
+`settleAuth` does **not** call the gate — once a balance is in the
+pool it can flow between users freely without re-attestation.
+
+## Events
+
+```solidity
+event Attested(address indexed user, bytes32 attestationHash, uint16 policyId, uint64 validUntil);
+event Revoked(address indexed user, uint16 policyId);
+event PolicyChanged(uint16 indexed oldPolicy, uint16 indexed newPolicy);
+```
+
+## Multiple gates
+
+Different deployments can wire different gates:
+
+```
+Pool A (retail)        → IdentityGate-A  (zk-X509 from MiCA-compliant KYC)
+Pool B (institutional) → IdentityGate-B  (qualified investor only)
+Pool C (sanctions only)→ IdentityGate-C  (OFAC screening, no KYC)
+```
+
+`NetworkConfig.contracts.identityGate` is the gate active for the
+deployment the SDK is configured against.
+
+## SDK status
+
+The `@zkscatter/sdk/identity` module — client-side zk-X509 proof
+generation — ships in **Phase 7**. Phase 0–3 of the SDK don't expose
+identity primitives; the gate is wired into the contracts but apps
+expect the user to have already attested via a separate flow.
+
+## Address by network
+
+`NetworkConfig.contracts.identityGate`. ABI ships as
+`IDENTITY_GATE_ABI` / `IDENTITY_GATE_IFACE`.

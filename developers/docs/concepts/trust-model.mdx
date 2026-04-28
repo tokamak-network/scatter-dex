@@ -1,0 +1,65 @@
+---
+title: Trust model
+description: "Who can do what — and what they can't — across the four parties."
+---
+
+zkScatter has four parties. None of them trust the others fully; the
+protocol uses ZK proofs and on-chain verification so each party only
+sees what it needs.
+
+## The parties
+
+<CardGroup cols={2}>
+  <Card title="User (maker / taker / claimer)" icon="shield-check">
+    Holds the spending key. Generates proofs locally. Never reveals
+    note secrets, EdDSA private keys, or stealth viewing keys.
+  </Card>
+  <Card title="Relayer" icon="server">
+    Off-chain matcher and submitter. Sees authorized half-proofs +
+    public order hashes. Cannot see plaintext amounts/balances.
+  </Card>
+  <Card title="Settlement contract" icon="file-contract">
+    Verifies Groth16 proofs, advances nullifiers, writes new
+    commitments. Trusts only ZK proofs and the identity gate.
+  </Card>
+  <Card title="Identity gate" icon="shield">
+    zk-X509 attestation verifier. Confirms the user is allowed to
+    deposit / claim without learning who they are.
+  </Card>
+</CardGroup>
+
+## What each party can do
+
+| Capability | User | Relayer | Settlement | Identity gate |
+|---|---|---|---|---|
+| Sign EdDSA orders | ✅ | ❌ | ❌ | ❌ |
+| Generate ZK proofs (own leaves) | ✅ | ❌ | ❌ | ❌ |
+| Match counterparties | ❌ | ✅ | ❌ | ❌ |
+| Submit `settleAuth` | ❌ | ✅ | — | ❌ |
+| Verify proofs | ❌ | ❌ | ✅ | — |
+| Slash a relayer's bond | ❌ | ❌ | ✅ | ❌ |
+| See plaintext amounts | ✅ (own only) | ❌ | ❌ | ❌ |
+
+## Trust assumptions
+
+- **Liveness, not safety**: a malicious relayer can refuse to match
+  your order, but cannot steal funds or fake settlements.
+- **Bond-backed**: relayers post slashable ETH bonds (TON in future).
+  Verifiable misbehaviour reduces the bond.
+- **No trusted setup beyond Groth16**: the per-circuit zkey is from a
+  ceremony; the protocol doesn't add new trusted parties on top.
+- **Identity gate is policy**: the gate is one place — change it and
+  every flow inherits the new policy. KYC / zk-X509 / sanctions
+  screening all flow through here.
+
+## Failure modes
+
+- **Relayer collusion** — two relayers can refuse to match, but a
+  third independent operator unblocks the flow. Apps default to
+  filtering for live operators.
+- **Compromised user device** — note secrets exposed. Mitigations
+  live in the wallet layer (PIN, biometric, hardware key).
+- **Identity gate exploit** — same blast radius as any KYC bypass;
+  scoped to deposits + claims, not in-band trades.
+- **Reorg** — proofs against not-yet-final pool state may fail. Apps
+  apply confirmation thresholds before treating events as final.

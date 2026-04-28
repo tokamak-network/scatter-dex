@@ -1,0 +1,33 @@
+# Function: hashAuthorizeOrder()
+
+```ts
+function hashAuthorizeOrder(order): Promise<bigint>;
+```
+
+Compute the order hash that the circuit and contract both sign
+ over. Field order is consensus-critical:
+
+   Poseidon(sellToken, buyToken, sellAmount, buyAmount,
+            maxFee, expiry, nonce, claimsRoot, relayer)
+
+ Including `claimsRoot` prevents claim-bag swapping; including
+ `relayer` enables the trustless fee split.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `order` | \{ `sellToken`: `bigint`; `buyToken`: `bigint`; `sellAmount`: `bigint`; `buyAmount`: `bigint`; `maxFee`: `bigint`; `expiry`: `bigint`; `nonce`: `bigint`; `claimsRoot`: `bigint`; `relayer`: `bigint`; \} |
+| `order.sellToken` | `bigint` |
+| `order.buyToken` | `bigint` |
+| `order.sellAmount` | `bigint` |
+| `order.buyAmount` | `bigint` |
+| `order.maxFee` | `bigint` |
+| `order.expiry` | `bigint` |
+| `order.nonce` | `bigint` |
+| `order.claimsRoot` | `bigint` |
+| `order.relayer` | `bigint` |
+
+## Returns
+
+`Promise`\<`bigint`\>

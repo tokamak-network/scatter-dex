@@ -1,0 +1,20 @@
+# Variable: TAG\_ESCROW\_NULL
+
+```ts
+const TAG_ESCROW_NULL: 0n = 0n;
+```
+
+Shared Poseidon domain-separation tags.
+
+ Mirrors the canonical definitions in `circuits/tags.circom`. Every
+ Poseidon-based commitment, nullifier, or bound hash prepends one
+ of these tags as its first input so the preimage spaces are
+ disjoint.
+
+ **CONSENSUS-CRITICAL**: any change to these values must land
+ in lock-step with:
+   - `circuits/tags.circom`
+   - `zk-relayer/src/core/tags.ts`
+   - `frontend/app/lib/zk/tags.ts` (legacy duplicate, to be removed)
+ Disagreement here causes proofs to verify against a different
+ preimage space than the contract expects — silent data loss.

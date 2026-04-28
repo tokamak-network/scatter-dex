@@ -1,0 +1,33 @@
+# Function: ensureAllowance()
+
+```ts
+function ensureAllowance(
+   signer, 
+   token, 
+   spender, 
+amount): Promise<TransactionResponse[]>;
+```
+
+Approve `token` for `spender` to pull `amount` units.
+
+ No-op when the existing allowance already covers the request.
+ When the existing allowance is non-zero but insufficient, we
+ reset to 0 first before raising — some widely-used ERC-20s
+ (notably USDT) revert on non-zero → non-zero allowance changes.
+
+ Returns the approval transaction (or `[]` when nothing was
+ needed). The reset-to-zero path returns both transactions; both
+ are pending and can be `wait()`-ed in order.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `signer` | `Signer` |
+| `token` | `string` |
+| `spender` | `string` |
+| `amount` | `bigint` |
+
+## Returns
+
+`Promise`\<`TransactionResponse`[]\>

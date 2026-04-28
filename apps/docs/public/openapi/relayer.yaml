@@ -1,0 +1,117 @@
+openapi: 3.1.0
+info:
+  title: zkScatter Relayer API
+  version: 0.1.0
+  description: >-
+    HTTP API exposed by every zkScatter relayer node. Apps use this to discover a relayer's identity
+    and fee, submit signed orders, fetch order status, and cancel.
+
+
+    All relayers implement the same surface — switch the base URL to switch operators.
+  contact:
+    name: Tokamak Network
+    url: https://github.com/tokamak-network/scatter-dex
+servers:
+  - url: https://relayer.example.com
+    description: Production relayer (replace with a registered operator's URL — see `RelayerRegistry`).
+tags:
+  - name: Discovery
+    description: Operator metadata. Read-only; safe to call without auth.
+paths:
+  /api/info:
+    get:
+      tags:
+        - Discovery
+      summary: Relayer identity, fee, and pending-queue depth
+      description: Returns the operator's identity, on-chain fee (in basis points), and the number of
+        pending authorize orders. Apps use this to filter the on-chain registry list down to
+        operators that are actually online and matching.
+      operationId: getInfo
+      responses:
+        "200":
+          description: Relayer info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayerApiInfo"
+components:
+  schemas:
+    RelayerApiInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: ScatterDEX ZK Relayer
+          description: Human-readable relayer name. Matches what the operator advertises on-chain.
+        version:
+          type: string
+          example: 0.1.0
+          description: Relayer software version. Use to gate features that require a specific server build.
+        address:
+          type: string
+          example: "0xabcdef0123456789abcdef0123456789abcdef01"
+          description: Operator EOA — must match the address registered in `RelayerRegistry`. Apps cross-check
+            this against the on-chain record before submitting.
+        fee:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          example: 30
+          description: Per-trade fee in basis points (100 = 1%). Must equal the on-chain `fee` field.
+        orderCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          example: 12
+          description: Number of pending authorize orders the relayer is currently holding.
+        commitmentPool:
+          type: string
+          description: Address of the `CommitmentPool` contract this relayer matches against.
+        privateSettlement:
+          type: string
+          description: Address of the `PrivateSettlement` contract this relayer submits to.
+        profile:
+          $ref: "#/components/schemas/RelayerProfile"
+      required:
+        - name
+        - version
+        - address
+        - fee
+        - orderCount
+        - commitmentPool
+        - privateSettlement
+        - profile
+      additionalProperties: false
+      description: Identity, fee, capabilities, and pending-queue depth. Apps probe this on relayer
+        discovery to filter out offline operators.
+    RelayerProfile:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 280
+        logoUrl:
+          type: string
+          maxLength: 256
+          format: uri
+        contact:
+          type: string
+          maxLength: 256
+        socialX:
+          type: string
+          maxLength: 64
+        website:
+          type: string
+          maxLength: 256
+          format: uri
+        updatedAt:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Unix seconds since the operator last edited the profile.
+      additionalProperties: false
+      description: Operator-set cosmetic metadata. Untrusted by the SDK — every consumer must run it
+        through `sanitizeProfile` before rendering.

@@ -1,0 +1,17 @@
+# Interface: OrderData
+
+Order payload as the relayer expects it on submit.
+
+## Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="maker"></a> `maker` | `string` |
+| <a id="selltoken"></a> `sellToken` | `string` |
+| <a id="buytoken"></a> `buyToken` | `string` |
+| <a id="sellamount"></a> `sellAmount` | `string` |
+| <a id="buyamount"></a> `buyAmount` | `string` |
+| <a id="maxfee"></a> `maxFee` | `number` |
+| <a id="expiry"></a> `expiry` | `number` |
+| <a id="nonce"></a> `nonce` | `number` |
+| <a id="claims"></a> `claims` | \{ `claimHash`: `string`; `amount`: `string`; `releaseDelay`: `number`; \}[] |

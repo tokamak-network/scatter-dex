@@ -1,0 +1,84 @@
+---
+title: CommitmentPool
+description: "On-chain Poseidon Merkle tree of commitments — the protocol's central state."
+---
+
+`CommitmentPool` is the contract every flow reads from and writes to.
+It maintains an append-only Merkle tree of Poseidon commitments and
+a nullifier set — together they're the protocol's authoritative state.
+
+## Storage
+
+| Slot | Field | Purpose |
+|---|---|---|
+| Tree | `bytes32[2^20]` | Leaves; `2^20 = 1_048_576` capacity |
+| Tree state | `uint256 nextLeafIndex` | Next free position |
+| Tree root | `bytes32 currentRoot` | Latest Poseidon root |
+| Nullifiers | `mapping(bytes32 => bool) spent` | Replay protection |
+| Roots history | `bytes32[N] recentRoots` | For proofs against recent state |
+
+## External entry points
+
+```solidity
+// Deposit a fresh commitment. Verifier checks zk-deposit proof.
+function deposit(
+  address token,
+  uint256 amount,
+  bytes32 commitment,
+  Groth16Proof calldata proof
+) external;
+
+// Read state.
+function root() external view returns (bytes32);
+function isKnownRoot(bytes32 r) external view returns (bool);
+function isSpent(bytes32 nullifier) external view returns (bool);
+function leafIndex() external view returns (uint256);
+```
+
+`PrivateSettlement` calls into the pool with restricted hooks for
+nullifier marking and commitment insertion — those aren't external.
+
+## Events
+
+```solidity
+event CommitmentInserted(uint256 indexed leafIndex, bytes32 commitment);
+event NullifierUsed(bytes32 indexed nullifier);
+```
+
+The SDK subscribes to `CommitmentInserted` to maintain a local
+incremental tree — see [Subscribe to pool events](/docs/guides/subscribe-pool-events).
+
+## Tree parameters
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Depth | 20 | `COMMIT_TREE_DEPTH` constant in SDK |
+| Capacity | `2^20 = 1,048,576` | Soft limit before rotation needed |
+| Hash | Poseidon over BN254 | `circomlibjs` impl in SDK |
+| Zero leaf | `0` | Pre-computed zero subtrees match on-chain |
+
+When the tree fills, the protocol either deploys a new pool address
+or migrates via a coordinated reset — see governance docs.
+
+## Reorg safety
+
+The pool emits leaves at insertion. Apps that build proofs against
+tree state should wait for confirmations before treating an inserted
+leaf as final — typical thresholds: 12 blocks on Sepolia, 32 on
+mainnet. The SDK exposes the raw event stream and leaves the
+threshold to the app:
+
+```ts
+import { subscribeCommitmentInserted } from "@zkscatter/sdk";
+```
+
+## Address by network
+
+The deployed address is part of `NetworkConfig.contracts.commitmentPool`
+in the SDK. Each network has one canonical pool per asset class
+(retail / institutional / etc.) — multiple pools can coexist on the
+same chain with separate identity gates.
+
+> The full ABI ships as `COMMITMENT_POOL_ABI` from `@zkscatter/sdk`
+> with a pre-parsed `Interface` at `COMMITMENT_POOL_IFACE`. See
+> [SDK reference / core](/sdk/core).

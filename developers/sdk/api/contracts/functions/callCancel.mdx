@@ -1,0 +1,33 @@
+# Function: callCancel()
+
+```ts
+function callCancel(
+   signer, 
+   settlementAddress, 
+proof): Promise<TransactionResponse>;
+```
+
+Send `PrivateSettlement.cancelPrivate(...)`. Anyone can submit
+ on behalf of the user; the cancel proof binds `msg.sender` (the
+ relayer) into the signed cancel message, so a different relayer
+ cannot replay the proof.
+
+ After the tx mines:
+  - The old commitment is permanently dead (escrowNullifier
+    burnt)
+  - The order is dropped from the orderbook (relayers see the
+    `PrivateCancel` event keyed by `nonceNullifier`)
+  - The fresh `newCommitment` is inserted into the pool with the
+    same balance, immediately spendable for a new order.
+
+## Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `signer` | `Signer` |
+| `settlementAddress` | `string` |
+| `proof` | [`CancelProofResult`](../../zk/interfaces/CancelProofResult.mdx) |
+
+## Returns
+
+`Promise`\<`TransactionResponse`\>

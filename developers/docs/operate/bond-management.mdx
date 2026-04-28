@@ -1,0 +1,136 @@
+---
+title: Bond management
+description: "Top up, slash protection, and withdrawal mechanics for a relayer's bond."
+---
+
+Every active relayer has a bond locked in `RelayerRegistry`. Apps
+prefer routing to higher-bonded operators (signals reliability), and
+the bond is slashable for verifiable misbehaviour. This page covers
+operator-side bond mechanics.
+
+## Sizing the bond
+
+The contract enforces `minBond()` — read it before registering:
+
+```ts
+import { ethers } from "ethers";
+import { RELAYER_REGISTRY_IFACE } from "@zkscatter/sdk";
+
+const registry = new ethers.Contract(
+  network.contracts.relayerRegistry,
+  RELAYER_REGISTRY_IFACE,
+  readProvider,
+);
+const min = await registry.minBond();
+console.log(`min bond: ${ethers.formatEther(min)} ETH`);
+```
+
+Practical sizing (over the minimum):
+
+| Volume tier | Recommended bond | Rationale |
+|---|---|---|
+| Hobbyist | `minBond` | Just to stay registered |
+| Production | 2× `minBond` | Headroom for one slash incident |
+| Institutional | 5–10× `minBond` | Apps prefer high-bond operators; signals long-term commitment |
+
+## Topping up
+
+```ts
+import { addRelayerBond } from "@zkscatter/sdk/relayer";
+
+const tx = await addRelayerBond(
+  network.contracts.relayerRegistry,
+  "0.5",     // ETH amount as decimal string (TON in future)
+  signer,
+);
+await tx.wait();
+```
+
+`addBond` accepts any positive amount. There's no upper limit.
+
+## What can slash
+
+Slashing is **verifiable misbehaviour**, not "you went offline". The
+governance multisig calls `slash(operator, amount, reason)` only when:
+
+1. **Bad proof submission** — relayer submitted `settleAuth` with a
+   proof that fails verification. The transaction reverts on-chain;
+   gas reimbursement is slashed.
+2. **Order theft** — relayer received an order signed against them
+   but routed it to another operator (or kept matching shares).
+3. **Censoring** — measurable refusal to match an order, then submitting
+   it after expiry to lock the user's `nonce`.
+
+Going offline doesn't slash — that's a liveness issue, not a safety
+one. Apps will simply route around you.
+
+## Exit cool-down
+
+`requestExit()` flips you into a 7-day cool-down (`EXIT_COOLDOWN_SECONDS`):
+
+<Steps>
+  <Step title="Stop accepting new orders">
+    Continue serving in-flight matches; reject newcomers with a 503 +
+    "exiting" message in `/api/info`.
+  </Step>
+  <Step title="Wait 7 days">
+    During this window, slashing is still possible — bad behaviour
+    pre-cool-down still counts.
+  </Step>
+  <Step title="Execute exit">
+    `executeRelayerExit(...)` returns the (possibly slashed) bond and
+    deactivates the registry entry.
+  </Step>
+</Steps>
+
+## Pre-flight checks
+
+Before `executeExit`, confirm:
+
+```ts
+import { loadOperatorRow, EXIT_COOLDOWN_SECONDS } from "@zkscatter/sdk/relayer";
+
+const row = await loadOperatorRow(
+  network.contracts.relayerRegistry,
+  account,
+  readProvider,
+);
+
+if (row.status !== "cooldown") {
+  throw new Error("not in cooldown");
+}
+
+const unlockAt = row.exitRequestedAt + EXIT_COOLDOWN_SECONDS;
+if (Math.floor(Date.now() / 1000) < unlockAt) {
+  throw new Error(`bond unlocks at ${new Date(unlockAt * 1000)}`);
+}
+```
+
+## Re-registration
+
+After `executeExit`, you can `register(...)` again with a fresh bond.
+Your prior `Slashed` events are public history — large operators
+typically want to avoid an exit/re-enter cycle since it surfaces as a
+trust signal.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Bond too low` on register">
+    `msg.value < minBond()`. Top up the wallet with at least the
+    minimum, plus gas.
+  </Accordion>
+  <Accordion title="`AlreadyRegistered`">
+    Same address already in the registry. Use `updateRelayerInfo` or
+    exit first.
+  </Accordion>
+  <Accordion title="`CooldownNotPassed` on exit">
+    Less than 7 days since `requestExit`. Read `loadOperatorRow().exitRequestedAt`
+    and wait.
+  </Accordion>
+  <Accordion title="`BondTransferFailed` on exit">
+    The operator EOA can't receive ETH (e.g. it's a contract without
+    a payable receive). Set up a payable receiver or hand off the
+    transfer manually.
+  </Accordion>
+</AccordionGroup>
