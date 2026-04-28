@@ -83,6 +83,15 @@ jobs:
 
       - run: npm ci
 
+      # `frontend` links `@zkscatter/sdk` via a `file:../packages/sdk`
+      # workspace dep. `npm ci` in `frontend/` doesn't install the
+      # SDK's own transitive deps (ethers, @noble/*, snarkjs, ...),
+      # which Next then can't resolve when it walks up from
+      # `packages/sdk/src/...`. Install them explicitly.
+      - name: Install linked SDK deps
+        working-directory: packages/sdk
+        run: npm ci
+
       - name: ESLint
         # All errors fixed; warnings still tolerated (mostly unused-vars
         # and exhaustive-deps that need case-by-case review).
