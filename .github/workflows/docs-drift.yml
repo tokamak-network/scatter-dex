@@ -1,15 +1,23 @@
 name: Docs drift
 
 # Catches the "code changed, regenerated docs not committed" failure
-# mode (PR #475 ran into 28 of these). Two auto-generated artefacts:
-#   - `developers/sdk/api/**` from TypeDoc reading `packages/sdk/src/`
-#   - `apps/docs/public/openapi/relayer.yaml` from zod schemas in
-#     `zk-relayer/src/openapi/schemas/`
+# mode (PR #475 ran into 28 of these). One auto-generated artefact
+# is checked here for drift:
 #
-# The job regenerates both, then `git diff --exit-code` on the
-# committed files. Any divergence fails the build with a clear hint
-# at the missing `npm run …` step. Also runs `next build` so an
-# mdx error or broken import surfaces before merge.
+#   - `apps/docs/public/openapi/relayer.yaml` — emitted by
+#     `zk-relayer/scripts/build-openapi.mjs` from the zod schemas
+#     under `zk-relayer/src/openapi/schemas/`. The yaml output is
+#     deterministic across Node versions, so a `git diff` between
+#     the committed copy and a fresh regen is a clean drift signal.
+#
+# The TypeDoc-emitted SDK reference under `developers/sdk/api/**`
+# is NOT committed — it's `.gitignore`d and regenerated as part of
+# `npm run build` in apps/docs (`build` is `npm run api && next
+# build`). TypeDoc categorises some internal re-exports differently
+# across Node majors, so committing it would produce flaky drift
+# failures. The build-time regen + `next build` step still surfaces
+# any mdx / import / type errors that would break the docs site,
+# which is what we actually care about.
 
 on:
   pull_request:
@@ -119,29 +127,23 @@ jobs:
         working-directory: zk-relayer
         run: npm run openapi
 
-      - name: Regenerate TypeDoc SDK reference
-        working-directory: apps/docs
-        run: npm run api
-
-      - name: Check for drift
+      - name: Check for OpenAPI drift
         run: |
           set -e
-          if ! git diff --exit-code -- \
-              apps/docs/public/openapi/relayer.yaml \
-              developers/sdk/api/; then
-            # Print the file-level summary first so it's visible above
-            # the GitHub Actions error annotation that follows.
-            git --no-pager diff --stat -- \
-              apps/docs/public/openapi/relayer.yaml \
-              developers/sdk/api/
+          if ! git diff --exit-code -- apps/docs/public/openapi/relayer.yaml; then
+            # File-level summary first so it's visible above the
+            # GitHub Actions error annotation that follows.
+            git --no-pager diff --stat -- apps/docs/public/openapi/relayer.yaml
             echo ""
-            echo "::error::Auto-generated docs are out of sync with the source. Run \`(cd zk-relayer && npm run openapi)\` and \`(cd apps/docs && npm run api)\` locally, then commit the regenerated files."
+            echo "::error::OpenAPI yaml is out of sync with the relayer's zod schemas. Run \`(cd zk-relayer && npm run openapi)\` locally and commit the regenerated file."
             exit 1
           fi
 
-      # Skip the wrapper `npm run build` (which would re-run `npm run
-      # api` we just ran above) and call Next directly. Catches mdx
-      # parse errors and broken imports the dev server tolerates.
-      - name: Build docs site (next build)
+      # `npm run build` is `npm run api && next build` — the api step
+      # regenerates the TypeDoc SDK reference into the gitignored
+      # `developers/sdk/api/` so the next build can render it. mdx /
+      # import / type errors surface here even though the SDK ref is
+      # never committed.
+      - name: Build docs site
         working-directory: apps/docs
-        run: npx next build
+        run: npm run build

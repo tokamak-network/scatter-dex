@@ -1,8 +1,0 @@
-# Interface: SplitPayoutOpts
-
-## Properties
-
-| Property | Type | Description |
-| ------ | ------ | ------ |
-| <a id="token"></a> `token` | `string` | Token address that goes into every [ClaimEntry.token](ClaimEntry.mdx#token). The protocol enforces `claim.token === buyToken` per used claim, so callers should pass the same value as their `AuthorizeProofInput.buyToken`. |
-| <a id="generatesecret"></a> `generateSecret?` | () => `bigint` | Override the per-claim secret generator. Useful for tests that need deterministic output. Defaults to [randomFieldElement](../functions/randomFieldElement.mdx). |

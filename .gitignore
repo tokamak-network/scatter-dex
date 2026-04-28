@@ -41,6 +41,15 @@ contracts/src/zk/SettleVerifier.sol
 # zk-relayer build artifacts
 zk-relayer/dist/
 
+# Auto-generated SDK reference (TypeDoc output) produced by
+# `cd apps/docs && npm run api`. Committing it drifts across Node
+# versions / TypeScript installs (TypeDoc categorises some internal
+# re-exports differently between Node 20 / 22 / 24, e.g. the noble
+# `bytesToNumberBE` re-export), so we regenerate it on every build
+# instead. The OpenAPI yaml (`apps/docs/public/openapi/relayer.yaml`)
+# stays committed because its output is deterministic.
+developers/sdk/api/
+
 # Node modules
 node_modules/
 
