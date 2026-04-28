@@ -53,6 +53,14 @@ library SettleVerifyLib {
         uint128 totalLocked;
         address relayer;
         bytes32 orderHash;
+        // Tier selects which authorize.circom variant produced this proof —
+        // tier 16 is the only circuit live today, but keeping the field on
+        // the struct lets the verifier registry on PrivateSettlement
+        // dispatch to the right Groth16 verifier when 64 / 128 ship.
+        // The Groth16 public signals (packAuthSignals) are unchanged across
+        // tiers — claimsRoot already hashes the variable-length claims set
+        // inside the circuit — so this byte never reaches the verifier.
+        uint8 tier;
     }
 
     // ─── Pack helpers (pure) ────────────────────────────────────

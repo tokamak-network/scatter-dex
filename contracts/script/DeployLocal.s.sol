@@ -265,12 +265,14 @@ contract DeployLocal is Script {
         privateSettlement = new PrivateSettlement(
             address(pool), claimVerifier, weth
         );
-        // settleAuth and scatterDirectAuth both require the authorize
-        // verifier to be wired before they accept proofs; the constructor
-        // doesn't take it (set after deploy via setAuthorizeVerifier).
-        // Without this call every same-token order reverts with
-        // AuthorizeVerifierNotSet (selector 0x7d234657).
-        privateSettlement.setAuthorizeVerifier(authorizeVerifier);
+        // settleAuth and scatterDirectAuth both require an authorize
+        // verifier to be wired for the proof's tier before they accept
+        // proofs; the constructor doesn't take it (set after deploy via
+        // setAuthorizeVerifier). Without this call every same-token order
+        // reverts with TierNotConfigured(16). Tier 16 is the only circuit
+        // shipped today; future 64 / 128 verifiers attach via the same
+        // setter without touching the deploy.
+        privateSettlement.setAuthorizeVerifier(16, authorizeVerifier);
         console.log("AuthorizeVerifier wired into PrivateSettlement");
         // cancelPrivate is gated the same way — without setCancelVerifier
         // every cancel reverts with `CancelVerifierNotSet()` (selector

@@ -73,7 +73,7 @@ export const APPS: AppEntry[] = [
     persona:
       "For crypto-native companies and DAOs running payroll, vendor payouts, and treasury ops.",
     bullets: [
-      "Bulk payouts in one private tx",
+      "Up to 16 recipients per private settlement (64 / 128 tiers planned)",
       "Recipient amounts hidden on-chain",
       "zk-X509 compliance built in",
     ],

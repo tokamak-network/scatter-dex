@@ -5,7 +5,19 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
-import { randomFieldElement, splitPayout, type PayoutBatch } from "@zkscatter/sdk/zk";
+import {
+  randomFieldElement,
+  splitPayout,
+  type PayoutBatch,
+  pickTier,
+  ACTIVE_TIERS,
+  type CircuitTier,
+} from "@zkscatter/sdk/zk";
+
+// Largest tier with a live verifier — this caps Pay's per-run recipient
+// count. Computed at module scope because ACTIVE_TIERS is a compile-time
+// constant; recomputing it per render would be wasted work.
+const MAX_ACTIVE_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   saveRun,
@@ -337,6 +349,16 @@ export default function NewPayout() {
     }
   }, [rows, tokenAddress, decimals, claimFrom]);
 
+  // The picked tier governs the on-chain settlement layout for this
+  // run. Returns null when the recipient count is empty or exceeds
+  // the active-tier ceiling — `validation` below surfaces the latter
+  // as a user-facing error so we don't need a separate guard here.
+  const tier = useMemo<CircuitTier | null>(() => {
+    if (rows.length === 0 || rows.length > MAX_ACTIVE_CAP) return null;
+    const picked = pickTier(rows.length);
+    return ACTIVE_TIERS.includes(picked) ? picked : null;
+  }, [rows.length]);
+
   const validation = useMemo(() => {
     const issues: string[] = [];
     const seen = new Set<string>();
@@ -351,6 +373,12 @@ export default function NewPayout() {
       if (!r.amount || !Number.isFinite(n) || n <= 0) {
         issues.push(`Invalid amount for ${r.name || r.address}`);
       }
+    }
+    if (rows.length > MAX_ACTIVE_CAP) {
+      issues.push(
+        `Pay v1 supports up to ${MAX_ACTIVE_CAP} recipients per payout. ` +
+          `Larger circuits (64 / 128) are planned — split this list across runs for now.`,
+      );
     }
     return issues.slice(0, 5);
   }, [rows]);
@@ -613,24 +641,16 @@ export default function NewPayout() {
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
               {template.exportNote}
             </div>
-            {batches.length > 1 && (
+            {tier && (
               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
                 <div className="mb-1 font-semibold text-[var(--color-text-muted)]">
-                  Signing plan
+                  Privacy plan
                 </div>
                 <div className="text-[var(--color-text-muted)]">
-                  {rows.length} recipients exceed the per-settlement cap of 16 — Pay will split into{" "}
-                  <strong>{batches.length} batches</strong>, requiring{" "}
-                  <strong>{batches.length} signatures</strong>.
+                  Tier {tier.cap} settlement — one private transaction with{" "}
+                  <strong>{rows.length}</strong> real recipients hidden inside an
+                  anonymity set of <strong>{tier.cap}</strong>. One signature.
                 </div>
-                <ul className="mt-2 space-y-0.5 font-mono">
-                  {batches.map((b, i) => (
-                    <li key={i}>
-                      Batch {i + 1}/{batches.length}: {b.claims.length} recipients ·{" "}
-                      {ethers.formatUnits(b.totalAmount, decimals)} {token}
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
             <button

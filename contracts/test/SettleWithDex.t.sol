@@ -101,7 +101,7 @@ contract SettleWithDexTest is Test {
         settlement.setTokenWhitelist(address(usdc), true);
         pool.setAuthorizedSettlement(address(settlement));
 
-        settlement.setAuthorizeVerifier(address(authVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
         settlement.setDexRouterWhitelist(address(dexRouter), true);
 
         // Fund pool with WETH (user's escrowed sell token)
@@ -145,7 +145,8 @@ contract SettleWithDexTest is Test {
                 claimsRoot: CLAIMS_ROOT,
                 totalLocked: 19_000e18,
                 relayer: user,
-                orderHash: ORDER_HASH
+                orderHash: ORDER_HASH,
+                tier: 16
             }),
             dexRouter: address(dexRouter),
             dexCalldata: _encodeDexCalldata(),
@@ -363,7 +364,8 @@ contract SettleWithDexTest is Test {
                 sellAmount: 10 ether, buyAmount: 19_000e18, maxFee: 0,
                 expiry: uint64(block.timestamp + 300),
                 claimsRoot: CLAIMS_ROOT, totalLocked: 19_000e18,
-                relayer: user, orderHash: ORDER_HASH
+                relayer: user, orderHash: ORDER_HASH,
+                tier: 16
             }),
             dexRouter: address(dexRouter),
             dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),

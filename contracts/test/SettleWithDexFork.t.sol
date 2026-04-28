@@ -78,7 +78,7 @@ contract SettleWithDexForkTest is Test {
         settlement.setTokenWhitelist(DAI, true);
 
         pool.setAuthorizedSettlement(address(settlement));
-        settlement.setAuthorizeVerifier(address(authVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         // Whitelist DEX routers
         settlement.setDexRouterWhitelist(UNISWAP_ROUTER, true);
@@ -121,7 +121,8 @@ contract SettleWithDexForkTest is Test {
             claimsRoot: claimsRoot,
             totalLocked: totalLocked,
             relayer: user,
-            orderHash: ORDER_HASH
+            orderHash: ORDER_HASH,
+            tier: 16
         });
     }
 

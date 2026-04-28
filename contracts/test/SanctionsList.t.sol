@@ -56,7 +56,7 @@ contract SanctionsListTest is Test {
         pool.setAuthorizedSettlement(address(settlement));
         settlement.setTokenWhitelist(address(weth), true);
         settlement.setTokenWhitelist(address(token), true);
-        settlement.setAuthorizeVerifier(address(authVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         // Wire up sanctions
         pool.setSanctionsList(address(sanctions));
@@ -195,7 +195,8 @@ contract SanctionsListTest is Test {
                 sellAmount: 1 ether, buyAmount: 0, maxFee: 0,
                 expiry: uint64(block.timestamp + 3600),
                 claimsRoot: bytes32(uint256(0x44)), totalLocked: 1 ether,
-                relayer: sanctionedAddr, orderHash: bytes32(uint256(0x55))
+                relayer: sanctionedAddr, orderHash: bytes32(uint256(0x55)),
+                tier: 16
             }),
             dexRouter: address(authVerifier),
             dexCalldata: "", deadline: block.timestamp + 1800

@@ -80,7 +80,7 @@ contract SettleAuthTest is Test {
         pool.setAuthorizedSettlement(address(settlement));
 
         // Wire up the AuthorizeVerifier (this is the new bit for settleAuth)
-        settlement.setAuthorizeVerifier(address(authVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         // Fund the pool so transferToSettlement and fee routing have something
         // to draw from. The default scenario sells 10 WETH for 20,000 USDC,
@@ -116,7 +116,8 @@ contract SettleAuthTest is Test {
             claimsRoot: M_CLAIMS_R,
             totalLocked: uint128(20_000e18),
             relayer: makerRelayer,
-            orderHash: M_ORDER_HASH
+            orderHash: M_ORDER_HASH,
+            tier: 16
         });
     }
 
@@ -141,7 +142,8 @@ contract SettleAuthTest is Test {
             claimsRoot: T_CLAIMS_R,
             totalLocked: uint128(10 ether),
             relayer: takerRelayer,
-            orderHash: T_ORDER_HASH
+            orderHash: T_ORDER_HASH,
+            tier: 16
         });
     }
 
@@ -437,7 +439,7 @@ contract SettleAuthTest is Test {
         );
         thinSettlement.setTokenWhitelist(address(weth), true);
         thinSettlement.setTokenWhitelist(address(usdc), true);
-        thinSettlement.setAuthorizeVerifier(address(thinAuthVerifier));
+        thinSettlement.setAuthorizeVerifier(16, address(thinAuthVerifier));
         thinPool.setAuthorizedSettlement(address(thinSettlement));
 
         // Fund exactly enough for one trade.
@@ -566,13 +568,53 @@ contract SettleAuthTest is Test {
         settlement.settleAuth(p);
     }
 
-    function test_settleAuth_authorizeVerifierNotSet_reverts() public {
-        // Disable the verifier
-        settlement.setAuthorizeVerifier(address(0));
+    function test_settleAuth_tierNotConfigured_reverts() public {
+        // Disable the tier-16 verifier (registry slot cleared)
+        settlement.setAuthorizeVerifier(16, address(0));
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.AuthorizeVerifierNotSet.selector);
+        vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(16)));
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_unknownTier_reverts() public {
+        // Maker submits a proof for tier 64, which has no verifier
+        // configured (only tier 16 is wired today). The dispatch must
+        // surface TierNotConfigured(64) so the SDK / UI can suggest
+        // upgrading the circuit. Mirror failure for the taker tier on
+        // the path below.
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.maker.tier = 64;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(64)));
+        settlement.settleAuth(p);
+
+        p.maker.tier = 16;
+        p.taker.tier = 128;
+        vm.prank(makerRelayer);
+        vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(128)));
+        settlement.settleAuth(p);
+    }
+
+    function test_settleAuth_mixedTier_skipsBatchOptimisation() public {
+        // Wire a batch verifier for tier 16 — when both sides are tier
+        // 16, settleAuth uses the batched 5-pairing check. When the
+        // taker hops to a different tier (here a hypothetical tier-64
+        // verifier), the batch path must be bypassed and the per-side
+        // verifiers used independently. Today we only have a tier-16
+        // verifier wired so the mixed case must revert with
+        // TierNotConfigured rather than silently using the tier-16
+        // verifier for both sides.
+        MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
+
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        p.taker.tier = 64;
+
+        vm.prank(makerRelayer);
+        vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(64)));
         settlement.settleAuth(p);
     }
 
@@ -646,7 +688,7 @@ contract SettleAuthTest is Test {
 
     function test_settleAuth_batchVerifier_happyPath() public {
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
 
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
         vm.prank(makerRelayer);
@@ -660,7 +702,7 @@ contract SettleAuthTest is Test {
     function test_settleAuth_batchVerifier_invalidProof_reverts() public {
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
         batchVerifier.setShouldPass(false);
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
 
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
         vm.prank(makerRelayer);
@@ -671,8 +713,8 @@ contract SettleAuthTest is Test {
     function test_settleAuth_batchVerifier_disabledFallsBackToSingle() public {
         // First enable batch, then disable it
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
-        settlement.setBatchAuthorizeVerifier(address(0));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(0));
 
         // Should use the single authorizeVerifier (still set from setUp)
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
@@ -689,34 +731,34 @@ contract SettleAuthTest is Test {
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
 
         vm.expectEmit(true, true, false, false);
-        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(address(0), address(batchVerifier));
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(16, address(0), address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
 
-        assertEq(address(settlement.batchAuthorizeVerifier()), address(batchVerifier));
+        assertEq(address(settlement.batchAuthorizeVerifierByTier(16)), address(batchVerifier));
     }
 
     function test_setBatchAuthorizeVerifier_disableWithZero() public {
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
 
         vm.expectEmit(true, true, false, false);
-        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(address(batchVerifier), address(0));
-        settlement.setBatchAuthorizeVerifier(address(0));
+        emit PrivateSettlement.BatchAuthorizeVerifierUpdated(16, address(batchVerifier), address(0));
+        settlement.setBatchAuthorizeVerifier(16, address(0));
 
-        assertEq(address(settlement.batchAuthorizeVerifier()), address(0));
+        assertEq(address(settlement.batchAuthorizeVerifierByTier(16)), address(0));
     }
 
     function test_setBatchAuthorizeVerifier_rejectsEOA() public {
         address eoa = address(0xDEAD);
         vm.expectRevert();
-        settlement.setBatchAuthorizeVerifier(eoa);
+        settlement.setBatchAuthorizeVerifier(16, eoa);
     }
 
     function test_setBatchAuthorizeVerifier_onlyOwner() public {
         MockBatchAuthorizeVerifier batchVerifier = new MockBatchAuthorizeVerifier();
         vm.prank(address(0xBAD));
         vm.expectRevert();
-        settlement.setBatchAuthorizeVerifier(address(batchVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(batchVerifier));
     }
 
     // ════════════════════════════════════════════════════════════
@@ -749,7 +791,8 @@ contract SettleAuthTest is Test {
                 claimsRoot: SD_CLAIMS_R,
                 totalLocked: uint128(9_900e18),
                 relayer: makerRelayer,
-                orderHash: SD_ORDER_HASH
+                orderHash: SD_ORDER_HASH,
+                tier: 16
             }),
             fee: 0
         });
