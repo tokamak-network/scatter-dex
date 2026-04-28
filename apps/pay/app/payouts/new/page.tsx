@@ -12,6 +12,8 @@ import { useEdDSAKey } from "../../_lib/eddsaKey";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
+import { autoPickSourceNotes, type SourceNotesPick } from "../../_lib/sourceNotes";
+import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
 type Row = { name: string; address: string; amount: string };
 
@@ -91,10 +93,16 @@ M. Lee (research),0xef56789012345678901234567890abcdef123456,3100`,
 
 const STEPPER_LABELS = [
   "Template",
-  "Token & total",
+  "Token",
   "Recipients",
+  "Funds",
   "Review & sign",
 ] as const;
+
+// Default cap on what the relayer can deduct as a fee. Lives here
+// until the org-settings page lands; the wizard exposes it as an
+// override in the Funds step.
+const DEFAULT_MAX_FEE_BPS = 30;
 
 // TODO: read from org settings
 const LARGE_AMOUNT_THRESHOLD = 50_000;
@@ -135,13 +143,19 @@ export default function NewPayout() {
   const [notify, setNotify] = useState(true);
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
+  const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
 
   const { account } = useWallet();
   const { notes, loaded: vaultLoaded } = useVault();
-  const { selected: relayer } = useRelayers();
+  const {
+    relayers,
+    selected: relayer,
+    select: selectRelayer,
+    registryConfigured,
+  } = useRelayers();
   const eddsa = useEdDSAKey();
 
   useEffect(() => {
@@ -233,7 +247,15 @@ export default function NewPayout() {
     return sum;
   }, [rows, decimals]);
 
-  const shortfallRaw = requiredRaw > availableRaw ? requiredRaw - availableRaw : 0n;
+  // Fee at the user-set cap so "Required to escrow" never under-counts.
+  const feeRaw = (requiredRaw * BigInt(maxFeeBps)) / 10_000n;
+  const totalEscrowRaw = requiredRaw + feeRaw;
+  const shortfallRaw = totalEscrowRaw > availableRaw ? totalEscrowRaw - availableRaw : 0n;
+
+  const sourcePick = useMemo<SourceNotesPick>(
+    () => autoPickSourceNotes(notes, tokenAddress ?? "", totalEscrowRaw),
+    [notes, tokenAddress, totalEscrowRaw],
+  );
 
   const batches = useMemo<PayoutBatch[]>(() => {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
@@ -306,7 +328,7 @@ export default function NewPayout() {
 
         {step === 2 && (
           <div className="space-y-5">
-            <h2 className="text-lg font-semibold">Token & total</h2>
+            <h2 className="text-lg font-semibold">Token</h2>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Run label">
                 <input
@@ -321,10 +343,10 @@ export default function NewPayout() {
                   onChange={(e) => setChain(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
                 >
-                  <option>Tokamak L2</option>
                   <option>Ethereum</option>
-                  <option>Base</option>
-                  <option>Arbitrum</option>
+                  <option>Sepolia</option>
+                  <option>Titan Sepolia</option>
+                  <option>Local:8545</option>
                 </select>
               </Field>
               <Field label="Token">
@@ -335,35 +357,27 @@ export default function NewPayout() {
                 >
                   <option>USDC</option>
                   <option>USDT</option>
-                  <option>WETH</option>
+                  <option>ETH</option>
                   <option>TON</option>
-                </select>
-              </Field>
-              <Field label="Source wallet">
-                <select
-                  defaultValue="safe-acme"
-                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
-                >
-                  <option value="safe-acme">Acme DAO Safe (0x12…ab) — multisig 3/5</option>
-                  <option value="eoa-treasury">Treasury EOA (0x9f…d2)</option>
-                  <option value="connect">Connect another…</option>
                 </select>
               </Field>
             </div>
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-              Funds escrow into your private vault before being split to recipients. One on-chain transaction.
+              Sender = the wallet connected in the header. Pay spends your
+              already-deposited notes — the wallet only signs the proof, no
+              transfer-from happens at sign time. Top up the source notes in
+              the Funds step.
             </div>
             <BalancePanel
               token={token}
               decimals={decimals}
               availableRaw={availableRaw}
-              requiredRaw={requiredRaw}
-              shortfallRaw={shortfallRaw}
+              requiredRaw={0n}
+              shortfallRaw={0n}
               account={account}
               vaultLoaded={vaultLoaded}
-              onDeposit={() =>
-                dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
-              }
+              showRequired={false}
+              onDeposit={() => undefined}
             />
           </div>
         )}
@@ -397,20 +411,6 @@ export default function NewPayout() {
                 />
               </Field>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Available to claim from">
-                <input
-                  type="date"
-                  value={claimFrom ?? ""}
-                  min={claimFrom ?? ""}
-                  onChange={(e) => setClaimFrom(e.target.value)}
-                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
-                />
-                <span className="mt-1 block text-[10px] text-[var(--color-text-subtle)]">
-                  Recipients can claim any time after this date — there is no expiry.
-                </span>
-              </Field>
-            </div>
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
               <div className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">Preview</div>
               <table className="w-full text-sm">
@@ -444,14 +444,61 @@ export default function NewPayout() {
                 </ul>
               </div>
             )}
+
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+              <h3 className="text-sm font-semibold">Claim schedule</h3>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                When can recipients start claiming? All recipients use the same
+                date for now — per-row overrides arrive in a later release.
+              </p>
+              <div className="mt-3 max-w-xs">
+                <Field label="Available from">
+                  <input
+                    type="date"
+                    value={claimFrom ?? ""}
+                    min={claimFrom ?? ""}
+                    onChange={(e) => setClaimFrom(e.target.value)}
+                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+                  />
+                </Field>
+              </div>
+              <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
+                Recipients can claim any time after this date — there is no expiry.
+              </p>
+            </div>
+
             <div className="space-y-2 text-sm">
               <Toggle checked={stealth} onChange={setStealth} label="Send via stealth address (recipients can't be linked on-chain)" />
-              <Toggle checked={notify} onChange={setNotify} label="Email / Discord notification to each recipient" />
+              <Toggle checked={notify} onChange={setNotify} label="Notify recipients by email / Discord" />
             </div>
           </div>
         )}
 
         {step === 4 && (
+          <FundsStep
+            token={token}
+            decimals={decimals}
+            requiredRaw={requiredRaw}
+            feeRaw={feeRaw}
+            totalEscrowRaw={totalEscrowRaw}
+            availableRaw={availableRaw}
+            shortfallRaw={shortfallRaw}
+            sourcePick={sourcePick}
+            account={account}
+            vaultLoaded={vaultLoaded}
+            relayers={relayers}
+            relayer={relayer}
+            registryConfigured={registryConfigured}
+            selectRelayer={selectRelayer}
+            maxFeeBps={maxFeeBps}
+            setMaxFeeBps={setMaxFeeBps}
+            onDeposit={() =>
+              dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
+            }
+          />
+        )}
+
+        {step === 5 && (
           <div className="space-y-5">
             <h2 className="text-lg font-semibold">Review & sign</h2>
             <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
@@ -521,7 +568,7 @@ export default function NewPayout() {
         >
           Back
         </button>
-        {step < 4 ? (
+        {step < 5 ? (
           <button
             onClick={() => setStep((s) => s + 1)}
             className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
@@ -658,6 +705,7 @@ function BalancePanel({
   shortfallRaw,
   account,
   vaultLoaded,
+  showRequired,
   onDeposit,
 }: {
   token: string;
@@ -667,6 +715,10 @@ function BalancePanel({
   shortfallRaw: bigint;
   account: string | null;
   vaultLoaded: boolean;
+  /** When false (e.g. step 2 before recipients exist) only Available
+   *  is shown. The Required / Shortfall lines need real recipient
+   *  entries, so they're hidden until step 3+. */
+  showRequired: boolean;
   onDeposit: () => void;
 }) {
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
@@ -693,13 +745,13 @@ function BalancePanel({
         <span className="text-[var(--color-text-muted)]">Available {token}</span>
         <span className="font-mono">{fmt(availableRaw)}</span>
       </div>
-      {requiredRaw > 0n && (
+      {showRequired && requiredRaw > 0n && (
         <div className="mt-1 flex justify-between">
           <span className="text-[var(--color-text-muted)]">Required for run</span>
           <span className="font-mono">{fmt(requiredRaw)}</span>
         </div>
       )}
-      {shortfallRaw > 0n && (
+      {showRequired && shortfallRaw > 0n && (
         <div className="mt-2 rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-[var(--color-warning)]">
           <div className="mb-1">
             Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before signing.
@@ -806,4 +858,181 @@ async function dryRunSettle({
       claimsCount: b.claims.length,
     });
   }
+}
+
+interface FundsStepProps {
+  token: string;
+  decimals: number;
+  requiredRaw: bigint;
+  feeRaw: bigint;
+  totalEscrowRaw: bigint;
+  availableRaw: bigint;
+  shortfallRaw: bigint;
+  sourcePick: SourceNotesPick;
+  account: string | null;
+  vaultLoaded: boolean;
+  relayers: RelayerInfo[];
+  relayer: RelayerInfo | null;
+  registryConfigured: boolean;
+  selectRelayer: (address: string) => void;
+  maxFeeBps: number;
+  setMaxFeeBps: (bps: number) => void;
+  onDeposit: () => void;
+}
+
+function FundsStep({
+  token,
+  decimals,
+  requiredRaw,
+  feeRaw,
+  totalEscrowRaw,
+  availableRaw,
+  shortfallRaw,
+  sourcePick,
+  account,
+  vaultLoaded,
+  relayers,
+  relayer,
+  registryConfigured,
+  selectRelayer,
+  maxFeeBps,
+  setMaxFeeBps,
+  onDeposit,
+}: FundsStepProps) {
+  const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
+  const configured = isNetworkConfigured(getNetworkConfig());
+  const onlineRelayers = relayers.filter((r) => r.online);
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-lg font-semibold">Funds</h2>
+      <p className="text-xs text-[var(--color-text-muted)]">
+        Pick a relayer, set the max fee cap, and confirm which already-deposited
+        notes will fund this run. Top up via Deposit if there&apos;s a shortfall.
+      </p>
+
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
+        <h3 className="mb-2 text-sm font-semibold">Relayer</h3>
+        {!registryConfigured ? (
+          <div className="text-[var(--color-warning)]">
+            No relayer registry configured. Set <span className="font-mono">NEXT_PUBLIC_PAY_RELAYER_REGISTRY</span> to enable signing.
+          </div>
+        ) : onlineRelayers.length === 0 ? (
+          <div className="text-[var(--color-warning)]">
+            No relayers online right now. Try again in a minute.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Selected relayer">
+              <select
+                value={relayer?.address ?? ""}
+                onChange={(e) => selectRelayer(e.target.value)}
+                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
+              >
+                {onlineRelayers.map((r) => (
+                  <option key={r.address} value={r.address}>
+                    {r.api?.name ?? r.address.slice(0, 10)}… · {r.fee} bps
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Max fee (bps)">
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                step={1}
+                value={maxFeeBps}
+                onChange={(e) => setMaxFeeBps(Math.max(0, Math.min(1000, Number(e.target.value) || 0)))}
+                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
+              />
+            </Field>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
+        <h3 className="mb-2 text-sm font-semibold">Required to escrow</h3>
+        <dl className="space-y-1 font-mono">
+          <FundsRow k="Recipients total" v={`${fmt(requiredRaw)} ${token}`} />
+          <FundsRow k={`Fee at max (${maxFeeBps} bps)`} v={`${fmt(feeRaw)} ${token}`} />
+          <FundsRow k="Total to escrow" v={`${fmt(totalEscrowRaw)} ${token}`} bold />
+        </dl>
+      </div>
+
+      {!account ? (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+          Connect a wallet to see your source notes.
+        </div>
+      ) : !vaultLoaded ? (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+          Reading your vault…
+        </div>
+      ) : (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Source notes (auto-pick)</h3>
+            <button
+              disabled
+              title="Manual selection arrives in Phase E"
+              className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-[var(--color-text-subtle)] opacity-40"
+            >
+              Change selection
+            </button>
+          </div>
+          <div className="mb-2 text-[var(--color-text-muted)]">
+            Available: <span className="font-mono">{fmt(availableRaw)} {token}</span>
+          </div>
+          {sourcePick.notes.length > 0 ? (
+            <ul className="space-y-0.5 font-mono">
+              {sourcePick.notes.map(({ note: n, spend }) => (
+                <li key={n.id} className="flex justify-between">
+                  <span>
+                    {n.label} · deposited {new Date(n.createdAt).toLocaleDateString()}
+                  </span>
+                  <span>
+                    {fmt(spend)} / {fmt(n.note.amount)} {token}
+                  </span>
+                </li>
+              ))}
+              <li className="mt-2 flex justify-between border-t border-[var(--color-border)] pt-2 text-[var(--color-text-muted)]">
+                <span>Change after run (new note)</span>
+                <span>{fmt(sourcePick.changeRaw)} {token}</span>
+              </li>
+            </ul>
+          ) : (
+            <div className="text-[var(--color-text-muted)]">
+              No matching notes yet. Deposit below to fund this run.
+            </div>
+          )}
+        </div>
+      )}
+
+      {shortfallRaw > 0n && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          <div className="mb-1">
+            Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before
+            advancing to Review.
+          </div>
+          <button
+            onClick={onDeposit}
+            disabled={!configured}
+            title={configured ? undefined : "Set NEXT_PUBLIC_PAY_* contract addresses to enable deposits"}
+            className="rounded bg-[var(--color-primary)] px-2 py-1 text-white disabled:opacity-40"
+          >
+            {configured ? `Deposit ${fmt(shortfallRaw)} ${token}` : "Deposit (env not configured)"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FundsRow({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
+  return (
+    <div className={`flex justify-between ${bold ? "font-semibold" : ""}`}>
+      <dt className="text-[var(--color-text-muted)]">{k}</dt>
+      <dd>{v}</dd>
+    </div>
+  );
 }
