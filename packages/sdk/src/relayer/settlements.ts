@@ -6,11 +6,11 @@ export type SettlementRole = "maker" | "taker";
 export interface RelayerSettlement {
   txHash: string;
   blockNumber: number;
-  /** Position within the block — combined with `logIndex` it
-   *  uniquely identifies a settlement, which lets React keys stay
-   *  stable when several settlements share a block and gives
-   *  generalized event-feed consumers a deterministic tiebreaker
-   *  for ordering events from the same block. */
+  /** Position within the block — together with `blockNumber` and
+   *  `logIndex` it forms a globally unique identity for the
+   *  settlement. Lets React keys stay stable when several
+   *  settlements share a block, and gives generalized event-feed
+   *  consumers a deterministic tiebreaker. */
   transactionIndex: number;
   logIndex: number;
   role: SettlementRole;
@@ -56,20 +56,32 @@ export async function loadRelayerSettlements(
     opts.toBlock,
   );
 
-  // queryFilter returns `(EventLog | Log)[]` — the bare `Log` type
+  // queryFilter returns `(EventLog | Log)[]`. The bare `Log` form
   // is for filters that didn't carry an event fragment, which
-  // can't happen here since we built the filter via
-  // `contract.filters.PrivateSettledAuth(...)`. Guard anyway so a
-  // malformed RPC response doesn't blow up `.args` access.
-  const eventLogs = logs.filter((log): log is ethers.EventLog => "args" in log);
+  // can't happen here because we built the filter via
+  // `contract.filters.PrivateSettledAuth(...)`. Throw on violation
+  // rather than silently dropping events — silent drops would mask
+  // an upstream bug (corrupt RPC response, ABI/contract mismatch)
+  // as a partial result.
+  for (const log of logs) {
+    if (!("args" in log)) {
+      throw new Error("loadRelayerSettlements: queryFilter returned a Log without args; ABI/contract mismatch?");
+    }
+  }
+  const eventLogs = logs as ethers.EventLog[];
 
-  // queryFilter returns ascending (block, txIndex, logIndex);
-  // reversing in place yields newest-first with a stable tiebreak
-  // for events that share a block, without a custom comparator.
-  eventLogs.reverse();
-  const sliced = opts.limit != null ? eventLogs.slice(0, opts.limit) : eventLogs;
+  // queryFilter returns ascending (block, txIndex, logIndex). Take
+  // the tail when a `limit` is set so we don't allocate
+  // intermediate `RelayerSettlement` objects (or even reverse the
+  // long prefix) for events we'll throw away.
+  const tail = opts.limit != null ? eventLogs.slice(-opts.limit) : eventLogs;
 
-  return sliced.map((e) => ({
+  // Reverse the (now bounded) tail in place to flip ascending →
+  // newest-first while preserving the within-block (txIndex,
+  // logIndex) tiebreak.
+  tail.reverse();
+
+  return tail.map((e) => ({
     txHash: e.transactionHash,
     blockNumber: e.blockNumber,
     transactionIndex: e.transactionIndex,
