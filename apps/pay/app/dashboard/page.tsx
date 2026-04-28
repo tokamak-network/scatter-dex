@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import {
   listRuns,
   type RunCategory,
@@ -10,6 +10,17 @@ import {
 } from "@zkscatter/sdk/storage";
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { useFolderStorage } from "../_lib/folderStorage";
+
+/** Toggle a `mounted` flag in `useEffect`. Used to gate `Date.now()`-
+ *  dependent rendering (current-month filter, locale formatting) so
+ *  SSR and the first client paint match. Mirrors the helper that
+ *  lives in `payouts/[id]/page.tsx`; pulling both copies into a
+ *  shared SDK hook is tracked as a follow-up. */
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
+}
 
 type Tab = "all" | RunCategory;
 
@@ -33,37 +44,58 @@ const CATEGORY_BADGE: Record<RunCategory, string> = {
 export default function Dashboard() {
   const folder = useFolderStorage();
   const wallet = useWallet();
+  const mounted = useMounted();
   const [tab, setTab] = useState<Tab>("all");
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [scope, setScope] = useState<"context" | "all-wallets">("context");
+  const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  // Race guard: workspace switch + scope toggle + wallet change can
+  // all trigger a fresh `listRuns`. A slower earlier call resolving
+  // after a newer one would overwrite `runs` with stale data, so we
+  // only commit results from the latest request.
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setError(null);
+
     if (!folder.ready) {
       setRuns([]);
       setLoaded(true);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
+
     const filter: { chainId?: number; operatorAddress?: string } = {};
     if (wallet.chainId !== null) filter.chainId = wallet.chainId;
     if (scope === "context" && wallet.account) {
       filter.operatorAddress = wallet.account;
     }
-    try {
-      setRuns(await listRuns(filter));
-    } finally {
-      setLoaded(true);
-    }
-  }, [folder.ready, wallet.chainId, wallet.account, scope]);
 
-  useEffect(() => {
-    setLoaded(false);
-    void refresh();
-  }, [refresh, folder.currentId]);
+    listRuns(filter)
+      .then((next) => {
+        if (cancelled) return;
+        setRuns(next);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setRuns([]);
+        setError(e instanceof Error ? e.message : "Failed to load runs");
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [folder.ready, folder.currentId, wallet.chainId, wallet.account, scope]);
 
   const visible = tab === "all" ? runs : runs.filter((r) => r.category === tab);
 
-  const stats = useMemo(() => deriveStats(runs), [runs]);
+  const stats = useMemo(() => deriveStats(runs, mounted), [runs, mounted]);
 
   return (
     <div className="space-y-10">
@@ -89,8 +121,8 @@ export default function Dashboard() {
       <section className="grid grid-cols-3 gap-4">
         <Stat
           label="This month"
-          value={`${stats.thisMonth.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`}
-          sub={`across ${stats.distinctTokens} token${stats.distinctTokens === 1 ? "" : "s"}`}
+          value={mounted ? formatThisMonthValue(stats) : "—"}
+          sub={mounted ? formatThisMonthSub(stats) : "loading…"}
         />
         <Stat
           label="Pending claims"
@@ -103,6 +135,12 @@ export default function Dashboard() {
           sub="vs. equivalent N transfers"
         />
       </section>
+
+      {error && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          Couldn&apos;t read your runs folder: {error}
+        </div>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">
@@ -146,7 +184,7 @@ function ScopeBar({
   folder: ReturnType<typeof useFolderStorage>;
 }) {
   const chainLabel = wallet.chainId !== null ? `chain ${wallet.chainId}` : "no chain";
-  const walletLabel = wallet.account ? shortAccount(wallet.account) : "no wallet";
+  const walletLabel = shortAddr(wallet.account) || "no wallet";
   const folderLabel = folder.folderName ?? "no workspace";
 
   return (
@@ -217,7 +255,7 @@ function RunRow({ record }: { record: RunRecord }) {
   const claimed = record.recipients.filter((r) => r.status === "claimed").length;
   const date = formatIsoDate(record.createdAt);
   const operatorTag = record.operatorAddress
-    ? shortAccount(record.operatorAddress)
+    ? shortAddr(record.operatorAddress)
     : "(unknown wallet)";
 
   return (
@@ -268,7 +306,10 @@ function Stat({ label, value, sub }: { label: string; value: string; sub: string
 }
 
 interface DashboardStats {
-  thisMonth: number;
+  /** Per-token totals for the current month — keyed by symbol so a
+   *  multi-token operator (USDC + TON) doesn't see an arithmetically
+   *  meaningless mixed-unit sum. */
+  thisMonthByToken: Record<string, number>;
   distinctTokens: number;
   pendingClaims: number;
   /** When `settleGasPaid` is empty across all runs (e.g. only v1
@@ -277,41 +318,72 @@ interface DashboardStats {
   gasSavedHint: string;
 }
 
-function deriveStats(runs: RunRecord[]): DashboardStats {
-  const now = new Date();
-  const thisMonthIso = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  let thisMonth = 0;
+function deriveStats(runs: RunRecord[], mounted: boolean): DashboardStats {
+  const thisMonthByToken: Record<string, number> = {};
   let pendingClaims = 0;
   const tokens = new Set<string>();
   let anyGas = false;
+  // `Date.now()` runs only after hydration so SSR doesn't see a
+  // current-month filter the client would compute differently.
+  const now = mounted ? new Date() : null;
+  const thisMonthIso = now
+    ? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
+    : null;
   for (const r of runs) {
     tokens.add(r.tokenSymbol);
     pendingClaims += r.recipients.filter((rec) => rec.status !== "claimed").length;
-    if (formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
-      thisMonth += parseAmount(r.totalAmount);
+    if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
+      thisMonthByToken[r.tokenSymbol] = (thisMonthByToken[r.tokenSymbol] ?? 0) + parseAmount(r.totalAmount);
     }
     if (r.settleGasPaid) anyGas = true;
   }
   return {
-    thisMonth,
+    thisMonthByToken,
     distinctTokens: tokens.size,
     pendingClaims,
     gasSavedHint: anyGas ? "see runs" : "—",
   };
 }
 
+function formatThisMonthValue(stats: DashboardStats): string {
+  const entries = Object.entries(stats.thisMonthByToken);
+  if (entries.length === 0) return "0";
+  if (entries.length === 1) {
+    const [symbol, total] = entries[0]!;
+    return `${formatAmount(total)} ${symbol}`;
+  }
+  // Mixed units — surface the highest-value token's total to give
+  // the operator a number, but flag it as one-of-many in the sub.
+  const [topSymbol, topTotal] = entries.sort((a, b) => b[1] - a[1])[0]!;
+  return `${formatAmount(topTotal)} ${topSymbol}`;
+}
+
+function formatThisMonthSub(stats: DashboardStats): string {
+  const entries = Object.entries(stats.thisMonthByToken);
+  if (entries.length <= 1) {
+    return entries.length === 0 ? "no runs this month" : "this month";
+  }
+  return `${entries[0]![0]} shown · also ${entries.length - 1} other token${entries.length - 1 === 1 ? "" : "s"}`;
+}
+
+function formatAmount(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+/** Parse a display-string amount (e.g. `"3,500.50"` or `"1_000"`) to
+ *  a number. Strips commas, underscores, and whitespace, then requires
+ *  the remainder to match a strict decimal pattern — `parseFloat`
+ *  alone would accept `"123abc"` (→ 123) and silently undercount the
+ *  monthly total when a record has a mis-edited amount. Returns 0 on
+ *  any deviation so the stat at least stays additive instead of NaN. */
 function parseAmount(s: string): number {
-  const cleaned = s.replace(/,/g, "").trim();
-  const n = parseFloat(cleaned);
+  const cleaned = s.replace(/[,_\s]/g, "");
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return 0;
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
 
 function formatIsoDate(unixSec: number): string {
   return new Date(unixSec * 1000).toISOString().slice(0, 10);
-}
-
-function shortAccount(addr: string): string {
-  if (addr.length < 10) return addr;
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
