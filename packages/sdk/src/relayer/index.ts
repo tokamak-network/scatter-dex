@@ -8,3 +8,4 @@ export * from "./register";
 export * from "./operator";
 export * from "./operator-actions";
 export * from "./fee-vault";
+export * from "./settlements";
