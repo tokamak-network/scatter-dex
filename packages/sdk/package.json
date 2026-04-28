@@ -14,7 +14,8 @@
     "./relayer": "./src/relayer/index.ts",
     "./orderbook": "./src/orderbook/index.ts",
     "./contracts": "./src/contracts/index.ts",
-    "./notes": "./src/notes/index.ts"
+    "./notes": "./src/notes/index.ts",
+    "./storage": "./src/storage/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
