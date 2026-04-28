@@ -1,4 +1,5 @@
 import { Router, RequestHandler } from "express";
+import { clampLimit } from "@scatter-dex/types";
 import type { PrivateOrderDB } from "../core/db.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { getMetrics } from "../core/metrics.js";
@@ -48,7 +49,7 @@ export function createRelayerStatsRoutes(
    */
   router.get("/trade-offers", ...limiter, (req, res) => {
     try {
-      const limit = Math.max(1, Math.min(Number(req.query.limit) || 50, 200));
+      const limit = clampLimit(req.query.limit, 200, 50);
       const offset = Math.max(0, Number(req.query.offset) || 0);
       const offers = db.getTradeOffers(limit, offset);
       res.json({ offers, count: offers.length, offset });

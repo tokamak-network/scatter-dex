@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { clampLimit } from "@scatter-dex/types";
 import { config } from "../config.js";
 import type { OrderSummary, OrderStatus, StoredOrder, MatchResult } from "../types/order.js";
 import type {
@@ -677,7 +678,7 @@ export class OrderbookDB {
   ): LeaderboardRow[] {
     const where = typeof sinceSec === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
     const args: unknown[] = typeof sinceSec === "number" ? [sinceSec, sinceSec, sinceSec] : [];
-    const cappedLimit = Math.min(Math.max(limit, 1), 500);
+    const cappedLimit = clampLimit(limit, 500, 50);
 
     const orderBy = metric === "verifiedCount"
       ? "tx_count_verified DESC, tx_count DESC"

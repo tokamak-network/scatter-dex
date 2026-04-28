@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { RequestHandler } from "express";
+import { clampLimit } from "@scatter-dex/types";
 import type { OrderbookDB } from "../core/db.js";
 import { parseSettlementInsert, LEADERBOARD_METRICS, type LeaderboardMetric } from "../types/settlement.js";
 import { isValidPair } from "../types/order.js";
@@ -9,12 +10,8 @@ const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAX_LIMIT = 500;
 
 function parseLimitOffset(q: Record<string, unknown>): { limit: number; offset: number } {
-  // Distinguish absent from explicit 0/NaN — `Number(undefined) || 100`
-  // would silently turn `?limit=0` into 100, which is misleading. With
-  // an explicit absence check, `?limit=0` clamps up to 1 (the min).
-  const parsedLimit = q.limit === undefined ? 100 : Number(q.limit);
+  const limit = clampLimit(q.limit, MAX_LIMIT, 100);
   const parsedOffset = q.offset === undefined ? 0 : Number(q.offset);
-  const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 100, 1), MAX_LIMIT);
   const offset = Math.max(Number.isFinite(parsedOffset) ? parsedOffset : 0, 0);
   return { limit, offset };
 }
