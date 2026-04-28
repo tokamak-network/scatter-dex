@@ -11,6 +11,7 @@
   "dependencies": {
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
+    "@zkscatter/sdk": "file:../packages/sdk",
     "circomlibjs": "^0.1.7",
     "ethers": "^6.16.0",
     "jszip": "^3.10.1",

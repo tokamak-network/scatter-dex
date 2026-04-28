@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -7,6 +8,16 @@ const isDev = process.env.NODE_ENV === "development";
 const extraConnectSrc = process.env.CSP_EXTRA_CONNECT_SRC?.trim() || "";
 
 const nextConfig: NextConfig = {
+  // SDK ships as TypeScript source from packages/sdk; transpile it
+  // through the same pipeline as app code so we don't need a
+  // separate tsc/dist step.
+  transpilePackages: ["@zkscatter/sdk"],
+  turbopack: {
+    // Pin Turbopack's project root to the monorepo root so it
+    // follows the symlinked `file:` dep at packages/sdk instead of
+    // refusing because frontend has its own lockfile.
+    root: path.join(__dirname, ".."),
+  },
   async headers() {
     return [
       {
