@@ -1,62 +1,101 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import {
+  listRuns,
+  type RunCategory,
+  type RunRecord,
+} from "@zkscatter/sdk/storage";
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
+import { useFolderStorage } from "../_lib/folderStorage";
 
-type Category = "all" | "payroll" | "grants" | "bonus" | "contractor";
+/** Toggle a `mounted` flag in `useEffect`. Used to gate `Date.now()`-
+ *  dependent rendering (current-month filter, locale formatting) so
+ *  SSR and the first client paint match. Mirrors the helper that
+ *  lives in `payouts/[id]/page.tsx`; pulling both copies into a
+ *  shared SDK hook is tracked as a follow-up. */
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
+}
 
-type Payout = {
-  id: string;
-  label: string;
-  category: Exclude<Category, "all">;
-  token: string;
-  total: string;
-  recipients: number;
-  claimed: number;
-  date: string;
-};
+type Tab = "all" | RunCategory;
 
-const allPayouts: Payout[] = [
-  { id: "p_2026_04_payroll",  label: "April payroll",            category: "payroll",    token: "USDC", total: "84,500",  recipients: 23, claimed: 18, date: "2026-04-01" },
-  { id: "p_2026_04_contract", label: "April contractor batch",   category: "contractor", token: "USDC", total: "11,700",  recipients: 6,  claimed: 5,  date: "2026-04-10" },
-  { id: "p_2026_q1_grants",   label: "Q1 public-goods grants",   category: "grants",     token: "USDC", total: "62,500",  recipients: 9,  claimed: 9,  date: "2026-03-30" },
-  { id: "p_2026_03_payroll",  label: "March payroll",            category: "payroll",    token: "USDC", total: "82,100",  recipients: 22, claimed: 22, date: "2026-03-01" },
-  { id: "p_2026_03_bonus",    label: "Q1 retention bonus",       category: "bonus",      token: "USDC", total: "27,000",  recipients: 12, claimed: 12, date: "2026-03-15" },
-];
-
-const TABS: { id: Category; label: string }[] = [
+const TABS: { id: Tab; label: string }[] = [
   { id: "all",        label: "All" },
   { id: "payroll",    label: "Payroll" },
   { id: "grants",     label: "Grants" },
   { id: "bonus",      label: "Bonus" },
   { id: "contractor", label: "Contractor" },
+  { id: "other",      label: "Other" },
 ];
 
-const CATEGORY_BADGE: Record<Exclude<Category, "all">, string> = {
+const CATEGORY_BADGE: Record<RunCategory, string> = {
   payroll:    "Payroll",
   grants:     "Grants",
   bonus:      "Bonus",
   contractor: "Contractor",
-};
-
-const TOTAL_THIS_MONTH = allPayouts
-  .filter((p) => p.date.startsWith("2026-04"))
-  .reduce((s, p) => s + parseFloat(p.total.replace(/,/g, "")), 0);
-
-const PENDING_CLAIMS = allPayouts.reduce((s, p) => s + (p.recipients - p.claimed), 0);
-
-const PAYOUTS_BY_CATEGORY: Record<Category, Payout[]> = {
-  all: allPayouts,
-  payroll: allPayouts.filter((p) => p.category === "payroll"),
-  grants: allPayouts.filter((p) => p.category === "grants"),
-  bonus: allPayouts.filter((p) => p.category === "bonus"),
-  contractor: allPayouts.filter((p) => p.category === "contractor"),
+  other:      "Other",
 };
 
 export default function Dashboard() {
-  const [tab, setTab] = useState<Category>("all");
-  const visible = PAYOUTS_BY_CATEGORY[tab];
+  const folder = useFolderStorage();
+  const wallet = useWallet();
+  const mounted = useMounted();
+  const [tab, setTab] = useState<Tab>("all");
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [scope, setScope] = useState<"context" | "all-wallets">("context");
+  const [error, setError] = useState<string | null>(null);
+
+  // Race guard: workspace switch + scope toggle + wallet change can
+  // all trigger a fresh `listRuns`. A slower earlier call resolving
+  // after a newer one would overwrite `runs` with stale data, so we
+  // only commit results from the latest request.
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setError(null);
+
+    if (!folder.ready) {
+      setRuns([]);
+      setLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const filter: { chainId?: number; operatorAddress?: string } = {};
+    if (wallet.chainId !== null) filter.chainId = wallet.chainId;
+    if (scope === "context" && wallet.account) {
+      filter.operatorAddress = wallet.account;
+    }
+
+    listRuns(filter)
+      .then((next) => {
+        if (cancelled) return;
+        setRuns(next);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setRuns([]);
+        setError(e instanceof Error ? e.message : "Failed to load runs");
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [folder.ready, folder.currentId, wallet.chainId, wallet.account, scope]);
+
+  const visible = tab === "all" ? runs : runs.filter((r) => r.category === tab);
+
+  const stats = useMemo(() => deriveStats(runs, mounted), [runs, mounted]);
 
   return (
     <div className="space-y-10">
@@ -77,11 +116,31 @@ export default function Dashboard() {
 
       <PoolBalanceCard />
 
+      <ScopeBar scope={scope} setScope={setScope} wallet={wallet} folder={folder} />
+
       <section className="grid grid-cols-3 gap-4">
-        <Stat label="This month" value={`$${TOTAL_THIS_MONTH.toLocaleString()}`} sub="across payroll + contractor + …" />
-        <Stat label="Pending claims" value={`${PENDING_CLAIMS}`} sub="across open runs" />
-        <Stat label="Saved on gas" value="~$112" sub="vs separate transfers" />
+        <Stat
+          label="This month"
+          value={mounted ? formatThisMonthValue(stats) : "—"}
+          sub={mounted ? formatThisMonthSub(stats) : "loading…"}
+        />
+        <Stat
+          label="Pending claims"
+          value={`${stats.pendingClaims}`}
+          sub={`across ${runs.length} run${runs.length === 1 ? "" : "s"}`}
+        />
+        <Stat
+          label="Saved on gas"
+          value={stats.gasSavedHint}
+          sub="vs. equivalent N transfers"
+        />
       </section>
+
+      {error && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          Couldn&apos;t read your runs folder: {error}
+        </div>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">
@@ -102,43 +161,137 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-          {visible.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
-              No {tab} payouts yet.
-            </div>
-          ) : (
-            visible.map((p) => (
-              <Link
-                key={p.id}
-                href={`/payouts/${p.id}`}
-                className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0 hover:bg-[var(--color-primary-soft)]"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{p.label}</span>
-                    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                      {CATEGORY_BADGE[p.category]}
-                    </span>
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)]">{p.date} · {p.recipients} recipients</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-sm">{p.total} {p.token}</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
-                    {p.claimed === p.recipients ? (
-                      <span className="text-[var(--color-success)]">All claimed</span>
-                    ) : (
-                      <span>{p.claimed}/{p.recipients} claimed</span>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            ))
-          )}
-        </div>
+        <RunsList
+          runs={visible}
+          loaded={loaded}
+          folderReady={folder.ready}
+          tab={tab}
+        />
       </section>
     </div>
+  );
+}
+
+function ScopeBar({
+  scope,
+  setScope,
+  wallet,
+  folder,
+}: {
+  scope: "context" | "all-wallets";
+  setScope: (s: "context" | "all-wallets") => void;
+  wallet: ReturnType<typeof useWallet>;
+  folder: ReturnType<typeof useFolderStorage>;
+}) {
+  const chainLabel = wallet.chainId !== null ? `chain ${wallet.chainId}` : "no chain";
+  const walletLabel = shortAddr(wallet.account) || "no wallet";
+  const folderLabel = folder.folderName ?? "no workspace";
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-xs">
+      <span className="text-[var(--color-text-muted)]">Scope:</span>
+      <span className="font-mono">📁 {folderLabel}</span>
+      <span className="text-[var(--color-text-subtle)]">·</span>
+      <span className="font-mono">🔗 {chainLabel}</span>
+      <span className="text-[var(--color-text-subtle)]">·</span>
+      <span className="font-mono">{walletLabel}</span>
+      {wallet.account && (
+        <button
+          onClick={() => setScope(scope === "context" ? "all-wallets" : "context")}
+          className="ml-auto rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
+        >
+          {scope === "context" ? "Show all wallets in workspace" : "Limit to this wallet"}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function RunsList({
+  runs,
+  loaded,
+  folderReady,
+  tab,
+}: {
+  runs: RunRecord[];
+  loaded: boolean;
+  folderReady: boolean;
+  tab: Tab;
+}) {
+  if (!folderReady) {
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
+        Pick a notes folder from the header to see your payouts.
+      </div>
+    );
+  }
+  if (!loaded) {
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
+        Loading runs from your folder…
+      </div>
+    );
+  }
+  if (runs.length === 0) {
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
+        {tab === "all"
+          ? "No runs in this scope yet. Create a payout or switch to a different workspace / wallet."
+          : `No ${tab} runs in this scope yet.`}
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      {runs.map((r) => (
+        <RunRow key={r.id} record={r} />
+      ))}
+    </div>
+  );
+}
+
+function RunRow({ record }: { record: RunRecord }) {
+  const total = record.recipients.length;
+  const claimed = record.recipients.filter((r) => r.status === "claimed").length;
+  const date = formatIsoDate(record.createdAt);
+  const operatorTag = record.operatorAddress
+    ? shortAddr(record.operatorAddress)
+    : "(unknown wallet)";
+
+  return (
+    <Link
+      href={`/payouts/${record.id}`}
+      className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0 hover:bg-[var(--color-primary-soft)]"
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{record.label}</span>
+          <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            {CATEGORY_BADGE[record.category]}
+          </span>
+          <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            chain {record.chainId}
+          </span>
+        </div>
+        <div className="text-xs text-[var(--color-text-muted)]">
+          {date} · {total} recipient{total === 1 ? "" : "s"} · sent by {operatorTag}
+        </div>
+      </div>
+      <div className="text-right">
+        <div className="font-mono text-sm">
+          {record.totalAmount} {record.tokenSymbol}
+        </div>
+        <div className="text-xs text-[var(--color-text-muted)]">
+          {claimed === total ? (
+            <span className="text-[var(--color-success)]">All claimed</span>
+          ) : (
+            <span>
+              {claimed}/{total} claimed
+            </span>
+          )}
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -151,3 +304,86 @@ function Stat({ label, value, sub }: { label: string; value: string; sub: string
     </div>
   );
 }
+
+interface DashboardStats {
+  /** Per-token totals for the current month — keyed by symbol so a
+   *  multi-token operator (USDC + TON) doesn't see an arithmetically
+   *  meaningless mixed-unit sum. */
+  thisMonthByToken: Record<string, number>;
+  distinctTokens: number;
+  pendingClaims: number;
+  /** When `settleGasPaid` is empty across all runs (e.g. only v1
+   *  records or wizard not yet wired to capture gas) we surface a
+   *  placeholder rather than a misleading $0. */
+  gasSavedHint: string;
+}
+
+function deriveStats(runs: RunRecord[], mounted: boolean): DashboardStats {
+  const thisMonthByToken: Record<string, number> = {};
+  let pendingClaims = 0;
+  const tokens = new Set<string>();
+  let anyGas = false;
+  // `Date.now()` runs only after hydration so SSR doesn't see a
+  // current-month filter the client would compute differently.
+  const now = mounted ? new Date() : null;
+  const thisMonthIso = now
+    ? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
+    : null;
+  for (const r of runs) {
+    tokens.add(r.tokenSymbol);
+    pendingClaims += r.recipients.filter((rec) => rec.status !== "claimed").length;
+    if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
+      thisMonthByToken[r.tokenSymbol] = (thisMonthByToken[r.tokenSymbol] ?? 0) + parseAmount(r.totalAmount);
+    }
+    if (r.settleGasPaid) anyGas = true;
+  }
+  return {
+    thisMonthByToken,
+    distinctTokens: tokens.size,
+    pendingClaims,
+    gasSavedHint: anyGas ? "see runs" : "—",
+  };
+}
+
+function formatThisMonthValue(stats: DashboardStats): string {
+  const entries = Object.entries(stats.thisMonthByToken);
+  if (entries.length === 0) return "0";
+  if (entries.length === 1) {
+    const [symbol, total] = entries[0]!;
+    return `${formatAmount(total)} ${symbol}`;
+  }
+  // Mixed units — surface the highest-value token's total to give
+  // the operator a number, but flag it as one-of-many in the sub.
+  const [topSymbol, topTotal] = entries.sort((a, b) => b[1] - a[1])[0]!;
+  return `${formatAmount(topTotal)} ${topSymbol}`;
+}
+
+function formatThisMonthSub(stats: DashboardStats): string {
+  const entries = Object.entries(stats.thisMonthByToken);
+  if (entries.length <= 1) {
+    return entries.length === 0 ? "no runs this month" : "this month";
+  }
+  return `${entries[0]![0]} shown · also ${entries.length - 1} other token${entries.length - 1 === 1 ? "" : "s"}`;
+}
+
+function formatAmount(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+/** Parse a display-string amount (e.g. `"3,500.50"` or `"1_000"`) to
+ *  a number. Strips commas, underscores, and whitespace, then requires
+ *  the remainder to match a strict decimal pattern — `parseFloat`
+ *  alone would accept `"123abc"` (→ 123) and silently undercount the
+ *  monthly total when a record has a mis-edited amount. Returns 0 on
+ *  any deviation so the stat at least stays additive instead of NaN. */
+function parseAmount(s: string): number {
+  const cleaned = s.replace(/[,_\s]/g, "");
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatIsoDate(unixSec: number): string {
+  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+}
+

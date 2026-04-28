@@ -300,29 +300,40 @@ export interface ListRunsFilter {
 
 /** List every run record in the folder, newest first. Skips files
  *  that fail to parse rather than blowing up the dashboard — corrupt
- *  files are surfaced when the user opens that specific run. */
+ *  files are surfaced when the user opens that specific run.
+ *
+ *  File reads run in parallel via `Promise.all`. The previous
+ *  sequential loop was the dashboard's dominant load-time cost once
+ *  a workspace held more than a handful of runs, since each
+ *  `entry.read()` is its own File System Access I/O round-trip. */
 export async function listRuns(filter: ListRunsFilter = {}): Promise<RunRecord[]> {
   if (!hasFolder()) return [];
   const entries = await listFiles((name) => parseIdFromFilename(name) !== null);
   const wantedOperator = filter.operatorAddress?.toLowerCase();
-  const records: RunRecord[] = [];
-  for (const entry of entries) {
-    try {
-      const text = await entry.read();
-      const record = parseRunFile(JSON.parse(text));
-      if (!record) continue;
-      if (filter.chainId !== undefined && record.chainId !== filter.chainId) continue;
-      if (filter.category !== undefined && record.category !== filter.category) continue;
-      if (
-        wantedOperator !== undefined &&
-        record.operatorAddress.toLowerCase() !== wantedOperator
-      ) {
-        continue;
+
+  const parsed = await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        const text = await entry.read();
+        return parseRunFile(JSON.parse(text));
+      } catch {
+        return null;
       }
-      records.push(record);
-    } catch {
-      // skip — caller's per-id `loadRun` will surface the error
+    }),
+  );
+
+  const records: RunRecord[] = [];
+  for (const record of parsed) {
+    if (!record) continue;
+    if (filter.chainId !== undefined && record.chainId !== filter.chainId) continue;
+    if (filter.category !== undefined && record.category !== filter.category) continue;
+    if (
+      wantedOperator !== undefined &&
+      record.operatorAddress.toLowerCase() !== wantedOperator
+    ) {
+      continue;
     }
+    records.push(record);
   }
   return records.sort((a, b) => b.createdAt - a.createdAt);
 }
