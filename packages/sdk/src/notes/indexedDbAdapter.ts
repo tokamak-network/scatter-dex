@@ -1,5 +1,11 @@
 import type { NoteStorageAdapter, StoredNote } from "./types";
 import { openIDB } from "../util/idb";
+import {
+  bigintToHex,
+  notePreimageFromHex,
+  notePreimageToHex,
+  type NotePreimageHex,
+} from "../util/format";
 
 const DEFAULT_DB_NAME = "zkscatter-notes";
 const DEFAULT_STORE = "notes";
@@ -18,23 +24,12 @@ interface WireNote {
   label: string;
   symbol: string;
   amount: string;
-  noteHex: {
-    ownerSecret: string;
-    token: string;
-    amount: string;
-    salt: string;
-    pubKeyAx: string;
-    pubKeyAy: string;
-  };
+  noteHex: NotePreimageHex;
   commitmentHex: string;
   leafIndex: number;
   txHash?: string;
   chainId?: number;
   createdAt: number;
-}
-
-function toHex(v: bigint): string {
-  return "0x" + v.toString(16);
 }
 
 function serialize(n: StoredNote): WireNote {
@@ -43,15 +38,8 @@ function serialize(n: StoredNote): WireNote {
     label: n.label,
     symbol: n.symbol,
     amount: n.amount,
-    noteHex: {
-      ownerSecret: toHex(n.note.ownerSecret),
-      token: toHex(n.note.token),
-      amount: toHex(n.note.amount),
-      salt: toHex(n.note.salt),
-      pubKeyAx: toHex(n.note.pubKeyAx),
-      pubKeyAy: toHex(n.note.pubKeyAy),
-    },
-    commitmentHex: toHex(n.commitment),
+    noteHex: notePreimageToHex(n.note),
+    commitmentHex: bigintToHex(n.commitment),
     leafIndex: n.leafIndex,
     txHash: n.txHash,
     chainId: n.chainId,
@@ -65,14 +53,7 @@ function deserialize(w: WireNote): StoredNote {
     label: w.label,
     symbol: w.symbol,
     amount: w.amount,
-    note: {
-      ownerSecret: BigInt(w.noteHex.ownerSecret),
-      token: BigInt(w.noteHex.token),
-      amount: BigInt(w.noteHex.amount),
-      salt: BigInt(w.noteHex.salt),
-      pubKeyAx: BigInt(w.noteHex.pubKeyAx),
-      pubKeyAy: BigInt(w.noteHex.pubKeyAy),
-    },
+    note: notePreimageFromHex(w.noteHex),
     commitment: BigInt(w.commitmentHex),
     leafIndex: w.leafIndex,
     txHash: w.txHash,
