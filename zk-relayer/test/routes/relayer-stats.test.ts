@@ -39,9 +39,10 @@ describe("/api/relayer", () => {
       createRelayerStatsRoutes(db, makeSubmitterStub()));
     await request(app).get("/api/relayer/trade-offers?limit=9999&offset=-5");
     expect(calls[0]).toEqual([200, 0]);
-    // limit=0 is falsy → falls back to default 50 (documented quirk of `|| 50`)
+    // limit=0 clamps up to 1 (smallest valid page) — aligns with
+    // shared-orderbook clampLimit policy locked in PR #493.
     await request(app).get("/api/relayer/trade-offers?limit=0");
-    expect(calls[1][0]).toBe(50);
+    expect(calls[1][0]).toBe(1);
     await request(app).get("/api/relayer/trade-offers");
     expect(calls[2]).toEqual([50, 0]);
     // Explicit out-of-range low value gets clamped to min 1
