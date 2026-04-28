@@ -10,12 +10,14 @@ import {
   useState,
 } from "react";
 import {
+  createFolderNoteAdapter,
   createIndexedDbNoteAdapter,
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
 import { useWallet } from "@zkscatter/sdk/react";
 import { getNetworkConfig } from "./network";
+import { useFolderStorage } from "./folderStorage";
 
 /** A note in the user's local vault. The full `CommitmentNote` is
  *  carried so spending circuits (authorize / claim) can spend this
@@ -82,21 +84,24 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // chain's hydrate window.
   const labelCounter = useRef(0);
 
-  // Adapter is keyed on the active chainId — per-chain DB so notes
-  // from one network don't leak into another when the user switches.
-  // `useMemo` (not `useRef`) so each chainId gets its own stable
-  // instance and `add` / `remove` callbacks close over the correct
-  // one. An in-flight `add()` started under chain A keeps writing
-  // to chain A's adapter even if chainId flips mid-await — without
-  // this binding, the dereference `adapterRef.current` would land
-  // on chain B's IDB after the swap. The SDK adapter is SSR-safe
-  // (no IDB call until the first method invocation).
+  // Adapter selection: prefer the folder backend whenever the user
+  // has picked one (so deposits land in the same notes folder
+  // frontend uses); fall back to per-chain IndexedDB otherwise.
+  //
+  // When `folder.ready` toggles, `adapter` is rebuilt and the
+  // hydrate effect below re-runs — picking up the on-disk notes for
+  // the freshly-selected folder. Account / chain switches still
+  // re-key the IDB DB so two wallets sharing the same browser don't
+  // cross-pollute the no-folder fallback.
+  const { ready: folderReady } = useFolderStorage();
   const adapter = useMemo<NoteStorageAdapter>(
     () =>
-      createIndexedDbNoteAdapter({
-        dbName: `zkscatter-pay-notes-${chainId}-${accountKey}`,
-      }),
-    [chainId, accountKey],
+      folderReady
+        ? createFolderNoteAdapter({ chainId })
+        : createIndexedDbNoteAdapter({
+            dbName: `zkscatter-pay-notes-${chainId}-${accountKey}`,
+          }),
+    [folderReady, chainId, accountKey],
   );
 
   // Hydrate on mount + on every chainId change. Cancellation guards
@@ -125,9 +130,9 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         // entries to match — without this, a refresh would visibly
         // flip the vault order and any pre-hydration `add()` would
         // straddle the boundary.
-        const filtered = list
-          .filter((n) => n.chainId === undefined || n.chainId === chainId)
-          .sort((a, b) => b.createdAt - a.createdAt);
+        // Adapters already filter by chainId (folder via opts, IDB
+        // via per-chain DB name) so no second filter here.
+        const filtered = list.slice().sort((a, b) => b.createdAt - a.createdAt);
         // Merge with anything `add()` may have inserted before
         // hydration completed. Without this, a deposit fired during
         // the initial async load would be visible in IDB but blown
