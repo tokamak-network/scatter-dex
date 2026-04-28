@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { ethers } from "ethers";
+import { LAUNCH_TOKENS } from "@zkscatter/sdk";
+import { randomFieldElement, splitPayout, type PayoutBatch } from "@zkscatter/sdk/zk";
+import { useWallet } from "@zkscatter/sdk/react";
+import { useVault } from "../../_lib/vault";
+import { useEdDSAKey } from "../../_lib/eddsaKey";
+import { useRelayers } from "../../_lib/relayers";
+import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 
 type Row = { name: string; address: string; amount: string };
 
@@ -127,15 +135,41 @@ export default function NewPayout() {
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
+
+  const { account } = useWallet();
+  const { notes } = useVault();
+  const { selected: relayer } = useRelayers();
+  const eddsa = useEdDSAKey();
 
   useEffect(() => {
     setClaimFrom(today());
   }, []);
 
-  function doSubmit() {
+  async function doSubmit() {
     setShowConfirm(false);
-    // TODO Phase B: ensureAllowance + generateAuthorizeProof + callSettleAuth
+    if (!isNetworkConfigured(getNetworkConfig())) {
+      // Pay's env hasn't been wired with deployed contract addresses
+      // — fall through to the demo result page so the wizard remains
+      // clickable end-to-end without a live deployment.
+      router.push("/payouts/p_2026_04_payroll");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await dryRunSettle({
+        rows,
+        tokenSymbol: token,
+        claimFrom,
+        account,
+        notes,
+        relayerAddress: relayer?.address,
+        eddsa,
+      });
+    } finally {
+      setSubmitting(false);
+    }
     router.push("/payouts/p_2026_04_payroll");
   }
 
@@ -167,6 +201,50 @@ export default function NewPayout() {
     }, 0),
     [rows],
   );
+
+  const tokenInfo = LAUNCH_TOKENS[token];
+  const tokenAddress = tokenInfo?.address?.toLowerCase();
+  const decimals = tokenInfo?.decimals ?? 18;
+
+  const availableRaw = useMemo<bigint>(() => {
+    if (!tokenAddress) return 0n;
+    let sum = 0n;
+    for (const n of notes) {
+      const noteToken = "0x" + n.note.token.toString(16).padStart(40, "0");
+      if (noteToken === tokenAddress) sum += n.note.amount;
+    }
+    return sum;
+  }, [notes, tokenAddress]);
+
+  const requiredRaw = useMemo<bigint>(() => {
+    try {
+      return ethers.parseUnits(total.toString(), decimals);
+    } catch {
+      return 0n;
+    }
+  }, [total, decimals]);
+
+  const shortfallRaw = requiredRaw > availableRaw ? requiredRaw - availableRaw : 0n;
+
+  const batches = useMemo<PayoutBatch[]>(() => {
+    if (!tokenAddress || rows.length === 0) return [];
+    try {
+      const recipients = rows.map((r) => {
+        const cleaned = r.amount.replace(/[,_\s]/g, "");
+        if (!/^\d+(\.\d+)?$/.test(cleaned) || !/^0x[a-fA-F0-9]{40}$/.test(r.address)) {
+          throw new Error("invalid row");
+        }
+        return {
+          recipient: r.address,
+          amount: ethers.parseUnits(cleaned, decimals),
+          releaseTime: BigInt(Math.floor(new Date(claimFrom ?? today()).getTime() / 1000)),
+        };
+      });
+      return splitPayout(recipients, { token: tokenAddress });
+    } catch {
+      return [];
+    }
+  }, [rows, tokenAddress, decimals, claimFrom]);
 
   const validation = useMemo(() => {
     const issues: string[] = [];
@@ -276,6 +354,17 @@ export default function NewPayout() {
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
               Funds escrow into your private vault before being split to recipients. One on-chain transaction.
             </div>
+            <BalancePanel
+              token={token}
+              decimals={decimals}
+              availableRaw={availableRaw}
+              requiredRaw={requiredRaw}
+              shortfallRaw={shortfallRaw}
+              account={account}
+              onDeposit={() =>
+                dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
+              }
+            />
           </div>
         )}
 
@@ -387,15 +476,35 @@ export default function NewPayout() {
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
               {template.exportNote}
             </div>
+            {batches.length > 1 && (
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
+                <div className="mb-1 font-semibold text-[var(--color-text-muted)]">
+                  Signing plan
+                </div>
+                <div className="text-[var(--color-text-muted)]">
+                  {rows.length} recipients exceed the per-settlement cap of 16 — Pay will split into{" "}
+                  <strong>{batches.length} batches</strong>, requiring{" "}
+                  <strong>{batches.length} signatures</strong>.
+                </div>
+                <ul className="mt-2 space-y-0.5 font-mono">
+                  {batches.map((b, i) => (
+                    <li key={i}>
+                      Batch {i + 1}/{batches.length}: {b.claims.length} recipients ·{" "}
+                      {ethers.formatUnits(b.totalAmount, decimals)} {token}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <button
-              disabled={validation.length > 0}
+              disabled={validation.length > 0 || submitting}
               onClick={() => {
                 if (total >= LARGE_AMOUNT_THRESHOLD) setShowConfirm(true);
-                else doSubmit();
+                else void doSubmit();
               }}
               className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
             >
-              Sign & submit
+              {submitting ? "Building proof inputs…" : "Sign & submit"}
             </button>
             <div className="text-center text-xs text-[var(--color-text-muted)]">
               You&apos;ll be asked to sign once. Recipients claim individually.
@@ -539,4 +648,173 @@ function Row({ k, v }: { k: string; v: string }) {
       <dd className="py-2 text-right font-medium">{v}</dd>
     </>
   );
+}
+
+function BalancePanel({
+  token,
+  decimals,
+  availableRaw,
+  requiredRaw,
+  shortfallRaw,
+  account,
+  onDeposit,
+}: {
+  token: string;
+  decimals: number;
+  availableRaw: bigint;
+  requiredRaw: bigint;
+  shortfallRaw: bigint;
+  account: string | null;
+  onDeposit: () => void;
+}) {
+  const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
+  const configured = isNetworkConfigured(getNetworkConfig());
+
+  if (!account) {
+    return (
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+        Connect a wallet to see your available pool balance.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
+      <div className="flex justify-between">
+        <span className="text-[var(--color-text-muted)]">Available {token}</span>
+        <span className="font-mono">{fmt(availableRaw)}</span>
+      </div>
+      {requiredRaw > 0n && (
+        <div className="mt-1 flex justify-between">
+          <span className="text-[var(--color-text-muted)]">Required for run</span>
+          <span className="font-mono">{fmt(requiredRaw)}</span>
+        </div>
+      )}
+      {shortfallRaw > 0n && (
+        <div className="mt-2 rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-[var(--color-warning)]">
+          <div className="mb-1">
+            Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before signing.
+          </div>
+          <button
+            onClick={onDeposit}
+            disabled={!configured}
+            title={configured ? undefined : "Set NEXT_PUBLIC_PAY_* contract addresses to enable deposits"}
+            className="rounded bg-[var(--color-primary)] px-2 py-1 text-white disabled:opacity-40"
+          >
+            {configured ? `Deposit ${fmt(shortfallRaw)} ${token}` : "Deposit (env not configured)"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface DryRunDepositArgs {
+  tokenSymbol: string;
+  amountRaw: bigint;
+  account: string | null;
+  eddsa: ReturnType<typeof useEdDSAKey>;
+}
+
+async function dryRunDeposit({ tokenSymbol, amountRaw, account, eddsa }: DryRunDepositArgs) {
+  const tokenInfo = LAUNCH_TOKENS[tokenSymbol];
+  if (!account || !tokenInfo) return;
+  const cfg = getNetworkConfig();
+  let publicKey: readonly [bigint, bigint] | null = null;
+  try {
+    const kp = await eddsa.derive();
+    publicKey = kp.publicKey;
+  } catch (err) {
+    console.warn("[Pay dry-run] EdDSA key not derived — deposit input will be incomplete", err);
+  }
+  // Phase B will replace this log with `ensureAllowance + generateDepositProof + callDeposit`.
+  console.info("[Pay dry-run] deposit", {
+    chainId: cfg.chainId,
+    pool: cfg.contracts.commitmentPool,
+    settlement: cfg.contracts.privateSettlement,
+    token: tokenInfo.address,
+    amount: amountRaw.toString(),
+    account,
+    publicKey: publicKey ? [publicKey[0].toString(), publicKey[1].toString()] : null,
+  });
+}
+
+interface DryRunSettleArgs {
+  rows: Row[];
+  tokenSymbol: string;
+  claimFrom: string | undefined;
+  account: string | null;
+  notes: ReturnType<typeof useVault>["notes"];
+  relayerAddress: string | undefined;
+  eddsa: ReturnType<typeof useEdDSAKey>;
+}
+
+async function dryRunSettle({
+  rows,
+  tokenSymbol,
+  claimFrom,
+  account,
+  notes,
+  relayerAddress,
+  eddsa,
+}: DryRunSettleArgs) {
+  const tokenInfo = LAUNCH_TOKENS[tokenSymbol];
+  if (!account || !tokenInfo) return;
+  const tokenAddress = tokenInfo.address.toLowerCase();
+  const decimals = tokenInfo.decimals;
+  const cfg = getNetworkConfig();
+
+  let recipients;
+  try {
+    recipients = rows.map((r) => ({
+      recipient: r.address,
+      amount: ethers.parseUnits(r.amount.replace(/[,_\s]/g, ""), decimals),
+      releaseTime: BigInt(Math.floor(new Date(claimFrom ?? today()).getTime() / 1000)),
+    }));
+  } catch (err) {
+    console.error("[Pay dry-run] invalid recipient row", err);
+    return;
+  }
+  const batches = splitPayout(recipients, { token: tokenAddress });
+
+  let kp;
+  try {
+    kp = await eddsa.derive();
+  } catch (err) {
+    console.warn("[Pay dry-run] EdDSA key not derived — proceeding with partial input", err);
+  }
+
+  // Pay's notes hold per-token escrow notes; we pick the first matching
+  // note as a placeholder. Phase B will replace this with a proper
+  // largest-first picker that bin-packs across batches and tracks the
+  // residual change UTXO.
+  const note = notes.find(
+    (n) => "0x" + n.note.token.toString(16).padStart(40, "0") === tokenAddress,
+  );
+  const expirySec = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
+
+  console.info("[Pay dry-run] settle plan", {
+    chainId: cfg.chainId,
+    settlement: cfg.contracts.privateSettlement,
+    token: tokenAddress,
+    relayer: relayerAddress ?? "(no relayer selected)",
+    batches: batches.length,
+    totalRecipients: recipients.length,
+  });
+  for (let i = 0; i < batches.length; i++) {
+    const b = batches[i];
+    console.info(`[Pay dry-run] batch ${i + 1}/${batches.length} input`, {
+      sellAmount: b.totalAmount.toString(),
+      buyAmount: b.totalAmount.toString(),
+      buyToken: tokenAddress,
+      noteId: note?.id ?? "(no matching note in vault)",
+      relayer: relayerAddress ?? null,
+      expiry: expirySec.toString(),
+      nonce: randomFieldElement().toString(),
+      eddsaPublicKey: kp
+        ? [kp.publicKey[0].toString(), kp.publicKey[1].toString()]
+        : null,
+      claimsCount: b.claims.length,
+    });
+  }
 }

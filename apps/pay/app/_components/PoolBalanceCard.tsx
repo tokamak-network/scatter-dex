@@ -1,58 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
-import {
-  createIndexedDbNoteAdapter,
-  getAvailableBalance,
-  type TokenBalance,
-} from "@zkscatter/sdk/notes";
+import type { TokenBalance } from "@zkscatter/sdk/notes";
 import { ethers } from "ethers";
-
-type State =
-  | { kind: "disconnected" }
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; balances: TokenBalance[] };
+import { useVault } from "../_lib/vault";
 
 const PRIMARY_TOKEN_SYMBOL = "USDC";
 
 export function PoolBalanceCard() {
-  const { account, chainId } = useWallet();
-  const [state, setState] = useState<State>({ kind: "disconnected" });
+  const { account } = useWallet();
+  const { notes, loaded } = useVault();
 
-  useEffect(() => {
-    if (!account || chainId === null) {
-      setState({ kind: "disconnected" });
-      return;
+  const balances = useMemo<TokenBalance[]>(() => {
+    if (!loaded || notes.length === 0) return [];
+    const byToken = new Map<string, TokenBalance>();
+    for (const n of notes) {
+      const token = "0x" + n.note.token.toString(16).padStart(40, "0");
+      const cur = byToken.get(token);
+      if (cur) cur.raw += n.note.amount;
+      else byToken.set(token, { token, symbol: n.symbol, raw: n.note.amount });
     }
+    return [...byToken.values()].sort((a, b) =>
+      a.raw === b.raw ? 0 : a.raw < b.raw ? 1 : -1,
+    );
+  }, [notes, loaded]);
 
-    let cancelled = false;
-    setState({ kind: "loading" });
-
-    (async () => {
-      try {
-        const adapter = createIndexedDbNoteAdapter({
-          dbName: `zkscatter-pay-notes-${chainId}-${account.toLowerCase()}`,
-        });
-        const balances = await getAvailableBalance(adapter, { chainId });
-        if (!cancelled) setState({ kind: "ready", balances });
-      } catch (err) {
-        console.error("Failed to load pool balance", err);
-        if (!cancelled) {
-          setState({
-            kind: "error",
-            message: err instanceof Error ? err.message : "Failed to load balance",
-          });
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [account, chainId]);
+  const state: State = !account
+    ? { kind: "disconnected" }
+    : !loaded
+      ? { kind: "loading" }
+      : { kind: "ready", balances };
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
@@ -85,73 +64,63 @@ export function PoolBalanceCard() {
   );
 }
 
+type State =
+  | { kind: "disconnected" }
+  | { kind: "loading" }
+  | { kind: "ready"; balances: TokenBalance[] };
+
 function Headline({ state }: { state: State }) {
-  switch (state.kind) {
-    case "disconnected":
-      return <div className="mt-2 text-2xl font-semibold text-[var(--color-text-muted)]">— USDC</div>;
-    case "loading":
-      return <div className="mt-2 text-2xl font-semibold">…</div>;
-    case "error":
-      return <div className="mt-2 text-2xl font-semibold">— USDC</div>;
-    case "ready": {
-      const primary = state.balances.find((b) => b.symbol === PRIMARY_TOKEN_SYMBOL);
-      const display = primary
-        ? formatBalance(primary.raw, decimalsFor(primary.symbol))
-        : "0";
-      return (
-        <div className="mt-2 text-2xl font-semibold">
-          {display} USDC
-        </div>
-      );
-    }
+  if (state.kind === "disconnected") {
+    return <div className="mt-2 text-2xl font-semibold text-[var(--color-text-muted)]">— USDC</div>;
   }
+  if (state.kind === "loading") {
+    return <div className="mt-2 text-2xl font-semibold">…</div>;
+  }
+  const primary = state.balances.find((b) => b.symbol === PRIMARY_TOKEN_SYMBOL);
+  const display = primary
+    ? formatBalance(primary.raw, decimalsFor(primary.symbol))
+    : "0";
+  return <div className="mt-2 text-2xl font-semibold">{display} USDC</div>;
 }
 
 function Subline({ state }: { state: State }) {
-  switch (state.kind) {
-    case "disconnected":
-      return (
-        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          Connect your wallet to see your available balance.
-        </div>
-      );
-    case "loading":
-      return (
-        <div className="mt-1 text-xs text-[var(--color-text-muted)]">Reading from your local notes…</div>
-      );
-    case "error":
-      return (
-        <div className="mt-1 text-xs text-[var(--color-error,#dc2626)]">{state.message}</div>
-      );
-    case "ready": {
-      const others = state.balances.filter((b) => b.symbol !== PRIMARY_TOKEN_SYMBOL);
-      if (state.balances.length === 0) {
-        return (
-          <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            No deposits yet. Top up USDC to start sending.
-          </div>
-        );
-      }
-      const tail =
-        others.length > 0
-          ? ` · plus ${others.length} other token${others.length > 1 ? "s" : ""}`
-          : "";
-      return (
-        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          Available to send to recipients{tail}
-        </div>
-      );
-    }
+  if (state.kind === "disconnected") {
+    return (
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Connect your wallet to see your available balance.
+      </div>
+    );
   }
+  if (state.kind === "loading") {
+    return (
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Reading from your local notes…
+      </div>
+    );
+  }
+  if (state.balances.length === 0) {
+    return (
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        No deposits yet. Top up USDC to start sending.
+      </div>
+    );
+  }
+  const others = state.balances.filter((b) => b.symbol !== PRIMARY_TOKEN_SYMBOL);
+  const tail =
+    others.length > 0
+      ? ` · plus ${others.length} other token${others.length > 1 ? "s" : ""}`
+      : "";
+  return (
+    <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+      Available to send to recipients{tail}
+    </div>
+  );
 }
 
 function decimalsFor(symbol: string): number {
   return LAUNCH_TOKENS[symbol]?.decimals ?? 18;
 }
 
-// Format without coercing through Number — preserves precision for
-// balances larger than Number.MAX_SAFE_INTEGER, then groups thousands
-// and trims fractional digits to two.
 function formatBalance(raw: bigint, decimals: number): string {
   const fixed = ethers.formatUnits(raw, decimals);
   const [intPart, fracRaw = ""] = fixed.split(".");
