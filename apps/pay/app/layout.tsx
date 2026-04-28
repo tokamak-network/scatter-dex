@@ -4,6 +4,10 @@ import { PayProviders } from "./_lib/providers";
 import { WalletButton } from "./_components/WalletButton";
 import { FolderPill } from "./_components/FolderPill";
 import { Brand } from "./_components/Brand";
+import { WrongChainBanner } from "./_components/WrongChainBanner";
+import { Pill, StatusDot } from "@zkscatter/ui";
+import { chainName } from "@zkscatter/sdk";
+import { getNetworkConfig } from "./_lib/network";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,9 +25,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.
           </div>
           <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-              <Brand />
-              <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <Brand />
+                <PayNetworkPill />
+              </div>
+              <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
                 <a
                   href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
                   className="hover:text-[var(--color-text)]"
@@ -39,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </nav>
             </div>
           </header>
+          <WrongChainBanner />
           <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
           <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
             Scatter Pay · Powered by zkScatter · zk-X509 audit trail · Tokamak Network
@@ -46,5 +54,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </PayProviders>
       </body>
     </html>
+  );
+}
+
+function PayNetworkPill() {
+  const cfg = getNetworkConfig();
+  const label = cfg.name ?? chainName(cfg.chainId);
+  return (
+    <Pill title={label}>
+      <StatusDot kind="online" />
+      <span>{label}</span>
+    </Pill>
   );
 }

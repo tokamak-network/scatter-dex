@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
-import { RelayerPill } from "./components/RelayerPill";
+import { WrongChainBanner } from "./components/WrongChainBanner";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { VaultProvider } from "./lib/vault";
 import { OrdersProvider } from "./lib/orders";
@@ -41,9 +41,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                               🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
                             </div>
                             <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-                              <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                                <Brand />
-                                <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">
+                              <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
+                                <div className="flex items-center gap-3">
+                                  <Brand />
+                                  <NetworkSwitcher />
+                                </div>
+                                <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
                                   <a
                                     href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app"}
                                     className="hover:text-[var(--color-text)]"
@@ -54,12 +57,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
                                   <Link href="/inbox" className="hover:text-[var(--color-text)]">Inbox</Link>
-                                  <NetworkSwitcher />
-                                  <RelayerPill />
                                   <ConnectWalletPill />
                                 </nav>
                               </div>
                             </header>
+                            <WrongChainBanner />
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
                               Scatter Pro · Powered by zkScatter · Tokamak Network

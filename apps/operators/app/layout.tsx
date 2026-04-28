@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
+import { WrongChainBanner } from "./components/WrongChainBanner";
 import { Brand } from "./components/Brand";
+import { Pill, StatusDot } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
 import { FeeVaultProvider } from "./lib/useFeeVault";
@@ -25,9 +27,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Operator preview — Sepolia testnet. Pages with mock data are tagged inline.
             </div>
             <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-              <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                <Brand />
-                <nav className="flex items-center gap-6 text-sm text-[var(--color-text-muted)]">
+              <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <Brand />
+                  <Pill title={DEMO_NETWORK.name ?? "Network"}>
+                    <StatusDot kind="online" />
+                    <span>{DEMO_NETWORK.name ?? "Network"}</span>
+                  </Pill>
+                </div>
+                <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
                   <a
                     href={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
                     className="hover:text-[var(--color-text)]"
@@ -45,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </nav>
               </div>
             </header>
+            <WrongChainBanner />
             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
               Scatter Operators · Powered by zkScatter · Tokamak Network
