@@ -1,0 +1,92 @@
+---
+title: Cancel an order
+description: "Roll an unmatched order forward into a fresh commitment."
+---
+
+A cancel produces a Groth16 proof that:
+
+- Spends the maker's existing leaf (advances the nullifier).
+- Re-deposits the same balance under a fresh commitment.
+
+The original order's `nonce` is invalidated, so the relayer can't match
+it after cancellation goes on-chain.
+
+## When to cancel
+
+- The order has not yet been matched.
+- You want to change side, price, or expiry.
+- The relayer you submitted to has gone offline and can't return your
+  order.
+
+If the order has already settled, there's nothing to cancel — claim
+the payout instead.
+
+## Code
+
+```ts
+import { generateCancelProof, randomFieldElement } from "@zkscatter/sdk/zk";
+import { callCancel } from "@zkscatter/sdk/contracts";
+
+const cancelResult = await generateCancelProof(
+  {
+    note: storedNote.note,
+    leafIndex: storedNote.leafIndex,
+    merkleProof,
+    eddsaPrivateKey: eddsa.privateKey,
+    originalOrderHash,                // hash of the order being cancelled
+    nonce: originalNonce,
+    newSalt: randomFieldElement(),
+  },
+  { wasm: "/zk/cancel.wasm", zkey: "/zk/cancel_final.zkey" },
+);
+
+const tx = await callCancel(
+  signer,
+  network.contracts.privateSettlement,
+  cancelResult,
+);
+await tx.wait();
+
+// Replace the old note with the rolled-forward one.
+await notes.put({
+  ...storedNote,
+  id: cancelResult.newCommitment.toString(16),
+  commitment: cancelResult.newCommitment,
+  leafIndex: -1,
+  createdAt: Date.now(),
+});
+await notes.remove(storedNote.id);
+```
+
+## Notify the relayer
+
+The relayer doesn't strictly need a hint — once the cancel is on-chain,
+the original `nonce` is unspendable. But notifying through the relayer
+API frees up the slot in their order book sooner:
+
+```ts
+// SDK signature: cancelOrder(address, nonce, signature, signal?).
+// `nonce` must be the numeric nonce the relayer indexed.
+await client.cancelOrder(account, Number(originalNonce), signature);
+```
+
+(Endpoint shape depends on the relayer's HTTP API. Check `getInfo()`
+for capabilities.)
+
+## Race with matching
+
+A cancel proof submitted at the same time as a settle is a race — only
+one can win because both consume the same nullifier. If your cancel
+reverts with `nullifier reused`, the order has already settled. Refresh
+the order list and treat it as filled.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`nullifier reused`">
+    Order already matched and settled. Treat as filled, not as failure.
+  </Accordion>
+  <Accordion title="`Bad merkle proof`">
+    Tree state stale. Reload commitment history and rebuild the proof.
+  </Accordion>
+</AccordionGroup>

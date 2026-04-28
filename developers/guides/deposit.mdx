@@ -1,0 +1,169 @@
+---
+title: Deposit funds
+description: "Mint a commitment in the pool from an ERC-20 balance."
+---
+
+A deposit converts an on-chain ERC-20 balance into a private commitment
+in `CommitmentPool`. The commitment hides the owner, token, and amount;
+only the depositor can later prove they own it.
+
+## Flow
+
+<Steps>
+  <Step title="Derive an EdDSA key">
+    From the wallet's ECDSA signature so the pubkey is deterministic.
+  </Step>
+  <Step title="Generate a note">
+    Bind it to the EdDSA pubkey, the token, and the amount.
+  </Step>
+  <Step title="Generate a deposit proof">
+    Groth16 over Baby Jubjub — runs in a Web Worker.
+  </Step>
+  <Step title="Approve and deposit">
+    `ensureAllowance` then `callDeposit`. Persist the note locally.
+  </Step>
+</Steps>
+
+## Code
+
+```tsx components/Deposit.tsx
+"use client";
+
+import { useWallet } from "@zkscatter/sdk/react";
+import {
+  generateNote,
+  generateDepositProof,
+  deriveEdDSAKey,
+} from "@zkscatter/sdk/zk";
+import { ensureAllowance, callDeposit } from "@zkscatter/sdk/contracts";
+import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
+import { network } from "@/lib/network";
+
+const notes = createIndexedDbNoteAdapter();
+
+export function DepositButton({
+  token,
+  symbol,
+  amount,
+}: {
+  token: string;
+  symbol: string;
+  amount: bigint;
+}) {
+  const { signer } = useWallet();
+
+  async function deposit() {
+    if (!signer) throw new Error("Connect wallet first");
+
+    const eddsa = await deriveEdDSAKey(signer);
+    const note = generateNote(token, amount, eddsa.publicKey);
+
+    const result = await generateDepositProof(note, {
+      wasm: "/zk/deposit.wasm",
+      zkey: "/zk/deposit_final.zkey",
+    });
+
+    // ensureAllowance returns one or two PENDING approval txs (USDT
+    // requires reset-to-zero + approve(amount)). Wait for each to
+    // confirm before depositing — otherwise the deposit can race
+    // ahead of the approve and revert with `transfer amount exceeds
+    // allowance`.
+    const approvals = await ensureAllowance(
+      signer,
+      token,
+      network.contracts.commitmentPool,
+      amount,
+    );
+    await Promise.all(approvals.map((tx) => tx.wait()));
+
+    const tx = await callDeposit(
+      signer,
+      network.contracts.commitmentPool,
+      result,
+      token,
+      amount,
+    );
+    const receipt = await tx.wait();
+
+    await notes.ready();
+    await notes.put({
+      id: result.commitment.toString(16),
+      label: `Deposit ${symbol}`,
+      symbol,
+      amount: amount.toString(),
+      note,
+      commitment: result.commitment,
+      leafIndex: -1, // populated when the CommitmentInserted event lands
+      txHash: receipt?.hash,
+      chainId: network.chainId,
+      createdAt: Date.now(),
+    });
+  }
+
+  return <button onClick={deposit}>Deposit {symbol}</button>;
+}
+```
+
+## Filling in `leafIndex`
+
+After the transaction confirms, the pool emits `CommitmentInserted`.
+Subscribe and update the note in storage. Wrap the subscription in a
+`useEffect` so a fresh listener attaches once per mount and tears down
+on unmount — never call `subscribeCommitmentInserted` in render:
+
+```tsx
+"use client";
+
+import { useEffect } from "react";
+import { useWallet } from "@zkscatter/sdk/react";
+import { subscribeCommitmentInserted } from "@zkscatter/sdk";
+
+export function PoolWatcher() {
+  const { readProvider } = useWallet();
+
+  useEffect(() => {
+    if (!readProvider) return;
+    const unsub = subscribeCommitmentInserted(
+      readProvider,
+      network.contracts.commitmentPool,
+      async (row) => {
+        const stored = (await notes.loadAll()).find(
+          (n) => n.commitment === row.commitment,
+        );
+        if (stored && stored.leafIndex < 0) {
+          await notes.put({ ...stored, leafIndex: row.leafIndex });
+        }
+      },
+    );
+    return unsub;
+  }, [readProvider]);
+
+  return null;
+}
+```
+
+## Native ETH
+
+If the user is depositing the synthetic "ETH" entry inserted by
+`withNativeEthAlias`, swap to a different code path that wraps WETH
+first (or use a contract method that accepts ETH directly, depending
+on your deployment).
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="`Could not load wasm`">
+    Confirm `/zk/deposit.wasm` and `/zk/deposit_final.zkey` are in
+    `public/zk/` and the dev server serves them with the correct
+    MIME types.
+  </Accordion>
+  <Accordion title="Deposit reverts with `IdentityGate: not whitelisted`">
+    The depositor must satisfy the IdentityGate (KYC / zk-X509). Show
+    a verification CTA before exposing the deposit UI.
+  </Accordion>
+  <Accordion title="USDT approve fails">
+    USDT requires `approve(0)` before any non-zero approve.
+    `ensureAllowance` does this for you — make sure you're calling it,
+    not raw `approve`.
+  </Accordion>
+</AccordionGroup>

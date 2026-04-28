@@ -1,0 +1,205 @@
+---
+title: zk
+description: "Groth16 prover, Poseidon, EdDSA, Merkle trees, stealth addresses."
+---
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk/zk";
+```
+
+The `zk` module is the SDK's cryptographic core. It assumes a browser
+or React Native runtime — for Node usage you'll need polyfills for
+`crypto.getRandomValues` and (optionally) IndexedDB.
+
+## Prover interface
+
+```ts
+interface Prover {
+  ready(): Promise<void>;
+  prove(req: ProveRequest, opts?: ProveOpts): Promise<ProveResult>;
+  dispose(): void;
+}
+
+const prover = createWebWorkerProver({
+  // Lazy factory — the worker spawns on the first prove / ready call.
+  createWorker: () => new Worker("/zk-worker.js"),
+  label: "scatter-prover",
+  // Optional main-thread fallback if the Worker constructor throws.
+  // fallbackProve: (req, opts) => mainThreadProve(req, opts),
+});
+
+const result = await prover.prove(
+  { circuitId: "deposit", input: depositInput },
+  { signal: abort.signal, onProgress: (m) => console.log(m) },
+);
+```
+
+Use `createMockProver()` for tests — emits deterministic dummy proofs
+that the on-chain verifier rejects but pass type-checking.
+
+## Field arithmetic
+
+```ts
+import {
+  FIELD_MODULUS,
+  randomFieldElement,
+  poseidonHash,
+  poseidonHashWith,
+  warmupPoseidon,
+  getPoseidonModule,
+  toBytes32Hex,
+} from "@zkscatter/sdk/zk";
+
+await warmupPoseidon();              // optional preload
+const h = await poseidonHash([1n, 2n, 3n]);
+const r = randomFieldElement();
+const hex = toBytes32Hex(h);         // "0x..." padded to 32 bytes
+```
+
+For hot loops, retain the Poseidon module:
+
+```ts
+const poseidon = await getPoseidonModule();
+for (const note of notes) {
+  const h = poseidonHashWith(poseidon, [note.token, note.amount]);
+}
+```
+
+## Commitments
+
+```ts
+interface CommitmentNote {
+  ownerSecret: bigint;
+  token: bigint;       // address as bigint
+  amount: bigint;
+  salt: bigint;
+  pubKeyAx: bigint;
+  pubKeyAy: bigint;
+}
+
+generateNote(token, amount, eddsa.publicKey);        // → CommitmentNote (sync)
+await computeCommitment(note);                       // → Poseidon hash
+await computeNullifier(note);                        // → escrow nullifier
+await computeNonceNullifier(ownerSecret, nonce);     // → replay protection
+await computeClaimNullifier(secret, leafIndex);      // → claim-side nullifier
+await computeTokenHash(tokenAddress);                // → Poseidon(token)
+```
+
+## EdDSA
+
+```ts
+import {
+  deriveEdDSAKey,
+  signEdDSA,
+  DEFAULT_DERIVE_MESSAGE,
+  type EdDSAKeyPair,
+  type EdDSASignature,
+} from "@zkscatter/sdk/zk";
+
+const eddsa = await deriveEdDSAKey(signer);
+//   { privateKey: Uint8Array(32), publicKey: [bigint, bigint] }
+
+const sig = signEdDSA(eddsa.privateKey, messageHash);
+//   { S: bigint, R8x: bigint, R8y: bigint }
+```
+
+`deriveEdDSAKey` derives a deterministic Baby Jubjub key from a wallet
+ECDSA signature. The default derivation message is consensus-critical
+— do not override it unless you understand the implications.
+
+## Merkle trees
+
+```ts
+import {
+  buildMerkleTree,
+  getMerkleProof,
+  IncrementalMerkleTree,
+  COMMIT_TREE_DEPTH,
+} from "@zkscatter/sdk/zk";
+
+// One-shot from leaves:
+const tree = await buildMerkleTree(leaves, COMMIT_TREE_DEPTH);
+// buildMerkleTree returns BuiltTree { root, layers }; getMerkleProof
+// walks the layer arrays — pass tree.layers, not the tree itself.
+const oneShotProof = getMerkleProof(tree.layers, leafIndex);
+
+// Incremental (matches on-chain contract):
+const inc = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+await inc.insert(leaf);            // async — Poseidon hashing per level
+inc.root;                          // current root
+inc.nextIndex;                     // next free index
+const incProof = await inc.proof(leafIndex);
+```
+
+Use `IncrementalMerkleTree` when streaming `CommitmentInserted` events;
+use `buildMerkleTree` when reconstructing from a fresh history scan.
+
+## Stealth addresses
+
+See [Stealth addresses](/concepts/stealth-addresses) for the full
+walkthrough.
+
+```ts
+const meta = generateMetaAddress();
+const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta.metaAddress);
+const spendingPriv = deriveStealthPrivateKey(meta.spendingKey, ephemeralPubKey);
+```
+
+## Circuit-specific proofs
+
+Each circuit has a `generateXxxProof(input, assets)` function:
+
+```ts
+const depositResult = await generateDepositProof(note, {
+  wasm: "/zk/deposit.wasm",
+  zkey: "/zk/deposit_final.zkey",
+});
+
+const authResult = await generateAuthorizeProof(authInput, {
+  wasm: "/zk/authorize.wasm",
+  zkey: "/zk/authorize_final.zkey",
+});
+
+const claimResult = await generateClaimProof(claimInput, {
+  wasm: "/zk/claim.wasm",
+  zkey: "/zk/claim_final.zkey",
+});
+
+const cancelResult = await generateCancelProof(cancelInput, {
+  wasm: "/zk/cancel.wasm",
+  zkey: "/zk/cancel_final.zkey",
+});
+```
+
+See the input types via TypeScript autocomplete or the source —
+`AuthorizeProofInput`, `ClaimEntry`, etc., are exported from `./zk`.
+
+## Asset cache
+
+```ts
+import { zkeyCache } from "@zkscatter/sdk/zk";
+
+await zkeyCache.warmup({
+  authorize: { wasm: "/zk/authorize.wasm", zkey: "/zk/authorize_final.zkey" },
+});
+```
+
+The cache stores assets in IndexedDB keyed by URL + ETag (when present).
+Subsequent proves skip the network fetch.
+
+## Instrumentation
+
+```ts
+import { timeProve } from "@zkscatter/sdk/zk";
+
+const result = await timeProve("authorize", () =>
+  generateAuthorizeProof(input, assets),
+);
+// dispatches `zk-perf:prove` CustomEvent on window
+```
+
+## Hardening
+
+- Wipe key material with `wipeBytes(buf)` after use.
+- Never log `eddsa.privateKey`, `meta.spendingKey`, or note secrets.
+- Treat `note.ownerSecret` like a private key — losing it loses the funds.

@@ -1,0 +1,125 @@
+---
+title: Persist notes
+description: "Keep commitment-note preimages safe across reloads and devices."
+---
+
+A **note** is the secret behind every commitment in the pool. Lose the
+note, lose the funds. This guide covers persistence, recovery, and the
+tradeoffs.
+
+## Storage adapter
+
+```ts
+import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
+
+const notes = createIndexedDbNoteAdapter({
+  dbName: "myapp",
+  storeName: "notes",
+  version: 1,
+});
+await notes.ready();
+```
+
+Use `createMemoryNoteAdapter()` in tests, SSR, and CLI tools.
+
+## CRUD
+
+```ts
+await notes.put(stored);                       // upsert
+const all = await notes.loadAll();             // ordered by createdAt
+await notes.remove(stored.id);
+await notes.clear();                           // wipe (e.g. on logout)
+```
+
+## What to store
+
+```ts
+interface StoredNote {
+  id: string;             // commitment hex (recommended)
+  label: string;          // "Deposit USDC" or order label
+  symbol: string;
+  amount: string;         // display string, decimals applied
+  note: CommitmentNote;   // bigint preimage — the secret
+  commitment: bigint;
+  leafIndex: number;      // -1 until CommitmentInserted lands
+  txHash?: string;
+  chainId?: number;
+  createdAt: number;
+}
+```
+
+Pick `id = commitment.toString(16)` so duplicates can't accumulate.
+
+## Filling in `leafIndex` async
+
+A deposit creates the note before the chain emits the leaf index.
+Reconcile asynchronously:
+
+```ts
+import { subscribeCommitmentInserted } from "@zkscatter/sdk";
+
+const unsub = subscribeCommitmentInserted(
+  readProvider,
+  network.contracts.commitmentPool,
+  async (row) => {
+    const all = await notes.loadAll();
+    const target = all.find((n) => n.commitment === row.commitment);
+    if (target && target.leafIndex < 0) {
+      await notes.put({ ...target, leafIndex: row.leafIndex });
+    }
+  },
+);
+```
+
+## Encryption at rest
+
+For threat models that include physical device access, encrypt the
+`note` field before writing:
+
+```ts
+const ciphertext = await aesEncrypt(passphraseKey, serializeNote(note));
+await notes.put({ ...rest, note: { ciphertext } as unknown as CommitmentNote });
+```
+
+Decrypt on `loadAll` before passing the note into `generateAuthorizeProof`.
+
+## Account isolation
+
+Different connected accounts should see different notes. Either:
+
+- Namespace by `dbName: \`zkscatter-\${account.toLowerCase()}\``, or
+- Tag each note with `chainId + ownerSecret` and filter on load.
+
+Don't keep notes from a previous account visible after a switch.
+
+## Recovery from seed
+
+If the user wipes storage but keeps their wallet:
+
+1. Re-derive `eddsa = await deriveEdDSAKey(signer)`.
+2. Stream `loadCommitmentInsertedHistory` from genesis.
+3. For each commitment, recompute the candidate hash for plausible
+   `(token, amount, salt)` combinations and compare.
+
+In practice this is too expensive without a salt index; recommended
+flow is **ship a backup file**: an encrypted blob of `loadAll()`
+output the user can re-import.
+
+## Backup file format
+
+```ts
+async function exportBackup(passphrase: string) {
+  const all = await notes.loadAll();
+  const json = JSON.stringify(all, replacerWithBigInts);
+  return aesEncryptString(passphrase, json);
+}
+```
+
+Watch out for `bigint` JSON serialization — write a custom replacer
+or convert to hex strings before stringifying.
+
+## Multi-device
+
+Cross-device sync is **out of scope** for the SDK. Do not store notes
+in a cloud-synced KV without end-to-end encryption — the cloud
+provider becomes a custodian of your funds.

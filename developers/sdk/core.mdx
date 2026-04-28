@@ -1,0 +1,130 @@
+---
+title: core
+description: "Network config, contract ABIs, token whitelist, pool events."
+---
+
+```ts
+import { /* ... */ } from "@zkscatter/sdk";
+// or
+import { /* ... */ } from "@zkscatter/sdk/core";
+```
+
+The `core` module is platform-agnostic — no DOM, no React, no Node-only
+APIs — and is re-exported from the package root.
+
+## Network configuration
+
+```ts
+interface NetworkConfig {
+  chainId: number;
+  rpcUrl: string;
+  contracts: ContractAddresses;
+  tokens: TokenInfo[];
+}
+
+interface ContractAddresses {
+  privateSettlement: string;
+  commitmentPool: string;
+  relayerRegistry: string;
+  identityGate: string;
+  feeVault: string;
+  weth: string;
+}
+```
+
+Helpers:
+
+```ts
+chainName(11155111);                 // "Sepolia"
+explorerLink(network, "tx", hash);   // "https://sepolia.etherscan.io/tx/0x..."
+explorerLink(network, "address", a); // explorer URL for an address
+isConfiguredAddress(addr);           // false for zero / null / undefined
+eqAddr(a, b);                        // case-insensitive equality
+ZERO_ADDRESS;                        // "0x0000000000000000000000000000000000000000"
+```
+
+`KNOWN_CHAIN_NAMES` and `KNOWN_EXPLORER_BASES` are public maps if you
+need to extend them.
+
+## Provider
+
+```ts
+import { getReadProvider } from "@zkscatter/sdk";
+
+const provider = getReadProvider(network.rpcUrl);
+```
+
+Returns a `JsonRpcProvider`. Use this for read-only operations
+(historical events, pool subscriptions, registry lookups). For
+write operations get the signer from `useWallet`.
+
+## Tokens
+
+```ts
+interface TokenInfo {
+  address: string;
+  symbol: string;
+  decimals: number;
+  isNative?: boolean;
+}
+
+parseTokenList("0xabc:USDC:6,0xdef:USDT:6");           // → TokenInfo[]
+withNativeEthAlias(tokens, wethAddress);                // adds synthetic ETH entry
+tokenMap(tokens);                                       // address → TokenInfo (excludes ETH alias)
+tokensBySymbol(tokens);                                 // symbol → TokenInfo
+```
+
+## Whitelisted pairs
+
+```ts
+import {
+  LAUNCH_TOKENS,         // { ETH, USDC, USDT, TON } with metadata
+  LAUNCH_PAIRS,          // 7 curated pairs
+  pairsByMarket,         // group by quote: USDC | USDT | ETH
+  findPair,              // lookup by display string ("ETH/USDC")
+  type WhitelistedPair,
+  type QuoteMarket,
+} from "@zkscatter/sdk";
+```
+
+Use these for launch-day UI; replace with on-chain whitelist reads as
+the protocol expands.
+
+## Contract ABIs
+
+Each contract ships in two forms:
+
+```ts
+import {
+  PRIVATE_SETTLEMENT_ABI,    // string[] for new ethers.Contract(...)
+  PRIVATE_SETTLEMENT_IFACE,  // ethers.Interface, pre-parsed
+  COMMITMENT_POOL_ABI,
+  COMMITMENT_POOL_IFACE,
+  RELAYER_REGISTRY_ABI,
+  RELAYER_REGISTRY_IFACE,
+  IDENTITY_GATE_ABI,
+  IDENTITY_GATE_IFACE,
+  FEE_VAULT_ABI,
+  FEE_VAULT_IFACE,
+  ERC20_ABI,
+  ERC20_IFACE,
+} from "@zkscatter/sdk";
+```
+
+Prefer `*_IFACE` when decoding logs — it skips the per-call parse cost.
+
+## Pool events
+
+```ts
+loadCommitmentInsertedHistory(provider, poolAddress, options?);
+// → CommitmentInsertedRow[]: { commitment: bigint, leafIndex: number }
+
+const unsub = subscribeCommitmentInserted(provider, poolAddress, (row) => {
+  // row.leafIndex, row.commitment
+});
+unsub();
+```
+
+`options` accepts `{ fromBlock?, toBlock? }` (ethers `BlockTag`). For
+reorg safety, fetch up to `head - confirmations` yourself (see
+[Subscribe to pool events](/guides/subscribe-pool-events)).

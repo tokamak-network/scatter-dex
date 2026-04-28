@@ -1,125 +1,235 @@
 ---
 title: Quickstart
-description: "Wire @zkscatter/sdk into a TypeScript project in under 5 minutes."
+description: "From npm install to a settled private trade — end to end."
 ---
 
-<Note>
-  `@zkscatter/sdk` is in **Phase 0** — it ships network configs, contract
-  ABIs/Interfaces, and a few helpers. The proof-generation and relayer
-  client surfaces ship in subsequent phases. This page reflects what
-  works today.
-</Note>
+This walkthrough wires the SDK into a fresh Next.js app and exercises
+every layer: wallet → deposit → order → settle → claim. Skim the
+[Architecture](/concepts/architecture) page first if any of those words
+look unfamiliar.
 
 ## 1. Install
 
-<CodeGroup>
-
-```bash npm
-npm install @zkscatter/sdk
+```bash
+npm install @zkscatter/sdk ethers react@^19
 ```
 
-```bash pnpm
-pnpm add @zkscatter/sdk
-```
+See [Installation](/installation) for Next.js wiring and Web Worker
+asset setup.
 
-```bash yarn
-yarn add @zkscatter/sdk
-```
+## 2. Configure the network
 
-</CodeGroup>
-
-The SDK is a peer of `ethers` — it does not bundle one. Install
-`ethers` (or `viem`) yourself if your app does not already depend on
-either.
-
-## 2. Reach the core surface
-
-Everything platform-agnostic ships from the root entrypoint:
-
-```ts
+```ts lib/network.ts
 import {
-  PRIVATE_SETTLEMENT_ABI,
-  PRIVATE_SETTLEMENT_IFACE,
-  COMMITMENT_POOL_ABI,
-  ERC20_ABI,
-  chainName,
   parseTokenList,
-  explorerLink,
+  withNativeEthAlias,
   type NetworkConfig,
-  type TokenInfo,
 } from "@zkscatter/sdk";
-```
 
-DOM-only modules (Web Worker proof types, the React hook) live behind
-their own subpaths so a Node/SSR consumer that omits `lib.dom` from
-`tsconfig` does not pick them up by accident:
+const wethAddress = "0x...";
 
-```ts
-import { /* ... */ } from "@zkscatter/sdk/zk";
-import { /* ... */ } from "@zkscatter/sdk/relayer";
-import { /* ... */ } from "@zkscatter/sdk/react";
-```
-
-## 3. Resolve a network
-
-```ts
-const network: NetworkConfig = {
+export const network: NetworkConfig = {
   chainId: 11155111,
-  rpcUrl: process.env.RPC_URL!,
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL!,
   contracts: {
     privateSettlement: "0x...",
     commitmentPool: "0x...",
     relayerRegistry: "0x...",
     identityGate: "0x...",
+    feeVault: "0x...",
+    weth: wethAddress,
   },
-  tokens: parseTokenList(
-    "0x...:USDC:6,0x...:WETH:18",
+  tokens: withNativeEthAlias(
+    parseTokenList(process.env.NEXT_PUBLIC_TOKEN_LIST),
+    wethAddress,
   ),
 };
-
-console.log(chainName(network.chainId));
-// → "Sepolia"
-
-console.log(
-  explorerLink(network, "tx", "0xdead..."),
-);
-// → "https://sepolia.etherscan.io/tx/0xdead..."
 ```
 
-## 4. Decode a settlement event
+`parseTokenList` expects the compact `addr:symbol:decimals,…` format —
+useful for shipping the same config through env vars across web and mobile.
 
-The pre-parsed `Interface` lets you decode logs without re-instantiating
-ethers:
+## 3. Mount the wallet provider
 
-```ts
-import { PRIVATE_SETTLEMENT_IFACE } from "@zkscatter/sdk";
+```tsx app/providers.tsx
+"use client";
 
-const log = /* an ethers Log from the PrivateSettlement contract */;
+import { WalletProvider } from "@zkscatter/sdk/react";
+import { network } from "@/lib/network";
 
-const parsed = PRIVATE_SETTLEMENT_IFACE.parseLog({
-  topics: [...log.topics],
-  data: log.data,
-});
-
-if (parsed?.name === "Settled") {
-  const [commitment, relayer] = parsed.args;
-  // ...
+export function Providers({ children }: { children: React.ReactNode }) {
+  return <WalletProvider network={network}>{children}</WalletProvider>;
 }
 ```
 
-<Check>
-  That covers the Phase 0 surface. The full proof-and-submit flow —
-  including the half-proof authorization, relayer submission, and
-  on-chain settlement — ships in Phase 1.
-</Check>
+```tsx app/layout.tsx
+import { Providers } from "./providers";
 
-## Next steps
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body><Providers>{children}</Providers></body>
+    </html>
+  );
+}
+```
+
+## 4. Deposit into the pool
+
+```tsx components/Deposit.tsx
+"use client";
+
+import { useWallet } from "@zkscatter/sdk/react";
+import {
+  generateNote,
+  generateDepositProof,
+  deriveEdDSAKey,
+} from "@zkscatter/sdk/zk";
+import { ensureAllowance, callDeposit } from "@zkscatter/sdk/contracts";
+import { network } from "@/lib/network";
+
+export function DepositButton({ token, amount }: { token: string; amount: bigint }) {
+  const { signer } = useWallet();
+
+  async function deposit() {
+    if (!signer) throw new Error("Connect wallet first");
+
+    const eddsa = await deriveEdDSAKey(signer);
+    const note = generateNote(token, amount, eddsa.publicKey);
+
+    const result = await generateDepositProof(note, {
+      wasm: "/zk/deposit.wasm",
+      zkey: "/zk/deposit_final.zkey",
+    });
+
+    // ensureAllowance returns pending approval txs; wait for each to
+    // confirm before depositing or the deposit can race ahead.
+    const approvals = await ensureAllowance(
+      signer,
+      token,
+      network.contracts.commitmentPool,
+      amount,
+    );
+    await Promise.all(approvals.map((tx) => tx.wait()));
+    const tx = await callDeposit(
+      signer,
+      network.contracts.commitmentPool,
+      result,
+      token,
+      amount,
+    );
+    await tx.wait();
+
+    // Persist `note` + `result.commitment` — see /guides/persist-notes.
+  }
+
+  return <button onClick={deposit}>Deposit</button>;
+}
+```
+
+## 5. Discover relayers and place an order
+
+```ts
+import {
+  loadRelayersWithApiInfo,
+  RelayerClient,
+  type OrderData,
+} from "@zkscatter/sdk/relayer";
+import {
+  generateAuthorizeProof,
+  randomFieldElement,
+} from "@zkscatter/sdk/zk";
+
+const relayers = await loadRelayersWithApiInfo(
+  network.contracts.relayerRegistry,
+  readProvider,
+);
+const best = relayers.find((r) => r.online && r.api);
+if (!best?.api) throw new Error("No relayer online");
+
+const expiry = BigInt(Math.floor(Date.now() / 1000) + 600);
+
+// AuthorizeProofInput uses `note.token` for the sell side — no
+// separate `sellToken` field. `claims` here must match the order's
+// claim distribution (see /guides/place-order for the full shape).
+const authResult = await generateAuthorizeProof(
+  {
+    note,
+    leafIndex,
+    merkleProof,
+    sellAmount: amountIn,
+    buyToken: tokenB,
+    buyAmount: amountOut,
+    maxFee,
+    expiry,
+    nonce,
+    relayer: best.address,
+    eddsaPrivateKey: eddsa.privateKey,
+    claims: [/* stealth-addressed payouts */],
+    newSalt: randomFieldElement(),
+  },
+  { wasm: "/zk/authorize.wasm", zkey: "/zk/authorize_final.zkey" },
+);
+
+const order: OrderData = {
+  maker: account,
+  sellToken: tokenA,
+  buyToken: tokenB,
+  sellAmount: amountIn.toString(),
+  buyAmount: amountOut.toString(),
+  maxFee: Number(maxFee),
+  expiry: Number(expiry),
+  nonce: Number(nonce),
+  claims,                          // wire-format claim entries
+};
+
+// `signature` is a relayer-protocol string — see the relayer's
+// /api/info for the format it accepts.
+const client = new RelayerClient(best.url);
+await client.submitOrder(order, signature, "cover_taker");
+```
+
+See [Place an order](/guides/place-order) for the complete flow,
+including how to build the merkle proof from indexed pool events.
+
+## 6. Claim a payout
+
+When a counterparty's order matches yours, your stealth payout lands as
+a new commitment in the pool. Claim it whenever you like:
+
+```ts
+import { generateClaimProof } from "@zkscatter/sdk/zk";
+import { callClaimWithProof } from "@zkscatter/sdk/contracts";
+
+const claimResult = await generateClaimProof(claimInput, {
+  wasm: "/zk/claim.wasm",
+  zkey: "/zk/claim_final.zkey",
+});
+
+const tx = await callClaimWithProof(
+  signer,
+  network.contracts.privateSettlement,
+  claimResult.proof,
+  { recipient, token, amount, releaseTime },
+);
+await tx.wait();
+```
+
+Claims can also be batched — see [Claim a payout](/guides/claim).
+
+## What's next
 
 <CardGroup cols={2}>
-  <Card title="SDK README" icon="book" href="https://github.com/tokamak-network">
-    Module-by-module rundown of what Phase 0 ships and what is planned.
+  <Card title="Architecture" icon="diagram-project" href="/concepts/architecture">
+    Why half-proofs, why a commitment pool, why stealth addresses.
   </Card>
-  <Card title="zkScatter apps" icon="grid" href="https://zkscatter.xyz/apps">
-    See the SDK in production behind Pro, Pay, Drop, and Mobile.
+  <Card title="Persist notes" icon="database" href="/guides/persist-notes">
+    Keep notes safe across reloads and devices.
+  </Card>
+  <Card title="Run a relayer" icon="server" href="/operate/run-a-relayer-node">
+    Match orders, charge fees, manage your bond.
+  </Card>
+  <Card title="SDK reference" icon="code" href="/sdk/overview">
+    Every export, every signature.
   </Card>
 </CardGroup>

@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "zkScatter",
-  "description": "Build private, compliant trading on the zkScatter ZK stack.",
+  "description": "Build private, compliant trading apps on the zkScatter ZK stack.",
   "colors": {
     "primary": "#0b1220",
     "light": "#0ea5e9",
@@ -17,7 +17,53 @@
             "group": "Get started",
             "pages": [
               "introduction",
+              "installation",
               "quickstart"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/proof-system",
+              "concepts/stealth-addresses"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/connect-wallet",
+              "guides/deposit",
+              "guides/place-order",
+              "guides/claim",
+              "guides/cancel",
+              "guides/discover-relayers",
+              "guides/persist-notes",
+              "guides/subscribe-pool-events"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "operate/run-a-relayer-node"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK reference",
+        "groups": [
+          {
+            "group": "Reference",
+            "pages": [
+              "sdk/overview",
+              "sdk/core",
+              "sdk/contracts",
+              "sdk/zk",
+              "sdk/relayer",
+              "sdk/orderbook",
+              "sdk/notes",
+              "sdk/react"
             ]
           }
         ]
@@ -27,7 +73,7 @@
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/tokamak-network",
+          "href": "https://github.com/tokamak-network/scatter-dex",
           "icon": "github"
         },
         {
@@ -48,7 +94,7 @@
     "primary": {
       "type": "button",
       "label": "GitHub",
-      "href": "https://github.com/tokamak-network"
+      "href": "https://github.com/tokamak-network/scatter-dex"
     }
   },
   "footer": {

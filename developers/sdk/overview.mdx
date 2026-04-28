@@ -1,0 +1,67 @@
+---
+title: Overview
+description: "Module map of @zkscatter/sdk."
+---
+
+`@zkscatter/sdk` ships as a multi-entry package. Pick the subpath that
+matches what you're doing — bundlers tree-shake the rest.
+
+## Modules
+
+<CardGroup cols={2}>
+  <Card title="core" icon="cube" href="/sdk/core">
+    Network config, contract ABIs, token whitelist, pool event helpers.
+  </Card>
+  <Card title="contracts" icon="file-contract" href="/sdk/contracts">
+    Typed transaction builders for deposit, settle, claim, cancel.
+  </Card>
+  <Card title="zk" icon="shield-halved" href="/sdk/zk">
+    Groth16 prover, Poseidon, EdDSA, Merkle trees, stealth addresses.
+  </Card>
+  <Card title="relayer" icon="network-wired" href="/sdk/relayer">
+    Registry, HTTP client, operator actions, profile sanitization.
+  </Card>
+  <Card title="orderbook" icon="list-ol" href="/sdk/orderbook">
+    Read-only client for the shared order discovery service.
+  </Card>
+  <Card title="notes" icon="database" href="/sdk/notes">
+    Pluggable note storage adapters (memory, IndexedDB).
+  </Card>
+  <Card title="react" icon="react" href="/sdk/react">
+    Wallet provider + `useWallet` hook for browser apps.
+  </Card>
+</CardGroup>
+
+## Compatibility matrix
+
+| Subpath | Browser | Node / SSR | React Native |
+|---|---|---|---|
+| root / `core` | ✅ | ✅ | ✅ |
+| `contracts` | ✅ | ✅ | ✅ |
+| `zk` | ✅ | ⚠️ no Worker | ⚠️ native prover required |
+| `relayer` | ✅ | ✅ | ✅ |
+| `orderbook` | ✅ | ✅ | ✅ |
+| `notes` | ✅ | ⚠️ memory only | ⚠️ memory only |
+| `react` | ✅ | ❌ | ❌ |
+
+## Versioning
+
+`@zkscatter/sdk` follows semver. Contract ABIs are pinned per minor —
+upgrading the SDK to track a contract upgrade is always a minor bump,
+even if the surface is source-compatible. Each minor release notes the
+contract version it tracks alongside any breaking source changes.
+
+## Conventions
+
+- All async APIs accept an optional `AbortSignal` (`signal?` parameter)
+  for cancellation.
+- ZK and contract-layer numeric values use native `bigint` (commitments,
+  amounts in `callDeposit`, EdDSA coordinates, etc.). HTTP wire types
+  in `relayer` and `orderbook` use strings for amounts/nonces and
+  numbers for `maxFee`/`expiry`/`nonce` to match the relayer protocol.
+  Storage adapters serialize bigints at their boundary.
+- All ABIs are exposed as both raw strings (`*_ABI`) and pre-parsed
+  ethers `Interface` objects (`*_IFACE`) — use the iface for
+  decoding logs without re-parsing.
+- All HTTP clients accept a `fetch` override for custom transports
+  (proxies, mocks, polyfills).

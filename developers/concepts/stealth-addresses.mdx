@@ -1,0 +1,105 @@
+---
+title: Stealth addresses
+description: "EIP-5564 unlinkable payouts for orders and drops."
+---
+
+A stealth address is a one-shot recipient address derived from a
+shareable **meta-address** plus an ephemeral key chosen by the sender.
+Only the recipient (holder of the *viewing key*) can recognize that the
+stealth address belongs to them; only the recipient (holder of the
+*spending key*) can spend from it.
+
+zkScatter uses stealth addresses for order payouts and drop claims so
+on-chain commitments cannot be linked to a public account.
+
+## Keys
+
+```ts
+import {
+  generateMetaAddress,
+  parseMetaAddress,
+  generateStealthAddress,
+  deriveStealthPrivateKey,
+} from "@zkscatter/sdk/zk";
+
+const meta = generateMetaAddress();
+// {
+//   spendingKey: "0x..." (32 bytes, keep secret),
+//   viewingKey:  "0x..." (32 bytes, share with services that need to scan),
+//   metaAddress: "0x..." (concatenated public form, share publicly),
+// }
+```
+
+| Key | Audience | What it grants |
+|---|---|---|
+| `spendingKey` | self only | spending from any stealth address derived for this meta |
+| `viewingKey` | indexers, wallets | scanning the chain to find your stealth payouts |
+| `metaAddress` | senders | deriving stealth addresses for you |
+
+## Sending
+
+```ts
+const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta.metaAddress);
+
+// Include `ephemeralPubKey` in the order's claim entry so the recipient
+// can recover the spending key:
+const claim = {
+  recipient: stealthAddress,
+  ephemeralPubKey,
+  token: "0x...",
+  amount: 1_000000n,
+  releaseTime: 0,
+};
+```
+
+`generateStealthAddress` performs a Diffie-Hellman over the recipient's
+viewing pubkey, hashes the shared secret, and uses it to tweak the
+spending pubkey. The result is an Ethereum address.
+
+## Recognizing inbound payouts
+
+Run through `CommitmentInserted` events with `subscribeCommitmentInserted`
+or `loadCommitmentInsertedHistory`. For each event with an associated
+`ephemeralPubKey` (carried in the claim entry), derive the stealth
+address client-side and compare:
+
+```ts
+const candidate = deriveStealthAddressFor(meta.viewingKey, ephemeralPubKey);
+if (candidate === eventStealthAddress) {
+  // It's yours.
+}
+```
+
+## Spending
+
+When the recipient is ready to claim:
+
+```ts
+const stealthPrivKey = deriveStealthPrivateKey(meta.spendingKey, ephemeralPubKey);
+// Use stealthPrivKey to sign the claim circuit's spending proof.
+```
+
+The claim circuit verifies that the prover knows a private key matching
+the stealth address recorded in the original commitment.
+
+## Hardening
+
+- **Never log `viewingKey` or `spendingKey`.** Treat them like wallet
+  seeds.
+- **Wipe ephemeral copies.** Use `wipeBytes(buf)` from `@zkscatter/sdk/zk`
+  to overwrite `Uint8Array` keys after use (best effort — JS GC limits).
+- **Different metas per persona.** A trader and a drop recipient on the
+  same device should use different meta-addresses to keep their flows
+  unlinkable.
+
+## Where the SDK helps
+
+| Helper | Purpose |
+|---|---|
+| `generateMetaAddress()` | recipient onboarding |
+| `parseMetaAddress(s)` | sender-side parsing |
+| `generateStealthAddress(meta)` | sender derives one-shot recipient |
+| `deriveStealthPrivateKey(spendingKey, ephemeralPubKey)` | recipient claims |
+| `wipeBytes(buf)` | best-effort key cleanup |
+
+All of these live behind `@zkscatter/sdk/zk`.

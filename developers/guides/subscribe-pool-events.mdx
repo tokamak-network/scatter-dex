@@ -1,0 +1,112 @@
+---
+title: Subscribe to pool events
+description: "Stream CommitmentInserted events into an incremental Merkle tree."
+---
+
+The pool's `CommitmentInserted` event drives Merkle tree state and
+note discovery. This guide covers historical loads, live subscriptions,
+and reorg handling.
+
+## Historical load
+
+```ts
+import { loadCommitmentInsertedHistory } from "@zkscatter/sdk";
+
+const rows = await loadCommitmentInsertedHistory(
+  readProvider,
+  network.contracts.commitmentPool,
+  { fromBlock: 0, toBlock: "latest" },
+);
+// rows[i] = { commitment, leafIndex }
+```
+
+For long histories, page in chunks:
+
+```ts
+const STEP = 10_000;
+const head = await readProvider.getBlockNumber();
+let cursor = startBlock;
+while (cursor <= head) {
+  const chunk = await loadCommitmentInsertedHistory(
+    readProvider,
+    network.contracts.commitmentPool,
+    { fromBlock: cursor, toBlock: Math.min(cursor + STEP, head) },
+  );
+  for (const row of chunk) tree.insert(row.commitment);
+  cursor += STEP + 1;
+}
+```
+
+## Live subscription
+
+```ts
+import { subscribeCommitmentInserted } from "@zkscatter/sdk";
+
+const unsub = subscribeCommitmentInserted(
+  readProvider,
+  network.contracts.commitmentPool,
+  (row) => {
+    tree.insert(row.commitment);
+    bumpUI();
+  },
+);
+
+// Later:
+unsub();
+```
+
+The helper wraps `provider.on(filter, listener)` and tears down cleanly.
+
+## Reorg safety
+
+The provider may emit events that later get reorged out. For applications
+where Merkle root mismatch is fatal (proof generation), wait for
+confirmations:
+
+```ts
+const CONFIRMATIONS = 12;
+
+const head = await readProvider.getBlockNumber();
+const safe = await loadCommitmentInsertedHistory(readProvider, pool, {
+  toBlock: head - CONFIRMATIONS,
+});
+
+// keep recent rows in a "tentative" buffer; promote on confirmation
+```
+
+The reference indexer in `relayer/` uses 12 confirmations on Sepolia
+and 32 on mainnet. Tune for your chain's reorg depth.
+
+## Batched UI updates
+
+Avoid re-rendering the whole tree on every event. Batch:
+
+```ts
+let pending: CommitmentInsertedRow[] = [];
+let timer: number | null = null;
+
+const unsub = subscribeCommitmentInserted(readProvider, pool, (row) => {
+  pending.push(row);
+  if (timer === null) {
+    timer = window.setTimeout(() => {
+      for (const r of pending) tree.insert(r.commitment);
+      pending = [];
+      timer = null;
+      bumpUI();
+    }, 250);
+  }
+});
+```
+
+## Persisted tree
+
+Rebuilding the tree from genesis on every page load is wasteful. Two
+options:
+
+- **Snapshot** — periodically serialize `tree.layers` to IndexedDB and
+  resume from there.
+- **Service worker indexer** — run a background worker that maintains
+  the tree across tabs.
+
+For now the reference apps just rebuild on load (under 5s for typical
+testnet history); revisit when mainnet pools grow past ~500K leaves.

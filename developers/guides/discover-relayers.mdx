@@ -1,0 +1,100 @@
+---
+title: Discover relayers
+description: "Combine on-chain registry rows with live API probes."
+---
+
+Relayers are bonded operators. Apps must:
+
+1. Read the on-chain registry to find who's registered.
+2. Probe each one's HTTP `/api/info` to filter for "live and matching."
+3. Surface their fee, profile, and supported pairs in the UI.
+
+## One call
+
+```ts
+import { loadRelayersWithApiInfo } from "@zkscatter/sdk/relayer";
+
+const relayers = await loadRelayersWithApiInfo(
+  network.contracts.relayerRegistry,
+  readProvider,
+  { probeTimeoutMs: 3000 },
+);
+```
+
+Returns `RelayerInfo[]` — each row is the on-chain state plus an
+`api?: RelayerApiInfo` block when the probe succeeded, plus a boolean
+`online`. Probes run in parallel.
+
+## Render a picker
+
+```tsx
+function RelayerPicker({
+  relayers,
+  selected,
+  onSelect,
+}: {
+  relayers: RelayerInfo[];
+  selected: string | null;
+  onSelect: (address: string) => void;
+}) {
+  return (
+    <ul>
+      {relayers.map((r) => (
+        <li key={r.address}>
+          <button
+            onClick={() => onSelect(r.address)}
+            disabled={!r.online}
+            aria-pressed={selected === r.address}
+          >
+            <strong>{r.api?.name ?? "Relayer"}</strong>
+            <span> · {Number(r.fee) / 100}% fee</span>
+            <span> · {r.online ? "online" : "offline"}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+## Profile sanitization
+
+Relayer profiles (`name`, `description`, `logoUrl`) come from
+untrusted operators. Always sanitize before rendering:
+
+```ts
+import { sanitizeProfile } from "@zkscatter/sdk/relayer";
+
+const safe = sanitizeProfile(rawApiResponse.profile);
+if (!safe) return; // discard malformed
+```
+
+Caps lengths, restricts URL schemes to `https://`, filters out control
+characters.
+
+## Manual selection vs. auto-routing
+
+The reference apps default to **auto-routing**: pick the lowest-fee
+online relayer that supports the chosen pair. Power users can override
+via a manual selector.
+
+```ts
+function pickRelayer(relayers: RelayerInfo[], pair: string): RelayerInfo | undefined {
+  return relayers
+    .filter((r) => r.online && r.api?.pairs?.includes(pair))
+    .sort((a, b) => Number(a.fee) - Number(b.fee))[0];
+}
+```
+
+## Refresh policy
+
+- **On wallet connect** — fresh fetch.
+- **Every 60s while idle** — keep the picker truthful.
+- **Before submit** — re-probe the chosen relayer (`client.getInfo()`)
+  to fail fast on a stale "online" flag.
+
+## Cross-relayer order discovery
+
+For pair-level liquidity views (not just matching), use the
+[shared orderbook](/sdk/orderbook) instead — single endpoint, lower
+fan-out.

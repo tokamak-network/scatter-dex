@@ -1,0 +1,113 @@
+---
+title: Architecture
+description: "Half-proof authorization, commitment-pool settlement, relayer economy."
+---
+
+zkScatter is a privacy-preserving DEX built around three primitives:
+
+1. A **commitment pool** — an on-chain Merkle tree of Poseidon hashes
+   hiding owner, token, and amount.
+2. **Half-proof authorization** — each side of a trade independently
+   proves they own a leaf and authorize the trade.
+3. A **relayer network** — off-chain matchers that batch half-proofs and
+   submit settlement transactions.
+
+Plus a fourth, optional layer: **stealth addresses** for unlinkable payouts.
+
+## Components
+
+```
+┌────────────┐       ┌────────────┐       ┌──────────────────┐
+│   Wallet   │──────▶│  Relayer   │──────▶│  PrivateSettlement│
+│ (browser / │ HTTP  │ (matcher + │  tx   │   + CommitmentPool│
+│  mobile)   │       │  prover)   │       │   (contracts)     │
+└────────────┘       └────────────┘       └──────────────────┘
+       │                    │                       │
+       │                    ▼                       ▼
+       │            ┌──────────────┐        ┌──────────────┐
+       └───────────▶│   Shared     │        │  Identity    │
+                    │  Orderbook   │        │    Gate      │
+                    └──────────────┘        └──────────────┘
+```
+
+| Component | Role | SDK module |
+|---|---|---|
+| `CommitmentPool` | Append-only Poseidon Merkle tree of commitments | `core` |
+| `PrivateSettlement` | Verifies half-proofs and settles trades atomically | `contracts` |
+| `RelayerRegistry` | On-chain directory of bonded relayers | `relayer` |
+| `IdentityGate` | KYC/zk-X509 attestation verifier | `core` |
+| Relayer node | Off-chain order matcher + half-proof co-prover | `relayer` |
+| Shared orderbook | Cross-relayer order discovery service | `orderbook` |
+
+## Why a commitment pool
+
+Token balances live as **commitments** — `Poseidon(ownerSecret, token,
+amount, salt, pubKey)` — appended to an incremental Merkle tree of
+depth 20 (1M leaves). Spending a balance produces a **nullifier** that
+the contract records to prevent double-spends.
+
+Because the leaf hides token, amount, and owner, an outside observer
+sees only opaque insertions and nullifier publications. Recovery from
+seed is straightforward: scan the tree, recompute commitments, find
+your leaves.
+
+## Why half-proofs
+
+A trade involves two parties. A naive design would wait for both
+parties to be online, build a joint witness, and prove it together —
+slow, brittle, and hostile to mobile.
+
+zkScatter splits the proof. Each side independently proves:
+
+- They own a leaf in the current commitment tree.
+- They've signed an EdDSA authorization over `(side, sellToken,
+  buyToken, sellAmount, buyAmount, maxFee, expiry, relayer, nonce)`.
+- The matched counterparty's authorization hashes to a value the
+  relayer commits to in the order hash.
+
+A relayer matches two compatible authorizations, collects both proofs,
+and submits them to `settleAuth` in a single transaction. The contract
+verifies both Groth16 proofs, advances both nullifiers, and writes new
+commitments for the payouts.
+
+This means **the user signs once and goes offline**. Matching, proving,
+and settlement happen asynchronously.
+
+## The relayer economy
+
+Relayers are bonded operators registered on `RelayerRegistry`. Each
+relayer:
+
+- Posts an ETH bond (slashable for malicious behavior).
+- Sets a fee in basis points.
+- Runs a matcher service exposing `/api/info` and `/api/orders/:address`
+  (history is the same endpoint with `?status=&limit=&offset=` query
+  params; per-order detail and cancel use `/api/orders/:address/:nonce`).
+- Probes the shared orderbook for cross-relayer matches.
+- Earns fees on every settlement they submit.
+
+To exit, a relayer requests exit, waits 7 days (`EXIT_COOLDOWN_SECONDS`),
+then withdraws their bond. See [Run a relayer](/operate/run-a-relayer-node).
+
+Apps discover relayers with `loadRelayersWithApiInfo` — combining
+on-chain registry rows with live `/api/info` probes.
+
+## Stealth addresses
+
+Order payouts route through stealth addresses (EIP-5564). The recipient
+publishes a meta-address once; the sender derives a fresh stealth
+address per payout from `ephemeralPubKey × viewingKey`. The result is
+unlinkable: even with the meta-address, an observer cannot tell which
+on-chain commitments belong to whom without the viewing key.
+
+See [Stealth addresses](/concepts/stealth-addresses) for the math and
+the SDK helpers.
+
+## Failure modes
+
+| Failure | Detection | Mitigation |
+|---|---|---|
+| Relayer goes offline mid-match | Probe timeout in `loadRelayersWithApiInfo` | Resubmit to another relayer — orders are idempotent by `nonce` |
+| Order expires | `expiry` < `block.timestamp` | Cancel and roll forward with a `cancel` proof |
+| Pool reorg | Indexer falls behind | Consume raw `subscribeCommitmentInserted` events and apply an app-level confirmation threshold (e.g. 12 blocks on Sepolia, 32 on mainnet) before treating inserts as final |
+| Lost note | User lost local storage | Rebuild from seed by scanning the pool |
