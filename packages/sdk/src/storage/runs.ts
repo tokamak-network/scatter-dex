@@ -11,6 +11,7 @@ import { hasFolder, listFiles, loadFile, saveFile, removeFile } from "./folder";
 
 const RUN_FILE_PREFIX = "zkscatter-run-";
 const RUN_FILE_SUFFIX = ".json";
+const RUNS_INDEX_FILENAME = "zkscatter-runs-index.json";
 
 export class RunRecordCorruptError extends Error {
   constructor(message: string) {
@@ -298,50 +299,317 @@ export interface ListRunsFilter {
   category?: RunCategory;
 }
 
+// ─── Runs index ────────────────────────────────────────────────
+//
+// `zkscatter-runs-index.json` summarises every run record in the
+// folder so `listRuns` can filter without reading each file. The
+// index is a cache: if it disagrees with the on-disk file set
+// (deleted entries, hand-added files, missing index altogether) the
+// next `listRuns` rebuilds it from a full scan and rewrites the file.
+// `saveRun` / `deleteRun` keep the index in sync after every mutation.
+
+/** Lightweight summary of a run record — enough to drive dashboard
+ *  filtering and stat aggregation without paying the full-file read
+ *  cost. The recipient counts are captured at write time and only
+ *  refresh when `saveRun` runs again, so the dashboard's "claimed N
+ *  of M" stays in sync with whatever the wizard last persisted. */
+export interface RunsIndexEntry {
+  id: string;
+  label: string;
+  category: RunCategory;
+  chainId: number;
+  operatorAddress: string;
+  createdAt: number;
+  settledAt: number;
+  totalAmount: string;
+  tokenSymbol: string;
+  totalRecipients: number;
+  claimedRecipients: number;
+}
+
+interface RunsIndexFile {
+  version: 1;
+  entries: RunsIndexEntry[];
+}
+
+function summariseRecord(record: RunRecord): RunsIndexEntry {
+  let claimed = 0;
+  for (const r of record.recipients) {
+    if (r.status === "claimed") claimed++;
+  }
+  return {
+    id: record.id,
+    label: record.label,
+    category: record.category,
+    chainId: record.chainId,
+    operatorAddress: record.operatorAddress,
+    createdAt: record.createdAt,
+    settledAt: record.settledAt,
+    totalAmount: record.totalAmount,
+    tokenSymbol: record.tokenSymbol,
+    totalRecipients: record.recipients.length,
+    claimedRecipients: claimed,
+  };
+}
+
+function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
+  if (!e || typeof e !== "object") return false;
+  const v = e as Record<string, unknown>;
+  return (
+    typeof v.id === "string" &&
+    typeof v.label === "string" &&
+    typeof v.category === "string" &&
+    RUN_CATEGORY_SET.has(v.category) &&
+    typeof v.chainId === "number" &&
+    typeof v.operatorAddress === "string" &&
+    typeof v.createdAt === "number" &&
+    typeof v.settledAt === "number" &&
+    typeof v.totalAmount === "string" &&
+    typeof v.tokenSymbol === "string" &&
+    typeof v.totalRecipients === "number" &&
+    typeof v.claimedRecipients === "number"
+  );
+}
+
+/** Read the on-disk index. Returns `null` when the file is missing,
+ *  unparseable, or has an unsupported shape — callers fall back to a
+ *  full scan in any of those cases. */
+async function loadRunsIndex(): Promise<RunsIndexEntry[] | null> {
+  if (!hasFolder()) return null;
+  let text: string | null;
+  try {
+    text = await loadFile(RUNS_INDEX_FILENAME);
+  } catch {
+    return null;
+  }
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as { version?: unknown; entries?: unknown };
+    if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) return null;
+    if (!parsed.entries.every(isValidIndexEntry)) return null;
+    return parsed.entries;
+  } catch {
+    return null;
+  }
+}
+
+async function persistRunsIndex(entries: RunsIndexEntry[]): Promise<void> {
+  const payload: RunsIndexFile = { version: 1, entries };
+  await saveFile(RUNS_INDEX_FILENAME, JSON.stringify(payload, null, 2));
+}
+
+// Every read-modify-write of `zkscatter-runs-index.json` runs through
+// this single queue. `withRunLock` only serialises mutations of one
+// run id, but two `saveRun` calls for *different* ids would still race
+// on the index file (both read the same starting state, both compute
+// `[...existing, mySummary]`, last writer wins → lost update). Cross-
+// tab safety remains best-effort — see `walletBook.ts` for the same
+// caveat.
+let _indexQueue: Promise<unknown> = Promise.resolve();
+function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = _indexQueue.then(task, task);
+  _indexQueue = run.catch(() => {});
+  return run;
+}
+
+/** Walk every run file in the folder, parse it, and build a fresh
+ *  index. Used both on first run (no index file yet) and as the
+ *  recovery path when the cached index disagrees with the file set.
+ *  Always runs under the index lock so a stale rebuild can't race
+ *  with a concurrent upsert. */
+async function rebuildRunsIndex(): Promise<{
+  index: RunsIndexEntry[];
+  records: Map<string, RunRecord>;
+}> {
+  return withIndexLock(async () => {
+    const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
+    const parsed = await Promise.all(
+      fileEntries.map(async (entry) => {
+        try {
+          const text = await entry.read();
+          return parseRunFile(JSON.parse(text));
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const records = new Map<string, RunRecord>();
+    const index: RunsIndexEntry[] = [];
+    for (const record of parsed) {
+      if (!record) continue;
+      records.set(record.id, record);
+      index.push(summariseRecord(record));
+    }
+    if (hasFolder()) {
+      try {
+        if (index.length === 0) {
+          // Don't write a 0-entry index file: a fresh folder (or one
+          // whose every run file failed to parse) should leave no
+          // cache on disk. Also remove a stale index left from a
+          // previous session so the lifecycle matches the test plan
+          // ("0 runs → no index file").
+          await removeFile(RUNS_INDEX_FILENAME);
+        } else {
+          await persistRunsIndex(index);
+        }
+      } catch (e) {
+        console.warn("Failed to persist runs index:", e);
+      }
+    }
+    return { index, records };
+  });
+}
+
+/** Upsert a single entry in the index without reading the rest of the
+ *  folder. No-op when no folder is selected. The index file is left
+ *  untouched on write failure — the next listRuns rebuild will catch
+ *  up. Serialised through `withIndexLock` so concurrent saveRun calls
+ *  for different ids can't lose updates. */
+async function upsertRunsIndexEntry(record: RunRecord): Promise<void> {
+  if (!hasFolder()) return;
+  await withIndexLock(async () => {
+    const existing = (await loadRunsIndex()) ?? [];
+    const summary = summariseRecord(record);
+    const idx = existing.findIndex((e) => e.id === record.id);
+    if (idx >= 0) existing[idx] = summary;
+    else existing.push(summary);
+    try {
+      await persistRunsIndex(existing);
+    } catch (e) {
+      console.warn("Failed to update runs index:", e);
+    }
+  });
+}
+
+async function removeRunsIndexEntry(id: string): Promise<void> {
+  if (!hasFolder()) return;
+  await withIndexLock(async () => {
+    const existing = await loadRunsIndex();
+    if (!existing) return;
+    const next = existing.filter((e) => e.id !== id);
+    if (next.length === existing.length) return;
+    try {
+      await persistRunsIndex(next);
+    } catch (e) {
+      console.warn("Failed to update runs index after delete:", e);
+    }
+  });
+}
+
+function matchesFilter(
+  e: { chainId: number; category: RunCategory; operatorAddress: string },
+  filter: ListRunsFilter,
+  wantedOperator: string | undefined,
+): boolean {
+  if (filter.chainId !== undefined && e.chainId !== filter.chainId) return false;
+  if (filter.category !== undefined && e.category !== filter.category) return false;
+  if (
+    wantedOperator !== undefined &&
+    e.operatorAddress.toLowerCase() !== wantedOperator
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Decide whether the cached index still describes the on-disk file
+ *  set. A length check alone misses swap-and-rename: file `a.json`
+ *  removed, file `b.json` added, count unchanged, ids diverged. The
+ *  ID set comparison is O(N) over the directory listing we already
+ *  have to perform anyway. */
+function indexMatchesFiles(
+  cached: RunsIndexEntry[],
+  fileEntries: { filename: string }[],
+): boolean {
+  if (cached.length !== fileEntries.length) return false;
+  const fileIds = new Set<string>();
+  for (const file of fileEntries) {
+    const id = parseIdFromFilename(file.filename);
+    if (id !== null) fileIds.add(id);
+  }
+  if (fileIds.size !== cached.length) return false;
+  for (const entry of cached) {
+    if (!fileIds.has(entry.id)) return false;
+  }
+  return true;
+}
+
 /** List every run record in the folder, newest first. Skips files
  *  that fail to parse rather than blowing up the dashboard — corrupt
  *  files are surfaced when the user opens that specific run.
  *
- *  File reads run in parallel via `Promise.all`. The previous
- *  sequential loop was the dashboard's dominant load-time cost once
- *  a workspace held more than a handful of runs, since each
- *  `entry.read()` is its own File System Access I/O round-trip. */
+ *  Uses the lightweight `zkscatter-runs-index.json` summary to filter
+ *  before paying the per-file parse cost. When the index is missing
+ *  or its entry count disagrees with the on-disk run files, the
+ *  function falls back to a full scan and rewrites the index. */
 export async function listRuns(filter: ListRunsFilter = {}): Promise<RunRecord[]> {
   if (!hasFolder()) return [];
-  const entries = await listFiles((name) => parseIdFromFilename(name) !== null);
   const wantedOperator = filter.operatorAddress?.toLowerCase();
 
-  const parsed = await Promise.all(
-    entries.map(async (entry) => {
+  const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
+  const cachedIndex = await loadRunsIndex();
+
+  // Stale-cache detection: rebuild whenever the cached id set
+  // disagrees with the on-disk file id set — catches missing entries,
+  // hand-added files, and swap-and-rename cases where the count is
+  // unchanged but the ids diverge.
+  if (!cachedIndex || !indexMatchesFiles(cachedIndex, fileEntries)) {
+    const { index, records } = await rebuildRunsIndex();
+    return index
+      .filter((e) => matchesFilter(e, filter, wantedOperator))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((e) => records.get(e.id)!)
+      .filter(Boolean);
+  }
+
+  // Index hit: filter the summary first, then read full files only
+  // for the matched ids.
+  const matching = cachedIndex.filter((e) =>
+    matchesFilter(e, filter, wantedOperator),
+  );
+  const fileByName = new Map(fileEntries.map((e) => [e.filename, e]));
+  const records = await Promise.all(
+    matching.map(async (entry) => {
+      const file = fileByName.get(filenameFor(entry.id));
+      if (!file) return null;
       try {
-        const text = await entry.read();
+        const text = await file.read();
         return parseRunFile(JSON.parse(text));
       } catch {
         return null;
       }
     }),
   );
+  return records
+    .filter((r): r is RunRecord => r !== null)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
 
-  const records: RunRecord[] = [];
-  for (const record of parsed) {
-    if (!record) continue;
-    if (filter.chainId !== undefined && record.chainId !== filter.chainId) continue;
-    if (filter.category !== undefined && record.category !== filter.category) continue;
-    if (
-      wantedOperator !== undefined &&
-      record.operatorAddress.toLowerCase() !== wantedOperator
-    ) {
-      continue;
-    }
-    records.push(record);
-  }
-  return records.sort((a, b) => b.createdAt - a.createdAt);
+/** Lightweight summary of every run record, recent-first. Hits the
+ *  cached index file in a single read when available. Use when the
+ *  caller only needs labels / counts / amounts (e.g. the dashboard's
+ *  recent-runs list) and doesn't need the full recipient + log
+ *  arrays. */
+export async function listRunsSummary(filter: ListRunsFilter = {}): Promise<RunsIndexEntry[]> {
+  if (!hasFolder()) return [];
+  const wantedOperator = filter.operatorAddress?.toLowerCase();
+  const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
+  const cachedIndex = await loadRunsIndex();
+  const index =
+    cachedIndex && indexMatchesFiles(cachedIndex, fileEntries)
+      ? cachedIndex
+      : (await rebuildRunsIndex()).index;
+  return index
+    .filter((e) => matchesFilter(e, filter, wantedOperator))
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /** Persist (or replace) a run record. Always writes the current
  *  schema version, so a v1 record loaded → mutated → saved is
  *  silently upgraded on disk. `operatorAddress` is lowercased so
- *  case-insensitive filtering downstream sees a canonical input. */
+ *  case-insensitive filtering downstream sees a canonical input.
+ *  Also upserts the matching `zkscatter-runs-index.json` entry so
+ *  the dashboard's `listRuns` cache stays current. */
 export async function saveRun(record: RunRecord): Promise<void> {
   const normalised: RunRecord = {
     ...record,
@@ -349,11 +617,13 @@ export async function saveRun(record: RunRecord): Promise<void> {
   };
   const payload: RunFile = { version: CURRENT_VERSION, record: normalised };
   await saveFile(filenameFor(record.id), JSON.stringify(payload, null, 2));
+  await upsertRunsIndexEntry(normalised);
 }
 
 /** Remove a run record by id. No-op when the file doesn't exist. */
 export async function deleteRun(id: string): Promise<void> {
   await removeFile(filenameFor(id));
+  await removeRunsIndexEntry(id);
 }
 
 // Serialize mutations through a per-id queue so concurrent
