@@ -1,84 +1,62 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ethers } from "ethers";
 import { UserPlus, ShieldCheck, AlertCircle, Loader2, CheckCircle, XCircle } from "lucide-react";
+import {
+  explainRegistryError,
+  loadRegistrationStatus,
+  MAX_RELAYER_FEE_BPS,
+  registerRelayer,
+} from "@zkscatter/sdk/relayer";
 import { useWallet } from "../../lib/wallet";
 import { getRelayerRegistryAddress } from "../../lib/config";
-import { RELAYER_REGISTRY_ABI } from "../../lib/contracts";
 import { getReadProvider } from "../../lib/provider";
 
-const RELAYER_REGISTRY_EXTENDED_ABI = [
-  ...RELAYER_REGISTRY_ABI,
-  "function identityRegistry() external view returns (address)",
-];
-
-const IDENTITY_REGISTRY_ABI = [
-  "function isVerified(address user) external view returns (bool)",
-  "function verifiedUntil(address user) external view returns (uint64)",
-];
-
-type RegistrationStatus = "idle" | "checking" | "not-connected" | "not-verified" | "already-registered" | "ready" | "submitting" | "success" | "error";
+type Phase = "idle" | "checking" | "not-connected" | "not-verified" | "already-registered" | "ready" | "submitting" | "success" | "error";
 
 export default function RelayerRegisterPage() {
   const { account, signer } = useWallet();
 
-  const [status, setStatus] = useState<RegistrationStatus>("idle");
+  const [phase, setPhase] = useState<Phase>("idle");
   const [isVerified, setIsVerified] = useState(false);
   const [verifiedUntil, setVerifiedUntil] = useState<number>(0);
-  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [minBond, setMinBond] = useState<bigint>(0n);
+  const [minBondEth, setMinBondEth] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState("");
   const [txHash, setTxHash] = useState("");
 
-  // Form
   const [url, setUrl] = useState("");
-  const [feeBps, setFeeBps] = useState("30"); // 0.3% default
+  const [feeBps, setFeeBps] = useState("30");
   const [bondEth, setBondEth] = useState("0.1");
 
   const checkStatus = useCallback(async () => {
+    // Reset derived state up front so a disconnect / account switch
+    // never leaves a stale "Verified until …" / minimum bond /
+    // error banner from the prior account visible on screen.
+    setIsVerified(false);
+    setVerifiedUntil(0);
+    setMinBond(0n);
+    setMinBondEth("");
+    setErrorMsg("");
+
     if (!account) {
-      setStatus("not-connected");
+      setPhase("not-connected");
       return;
     }
-
-    setStatus("checking");
+    setPhase("checking");
     try {
-      const provider = getReadProvider();
-      const registryAddr = getRelayerRegistryAddress();
-      const registry = new ethers.Contract(registryAddr, RELAYER_REGISTRY_EXTENDED_ABI, provider);
-
-      // Get identity registry address from RelayerRegistry
-      const idRegistryAddr = await registry.identityRegistry();
-      const idRegistry = new ethers.Contract(idRegistryAddr, IDENTITY_REGISTRY_ABI, provider);
-
-      // Check verification
-      const verified = await idRegistry.isVerified(account);
-      setIsVerified(verified);
-
-      if (verified) {
-        const until = await idRegistry.verifiedUntil(account);
-        setVerifiedUntil(Number(until));
-      }
-
-      // Check if already registered
-      const isActive = await registry.isActiveRelayer(account);
-      setAlreadyRegistered(isActive);
-
-      // Get min bond
-      const bond = await registry.minBond();
-      setMinBond(bond);
-
-      if (!verified) {
-        setStatus("not-verified");
-      } else if (isActive) {
-        setStatus("already-registered");
-      } else {
-        setStatus("ready");
-      }
+      const status = await loadRegistrationStatus(getRelayerRegistryAddress(), account, getReadProvider());
+      setIsVerified(status.isVerified);
+      setVerifiedUntil(status.verifiedUntil);
+      setMinBond(status.minBond);
+      setMinBondEth(status.minBondEth);
+      if (!status.isVerified) setPhase("not-verified");
+      else if (status.alreadyRegistered) setPhase("already-registered");
+      else setPhase("ready");
     } catch (err: unknown) {
+      console.error("Failed to load registration status", err);
       setErrorMsg(err instanceof Error ? err.message : "Failed to check status");
-      setStatus("error");
+      setPhase("error");
     }
   }, [account]);
 
@@ -88,38 +66,29 @@ export default function RelayerRegisterPage() {
 
   const handleRegister = async () => {
     if (!account) return;
-
-    setStatus("submitting");
+    // `account` can be set without a signer when wallet.tsx fails to
+    // attach one (e.g. injected provider lost the request handler).
+    // Surface that as an error instead of a silent no-op click.
+    if (!signer) {
+      setErrorMsg("Wallet signer is unavailable. Reconnect your wallet and try again.");
+      setPhase("error");
+      return;
+    }
+    setPhase("submitting");
     setErrorMsg("");
     try {
-      if (!signer) throw new Error("No signer available");
-
-      const registryAddr = getRelayerRegistryAddress();
-      const registry = new ethers.Contract(registryAddr, RELAYER_REGISTRY_ABI, signer);
-
-      const feeNum = parseInt(feeBps, 10);
-      if (isNaN(feeNum) || feeNum < 0 || feeNum > 500) throw new Error("FeeTooHigh");
-      const fee = BigInt(feeNum);
-      let bond: bigint;
-      try { bond = ethers.parseEther(bondEth || "0"); }
-      catch { throw new Error("Invalid bond amount"); }
-
-      const tx = await registry.register(url, fee, { value: bond });
+      const tx = await registerRelayer(
+        getRelayerRegistryAddress(),
+        { url, feeBps: parseInt(feeBps, 10), bondEth },
+        signer,
+      );
       const receipt = await tx.wait();
-      setTxHash(receipt.hash);
-      setStatus("success");
+      setTxHash(receipt?.hash ?? tx.hash);
+      setPhase("success");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Registration failed";
-      const errorMap: Record<string, string> = {
-        NotVerified: "zk-X509 identity not verified. Please register your identity first.",
-        AlreadyRegistered: "This address is already registered as a relayer.",
-        InsufficientBond: `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`,
-        FeeTooHigh: "Fee too high. Maximum: 500 bps (5%).",
-        "Invalid bond": "Invalid bond amount. Enter a valid ETH value.",
-      };
-      const matched = Object.entries(errorMap).find(([key]) => msg.includes(key));
-      setErrorMsg(matched ? matched[1] : msg);
-      setStatus("error");
+      console.error("Registration failed", err);
+      setErrorMsg(explainRegistryError(err, minBond));
+      setPhase("error");
     }
   };
 
@@ -143,14 +112,14 @@ export default function RelayerRegisterPage() {
             Step 1: zk-X509 Identity Verification
           </h3>
 
-          {status === "not-connected" && (
+          {phase === "not-connected" && (
             <div className="flex items-center gap-2 text-sm text-on-surface-variant">
               <AlertCircle className="w-4 h-4" />
               Connect your wallet to check verification status
             </div>
           )}
 
-          {status === "checking" && (
+          {phase === "checking" && (
             <div className="flex items-center gap-2 text-sm text-on-surface-variant">
               <Loader2 className="w-4 h-4 animate-spin" />
               Checking identity status...
@@ -164,7 +133,7 @@ export default function RelayerRegisterPage() {
             </div>
           )}
 
-          {status === "not-verified" && (
+          {phase === "not-verified" && (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm text-error">
                 <XCircle className="w-4 h-4" />
@@ -179,7 +148,7 @@ export default function RelayerRegisterPage() {
         </div>
 
         {/* Step 2: Registration Form */}
-        {(status === "ready" || status === "submitting" || status === "error") && (
+        {(phase === "ready" || phase === "submitting" || phase === "error") && (
           <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-6">
             <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2 mb-4">
               <UserPlus className="w-4 h-4 text-primary" />
@@ -215,11 +184,11 @@ export default function RelayerRegisterPage() {
                     value={feeBps}
                     onChange={(e) => setFeeBps(e.target.value)}
                     min="0"
-                    max="500"
+                    max={MAX_RELAYER_FEE_BPS}
                     className="w-32 px-4 py-2.5 rounded-lg bg-surface border border-outline-variant/20 text-sm text-on-surface focus:border-primary focus:outline-none font-mono"
                   />
                   <span className="text-xs text-on-surface-variant">
-                    = {(Number(feeBps) / 100).toFixed(2)}% per trade (max 5%)
+                    = {(Number(feeBps) / 100).toFixed(2)}% per trade (max {(MAX_RELAYER_FEE_BPS / 100).toFixed(0)}%)
                   </span>
                 </div>
               </div>
@@ -235,9 +204,9 @@ export default function RelayerRegisterPage() {
                   onChange={(e) => setBondEth(e.target.value)}
                   className="w-32 px-4 py-2.5 rounded-lg bg-surface border border-outline-variant/20 text-sm text-on-surface focus:border-primary focus:outline-none font-mono"
                 />
-                {minBond > 0n && (
+                {minBondEth && (
                   <p className="text-[10px] text-on-surface-variant/50 mt-1">
-                    Minimum bond: {ethers.formatEther(minBond)} ETH
+                    Minimum bond: {minBondEth} ETH
                   </p>
                 )}
               </div>
@@ -253,10 +222,10 @@ export default function RelayerRegisterPage() {
               {/* Submit */}
               <button
                 onClick={handleRegister}
-                disabled={!url || status === "submitting"}
+                disabled={!url || phase === "submitting"}
                 className="w-full py-3 gradient-btn text-on-primary-fixed rounded-lg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
-                {status === "submitting" ? (
+                {phase === "submitting" ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Registering...
@@ -270,7 +239,7 @@ export default function RelayerRegisterPage() {
         )}
 
         {/* Already registered */}
-        {status === "already-registered" && (
+        {phase === "already-registered" && (
           <div className="bg-surface-container rounded-xl border border-primary/20 p-6">
             <div className="flex items-center gap-2 text-sm text-primary">
               <CheckCircle className="w-4 h-4" />
@@ -280,7 +249,7 @@ export default function RelayerRegisterPage() {
         )}
 
         {/* Success */}
-        {status === "success" && (
+        {phase === "success" && (
           <div className="bg-surface-container rounded-xl border border-primary/20 p-6 space-y-3">
             <div className="flex items-center gap-2 text-sm text-primary">
               <CheckCircle className="w-5 h-5" />
