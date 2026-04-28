@@ -64,17 +64,21 @@ import {
 const eddsa = await deriveEdDSAKey(signer);
 const nonce = randomFieldElement();
 
+// AuthorizeProofInput uses `note.token` for the sell side — there is
+// no separate `sellToken` field. `sellAmount` must be ≤ `note.amount`;
+// any residual is rolled into a change commitment using `newSalt`.
+const expiry = BigInt(Math.floor(Date.now() / 1000) + 600);
+
 const authResult = await generateAuthorizeProof(
   {
     note: myStoredNote.note,
     leafIndex: myStoredNote.leafIndex,
     merkleProof,
-    sellToken: tokenA,
-    buyToken: tokenB,
     sellAmount: amountIn,
+    buyToken: tokenB,
     buyAmount: amountOut,
     maxFee,
-    expiry: Math.floor(Date.now() / 1000) + 600,
+    expiry,
     nonce,
     relayer: target.address,
     eddsaPrivateKey: eddsa.privateKey,
@@ -84,7 +88,7 @@ const authResult = await generateAuthorizeProof(
         recipient: stealthAddressForPayout,
         token: tokenB,
         amount: amountOut,
-        releaseTime: 0,
+        releaseTime: 0n,
       },
     ],
     newSalt: randomFieldElement(),
@@ -96,24 +100,28 @@ const authResult = await generateAuthorizeProof(
 ## 4. Submit to the relayer
 
 ```ts
-import { RelayerClient } from "@zkscatter/sdk/relayer";
+import { RelayerClient, type OrderData } from "@zkscatter/sdk/relayer";
 
 const client = new RelayerClient(target.url);
 
-const response = await client.submitOrder(
-  {
-    maker: account,
-    sellToken: tokenA,
-    buyToken: tokenB,
-    sellAmount: amountIn,
-    buyAmount: amountOut,
-    maxFee,
-    expiry: Math.floor(Date.now() / 1000) + 600,
-    nonce: nonce.toString(16),
-  },
-  serializeAuthProof(authResult),
-  "cover_taker",
-);
+// Wire-format payload — see sdk/relayer for the full type. `claims`
+// must be the exact distribution committed in the authorize proof's
+// claimsRoot; the relayer rejects any divergence.
+const order: OrderData = {
+  maker: account,
+  sellToken: tokenA,
+  buyToken: tokenB,
+  sellAmount: amountIn.toString(),
+  buyAmount: amountOut.toString(),
+  maxFee: Number(maxFee),
+  expiry: Number(expiry),
+  nonce: Number(nonce),
+  claims,
+};
+
+// `signature` is a relayer-protocol string committing to `order` —
+// see the relayer's `/api/info` for the format it accepts.
+const response = await client.submitOrder(order, signature, "cover_taker");
 
 if (response.status === "rejected") {
   throw new Error("Relayer rejected order");

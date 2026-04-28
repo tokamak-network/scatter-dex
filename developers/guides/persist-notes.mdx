@@ -10,9 +10,9 @@ tradeoffs.
 ## Storage adapter
 
 ```ts
-import { createIndexedDbAdapter } from "@zkscatter/sdk/notes";
+import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
 
-const notes = createIndexedDbAdapter({
+const notes = createIndexedDbNoteAdapter({
   dbName: "myapp",
   storeName: "notes",
   version: 1,

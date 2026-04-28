@@ -15,15 +15,15 @@ endpoint individually.
 
 ```ts
 const orderbook = new SharedOrderbookClient("https://orderbook.zkscatter.xyz", {
-  fetch: globalThis.fetch,
-  defaultTimeoutMs: 5000,
+  fetchImpl: globalThis.fetch,
+  timeoutMs: 5000,
 });
 
-await orderbook.isOnline();                          // boolean
-await orderbook.getStats();                          // { totalOrders, pairs, relayers }
-await orderbook.getRelayers();                       // SharedRelayer[]
-await orderbook.getOrders("ETH/USDC", 0);            // SharedOrder[]
-await orderbook.getPairsForRelayer(relayerAddress);  // pair strings
+await orderbook.isOnline();                  // boolean (probes /health)
+await orderbook.getStats();                  // SharedOrderbookStats | null
+await orderbook.getRelayers();               // SharedRelayer[]
+await orderbook.getOrders(500);              // SharedOrder[] — flat, optionally limited
+await orderbook.getOrdersByPair("ETH/USDC"); // SharedOrder[] for one pair
 ```
 
 ## Types
@@ -38,7 +38,7 @@ interface SharedOrderbookStats {
 interface SharedRelayer {
   address: string;
   url: string;
-  name: string;
+  name?: string;               // optional — relayer may not advertise one
   orderCount: number;
   lastHeartbeat: number;       // unix seconds
 }
@@ -47,15 +47,14 @@ interface SharedOrder {
   id: string;
   relayer: string;
   relayerUrl: string;
-  pair: string;
-  side: "buy" | "sell";
   nonce: string;
-  pubKeyAx: bigint;
+  pubKeyAx: string;
   sellToken: string;
   buyToken: string;
-  sellAmount: bigint;
-  buyAmount: bigint;
-  maxFee: bigint;
+  sellAmount: string;          // wire-format strings — parse as bigint when needed
+  buyAmount: string;
+  minFillAmount: string;
+  maxFee: number;
   expiry: number;
   createdAt: number;
 }
@@ -82,15 +81,17 @@ const client = new RelayerClient(target.url);
 await client.submitOrder(order, signature);
 ```
 
-## Filtering by relayer
+## Filtering client-side
+
+The shared orderbook does not expose a per-relayer pair endpoint;
+fetch the full list with `getOrders` (or `getOrdersByPair`) and filter
+by `order.relayer` locally.
 
 ```ts
-const pairs = await orderbook.getPairsForRelayer("0xabc...");
-// → ["ETH/USDC", "TON/USDT", ...]
+const all = await orderbook.getOrders();
+const byRelayer = all.filter((o) => o.relayer === relayerAddress);
+const distinctPairs = new Set(byRelayer.map((o) => `${o.sellToken}/${o.buyToken}`));
 ```
-
-Useful for relayer dashboards — show which pairs a given relayer is
-willing to match.
 
 ## Common errors
 

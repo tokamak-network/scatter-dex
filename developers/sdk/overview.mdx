@@ -30,9 +30,6 @@ matches what you're doing — bundlers tree-shake the rest.
   <Card title="react" icon="react" href="/sdk/react">
     Wallet provider + `useWallet` hook for browser apps.
   </Card>
-  <Card title="util" icon="wrench" href="/sdk/util">
-    HTTP and IndexedDB primitives shared across modules.
-  </Card>
 </CardGroup>
 
 ## Compatibility matrix
@@ -46,15 +43,13 @@ matches what you're doing — bundlers tree-shake the rest.
 | `orderbook` | ✅ | ✅ | ✅ |
 | `notes` | ✅ | ⚠️ memory only | ⚠️ memory only |
 | `react` | ✅ | ❌ | ❌ |
-| `util` | ✅ | ✅ | ✅ |
 
 ## Versioning
 
 `@zkscatter/sdk` follows semver. Contract ABIs are pinned per minor —
 upgrading the SDK to track a contract upgrade is always a minor bump,
-even if the surface is source-compatible. See the
-[CHANGELOG](https://github.com/tokamak-network/scatter-dex/blob/main/packages/sdk/CHANGELOG.md)
-for migration notes.
+even if the surface is source-compatible. Each minor release notes the
+contract version it tracks alongside any breaking source changes.
 
 ## Conventions
 

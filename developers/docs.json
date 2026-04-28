@@ -63,8 +63,7 @@
               "sdk/relayer",
               "sdk/orderbook",
               "sdk/notes",
-              "sdk/react",
-              "sdk/util"
+              "sdk/react"
             ]
           }
         ]

@@ -102,7 +102,15 @@ export function DepositButton({ token, amount }: { token: string; amount: bigint
       zkey: "/zk/deposit_final.zkey",
     });
 
-    await ensureAllowance(signer, token, network.contracts.commitmentPool, amount);
+    // ensureAllowance returns pending approval txs; wait for each to
+    // confirm before depositing or the deposit can race ahead.
+    const approvals = await ensureAllowance(
+      signer,
+      token,
+      network.contracts.commitmentPool,
+      amount,
+    );
+    await Promise.all(approvals.map((tx) => tx.wait()));
     const tx = await callDeposit(
       signer,
       network.contracts.commitmentPool,
@@ -125,8 +133,12 @@ export function DepositButton({ token, amount }: { token: string; amount: bigint
 import {
   loadRelayersWithApiInfo,
   RelayerClient,
+  type OrderData,
 } from "@zkscatter/sdk/relayer";
-import { generateAuthorizeProof } from "@zkscatter/sdk/zk";
+import {
+  generateAuthorizeProof,
+  randomFieldElement,
+} from "@zkscatter/sdk/zk";
 
 const relayers = await loadRelayersWithApiInfo(
   network.contracts.relayerRegistry,
@@ -135,17 +147,21 @@ const relayers = await loadRelayersWithApiInfo(
 const best = relayers.find((r) => r.online && r.api);
 if (!best?.api) throw new Error("No relayer online");
 
+const expiry = BigInt(Math.floor(Date.now() / 1000) + 600);
+
+// AuthorizeProofInput uses `note.token` for the sell side — no
+// separate `sellToken` field. `claims` here must match the order's
+// claim distribution (see /guides/place-order for the full shape).
 const authResult = await generateAuthorizeProof(
   {
     note,
     leafIndex,
     merkleProof,
-    sellToken: tokenA,
-    buyToken: tokenB,
     sellAmount: amountIn,
+    buyToken: tokenB,
     buyAmount: amountOut,
     maxFee,
-    expiry: Math.floor(Date.now() / 1000) + 600,
+    expiry,
     nonce,
     relayer: best.address,
     eddsaPrivateKey: eddsa.privateKey,
@@ -155,8 +171,22 @@ const authResult = await generateAuthorizeProof(
   { wasm: "/zk/authorize.wasm", zkey: "/zk/authorize_final.zkey" },
 );
 
+const order: OrderData = {
+  maker: account,
+  sellToken: tokenA,
+  buyToken: tokenB,
+  sellAmount: amountIn.toString(),
+  buyAmount: amountOut.toString(),
+  maxFee: Number(maxFee),
+  expiry: Number(expiry),
+  nonce: Number(nonce),
+  claims,                          // wire-format claim entries
+};
+
+// `signature` is a relayer-protocol string — see the relayer's
+// /api/info for the format it accepts.
 const client = new RelayerClient(best.url);
-await client.submitOrder(orderData, signature, "cover_taker");
+await client.submitOrder(order, signature, "cover_taker");
 ```
 
 See [Place an order](/guides/place-order) for the complete flow,

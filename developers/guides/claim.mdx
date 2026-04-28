@@ -14,17 +14,35 @@ Claims can be **locked** (have a `releaseTime` in the future) or
 
 Two paths:
 
-**A) Through a relayer** — relayers expose `/api/claims/:address`
-returning the claim entries from settled orders the relayer matched:
+**A) Through the relayer's order endpoint** — settled orders carry
+their claim distribution in the `RelayerOrder.claims` field. Walk the
+maker's order history (or the recipient-side view your relayer exposes)
+and flatten the claim arrays. Pair each entry with the local secret
+you generated in [Place an order](/guides/place-order) — relayers do
+not see secrets.
 
 ```ts
-const claims = await client.getClaims(account);
-// [{ commitment, leafIndex, token, amount, releaseTime, ephemeralPubKey }]
+const orders = await client.getOrderHistory(account);
+const fromOrders = orders.orders.flatMap((o) => o.claims ?? []);
+// Each entry: { claimHash, amount, releaseDelay } as the relayer sees it.
+// Reconcile with your local pending list (keyed by claimHash) to attach
+// the secret, ephemeralPubKey, and leafIndex you persisted at order time.
 ```
 
 **B) Self-scan** — replay `CommitmentInserted` events and identify
 yours from `ephemeralPubKey` against your viewing key (see
 [Stealth addresses](/concepts/stealth-addresses)).
+
+Either path, the local record you feed into `generateClaimProof` looks
+like:
+
+```ts
+// [{ commitment, leafIndex, secret, token, amount, releaseTime, ephemeralPubKey }]
+```
+
+`secret` is the random field element you generated for this claim
+entry at order-placement time and persisted alongside the order — the
+proof cannot be built without it.
 
 ## Generate the claim proof
 

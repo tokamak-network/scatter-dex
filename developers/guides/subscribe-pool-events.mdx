@@ -17,7 +17,7 @@ const rows = await loadCommitmentInsertedHistory(
   network.contracts.commitmentPool,
   { fromBlock: 0, toBlock: "latest" },
 );
-// rows[i] = { commitment, leafIndex, blockNumber, txHash }
+// rows[i] = { commitment, leafIndex }
 ```
 
 For long histories, page in chunks:

@@ -6,7 +6,7 @@ description: "Pluggable note storage adapters."
 ```ts
 import {
   createMemoryNoteAdapter,
-  createIndexedDbAdapter,
+  createIndexedDbNoteAdapter,
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
@@ -55,7 +55,7 @@ In-process — wiped on reload. Use for tests, SSR, and CLI tools.
 ## IndexedDB adapter
 
 ```ts
-const notes = createIndexedDbAdapter({
+const notes = createIndexedDbNoteAdapter({
   dbName: "zkscatter",
   storeName: "notes",
   version: 1,
@@ -77,11 +77,11 @@ A typical browser app wires storage like this:
 ```tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createIndexedDbAdapter, type StoredNote } from "@zkscatter/sdk/notes";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createIndexedDbNoteAdapter, type StoredNote } from "@zkscatter/sdk/notes";
 
 export function useNotes() {
-  const adapter = useMemo(() => createIndexedDbAdapter(), []);
+  const adapter = useMemo(() => createIndexedDbNoteAdapter(), []);
   const [notes, setNotes] = useState<StoredNote[]>([]);
 
   useEffect(() => {
@@ -94,17 +94,26 @@ export function useNotes() {
     return () => { alive = false };
   }, [adapter]);
 
-  return {
-    notes,
-    add: async (n: StoredNote) => {
-      await adapter.put(n);
-      setNotes((prev) => [...prev, n]);
-    },
-    remove: async (id: string) => {
-      await adapter.remove(id);
-      setNotes((prev) => prev.filter((n) => n.id !== id));
-    },
-  };
+  // Upsert: replace by id if it exists, otherwise append. Avoids
+  // duplicate rows when the same note is updated (e.g. leafIndex
+  // back-fill after CommitmentInserted lands).
+  const add = useCallback(async (n: StoredNote) => {
+    await adapter.put(n);
+    setNotes((prev) => {
+      const i = prev.findIndex((x) => x.id === n.id);
+      if (i < 0) return [...prev, n];
+      const next = prev.slice();
+      next[i] = n;
+      return next;
+    });
+  }, [adapter]);
+
+  const remove = useCallback(async (id: string) => {
+    await adapter.remove(id);
+    setNotes((prev) => prev.filter((n) => n.id !== id));
+  }, [adapter]);
+
+  return { notes, add, remove };
 }
 ```
 

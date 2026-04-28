@@ -65,7 +65,9 @@ the original `nonce` is unspendable. But notifying through the relayer
 API frees up the slot in their order book sooner:
 
 ```ts
-await client.cancelOrder(originalNonce, account, signature);
+// SDK signature: cancelOrder(address, nonce, signature, signal?).
+// `nonce` must be the numeric nonce the relayer indexed.
+await client.cancelOrder(account, Number(originalNonce), signature);
 ```
 
 (Endpoint shape depends on the relayer's HTTP API. Check `getInfo()`

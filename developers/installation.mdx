@@ -21,11 +21,13 @@ yarn add @zkscatter/sdk ethers
 
 </CodeGroup>
 
-`ethers@^6` is a peer dependency — install it yourself if your app does
-not already depend on it.
+`ethers@^6` ships as a direct dependency of `@zkscatter/sdk`, so
+installing the SDK pulls it in transitively. Adding `ethers` to your
+own dependencies is recommended so version resolution is explicit and
+your bundler de-dupes on the same major.
 
-`react@^19` is an **optional** peer; only required if you import from
-`@zkscatter/sdk/react`.
+`react@^19` is an **optional** peer dependency; only required if you
+import from `@zkscatter/sdk/react`.
 
 ## Subpath exports
 
@@ -43,7 +45,6 @@ omits `lib.dom` from `tsconfig` does not pick them up by accident.
 | `@zkscatter/sdk/orderbook` | universal | shared orderbook HTTP client |
 | `@zkscatter/sdk/notes` | universal | pluggable note storage adapters |
 | `@zkscatter/sdk/react` | browser only | `<WalletProvider>` + `useWallet` |
-| `@zkscatter/sdk/util` | universal | HTTP / IndexedDB primitives |
 
 ## Next.js integration
 

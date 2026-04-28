@@ -80,8 +80,9 @@ relayer:
 
 - Posts an ETH bond (slashable for malicious behavior).
 - Sets a fee in basis points.
-- Runs a matcher service exposing `/api/info`, `/api/orders`,
-  `/api/history`, `/api/claims`.
+- Runs a matcher service exposing `/api/info` and `/api/orders/:address`
+  (history is the same endpoint with `?status=&limit=&offset=` query
+  params; per-order detail and cancel use `/api/orders/:address/:nonce`).
 - Probes the shared orderbook for cross-relayer matches.
 - Earns fees on every settlement they submit.
 
@@ -108,5 +109,5 @@ the SDK helpers.
 |---|---|---|
 | Relayer goes offline mid-match | Probe timeout in `loadRelayersWithApiInfo` | Resubmit to another relayer — orders are idempotent by `nonce` |
 | Order expires | `expiry` < `block.timestamp` | Cancel and roll forward with a `cancel` proof |
-| Pool reorg | Indexer falls behind | SDK exposes `subscribeCommitmentInserted` with `INDEX_CONFIRMATIONS` |
+| Pool reorg | Indexer falls behind | Consume raw `subscribeCommitmentInserted` events and apply an app-level confirmation threshold (e.g. 12 blocks on Sepolia, 32 on mainnet) before treating inserts as final |
 | Lost note | User lost local storage | Rebuild from seed by scanning the pool |

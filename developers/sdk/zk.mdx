@@ -21,7 +21,11 @@ interface Prover {
 }
 
 const prover = createWebWorkerProver({
-  workerUrl: "/zk-worker.js",
+  // Lazy factory — the worker spawns on the first prove / ready call.
+  createWorker: () => new Worker("/zk-worker.js"),
+  label: "scatter-prover",
+  // Optional main-thread fallback if the Worker constructor throws.
+  // fallbackProve: (req, opts) => mainThreadProve(req, opts),
 });
 
 const result = await prover.prove(
@@ -119,10 +123,10 @@ const proof = getMerkleProof(tree, leafIndex);
 
 // Incremental (matches on-chain contract):
 const inc = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
-inc.insert(leaf);
-inc.root;       // current root
-inc.nextIndex;  // next free index
-inc.getProof(leafIndex);
+await inc.insert(leaf);            // async — Poseidon hashing per level
+inc.root;                          // current root
+inc.nextIndex;                     // next free index
+const proof = await inc.proof(leafIndex);
 ```
 
 Use `IncrementalMerkleTree` when streaming `CommitmentInserted` events;

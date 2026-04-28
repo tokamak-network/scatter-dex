@@ -36,10 +36,10 @@ import {
   deriveEdDSAKey,
 } from "@zkscatter/sdk/zk";
 import { ensureAllowance, callDeposit } from "@zkscatter/sdk/contracts";
-import { createIndexedDbAdapter } from "@zkscatter/sdk/notes";
+import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
 import { network } from "@/lib/network";
 
-const notes = createIndexedDbAdapter();
+const notes = createIndexedDbNoteAdapter();
 
 export function DepositButton({
   token,
@@ -63,12 +63,18 @@ export function DepositButton({
       zkey: "/zk/deposit_final.zkey",
     });
 
-    await ensureAllowance(
+    // ensureAllowance returns one or two PENDING approval txs (USDT
+    // requires reset-to-zero + approve(amount)). Wait for each to
+    // confirm before depositing — otherwise the deposit can race
+    // ahead of the approve and revert with `transfer amount exceeds
+    // allowance`.
+    const approvals = await ensureAllowance(
       signer,
       token,
       network.contracts.commitmentPool,
       amount,
     );
+    await Promise.all(approvals.map((tx) => tx.wait()));
 
     const tx = await callDeposit(
       signer,
@@ -101,26 +107,39 @@ export function DepositButton({
 ## Filling in `leafIndex`
 
 After the transaction confirms, the pool emits `CommitmentInserted`.
-Subscribe and update the note in storage. Use the `readProvider` from
-`useWallet()` — it's always non-null even when the user is disconnected:
+Subscribe and update the note in storage. Wrap the subscription in a
+`useEffect` so a fresh listener attaches once per mount and tears down
+on unmount — never call `subscribeCommitmentInserted` in render:
 
-```ts
+```tsx
+"use client";
+
+import { useEffect } from "react";
+import { useWallet } from "@zkscatter/sdk/react";
 import { subscribeCommitmentInserted } from "@zkscatter/sdk";
 
-const { readProvider } = useWallet();
+export function PoolWatcher() {
+  const { readProvider } = useWallet();
 
-const unsub = subscribeCommitmentInserted(
-  readProvider,
-  network.contracts.commitmentPool,
-  async (row) => {
-    const stored = (await notes.loadAll()).find(
-      (n) => n.commitment === row.commitment,
+  useEffect(() => {
+    if (!readProvider) return;
+    const unsub = subscribeCommitmentInserted(
+      readProvider,
+      network.contracts.commitmentPool,
+      async (row) => {
+        const stored = (await notes.loadAll()).find(
+          (n) => n.commitment === row.commitment,
+        );
+        if (stored && stored.leafIndex < 0) {
+          await notes.put({ ...stored, leafIndex: row.leafIndex });
+        }
+      },
     );
-    if (stored && stored.leafIndex < 0) {
-      await notes.put({ ...stored, leafIndex: row.leafIndex });
-    }
-  },
-);
+    return unsub;
+  }, [readProvider]);
+
+  return null;
+}
 ```
 
 ## Native ETH

@@ -29,42 +29,50 @@ const full = await loadRelayersWithApiInfo(
 
 ```ts
 const client = new RelayerClient("https://relayer.example.com", {
-  fetch: globalThis.fetch,        // optional override
-  defaultTimeoutMs: 5000,
+  fetchImpl: globalThis.fetch,    // optional override
+  timeoutMs: 5000,                // default 5_000
 });
 
-await client.getInfo();                        // /api/info
+await client.getInfo();                                   // /api/info
 await client.submitOrder(order, signature, "cover_taker");
-await client.getOrders(account);               // active orders for an account
+await client.getOrders(account);                          // active orders for an account
 await client.getOrderHistory(account, { limit: 50, offset: 0 });
-await client.getClaims(account);               // pending stealth payouts
+await client.getOrderDetail(account, nonce);              // single order
+await client.cancelOrder(account, nonce, signature);      // DELETE /api/orders/:address/:nonce
 ```
 
-Every method accepts an optional trailing `AbortSignal` — pair with
-`timeoutSignal` from `@zkscatter/sdk/util` for per-call cancellation.
+Every method accepts an optional trailing `AbortSignal` — wire it to a
+standard `AbortController` for per-call cancellation. The client wraps
+each call in its own timeout (`timeoutMs`) so an explicit signal is
+only needed for user-driven cancellation.
 
 ### Submit order
 
 ```ts
-type FeeMode = "cover_taker";
+import type { OrderData, FeeMode } from "@zkscatter/sdk/relayer";
 
-interface OrderData {
-  maker: string;
-  sellToken: string;
-  buyToken: string;
-  sellAmount: bigint;
-  buyAmount: bigint;
-  maxFee: bigint;
-  expiry: number;
-  nonce: string;
-}
+// Wire-format payload — amounts/maxFee/nonce already serialized for
+// transport. `claims` is the same distribution committed in the
+// authorize proof's claimsRoot.
+const order: OrderData = {
+  maker: account,
+  sellToken: tokenA,
+  buyToken: tokenB,
+  sellAmount: amountIn.toString(),
+  buyAmount: amountOut.toString(),
+  maxFee: feeBps,                  // number, basis points
+  expiry: expiryUnixSeconds,       // number
+  nonce: Number(nonce),            // number
+  claims,                          // [{ claimHash, amount, releaseDelay }]
+};
 
-await client.submitOrder(order, signature, feeMode?);
+await client.submitOrder(order, signature, "cover_taker");
 // → { status: "queued" | "matched" | "settled", txHash?, nonce? }
 ```
 
-`signature` is the EdDSA signature serialized as a hex string. The
-relayer verifies it against the maker's pubkey before queueing.
+`signature` is a relayer-protocol-defined string committing to the
+order payload — the relayer verifies it before queueing. Match the
+exact format the relayer's `/api/info` advertises.
 
 ## Operator actions
 
@@ -142,7 +150,7 @@ Always run untrusted relayer profiles through this before rendering.
     Default timeout is 3s. Bump `probeTimeoutMs` for cross-region setups,
     or pre-filter by `lastHeartbeat` from the shared orderbook.
   </Accordion>
-  <Accordion title="`submitOrder` returns `status: "rejected"`">
+  <Accordion title={'`submitOrder` returns `status: "rejected"`'}>
     Inspect the response body — common reasons are nonce reuse, EdDSA
     signature mismatch, fee below relayer minimum, or expired order.
   </Accordion>
