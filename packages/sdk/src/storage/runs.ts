@@ -325,6 +325,12 @@ export interface RunsIndexEntry {
   tokenSymbol: string;
   totalRecipients: number;
   claimedRecipients: number;
+  /** Mirror of `RunRecord.settleGasPaid`. Hoisted so the dashboard's
+   *  "Saved on gas" stat doesn't need to read every full record just
+   *  to test whether any of them captured gas. Optional — old index
+   *  files written before this field existed return `undefined`,
+   *  same as the underlying record. */
+  settleGasPaid?: string;
 }
 
 interface RunsIndexFile {
@@ -349,6 +355,7 @@ function summariseRecord(record: RunRecord): RunsIndexEntry {
     tokenSymbol: record.tokenSymbol,
     totalRecipients: record.recipients.length,
     claimedRecipients: claimed,
+    settleGasPaid: record.settleGasPaid,
   };
 }
 
@@ -367,7 +374,8 @@ function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
     typeof v.totalAmount === "string" &&
     typeof v.tokenSymbol === "string" &&
     typeof v.totalRecipients === "number" &&
-    typeof v.claimedRecipients === "number"
+    typeof v.claimedRecipients === "number" &&
+    isOptionalString(v.settleGasPaid)
   );
 }
 
