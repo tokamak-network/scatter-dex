@@ -34,19 +34,46 @@ function deriveStatus(active: boolean, registeredAt: number, exitRequestedAt: nu
   return exitRequestedAt > 0 ? "cooldown" : "active";
 }
 
+/** Module-level cache for `bondToken` keyed by registry address.
+ *  The bond token is fixed at construction (immutable on the
+ *  contract), so one read per registry is enough — every subsequent
+ *  `loadOperatorRow` reuses the cached value and stays at one RPC. */
+const bondTokenCache = new Map<string, string>();
+
+async function resolveBondToken(
+  registryAddress: string,
+  registry: ethers.Contract,
+): Promise<string> {
+  const key = registryAddress.toLowerCase();
+  const cached = bondTokenCache.get(key);
+  if (cached !== undefined) return cached;
+  const value = (await registry.bondToken()) as string;
+  bondTokenCache.set(key, value);
+  return value;
+}
+
 /** Read the on-chain registry row for `account`. Returns the full
  *  set of operator-scoped state every dashboard / profile / treasury
- *  page needs, plus a derived `status` for UI gating. Pure read. */
+ *  page needs, plus a derived `status` for UI gating. Pure read.
+ *
+ *  Issues one RPC after the first call per registry: the row read.
+ *  `bondToken` is fetched once and memoised because it's immutable. */
 export async function loadOperatorRow(
   registryAddress: string,
   account: string,
   provider: ethers.Provider,
 ): Promise<OperatorRow> {
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
-  const [r, bondToken] = await Promise.all([
-    registry.relayers(account),
-    registry.bondToken() as Promise<string>,
-  ]);
+  const cachedBondToken = bondTokenCache.get(registryAddress.toLowerCase());
+  // First call per registry: parallelise the bondToken fetch with
+  // the row read so we don't pay an extra round-trip. After the
+  // first call the cache short-circuits and only the row reads ride.
+  const [r, bondToken] = cachedBondToken !== undefined
+    ? [await registry.relayers(account), cachedBondToken]
+    : await Promise.all([
+        registry.relayers(account),
+        resolveBondToken(registryAddress, registry),
+      ]);
   const active = r.active as boolean;
   const registeredAt = Number(r.registeredAt);
   const exitRequestedAt = Number(r.exitRequestedAt);

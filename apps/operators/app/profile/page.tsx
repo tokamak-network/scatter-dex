@@ -231,13 +231,19 @@ function BondPanel({ operator }: { operator: OperatorState }) {
 /** Parse a decimal-ETH string into 18-decimal base units, returning
  *  null on bad input (so the caller can decide whether to halt or
  *  fall through). Stays out of `useChainWrite` because it's only
- *  used here. */
+ *  used here.
+ *
+ *  Behaviour aligned with `ethers.parseEther` for the inputs we
+ *  accept: a leading-decimal form like `.5` is treated as `0.5`,
+ *  and more than 18 fractional digits is rejected (rather than
+ *  silently truncated) so the parser doesn't disagree with the
+ *  SDK helper that runs at submit time. */
 function parseEth(input: string): bigint | null {
-  // Inline parse to avoid importing ethers in this consumer; matches
-  // ethers.parseEther's behavior for the inputs we accept.
   if (!/^[0-9]*\.?[0-9]+$/.test(input)) return null;
-  const [whole, frac = ""] = input.split(".");
-  const fracPadded = (frac + "0".repeat(18)).slice(0, 18);
+  const [rawWhole, frac = ""] = input.split(".");
+  if (frac.length > 18) return null;
+  const whole = rawWhole === "" ? "0" : rawWhole;
+  const fracPadded = frac.padEnd(18, "0");
   try {
     return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || "0");
   } catch {
