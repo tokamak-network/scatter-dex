@@ -398,70 +398,93 @@ async function persistRunsIndex(entries: RunsIndexEntry[]): Promise<void> {
   await saveFile(RUNS_INDEX_FILENAME, JSON.stringify(payload, null, 2));
 }
 
+// Every read-modify-write of `zkscatter-runs-index.json` runs through
+// this single queue. `withRunLock` only serialises mutations of one
+// run id, but two `saveRun` calls for *different* ids would still race
+// on the index file (both read the same starting state, both compute
+// `[...existing, mySummary]`, last writer wins → lost update). Cross-
+// tab safety remains best-effort — see `walletBook.ts` for the same
+// caveat.
+let _indexQueue: Promise<unknown> = Promise.resolve();
+function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = _indexQueue.then(task, task);
+  _indexQueue = run.catch(() => {});
+  return run;
+}
+
 /** Walk every run file in the folder, parse it, and build a fresh
  *  index. Used both on first run (no index file yet) and as the
- *  recovery path when the cached index disagrees with the file set. */
+ *  recovery path when the cached index disagrees with the file set.
+ *  Always runs under the index lock so a stale rebuild can't race
+ *  with a concurrent upsert. */
 async function rebuildRunsIndex(): Promise<{
   index: RunsIndexEntry[];
   records: Map<string, RunRecord>;
 }> {
-  const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
-  const parsed = await Promise.all(
-    fileEntries.map(async (entry) => {
-      try {
-        const text = await entry.read();
-        return parseRunFile(JSON.parse(text));
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const records = new Map<string, RunRecord>();
-  const index: RunsIndexEntry[] = [];
-  for (const record of parsed) {
-    if (!record) continue;
-    records.set(record.id, record);
-    index.push(summariseRecord(record));
-  }
-  if (hasFolder()) {
-    try {
-      await persistRunsIndex(index);
-    } catch (e) {
-      console.warn("Failed to persist runs index:", e);
+  return withIndexLock(async () => {
+    const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
+    const parsed = await Promise.all(
+      fileEntries.map(async (entry) => {
+        try {
+          const text = await entry.read();
+          return parseRunFile(JSON.parse(text));
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const records = new Map<string, RunRecord>();
+    const index: RunsIndexEntry[] = [];
+    for (const record of parsed) {
+      if (!record) continue;
+      records.set(record.id, record);
+      index.push(summariseRecord(record));
     }
-  }
-  return { index, records };
+    if (hasFolder()) {
+      try {
+        await persistRunsIndex(index);
+      } catch (e) {
+        console.warn("Failed to persist runs index:", e);
+      }
+    }
+    return { index, records };
+  });
 }
 
 /** Upsert a single entry in the index without reading the rest of the
  *  folder. No-op when no folder is selected. The index file is left
  *  untouched on write failure — the next listRuns rebuild will catch
- *  up. */
+ *  up. Serialised through `withIndexLock` so concurrent saveRun calls
+ *  for different ids can't lose updates. */
 async function upsertRunsIndexEntry(record: RunRecord): Promise<void> {
   if (!hasFolder()) return;
-  const existing = (await loadRunsIndex()) ?? [];
-  const summary = summariseRecord(record);
-  const idx = existing.findIndex((e) => e.id === record.id);
-  if (idx >= 0) existing[idx] = summary;
-  else existing.push(summary);
-  try {
-    await persistRunsIndex(existing);
-  } catch (e) {
-    console.warn("Failed to update runs index:", e);
-  }
+  await withIndexLock(async () => {
+    const existing = (await loadRunsIndex()) ?? [];
+    const summary = summariseRecord(record);
+    const idx = existing.findIndex((e) => e.id === record.id);
+    if (idx >= 0) existing[idx] = summary;
+    else existing.push(summary);
+    try {
+      await persistRunsIndex(existing);
+    } catch (e) {
+      console.warn("Failed to update runs index:", e);
+    }
+  });
 }
 
 async function removeRunsIndexEntry(id: string): Promise<void> {
   if (!hasFolder()) return;
-  const existing = await loadRunsIndex();
-  if (!existing) return;
-  const next = existing.filter((e) => e.id !== id);
-  if (next.length === existing.length) return;
-  try {
-    await persistRunsIndex(next);
-  } catch (e) {
-    console.warn("Failed to update runs index after delete:", e);
-  }
+  await withIndexLock(async () => {
+    const existing = await loadRunsIndex();
+    if (!existing) return;
+    const next = existing.filter((e) => e.id !== id);
+    if (next.length === existing.length) return;
+    try {
+      await persistRunsIndex(next);
+    } catch (e) {
+      console.warn("Failed to update runs index after delete:", e);
+    }
+  });
 }
 
 function matchesFilter(
@@ -476,6 +499,28 @@ function matchesFilter(
     e.operatorAddress.toLowerCase() !== wantedOperator
   ) {
     return false;
+  }
+  return true;
+}
+
+/** Decide whether the cached index still describes the on-disk file
+ *  set. A length check alone misses swap-and-rename: file `a.json`
+ *  removed, file `b.json` added, count unchanged, ids diverged. The
+ *  ID set comparison is O(N) over the directory listing we already
+ *  have to perform anyway. */
+function indexMatchesFiles(
+  cached: RunsIndexEntry[],
+  fileEntries: { filename: string }[],
+): boolean {
+  if (cached.length !== fileEntries.length) return false;
+  const fileIds = new Set<string>();
+  for (const file of fileEntries) {
+    const id = parseIdFromFilename(file.filename);
+    if (id !== null) fileIds.add(id);
+  }
+  if (fileIds.size !== cached.length) return false;
+  for (const entry of cached) {
+    if (!fileIds.has(entry.id)) return false;
   }
   return true;
 }
@@ -495,10 +540,11 @@ export async function listRuns(filter: ListRunsFilter = {}): Promise<RunRecord[]
   const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
   const cachedIndex = await loadRunsIndex();
 
-  // Stale-cache detection: if the index is missing or its size
-  // doesn't match the file count, rebuild from a full scan rather
-  // than returning a partial view.
-  if (!cachedIndex || cachedIndex.length !== fileEntries.length) {
+  // Stale-cache detection: rebuild whenever the cached id set
+  // disagrees with the on-disk file id set — catches missing entries,
+  // hand-added files, and swap-and-rename cases where the count is
+  // unchanged but the ids diverge.
+  if (!cachedIndex || !indexMatchesFiles(cachedIndex, fileEntries)) {
     const { index, records } = await rebuildRunsIndex();
     return index
       .filter((e) => matchesFilter(e, filter, wantedOperator))
@@ -541,7 +587,7 @@ export async function listRunsSummary(filter: ListRunsFilter = {}): Promise<Runs
   const fileEntries = await listFiles((name) => parseIdFromFilename(name) !== null);
   const cachedIndex = await loadRunsIndex();
   const index =
-    cachedIndex && cachedIndex.length === fileEntries.length
+    cachedIndex && indexMatchesFiles(cachedIndex, fileEntries)
       ? cachedIndex
       : (await rebuildRunsIndex()).index;
   return index
