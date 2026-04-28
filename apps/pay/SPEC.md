@@ -104,7 +104,7 @@ zk-X509. Finance ops should never see those words. UX rules:
 /payouts/new                   Wizard (5 steps)
 /payouts/[id]                  Run detail (manual notification trigger)
 /payouts/[id]/payslip/[row]    Per-recipient PDF (printable)
-/recipients                    Address book — name, address, email, channels
+/recipients                    Address book — name, address, email, preferredChannel
 /approvals                     Multisig / threshold approvals queue
 /audit                         Activity log (immutable)
 /settings/organization         Company name, logo, registration #
@@ -146,8 +146,8 @@ For each page: **purpose · flow · primitives used · Pay-only additions**.
 
 **Primitives used.**
 - `loadCommitmentInsertedHistory` for sender's runs.
-- Pool balance via `@zkscatter/sdk/notes/getAvailableBalance` (added in
-  PR #473) reading the local `useVault().notes`.
+- Pool balance via `getAvailableBalance` from `@zkscatter/sdk/notes`
+  (added in PR #473) reading the local `useVault().notes`.
 
 **Pay-only.** Category badges, tabs, filter, period picker (this/last
 month, Q1, year), bulk export.
@@ -253,7 +253,9 @@ three concerns: relayer, fee, source notes.
 **Source notes (auto-pick).**
 - Available pool: "X USDC across N notes."
 - Auto-pick algorithm — see [§10](#10-source-notes--funding):
-  - Largest-first greedy; reserves the last claim slot for change.
+  - Largest-first greedy; the last picked note covers the partial
+    spend so change is returned as a new note via
+    `AuthorizeProofInput.newSalt`.
 - Selected source notes list:
   ```
   • lot-3 · 50 USDC · deposited Apr 5
@@ -276,8 +278,8 @@ three concerns: relayer, fee, source notes.
     disappears once shortfall is 0.
 
 **No on-chain calls happen here in Phase A.** The wizard fires
-[`dryRunDeposit`](apps/pay/app/payouts/new/page.tsx) which logs the
-inputs to console. Phase B replaces the body with the real calls.
+[`dryRunDeposit`](./app/payouts/new/page.tsx) which logs the inputs
+to console. Phase B replaces the body with the real calls.
 
 #### Step 5 — Review & sign
 **Summary.** Definition list of every input from steps 1–4:
@@ -302,8 +304,9 @@ inputs to console. Phase B replaces the body with the real calls.
   - "X recipients exceed the per-settlement cap of 16 — Pay will split
     into N batches, requiring N signatures."
   - List per-batch claim count + total.
-  - Progress UI during signing: "Signing 2 of 3…" via splitPayout's
-    `onProgress` callback.
+  - Progress UI during signing: "Signing 2 of 3…" driven by the
+    proving / signing layer (e.g. `generateAuthorizeProof` prove
+    options) — `splitPayout` itself only chunks the recipient list.
 
 **Sign & submit.**
 - Derives the EdDSA key via `useEdDSAKey().derive()` once per session.
@@ -929,7 +932,7 @@ POST /api/runs/:id/clone            return a new wizard pre-fill payload
 ### 11.4 Notifications
 ```
 GET  /api/notifications/:runId       run's notification log
-GET  /api/n/<token>                  tokenized claim-link redirect
+GET  /n/<token>                      tokenized claim-link redirect
 POST /api/webhooks/email/postmark    delivery state from Postmark
 POST /api/webhooks/email/ses         delivery state from SES
 ```
