@@ -639,6 +639,8 @@ function buildSampleRun(): RunRecord {
   return {
     id: SAMPLE_RUN_ID,
     label: "April payroll",
+    operatorAddress: "0x0000000000000000000000000000000000000001",
+    category: "payroll",
     createdAt: settled,
     settledAt: settled,
     chainId: 1,
