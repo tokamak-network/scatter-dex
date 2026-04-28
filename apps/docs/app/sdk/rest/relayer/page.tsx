@@ -28,6 +28,15 @@ export const metadata = {
     "HTTP API every zkScatter relayer node exposes. Auto-generated from the relayer's zod schemas.",
 };
 
+// Nextra's `Wrapper` expects `$NextraMetadata` which carries a
+// `filePath` field MDX pages get for free from `importPage`. This
+// page isn't MDX, so synthesize a minimal record matching the
+// shape — the value is only used for the "Edit on GitHub" link.
+const wrapperMetadata = {
+  ...metadata,
+  filePath: "developers/sdk/rest/relayer.mdx",
+};
+
 const Wrapper = getMDXComponents().wrapper;
 
 const loadSpec = cache(async (): Promise<OpenApiDoc> => {
@@ -44,14 +53,18 @@ export default async function Page() {
   }));
   const server = doc.servers?.[0]?.url;
 
+  // Nextra's `Heading` type pins `depth` to a literal union — `as const`
+  // narrows our `2` to that, otherwise the inferred `number` blows the
+  // build typecheck.
   const toc = operations.map((entry) => ({
     value: entry.op.summary ?? `${entry.method.toUpperCase()} ${entry.path}`,
     id: entry.slug,
-    depth: 2,
+    depth: 2 as const,
   }));
 
   return (
-    <Wrapper toc={toc} metadata={metadata}>
+    <Wrapper toc={toc} metadata={wrapperMetadata} sourceCode="">
+
       <article className="zs-rest-page">
         <DocsPageShell section="REST API" description={doc.info.description}>
           <h1>{doc.info.title}</h1>
