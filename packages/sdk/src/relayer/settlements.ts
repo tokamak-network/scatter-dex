@@ -17,12 +17,15 @@ export interface LoadSettlementsOpts {
    *  but callers should always pass an explicit lower bound — use
    *  `NetworkConfig.deployBlock`, or compute a reorg-safe window
    *  via the host app's provider helper — to keep RPC traffic
-   *  bounded on busy relayers. */
-  fromBlock?: number;
+   *  bounded on busy relayers. Accepts the full ethers `BlockTag`
+   *  range. */
+  fromBlock?: ethers.BlockTag;
   /** Block to end the scan at. Defaults to `"latest"`. Pair with
    *  `fromBlock` to scan a rolling window when only the most
-   *  recent N events matter. */
-  toBlock?: number;
+   *  recent N events matter. Accepts the full ethers `BlockTag`
+   *  range (`"latest"` / `"finalized"` / `"safe"` / a block
+   *  number / hex string / bigint). */
+  toBlock?: ethers.BlockTag;
   /** Cap on the number of events returned, sorted descending by
    *  block number. Default: no cap. */
   limit?: number;
@@ -40,11 +43,9 @@ export async function loadRelayerSettlements(
   opts: LoadSettlementsOpts = {},
 ): Promise<RelayerSettlement[]> {
   const contract = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_ABI, provider);
-  const fromBlock = opts.fromBlock ?? 0;
-
   const logs = await contract.queryFilter(
     contract.filters.PrivateSettledAuth(null, null, relayer),
-    fromBlock,
+    opts.fromBlock ?? 0,
     opts.toBlock,
   );
 
