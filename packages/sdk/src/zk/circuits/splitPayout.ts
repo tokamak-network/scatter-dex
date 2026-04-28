@@ -61,18 +61,20 @@ export function splitPayout(
   const generateSecret = opts.generateSecret ?? randomFieldElement;
   const batches: PayoutBatch[] = [];
   for (let i = 0; i < recipients.length; i += MAX_CLAIMS_PER_SIDE) {
-    const slice = recipients.slice(i, i + MAX_CLAIMS_PER_SIDE);
+    const claims: ClaimEntry[] = [];
     let totalAmount = 0n;
-    const claims: ClaimEntry[] = slice.map((r) => {
+    const end = Math.min(i + MAX_CLAIMS_PER_SIDE, recipients.length);
+    for (let j = i; j < end; j++) {
+      const r = recipients[j];
       totalAmount += r.amount;
-      return {
+      claims.push({
         secret: r.secret ?? generateSecret(),
         recipient: r.recipient,
         token: opts.token,
         amount: r.amount,
         releaseTime: r.releaseTime,
-      };
-    });
+      });
+    }
     batches.push({ totalAmount, claims });
   }
   return batches;
