@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ArrowRight, Lock, ShieldCheck, Zap, GitBranch } from "lucide-react";
-import { Button } from "@zkscatter/ui";
+import { Button, buttonClassName } from "@zkscatter/ui";
 import { Section } from "../components/Section";
 import { FeatureCard } from "../components/FeatureCard";
 import { EyebrowLabel, SectionHeading } from "../components/SectionHeader";
@@ -283,14 +284,13 @@ function FooterCTA() {
           zk-X509 identity gating — designed and analyzed in the open.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button
+          <Link
             href="/research"
-            variant="inverse"
-            size="lg"
+            className={buttonClassName({ variant: "inverse", size: "lg" })}
           >
             Whitepaper
             <ArrowRight className="h-4 w-4" />
-          </Button>
+          </Link>
           <Button
             href={DOCS_URL}
             target="_blank"

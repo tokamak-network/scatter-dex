@@ -9,6 +9,7 @@
  * brandmark must be mirrored across hub/docs/pro until the composite
  * moves into a shared package. */
 import * as React from "react";
+import Link from "next/link";
 
 const VIEWBOX_W = 36;
 const VIEWBOX_H = 24;
@@ -81,7 +82,7 @@ function BrandImpl({
         </text>
       </svg>
       </a>
-      <a
+      <Link
         href={homeHref}
         className="hover:opacity-80"
         style={{
@@ -94,7 +95,7 @@ function BrandImpl({
         }}
       >
         Scatter
-      </a>
+      </Link>
     </span>
   );
 }

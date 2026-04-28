@@ -12,6 +12,7 @@
  * alongside a follow-up that adds a `children` slot to `TokamakMark`
  * so this composition can move into the shared package. */
 import * as React from "react";
+import Link from "next/link";
 
 const VIEWBOX_W = 36;
 const VIEWBOX_H = 24;
@@ -84,7 +85,7 @@ function BrandImpl({
         </text>
       </svg>
       </a>
-      <a
+      <Link
         href={homeHref}
         className="hover:opacity-80"
         style={{
@@ -97,7 +98,7 @@ function BrandImpl({
         }}
       >
         Scatter Pro
-      </a>
+      </Link>
     </span>
   );
 }

@@ -16,11 +16,13 @@ export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
  *  override. */
 const APP_URLS: Record<AppId, string> = {
   pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://zkscatter-pro.web.app",
-  // Pay/Drop/Relayer apps are not yet deployed; href is unused when
-  // `comingSoon: true` (AppCard renders a non-link card with a badge).
-  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "#",
-  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "#",
-  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "#",
+  // Pay/Drop/Relayer apps are not yet deployed, but `APP_BY_ID.*.href`
+  // is consumed in non-AppCard contexts (Footer, Recommender) that
+  // don't check `comingSoon`. Use the eventual real URL so those
+  // links are deterministic instead of broken in-app hashes.
+  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://zkscatter-pay.web.app",
+  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://zkscatter-drop.web.app",
+  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://zkscatter-relayer.web.app",
   // Mobile is an in-hub marketing route, not a separate app server.
   mobile: "/mobile",
 };

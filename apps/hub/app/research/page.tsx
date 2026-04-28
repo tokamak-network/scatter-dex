@@ -111,6 +111,12 @@ function Papers() {
 
 function PaperCard({ paper }: { paper: Paper }) {
   const isDraft = paper.status === "draft";
+  // Label the CTA to match where the link actually goes — the
+  // whitepaper opens in the docs site while the others link to
+  // GitHub markdown.
+  const ctaLabel = paper.href.startsWith(DOCS_BASE)
+    ? "Read in Docs"
+    : "Read on GitHub";
   const Inner = (
     <article
       className={`flex h-full flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition ${
@@ -149,7 +155,7 @@ function PaperCard({ paper }: { paper: Paper }) {
           </span>
         ) : (
           <>
-            Read on GitHub
+            {ctaLabel}
             <ExternalLink className="h-3.5 w-3.5" />
           </>
         )}

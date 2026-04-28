@@ -10,7 +10,14 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ALL_TARGETS=(hub docs pro)
-TARGETS=("${@:-${ALL_TARGETS[@]}}")
+# `"${@:-${ALL_TARGETS[@]}}"` collapses the default into one quoted
+# string when no args are passed, so an explicit branch is needed to
+# preserve word splitting for the array assignment.
+if [ "$#" -eq 0 ]; then
+  TARGETS=("${ALL_TARGETS[@]}")
+else
+  TARGETS=("$@")
+fi
 
 declare -A APP_DIR=(
   [hub]="apps/hub"
@@ -44,15 +51,15 @@ for target in "${TARGETS[@]}"; do
     mv "$ENV_LOCAL" "$ENV_BACKUP"
     trap 'if [ -n "${ENV_BACKUP:-}" ] && [ -f "$ENV_BACKUP" ]; then mv "$ENV_BACKUP" "$ENV_LOCAL"; fi' EXIT INT TERM
   fi
+  # Under `set -e` a failing build aborts the script before the manual
+  # restore runs, so we rely on the EXIT trap to put .env.local back.
+  # On success the trap is cleared so the next iteration installs its
+  # own and we restore manually.
   ( cd "$dir" && npm run build )
-  build_status=$?
   if [ -n "$ENV_BACKUP" ]; then
     mv "$ENV_BACKUP" "$ENV_LOCAL"
     trap - EXIT INT TERM
     ENV_BACKUP=""
-  fi
-  if [ "$build_status" -ne 0 ]; then
-    exit "$build_status"
   fi
 done
 
