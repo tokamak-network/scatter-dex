@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import { useEffect, useMemo, useState } from "react";
+import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import {
   listRuns,
   type RunCategory,
@@ -10,17 +10,6 @@ import {
 } from "@zkscatter/sdk/storage";
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { useFolderStorage } from "../_lib/folderStorage";
-
-/** Toggle a `mounted` flag in `useEffect`. Used to gate `Date.now()`-
- *  dependent rendering (current-month filter, locale formatting) so
- *  SSR and the first client paint match. Mirrors the helper that
- *  lives in `payouts/[id]/page.tsx`; pulling both copies into a
- *  shared SDK hook is tracked as a follow-up. */
-function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  return mounted;
-}
 
 type Tab = "all" | RunCategory;
 

@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { useOutsideClick } from "@zkscatter/ui";
-import { shortAddr } from "@zkscatter/sdk/react";
+import { shortAddr, useMounted } from "@zkscatter/sdk/react";
 import {
   indexLatestNotifications,
   saveRun,
@@ -625,12 +625,6 @@ function formatUtcStamp(unixSec: number | undefined): string {
   if (!unixSec) return "";
   const iso = new Date(unixSec * 1000).toISOString();
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
-}
-
-function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  return mounted;
 }
 
 function buildSampleRun(): RunRecord {
