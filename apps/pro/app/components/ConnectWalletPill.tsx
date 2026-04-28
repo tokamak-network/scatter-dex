@@ -1,28 +1,12 @@
 "use client";
 
-import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { chainName } from "@zkscatter/sdk";
+import { useConnectWalletPill } from "@zkscatter/sdk/react";
 import { ConnectWalletPillView } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "../lib/network";
 
-/** Pro-app pill: thin wrapper around the shared presentational
- *  view in `@zkscatter/ui`. Reads the wallet state from the SDK
- *  and resolves the network label against the app's own
- *  `NetworkConfig`. Operators app does the same against its own. */
+/** Pro-app pill — binds the SDK wallet hook to the shared
+ *  presentational view via `useConnectWalletPill`, so the only
+ *  thing that varies per app is the `NetworkConfig` passed in. */
 export function ConnectWalletPill() {
-  const { account, walletName, connect, disconnect, connectError, chainId } =
-    useWallet();
-
-  return (
-    <ConnectWalletPillView
-      account={account}
-      shortAccount={shortAddr(account)}
-      walletName={walletName}
-      connect={connect}
-      disconnect={disconnect}
-      connectError={connectError}
-      networkLabel={DEMO_NETWORK.name ?? chainName(DEMO_NETWORK.chainId)}
-      wrongChain={chainId !== null && chainId !== DEMO_NETWORK.chainId}
-    />
-  );
+  return <ConnectWalletPillView {...useConnectWalletPill(DEMO_NETWORK)} />;
 }

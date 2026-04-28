@@ -3,7 +3,10 @@
 import { Pill, StatusDot } from "./Pill";
 
 export interface ConnectWalletPillViewProps {
-  account: string | null;
+  /** True when a wallet is connected. Drives the connected vs.
+   *  disconnected branch — the view doesn't need the raw account
+   *  address, the caller passes a pre-truncated string instead. */
+  connected: boolean;
   /** Pre-truncated address (`shortAddr(account)`) — let the caller
    *  decide the truncation form so this view stays SDK-agnostic. */
   shortAccount: string;
@@ -24,7 +27,7 @@ export interface ConnectWalletPillViewProps {
  *  results in as props, so this stays in `packages/ui` without
  *  pulling `@zkscatter/sdk` into ui's peer deps. */
 export function ConnectWalletPillView({
-  account,
+  connected,
   shortAccount,
   walletName,
   connect,
@@ -33,7 +36,7 @@ export function ConnectWalletPillView({
   networkLabel,
   wrongChain,
 }: ConnectWalletPillViewProps) {
-  if (!account) {
+  if (!connected) {
     return (
       <button
         type="button"
