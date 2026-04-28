@@ -76,8 +76,14 @@ export function EdDSAKeyProvider({ children }: { children: React.ReactNode }) {
   }, [account]);
 
   const derive = useCallback(async (): Promise<EdDSAKeyPair> => {
-    if (keyPair) return keyPair;
-    if (inflightRef.current) return inflightRef.current;
+    // Account-switch guard: effects run after render, so a `derive()`
+    // call that lands in the same tick as an account flip could
+    // otherwise return the previous account's cached keypair. Reject
+    // the stale cache here in addition to the cleanup effect.
+    if (keyPair && derivedForRef.current === account) return keyPair;
+    if (inflightRef.current && derivedForRef.current === account) {
+      return inflightRef.current;
+    }
     if (!signer) {
       const msg = "Connect a wallet before deriving the trading key.";
       setError(msg);
@@ -97,10 +103,10 @@ export function EdDSAKeyProvider({ children }: { children: React.ReactNode }) {
         const msg =
           e instanceof Error ? e.message : "Trading key derivation failed.";
         setError(msg);
-        // Re-throw a real Error preserving the message so callers
-        // see the same string we put into `error`. `cause` carries
-        // the original for debugging.
-        throw e instanceof Error ? e : new Error(msg);
+        // Wrap non-Error throws so callers always get a real Error
+        // with the same string we put into `error`, while preserving
+        // the original via `cause` for debugging.
+        throw e instanceof Error ? e : new Error(msg, { cause: e });
       } finally {
         setIsDeriving(false);
         inflightRef.current = null;

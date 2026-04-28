@@ -6,6 +6,7 @@ import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import type { TokenBalance } from "@zkscatter/sdk/notes";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
+import { tokenBigIntToAddress } from "../_lib/format";
 
 const PRIMARY_TOKEN_SYMBOL = "USDC";
 
@@ -17,7 +18,7 @@ export function PoolBalanceCard() {
     if (!loaded || notes.length === 0) return [];
     const byToken = new Map<string, TokenBalance>();
     for (const n of notes) {
-      const token = "0x" + n.note.token.toString(16).padStart(40, "0");
+      const token = tokenBigIntToAddress(n.note.token);
       const cur = byToken.get(token);
       if (cur) cur.raw += n.note.amount;
       else byToken.set(token, { token, symbol: n.symbol, raw: n.note.amount });

@@ -14,6 +14,7 @@ import {
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
+import { useWallet } from "@zkscatter/sdk/react";
 import { getNetworkConfig } from "./network";
 
 /** A note in the user's local vault. The full `CommitmentNote` is
@@ -67,6 +68,10 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // envs at build time, so `chainId` is stable for the lifetime of the
   // bundle and we don't need an ActiveNetwork context.
   const chainId = getNetworkConfig().chainId;
+  // Scope the IndexedDB by `account` too so two wallets sharing the
+  // same browser don't read each other's notes.
+  const { account } = useWallet();
+  const accountKey = account?.toLowerCase() ?? "anon";
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
@@ -87,8 +92,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // on chain B's IDB after the swap. The SDK adapter is SSR-safe
   // (no IDB call until the first method invocation).
   const adapter = useMemo<NoteStorageAdapter>(
-    () => createIndexedDbNoteAdapter({ dbName: `zkscatter-pay-notes-${chainId}` }),
-    [chainId],
+    () =>
+      createIndexedDbNoteAdapter({
+        dbName: `zkscatter-pay-notes-${chainId}-${accountKey}`,
+      }),
+    [chainId, accountKey],
   );
 
   // Hydrate on mount + on every chainId change. Cancellation guards

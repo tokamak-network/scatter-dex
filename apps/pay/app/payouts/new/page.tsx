@@ -11,6 +11,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "../../_lib/eddsaKey";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
+import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
 
 type Row = { name: string; address: string; amount: string };
 
@@ -139,7 +140,7 @@ export default function NewPayout() {
   const router = useRouter();
 
   const { account } = useWallet();
-  const { notes } = useVault();
+  const { notes, loaded: vaultLoaded } = useVault();
   const { selected: relayer } = useRelayers();
   const eddsa = useEdDSAKey();
 
@@ -158,10 +159,10 @@ export default function NewPayout() {
     }
     setSubmitting(true);
     try {
+      if (!tokenAddress) return;
       await dryRunSettle({
-        rows,
-        tokenSymbol: token,
-        claimFrom,
+        batches,
+        tokenAddress,
         account,
         notes,
         relayerAddress: relayer?.address,
@@ -210,36 +211,34 @@ export default function NewPayout() {
     if (!tokenAddress) return 0n;
     let sum = 0n;
     for (const n of notes) {
-      const noteToken = "0x" + n.note.token.toString(16).padStart(40, "0");
-      if (noteToken === tokenAddress) sum += n.note.amount;
+      if (tokenBigIntToAddress(n.note.token) === tokenAddress) sum += n.note.amount;
     }
     return sum;
   }, [notes, tokenAddress]);
 
+  // Sum per-row bigints rather than going through the JS-float
+  // `total`; otherwise 0.1 + 0.2 = 0.30000000000000004 turns into a
+  // bigint shortfall that doesn't match what gets settled.
   const requiredRaw = useMemo<bigint>(() => {
-    try {
-      return ethers.parseUnits(total.toString(), decimals);
-    } catch {
-      return 0n;
+    let sum = 0n;
+    for (const r of rows) {
+      const cleaned = r.amount.replace(/[,_\s]/g, "");
+      if (!/^\d+(\.\d+)?$/.test(cleaned)) return 0n;
+      try {
+        sum += ethers.parseUnits(cleaned, decimals);
+      } catch {
+        return 0n;
+      }
     }
-  }, [total, decimals]);
+    return sum;
+  }, [rows, decimals]);
 
   const shortfallRaw = requiredRaw > availableRaw ? requiredRaw - availableRaw : 0n;
 
   const batches = useMemo<PayoutBatch[]>(() => {
-    if (!tokenAddress || rows.length === 0) return [];
+    if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
     try {
-      const recipients = rows.map((r) => {
-        const cleaned = r.amount.replace(/[,_\s]/g, "");
-        if (!/^\d+(\.\d+)?$/.test(cleaned) || !/^0x[a-fA-F0-9]{40}$/.test(r.address)) {
-          throw new Error("invalid row");
-        }
-        return {
-          recipient: r.address,
-          amount: ethers.parseUnits(cleaned, decimals),
-          releaseTime: BigInt(Math.floor(new Date(claimFrom ?? today()).getTime() / 1000)),
-        };
-      });
+      const recipients = parseRecipientRows(rows, decimals, claimFrom);
       return splitPayout(recipients, { token: tokenAddress });
     } catch {
       return [];
@@ -361,6 +360,7 @@ export default function NewPayout() {
               requiredRaw={requiredRaw}
               shortfallRaw={shortfallRaw}
               account={account}
+              vaultLoaded={vaultLoaded}
               onDeposit={() =>
                 dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
               }
@@ -657,6 +657,7 @@ function BalancePanel({
   requiredRaw,
   shortfallRaw,
   account,
+  vaultLoaded,
   onDeposit,
 }: {
   token: string;
@@ -665,6 +666,7 @@ function BalancePanel({
   requiredRaw: bigint;
   shortfallRaw: bigint;
   account: string | null;
+  vaultLoaded: boolean;
   onDeposit: () => void;
 }) {
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
@@ -674,6 +676,13 @@ function BalancePanel({
     return (
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
         Connect a wallet to see your available pool balance.
+      </div>
+    );
+  }
+  if (!vaultLoaded) {
+    return (
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+        Reading your vault…
       </div>
     );
   }
@@ -740,9 +749,8 @@ async function dryRunDeposit({ tokenSymbol, amountRaw, account, eddsa }: DryRunD
 }
 
 interface DryRunSettleArgs {
-  rows: Row[];
-  tokenSymbol: string;
-  claimFrom: string | undefined;
+  batches: PayoutBatch[];
+  tokenAddress: string;
   account: string | null;
   notes: ReturnType<typeof useVault>["notes"];
   relayerAddress: string | undefined;
@@ -750,32 +758,15 @@ interface DryRunSettleArgs {
 }
 
 async function dryRunSettle({
-  rows,
-  tokenSymbol,
-  claimFrom,
+  batches,
+  tokenAddress,
   account,
   notes,
   relayerAddress,
   eddsa,
 }: DryRunSettleArgs) {
-  const tokenInfo = LAUNCH_TOKENS[tokenSymbol];
-  if (!account || !tokenInfo) return;
-  const tokenAddress = tokenInfo.address.toLowerCase();
-  const decimals = tokenInfo.decimals;
+  if (!account || batches.length === 0) return;
   const cfg = getNetworkConfig();
-
-  let recipients;
-  try {
-    recipients = rows.map((r) => ({
-      recipient: r.address,
-      amount: ethers.parseUnits(r.amount.replace(/[,_\s]/g, ""), decimals),
-      releaseTime: BigInt(Math.floor(new Date(claimFrom ?? today()).getTime() / 1000)),
-    }));
-  } catch (err) {
-    console.error("[Pay dry-run] invalid recipient row", err);
-    return;
-  }
-  const batches = splitPayout(recipients, { token: tokenAddress });
 
   let kp;
   try {
@@ -788,9 +779,7 @@ async function dryRunSettle({
   // note as a placeholder. Phase B will replace this with a proper
   // largest-first picker that bin-packs across batches and tracks the
   // residual change UTXO.
-  const note = notes.find(
-    (n) => "0x" + n.note.token.toString(16).padStart(40, "0") === tokenAddress,
-  );
+  const note = notes.find((n) => tokenBigIntToAddress(n.note.token) === tokenAddress);
   const expirySec = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
 
   console.info("[Pay dry-run] settle plan", {
@@ -799,7 +788,7 @@ async function dryRunSettle({
     token: tokenAddress,
     relayer: relayerAddress ?? "(no relayer selected)",
     batches: batches.length,
-    totalRecipients: recipients.length,
+    totalRecipients: batches.reduce((sum, b) => sum + b.claims.length, 0),
   });
   for (let i = 0; i < batches.length; i++) {
     const b = batches[i];
