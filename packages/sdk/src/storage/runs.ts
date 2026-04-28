@@ -442,7 +442,16 @@ async function rebuildRunsIndex(): Promise<{
     }
     if (hasFolder()) {
       try {
-        await persistRunsIndex(index);
+        if (index.length === 0) {
+          // Don't write a 0-entry index file: a fresh folder (or one
+          // whose every run file failed to parse) should leave no
+          // cache on disk. Also remove a stale index left from a
+          // previous session so the lifecycle matches the test plan
+          // ("0 runs → no index file").
+          await removeFile(RUNS_INDEX_FILENAME);
+        } else {
+          await persistRunsIndex(index);
+        }
       } catch (e) {
         console.warn("Failed to persist runs index:", e);
       }
