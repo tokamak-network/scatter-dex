@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ethers } from "ethers";
 import { ShieldCheck, Building2, User } from "lucide-react";
+import { loadOperatorRow, loadRegistrationStatus } from "@zkscatter/sdk/relayer";
 import { useWallet } from "../lib/wallet";
-import { getIdentityGateAddress, getRelayerRegistryAddress, getZkX509Url } from "../lib/config";
-import { IDENTITY_GATE_ABI, RELAYER_REGISTRY_ABI } from "../lib/contracts";
+import { getRelayerRegistryAddress, getZkX509Url } from "../lib/config";
 import { getReadProvider } from "../lib/provider";
 import UserCAPanel from "./UserCAPanel";
 import RelayerCAPanel from "./RelayerCAPanel";
@@ -25,6 +24,14 @@ export default function IdentityPage() {
   const [relayerError, setRelayerError] = useState("");
 
   const checkIdentity = useCallback(async () => {
+    // Reset derived state up front so an account switch / disconnect
+    // never leaves the prior account's "Verified until …" or relayer
+    // bond visible until the next fetch resolves.
+    setVerifiedUntil(0);
+    setRelayerInfo(null);
+    setUserError("");
+    setRelayerError("");
+
     if (!account) {
       setUserStatus("idle");
       setRelayerStatus("idle");
@@ -32,39 +39,45 @@ export default function IdentityPage() {
     }
 
     setUserStatus("checking");
-    try {
-      const provider = getReadProvider();
-      const gate = new ethers.Contract(getIdentityGateAddress(), IDENTITY_GATE_ABI, provider);
-      const verified = await gate.isVerified(account);
-      if (verified) {
-        const until = await gate.verifiedUntil(account);
-        setVerifiedUntil(Number(until));
-        setUserStatus("verified");
-      } else {
-        setUserStatus("not-verified");
-      }
-    } catch (err: unknown) {
+    setRelayerStatus("checking");
+
+    const provider = getReadProvider();
+    const registryAddr = getRelayerRegistryAddress();
+
+    // Two independent reads — fan out so the panel's perceived
+    // latency is bounded by the slower of the two, not their sum.
+    const [identityResult, relayerResult] = await Promise.allSettled([
+      loadRegistrationStatus(registryAddr, account, provider),
+      loadOperatorRow(registryAddr, account, provider),
+    ]);
+
+    if (identityResult.status === "fulfilled") {
+      const status = identityResult.value;
+      setVerifiedUntil(status.verifiedUntil);
+      setUserStatus(status.isVerified ? "verified" : "not-verified");
+    } else {
+      console.error("Failed to load identity status", identityResult.reason);
+      const err = identityResult.reason;
       setUserError(err instanceof Error ? err.message : "Failed to check identity");
       setUserStatus("error");
     }
 
-    setRelayerStatus("checking");
-    try {
-      const provider = getReadProvider();
-      const registry = new ethers.Contract(getRelayerRegistryAddress(), RELAYER_REGISTRY_ABI, provider);
-      const r = await registry.relayers(account);
-      if (r.active) {
+    if (relayerResult.status === "fulfilled") {
+      const row = relayerResult.value;
+      if (row.active) {
         setRelayerInfo({
-          url: r.url,
-          fee: Number(r.fee),
-          bond: r.bond,
-          registeredAt: Number(r.registeredAt),
+          url: row.url,
+          fee: row.feeBps,
+          bond: row.bond,
+          registeredAt: row.registeredAt,
         });
         setRelayerStatus("verified");
       } else {
         setRelayerStatus("not-verified");
       }
-    } catch (err: unknown) {
+    } else {
+      console.error("Failed to load relayer status", relayerResult.reason);
+      const err = relayerResult.reason;
       setRelayerError(err instanceof Error ? err.message : "Failed to check relayer status");
       setRelayerStatus("error");
     }
