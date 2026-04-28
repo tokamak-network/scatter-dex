@@ -1,24 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useWallet, shortAddr } from "@zkscatter/sdk/react";
+import {
+  claimRelayerFees,
+  explainFeeVaultError,
+  type FeeVaultBalance,
+} from "@zkscatter/sdk/relayer";
 import { Stat } from "../components/Stat";
+import { SectionHeader } from "../components/SectionHeader";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
+import { WriteResult } from "../components/WriteResult";
+import { DEMO_NETWORK } from "../lib/network";
+import { useChainWrite } from "../lib/useChainWrite";
+import { useFeeVault, type FeeVaultState } from "../lib/useFeeVault";
 
-interface TokenBalance {
-  symbol: string;
-  address: string;
-  decimals: number;
-  accumulated: string;
-  lifetimeWithdrawn: string;
-}
-
-const balances: TokenBalance[] = [
-  { symbol: "USDC", address: "0xA0b8…eB48", decimals: 6,  accumulated: "412.85", lifetimeWithdrawn: "8,420.10" },
-  { symbol: "USDT", address: "0xdAC1…1ec7", decimals: 6,  accumulated: "188.20", lifetimeWithdrawn: "3,120.50" },
-  { symbol: "WETH", address: "0xC02a…6Cc2", decimals: 18, accumulated: "0.142",  lifetimeWithdrawn: "2.180" },
-  { symbol: "WBTC", address: "0x2260…6599", decimals: 8,  accumulated: "0.0021", lifetimeWithdrawn: "0.018" },
-];
+const VAULT = DEMO_NETWORK.contracts.feeVault;
 
 interface RecentWithdrawal {
   id: string;
@@ -35,7 +32,9 @@ const recentWithdrawals: RecentWithdrawal[] = [
 ];
 
 export default function TreasuryPage() {
-  const [pendingToken, setPendingToken] = useState<string | null>(null);
+  const vault = useFeeVault();
+  const ph = vaultPlaceholder(vault);
+  const nonZero = ph ? [] : vault.balances.filter((b) => b.balance > 0n);
 
   return (
     <div className="space-y-10">
@@ -44,8 +43,8 @@ export default function TreasuryPage() {
         <div>
           <h1 className="text-2xl font-semibold">Treasury</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Fee revenue accrued in the FeeVault contract. Withdraw any time —
-            gas paid by you.
+            Fee revenue accrued in the FeeVault contract. Claim any time —
+            gas paid by you. Platform fee is deducted on claim.
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-[var(--color-primary)] hover:underline">
@@ -53,67 +52,39 @@ export default function TreasuryPage() {
         </Link>
       </header>
 
-      <section className="grid grid-cols-3 gap-4">
-        <Stat label="Withdrawable now" value="$601.05" sub="Across 4 tokens" />
-        <Stat label="Lifetime earned" value="$11,562.80" sub="Since 2026-01-12" />
-        <Stat label="Avg fee per settle" value="$5.71" sub="Last 30d" />
+      <section>
+        <SectionHeader title="On-chain" badge="live" />
+        <div className="grid grid-cols-3 gap-4">
+          <Stat
+            label="Claimable now"
+            value={ph ? ph.value : `${nonZero.length} ${nonZero.length === 1 ? "token" : "tokens"}`}
+            sub={ph ? ph.sub : nonZero.length === 0 ? "Nothing accrued yet" : "Claim row-by-row below"}
+          />
+          <Stat
+            label="Tokens tracked"
+            value={ph ? ph.value : String(vault.balances.length)}
+            sub={ph ? ph.sub : "From network whitelist"}
+          />
+          <Stat
+            label="Platform fee"
+            value="—"
+            sub="Reads vault.platformFeeBps once deployed"
+          />
+        </div>
       </section>
 
       <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Per-token balances</h2>
-          <button className="text-xs text-[var(--color-primary)] hover:underline">
-            Withdraw all
-          </button>
-        </div>
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-              <tr>
-                <th className="px-5 py-3 text-left">Token</th>
-                <th className="px-5 py-3 text-left">Address</th>
-                <th className="px-5 py-3 text-right">Withdrawable</th>
-                <th className="px-5 py-3 text-right">Lifetime withdrawn</th>
-                <th className="px-5 py-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {balances.map((b) => {
-                const isPending = pendingToken === b.symbol;
-                const accumulatedAmount = Number(b.accumulated.replaceAll(",", ""));
-                const empty = !Number.isFinite(accumulatedAmount) || accumulatedAmount <= 0;
-                return (
-                  <tr key={b.symbol} className="border-t border-[var(--color-border)]">
-                    <td className="px-5 py-3 font-medium">{b.symbol}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{b.address}</td>
-                    <td className="px-5 py-3 text-right font-mono">{b.accumulated}</td>
-                    <td className="px-5 py-3 text-right font-mono text-[var(--color-text-muted)]">{b.lifetimeWithdrawn}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button
-                        disabled={empty || isPending}
-                        onClick={() => {
-                          setPendingToken(b.symbol);
-                          setTimeout(() => setPendingToken(null), 1500);
-                        }}
-                        className="rounded-lg bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-subtle)]"
-                      >
-                        {isPending ? "Pending…" : "Withdraw"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SectionHeader title="Per-token balances" badge="live" />
+        <BalancesTable vault={vault} placeholder={ph} />
         <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
-          Withdraws call <code className="font-mono">FeeVault.withdrawRelayerFees(token, recipient)</code>.
-          Recipient defaults to the operator address; configurable in profile.
+          Claims call <code className="font-mono">FeeVault.claim(token)</code>.
+          Tokens come from the network whitelist; the indexer trail will replace
+          this once event scanning ships.
         </p>
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recent withdrawals</h2>
+        <SectionHeader title="Recent withdrawals" badge="mock" hint="Wired in once the indexer ships" />
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           {recentWithdrawals.map((w) => (
             <div
@@ -125,12 +96,12 @@ export default function TreasuryPage() {
                 <div className="text-xs text-[var(--color-text-muted)]">{w.at}</div>
               </div>
               <a
-                href={`https://etherscan.io/tx/${w.txHash}`}
+                href={`${DEMO_NETWORK.explorerBase}/tx/${w.txHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-mono text-xs text-[var(--color-primary)] hover:underline"
               >
-                {`${w.txHash.slice(0, 6)}…${w.txHash.slice(-4)}`} ↗
+                {shortAddr(w.txHash)} ↗
               </a>
             </div>
           ))}
@@ -140,3 +111,104 @@ export default function TreasuryPage() {
   );
 }
 
+interface VaultPlaceholder { value: string; sub: string }
+
+function vaultPlaceholder(state: FeeVaultState): VaultPlaceholder | null {
+  if (!state.account) return { value: "—", sub: "Connect wallet to load" };
+  if (!state.vaultDeployed) return { value: "—", sub: "FeeVault not deployed" };
+  if (state.loading) return { value: "…", sub: "Reading vault" };
+  if (state.error) return { value: "—", sub: `Read error: ${state.error}` };
+  return null;
+}
+
+const BALANCE_COLUMNS = 4;
+
+function BalancesTable({
+  vault,
+  placeholder,
+}: {
+  vault: FeeVaultState;
+  placeholder: VaultPlaceholder | null;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-sm">
+        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-5 py-3 text-left">Token</th>
+            <th className="px-5 py-3 text-left">Address</th>
+            <th className="px-5 py-3 text-right">Claimable</th>
+            <th className="px-5 py-3 text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {placeholder && <EmptyRow message={placeholder.sub} />}
+          {!placeholder && vault.balances.length === 0 && (
+            <EmptyRow message="No tokens configured on this network yet." />
+          )}
+          {!placeholder && vault.balances.map((b) => (
+            <BalanceRow key={b.token.address} entry={b} onClaimed={vault.refresh} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EmptyRow({ message }: { message: string }) {
+  return (
+    <tr className="border-t border-[var(--color-border)]">
+      <td colSpan={BALANCE_COLUMNS} className="px-5 py-6 text-center text-sm text-[var(--color-text-muted)]">
+        {message}
+      </td>
+    </tr>
+  );
+}
+
+function BalanceRow({ entry, onClaimed }: { entry: FeeVaultBalance; onClaimed: () => void }) {
+  const { signer } = useWallet();
+  const write = useChainWrite({ explain: explainFeeVaultError, onSuccess: onClaimed });
+  const { token, balance } = entry;
+  const empty = balance === 0n;
+  const submitting = write.phase.kind === "submitting";
+
+  const onClaim = () => {
+    if (!signer || !VAULT) return;
+    write.run(() => claimRelayerFees(VAULT, token.address, signer));
+  };
+
+  return (
+    <tr className="border-t border-[var(--color-border)] align-top">
+      <td className="px-5 py-3 font-medium">{token.symbol}</td>
+      <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">
+        {shortAddr(token.address)}
+      </td>
+      <td className="px-5 py-3 text-right font-mono">
+        {formatTokenAmount(balance, token.decimals)}
+      </td>
+      <td className="px-5 py-3 text-right">
+        <button
+          disabled={empty || submitting || !signer}
+          onClick={onClaim}
+          className="rounded-lg bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-subtle)]"
+        >
+          {submitting ? "Claiming…" : "Claim"}
+        </button>
+        <WriteResult phase={write.phase} />
+      </td>
+    </tr>
+  );
+}
+
+/** Pure-bigint formatter so the operators app doesn't pull `ethers`
+ *  as a direct dep (the SDK does). */
+function formatTokenAmount(amount: bigint, decimals: number): string {
+  if (decimals === 0) return amount.toString();
+  const negative = amount < 0n;
+  const abs = negative ? -amount : amount;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = (abs % base).toString().padStart(decimals, "0").replace(/0+$/, "");
+  const body = frac.length > 0 ? `${whole}.${frac}` : whole.toString();
+  return negative ? `-${body}` : body;
+}

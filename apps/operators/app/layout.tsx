@@ -5,6 +5,7 @@ import { TokamakMark } from "@zkscatter/ui";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
+import { FeeVaultProvider } from "./lib/useFeeVault";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider network={DEMO_NETWORK}>
           <OperatorProvider>
+            <FeeVaultProvider>
             <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
               Operator preview — Sepolia testnet. Pages with mock data are tagged inline.
             </div>
@@ -50,6 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
               Scatter Operators · Powered by zkScatter · Tokamak Network
             </footer>
+            </FeeVaultProvider>
           </OperatorProvider>
         </WalletProvider>
       </body>

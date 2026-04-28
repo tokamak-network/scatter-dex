@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { IDENTITY_GATE_IFACE, RELAYER_REGISTRY_IFACE } from "../core/contracts";
+import { callExceptionErrorName } from "./errors";
 
 /** Maximum per-trade fee a relayer may register, in basis points.
  *  Mirrors `RelayerRegistry.MAX_FEE` (50 bps) — kept in sync here so
@@ -80,15 +81,6 @@ export async function registerRelayer(
 
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, signer);
   return registry.register(params.url, BigInt(params.feeBps), { value: bond }) as Promise<ethers.TransactionResponse>;
-}
-
-/** Read the named error off ethers v6 contract-call exceptions
- *  when the ABI carries the matching error fragment. Falls back to
- *  null so callers can substring-match the message instead. */
-function callExceptionErrorName(err: unknown): string | null {
-  if (typeof err !== "object" || err === null) return null;
-  const e = err as { revert?: { name?: string } | null; errorName?: string };
-  return e.revert?.name ?? e.errorName ?? null;
 }
 
 /** Static error-code → copy table. Hoisted to module scope so it
