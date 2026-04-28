@@ -67,11 +67,18 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # `setup-node` will hash these lockfiles and cache the npm
+          # Pinned to 22 (current LTS) because TypeDoc's output is
+          # sensitive to the Node major version — local Node 22 emits
+          # different mdx than Node 20 for some re-exports (e.g. the
+          # internal `bytesToNumberBE` from @noble/curves), which
+          # produces phantom drift failures on a clean PR. Anyone
+          # running `npm run api` locally is almost certainly on
+          # Node 22 LTS, so match that.
+          node-version: 22
+          # `setup-node` hashes these lockfiles and caches the npm
           # registry tarballs. Cold install ~120s; warm ~30s. The
-          # zk-relayer lockfile is intentionally excluded — that job
-          # deletes it as part of the npm bug #4828 workaround below.
+          # zk-relayer lockfile is excluded from the cache — its
+          # install path wipes `node_modules` to dodge npm bug #4828.
           cache: npm
           cache-dependency-path: |
             packages/types/package-lock.json
