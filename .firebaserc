@@ -13,6 +13,9 @@
         ],
         "pro": [
           "zkscatter-pro"
+        ],
+        "pay": [
+          "zkscatter-pay"
         ]
       }
     }
