@@ -30,6 +30,15 @@ export default function RelayerRegisterPage() {
   const [bondEth, setBondEth] = useState("0.1");
 
   const checkStatus = useCallback(async () => {
+    // Reset derived state up front so a disconnect / account switch
+    // never leaves a stale "Verified until …" / minimum bond /
+    // error banner from the prior account visible on screen.
+    setIsVerified(false);
+    setVerifiedUntil(0);
+    setMinBond(0n);
+    setMinBondEth("");
+    setErrorMsg("");
+
     if (!account) {
       setPhase("not-connected");
       return;
@@ -45,6 +54,7 @@ export default function RelayerRegisterPage() {
       else if (status.alreadyRegistered) setPhase("already-registered");
       else setPhase("ready");
     } catch (err: unknown) {
+      console.error("Failed to load registration status", err);
       setErrorMsg(err instanceof Error ? err.message : "Failed to check status");
       setPhase("error");
     }
@@ -55,7 +65,15 @@ export default function RelayerRegisterPage() {
   }, [checkStatus]);
 
   const handleRegister = async () => {
-    if (!account || !signer) return;
+    if (!account) return;
+    // `account` can be set without a signer when wallet.tsx fails to
+    // attach one (e.g. injected provider lost the request handler).
+    // Surface that as an error instead of a silent no-op click.
+    if (!signer) {
+      setErrorMsg("Wallet signer is unavailable. Reconnect your wallet and try again.");
+      setPhase("error");
+      return;
+    }
     setPhase("submitting");
     setErrorMsg("");
     try {
@@ -68,6 +86,7 @@ export default function RelayerRegisterPage() {
       setTxHash(receipt?.hash ?? tx.hash);
       setPhase("success");
     } catch (err: unknown) {
+      console.error("Registration failed", err);
       setErrorMsg(explainRegistryError(err, minBond));
       setPhase("error");
     }
