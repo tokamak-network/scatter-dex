@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useOutsideClick } from "@zkscatter/ui";
 
 type Status = "claimed" | "available" | "locked";
@@ -31,6 +31,7 @@ export default function PayoutDetail() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? PAYOUT_ID;
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const closeMenu = useCallback(() => setOpenMenu(null), []);
 
   if (id !== PAYOUT_ID) {
     return (
@@ -143,7 +144,7 @@ export default function PayoutDetail() {
                     <RowMenu
                       open={openMenu === r.address}
                       onOpen={() => setOpenMenu((cur) => (cur === r.address ? null : r.address))}
-                      onClose={() => setOpenMenu(null)}
+                      onClose={closeMenu}
                       onCopy={() => copyClaimLink(r.name)}
                       onResend={() => emailClaimLink(r.name)}
                       onPayslipEmail={() => emailPayslip(r.name)}
