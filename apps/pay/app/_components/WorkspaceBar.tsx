@@ -11,13 +11,18 @@ import { useFolderStorage } from "../_lib/folderStorage";
 
 const RECENT_MAX = 5;
 
-/** Workspace switcher in the header. Shows the current folder name
- *  and opens a dropdown with recently-used folders, "Pick another
- *  folder…", and "Forget current". When no folder is picked yet the
- *  pill collapses to a single "Pick folder" button. Hidden entirely
- *  when the host browser doesn't support the File System Access API
- *  (the recipients page surfaces a dedicated banner there). */
-export function FolderPill() {
+/** Per-page workspace indicator, rendered just under each operator
+ *  page's title. Replaces the old header `FolderPill` so the folder
+ *  picker / current-workspace label sits in the page's content
+ *  instead of the global nav.
+ *
+ *  - Unpicked → orange "Pick folder" call to action.
+ *  - Picked   → folder name + a dropdown for switch / forget / pick
+ *               another / export / import.
+ *  - Probing  → subtle "Restoring folder…" placeholder.
+ *  - Unsupported browser → null (the underlying page already has its
+ *    own banner — duplicating here would just be noise). */
+export function WorkspaceBar() {
   const folder = useFolderStorage();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"export" | "import" | null>(null);
@@ -47,11 +52,7 @@ export function FolderPill() {
         a.click();
         a.remove();
       } finally {
-        // Defer the revoke so Safari (which kicks the download off
-        // asynchronously after `click()`) doesn't race the URL going
-        // away. The `try/finally` also catches any throw between
-        // `createObjectURL` and the click — without it the URL
-        // would leak.
+        // Defer revoke so Safari's async download kickoff doesn't race.
         setTimeout(() => URL.revokeObjectURL(url), 0);
       }
       setStatus({
@@ -61,7 +62,6 @@ export function FolderPill() {
         }.`,
       });
     } catch (e) {
-      // Surface the full error to devtools before collapsing to a UI banner.
       console.error("Workspace export failed:", e);
       setStatus({
         tone: "warn",
@@ -93,7 +93,6 @@ export function FolderPill() {
           }. Reload the page to see the new runs.`,
         });
       } catch (err) {
-        // Surface the full error to devtools before collapsing to a UI banner.
         console.error("Workspace import failed:", err);
         if (err instanceof WorkspaceBackupCorruptError) {
           setStatus({ tone: "warn", text: `Bundle is invalid: ${err.message}` });
@@ -118,41 +117,61 @@ export function FolderPill() {
 
   if (folder.restoring) {
     return (
-      <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
-        Folder: …
-      </span>
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+        Restoring your notes folder…
+      </div>
     );
   }
 
   if (!folder.ready) {
     return (
-      <button
-        onClick={() => void folder.select()}
-        className="rounded-full border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-1 text-xs font-medium text-[var(--color-warning)]"
-      >
-        Pick folder
-      </button>
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-xs">
+        <div className="flex-1">
+          <div className="font-medium text-[var(--color-warning)]">
+            No notes folder selected
+          </div>
+          <div className="mt-0.5 text-[var(--color-text-muted)]">
+            Pay reads run records and the address book from a folder you choose. Pick once — the browser remembers it across sessions.
+          </div>
+        </div>
+        <button
+          onClick={() => void folder.select()}
+          className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)]"
+        >
+          Pick folder
+        </button>
+      </div>
     );
   }
 
   const others = folder.recent.filter((r) => !r.isCurrent).slice(0, RECENT_MAX);
+  const anyBusy = busy !== null;
 
   return (
-    <div ref={ref} className="relative inline-block">
+    <div
+      ref={ref}
+      className="relative flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs"
+    >
+      <span className="text-[var(--color-text-muted)]">Workspace:</span>
+      <span
+        title={`Notes folder: ${folder.folderName}`}
+        className="font-mono text-[var(--color-text)]"
+      >
+        📁 {folder.folderName}
+      </span>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={`Workspace: ${folder.folderName}`}
-        className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs"
+        className="ml-auto rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
       >
-        📁 {folder.folderName} ▾
+        Change ▾
       </button>
       {open && (
-        <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-xs shadow-lg">
+        <div className="absolute right-3 top-full z-20 mt-1 w-72 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-xs shadow-lg">
           <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
             Active workspace
           </div>
-          <div className="px-3 pb-2 text-[var(--color-text)]">
-            <span className="font-mono">📁 {folder.folderName}</span>
+          <div className="px-3 pb-2 font-mono text-[var(--color-text)]">
+            📁 {folder.folderName}
           </div>
           {others.length > 0 && (
             <>
@@ -166,7 +185,7 @@ export function FolderPill() {
                   className="flex items-center justify-between gap-2 px-3 py-1 hover:bg-[var(--color-primary-soft)]"
                 >
                   <button
-                    disabled={busy !== null}
+                    disabled={anyBusy}
                     onClick={async () => {
                       const ok = await folder.switchTo(r.id);
                       if (ok) setOpen(false);
@@ -177,7 +196,7 @@ export function FolderPill() {
                     📁 {r.name}
                   </button>
                   <button
-                    disabled={busy !== null}
+                    disabled={anyBusy}
                     onClick={() => void folder.forget(r.id)}
                     title="Forget this workspace"
                     className="text-[var(--color-text-subtle)] hover:text-[var(--color-warning)] disabled:opacity-50"
@@ -190,7 +209,7 @@ export function FolderPill() {
           )}
           <div className="border-t border-[var(--color-border)]" />
           <button
-            disabled={busy !== null}
+            disabled={anyBusy}
             onClick={async () => {
               await folder.select();
               setOpen(false);
@@ -200,14 +219,14 @@ export function FolderPill() {
             ＋ Pick another folder…
           </button>
           <button
-            disabled={busy !== null}
+            disabled={anyBusy}
             onClick={() => void onExport()}
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
           >
             {busy === "export" ? "Exporting…" : "⬇ Export workspace"}
           </button>
           <button
-            disabled={busy !== null}
+            disabled={anyBusy}
             onClick={onPickImport}
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
           >
@@ -226,7 +245,7 @@ export function FolderPill() {
           )}
           {folder.currentId && (
             <button
-              disabled={busy !== null}
+              disabled={anyBusy}
               onClick={async () => {
                 if (!folder.currentId) return;
                 await folder.forget(folder.currentId);

@@ -21,6 +21,7 @@ import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
 import { autoPickSourceNotes, type SourceNotesPick } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
 import { AddressBookPicker } from "../../_components/AddressBookPicker";
+import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import type { WalletEntry } from "@zkscatter/sdk/storage";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
@@ -361,6 +362,8 @@ export default function NewPayout() {
         <span>/</span>
         <span>New</span>
       </div>
+
+      <WorkspaceBar />
 
       <Stepper step={step} onJump={setStep} />
 
