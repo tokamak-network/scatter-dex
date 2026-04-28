@@ -17,10 +17,10 @@ export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
 const APP_URLS: Record<AppId, string> = {
   pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://zkscatter-pro.web.app",
   pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://zkscatter-pay.web.app",
-  // Drop/Relayer aren't deployed yet, but `APP_BY_ID.*.href` is
-  // consumed in non-AppCard contexts (Footer, Recommender) that
-  // don't check `comingSoon`. Use the eventual real URL so those
-  // links are deterministic instead of broken in-app hashes.
+  // Drop isn't deployed yet, but `APP_BY_ID.*.href` is consumed in
+  // non-AppCard contexts (Footer, Recommender) that don't check
+  // `comingSoon`. Use the eventual real URL so those links are
+  // deterministic instead of broken in-app hashes.
   drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://zkscatter-drop.web.app",
   relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://zkscatter-relayer.web.app",
   // Mobile is an in-hub marketing route, not a separate app server.
@@ -134,7 +134,6 @@ export const APPS: AppEntry[] = [
     href: APP_URLS.relayer,
     cta: "Open Relayer",
     accent: "var(--color-accent-relayer)",
-    comingSoon: true,
   },
 ];
 
