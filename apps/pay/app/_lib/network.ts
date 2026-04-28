@@ -18,30 +18,35 @@ import { LAUNCH_TOKENS, type NetworkConfig } from "@zkscatter/sdk";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
-function env(name: string, fallback = ""): string {
-  // Next inlines NEXT_PUBLIC_* at build time, so this lookup is safe
-  // for client and server.
-  const v = process.env[name];
-  return v && v.length > 0 ? v : fallback;
+function pick(value: string | undefined, fallback = ""): string {
+  return value && value.length > 0 ? value : fallback;
 }
 
+// Each `process.env.NEXT_PUBLIC_*` access has to be a *literal* key
+// for Next to inline the value into the client bundle — a dynamic
+// lookup like `process.env[name]` is not statically analysable, so
+// it survives only on the server and the browser sees `undefined`
+// (which then silently falls through to the dev defaults). Reading
+// each key explicitly here keeps the chain pill rendered on the
+// server and the wrong-chain banner rendered on the client agreeing
+// on the same chain.
 export function getNetworkConfig(): NetworkConfig {
   return {
-    chainId: Number(env("NEXT_PUBLIC_PAY_CHAIN_ID", "31337")),
-    rpcUrl: env("NEXT_PUBLIC_PAY_RPC_URL", "http://127.0.0.1:8545"),
-    explorerBase: env("NEXT_PUBLIC_PAY_EXPLORER_BASE") || undefined,
+    chainId: Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337")),
+    rpcUrl: pick(process.env.NEXT_PUBLIC_PAY_RPC_URL, "http://127.0.0.1:8545"),
+    explorerBase: pick(process.env.NEXT_PUBLIC_PAY_EXPLORER_BASE) || undefined,
     contracts: {
-      privateSettlement: env("NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT", ZERO),
-      commitmentPool: env("NEXT_PUBLIC_PAY_COMMITMENT_POOL", ZERO),
-      identityGate: env("NEXT_PUBLIC_PAY_IDENTITY_GATE", ZERO),
-      relayerRegistry: env("NEXT_PUBLIC_PAY_RELAYER_REGISTRY", ZERO),
-      weth: env("NEXT_PUBLIC_PAY_WETH", ZERO),
+      privateSettlement: pick(process.env.NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT, ZERO),
+      commitmentPool: pick(process.env.NEXT_PUBLIC_PAY_COMMITMENT_POOL, ZERO),
+      identityGate: pick(process.env.NEXT_PUBLIC_PAY_IDENTITY_GATE, ZERO),
+      relayerRegistry: pick(process.env.NEXT_PUBLIC_PAY_RELAYER_REGISTRY, ZERO),
+      weth: pick(process.env.NEXT_PUBLIC_PAY_WETH, ZERO),
     },
     tokens: Object.values(LAUNCH_TOKENS),
-    relayer: env("NEXT_PUBLIC_PAY_RELAYER_URL")
-      ? { url: env("NEXT_PUBLIC_PAY_RELAYER_URL") }
+    relayer: process.env.NEXT_PUBLIC_PAY_RELAYER_URL
+      ? { url: process.env.NEXT_PUBLIC_PAY_RELAYER_URL }
       : undefined,
-    deployBlock: Number(env("NEXT_PUBLIC_PAY_DEPLOY_BLOCK", "0")),
+    deployBlock: Number(pick(process.env.NEXT_PUBLIC_PAY_DEPLOY_BLOCK, "0")),
   };
 }
 
