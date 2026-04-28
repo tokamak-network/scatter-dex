@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import {
-  listRuns,
+  listRunsSummary,
   type RunCategory,
-  type RunRecord,
+  type RunsIndexEntry,
 } from "@zkscatter/sdk/storage";
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { useFolderStorage } from "../_lib/folderStorage";
@@ -35,15 +35,15 @@ export default function Dashboard() {
   const wallet = useWallet();
   const mounted = useMounted();
   const [tab, setTab] = useState<Tab>("all");
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runs, setRuns] = useState<RunsIndexEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [scope, setScope] = useState<"context" | "all-wallets">("context");
   const [error, setError] = useState<string | null>(null);
 
   // Race guard: workspace switch + scope toggle + wallet change can
-  // all trigger a fresh `listRuns`. A slower earlier call resolving
-  // after a newer one would overwrite `runs` with stale data, so we
-  // only commit results from the latest request.
+  // all trigger a fresh fetch. A slower earlier call resolving after
+  // a newer one would overwrite `runs` with stale data, so we only
+  // commit results from the latest request.
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
@@ -63,7 +63,12 @@ export default function Dashboard() {
       filter.operatorAddress = wallet.account;
     }
 
-    listRuns(filter)
+    // The dashboard only needs the summary fields (label, counts,
+    // amount, etc.) — `listRunsSummary` reads the cached
+    // `zkscatter-runs-index.json` in a single I/O instead of
+    // re-parsing every per-run file. The full record is still
+    // available via `loadRun(id)` on the detail page.
+    listRunsSummary(filter)
       .then((next) => {
         if (cancelled) return;
         setRuns(next);
@@ -202,7 +207,7 @@ function RunsList({
   folderReady,
   tab,
 }: {
-  runs: RunRecord[];
+  runs: RunsIndexEntry[];
   loaded: boolean;
   folderReady: boolean;
   tab: Tab;
@@ -233,33 +238,33 @@ function RunsList({
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       {runs.map((r) => (
-        <RunRow key={r.id} record={r} />
+        <RunRow key={r.id} entry={r} />
       ))}
     </div>
   );
 }
 
-function RunRow({ record }: { record: RunRecord }) {
-  const total = record.recipients.length;
-  const claimed = record.recipients.filter((r) => r.status === "claimed").length;
-  const date = formatIsoDate(record.createdAt);
-  const operatorTag = record.operatorAddress
-    ? shortAddr(record.operatorAddress)
+function RunRow({ entry }: { entry: RunsIndexEntry }) {
+  const total = entry.totalRecipients;
+  const claimed = entry.claimedRecipients;
+  const date = formatIsoDate(entry.createdAt);
+  const operatorTag = entry.operatorAddress
+    ? shortAddr(entry.operatorAddress)
     : "(unknown wallet)";
 
   return (
     <Link
-      href={`/payouts/${record.id}`}
+      href={`/payouts/${entry.id}`}
       className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0 hover:bg-[var(--color-primary-soft)]"
     >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium">{record.label}</span>
+          <span className="font-medium">{entry.label}</span>
           <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-            {CATEGORY_BADGE[record.category]}
+            {CATEGORY_BADGE[entry.category]}
           </span>
           <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-            chain {record.chainId}
+            chain {entry.chainId}
           </span>
         </div>
         <div className="text-xs text-[var(--color-text-muted)]">
@@ -268,7 +273,7 @@ function RunRow({ record }: { record: RunRecord }) {
       </div>
       <div className="text-right">
         <div className="font-mono text-sm">
-          {record.totalAmount} {record.tokenSymbol}
+          {entry.totalAmount} {entry.tokenSymbol}
         </div>
         <div className="text-xs text-[var(--color-text-muted)]">
           {claimed === total ? (
@@ -307,7 +312,7 @@ interface DashboardStats {
   gasSavedHint: string;
 }
 
-function deriveStats(runs: RunRecord[], mounted: boolean): DashboardStats {
+function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
   const thisMonthByToken: Record<string, number> = {};
   let pendingClaims = 0;
   const tokens = new Set<string>();
@@ -320,7 +325,7 @@ function deriveStats(runs: RunRecord[], mounted: boolean): DashboardStats {
     : null;
   for (const r of runs) {
     tokens.add(r.tokenSymbol);
-    pendingClaims += r.recipients.filter((rec) => rec.status !== "claimed").length;
+    pendingClaims += r.totalRecipients - r.claimedRecipients;
     if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
       thisMonthByToken[r.tokenSymbol] = (thisMonthByToken[r.tokenSymbol] ?? 0) + parseAmount(r.totalAmount);
     }
