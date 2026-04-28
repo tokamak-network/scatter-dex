@@ -1,4 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Requires bash 4+ for associative arrays (`declare -A`). macOS ships
+# /bin/bash 3.2; install bash via Homebrew (`brew install bash`) so
+# `/usr/bin/env bash` picks up the newer version on PATH.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "ERROR: scripts/dev.sh requires bash 4+." >&2
+  echo "Install a newer bash (for example: brew install bash) and ensure it is first on PATH." >&2
+  exit 1
+fi
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,21 +24,66 @@ MOBILE_BUNDLE_ID="io.scatterdex.mobile"
 PIDS=()
 CLEANED_UP=false
 
+# Per-app dev ports come from each app's `next dev -p …` script.
+# `hub` is intentionally excluded — it shares port 4000 with the
+# shared-orderbook this script always starts, so it must be run from
+# a separate terminal (it's a static landing site that doesn't need
+# the relayer/anvil stack anyway).
+declare -A APP_PORTS=(
+  [pay]=4001
+  [drop]=4002
+  [pro]=4003
+  [operators]=4004
+)
+# Comma-separated app list from --apps. Empty means "start frontend"
+# (the legacy default).
+APPS_LIST=""
+
 usage() {
-  echo "Usage: $0 [--mock]"
+  echo "Usage: $0 [--mock] [--apps <a,b,c>]"
   echo ""
-  echo "  Default:  Connects to running anvil with zk-X509 deployed."
-  echo "            Requires IDENTITY_REGISTRY env var or prompts for it."
-  echo "  --mock:   Starts own anvil with MockIdentityRegistry (no zk-X509 needed)."
+  echo "  Default:    Connects to running anvil with zk-X509 deployed."
+  echo "              Requires IDENTITY_REGISTRY env var or prompts for it."
+  echo "  --mock:     Starts own anvil with MockIdentityRegistry (no zk-X509 needed)."
+  echo "  --apps L:   Comma-separated app names to run instead of \`frontend/\`."
+  echo "              Valid: ${!APP_PORTS[*]}"
+  echo "              Example: --apps pro,pay"
+  echo "              Note: hub is excluded (port 4000 collides with shared-orderbook)."
   exit 0
 }
 
-for arg in "$@"; do
-  case "$arg" in
-    --mock) MOCK_MODE=true ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mock) MOCK_MODE=true; shift ;;
+    --apps)
+      # Without this guard, `--apps` as the last arg or before another
+      # flag would silently consume the wrong value (or `shift 2` would
+      # error under `set -e`).
+      if [ -z "${2:-}" ] || [[ "$2" == --* ]]; then
+        echo "ERROR: --apps requires a comma-separated value (try --help)" >&2
+        exit 1
+      fi
+      APPS_LIST="$2"
+      shift 2
+      ;;
+    --apps=*) APPS_LIST="${1#--apps=}"; shift ;;
     --help|-h) usage ;;
+    *) echo "ERROR: unknown argument '$1' (try --help)" >&2; exit 1 ;;
   esac
 done
+
+# Validate --apps entries against APP_PORTS so a typo fails fast
+# instead of silently skipping the app or starting the wrong port.
+APPS_TO_RUN=()
+if [ -n "$APPS_LIST" ]; then
+  IFS=',' read -ra APPS_TO_RUN <<< "$APPS_LIST"
+  for a in "${APPS_TO_RUN[@]}"; do
+    if [ -z "${APP_PORTS[$a]:-}" ]; then
+      echo "ERROR: unknown app '$a' (valid: ${!APP_PORTS[*]})" >&2
+      exit 1
+    fi
+  done
+fi
 
 cleanup() {
   if [ "$CLEANED_UP" = true ]; then return; fi
@@ -172,6 +225,7 @@ wipe_dev_dbs() {
     done
   done
   [ "$removed" = 1 ] && echo "Wiped stale relayer/orderbook DBs from previous run." && echo ""
+  return 0
 }
 if [ "$SHOULD_RESET_STATE" = true ]; then
   wipe_dev_dbs
@@ -500,21 +554,24 @@ else
   fi
 fi
 
-# ── 6. Start frontend ──────────────────────────────────────
+# ── 6. Start frontend (or selected apps via --apps) ────────
 echo ""
-echo "[6/6] Starting frontend..."
 TOKENS=""
 [ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
 
-# Preserve user-provided secrets (non-deployment env vars) across regeneration.
-# The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
-# like ONEINCH_API_KEY belong to the developer, not the deployment.
-PRESERVED_ENV=""
-if [ -f "$ROOT_DIR/frontend/.env.local" ]; then
-  PRESERVED_ENV=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$ROOT_DIR/frontend/.env.local" || true)
-fi
-
-cat > "$ROOT_DIR/frontend/.env.local" << EOF
+# Write the same NEXT_PUBLIC_* env file to a target dir. Used for both
+# `frontend/` (legacy default) and `apps/*` (new --apps mode) so all
+# clients see the same deployment without diverging by hand.
+write_app_env() {
+  local target_dir="$1"
+  # Preserve user-provided secrets (non-deployment env vars) across regeneration.
+  # The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
+  # like ONEINCH_API_KEY belong to the developer, not the deployment.
+  local preserved=""
+  if [ -f "$target_dir/.env.local" ]; then
+    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$target_dir/.env.local" || true)
+  fi
+  cat > "$target_dir/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
 NEXT_PUBLIC_WETH_ADDRESS=$WETH
@@ -528,9 +585,19 @@ NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 EOF
+  if [ -n "$preserved" ]; then
+    echo "$preserved" >> "$target_dir/.env.local"
+  fi
+}
 
-if [ -n "$PRESERVED_ENV" ]; then
-  echo "$PRESERVED_ENV" >> "$ROOT_DIR/frontend/.env.local"
+if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+  echo "[6/6] Starting frontend..."
+  write_app_env "$ROOT_DIR/frontend"
+else
+  echo "[6/6] Starting selected apps: ${APPS_TO_RUN[*]}"
+  for app in "${APPS_TO_RUN[@]}"; do
+    check_port "${APP_PORTS[$app]}" "apps/$app"
+  done
 fi
 
 # Mobile reads its per-chain contract map from
@@ -576,16 +643,36 @@ if [ -d "$ROOT_DIR/mobile" ]; then
     || echo "  WARN: failed to copy mobile ZK assets (proofs may fail to verify)"
 fi
 
-cd "$ROOT_DIR/frontend"
-npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
-last_pid=$!
-PIDS+=("$last_pid")
-if ! wait_for "http://localhost:3000" "frontend" 30; then
-  echo "  Last 20 lines of frontend log:"
-  tail -20 "$LOG_DIR/frontend.log" 2>/dev/null
-  exit 1
+if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+  cd "$ROOT_DIR/frontend"
+  npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
+  last_pid=$!
+  PIDS+=("$last_pid")
+  if ! wait_for "http://localhost:3000" "frontend" 30; then
+    echo "  Last 20 lines of frontend log:"
+    tail -20 "$LOG_DIR/frontend.log" 2>/dev/null
+    exit 1
+  fi
+  echo "  frontend running on http://localhost:3000 (PID $last_pid)"
+else
+  for app in "${APPS_TO_RUN[@]}"; do
+    port="${APP_PORTS[$app]}"
+    write_app_env "$ROOT_DIR/apps/$app"
+    # `exec` makes the subshell *become* the npm process so `$!` is the
+    # real server PID. Without it, the subshell PID is captured and
+    # `cleanup()` would kill only the wrapper, leaving npm/next orphaned
+    # and the port wedged on the next run.
+    ( cd "$ROOT_DIR/apps/$app" && exec npm run dev > "$LOG_DIR/app-$app.log" 2>&1 ) &
+    last_pid=$!
+    PIDS+=("$last_pid")
+    if ! wait_for "http://localhost:$port" "apps/$app" 30; then
+      echo "  Last 20 lines of $app log:"
+      tail -20 "$LOG_DIR/app-$app.log" 2>/dev/null
+      exit 1
+    fi
+    echo "  apps/$app running on http://localhost:$port (PID $last_pid)"
+  done
 fi
-echo "  frontend running on http://localhost:3000 (PID $last_pid)"
 
 echo ""
 echo "========================================"
@@ -599,7 +686,13 @@ else
   echo "  Registry:  $IDENTITY_REGISTRY"
 fi
 echo ""
-echo "  Frontend:    http://localhost:3000"
+if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+  echo "  Frontend:    http://localhost:3000"
+else
+  for app in "${APPS_TO_RUN[@]}"; do
+    printf "  apps/%-10s http://localhost:%s\n" "$app:" "${APP_PORTS[$app]}"
+  done
+fi
 echo "  Relayer A:   http://localhost:3002"
 echo "  Relayer B:   http://localhost:3003"
 echo "  Orderbook:   http://localhost:4000"
