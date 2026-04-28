@@ -96,3 +96,24 @@ export function isValidPair(pair: string): [string, string] | null {
   if (!ETH_ADDRESS_RE.test(a) || !ETH_ADDRESS_RE.test(b)) return null;
   return [a, b];
 }
+
+/**
+ * Clamp a `limit` query parameter into `[1, max]`.
+ *
+ * - `undefined` / `null` / non-finite (NaN, Infinity) → fall back to
+ *   `defaultValue`, then clamp.
+ * - finite numbers → truncated, then clamped to `[1, max]`
+ *   (so `0` and negatives become `1` — `?limit=0` is read as
+ *   "smallest valid page", consistent with parseSettlementsLimit
+ *   in PR #493).
+ *
+ * The trailing clamp also covers the case where `defaultValue` itself
+ * is outside `[1, max]` (caller bug), keeping the helper's invariant
+ * intact regardless of input source. Callers wanting strict
+ * reject-on-invalid semantics should validate before calling.
+ */
+export function clampLimit(value: unknown, max: number, defaultValue: number): number {
+  const raw = value === undefined || value === null ? defaultValue : Number(value);
+  const n = Number.isFinite(raw) ? raw : defaultValue;
+  return Math.min(Math.max(Math.trunc(n), 1), max);
+}
