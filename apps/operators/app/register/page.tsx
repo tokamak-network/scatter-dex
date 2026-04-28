@@ -5,9 +5,11 @@ import { useCallback, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
+  approveBondToken,
   explainRegistryError,
   loadRegistrationStatus,
   MAX_RELAYER_FEE_BPS,
+  needsBondApproval,
   registerRelayer,
   type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
@@ -17,6 +19,7 @@ type Phase =
   | "idle"
   | "checking"
   | "ready"
+  | "approving"
   | "submitting"
   | "success"
   | "error";
@@ -65,11 +68,23 @@ export default function RegisterPage() {
   const onSubmit = async () => {
     if (!signer || !status) return;
     setErrorMsg("");
-    setPhase("submitting");
     try {
+      // ERC20 bond mode: approve the registry first if the existing
+      // allowance is insufficient. Native mode skips this entirely.
+      if (needsBondApproval(status, bondEth)) {
+        setPhase("approving");
+        const approveTx = await approveBondToken(
+          status.bondToken,
+          DEMO_NETWORK.contracts.relayerRegistry,
+          bondEth,
+          signer,
+        );
+        await approveTx.wait();
+      }
+      setPhase("submitting");
       const tx = await registerRelayer(
         DEMO_NETWORK.contracts.relayerRegistry,
-        { url, feeBps: Number(feeBps), bondEth },
+        { url, feeBps: Number(feeBps), bondEth, bondToken: status.bondToken },
         signer,
       );
       const receipt = await tx.wait();
@@ -248,10 +263,12 @@ function SubmitButton(props: {
     wrongChain ||
     alreadyRegistered ||
     notVerified ||
+    phase === "approving" ||
     phase === "submitting" ||
     phase === "checking";
 
   const label =
+    phase === "approving" ? "Approving bond token…" :
     phase === "submitting" ? "Submitting…" :
     alreadyRegistered ? "Already registered" :
     notVerified ? "Identity verification required" :

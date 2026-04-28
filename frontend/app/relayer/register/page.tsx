@@ -3,16 +3,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { UserPlus, ShieldCheck, AlertCircle, Loader2, CheckCircle, XCircle } from "lucide-react";
 import {
+  approveBondToken,
   explainRegistryError,
   loadRegistrationStatus,
   MAX_RELAYER_FEE_BPS,
+  NATIVE_BOND_TOKEN,
+  needsBondApproval,
   registerRelayer,
+  type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
 import { useWallet } from "../../lib/wallet";
 import { getRelayerRegistryAddress } from "../../lib/config";
 import { getReadProvider } from "../../lib/provider";
 
-type Phase = "idle" | "checking" | "not-connected" | "not-verified" | "already-registered" | "ready" | "submitting" | "success" | "error";
+type Phase = "idle" | "checking" | "not-connected" | "not-verified" | "already-registered" | "ready" | "approving" | "submitting" | "success" | "error";
 
 export default function RelayerRegisterPage() {
   const { account, signer } = useWallet();
@@ -22,6 +26,8 @@ export default function RelayerRegisterPage() {
   const [verifiedUntil, setVerifiedUntil] = useState<number>(0);
   const [minBond, setMinBond] = useState<bigint>(0n);
   const [minBondEth, setMinBondEth] = useState<string>("");
+  const [bondToken, setBondToken] = useState<string>(NATIVE_BOND_TOKEN);
+  const [bondAllowance, setBondAllowance] = useState<bigint>(0n);
   const [errorMsg, setErrorMsg] = useState("");
   const [txHash, setTxHash] = useState("");
 
@@ -50,6 +56,8 @@ export default function RelayerRegisterPage() {
       setVerifiedUntil(status.verifiedUntil);
       setMinBond(status.minBond);
       setMinBondEth(status.minBondEth);
+      setBondToken(status.bondToken);
+      setBondAllowance(status.bondAllowance);
       if (!status.isVerified) setPhase("not-verified");
       else if (status.alreadyRegistered) setPhase("already-registered");
       else setPhase("ready");
@@ -74,12 +82,24 @@ export default function RelayerRegisterPage() {
       setPhase("error");
       return;
     }
-    setPhase("submitting");
     setErrorMsg("");
     try {
+      // ERC20 mode: pre-approve the registry if existing allowance
+      // is insufficient. Native mode skips this entirely.
+      const status: RegistrationStatus = {
+        isVerified, verifiedUntil, alreadyRegistered: false,
+        minBond, minBondEth,
+        bondToken, isErc20Bond: bondToken !== NATIVE_BOND_TOKEN, bondAllowance,
+      };
+      if (needsBondApproval(status, bondEth)) {
+        setPhase("approving");
+        const approveTx = await approveBondToken(bondToken, getRelayerRegistryAddress(), bondEth, signer);
+        await approveTx.wait();
+      }
+      setPhase("submitting");
       const tx = await registerRelayer(
         getRelayerRegistryAddress(),
-        { url, feeBps: parseInt(feeBps, 10), bondEth },
+        { url, feeBps: parseInt(feeBps, 10), bondEth, bondToken },
         signer,
       );
       const receipt = await tx.wait();
@@ -148,7 +168,7 @@ export default function RelayerRegisterPage() {
         </div>
 
         {/* Step 2: Registration Form */}
-        {(phase === "ready" || phase === "submitting" || phase === "error") && (
+        {(phase === "ready" || phase === "approving" || phase === "submitting" || phase === "error") && (
           <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-6">
             <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2 mb-4">
               <UserPlus className="w-4 h-4 text-primary" />
@@ -222,10 +242,15 @@ export default function RelayerRegisterPage() {
               {/* Submit */}
               <button
                 onClick={handleRegister}
-                disabled={!url || phase === "submitting"}
+                disabled={!url || phase === "approving" || phase === "submitting"}
                 className="w-full py-3 gradient-btn text-on-primary-fixed rounded-lg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
-                {phase === "submitting" ? (
+                {phase === "approving" ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Approving bond token…
+                  </span>
+                ) : phase === "submitting" ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Registering...

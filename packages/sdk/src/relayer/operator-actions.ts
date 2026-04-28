@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 import { RELAYER_REGISTRY_IFACE } from "../core/contracts";
-import { MAX_RELAYER_FEE_BPS } from "./register";
+import { MAX_RELAYER_FEE_BPS, NATIVE_BOND_TOKEN } from "./register";
 
 /** Mirrors `RelayerRegistry.EXIT_COOLDOWN`. The contract exposes
  *  it as a public constant; we mirror the value here so callers
@@ -31,19 +31,35 @@ export async function updateRelayerInfo(
   return registry.updateInfo(params.url, BigInt(params.feeBps)) as Promise<ethers.TransactionResponse>;
 }
 
-/** Submit `addBond()` with the given top-up as `msg.value`.
+/** Submit `addBond(bondAmount)`.
+ *  - Native mode: top-up paid via `msg.value`.
+ *  - ERC20 mode: caller MUST `approve` the registry for at least
+ *    `bondEth` first (see `approveBondToken`); this helper just
+ *    submits the addBond call.
+ *
+ *  When `bondToken` is omitted, the helper reads `bondToken()` from
+ *  the registry itself — convenient for simple top-up UIs that already
+ *  hold the registry address but not its mode.
+ *
  *  Rejects zero / negative amounts before a wallet prompt. */
 export async function addRelayerBond(
   registryAddress: string,
   bondEth: string,
   signer: ethers.Signer,
+  bondToken?: string,
 ): Promise<ethers.TransactionResponse> {
   let bond: bigint;
   try { bond = ethers.parseEther(bondEth || "0"); }
   catch { throw new Error("InvalidBond"); }
   if (bond <= 0n) throw new Error("InvalidBond");
+
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, signer);
-  return registry.addBond({ value: bond }) as Promise<ethers.TransactionResponse>;
+  const resolvedBondToken = bondToken ?? (await registry.bondToken() as string);
+  const isErc20 = resolvedBondToken !== NATIVE_BOND_TOKEN;
+  if (isErc20) {
+    return registry.addBond(bond) as Promise<ethers.TransactionResponse>;
+  }
+  return registry.addBond(0n, { value: bond }) as Promise<ethers.TransactionResponse>;
 }
 
 /** Submit `requestExit()` — flips the operator into the cool-down

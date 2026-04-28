@@ -1,11 +1,11 @@
 import { ethers } from "ethers";
 
 export const RELAYER_REGISTRY_ABI = [
-  "function register(string url, uint256 fee) external payable",
+  "function register(string url, uint256 fee, uint256 bondAmount) external payable",
   "function requestExit() external",
   "function executeExit() external",
   "function updateInfo(string url, uint256 fee) external",
-  "function addBond() external payable",
+  "function addBond(uint256 bondAmount) external payable",
   "function isActiveRelayer(address relayer) external view returns (bool)",
   "function getActiveRelayers() external view returns (address[])",
   "function getRelayerCount() external view returns (uint256)",
@@ -13,6 +13,7 @@ export const RELAYER_REGISTRY_ABI = [
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",
+  "function bondToken() external view returns (address)",
   // Custom-error fragments — needed for ethers v6 to decode reverts
   // by name. Without them, registry reverts arrive as raw selector
   // hex and `explainRegisterError`'s name match silently misses.
@@ -27,6 +28,7 @@ export const RELAYER_REGISTRY_ABI = [
   "error BondTransferFailed()",
   "error FeeTooHigh()",
   "error NotVerified()",
+  "error WrongPaymentMode()",
 ] as const;
 
 export const IDENTITY_GATE_ABI = [

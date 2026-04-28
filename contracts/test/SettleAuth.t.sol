@@ -615,12 +615,12 @@ contract SettleAuthTest is Test {
         MockIdentityRegistry idRegistry = new MockIdentityRegistry();
         idRegistry.setVerified(makerRelayer, true);
         idRegistry.setVerified(takerRelayer, true);
-        RelayerRegistry registry = new RelayerRegistry(treasury, address(idRegistry));
+        RelayerRegistry registry = new RelayerRegistry(treasury, address(idRegistry), address(0));
 
         // Fund makerRelayer and register; takerRelayer stays unregistered.
         vm.deal(makerRelayer, 1 ether);
         vm.prank(makerRelayer);
-        registry.register{value: 0}("https://maker.example", 10);
+        registry.register{value: 0}("https://maker.example", 10, 0);
 
         settlement.setRelayerRegistry(address(registry));
 
