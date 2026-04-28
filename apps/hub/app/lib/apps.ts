@@ -117,7 +117,6 @@ export const APPS: AppEntry[] = [
     href: "/mobile",
     cta: "Get the app",
     accent: "var(--color-accent-mobile)",
-    comingSoon: true,
   },
   {
     id: "relayer",
