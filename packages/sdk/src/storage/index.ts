@@ -19,3 +19,4 @@ export {
 } from "./folder";
 export * from "./walletBook";
 export * from "./runs";
+export * from "./backup";
