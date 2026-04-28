@@ -41,9 +41,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             </div>
                             <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                               <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                                <Link href="/" className="flex items-center gap-2 font-semibold">
-                                  <TokamakMark />
-                                  Scatter Pro
+                                <Link
+                                  href="/"
+                                  className="flex items-center gap-2 font-semibold tracking-tight text-[var(--color-primary)]"
+                                >
+                                  <TokamakMark height={22} />
+                                  <span className="text-[var(--color-text)]">Scatter Pro</span>
                                 </Link>
                                 <nav className="flex items-center gap-4 text-sm text-[var(--color-text-muted)]">
                                   <a
