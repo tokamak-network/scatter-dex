@@ -2,6 +2,11 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useOutsideClick } from "@zkscatter/ui";
+import {
+  exportWorkspace,
+  importWorkspace,
+  WorkspaceBackupCorruptError,
+} from "@zkscatter/sdk/storage";
 import { useFolderStorage } from "../_lib/folderStorage";
 
 const RECENT_MAX = 5;
@@ -15,9 +20,83 @@ const RECENT_MAX = 5;
 export function FolderPill() {
   const folder = useFolderStorage();
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<"export" | "import" | null>(null);
+  const [status, setStatus] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useOutsideClick({ enabled: open, ref, onClose: close });
+
+  const onExport = useCallback(async () => {
+    setBusy("export");
+    setStatus(null);
+    try {
+      const result = await exportWorkspace();
+      if (!result) {
+        setStatus({ tone: "warn", text: "No folder selected." });
+        return;
+      }
+      const blob = new Blob([result.text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date(result.bundle.exportedAt * 1000).toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `zkscatter-workspace-${result.bundle.exportedFrom || "export"}-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus({
+        tone: "ok",
+        text: `Exported ${Object.keys(result.bundle.files).length} file${
+          Object.keys(result.bundle.files).length === 1 ? "" : "s"
+        }.`,
+      });
+    } catch (e) {
+      setStatus({
+        tone: "warn",
+        text: e instanceof Error ? e.message : "Export failed",
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const onPickImport = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const onImportFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      setBusy("import");
+      setStatus(null);
+      try {
+        const text = await file.text();
+        const { written } = await importWorkspace(text, "merge");
+        setStatus({
+          tone: "ok",
+          text: `Imported ${written.length} file${
+            written.length === 1 ? "" : "s"
+          }. Reload the page to see the new runs.`,
+        });
+      } catch (err) {
+        if (err instanceof WorkspaceBackupCorruptError) {
+          setStatus({ tone: "warn", text: `Bundle is invalid: ${err.message}` });
+        } else {
+          setStatus({
+            tone: "warn",
+            text: err instanceof Error ? err.message : "Import failed",
+          });
+        }
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
 
   // `available === null` is the "still probing" window; render
   // nothing rather than an unsupported state we don't yet know is
@@ -105,6 +184,31 @@ export function FolderPill() {
           >
             ＋ Pick another folder…
           </button>
+          <button
+            disabled={busy !== null}
+            onClick={() => void onExport()}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
+          >
+            {busy === "export" ? "Exporting…" : "⬇ Export workspace"}
+          </button>
+          <button
+            disabled={busy !== null}
+            onClick={onPickImport}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
+          >
+            {busy === "import" ? "Importing…" : "⬆ Import into workspace…"}
+          </button>
+          {status && (
+            <div
+              className={`mx-3 my-1 rounded px-2 py-1 text-[10px] ${
+                status.tone === "ok"
+                  ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+                  : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+              }`}
+            >
+              {status.text}
+            </div>
+          )}
           {folder.currentId && (
             <button
               onClick={async () => {
@@ -119,6 +223,13 @@ export function FolderPill() {
           )}
         </div>
       )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={(e) => void onImportFile(e)}
+        className="hidden"
+      />
     </div>
   );
 }
