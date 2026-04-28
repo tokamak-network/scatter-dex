@@ -73,8 +73,13 @@ export async function loadRelayerSettlements(
   // queryFilter returns ascending (block, txIndex, logIndex). Take
   // the tail when a `limit` is set so we don't allocate
   // intermediate `RelayerSettlement` objects (or even reverse the
-  // long prefix) for events we'll throw away.
-  const tail = opts.limit != null ? eventLogs.slice(-opts.limit) : eventLogs;
+  // long prefix) for events we'll throw away. `slice(-0)` equals
+  // `slice(0)` and would return the full array; negative limits
+  // are nonsense. Treat both as empty.
+  const tail =
+    opts.limit == null ? eventLogs :
+    opts.limit <= 0 ? [] :
+    eventLogs.slice(-opts.limit);
 
   // Reverse the (now bounded) tail in place to flip ascending →
   // newest-first while preserving the within-block (txIndex,
