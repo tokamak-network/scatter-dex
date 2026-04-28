@@ -18,6 +18,9 @@
  */
 
 import { openIDB } from "../util/idb";
+// Augment globalThis with the File System Access API typings — bare
+// import for the side-effect.
+import "./fs-api-globals";
 
 const DIR_HANDLE_KEY = "zkscatter_dir_handle";
 
@@ -246,9 +249,15 @@ export async function listFiles(
   for await (const [name, handle] of dirHandle.entries()) {
     if (handle.kind !== "file") continue;
     if (!matches(name)) continue;
+    // Discriminating on `kind === "file"` should narrow `handle` to
+    // `FileSystemFileHandle` automatically; TS's lib.dom.d.ts ties
+    // the narrowing to the discriminated union's `readonly kind`,
+    // but the augmented `entries()` signature returns
+    // `FileSystemHandle` so we cast on the value side.
+    const fileHandle = handle as FileSystemFileHandle;
     out.push({
       filename: name,
-      read: async () => (await handle.getFile()).text(),
+      read: async () => (await fileHandle.getFile()).text(),
     });
   }
   return out;

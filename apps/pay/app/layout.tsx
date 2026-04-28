@@ -3,6 +3,7 @@ import Link from "next/link";
 import { TokamakMark } from "@zkscatter/ui";
 import { PayProviders } from "./_lib/providers";
 import { WalletButton } from "./_components/WalletButton";
+import { FolderPill } from "./_components/FolderPill";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,6 +36,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                 <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                 <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
+                <Link href="/recipients" className="hover:text-[var(--color-text)]">Recipients</Link>
+                <FolderPill />
                 <WalletButton />
               </nav>
             </div>

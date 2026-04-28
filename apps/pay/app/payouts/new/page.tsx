@@ -13,6 +13,10 @@ import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
 import { autoPickSourceNotes, type SourceNotesPick } from "../../_lib/sourceNotes";
+import { useWalletBook } from "../../_lib/walletBook";
+import { AddressBookPicker } from "../../_components/AddressBookPicker";
+import { useFolderStorage } from "../../_lib/folderStorage";
+import type { WalletEntry } from "@zkscatter/sdk/storage";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
 type Row = { name: string; address: string; amount: string };
@@ -157,6 +161,19 @@ export default function NewPayout() {
     registryConfigured,
   } = useRelayers();
   const eddsa = useEdDSAKey();
+  const walletBook = useWalletBook();
+  const folder = useFolderStorage();
+  const [showBookPicker, setShowBookPicker] = useState(false);
+
+  const addressBookHint = !folder.ready
+    ? "Pick a notes folder to load your address book."
+    : !walletBook.loaded
+      ? "Loading your address book…"
+      : walletBook.corrupt
+        ? "Address book file is corrupt — repair it from /recipients."
+        : walletBook.entries.length === 0
+          ? "Add recipients in /recipients first."
+          : null;
 
   useEffect(() => {
     setClaimFrom(today());
@@ -186,6 +203,29 @@ export default function NewPayout() {
       setSubmitting(false);
     }
     router.push("/payouts/p_2026_04_payroll");
+  }
+
+  function appendFromAddressBook(picked: WalletEntry[]) {
+    if (picked.length === 0) return;
+    // Reuse the wizard's already-parsed `rows` so we don't re-derive
+    // the address column from raw CSV (which would shift if a future
+    // template adds quoted fields). `eqAddr` handles checksum / case.
+    const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
+    const rowsToAdd = picked
+      .filter((e) => !seen.has(e.address.toLowerCase()))
+      .map((e) => `${csvSafeLabel(e.label)},${e.address},`);
+    if (rowsToAdd.length === 0) return;
+    const trimmed = csv.trimEnd();
+    setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
+  }
+
+  // Strip CSV-breaking characters from a free-form label so a comma
+  // or newline in the address-book entry doesn't shift columns.
+  // The wizard's CSV parser is `line.split(",")` (no quoting), so the
+  // simplest correctness guarantee is "labels can't contain commas
+  // or newlines."
+  function csvSafeLabel(label: string): string {
+    return label.replace(/[,\n\r]/g, " ").trim();
   }
 
   function pickTemplate(id: TemplateId) {
@@ -389,9 +429,27 @@ export default function NewPayout() {
           <div className="space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">Recipients</h2>
-              <div className="flex gap-2 text-xs">
-                <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Upload CSV</button>
-                <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Import from Safe</button>
+              <div className="flex flex-col items-end gap-1 text-xs">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => addressBookHint === null && setShowBookPicker(true)}
+                    aria-disabled={addressBookHint !== null}
+                    aria-describedby={addressBookHint ? "abp-hint" : undefined}
+                    onMouseDown={(e) => addressBookHint !== null && e.preventDefault()}
+                    className={`rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-primary-soft)] ${
+                      addressBookHint !== null ? "opacity-40" : ""
+                    }`}
+                  >
+                    + Add from address book
+                  </button>
+                  <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Upload CSV</button>
+                  <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Import from Safe</button>
+                </div>
+                {addressBookHint && (
+                  <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
+                    {addressBookHint}
+                  </span>
+                )}
               </div>
             </div>
             <div className="text-xs text-[var(--color-text-muted)]">
@@ -595,6 +653,16 @@ export default function NewPayout() {
           recipients={rows.length}
           onCancel={() => setShowConfirm(false)}
           onConfirm={doSubmit}
+        />
+      )}
+      {showBookPicker && (
+        <AddressBookPicker
+          entries={walletBook.entries}
+          onCancel={() => setShowBookPicker(false)}
+          onPick={(picked) => {
+            appendFromAddressBook(picked);
+            setShowBookPicker(false);
+          }}
         />
       )}
     </div>
