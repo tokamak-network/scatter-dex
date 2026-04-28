@@ -1,3 +1,8 @@
+// `import type` is erased at compile time, so format.ts has no
+// runtime dependency on the zk module — but the helpers stay in
+// lockstep with `CommitmentNote` if its fields ever change.
+import type { CommitmentNote } from "../zk/commitment";
+
 /** Render a fixed-point token amount as a decimal string without
  *  pulling `ethers` into the consumer (the SDK already lists it,
  *  apps don't have to). Trims trailing zeros from the fractional
@@ -29,4 +34,77 @@ export function formatTokenAmount(amount: bigint, decimals: number): string {
  *  side-by-side from both sources. */
 export function formatEther(wei: bigint): string {
   return formatTokenAmount(wei, 18);
+}
+
+/** Compact hex string for storing a non-negative `bigint` in JSON
+ *  (`"0x" + v.toString(16)`). Mirrored across every wire-format
+ *  call site — IDB notes adapter, folder notes adapter, frontend's
+ *  `note-storage.ts` — so the format stays in lockstep when one
+ *  side changes.
+ *
+ *  Throws for negative inputs because `"0x-1"` is not valid
+ *  `BigInt(...)` syntax — the round-trip would silently corrupt.
+ *  Every caller in the codebase passes a zk field element
+ *  (commitment, ownerSecret, salt, …) which is always ≥ 0; the
+ *  guard catches an accidental signed value before it lands on
+ *  disk. Use a different encoding if signed support is ever
+ *  needed. */
+export function bigintToHex(v: bigint): string {
+  if (v < 0n) {
+    throw new Error("bigintToHex: negative bigints are not supported");
+  }
+  return "0x" + v.toString(16);
+}
+
+/** Hex-encoded mirror of a `CommitmentNote`. The shape every notes
+ *  adapter writes to disk for the preimage half of a `StoredNote`.
+ *
+ *  `pubKeyAx` / `pubKeyAy` are optional because v1 deposit records
+ *  (predating the BabyJub binding) sit on disk in some users'
+ *  notes folders. Writers always populate both — `notePreimageToHex`
+ *  doesn't accept a v1 input. Readers (`notePreimageFromHex`) check
+ *  at runtime and surface the canonical "re-deposit required" error
+ *  when they're missing, rather than dropping the record silently. */
+export interface NotePreimageHex {
+  ownerSecret: string;
+  token: string;
+  amount: string;
+  salt: string;
+  pubKeyAx?: string;
+  pubKeyAy?: string;
+}
+
+/** Hex-encode a `CommitmentNote` for a wire-format note record.
+ *  Adapters previously inlined six `bigintToHex` calls; this keeps
+ *  the conversion in one place so the format stays consistent (and
+ *  any future field addition lands once instead of three times). */
+export function notePreimageToHex(n: CommitmentNote): NotePreimageHex {
+  return {
+    ownerSecret: bigintToHex(n.ownerSecret),
+    token: bigintToHex(n.token),
+    amount: bigintToHex(n.amount),
+    salt: bigintToHex(n.salt),
+    pubKeyAx: bigintToHex(n.pubKeyAx),
+    pubKeyAy: bigintToHex(n.pubKeyAy),
+  };
+}
+
+/** Inverse of {@link notePreimageToHex}. Throws when `pubKeyAx` /
+ *  `pubKeyAy` are missing — a v1-format note that can't be spent
+ *  with v2 circuits. Callers should catch and surface "re-deposit
+ *  required" rather than dropping the record silently. */
+export function notePreimageFromHex(h: NotePreimageHex): CommitmentNote {
+  if (!h.pubKeyAx || !h.pubKeyAy) {
+    throw new Error(
+      "Note missing pubKeyAx/pubKeyAy — v1 note that cannot be used with v2 circuits. Re-deposit required.",
+    );
+  }
+  return {
+    ownerSecret: BigInt(h.ownerSecret),
+    token: BigInt(h.token),
+    amount: BigInt(h.amount),
+    salt: BigInt(h.salt),
+    pubKeyAx: BigInt(h.pubKeyAx),
+    pubKeyAy: BigInt(h.pubKeyAy),
+  };
 }
