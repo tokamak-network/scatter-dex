@@ -153,8 +153,17 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
       // leafIndex (e.g. two pending deposits at -1) don't collide.
       const idSuffix = note.id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12);
       const filename = `${NOTE_PREFIX}${note.leafIndex}-${Date.now()}-${idSuffix}.json`;
+      // Write the new file *before* deleting any prior versions so a
+      // mid-call failure leaves the data intact rather than wiping
+      // a record that's no longer recoverable. The folder accepts
+      // duplicate-by-commitment files (loadAll dedupes); cleanup is
+      // a best-effort optimisation.
       await saveFile(filename, JSON.stringify(serialize(note), null, 2));
-      rememberFilename(note.id, filename);
+      const stale = filenamesById.get(note.id);
+      filenamesById.set(note.id, [filename]);
+      if (stale && stale.length > 0) {
+        await Promise.all(stale.map((f) => removeFile(f)));
+      }
     },
 
     async remove(id: string) {
@@ -178,7 +187,19 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
           const parsed = JSON.parse(await f.read()) as unknown;
           if (!isLikelyFileShape(parsed)) continue;
           const note = deserialize(parsed);
-          if (note.id === id) matches.push(f.filename);
+          if (note.id !== id) continue;
+          // Respect the same chainId scope `loadAll` and the warm
+          // cache use, otherwise a cross-chain `remove(id)` could
+          // delete a note belonging to a different network that
+          // happens to share the (content-addressed) id.
+          if (
+            opts.chainId !== undefined &&
+            note.chainId !== undefined &&
+            note.chainId !== opts.chainId
+          ) {
+            continue;
+          }
+          matches.push(f.filename);
         } catch {
           /* skip malformed */
         }
@@ -283,7 +304,9 @@ function deserialize(parsed: FileShape): StoredNote {
 
 /** Content-addressed id for a commitment. Hex of the commitment is
  *  unique per note (Poseidon collision resistance) and matches the
- *  same record across reads from Pay or frontend. */
-function idForCommitment(commitment: bigint): string {
+ *  same record across reads from Pay or frontend. Exported so vault
+ *  providers stamp the same id at `put` time, which keeps the
+ *  in-memory vault and the on-disk record consistent. */
+export function idForCommitment(commitment: bigint): string {
   return "c-" + commitment.toString(16);
 }

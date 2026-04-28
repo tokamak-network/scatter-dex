@@ -12,6 +12,7 @@ import {
 import {
   createFolderNoteAdapter,
   createIndexedDbNoteAdapter,
+  idForCommitment,
   type NoteStorageAdapter,
   type StoredNote,
 } from "@zkscatter/sdk/notes";
@@ -43,12 +44,6 @@ export function useVault(): VaultState {
   const ctx = useContext(VaultCtx);
   if (!ctx) throw new Error("useVault must be used inside <VaultProvider>");
   return ctx;
-}
-
-function newId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /** Pull the highest `lot-N` sequence number out of an existing note
@@ -165,7 +160,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       const seq = ++labelCounter.current;
       const note: VaultNote = {
         ...n,
-        id: newId(),
+        // Content-addressed id (matches the folder adapter's
+        // identity rule) so a note added in-memory has the same id
+        // it'll read back as after a folder reload, and the IDB
+        // path stays consistent with what the folder path produces.
+        id: idForCommitment(n.commitment),
         label: `lot-${seq}`,
         createdAt: Date.now(),
         chainId,
