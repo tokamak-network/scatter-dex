@@ -59,10 +59,12 @@ function newId(): string {
 }
 
 /** Reject any key that is not the canonical decimal string of a
- *  positive integer. `"0x1"` / `"1.0"` would pass a loose
+ *  positive integer. `"0x1"` / `"1.0"` / `"1e3"` would pass a loose
  *  `Number()` check but never match a numeric `chainId` lookup,
- *  leaving an unreachable entry on disk. */
-function isCanonicalChainKey(key: string): boolean {
+ *  leaving an unreachable entry on disk. Exported so UI forms can
+ *  validate before they hit `addWallet` / `updateWallet` (which
+ *  throw on invalid keys). */
+export function isCanonicalChainKey(key: string): boolean {
   if (key.length === 0 || key.length > 12) return false;
   const n = Number(key);
   if (!Number.isInteger(n) || n <= 0) return false;

@@ -28,8 +28,22 @@ interface WalletBookState {
   /** Last operation error (validation, address-already-in-book, etc.).
    *  Cleared on the next successful call. */
   error: string | null;
-  add(input: { label: string; address: string; memo?: string }): Promise<WalletEntry | null>;
-  update(id: string, patch: Partial<Pick<WalletEntry, "label" | "memo">>): Promise<boolean>;
+  add(input: {
+    label: string;
+    address: string;
+    memo?: string;
+    email?: string;
+    discordHandle?: string;
+    addressByChain?: Record<number, string>;
+  }): Promise<WalletEntry | null>;
+  update(
+    id: string,
+    patch: Partial<
+      Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+        addressByChain?: Record<number, string>;
+      }
+    >,
+  ): Promise<boolean>;
   remove(id: string): Promise<boolean>;
   /** Force a fresh read from disk. Useful after the user picks a
    *  folder mid-session. */
@@ -91,7 +105,14 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
   }, [folderReady, refresh]);
 
   const add = useCallback(
-    async (input: { label: string; address: string; memo?: string }) => {
+    async (input: {
+      label: string;
+      address: string;
+      memo?: string;
+      email?: string;
+      discordHandle?: string;
+      addressByChain?: Record<number, string>;
+    }) => {
       try {
         const entry = await addWallet(input);
         setEntries((prev) => [...prev, entry]);
@@ -106,7 +127,14 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
   );
 
   const update = useCallback(
-    async (id: string, patch: Partial<Pick<WalletEntry, "label" | "memo">>) => {
+    async (
+      id: string,
+      patch: Partial<
+        Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+          addressByChain?: Record<number, string>;
+        }
+      >,
+    ) => {
       try {
         await updateWallet(id, patch);
         // Re-read from disk rather than mirroring the patch locally —
