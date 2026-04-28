@@ -1,38 +1,39 @@
-/* zkScatter Docs brandmark.
+/* Scatter Pro brandmark.
  *
- * Single SVG composite: the official Tokamak Network symbol with a
- * centred italic-serif "zk" overlay rendered inside the same SVG so
- * the mark scales as one unit. Followed by the wordmark "Scatter
- * Docs".
+ * Composite of the Tokamak Network symbol with a centred italic-serif
+ * "zk" overlay, followed by the "Scatter Pro" wordmark. Mirrors the
+ * docs brandmark (apps/docs/components/brand.tsx) for cross-app
+ * consistency, but renders in Pro's primary accent (--color-primary)
+ * via currentColor so the same SVG paths can be reused per-app.
  *
  * DRIFT: paths below are duplicated from
- * `packages/ui/src/components/TokamakMark.tsx`. The docs app
- * deliberately avoids depending on `@zkscatter/ui` for one glyph,
- * so any change to the shared brandmark must be mirrored here.
- * Tracked alongside a follow-up that adds a `children` slot to
- * `TokamakMark` so this composition can move into the shared
- * package. */
+ * `packages/ui/src/components/TokamakMark.tsx` and the docs brand.
+ * Any change to the shared brandmark must be mirrored here. Tracked
+ * alongside a follow-up that adds a `children` slot to `TokamakMark`
+ * so this composition can move into the shared package. */
 import * as React from "react";
+import Link from "next/link";
 
 const VIEWBOX_W = 36;
 const VIEWBOX_H = 24;
 
-/* Tunable layout constants — surface here so the user-tuned visual
- * is in one place instead of magic literals in JSX. */
-const BRAND_DEFAULT_HEIGHT = 26; // compact logotype matching hub footer balance
-const SYMBOL_OPACITY = 0.7;       // keeps "zk" legible over the mark
-const ZK_TEXT_Y = "32%";          // optical centring vs symbol mass
+const BRAND_DEFAULT_HEIGHT = 26;
+const SYMBOL_OPACITY = 0.7;
+const ZK_TEXT_Y = "32%";
 const ZK_FONT_SIZE = 13;
 const ZK_LETTER_SPACING = -0.5;
 
-/* Two click targets: symbol → cross-app hub, wordmark → docs home.
- * The Navbar wraps logos in a single anchor by default, but we pass
- * `logoLink={false}` from the layout so this component owns the two
- * anchors directly (nested anchors are invalid HTML). */
+/* Two click targets: symbol → cross-app hub, wordmark → Pro home.
+ * Lets users navigate to the hub from any deep-linked Pro page
+ * without losing the standard "click logo to go home" affordance
+ * for the current site. */
+const HUB_HREF =
+  process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app";
+
 function BrandImpl({
   height = BRAND_DEFAULT_HEIGHT,
   homeHref = "/",
-  hubHref = "/",
+  hubHref = HUB_HREF,
 }: {
   height?: number;
   homeHref?: string;
@@ -40,12 +41,12 @@ function BrandImpl({
 }) {
   const width = (height * VIEWBOX_W) / VIEWBOX_H;
   return (
-    <span className="zs-brand">
-      <a href={hubHref} aria-label="Back to zkScatter Hub" className="zs-brand-hub">
-      {/* SVG is decorative; the visible "Scatter Docs" wordmark
-          carries the accessible name for screen readers. */}
+    <span
+      className="inline-flex items-baseline gap-1"
+      style={{ color: "var(--color-primary)" }}
+    >
+      <a href={hubHref} aria-label="Back to zkScatter Hub" className="inline-flex items-center">
       <svg
-        className="zs-brand-mark"
         width={width}
         height={height}
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -68,7 +69,6 @@ function BrandImpl({
           <path d="M1.74322 17.3944C1.95362 17.6776 2.23762 18.0536 2.46322 18.3224C1.46162 16.796 5.68481 12.8432 10.0552 11.9224C9.3932 11.6674 8.75139 11.3628 8.13521 11.0112C4.11361 11.448 0.286417 14.2984 1.07362 16.2688C1.26642 16.6144 1.52483 17.0744 1.74723 17.3952" />
           <path d="M0.00159912 11.804C0.00159912 11.8688 0.00159912 11.9328 0.00159912 11.9968C0.0191991 12.3312 0.047204 12.776 0.081604 13.108C-0.026396 10.94 3.2656 9.53922 6.288 9.63842C5.9107 9.27247 5.59033 8.85206 5.33758 8.3912C2.78239 8.0632 1.3856 8.72242 0.663196 9.33202C0.243019 10.0892 0.015535 10.9382 0.000793457 11.804" />
         </g>
-        {/* Italic serif keeps "zk" distinct from the geometric symbol. */}
         <text
           x="50%"
           y={ZK_TEXT_Y}
@@ -85,12 +85,22 @@ function BrandImpl({
         </text>
       </svg>
       </a>
-      <a href={homeHref} className="zs-brand-text">Scatter Docs</a>
+      <Link
+        href={homeHref}
+        className="hover:opacity-80"
+        style={{
+          fontFamily: "ui-serif, Georgia, 'Times New Roman', serif",
+          fontStyle: "italic",
+          fontWeight: 700,
+          fontSize: "1.5rem",
+          letterSpacing: "-0.02em",
+          lineHeight: 1,
+        }}
+      >
+        Scatter Pro
+      </Link>
     </span>
   );
 }
 
-/* Memoised — Nextra re-renders the navbar on route changes; `Brand`
- * has no props that vary per route, so memo skips reconciling 14
- * path nodes plus the `<text>` overlay each navigation. */
 export const Brand = React.memo(BrandImpl);

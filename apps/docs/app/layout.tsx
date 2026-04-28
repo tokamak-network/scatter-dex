@@ -21,9 +21,15 @@ export const metadata = {
 // `type: "page"` entry in the root `_meta.tsx` to the navbar AND
 // scopes the sidebar to that subtree. Logo + Search + GitHub +
 // theme toggle round out the navbar.
+const HUB_URL = process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app";
+
+// `logoLink={false}` opts out of Nextra's wrapping anchor so the
+// Brand component can render two click targets itself: the symbol →
+// hub, the wordmark → docs root.
 const navbar = (
   <Navbar
-    logo={<Brand />}
+    logo={<Brand hubHref={HUB_URL} />}
+    logoLink={false}
     projectLink="https://github.com/tokamak-network/scatter-dex"
   />
 );
@@ -48,6 +54,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="en" dir="ltr" suppressHydrationWarning>
       <Head />
       <body>
+        {/* Cross-app return path. Sits above the Nextra Layout chrome so
+            it's visible from every doc page without depending on Nextra
+            theme internals. */}
+        <div className="zs-app-bar">
+          <a href={HUB_URL} className="zs-app-bar-link">
+            ← All apps
+          </a>
+        </div>
         <Layout
           navbar={navbar}
           footer={footer}

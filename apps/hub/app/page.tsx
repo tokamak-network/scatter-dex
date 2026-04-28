@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Lock, ShieldCheck, Zap } from "lucide-react";
 import { Button, buttonClassName } from "@zkscatter/ui";
-import { USER_APPS, OPERATOR_APPS } from "./lib/apps";
+import { USER_APPS, OPERATOR_APPS, DOCS_URL } from "./lib/apps";
 import { AppCard } from "./components/AppCard";
 import { Section } from "./components/Section";
 import { FeatureCard } from "./components/FeatureCard";
@@ -78,14 +78,12 @@ function Why() {
     <Section id="technology" className="border-t border-[var(--color-border)]">
       <div className="mb-10 flex items-end justify-between">
         <SectionHeading>Why zkScatter</SectionHeading>
-        <a
-          href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/research/PAPER.md"
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          href="/research"
           className="text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
           Read the paper →
-        </a>
+        </Link>
       </div>
       <div className="grid gap-5 md:grid-cols-3">
         {items.map((i) => (
@@ -199,7 +197,7 @@ function Developers() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button
-              href="https://docs.zkscatter.xyz"
+              href={DOCS_URL}
               target="_blank"
               rel="noopener noreferrer"
               size="lg"
@@ -208,7 +206,7 @@ function Developers() {
               <ArrowRight className="h-4 w-4" />
             </Button>
             <Button
-              href="https://github.com/tokamak-network"
+              href="https://github.com/tokamak-network/scatter-dex"
               target="_blank"
               rel="noopener noreferrer"
               variant="secondary"
@@ -268,14 +266,12 @@ function Proof() {
             Half-proof authorization, commitment-pool settlement, and zk-X509
             identity gating — designed and analyzed in the open.
           </p>
-          <a
-            href="https://github.com/tokamak-network"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/research"
             className="mt-5 inline-flex text-sm font-medium text-[var(--color-text)] hover:underline"
           >
             Read the whitepaper →
-          </a>
+          </Link>
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {items.map((i) => (
@@ -309,7 +305,7 @@ function FooterCTA() {
             Try the apps
           </Link>
           <Button
-            href="https://docs.zkscatter.xyz"
+            href={DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             variant="inverse-outline"

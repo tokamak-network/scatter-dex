@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  // Static export for Firebase Hosting (Spark plan, no SSR runtime).
+  // All data fetching is client-side (wagmi/relayer), so SSG is sufficient.
+  output: "export",
+  images: { unoptimized: true },
   // Zero-build dev for shared packages — SDK + UI ship as TypeScript
   // source from packages/* (see packages/sdk/README.md > Distribution).
   // transpilePackages tells Next to compile them through the same

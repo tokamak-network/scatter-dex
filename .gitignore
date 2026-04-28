@@ -66,3 +66,8 @@ orderbook-data/
 relayer-a-data/
 relayer-b-data/
 .claude/
+
+# Firebase Hosting — local CLI cache and per-app static export output
+.firebase/
+apps/*/out/
+apps/*/tsconfig.tsbuildinfo

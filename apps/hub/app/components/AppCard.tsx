@@ -2,12 +2,19 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { SURFACE_LABEL, type AppEntry } from "../lib/apps";
 
+// Module-scope constants so React doesn't see new component identities
+// on each AppCard render. Defining the wrapper inline triggers a remount
+// of the entire subtree per render, dropping focus/animation state.
+const CARD_CLASS =
+  "group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition";
+const INTERACTIVE_CLASS =
+  " hover:border-[var(--color-border-strong)] hover:shadow-md";
+const DIMMED_CLASS = " opacity-70 cursor-not-allowed";
+
 export function AppCard({ app }: { app: AppEntry }) {
-  return (
-    <Link
-      href={app.href}
-      className="group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition hover:border-[var(--color-border-strong)] hover:shadow-md"
-    >
+  const isExternal = /^https?:\/\//.test(app.href);
+  const body = (
+    <>
       <span
         className="absolute left-0 top-0 h-full w-1"
         style={{ background: app.accent }}
@@ -37,9 +44,33 @@ export function AppCard({ app }: { app: AppEntry }) {
         ))}
       </ul>
       <div className="mt-6 flex items-center gap-1.5 text-sm font-medium text-[var(--color-text)] group-hover:gap-2.5 transition-all">
-        {app.cta}
-        <ArrowRight className="h-4 w-4" />
+        {app.comingSoon ? "Coming soon" : app.cta}
+        {!app.comingSoon && <ArrowRight className="h-4 w-4" />}
       </div>
+    </>
+  );
+  if (app.comingSoon) {
+    return (
+      <div className={CARD_CLASS + DIMMED_CLASS} aria-disabled role="article">
+        {body}
+      </div>
+    );
+  }
+  if (isExternal) {
+    return (
+      <a
+        href={app.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={CARD_CLASS + INTERACTIVE_CLASS}
+      >
+        {body}
+      </a>
+    );
+  }
+  return (
+    <Link href={app.href} className={CARD_CLASS + INTERACTIVE_CLASS}>
+      {body}
     </Link>
   );
 }

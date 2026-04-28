@@ -1,0 +1,21 @@
+{
+  "projects": {
+    "default": "zkscatter"
+  },
+  "targets": {
+    "zkscatter": {
+      "hosting": {
+        "hub": [
+          "zkscatter-hub"
+        ],
+        "docs": [
+          "zkscatter-docs"
+        ],
+        "pro": [
+          "zkscatter-pro"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

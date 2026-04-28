@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ArrowRight, Lock, ShieldCheck, Zap, GitBranch } from "lucide-react";
-import { Button } from "@zkscatter/ui";
+import { Button, buttonClassName } from "@zkscatter/ui";
 import { Section } from "../components/Section";
 import { FeatureCard } from "../components/FeatureCard";
 import { EyebrowLabel, SectionHeading } from "../components/SectionHeader";
+import { DOCS_URL } from "../lib/apps";
 
 export const metadata: Metadata = {
   title: "Technology · zkScatter",
@@ -282,18 +284,15 @@ function FooterCTA() {
           zk-X509 identity gating — designed and analyzed in the open.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button
-            href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/research/PAPER.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            variant="inverse"
-            size="lg"
+          <Link
+            href="/research"
+            className={buttonClassName({ variant: "inverse", size: "lg" })}
           >
             Whitepaper
             <ArrowRight className="h-4 w-4" />
-          </Button>
+          </Link>
           <Button
-            href="https://docs.zkscatter.xyz"
+            href={DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             variant="inverse-outline"
