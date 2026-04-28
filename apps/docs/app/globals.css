@@ -48,10 +48,29 @@
   --zs-badge-fg: #38bdf8;
 }
 
-/* Brand + footer typography (used by app/layout.tsx). */
+/* Brand + footer typography (used by app/layout.tsx).
+ *
+ * Layout: [zk overlaid on the Tokamak symbol]   Scatter Docs
+ *
+ * The "zk" letters sit centred *over* the symbol — the Tokamak
+ * Network mark becomes a backdrop, and the two read as one
+ * composite glyph. The symbol is the same SVG every Tokamak app
+ * uses (pro, pay, drop, hub, …); the docs site themes it via
+ * `--zs-icon-fg` and `currentColor`. */
 .zs-brand {
   font-weight: 700;
   letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
+}
+
+.zs-brand-mark {
+  color: var(--zs-icon-fg);
+  flex-shrink: 0;
+}
+
+.zs-brand-text {
+  margin-left: 0.55rem;
 }
 
 .zs-footer-text {

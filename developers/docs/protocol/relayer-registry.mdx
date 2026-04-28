@@ -110,14 +110,22 @@ event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
 | `BondTransferFailed` | Operator EOA can't receive ETH on exit |
 | `ZeroAddress` | Required address arg is `address(0)` |
 
-## Slashing
+## Accountability — reputation, not slashing
 
-The current registry **does not implement slashing**. Bonds are
-posted on registration and returned in full on exit (after the
+The registry **does not implement bond slashing**, by design. Bonds
+are posted on registration and returned in full on exit (after the
 7-day cool-down) — there is no `slash()` entry point and no
-governance hook to forfeit bond. If a slashing mechanism is needed
-(verifiable misbehaviour, censorship penalties), it would land in a
-future contract version.
+governance hook to forfeit bond.
+
+Misbehaving relayers are accountable through the planned
+`DisputeRegistry`: anyone with cryptographic evidence (e.g., a
+conflicting commit-reveal pair) submits it on-chain, the contract
+verifies and emits an event, and an off-chain reputation indexer
+aggregates events into a per-relayer rating that frontends display
+in the relayer picker. Users avoid low-rated relayers; lost fees
+do the economic work a slashed bond would do, without the
+dispute-game complexity slashing systems impose. See whitepaper
+§10.2 for the rationale.
 
 ## SDK helpers
 
