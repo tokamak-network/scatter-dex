@@ -58,12 +58,22 @@ function newId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Reject any key that is not the canonical decimal string of a
+ *  positive integer. `"0x1"` / `"1.0"` would pass a loose
+ *  `Number()` check but never match a numeric `chainId` lookup,
+ *  leaving an unreachable entry on disk. */
+function isCanonicalChainKey(key: string): boolean {
+  if (key.length === 0 || key.length > 12) return false;
+  const n = Number(key);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  return String(n) === key;
+}
+
 function isValidAddressByChain(v: unknown): boolean {
   if (v === undefined) return true;
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
   for (const [chainKey, addr] of Object.entries(v as Record<string, unknown>)) {
-    const chainId = Number(chainKey);
-    if (!Number.isInteger(chainId) || chainId <= 0) return false;
+    if (!isCanonicalChainKey(chainKey)) return false;
     if (typeof addr !== "string" || !ethers.isAddress(addr)) return false;
     if (addr !== addr.toLowerCase()) return false;
   }
@@ -164,14 +174,17 @@ function normaliseAddressByChain(
   if (!input) return undefined;
   const out: Record<number, string> = {};
   for (const [chainKey, addr] of Object.entries(input)) {
-    const chainId = Number(chainKey);
-    if (!Number.isInteger(chainId) || chainId <= 0) {
+    // Accept the JS-numeric form (`{ 1: "0x..." }` reads back as
+    // `"1"`) but reject anything that wouldn't round-trip through a
+    // numeric lookup. JSON serialisation always emits the canonical
+    // form anyway — this guards hand-edited / programmatic input.
+    if (!isCanonicalChainKey(chainKey)) {
       throw new Error(`Invalid chain id: ${chainKey}`);
     }
     if (!ethers.isAddress(addr)) {
-      throw new Error(`Invalid address for chain ${chainId}: ${addr}`);
+      throw new Error(`Invalid address for chain ${chainKey}: ${addr}`);
     }
-    out[chainId] = addr.toLowerCase();
+    out[Number(chainKey)] = addr.toLowerCase();
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
