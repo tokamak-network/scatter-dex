@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ShieldCheck, Building2, User } from "lucide-react";
-import { loadOperatorRow, loadRegistrationStatus } from "@zkscatter/sdk/relayer";
+import { loadIdentityVerification, loadOperatorRow } from "@zkscatter/sdk/relayer";
 import { useWallet } from "../lib/wallet";
-import { getRelayerRegistryAddress, getZkX509Url } from "../lib/config";
+import { getIdentityGateAddress, getRelayerRegistryAddress, getZkX509Url } from "../lib/config";
 import { getReadProvider } from "../lib/provider";
 import UserCAPanel from "./UserCAPanel";
 import RelayerCAPanel from "./RelayerCAPanel";
@@ -23,7 +23,7 @@ export default function IdentityPage() {
   const [relayerInfo, setRelayerInfo] = useState<RelayerInfo | null>(null);
   const [relayerError, setRelayerError] = useState("");
 
-  const checkIdentity = useCallback(async () => {
+  const checkIdentity = useCallback((account: string | null): (() => void) => {
     // Reset derived state up front so an account switch / disconnect
     // never leaves the prior account's "Verified until …" or relayer
     // bond visible until the next fetch resolves.
@@ -35,55 +35,84 @@ export default function IdentityPage() {
     if (!account) {
       setUserStatus("idle");
       setRelayerStatus("idle");
-      return;
+      return () => {};
     }
 
     setUserStatus("checking");
     setRelayerStatus("checking");
 
+    let cancelled = false;
     const provider = getReadProvider();
-    const registryAddr = getRelayerRegistryAddress();
+
+    // Resolve config addresses inside try/catch — `getXxxAddress()`
+    // throws on missing env, and that exception would otherwise bypass
+    // the per-panel error path and bubble as an unhandled rejection.
+    let gateAddr: string;
+    let registryAddr: string;
+    try {
+      gateAddr = getIdentityGateAddress();
+      registryAddr = getRelayerRegistryAddress();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to read addresses";
+      console.error("Identity page: missing contract address config", err);
+      setUserError(msg);
+      setRelayerError(msg);
+      setUserStatus("error");
+      setRelayerStatus("error");
+      return () => { cancelled = true; };
+    }
 
     // Two independent reads — fan out so the panel's perceived
     // latency is bounded by the slower of the two, not their sum.
-    const [identityResult, relayerResult] = await Promise.allSettled([
-      loadRegistrationStatus(registryAddr, account, provider),
+    // Dual-CA: the User CA gate (privacy-preserving) and the Relayer
+    // CA registry are *separate* contracts; reading from the wrong
+    // one would silently mislabel a user as a relayer or vice versa.
+    Promise.allSettled([
+      loadIdentityVerification(gateAddr, account, provider),
       loadOperatorRow(registryAddr, account, provider),
-    ]);
+    ]).then(([identityResult, relayerResult]) => {
+      if (cancelled) return;
 
-    if (identityResult.status === "fulfilled") {
-      const status = identityResult.value;
-      setVerifiedUntil(status.verifiedUntil);
-      setUserStatus(status.isVerified ? "verified" : "not-verified");
-    } else {
-      console.error("Failed to load identity status", identityResult.reason);
-      const err = identityResult.reason;
-      setUserError(err instanceof Error ? err.message : "Failed to check identity");
-      setUserStatus("error");
-    }
-
-    if (relayerResult.status === "fulfilled") {
-      const row = relayerResult.value;
-      if (row.active) {
-        setRelayerInfo({
-          url: row.url,
-          fee: row.feeBps,
-          bond: row.bond,
-          registeredAt: row.registeredAt,
-        });
-        setRelayerStatus("verified");
+      if (identityResult.status === "fulfilled") {
+        setVerifiedUntil(identityResult.value.verifiedUntil);
+        setUserStatus(identityResult.value.isVerified ? "verified" : "not-verified");
       } else {
-        setRelayerStatus("not-verified");
+        console.error("Failed to load identity verification", identityResult.reason);
+        const err = identityResult.reason;
+        setUserError(err instanceof Error ? err.message : "Failed to check identity");
+        setUserStatus("error");
       }
-    } else {
-      console.error("Failed to load relayer status", relayerResult.reason);
-      const err = relayerResult.reason;
-      setRelayerError(err instanceof Error ? err.message : "Failed to check relayer status");
-      setRelayerStatus("error");
-    }
-  }, [account]);
 
-  useEffect(() => { checkIdentity(); }, [checkIdentity]);
+      if (relayerResult.status === "fulfilled") {
+        const row = relayerResult.value;
+        if (row.active) {
+          setRelayerInfo({
+            url: row.url,
+            fee: row.feeBps,
+            bond: row.bond,
+            registeredAt: row.registeredAt,
+          });
+          setRelayerStatus("verified");
+        } else {
+          setRelayerStatus("not-verified");
+        }
+      } else {
+        console.error("Failed to load relayer status", relayerResult.reason);
+        const err = relayerResult.reason;
+        setRelayerError(err instanceof Error ? err.message : "Failed to check relayer status");
+        setRelayerStatus("error");
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    // Cancellation guard: rapid account switches can race so the
+    // older fetch finishes after the newer one. The cleanup flips
+    // `cancelled`, so the older promise no-ops on resolve.
+    return checkIdentity(account);
+  }, [account, checkIdentity]);
 
   const zkX509Url = getZkX509Url();
 
