@@ -8,11 +8,11 @@ import {
   Loader2, AlertCircle, Circle, ExternalLink, ArrowLeft, Wallet, ArrowDownToLine,
 } from "lucide-react";
 import Link from "next/link";
+import { loadRelayerSettlements, type RelayerSettlement } from "@zkscatter/sdk/relayer";
 import { useRelayers, type RelayerInfo } from "../../lib/useRelayers";
 import { getSafeFromBlock, getReadProvider } from "../../lib/provider";
 import { getPrivateSettlementAddress } from "../../lib/config";
 import { shortenAddress, formatBond, formatDuration, formatTokenAmount } from "../../lib/utils";
-import { PRIVATE_SETTLEMENT_ABI } from "../../lib/contracts";
 import { eqAddr } from "../../lib/address";
 import { useRelayerEarnings, RECENT_ACTIVITY_LIMIT } from "../../lib/useRelayerEarnings";
 import RelayerLogo from "../../components/RelayerLogo";
@@ -52,12 +52,6 @@ interface RelayerStats {
   uptimeSince: number | null;
 }
 
-interface SettlementEvent {
-  txHash: string;
-  blockNumber: number;
-  role: "maker" | "taker";
-  fee: bigint;
-}
 
 function BadgeChip({ badge, earned }: { badge: Badge; earned: boolean }) {
   const Icon = badge.icon;
@@ -132,7 +126,7 @@ function RelayerProfileContent() {
   const [stats, setStats] = useState<RelayerStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
-  const [settlements, setSettlements] = useState<SettlementEvent[]>([]);
+  const [settlements, setSettlements] = useState<RelayerSettlement[]>([]);
   const [settlementsLoading, setSettlementsLoading] = useState(false);
 
   const validAddress = address && ethers.isAddress(address) ? address : null;
@@ -166,29 +160,14 @@ function RelayerProfileContent() {
     setSettlementsLoading(true);
     try {
       const provider = getReadProvider();
-      const settlementAddr = getPrivateSettlementAddress();
-      const contract = new ethers.Contract(settlementAddr, PRIVATE_SETTLEMENT_ABI, provider);
       const fromBlock = await getSafeFromBlock(provider);
-
-      // PrivateSettledAuth has 3 indexed params: makerNullifier, takerNullifier, makerRelayer
-      // We query where makerRelayer == address (3rd indexed param)
-      const authLogs = await contract.queryFilter(
-        contract.filters.PrivateSettledAuth(null, null, validAddress),
-        fromBlock,
+      const events = await loadRelayerSettlements(
+        getPrivateSettlementAddress(),
+        validAddress,
+        provider,
+        { fromBlock, limit: 20 },
       );
-
-      const events: SettlementEvent[] = authLogs.map((log) => {
-        const e = log as ethers.EventLog;
-        return {
-          txHash: e.transactionHash,
-          blockNumber: e.blockNumber,
-          role: "maker" as const,
-          fee: BigInt(e.args.feeTokenMaker),
-        };
-      });
-
-      events.sort((a, b) => b.blockNumber - a.blockNumber);
-      setSettlements(events.slice(0, 20));
+      setSettlements(events);
     } catch (e) {
       console.warn("Failed to load settlements:", e);
     } finally {
