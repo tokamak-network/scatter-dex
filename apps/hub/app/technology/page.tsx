@@ -4,6 +4,7 @@ import { Button } from "@zkscatter/ui";
 import { Section } from "../components/Section";
 import { FeatureCard } from "../components/FeatureCard";
 import { EyebrowLabel, SectionHeading } from "../components/SectionHeader";
+import { DOCS_URL } from "../lib/apps";
 
 export const metadata: Metadata = {
   title: "Technology · zkScatter",
@@ -283,9 +284,7 @@ function FooterCTA() {
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button
-            href="https://github.com/tokamak-network/scatter-dex/blob/main/docs/research/PAPER.md"
-            target="_blank"
-            rel="noopener noreferrer"
+            href="/research"
             variant="inverse"
             size="lg"
           >
@@ -293,7 +292,7 @@ function FooterCTA() {
             <ArrowRight className="h-4 w-4" />
           </Button>
           <Button
-            href="https://docs.zkscatter.xyz"
+            href={DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             variant="inverse-outline"

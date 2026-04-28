@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { TokamakMark } from "@zkscatter/ui";
+import { Brand } from "./Brand";
 import { CurrentYear } from "./CurrentYear";
-import { APP_BY_ID } from "../lib/apps";
+import { APP_BY_ID, DOCS_URL } from "../lib/apps";
 
 type FooterLink = { label: string; href: string };
 
@@ -10,10 +10,7 @@ export function Footer() {
     <footer className="border-t border-[var(--color-border)] bg-[var(--color-surface-muted)]">
       <div className="mx-auto grid max-w-6xl gap-10 px-6 py-12 md:grid-cols-5">
         <div className="md:col-span-1">
-          <div className="flex items-center gap-2 font-semibold text-[var(--color-primary)]">
-            <TokamakMark height={20} />
-            <span className="text-[var(--color-text)]">zkScatter</span>
-          </div>
+          <Brand />
           <p className="mt-3 text-sm text-[var(--color-text-muted)]">
             Private trades. Compliant identity. One ZK stack.
           </p>
@@ -31,25 +28,24 @@ export function Footer() {
           title="Operators"
           links={[
             { label: "Relayers", href: APP_BY_ID.relayer.href },
-            { label: "Run a node", href: "https://docs.zkscatter.xyz/operate/run-a-relayer-node" },
+            { label: "Run a node", href: `${DOCS_URL}/operate/run-a-relayer-node` },
             { label: "Leaderboard", href: `${APP_BY_ID.relayer.href}/leaderboard` },
           ]}
         />
         <FooterCol
           title="Developers"
           links={[
-            { label: "Quickstart", href: "https://docs.zkscatter.xyz/quickstart" },
-            { label: "SDK", href: "https://docs.zkscatter.xyz/sdk/overview" },
-            { label: "Contracts", href: "https://docs.zkscatter.xyz/contracts/overview" },
-            { label: "Circuits", href: "https://docs.zkscatter.xyz/circuits/overview" },
+            { label: "Quickstart", href: `${DOCS_URL}/quickstart` },
+            { label: "SDK", href: `${DOCS_URL}/sdk/overview` },
+            { label: "Contracts", href: `${DOCS_URL}/contracts/overview` },
+            { label: "Circuits", href: `${DOCS_URL}/circuits/overview` },
           ]}
         />
         <FooterCol
           title="Company"
           links={[
-            { label: "Research", href: "https://github.com/tokamak-network" },
-            { label: "GitHub", href: "https://github.com/tokamak-network" },
-            { label: "Contact", href: "mailto:hello@zkscatter.xyz" },
+            { label: "Research", href: "/research" },
+            { label: "GitHub", href: "https://github.com/tokamak-network/scatter-dex" },
           ]}
         />
       </div>

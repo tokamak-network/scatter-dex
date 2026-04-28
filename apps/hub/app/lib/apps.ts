@@ -15,13 +15,17 @@ export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
  *  return `undefined` in the browser bundle, defeating the
  *  override. */
 const APP_URLS: Record<AppId, string> = {
-  pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://pro.zkscatter.xyz",
-  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://pay.zkscatter.xyz",
-  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://drop.zkscatter.xyz",
-  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://relayer.zkscatter.xyz",
+  pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://zkscatter-pro.web.app",
+  // Pay/Drop/Relayer apps are not yet deployed; href is unused when
+  // `comingSoon: true` (AppCard renders a non-link card with a badge).
+  pay: process.env.NEXT_PUBLIC_PAY_URL ?? "#",
+  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "#",
+  relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "#",
   // Mobile is an in-hub marketing route, not a separate app server.
   mobile: "/mobile",
 };
+
+export const DOCS_URL = process.env.NEXT_PUBLIC_DOCS_URL ?? "https://zkscatter-docs.web.app";
 
 export type AppEntry = {
   id: AppId;
@@ -34,6 +38,7 @@ export type AppEntry = {
   href: string;
   cta: string;
   accent: string;
+  comingSoon?: boolean;
 };
 
 export const SURFACE_LABEL: Record<AppSurface, string> = {
@@ -75,6 +80,7 @@ export const APPS: AppEntry[] = [
     href: APP_URLS.pay,
     cta: "Open Pay",
     accent: "var(--color-accent-pay)",
+    comingSoon: true,
   },
   {
     id: "drop",
@@ -92,6 +98,7 @@ export const APPS: AppEntry[] = [
     href: APP_URLS.drop,
     cta: "Open Drop",
     accent: "var(--color-accent-drop)",
+    comingSoon: true,
   },
   {
     id: "mobile",
@@ -109,6 +116,7 @@ export const APPS: AppEntry[] = [
     href: "/mobile",
     cta: "Get the app",
     accent: "var(--color-accent-mobile)",
+    comingSoon: true,
   },
   {
     id: "relayer",
@@ -126,6 +134,7 @@ export const APPS: AppEntry[] = [
     href: APP_URLS.relayer,
     cta: "Open Relayer",
     accent: "var(--color-accent-relayer)",
+    comingSoon: true,
   },
 ];
 

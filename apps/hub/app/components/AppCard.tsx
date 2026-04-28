@@ -3,11 +3,44 @@ import { ArrowRight } from "lucide-react";
 import { SURFACE_LABEL, type AppEntry } from "../lib/apps";
 
 export function AppCard({ app }: { app: AppEntry }) {
+  const isExternal = /^https?:\/\//.test(app.href);
+  const cardClass =
+    "group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition";
+  const interactiveClass =
+    " hover:border-[var(--color-border-strong)] hover:shadow-md";
+  const dimmedClass = " opacity-70 cursor-not-allowed";
+  const Wrapper = ({ children }: { children: React.ReactNode }) => {
+    if (app.comingSoon) {
+      return (
+        <div
+          className={cardClass + dimmedClass}
+          aria-disabled
+          role="article"
+        >
+          {children}
+        </div>
+      );
+    }
+    if (isExternal) {
+      return (
+        <a
+          href={app.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cardClass + interactiveClass}
+        >
+          {children}
+        </a>
+      );
+    }
+    return (
+      <Link href={app.href} className={cardClass + interactiveClass}>
+        {children}
+      </Link>
+    );
+  };
   return (
-    <Link
-      href={app.href}
-      className="group relative flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 transition hover:border-[var(--color-border-strong)] hover:shadow-md"
-    >
+    <Wrapper>
       <span
         className="absolute left-0 top-0 h-full w-1"
         style={{ background: app.accent }}
@@ -37,9 +70,9 @@ export function AppCard({ app }: { app: AppEntry }) {
         ))}
       </ul>
       <div className="mt-6 flex items-center gap-1.5 text-sm font-medium text-[var(--color-text)] group-hover:gap-2.5 transition-all">
-        {app.cta}
-        <ArrowRight className="h-4 w-4" />
+        {app.comingSoon ? "Coming soon" : app.cta}
+        {!app.comingSoon && <ArrowRight className="h-4 w-4" />}
       </div>
-    </Link>
+    </Wrapper>
   );
 }
