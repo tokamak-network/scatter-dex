@@ -4,6 +4,10 @@ export {
   restoreFolder,
   hasFolder,
   getFolderName,
+  getCurrentFolderId,
+  listKnownFolders,
+  switchToFolder,
+  forgetFolder,
   saveFile,
   loadFile,
   removeFile,
@@ -11,6 +15,7 @@ export {
   clearPersistedFolder,
   adoptHandle,
   type FolderFileEntry,
+  type KnownFolder,
 } from "./folder";
 export * from "./walletBook";
 export * from "./runs";
