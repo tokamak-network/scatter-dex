@@ -32,7 +32,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </Pill>
               }
               walletSlot={<ConnectWalletPill />}
-              hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
               topRibbon={
                 <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                   Relayer preview — Sepolia testnet. Pages with mock data are tagged inline.

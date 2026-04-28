@@ -12,15 +12,12 @@ export interface AppShellHeaderProps {
   /** Wallet element on the right side of the header — usually
    *  `ConnectWalletPill` (shared) or an app-specific button. */
   walletSlot?: ReactNode;
-  /** Pre-rendered nav links (`<Link />` / `<a />`). The "← All apps"
-   *  link is prepended automatically. */
+  /** Pre-rendered nav links (`<Link />` / `<a />`). */
   navLinks: ReactNode;
   /** Optional in-page slots before the nav links (e.g. Pay's
    *  `<FolderPill />`). Rendered after `navLinks`, before the
    *  wallet slot. */
   navTrailing?: ReactNode;
-  /** Hub URL used by the "← All apps" link. */
-  hubUrl: string;
   /** Banner ribbon above the header (launch event copy, etc). */
   topRibbon?: ReactNode;
 }
@@ -35,7 +32,6 @@ export function AppShellHeader({
   walletSlot,
   navLinks,
   navTrailing,
-  hubUrl,
   topRibbon,
 }: AppShellHeaderProps) {
   return (
@@ -48,9 +44,6 @@ export function AppShellHeader({
             {chainPill}
           </div>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
-            <a href={hubUrl} className="hover:text-[var(--color-text)]">
-              ← All apps
-            </a>
             {navLinks}
             {navTrailing}
             {walletSlot}

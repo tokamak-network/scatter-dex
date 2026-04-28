@@ -54,14 +54,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="en" dir="ltr" suppressHydrationWarning>
       <Head />
       <body>
-        {/* Cross-app return path. Sits above the Nextra Layout chrome so
-            it's visible from every doc page without depending on Nextra
-            theme internals. */}
-        <div className="zs-app-bar">
-          <a href={HUB_URL} className="zs-app-bar-link">
-            ← All apps
-          </a>
-        </div>
         <Layout
           navbar={navbar}
           footer={footer}
