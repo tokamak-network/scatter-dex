@@ -106,14 +106,17 @@ export interface RunRecord {
   notifications: NotificationLog[];
 }
 
-type RunFileVersion = 1 | 2;
-
+/** On-disk shape this module writes today. The reader (`parseRunFile`)
+ *  also accepts legacy v1 payloads, but those are upgraded to a v2
+ *  `RunRecord` before they exit the SDK — there is no branded v1
+ *  type because callers should never see one. */
 interface RunFile {
-  version: RunFileVersion;
+  version: 2;
   record: RunRecord;
 }
 
-const CURRENT_VERSION: RunFileVersion = 2;
+const CURRENT_VERSION = 2 as const;
+const HEX_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const RUN_CATEGORY_SET = new Set<string>(RUN_CATEGORIES);
 
 const RECIPIENT_STATUSES = new Set(["claimed", "available", "locked"]);
@@ -178,26 +181,49 @@ function hasValidCommonFields(v: Record<string, unknown>): boolean {
   return true;
 }
 
+/** `operatorAddress` may be empty (migrated v1 records the user
+ *  hasn't re-edited) but a non-empty value must be a lowercase
+ *  0x-prefixed EVM address — the dashboard relies on case-insensitive
+ *  comparison having a canonical input. */
+function isValidOperatorAddress(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  if (v === "") return true;
+  return HEX_ADDRESS_RE.test(v);
+}
+
 function isValidRecord(r: unknown): r is RunRecord {
   if (!r || typeof r !== "object") return false;
   const v = r as Record<string, unknown>;
   if (!hasValidCommonFields(v)) return false;
-  if (typeof v.operatorAddress !== "string") return false;
+  if (!isValidOperatorAddress(v.operatorAddress)) return false;
   if (typeof v.category !== "string" || !RUN_CATEGORY_SET.has(v.category)) return false;
   if (!isOptionalString(v.settleGasPaid)) return false;
   return true;
 }
 
-/** Promote a v1 record to v2 by filling the new fields with defaults.
- *  `operatorAddress` stays empty (the dashboard renders "(unknown
- *  wallet)") and `category` defaults to `"other"`. The next save
- *  writes the upgraded shape to disk. */
+/** Pick only the v1 fields we know about, then add the v2 defaults.
+ *  Spreading the raw parsed object would let a v1 file with a
+ *  malformed v2-only key (e.g. `settleGasPaid: 123`) leak through
+ *  with the wrong shape — the explicit `pick` keeps the upgrade
+ *  deterministic. `operatorAddress` stays empty (dashboard renders
+ *  "(unknown wallet)") and `category` defaults to `"other"`. The
+ *  next `saveRun` writes the upgraded shape to disk. */
 function upgradeV1Record(v: Record<string, unknown>): RunRecord {
   return {
-    ...(v as object),
+    id: v.id as string,
+    label: v.label as string,
     operatorAddress: "",
     category: "other",
-  } as RunRecord;
+    createdAt: v.createdAt as number,
+    settledAt: v.settledAt as number,
+    chainId: v.chainId as number,
+    txHash: v.txHash as string,
+    tokenSymbol: v.tokenSymbol as string,
+    tokenAddress: v.tokenAddress as string,
+    totalAmount: v.totalAmount as string,
+    recipients: v.recipients as RecipientRow[],
+    notifications: v.notifications as NotificationLog[],
+  };
 }
 
 function filenameFor(id: string): string {
@@ -303,9 +329,14 @@ export async function listRuns(filter: ListRunsFilter = {}): Promise<RunRecord[]
 
 /** Persist (or replace) a run record. Always writes the current
  *  schema version, so a v1 record loaded → mutated → saved is
- *  silently upgraded on disk. */
+ *  silently upgraded on disk. `operatorAddress` is lowercased so
+ *  case-insensitive filtering downstream sees a canonical input. */
 export async function saveRun(record: RunRecord): Promise<void> {
-  const payload: RunFile = { version: CURRENT_VERSION, record };
+  const normalised: RunRecord = {
+    ...record,
+    operatorAddress: record.operatorAddress.toLowerCase(),
+  };
+  const payload: RunFile = { version: CURRENT_VERSION, record: normalised };
   await saveFile(filenameFor(record.id), JSON.stringify(payload, null, 2));
 }
 
