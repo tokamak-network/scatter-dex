@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  // Static HTML export — Operators deploys to Firebase Hosting, which
+  // only serves static assets. No `[param]` segments today; any future
+  // ones must be query-param-encoded (mirror apps/pay).
+  output: "export",
+  // No Next image optimiser at runtime under static export.
+  images: { unoptimized: true },
   // Zero-build dev for shared packages — both `@zkscatter/ui` and
   // `@zkscatter/sdk` ship as TypeScript source. `transpilePackages`
   // tells Next to compile them through the same pipeline as app

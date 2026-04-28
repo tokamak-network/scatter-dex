@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build hub/docs/pro as static exports and deploy to Firebase Hosting.
+# Build hub/docs/pro/pay/relayer as static exports and deploy to Firebase Hosting.
 # Usage:
-#   ./scripts/firebase-deploy.sh           # deploy all three sites
+#   ./scripts/firebase-deploy.sh           # deploy all default targets (hub/docs/pro/pay/relayer)
 #   ./scripts/firebase-deploy.sh hub       # deploy a single target
 #   ./scripts/firebase-deploy.sh hub docs  # deploy multiple targets
 set -euo pipefail
@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ALL_TARGETS=(hub docs pro pay)
+ALL_TARGETS=(hub docs pro pay relayer)
 # `"${@:-${ALL_TARGETS[@]}}"` collapses the default into one quoted
 # string when no args are passed, so an explicit branch is needed to
 # preserve word splitting for the array assignment.
@@ -24,6 +24,9 @@ declare -A APP_DIR=(
   [docs]="apps/docs"
   [pro]="apps/pro"
   [pay]="apps/pay"
+  # Site is named `zkscatter-relayer` (operator-facing brand) but the
+  # source lives in apps/operators (engineering name for the console).
+  [relayer]="apps/operators"
 )
 
 # Production URLs baked into static exports at build time. `.env.local`
@@ -33,6 +36,7 @@ export NEXT_PUBLIC_HUB_URL="https://zkscatter-hub.web.app"
 export NEXT_PUBLIC_DOCS_URL="https://zkscatter-docs.web.app"
 export NEXT_PUBLIC_PRO_URL="https://zkscatter-pro.web.app"
 export NEXT_PUBLIC_PAY_URL="https://zkscatter-pay.web.app"
+export NEXT_PUBLIC_RELAYER_URL="https://zkscatter-relayer.web.app"
 # Pay reads its chain config from envs at build time. Default to
 # Sepolia for the public Firebase deploy so the chain pill / wrong-
 # chain banner show "Sepolia (testnet)" instead of falling back to
