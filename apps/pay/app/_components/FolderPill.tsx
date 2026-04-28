@@ -38,14 +38,22 @@ export function FolderPill() {
       }
       const blob = new Blob([result.text], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const stamp = new Date(result.bundle.exportedAt * 1000).toISOString().slice(0, 10);
-      a.href = url;
-      a.download = `zkscatter-workspace-${result.bundle.exportedFrom || "export"}-${stamp}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      try {
+        const a = document.createElement("a");
+        const stamp = new Date(result.bundle.exportedAt * 1000).toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `zkscatter-workspace-${result.bundle.exportedFrom || "export"}-${stamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        // Defer the revoke so Safari (which kicks the download off
+        // asynchronously after `click()`) doesn't race the URL going
+        // away. The `try/finally` also catches any throw between
+        // `createObjectURL` and the click — without it the URL
+        // would leak.
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
       setStatus({
         tone: "ok",
         text: `Exported ${Object.keys(result.bundle.files).length} file${
@@ -158,19 +166,21 @@ export function FolderPill() {
                   className="flex items-center justify-between gap-2 px-3 py-1 hover:bg-[var(--color-primary-soft)]"
                 >
                   <button
+                    disabled={busy !== null}
                     onClick={async () => {
                       const ok = await folder.switchTo(r.id);
                       if (ok) setOpen(false);
                     }}
                     title={`Switch to ${r.name}`}
-                    className="flex-1 truncate text-left font-mono"
+                    className="flex-1 truncate text-left font-mono disabled:opacity-50"
                   >
                     📁 {r.name}
                   </button>
                   <button
+                    disabled={busy !== null}
                     onClick={() => void folder.forget(r.id)}
                     title="Forget this workspace"
-                    className="text-[var(--color-text-subtle)] hover:text-[var(--color-warning)]"
+                    className="text-[var(--color-text-subtle)] hover:text-[var(--color-warning)] disabled:opacity-50"
                   >
                     ✕
                   </button>
@@ -180,11 +190,12 @@ export function FolderPill() {
           )}
           <div className="border-t border-[var(--color-border)]" />
           <button
+            disabled={busy !== null}
             onClick={async () => {
               await folder.select();
               setOpen(false);
             }}
-            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
           >
             ＋ Pick another folder…
           </button>
@@ -215,12 +226,13 @@ export function FolderPill() {
           )}
           {folder.currentId && (
             <button
+              disabled={busy !== null}
               onClick={async () => {
                 if (!folder.currentId) return;
                 await folder.forget(folder.currentId);
                 setOpen(false);
               }}
-              className="block w-full px-3 py-1.5 text-left text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
+              className="block w-full px-3 py-1.5 text-left text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)] disabled:opacity-50"
             >
               Forget current workspace
             </button>
