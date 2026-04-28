@@ -8,6 +8,7 @@ import {
   isCanonicalChainKey,
   type WalletEntry,
 } from "@zkscatter/sdk/storage";
+import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
 
@@ -76,10 +77,9 @@ export default function RecipientsPage() {
         )}
       </div>
 
+      <WorkspaceBar />
+
       {folder.available === false && <UnsupportedBanner />}
-      {folder.available === true && !folder.ready && !folder.restoring && (
-        <PickFolderBanner onPick={() => void folder.select()} />
-      )}
       {folder.ready && book.corrupt && <CorruptBanner message={book.corrupt.message} />}
 
       {folder.ready && !book.corrupt && (
@@ -503,24 +503,6 @@ function ConfirmRemove({
   );
 }
 
-function PickFolderBanner({ onPick }: { onPick: () => void }) {
-  return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <h3 className="text-sm font-semibold">Pick a notes folder</h3>
-      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-        Pay stores your address book + commitment notes as files in a folder
-        you choose. Pick once — the browser remembers it across sessions. The
-        same folder can be used by other zkScatter apps for shared access.
-      </p>
-      <button
-        onClick={onPick}
-        className="mt-3 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-      >
-        Pick folder
-      </button>
-    </div>
-  );
-}
 
 function UnsupportedBanner() {
   return (

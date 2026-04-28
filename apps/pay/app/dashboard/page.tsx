@@ -9,6 +9,7 @@ import {
   type RunsIndexEntry,
 } from "@zkscatter/sdk/storage";
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
+import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 
 type Tab = "all" | RunCategory;
@@ -107,6 +108,8 @@ export default function Dashboard() {
           New payout
         </Link>
       </section>
+
+      <WorkspaceBar />
 
       <PoolBalanceCard />
 
