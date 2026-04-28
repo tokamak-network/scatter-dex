@@ -1,162 +1,24 @@
 /**
- * Address book persisted in the notes folder (same File System Access
- * API directory that holds deposit notes, order bundles, and EdDSA keys).
+ * Address book persisted in the notes folder. The implementation
+ * lives in `@zkscatter/sdk/storage` so frontend and Pay (and any
+ * future zkScatter app) read and write the same
+ * `zkscatter-wallets.json` schema.
  *
- * Stored as a single JSON file `zkscatter-wallets.json`; entries are
- * keyed by a stable random `id` so labels can be renamed without
- * orphaning references.
+ * Frontend's `note-storage.ts` mirrors its `dirHandle` into the SDK
+ * via `adoptHandle` whenever the user picks or restores a folder, so
+ * SDK file I/O sees the same folder this app does.
+ *
+ * This file kept its old import path (`../lib/wallet-book`) so
+ * existing callers (`AddressPicker.tsx`, `wallets/page.tsx`) don't
+ * have to change. Once frontend pages migrate to importing from
+ * `@zkscatter/sdk/storage` directly, this shim can drop.
  */
 
-import { ethers } from "ethers";
-import {
-  hasFolderSelected,
-  loadFileFromFolder,
-  saveFileToFolder,
-} from "./zk/note-storage";
-
-const WALLET_BOOK_FILENAME = "zkscatter-wallets.json";
-
-export class WalletBookCorruptError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WalletBookCorruptError";
-  }
-}
-
-export interface WalletEntry {
-  id: string;
-  label: string;
-  address: string;     // lowercase 0x-prefixed
-  memo?: string;
-  createdAt: number;   // unix seconds
-}
-
-interface WalletBookFile {
-  version: 1;
-  entries: WalletEntry[];
-}
-
-function newId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function isValidEntry(e: unknown): e is WalletEntry {
-  if (!e || typeof e !== "object") return false;
-  const v = e as Record<string, unknown>;
-  return (
-    typeof v.id === "string" &&
-    typeof v.label === "string" &&
-    typeof v.address === "string" &&
-    ethers.isAddress(v.address) &&
-    v.address === (v.address as string).toLowerCase() &&
-    typeof v.createdAt === "number" &&
-    (v.memo === undefined || typeof v.memo === "string")
-  );
-}
-
-/**
- * Load the wallet book. Throws {@link WalletBookCorruptError} if the
- * file exists but is not parseable or has an unsupported shape —
- * callers must catch and prompt the user rather than letting the next
- * write silently overwrite the corrupt file.
- */
-export async function loadWalletBook(): Promise<WalletEntry[]> {
-  if (!hasFolderSelected()) return [];
-  const text = await loadFileFromFolder(WALLET_BOOK_FILENAME);
-  if (!text) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (e) {
-    throw new WalletBookCorruptError(
-      `zkscatter-wallets.json is not valid JSON: ${e instanceof Error ? e.message : "parse error"}`,
-    );
-  }
-
-  const book = parsed as WalletBookFile | null;
-  if (!book || typeof book !== "object" || book.version !== 1 || !Array.isArray(book.entries)) {
-    throw new WalletBookCorruptError(
-      "zkscatter-wallets.json has an unsupported shape (expected { version: 1, entries: [...] })",
-    );
-  }
-
-  if (!book.entries.every(isValidEntry)) {
-    throw new WalletBookCorruptError(
-      "zkscatter-wallets.json contains invalid entries",
-    );
-  }
-  return book.entries;
-}
-
-async function writeBook(entries: WalletEntry[]): Promise<void> {
-  const payload: WalletBookFile = { version: 1, entries };
-  await saveFileToFolder(WALLET_BOOK_FILENAME, JSON.stringify(payload, null, 2));
-}
-
-// Serialize every mutation through a single promise chain so concurrent
-// add/update/remove calls can't race on read-modify-write. Each task
-// runs load-modify-save end-to-end before the next begins.
-let _mutationQueue: Promise<unknown> = Promise.resolve();
-function withLock<T>(task: () => Promise<T>): Promise<T> {
-  const run = _mutationQueue.then(task, task);
-  _mutationQueue = run.catch(() => {});
-  return run;
-}
-
-export async function addWallet(input: {
-  label: string;
-  address: string;
-  memo?: string;
-}): Promise<WalletEntry> {
-  if (!ethers.isAddress(input.address)) throw new Error("Invalid address");
-  const label = input.label.trim();
-  if (!label) throw new Error("Label is required");
-  const address = input.address.toLowerCase();
-
-  return withLock(async () => {
-    const entries = await loadWalletBook();
-    if (entries.some((e) => e.address === address)) {
-      throw new Error("Address already in book");
-    }
-    const entry: WalletEntry = {
-      id: newId(),
-      label,
-      address,
-      memo: input.memo?.trim() || undefined,
-      createdAt: Math.floor(Date.now() / 1000),
-    };
-    await writeBook([...entries, entry]);
-    return entry;
-  });
-}
-
-export async function updateWallet(
-  id: string,
-  patch: Partial<Pick<WalletEntry, "label" | "memo">>,
-): Promise<void> {
-  if (patch.label !== undefined && !patch.label.trim()) {
-    throw new Error("Label is required");
-  }
-  return withLock(async () => {
-    const entries = await loadWalletBook();
-    const next = entries.map((e) =>
-      e.id === id
-        ? {
-            ...e,
-            label: patch.label !== undefined ? patch.label.trim() : e.label,
-            memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
-          }
-        : e,
-    );
-    await writeBook(next);
-  });
-}
-
-export async function removeWallet(id: string): Promise<void> {
-  return withLock(async () => {
-    const entries = await loadWalletBook();
-    await writeBook(entries.filter((e) => e.id !== id));
-  });
-}
+export {
+  WalletBookCorruptError,
+  type WalletEntry,
+  loadWalletBook,
+  addWallet,
+  updateWallet,
+  removeWallet,
+} from "@zkscatter/sdk/storage";
