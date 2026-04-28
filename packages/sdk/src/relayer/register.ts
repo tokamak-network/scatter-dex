@@ -43,25 +43,34 @@ export async function loadRegistrationStatus(
   provider: ethers.Provider,
 ): Promise<RegistrationStatus> {
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
-  const idRegistryAddr = (await registry.identityRegistry()) as string;
-  const idRegistry = new ethers.Contract(idRegistryAddr, IDENTITY_GATE_IFACE, provider);
 
-  // Always issue all five reads in parallel — `verifiedUntil` is
-  // meaningless when `isVerified` is false, but the wasted call
-  // costs less than the extra round-trip a sequential branch
-  // would add on the (common) verified path.
-  const [isVerified, verifiedUntilRaw, alreadyRegistered, minBond, bondToken] = await Promise.all([
+  // Round-trip 1: discover the two satellite addresses in parallel —
+  // identity registry (for verification reads) and bond token
+  // (decides whether we need an allowance read). Folding `bondToken`
+  // into this batch lets the allowance call ride the same round-trip
+  // as the verification/registration reads below.
+  const [idRegistryAddr, bondToken] = await Promise.all([
+    registry.identityRegistry() as Promise<string>,
+    registry.bondToken() as Promise<string>,
+  ]);
+  const idRegistry = new ethers.Contract(idRegistryAddr, IDENTITY_GATE_IFACE, provider);
+  const isErc20Bond = bondToken !== NATIVE_BOND_TOKEN;
+
+  // Round-trip 2: all remaining reads in parallel. `verifiedUntil` is
+  // meaningless when `isVerified` is false, but the wasted call costs
+  // less than the extra round-trip a sequential branch would add on
+  // the (common) verified path. Allowance read is included only in
+  // ERC20 mode — in native mode there's no token to query.
+  const allowancePromise = isErc20Bond
+    ? (new ethers.Contract(bondToken, ERC20_ABI, provider).allowance(account, registryAddress) as Promise<bigint>)
+    : Promise.resolve(0n);
+  const [isVerified, verifiedUntilRaw, alreadyRegistered, minBond, bondAllowance] = await Promise.all([
     idRegistry.isVerified(account) as Promise<boolean>,
     idRegistry.verifiedUntil(account) as Promise<bigint>,
     registry.isActiveRelayer(account) as Promise<boolean>,
     registry.minBond() as Promise<bigint>,
-    registry.bondToken() as Promise<string>,
+    allowancePromise,
   ]);
-
-  const isErc20Bond = bondToken !== NATIVE_BOND_TOKEN;
-  const bondAllowance = isErc20Bond
-    ? (await new ethers.Contract(bondToken, ERC20_ABI, provider).allowance(account, registryAddress) as bigint)
-    : 0n;
 
   return {
     isVerified,

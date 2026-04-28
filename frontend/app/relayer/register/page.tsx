@@ -168,7 +168,7 @@ export default function RelayerRegisterPage() {
         </div>
 
         {/* Step 2: Registration Form */}
-        {(phase === "ready" || phase === "submitting" || phase === "error") && (
+        {(phase === "ready" || phase === "approving" || phase === "submitting" || phase === "error") && (
           <div className="bg-surface-container rounded-xl border border-outline-variant/15 p-6">
             <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2 mb-4">
               <UserPlus className="w-4 h-4 text-primary" />
@@ -242,10 +242,15 @@ export default function RelayerRegisterPage() {
               {/* Submit */}
               <button
                 onClick={handleRegister}
-                disabled={!url || phase === "submitting"}
+                disabled={!url || phase === "approving" || phase === "submitting"}
                 className="w-full py-3 gradient-btn text-on-primary-fixed rounded-lg font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
-                {phase === "submitting" ? (
+                {phase === "approving" ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Approving bond token…
+                  </span>
+                ) : phase === "submitting" ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Registering...

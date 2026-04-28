@@ -123,7 +123,10 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     }
 
     /// @param bondAmount In ERC20 mode, the amount to pull. In native mode, MUST be 0.
-    function addBond(uint256 bondAmount) external payable {
+    /// @dev `nonReentrant` is required because `_pullBond` performs an external
+    ///      `safeTransferFrom` in ERC20 mode; without the guard a malicious bond
+    ///      token could re-enter `executeExit` (or another state mutator) mid-pull.
+    function addBond(uint256 bondAmount) external payable nonReentrant {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
