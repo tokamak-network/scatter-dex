@@ -1,11 +1,12 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 
 // Demo claim payload. The real Pay reads this from its claim record
-// store keyed off the URL path, then verifies the secret hashes to the
-// claimHash that's on-chain via the SDK before showing "Claim".
+// store keyed off the URL `?id=`, then verifies the secret hashes to
+// the claimHash that's on-chain via the SDK before showing "Claim".
 const DEMO_CLAIM = {
   senderName: "Acme DAO",
   senderVerified: true,
@@ -13,11 +14,31 @@ const DEMO_CLAIM = {
   token: "USDC",
   label: "April payroll",
   availableFrom: "2026-04-01",
-  payslipHref: "/payouts/p_2026_04_payroll/payslip/alice",
+  payslipHref: "/payouts/payslip?id=p_2026_04_payroll&row=0",
 };
 
-export default function Claim({ params }: { params: Promise<{ link: string }> }) {
-  const { link } = use(params);
+/** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
+ *  as a static export, so the link id moves to a `?id=` query param
+ *  while the secret keeps living in the URL hash (it must never reach
+ *  the server, even on a hosted prerender). `useSearchParams` needs a
+ *  `<Suspense>` boundary for static export to skip the CSR bailout. */
+export default function Claim() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-md py-10 text-center text-sm text-[var(--color-text-muted)]">
+          Loading claim…
+        </div>
+      }
+    >
+      <ClaimInner />
+    </Suspense>
+  );
+}
+
+function ClaimInner() {
+  const searchParams = useSearchParams();
+  const link = searchParams?.get("id") ?? "";
   const { account, connect, connectError } = useWallet();
   const [secret, setSecret] = useState<string | null>(null);
   const [done, setDone] = useState(false);
