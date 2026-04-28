@@ -254,7 +254,7 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
 
   return (
     <Link
-      href={`/payouts/${entry.id}`}
+      href={`/payouts/detail?id=${entry.id}`}
       className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0 hover:bg-[var(--color-primary-soft)]"
     >
       <div className="min-w-0">

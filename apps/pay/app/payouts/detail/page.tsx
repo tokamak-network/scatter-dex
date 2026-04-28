@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   type Dispatch,
   type ReactNode,
   type SetStateAction,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -30,9 +31,30 @@ const EMAIL: NotificationChannel = "email";
 
 type BusyKind = "send-all" | "resend" | "row" | "seed" | null;
 
+/** Pre-Next 16 the route was `/payouts/[id]`; Pay now ships as a
+ *  static export (Firebase Hosting), which forbids dynamic route
+ *  params. The id moves to a `?id=` query string read at runtime
+ *  via `useSearchParams`, which Next requires to be wrapped in a
+ *  `<Suspense>` boundary so the static prerender doesn't bail out.
+ *  Old `/payouts/<id>` deep-links should be redirected at the host
+ *  layer (Firebase rewrite rule) until the migration completes. */
 export default function PayoutDetail() {
-  const params = useParams<{ id: string }>();
-  const id = params?.id;
+  return (
+    <Suspense
+      fallback={
+        <p className="text-sm text-[var(--color-text-muted)]">
+          Loading payout…
+        </p>
+      }
+    >
+      <PayoutDetailInner />
+    </Suspense>
+  );
+}
+
+function PayoutDetailInner() {
+  const searchParams = useSearchParams();
+  const id = searchParams?.get("id") ?? undefined;
   const folder = useFolderStorage();
   const run = useRunRecord(id);
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -396,7 +418,7 @@ function RecipientTable({
                       hasEmail={!!r.email}
                       alreadySent={!!log?.sentAt}
                       busy={busy !== null}
-                      payslipHref={`/payouts/${record.id}/payslip/${r.rowIndex}`}
+                      payslipHref={`/payouts/payslip?id=${record.id}&row=${r.rowIndex}`}
                     />
                   </td>
                 </tr>
@@ -602,10 +624,12 @@ function CorruptBanner({ message, filename }: { message: string; filename: strin
 }
 
 function copyClaimLink(record: RunRecord, row: RecipientRow): void {
-  // Real claim URL is `/claim/<id>#<secret>`; the per-row secret is
-  // populated by the wizard on settle (Phase B). Fall back to a
-  // deterministic placeholder so demos work end-to-end until then.
-  const url = `${window.location.origin}/claim/${record.id}_${row.rowIndex}#demo-secret`;
+  // Real claim URL is `/claim?id=<linkId>#<secret>`; the per-row
+  // secret is populated by the wizard on settle (Phase B). Fall back
+  // to a deterministic placeholder so demos work end-to-end until
+  // then. Query-string form (instead of `/claim/[link]`) keeps the
+  // page statically exportable for Firebase Hosting.
+  const url = `${window.location.origin}/claim?id=${record.id}_${row.rowIndex}#demo-secret`;
   void navigator.clipboard.writeText(url);
 }
 

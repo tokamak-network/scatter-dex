@@ -159,7 +159,7 @@ export default function Landing() {
           <Link href="/payouts/new" className="rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
             Walk through the wizard
           </Link>
-          <Link href="/claim/demo" className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-white">
+          <Link href="/claim?id=demo" className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-white">
             See the recipient page
           </Link>
         </div>

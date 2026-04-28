@@ -185,7 +185,7 @@ export default function NewPayout() {
       // Pay's env hasn't been wired with deployed contract addresses
       // — fall through to the demo result page so the wizard remains
       // clickable end-to-end without a live deployment.
-      router.push("/payouts/p_2026_04_payroll");
+      router.push("/payouts/detail?id=p_2026_04_payroll");
       return;
     }
     setSubmitting(true);
@@ -202,7 +202,7 @@ export default function NewPayout() {
     } finally {
       setSubmitting(false);
     }
-    router.push("/payouts/p_2026_04_payroll");
+    router.push("/payouts/detail?id=p_2026_04_payroll");
   }
 
   function appendFromAddressBook(picked: WalletEntry[]) {
@@ -638,7 +638,7 @@ export default function NewPayout() {
           </button>
         ) : (
           <Link
-            href="/payouts/p_2026_04_payroll"
+            href="/payouts/detail?id=p_2026_04_payroll"
             className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
           >
             View sample result →
