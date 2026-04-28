@@ -22,27 +22,6 @@
       ]
     },
     {
-      "target": "pay",
-      "public": "apps/pay/out",
-      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-      "cleanUrls": true,
-      "trailingSlash": false,
-      "headers": [
-        {
-          "source": "**/*.@(js|css|woff2|woff|ttf|svg|png|jpg|jpeg|webp|ico)",
-          "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-          ]
-        },
-        {
-          "source": "**/*.@(html|json)",
-          "headers": [
-            { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
-          ]
-        }
-      ]
-    },
-    {
       "target": "docs",
       "public": "apps/docs/out",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
@@ -79,6 +58,27 @@
     {
       "target": "pro",
       "public": "apps/pro/out",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "cleanUrls": true,
+      "trailingSlash": false,
+      "headers": [
+        {
+          "source": "**/*.@(js|css|woff2|woff|ttf|svg|png|jpg|jpeg|webp|ico)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+          ]
+        },
+        {
+          "source": "**/*.@(html|json)",
+          "headers": [
+            { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "pay",
+      "public": "apps/pay/out",
       "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
       "cleanUrls": true,
       "trailingSlash": false,
