@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build hub/docs/pro/pay/relayer as static exports and deploy to Firebase Hosting.
 # Usage:
-#   ./scripts/firebase-deploy.sh           # deploy all three sites
+#   ./scripts/firebase-deploy.sh           # deploy all default targets (hub/docs/pro/pay/relayer)
 #   ./scripts/firebase-deploy.sh hub       # deploy a single target
 #   ./scripts/firebase-deploy.sh hub docs  # deploy multiple targets
 set -euo pipefail
