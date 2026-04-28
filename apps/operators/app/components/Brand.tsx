@@ -1,10 +1,10 @@
-/* Scatter Operators brandmark.
+/* Scatter Relayer brandmark.
  *
  * Composite of the Tokamak Network symbol with a centred italic-serif
- * "zk" overlay, followed by the "Scatter Operators" wordmark. Mirrors
+ * "zk" overlay, followed by the "Scatter Relayer" wordmark. Mirrors
  * the docs / hub / pro brandmarks for cross-app consistency, rendered
- * in Operators' primary accent (--color-primary) via currentColor so
- * the same SVG paths can be reused per-app.
+ * in the relayer console's primary accent (--color-primary) via
+ * currentColor so the same SVG paths can be reused per-app.
  *
  * DRIFT: paths below are duplicated from
  * `packages/ui/src/components/TokamakMark.tsx` and the docs brand.
@@ -23,10 +23,10 @@ const ZK_TEXT_Y = "32%";
 const ZK_FONT_SIZE = 13;
 const ZK_LETTER_SPACING = -0.5;
 
-/* Two click targets: symbol → cross-app hub, wordmark → Operators
- * home. Lets users navigate to the hub from any deep-linked Operators
- * page without losing the standard "click logo to go home" affordance
- * for the current site. */
+/* Two click targets: symbol → cross-app hub, wordmark → Relayer
+ * home. Lets users navigate to the hub from any deep-linked Relayer
+ * console page without losing the standard "click logo to go home"
+ * affordance for the current site. */
 const HUB_HREF =
   process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app";
 
@@ -97,7 +97,7 @@ function BrandImpl({
           lineHeight: 1,
         }}
       >
-        Scatter Operators
+        Scatter Relayer
       </Link>
     </span>
   );
