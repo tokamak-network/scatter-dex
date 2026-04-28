@@ -4,16 +4,27 @@ pragma solidity ^0.8.28;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers may optionally stake a bond to register (minBond configurable by owner, default 0).
 ///      Bond is returned after a cooldown on exit.
+///
+///      Bond token is configurable via `bondToken` (immutable):
+///      - `address(0)` → **native mode** (e.g. TON on Tokamak L2): bond paid via `msg.value`.
+///      - non-zero ERC20 → **token mode** (e.g. TON ERC20 on L1): bond pulled via
+///        `transferFrom`; caller must `approve` first. `msg.value` MUST be 0.
+///      Choosing immutable lets one codebase deploy to both networks while
+///      making it impossible to "rug" existing bonds by switching tokens.
+///
 ///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
 ///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
 ///      registries, off-chain indexing via events is recommended instead.
 contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
+    using SafeERC20 for IERC20;
     struct Relayer {
         string url;
         uint256 fee; // basis points
@@ -28,6 +39,8 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
     IIdentityRegistry public immutable identityRegistry;
+    /// @notice Bond token. `address(0)` means native (msg.value) mode.
+    IERC20 public immutable bondToken;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
@@ -56,6 +69,8 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     error FeeTooHigh();
     error NotVerified();
     error RenounceOwnershipDisabled();
+    /// @dev ERC20 mode received native value, or native mode received non-zero `bondAmount`.
+    error WrongPaymentMode();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
     function renounceOwnership() public pure override {
@@ -68,25 +83,31 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
         super.transferOwnership(newOwner);
     }
 
-    constructor(address _treasury, address _identityRegistry) Ownable(msg.sender) {
+    /// @param _bondToken ERC20 token address for bonds, or `address(0)` for native (msg.value) mode.
+    constructor(address _treasury, address _identityRegistry, address _bondToken) Ownable(msg.sender) {
         if (_treasury == address(0)) revert ZeroAddress();
         if (_identityRegistry == address(0)) revert ZeroAddress();
         treasury = _treasury;
         identityRegistry = IIdentityRegistry(_identityRegistry);
+        bondToken = IERC20(_bondToken); // address(0) → native mode
     }
 
     // ─── Registration ────────────────────────────────────────────
 
-    function register(string calldata url, uint256 fee) external payable nonReentrant {
+    /// @param bondAmount In ERC20 mode, the amount to pull via `transferFrom` (caller must `approve` first).
+    ///                   In native mode, MUST be 0 — bond is taken from `msg.value`.
+    function register(string calldata url, uint256 fee, uint256 bondAmount) external payable nonReentrant {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
-        if (msg.value < minBond) revert InsufficientBond();
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
+
+        uint256 bond = _pullBond(bondAmount);
+        if (bond < minBond) revert InsufficientBond();
 
         relayers[msg.sender] = Relayer({
             url: url,
             fee: fee,
-            bond: msg.value,
+            bond: bond,
             registeredAt: block.timestamp,
             exitRequestedAt: 0,
             active: true
@@ -98,17 +119,19 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
             inList[msg.sender] = true;
         }
 
-        emit RelayerRegistered(msg.sender, url, fee, msg.value);
+        emit RelayerRegistered(msg.sender, url, fee, bond);
     }
 
-    function addBond() external payable {
+    /// @param bondAmount In ERC20 mode, the amount to pull. In native mode, MUST be 0.
+    function addBond(uint256 bondAmount) external payable {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
-        if (msg.value == 0) revert InsufficientBond();
-        r.bond += msg.value;
+        uint256 bond = _pullBond(bondAmount);
+        if (bond == 0) revert InsufficientBond();
+        r.bond += bond;
 
-        emit BondAdded(msg.sender, msg.value);
+        emit BondAdded(msg.sender, bond);
     }
 
     function updateInfo(string calldata url, uint256 fee) external {
@@ -145,10 +168,40 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
         r.active = false;
         r.bond = 0;
 
-        (bool sent,) = msg.sender.call{value: bondToReturn}("");
-        if (!sent) revert BondTransferFailed();
+        _pushBond(msg.sender, bondToReturn);
 
         emit RelayerExited(msg.sender, bondToReturn);
+    }
+
+    // ─── Bond plumbing ───────────────────────────────────────────
+
+    /// @dev Pull bond from caller. In native mode, returns `msg.value` (and `bondAmount`
+    ///      MUST be 0 — supplying both is an API misuse). In ERC20 mode, transfers
+    ///      `bondAmount` from caller via `safeTransferFrom` and returns the same value
+    ///      (`msg.value` MUST be 0).
+    function _pullBond(uint256 bondAmount) internal returns (uint256) {
+        if (address(bondToken) == address(0)) {
+            // Native mode
+            if (bondAmount != 0) revert WrongPaymentMode();
+            return msg.value;
+        }
+        // ERC20 mode
+        if (msg.value != 0) revert WrongPaymentMode();
+        if (bondAmount != 0) {
+            bondToken.safeTransferFrom(msg.sender, address(this), bondAmount);
+        }
+        return bondAmount;
+    }
+
+    /// @dev Push bond back to recipient. Skips no-op transfers so a 0-bond exit is gas-efficient.
+    function _pushBond(address to, uint256 amount) internal {
+        if (amount == 0) return;
+        if (address(bondToken) == address(0)) {
+            (bool sent,) = to.call{value: amount}("");
+            if (!sent) revert BondTransferFailed();
+        } else {
+            bondToken.safeTransfer(to, amount);
+        }
     }
 
     // ─── Views ───────────────────────────────────────────────────

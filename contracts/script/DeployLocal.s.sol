@@ -71,7 +71,7 @@ contract DeployLocal is Script {
         console.log("IdentityGate:", address(gate));
 
         // 3. Relayer registry (Relayer CA)
-        RelayerRegistry relayerRegistry = new RelayerRegistry(deployer, relayerRegistry_);
+        RelayerRegistry relayerRegistry = new RelayerRegistry(deployer, relayerRegistry_, address(0));
         console.log("RelayerRegistry:", address(relayerRegistry));
 
         // 4. Tokens — mock by default, or real mainnet addresses when
@@ -87,7 +87,7 @@ contract DeployLocal is Script {
         uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
         vm.stopBroadcast();
         vm.startBroadcast(zkRelayerKey);
-        relayerRegistry.register("http://localhost:3002", 30);
+        relayerRegistry.register("http://localhost:3002", 30, 0);
         console.log("Account #1 registered as zk-relayer");
         vm.stopBroadcast();
         vm.startBroadcast(deployerKey);
