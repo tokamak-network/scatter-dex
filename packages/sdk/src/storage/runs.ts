@@ -19,6 +19,13 @@ export class RunRecordCorruptError extends Error {
   }
 }
 
+export class NoFolderSelectedError extends Error {
+  constructor() {
+    super("No notes folder selected");
+    this.name = "NoFolderSelectedError";
+  }
+}
+
 export type RecipientStatus = "claimed" | "available" | "locked";
 
 export interface RecipientRow {
@@ -87,22 +94,66 @@ interface RunFile {
   record: RunRecord;
 }
 
+const RECIPIENT_STATUSES = new Set(["claimed", "available", "locked"]);
+const NOTIFICATION_CHANNELS = new Set(["email", "discord", "slack"]);
+const BOUNCE_KINDS = new Set(["hard", "soft"]);
+
+function isOptionalNumber(v: unknown): boolean {
+  return v === undefined || (typeof v === "number" && Number.isFinite(v));
+}
+
+function isOptionalString(v: unknown): boolean {
+  return v === undefined || typeof v === "string";
+}
+
+function isValidRecipient(r: unknown): r is RecipientRow {
+  if (!r || typeof r !== "object") return false;
+  const v = r as Record<string, unknown>;
+  if (typeof v.rowIndex !== "number" || !Number.isInteger(v.rowIndex)) return false;
+  if (typeof v.name !== "string") return false;
+  if (typeof v.address !== "string") return false;
+  if (typeof v.amount !== "string") return false;
+  if (typeof v.status !== "string" || !RECIPIENT_STATUSES.has(v.status)) return false;
+  if (!isOptionalNumber(v.claimedAt)) return false;
+  if (!isOptionalNumber(v.claimFrom)) return false;
+  if (!isOptionalString(v.email)) return false;
+  if (!isOptionalString(v.discordHandle)) return false;
+  return true;
+}
+
+function isValidNotification(n: unknown): n is NotificationLog {
+  if (!n || typeof n !== "object") return false;
+  const v = n as Record<string, unknown>;
+  if (typeof v.rowIndex !== "number" || !Number.isInteger(v.rowIndex)) return false;
+  if (typeof v.channel !== "string" || !NOTIFICATION_CHANNELS.has(v.channel)) return false;
+  if (typeof v.toAddress !== "string") return false;
+  if (typeof v.retryCount !== "number" || !Number.isInteger(v.retryCount)) return false;
+  if (!isOptionalNumber(v.sentAt)) return false;
+  if (!isOptionalNumber(v.deliveredAt)) return false;
+  if (!isOptionalNumber(v.openedAt)) return false;
+  if (!isOptionalNumber(v.clickedAt)) return false;
+  if (!isOptionalNumber(v.claimedAt)) return false;
+  if (!isOptionalNumber(v.lastRetryAt)) return false;
+  if (v.bounceKind !== undefined && (typeof v.bounceKind !== "string" || !BOUNCE_KINDS.has(v.bounceKind))) return false;
+  if (!isOptionalString(v.error)) return false;
+  return true;
+}
+
 function isValidRecord(r: unknown): r is RunRecord {
   if (!r || typeof r !== "object") return false;
   const v = r as Record<string, unknown>;
-  return (
-    typeof v.id === "string" &&
-    typeof v.label === "string" &&
-    typeof v.createdAt === "number" &&
-    typeof v.settledAt === "number" &&
-    typeof v.chainId === "number" &&
-    typeof v.txHash === "string" &&
-    typeof v.tokenSymbol === "string" &&
-    typeof v.tokenAddress === "string" &&
-    typeof v.totalAmount === "string" &&
-    Array.isArray(v.recipients) &&
-    Array.isArray(v.notifications)
-  );
+  if (typeof v.id !== "string") return false;
+  if (typeof v.label !== "string") return false;
+  if (typeof v.createdAt !== "number") return false;
+  if (typeof v.settledAt !== "number") return false;
+  if (typeof v.chainId !== "number") return false;
+  if (typeof v.txHash !== "string") return false;
+  if (typeof v.tokenSymbol !== "string") return false;
+  if (typeof v.tokenAddress !== "string") return false;
+  if (typeof v.totalAmount !== "string") return false;
+  if (!Array.isArray(v.recipients) || !v.recipients.every(isValidRecipient)) return false;
+  if (!Array.isArray(v.notifications) || !v.notifications.every(isValidNotification)) return false;
+  return true;
 }
 
 function filenameFor(id: string): string {
@@ -248,6 +299,7 @@ export async function recordSentNotification(
   input: SendNotificationInput & { runId: string },
 ): Promise<{ record: RunRecord; log: NotificationLog }> {
   const { runId, ...rest } = input;
+  if (!hasFolder()) throw new NoFolderSelectedError();
   return withRunLock(runId, async () => {
     const record = await loadRun(runId);
     if (!record) throw new Error(`Run ${runId} not found`);
@@ -264,6 +316,7 @@ export async function recordSentNotificationsBatch(input: {
   runId: string;
   entries: SendNotificationInput[];
 }): Promise<{ record: RunRecord; logs: NotificationLog[] }> {
+  if (!hasFolder()) throw new NoFolderSelectedError();
   return withRunLock(input.runId, async () => {
     const record = await loadRun(input.runId);
     if (!record) throw new Error(`Run ${input.runId} not found`);

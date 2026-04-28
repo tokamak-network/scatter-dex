@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type SetStateAction,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -219,13 +220,9 @@ function PayoutBody({
 }
 
 function PayoutHeader({ record }: { record: RunRecord }) {
-  const submitted = new Date(record.createdAt * 1000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // ISO `YYYY-MM-DD HH:mm UTC` to avoid SSR / client locale mismatch
+  // (operators app uses the same pattern in `app/lib/format.ts`).
+  const submitted = formatUtcStamp(record.createdAt);
   return (
     <header className="flex items-end justify-between">
       <div>
@@ -297,13 +294,19 @@ function NotificationsBar({
 }) {
   const total = record.recipients.length;
   let sentCount = 0;
+  let unsentEmailable = 0;
   let unclaimed = 0;
   for (const r of record.recipients) {
-    if (logsByRow.get(r.rowIndex)?.sentAt) sentCount++;
+    const sent = !!logsByRow.get(r.rowIndex)?.sentAt;
+    if (sent) sentCount++;
+    if (r.email && !sent) unsentEmailable++;
     if (r.status !== "claimed" && r.email) unclaimed++;
   }
   const isFirstSend = sentCount === 0;
   const anyBusy = busy !== null;
+  const sendAllLabel = isFirstSend
+    ? "Send to all recipients"
+    : `Send to unsent (${unsentEmailable})`;
 
   return (
     <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
@@ -316,11 +319,11 @@ function NotificationsBar({
         </div>
       </div>
       <button
-        disabled={anyBusy || !isFirstSend}
+        disabled={anyBusy || unsentEmailable === 0}
         onClick={onSendAll}
         className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
       >
-        {busy === "send-all" ? "Sending…" : "Send to all recipients"}
+        {busy === "send-all" ? "Sending…" : sendAllLabel}
       </button>
       <button
         disabled={anyBusy || isFirstSend || unclaimed === 0}
@@ -450,6 +453,10 @@ function NotificationStatus({
   log: NotificationLog | undefined;
   hasEmail: boolean;
 }) {
+  // `formatRelative` reads `Date.now()`, so it would render different
+  // strings on SSR vs first client paint. Gate behind `mounted` and
+  // fall back to the absolute UTC stamp until hydration completes.
+  const mounted = useMounted();
   if (!hasEmail) {
     return <span className="text-xs text-[var(--color-text-subtle)]">No email on file</span>;
   }
@@ -466,7 +473,7 @@ function NotificationStatus({
   if (stage.key === "sentAt") {
     return (
       <span className="text-xs text-[var(--color-primary)]">
-        ✉ Sent {formatRelative(log.sentAt)}
+        ✉ Sent {mounted ? formatRelative(log.sentAt) : formatUtcStamp(log.sentAt)}
       </span>
     );
   }
@@ -609,6 +616,21 @@ function formatRelative(unixSec: number | undefined): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/** Stable `YYYY-MM-DD HH:mm UTC` — used everywhere the markup is
+ *  pre-rendered on the server, where `toLocaleString` would disagree
+ *  with the client and trip Next's hydration warning. */
+function formatUtcStamp(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const iso = new Date(unixSec * 1000).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
 }
 
 function buildSampleRun(): RunRecord {
