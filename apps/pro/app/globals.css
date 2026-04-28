@@ -6,7 +6,7 @@
  * utilities used inside the workspace-linked `@zkscatter/ui`
  * package (e.g. `AppShellHeader`'s `gap-x-4`, `flex-wrap`) get
  * tree-shaken out unless we point the source scanner at it. */
-@source "../../../../packages/ui/src";
+@source "../../../packages/ui/src";
 
 html, body {
   background: var(--color-bg);
