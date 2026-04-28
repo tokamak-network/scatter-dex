@@ -51,7 +51,11 @@ first. The bond is returned in full on exit (after the 7-day
 cool-down); the protocol does not slash it. Apps still favour
 higher-bonded operators because bond size signals operational
 commitment. (SDK note: the parameter is named `bondEth` for legacy
-reasons — it forwards `msg.value` to the contract. The TON
+reasons. The SDK supports both bond modes: in native mode
+(`bondToken == address(0)`) it forwards the bond via `msg.value`;
+in ERC20 mode (non-zero `bondToken`) the operator must `approve`
+the registry for the bond amount first, and the SDK then calls
+`register` / `addRelayerBond` with `msg.value = 0`. The TON-bond
 migration is a separate PR; until it lands, the deployed bond
 asset is whatever the contract was deployed with.)
 

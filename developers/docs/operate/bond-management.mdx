@@ -55,10 +55,14 @@ await tx.wait();
 ```
 
 `addBond` accepts any positive amount. There's no upper limit. (SDK
-note: the parameter name is `bondEth` for legacy reasons — the
-current contract uses `msg.value`. The TON-bond migration is a
-separate PR; the deployed bond asset is whatever the contract was
-deployed with.)
+note: the parameter name is `bondEth` for legacy reasons. If the
+registry was deployed in native-bond mode (`bondToken ==
+address(0)`), the SDK funds the top-up via `msg.value`. If the
+registry was deployed with an ERC20 bond token (`bondToken !=
+address(0)`), `approve` the bond token for at least the top-up
+amount first, then call `addRelayerBond` — the SDK submits with
+`msg.value = 0`. The TON-bond migration is a separate PR; the
+deployed bond asset is whatever the contract was deployed with.)
 
 ## Accountability — reputation, not slashing
 

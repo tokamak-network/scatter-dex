@@ -18,7 +18,7 @@ The SDK ships every primitive needed — this page assembles them.
   </Card>
   <Card title="Settlement throughput" icon="chart-line">
     Trades settled per hour, fees collected. Subscribe to
-    `TradeSettled` events.
+    `PrivateSettledAuth` events.
   </Card>
   <Card title="Bond posture" icon="server">
     Current bond, headroom over `minBond`. (No slashing history —
@@ -75,7 +75,7 @@ const contract = new ethers.Contract(
 // indexed) to scope to your own settlements where you matched as
 // the maker-side relayer.
 const filter = contract.filters.PrivateSettledAuth(null, null, operatorAddress);
-contract.on(filter, (makerNull, takerNull, makerRelayer, claimsRootMaker, claimsRootTaker, takerRelayer, submitter, feeTokenMaker, feeTokenTaker) => {
+contract.on(filter, (makerNull, takerNull, claimsRootMaker, claimsRootTaker, makerRelayer, takerRelayer, submitter, feeTokenMaker, feeTokenTaker) => {
   // append to UI
 });
 ```
@@ -107,8 +107,8 @@ function BondPosture({ row, minBond }: { row: OperatorRow; minBond: bigint }) {
   const ratio = Number((row.bond * 1000n) / minBond) / 1000;
   return (
     <div>
-      <div>Current bond: {row.bondEth} ETH</div>
-      <div>Minimum: {ethers.formatEther(minBond)} ETH</div>
+      <div>Current bond: {row.bondEth} (registry bond asset)</div>
+      <div>Minimum: {ethers.formatEther(minBond)} (registry bond asset)</div>
       <div>Headroom: {(ratio - 1).toFixed(2)}× over minimum</div>
       {ratio < 1.5 && <Warning>Bond is close to `minBond` — apps doing operator filtering may rank operators with thinner bond margins lower</Warning>}
     </div>
