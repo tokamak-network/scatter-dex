@@ -81,22 +81,27 @@ export async function loadWalletBook(): Promise<WalletEntry[]> {
     );
   }
 
-  const book = parsed as WalletBookFile | null;
+  // Don't pre-cast to `WalletBookFile` — the JSON shape is whatever
+  // a previous Pay/frontend run wrote. Narrow on `unknown` so the
+  // checks below are real type guards (a future shape change is
+  // a TS error, not a silent miscast).
   if (
-    !book ||
-    typeof book !== "object" ||
-    book.version !== 1 ||
-    !Array.isArray(book.entries)
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    (parsed as { version?: unknown }).version !== 1 ||
+    !Array.isArray((parsed as { entries?: unknown }).entries)
   ) {
     throw new WalletBookCorruptError(
       `${WALLET_BOOK_FILENAME} has an unsupported shape (expected { version: 1, entries: [...] })`,
     );
   }
 
-  if (!book.entries.every(isValidEntry)) {
+  const entries = (parsed as { entries: unknown[] }).entries;
+  if (!entries.every(isValidEntry)) {
     throw new WalletBookCorruptError(`${WALLET_BOOK_FILENAME} contains invalid entries`);
   }
-  return book.entries;
+  return entries;
 }
 
 async function writeBook(entries: WalletEntry[]): Promise<void> {
@@ -105,8 +110,12 @@ async function writeBook(entries: WalletEntry[]): Promise<void> {
 }
 
 // Serialize every mutation through a single promise chain so concurrent
-// add/update/remove calls can't race on read-modify-write. Each task
-// runs load-modify-save end-to-end before the next begins.
+// add/update/remove calls in *this tab* can't race on read-modify-write.
+// Cross-tab safety is **not** provided: two tabs racing on the same
+// folder will produce a last-writer-wins outcome on
+// `zkscatter-wallets.json`. The address book is single-tenant per
+// folder and rarely mutated, so this is acceptable; consumers that
+// need stronger guarantees should layer a `BroadcastChannel` on top.
 let _mutationQueue: Promise<unknown> = Promise.resolve();
 function withLock<T>(task: () => Promise<T>): Promise<T> {
   const run = _mutationQueue.then(task, task);

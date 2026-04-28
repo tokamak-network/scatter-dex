@@ -17,49 +17,40 @@
  * via dedicated SDK modules).
  */
 
+import { openIDB } from "../util/idb";
+
 const DIR_HANDLE_KEY = "zkscatter_dir_handle";
 
 // ─── IndexedDB persistence for FileSystemDirectoryHandle ────
+//
+// Re-uses the shared `openIDB` helper from `../util/idb` so the
+// SSR / sync-throw / async-error / `onblocked` failure modes are all
+// handled in one place (and consistent with the notes IDB adapter).
 
-let _dbPromise: Promise<IDBDatabase> | null = null;
+interface HandleRecord {
+  id: string;
+  handle: FileSystemDirectoryHandle;
+}
 
-function openHandleDB(recursed = false): Promise<IDBDatabase> {
-  if (_dbPromise) {
-    return _dbPromise.then((db) => {
-      try {
-        if (db.objectStoreNames.contains("handles")) return db;
-      } catch {
-        // Accessing objectStoreNames on a closed connection throws
-        // InvalidStateError; fall through to reopen.
-      }
-      try {
-        db.close();
-      } catch {
-        /* already closed */
-      }
-      _dbPromise = null;
-      if (recursed) {
-        return Promise.reject(new Error("IDB store 'handles' missing after reopen"));
-      }
-      return openHandleDB(true);
-    });
-  }
-  _dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open("zkscatter-fs", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("handles");
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => {
-      _dbPromise = null;
-      reject(req.error);
-    };
+let _dbPromise: Promise<IDBDatabase | null> | null = null;
+
+function openHandleDB(): Promise<IDBDatabase | null> {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = openIDB({
+    dbName: "zkscatter-fs",
+    version: 1,
+    stores: [{ name: "handles", keyPath: "id" }],
+    onWarn: (reason, err) => console.warn("zkscatter-fs:", reason, err),
   });
   return _dbPromise;
 }
 
 async function persistHandle(handle: FileSystemDirectoryHandle): Promise<void> {
   const db = await openHandleDB();
+  if (!db) return;
   const tx = db.transaction("handles", "readwrite");
-  tx.objectStore("handles").put(handle, DIR_HANDLE_KEY);
+  const record: HandleRecord = { id: DIR_HANDLE_KEY, handle };
+  tx.objectStore("handles").put(record);
   await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -69,10 +60,14 @@ async function persistHandle(handle: FileSystemDirectoryHandle): Promise<void> {
 async function loadPersistedHandle(): Promise<FileSystemDirectoryHandle | null> {
   try {
     const db = await openHandleDB();
+    if (!db) return null;
     const tx = db.transaction("handles", "readonly");
     const req = tx.objectStore("handles").get(DIR_HANDLE_KEY);
     return await new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
-      req.onsuccess = () => resolve(req.result ?? null);
+      req.onsuccess = () => {
+        const record = req.result as HandleRecord | undefined;
+        resolve(record?.handle ?? null);
+      };
       req.onerror = () => reject(req.error);
     });
   } catch (e) {
@@ -97,12 +92,27 @@ let _restorePromise: Promise<boolean> | null = null;
  *  true if the handle was restored and read/write permission is still
  *  granted. Concurrent calls are deduplicated so multiple hooks
  *  mounting in the same tick don't issue overlapping permission
- *  prompts. */
+ *  prompts.
+ *
+ *  A false result clears the dedupe slot so a subsequent call from a
+ *  user-gesture context (e.g. a click handler that can satisfy
+ *  `requestPermission`) can retry. Without this, the first failure
+ *  during page load — when no gesture is available — would
+ *  permanently cache `false`. */
 export function restoreFolder(): Promise<boolean> {
   if (dirHandle) return Promise.resolve(true);
   if (_restorePromise) return _restorePromise;
-  _restorePromise = _doRestore();
-  return _restorePromise;
+  const promise = _doRestore();
+  _restorePromise = promise;
+  void promise.then(
+    (ok) => {
+      if (!ok) _restorePromise = null;
+    },
+    () => {
+      _restorePromise = null;
+    },
+  );
+  return promise;
 }
 
 async function _doRestore(): Promise<boolean> {
@@ -168,13 +178,26 @@ export function getFolderName(): string | null {
 // ─── File I/O ────────────────────────────────────────────────
 
 /** Save text content to `<folder>/<filename>`. Throws when no folder
- *  is selected. Overwrites any existing file. */
+ *  is selected. Overwrites any existing file.
+ *
+ *  Aborts the writable on a mid-write error (permission revoked,
+ *  disk full) so the browser doesn't leak a half-written swap file
+ *  alongside the original. */
 export async function saveFile(filename: string, content: string): Promise<void> {
   if (!dirHandle) throw new Error("No folder selected");
   const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(content);
-  await writable.close();
+  try {
+    await writable.write(content);
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort();
+    } catch {
+      /* already closed / aborted */
+    }
+    throw err;
+  }
 }
 
 /** Read text content from `<folder>/<filename>`. Returns null when
@@ -247,6 +270,7 @@ export async function clearPersistedFolder(): Promise<void> {
   _restorePromise = null;
   try {
     const db = await openHandleDB();
+    if (!db) return;
     const tx = db.transaction("handles", "readwrite");
     tx.objectStore("handles").delete(DIR_HANDLE_KEY);
     await new Promise<void>((resolve, reject) => {
