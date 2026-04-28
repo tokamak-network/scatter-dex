@@ -137,7 +137,7 @@ export default function NewPayout() {
 
   const [label, setLabel] = useState(template.defaultLabel);
   const [token, setToken] = useState(template.defaultToken);
-  const [chain, setChain] = useState("Tokamak L2");
+  const [chain, setChain] = useState("Sepolia");
   const [csv, setCsv] = useState(template.sampleCsv);
   const [stealth, setStealth] = useState(true);
   const [notify, setNotify] = useState(true);
@@ -248,7 +248,10 @@ export default function NewPayout() {
   }, [rows, decimals]);
 
   // Fee at the user-set cap so "Required to escrow" never under-counts.
-  const feeRaw = (requiredRaw * BigInt(maxFeeBps)) / 10_000n;
+  // Sanitize first — browser number inputs can carry transient decimal
+  // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws.
+  const safeMaxFeeBps = Number.isFinite(maxFeeBps) ? Math.max(0, Math.trunc(maxFeeBps)) : 0;
+  const feeRaw = (requiredRaw * BigInt(safeMaxFeeBps)) / 10_000n;
   const totalEscrowRaw = requiredRaw + feeRaw;
   const shortfallRaw = totalEscrowRaw > availableRaw ? totalEscrowRaw - availableRaw : 0n;
 
@@ -756,14 +759,12 @@ function BalancePanel({
           <div className="mb-1">
             Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before signing.
           </div>
-          <button
+          <DepositButton
+            account={account}
+            configured={configured}
+            label={`Deposit ${fmt(shortfallRaw)} ${token}`}
             onClick={onDeposit}
-            disabled={!configured}
-            title={configured ? undefined : "Set NEXT_PUBLIC_PAY_* contract addresses to enable deposits"}
-            className="rounded bg-[var(--color-primary)] px-2 py-1 text-white disabled:opacity-40"
-          >
-            {configured ? `Deposit ${fmt(shortfallRaw)} ${token}` : "Deposit (env not configured)"}
-          </button>
+          />
         </div>
       )}
     </div>
@@ -902,6 +903,13 @@ function FundsStep({
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
   const configured = isNetworkConfigured(getNetworkConfig());
   const onlineRelayers = relayers.filter((r) => r.online);
+  // Keep the currently-selected relayer in the dropdown even after it
+  // goes offline so the controlled <select> never has a `value` that
+  // doesn't match an `<option>` (React would warn + show the wrong
+  // entry). The offline option is rendered with a "(offline)" suffix
+  // so the user can still see what they had picked.
+  const relayerOptions =
+    relayer && !relayer.online ? [relayer, ...onlineRelayers] : onlineRelayers;
 
   return (
     <div className="space-y-5">
@@ -929,9 +937,10 @@ function FundsStep({
                 onChange={(e) => selectRelayer(e.target.value)}
                 className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
               >
-                {onlineRelayers.map((r) => (
+                {relayerOptions.map((r) => (
                   <option key={r.address} value={r.address}>
                     {r.api?.name ?? r.address.slice(0, 10)}… · {r.fee} bps
+                    {r.online ? "" : " (offline)"}
                   </option>
                 ))}
               </select>
@@ -943,7 +952,9 @@ function FundsStep({
                 max={1000}
                 step={1}
                 value={maxFeeBps}
-                onChange={(e) => setMaxFeeBps(Math.max(0, Math.min(1000, Number(e.target.value) || 0)))}
+                onChange={(e) =>
+                  setMaxFeeBps(Math.max(0, Math.min(1000, Math.trunc(Number(e.target.value) || 0))))
+                }
                 className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
               />
             </Field>
@@ -988,7 +999,7 @@ function FundsStep({
               {sourcePick.notes.map(({ note: n, spend }) => (
                 <li key={n.id} className="flex justify-between">
                   <span>
-                    {n.label} · deposited {new Date(n.createdAt).toLocaleDateString()}
+                    {n.label} · deposited {new Date(n.createdAt).toISOString().slice(0, 10)}
                   </span>
                   <span>
                     {fmt(spend)} / {fmt(n.note.amount)} {token}
@@ -1002,7 +1013,9 @@ function FundsStep({
             </ul>
           ) : (
             <div className="text-[var(--color-text-muted)]">
-              No matching notes yet. Deposit below to fund this run.
+              {availableRaw > 0n
+                ? "Matching notes are available, but they don't cover the run total. Deposit below to close the shortfall."
+                : "No matching notes yet. Deposit below to fund this run."}
             </div>
           )}
         </div>
@@ -1014,17 +1027,49 @@ function FundsStep({
             Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before
             advancing to Review.
           </div>
-          <button
+          <DepositButton
+            account={account}
+            configured={configured}
+            label={`Deposit ${fmt(shortfallRaw)} ${token}`}
             onClick={onDeposit}
-            disabled={!configured}
-            title={configured ? undefined : "Set NEXT_PUBLIC_PAY_* contract addresses to enable deposits"}
-            className="rounded bg-[var(--color-primary)] px-2 py-1 text-white disabled:opacity-40"
-          >
-            {configured ? `Deposit ${fmt(shortfallRaw)} ${token}` : "Deposit (env not configured)"}
-          </button>
+          />
         </div>
       )}
     </div>
+  );
+}
+
+function DepositButton({
+  account,
+  configured,
+  label,
+  onClick,
+}: {
+  account: string | null;
+  configured: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const disabled = !configured || !account;
+  const reason = !account
+    ? "Connect a wallet to deposit"
+    : !configured
+      ? "Set NEXT_PUBLIC_PAY_* contract addresses to enable deposits"
+      : undefined;
+  const text = !configured
+    ? "Deposit (env not configured)"
+    : !account
+      ? "Deposit (connect wallet)"
+      : label;
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={reason}
+      className="rounded bg-[var(--color-primary)] px-2 py-1 text-white disabled:opacity-40"
+    >
+      {text}
+    </button>
   );
 }
 
