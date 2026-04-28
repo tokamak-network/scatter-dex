@@ -3,6 +3,7 @@ export * from "./Button";
 export * from "./Field";
 export * from "./EmptyState";
 export * from "./Pill";
+export * from "./ConnectWalletPill";
 export * from "./Toast";
 export * from "./TokamakMark";
 export * from "./useOutsideClick";
