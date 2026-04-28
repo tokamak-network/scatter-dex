@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Pill, StatusDot } from "@zkscatter/ui";
+import { Pill, StatusDot, useOutsideClick } from "@zkscatter/ui";
 import { NETWORKS } from "../lib/network";
 import { useActiveNetwork } from "../lib/activeNetwork";
-import { useOutsideClick } from "../lib/useOutsideClick";
 import { useListboxNav } from "../lib/useListboxNav";
 
 /** Header network switcher. Reads/writes the active network from

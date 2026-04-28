@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useOutsideClick } from "@zkscatter/ui";
 
 type Status = "claimed" | "available" | "locked";
 
@@ -197,21 +198,7 @@ interface RowMenuProps {
 
 function RowMenu({ open, onOpen, onClose, onCopy, onResend, onPayslipEmail, payslipHref }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, onClose]);
+  useOutsideClick({ enabled: open, ref, onClose });
   return (
     <div ref={ref} className="relative inline-block text-left">
       <button

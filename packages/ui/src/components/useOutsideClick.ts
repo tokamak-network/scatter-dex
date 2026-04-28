@@ -15,17 +15,15 @@ interface Options {
 }
 
 /** Shared dismissal hook for popovers / dropdowns / drawers.
- *  Replaces near-identical inline effects in NetworkSwitcher,
- *  PairSelector, OrderDetailDrawer (ESC only). Listeners attach
- *  only while `enabled` is true so a closed surface costs nothing. */
+ *  Listeners attach only while `enabled` is true so a closed
+ *  surface costs nothing. */
 export function useOutsideClick({ enabled, ref, onClose }: Options): void {
   useEffect(() => {
     if (!enabled) return;
     const onDoc = (e: MouseEvent) => {
       // Guard against an unmounted (or not-yet-attached) ref:
       // `null?.contains(...)` is `undefined` and the negation
-      // would dismiss on every click. Skip the dismissal entirely
-      // when the wrapping element isn't in the DOM.
+      // would dismiss on every click.
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
