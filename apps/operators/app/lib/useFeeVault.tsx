@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { loadFeeVaultBalances, type FeeVaultBalance } from "@zkscatter/sdk/relayer";
+import { loadFeeVaultBalances, unwrapEthersError, type FeeVaultBalance } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
 export interface FeeVaultState {
@@ -56,11 +56,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
       .then((b) => { if (!cancelled) setBalances(b); })
       .catch((e) => {
         if (cancelled) return;
-        const e6 = e as { shortMessage?: string; reason?: string };
-        const msg = e instanceof Error
-          ? e6.shortMessage ?? e6.reason ?? e.message
-          : String(e);
-        setError(msg);
+        setError(unwrapEthersError(e));
         console.error("Failed to load FeeVault balances", e);
       })
       .finally(() => { if (!cancelled) setLoading(false); });

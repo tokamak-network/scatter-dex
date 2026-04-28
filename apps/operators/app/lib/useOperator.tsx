@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { loadOperatorRow, type OperatorRow } from "@zkscatter/sdk/relayer";
+import { loadOperatorRow, unwrapEthersError, type OperatorRow } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
 export interface OperatorState {
@@ -57,16 +57,7 @@ export function OperatorProvider({ children }: { children: ReactNode }) {
       .then((r) => { if (!cancelled) setRow(r); })
       .catch((e) => {
         if (cancelled) return;
-        // ethers v6 contract-call exceptions carry richer fields
-        // than the bare Error message — `shortMessage` is the
-        // user-facing summary, `reason` the parsed revert reason.
-        // Fall through to `message` / `String(e)` so unknown
-        // shapes still surface something rather than swallowing.
-        const e6 = e as { shortMessage?: string; reason?: string };
-        const msg = e instanceof Error
-          ? e6.shortMessage ?? e6.reason ?? e.message
-          : String(e);
-        setError(msg);
+        setError(unwrapEthersError(e));
         console.error("Failed to load operator row", e);
       })
       .finally(() => { if (!cancelled) setLoading(false); });

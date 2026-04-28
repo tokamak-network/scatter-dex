@@ -12,6 +12,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { WriteResult } from "../components/WriteResult";
 import { DEMO_NETWORK } from "../lib/network";
+import { formatTokenAmount } from "../lib/format";
 import { useChainWrite } from "../lib/useChainWrite";
 import { useFeeVault, type FeeVaultState } from "../lib/useFeeVault";
 
@@ -200,15 +201,3 @@ function BalanceRow({ entry, onClaimed }: { entry: FeeVaultBalance; onClaimed: (
   );
 }
 
-/** Pure-bigint formatter so the operators app doesn't pull `ethers`
- *  as a direct dep (the SDK does). */
-function formatTokenAmount(amount: bigint, decimals: number): string {
-  if (decimals === 0) return amount.toString();
-  const negative = amount < 0n;
-  const abs = negative ? -amount : amount;
-  const base = 10n ** BigInt(decimals);
-  const whole = abs / base;
-  const frac = (abs % base).toString().padStart(decimals, "0").replace(/0+$/, "");
-  const body = frac.length > 0 ? `${whole}.${frac}` : whole.toString();
-  return negative ? `-${body}` : body;
-}

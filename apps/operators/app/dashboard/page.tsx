@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Stat } from "../components/Stat";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { SectionHeader } from "../components/SectionHeader";
+import { formatIsoDate } from "../lib/format";
 import { useOperator, type OperatorState } from "../lib/useOperator";
 
 const recentSettlements = [
@@ -120,20 +121,14 @@ function RegisteredCard({ operator }: { operator: OperatorState }) {
   const ph = operatorPlaceholder(operator);
   if (ph) return <Stat label="Registered" value={ph.value} sub={ph.sub} />;
   const row = operator.row!;
-  // Locale-stable ISO formatting — `toLocaleDateString` would
-  // disagree between server and client and trip Next's hydration
-  // mismatch warning. The date-using branch only renders post-
-  // mount (gated by `account`), so `Date.now()` is safe here.
+  // `Date.now()` is safe here — the date branch only renders after
+  // wallet connect (gated by `account`), past Next's prerender pass.
   const value = formatIsoDate(row.registeredAt);
   const ageDays = Math.floor((Date.now() - row.registeredAt * 1000) / (1000 * 60 * 60 * 24));
   const sub = row.exitRequestedAt > 0
     ? `Exit requested ${formatIsoDate(row.exitRequestedAt)}`
     : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
   return <Stat label="Registered" value={value} sub={sub} />;
-}
-
-function formatIsoDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 }
 
 function HealthCard({
