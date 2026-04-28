@@ -23,6 +23,10 @@ export interface UseChainWrite {
    *  errors through the configured `explain` so panel copy stays
    *  consistent across pages. */
   run: (thunk: () => Promise<TransactionLike>) => Promise<void>;
+  /** Surface a pre-write failure (e.g. an ERC20 approve step that
+   *  precedes the actual write) through the same error banner.
+   *  Lets callers short-circuit before invoking `run`. */
+  fail: (err: unknown) => void;
   reset: () => void;
 }
 
@@ -57,7 +61,11 @@ export function useChainWrite(opts: UseChainWriteOpts): UseChainWrite {
     }
   }, [explain, onSuccess]);
 
+  const fail = useCallback((err: unknown) => {
+    setPhase({ kind: "error", msg: explain(err) });
+  }, [explain]);
+
   const reset = useCallback(() => setPhase({ kind: "idle" }), []);
 
-  return { phase, run, reset };
+  return { phase, run, fail, reset };
 }
