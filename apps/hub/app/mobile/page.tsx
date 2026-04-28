@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function MobilePage() {
   return (
-    <div className="space-y-24">
+    <div className="mx-auto max-w-6xl space-y-24 px-6 py-12">
       {/* Hero */}
       <section className="pt-12 text-center">
         <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)]">
@@ -18,7 +18,7 @@ export default function MobilePage() {
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
           Privacy in your pocket.
           <br />
-          <span className="text-[var(--color-primary)]">
+          <span className="text-[var(--color-accent-mobile)]">
             One app for wallet, trading, and private payments.
           </span>
         </h1>
@@ -75,8 +75,8 @@ export default function MobilePage() {
               </tr>
             </thead>
             <tbody>
-              <Row label="Runtime" value="React Native (Expo bare)" />
-              <Row label="Storage" value="Encrypted IndexedDB equivalent (MMKV / SecureStore)" />
+              <Row label="Runtime" value="React Native (Expo, dev client + new arch)" />
+              <Row label="Storage" value="expo-secure-store (keys) + expo-sqlite (history) + AsyncStorage" />
               <Row label="Prover" value="Native Rust (groth16) over snarkjs-compatible witness" />
               <Row label="Stealth" value="EIP-5564 sender + recipient (PR #252 / #256)" />
               <Row label="Identity" value="zk-X509 IdentityGate, on-device verification" />
@@ -86,7 +86,7 @@ export default function MobilePage() {
       </section>
 
       {/* Status */}
-      <section className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-primary-soft)] to-[var(--color-surface)] p-10 text-center">
+      <section className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-accent-mobile-soft)] to-[var(--color-surface)] p-10 text-center">
         <h2 className="text-2xl font-semibold">Status</h2>
         <p className="mx-auto mt-2 max-w-xl text-sm text-[var(--color-text-muted)]">
           Public beta opens with v1 launch. Phase C native prover (deposit
@@ -97,7 +97,7 @@ export default function MobilePage() {
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Link
             href="/"
-            className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-[var(--color-primary-soft)]"
+            className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-[var(--color-accent-mobile-soft)]"
           >
             ← Back to apps
           </Link>
@@ -105,7 +105,7 @@ export default function MobilePage() {
             href="https://github.com/tokamak-network/scatter-dex"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
+            className="rounded-lg bg-[var(--color-accent-mobile)] px-6 py-3 font-medium text-white hover:bg-[var(--color-accent-mobile-hover)]"
           >
             Source on GitHub →
           </a>
@@ -123,7 +123,7 @@ function DownloadCTA({ store, disabled }: { store: string; disabled?: boolean })
       className={
         disabled
           ? "cursor-not-allowed rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-6 py-3 font-medium text-[var(--color-text-subtle)]"
-          : "rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
+          : "rounded-lg bg-[var(--color-accent-mobile)] px-6 py-3 font-medium text-white hover:bg-[var(--color-accent-mobile-hover)]"
       }
       title={disabled ? "Public beta opens with v1 launch." : undefined}
     >

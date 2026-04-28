@@ -8,8 +8,11 @@
  * `packages/ui/src/components/TokamakMark.tsx`. Any change to the
  * brandmark must be mirrored across hub/docs/pro until the composite
  * moves into a shared package. */
+"use client";
+
 import * as React from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const VIEWBOX_W = 36;
 const VIEWBOX_H = 24;
@@ -37,10 +40,15 @@ function BrandImpl({
   hubHref?: string;
 }) {
   const width = (height * VIEWBOX_W) / VIEWBOX_H;
+  const pathname = usePathname();
+  const tone =
+    pathname?.startsWith("/mobile")
+      ? "var(--color-accent-mobile)"
+      : "var(--color-primary)";
   return (
     <span
       className="inline-flex items-baseline gap-1"
-      style={{ color: "var(--color-primary)" }}
+      style={{ color: tone }}
     >
       <a href={hubHref} aria-label="Back to zkScatter Hub" className="inline-flex items-center">
       <svg
