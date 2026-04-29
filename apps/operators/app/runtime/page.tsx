@@ -9,6 +9,7 @@ import {
   readAdminAuth,
 } from "../lib/adminApi";
 import { AdminConnectBar } from "../components/AdminConnectBar";
+import { formatRelative } from "../lib/format";
 
 type AuthState = AdminAuth | null;
 
@@ -60,6 +61,7 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
       <DrainSection auth={auth} onChange={refresh} />
       <ProfileSection auth={auth} />
       <SanctionsSection auth={auth} />
+      <WebhookSection auth={auth} />
     </div>
   );
 }
@@ -567,6 +569,213 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
         )}
       </div>
     </Panel>
+  );
+}
+
+interface WebhookStatusBody {
+  configured: boolean;
+  health: { state: "healthy" | "degraded" | null; at: number | null };
+  recent: Array<{
+    type: string;
+    severity: "info" | "warn" | "critical";
+    text: string;
+    payload?: Record<string, unknown>;
+    emittedAt: number;
+    delivery:
+      | { ok: true; status: number }
+      | { ok: false; reason: string }
+      | null;
+  }>;
+}
+
+function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
+  const [tick, setTick] = useState(0);
+  const fetcher = useCallback(
+    (signal: AbortSignal) =>
+      adminGet<WebhookStatusBody>(auth, "/api/admin/webhook", signal),
+    [auth.url, auth.key],
+  );
+  const { data, error, loading } = useAdmin(fetcher, [tick]);
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [lastTestAt, setLastTestAt] = useState<number | null>(null);
+
+  const onTest = async () => {
+    setTesting(true);
+    setTestError(null);
+    try {
+      await adminPost(auth, "/api/admin/webhook/test", {
+        text: `Manual test from /runtime at ${new Date().toLocaleString()}`,
+      });
+      setLastTestAt(Date.now());
+      setTick((n) => n + 1);
+    } catch (e) {
+      setTestError((e as Error).message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="Webhook alerts"
+      eyebrow="GET /api/admin/webhook · POST /api/admin/webhook/test"
+      action={
+        data?.configured ? (
+          <button
+            onClick={onTest}
+            disabled={testing}
+            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {testing ? "Sending…" : "Send test alert"}
+          </button>
+        ) : null
+      }
+    >
+      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+        Optional outbound webhook for health transitions and other
+        significant events. Set <code className="font-mono">WEBHOOK_URL</code>{" "}
+        in the relayer&apos;s <code className="font-mono">.env</code>; the URL
+        itself is never echoed back to this UI. The send-test button below
+        emits a synthetic <code className="font-mono">info</code> alert so you
+        can verify the channel is wired before relying on it.
+      </p>
+
+      {loading && !data && (
+        <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+      )}
+      {error && <ErrorLine text={error} />}
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Cell
+              label="Configured"
+              value={data.configured ? "Yes" : "No"}
+              tone={data.configured ? "ok" : "warn"}
+            />
+            <Cell
+              label="Last health probe"
+              value={data.health.state ?? "—"}
+              tone={
+                data.health.state === "healthy"
+                  ? "ok"
+                  : data.health.state === "degraded"
+                  ? "warn"
+                  : undefined
+              }
+            />
+            <Cell
+              label="Probed at"
+              value={data.health.at ? formatRelative(data.health.at) : "—"}
+            />
+          </div>
+
+          {!data.configured && (
+            <p className="mt-4 rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
+              No <code className="font-mono">WEBHOOK_URL</code> set on the
+              relayer. Set it and restart to enable alerting; this section
+              still shows recent attempts (each will record a{" "}
+              <code className="font-mono">webhook URL not configured</code>{" "}
+              failure until it is wired).
+            </p>
+          )}
+
+          {testError && <ErrorLine text={testError} />}
+          {lastTestAt && !testError && (
+            <p className="mt-3 rounded-md bg-[var(--color-success-soft)] px-3 py-2 text-xs text-[var(--color-success)]">
+              Test alert dispatched at {new Date(lastTestAt).toLocaleTimeString()} —
+              check your channel and the table below.
+            </p>
+          )}
+
+          <div className="mt-5">
+            <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+              Recent alerts ({data.recent.length})
+            </div>
+            {data.recent.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-muted)]">
+                No alerts attempted yet.
+              </p>
+            ) : (
+              <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
+                <table className="w-full text-xs">
+                  <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">When</th>
+                      <th className="px-3 py-2 text-left font-medium">Type</th>
+                      <th className="px-3 py-2 text-left font-medium">Severity</th>
+                      <th className="px-3 py-2 text-left font-medium">Text</th>
+                      <th className="px-3 py-2 text-left font-medium">Delivery</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.recent.map((a, i) => (
+                      <tr
+                        key={`${a.emittedAt}-${a.type}-${i}`}
+                        className="border-t border-[var(--color-border)]"
+                      >
+                        <td className="px-3 py-2 text-[var(--color-text-muted)]">
+                          {formatRelative(a.emittedAt)}
+                        </td>
+                        <td className="px-3 py-2 font-mono">{a.type}</td>
+                        <td className="px-3 py-2">
+                          <SeverityPill severity={a.severity} />
+                        </td>
+                        <td className="px-3 py-2">{a.text}</td>
+                        <td className="px-3 py-2">
+                          <DeliveryPill delivery={a.delivery} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function SeverityPill({
+  severity,
+}: {
+  severity: "info" | "warn" | "critical";
+}) {
+  const cls =
+    severity === "critical"
+      ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : severity === "warn"
+      ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : "bg-[var(--color-success-soft)] text-[var(--color-success)]";
+  return (
+    <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>
+      {severity}
+    </span>
+  );
+}
+
+function DeliveryPill({
+  delivery,
+}: {
+  delivery: WebhookStatusBody["recent"][number]["delivery"];
+}) {
+  if (delivery === null) {
+    return <span className="text-[var(--color-text-subtle)]">in flight</span>;
+  }
+  if (delivery.ok) {
+    return (
+      <span className="text-[var(--color-success)]">
+        ok ({delivery.status})
+      </span>
+    );
+  }
+  return (
+    <span className="text-[var(--color-warning)]" title={delivery.reason}>
+      failed: {delivery.reason.slice(0, 40)}
+    </span>
   );
 }
 
