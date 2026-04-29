@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import {
   claimRelayerFees,
@@ -12,25 +13,29 @@ import { SectionHeader } from "../components/SectionHeader";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { WriteResult } from "../components/WriteResult";
 import { DEMO_NETWORK } from "../lib/network";
-import { formatTokenAmount } from "../lib/format";
+import { formatRelative, formatTokenAmount } from "../lib/format";
+import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useChainWrite } from "../lib/useChainWrite";
 import { useFeeVault, type FeeVaultState } from "../lib/useFeeVault";
 
 const VAULT = DEMO_NETWORK.contracts.feeVault;
 
-interface RecentWithdrawal {
-  id: string;
+type Auth = AdminAuth | null;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface FeeRow {
+  id: number;
+  tx_hash: string;
+  side: "maker" | "taker" | "scatterDirect";
   token: string;
-  amount: string;
-  txHash: string;
-  at: string;
+  amount_wei: string;
+  block_number: number | null;
+  created_at: number;
 }
 
-const recentWithdrawals: RecentWithdrawal[] = [
-  { id: "w_2026_04_25", token: "USDC", amount: "1,200.00", txHash: "0x9a3f2c1d8e7b4a0f9c5d6e8a1b2c3d4e5f6789a0b1c2d3e4f5a6b7c8d9e0f1a2", at: "2026-04-25 18:02" },
-  { id: "w_2026_04_18", token: "USDC", amount: "980.55",   txHash: "0x4c1b7e9f2a8d6c0b3e5a7f9d1c2b4e6a8d0f2c4b6e8a0d2c4f6b8e0a2d4c6f8b", at: "2026-04-18 09:14" },
-  { id: "w_2026_04_11", token: "WETH", amount: "0.420",    txHash: "0xee23f1a8b9c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1", at: "2026-04-11 22:48" },
-];
+interface FeeTotalsBody {
+  totals: Array<{ token: string; count: number; totalWei: string }>;
+}
 
 export default function TreasuryPage() {
   const vault = useFeeVault();
@@ -84,33 +89,219 @@ export default function TreasuryPage() {
         </p>
       </section>
 
-      <section>
-        <SectionHeader title="Recent withdrawals" badge="mock" hint="Wired in once the indexer ships" />
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-          {recentWithdrawals.map((w) => (
-            <div
-              key={w.id}
-              className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0"
-            >
-              <div>
-                <div className="font-medium">{w.amount} {w.token}</div>
-                <div className="text-xs text-[var(--color-text-muted)]">{w.at}</div>
-              </div>
-              <a
-                href={`${DEMO_NETWORK.explorerBase}/tx/${w.txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-xs text-[var(--color-primary)] hover:underline"
-              >
-                {shortAddr(w.txHash)} ↗
-              </a>
-            </div>
-          ))}
-        </div>
-      </section>
+      <FeeAccrualSection vault={vault} />
     </div>
   );
 }
+
+function FeeAccrualSection({ vault }: { vault: FeeVaultState }) {
+  const [auth, setAuth] = useState<Auth>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setAuth(readAdminAuth());
+    setHydrated(true);
+  }, []);
+
+  if (!hydrated) return null;
+  if (!auth) {
+    return (
+      <section>
+        <SectionHeader title="Fee accrual" badge="live" hint="Auth required" />
+        <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
+          Connect your relayer on{" "}
+          <Link href="/dashboard" className="text-[var(--color-primary)] underline">
+            /dashboard
+          </Link>{" "}
+          (or{" "}
+          <Link href="/runtime" className="text-[var(--color-primary)] underline">
+            /runtime
+          </Link>
+          ) to load fee history. Auth is shared across the tab; on-chain
+          claimable balances above don&apos;t need it.
+        </div>
+      </section>
+    );
+  }
+  return <FeeAccrualLive auth={auth} vault={vault} />;
+}
+
+function FeeAccrualLive({
+  auth,
+  vault,
+}: {
+  auth: NonNullable<Auth>;
+  vault: FeeVaultState;
+}) {
+  const [totals, setTotals] = useState<FeeTotalsBody | null>(null);
+  const [recent, setRecent] = useState<FeeRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const since = Date.now() - THIRTY_DAYS_MS;
+      const [t, r] = await Promise.all([
+        adminGet<FeeTotalsBody>(auth, "/api/admin/history/fees"),
+        adminGet<{ rows: FeeRow[] }>(
+          auth,
+          `/api/admin/history/fees?detail=1&limit=20&since=${since}`,
+        ),
+      ]);
+      setTotals(t);
+      setRecent(r.rows);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [auth]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Map token-list addresses (lowercase) to symbol/decimals so the
+  // fee rows can be rendered in human units. The vault page already
+  // hydrates this list — reuse it instead of round-tripping a fresh
+  // request for token metadata.
+  const tokenMeta = new Map<string, { symbol: string; decimals: number }>();
+  for (const b of vault.balances) {
+    tokenMeta.set(b.token.address.toLowerCase(), {
+      symbol: b.token.symbol,
+      decimals: b.token.decimals,
+    });
+  }
+
+  return (
+    <section className="space-y-6">
+      <div className="flex items-center justify-between">
+        <SectionHeader title="Fee accrual" badge="live" />
+        <button
+          onClick={refresh}
+          disabled={loading}
+          className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
+          Failed to load fee history: {error}
+        </div>
+      )}
+
+      <div>
+        <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+          Lifetime totals (per token)
+        </div>
+        {!totals ? (
+          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+        ) : totals.totals.length === 0 ? (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            No fees accrued yet — settle some orders and they&apos;ll show up
+            here. Distinct from the FeeVault balance above: this is what
+            you&apos;ve <em>earned</em>; the vault balance is what is
+            currently <em>claimable</em>.
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+                <tr>
+                  <th className="px-5 py-3 text-left">Token</th>
+                  <th className="px-5 py-3 text-right">Fills</th>
+                  <th className="px-5 py-3 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {totals.totals.map((t) => {
+                  const meta = tokenMeta.get(t.token);
+                  return (
+                    <tr key={t.token} className="border-t border-[var(--color-border)]">
+                      <td className="px-5 py-3">
+                        <div className="font-medium">{meta?.symbol ?? "Unknown"}</div>
+                        <div className="font-mono text-xs text-[var(--color-text-muted)]">
+                          {shortAddr(t.token)}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono">{t.count}</td>
+                      <td className="px-5 py-3 text-right font-mono">
+                        {meta
+                          ? formatTokenAmount(BigInt(t.totalWei), meta.decimals)
+                          : `${t.totalWei} (raw)`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+          Recent fee events (last 30 days)
+        </div>
+        {!recent ? (
+          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+        ) : recent.length === 0 ? (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            No fee events in the last 30 days.
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+                <tr>
+                  <th className="px-5 py-3 text-left">When</th>
+                  <th className="px-5 py-3 text-left">Side</th>
+                  <th className="px-5 py-3 text-left">Token</th>
+                  <th className="px-5 py-3 text-right">Amount</th>
+                  <th className="px-5 py-3 text-left">Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((r) => {
+                  const meta = tokenMeta.get(r.token);
+                  return (
+                    <tr key={r.id} className="border-t border-[var(--color-border)]">
+                      <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
+                        {formatRelative(r.created_at)}
+                      </td>
+                      <td className="px-5 py-3 text-xs">{r.side}</td>
+                      <td className="px-5 py-3 font-mono text-xs">
+                        {meta?.symbol ?? shortAddr(r.token)}
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono text-xs">
+                        {meta
+                          ? formatTokenAmount(BigInt(r.amount_wei), meta.decimals)
+                          : `${r.amount_wei} (raw)`}
+                      </td>
+                      <td className="px-5 py-3">
+                        <Link
+                          href={`/orders/detail?tx=${r.tx_hash}`}
+                          className="font-mono text-xs text-[var(--color-primary)] hover:underline"
+                        >
+                          {shortAddr(r.tx_hash)}
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 
 interface VaultPlaceholder { value: string; sub: string }
 

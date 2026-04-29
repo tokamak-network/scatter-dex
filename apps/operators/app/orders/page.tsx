@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
+import { formatRelative } from "../lib/format";
 
 type Auth = AdminAuth | null;
 // Type/status enum values must match zk-relayer/src/routes/admin.ts
@@ -298,11 +299,4 @@ function shortAddr(s: string): string {
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
-function formatRelative(unixMs: number): string {
-  const diff = Math.max(0, Date.now() - unixMs);
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
-}
 
