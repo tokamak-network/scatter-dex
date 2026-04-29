@@ -15,7 +15,7 @@ import { authorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
-import { computeCommitment } from "@zkscatter/sdk/zk";
+import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { formatTokenAmount } from "../lib/format";
 import type { VaultNote } from "../lib/vault";
 import {
@@ -434,6 +434,12 @@ export function OrderModal({
       // claim history lands with A.3.
       const firstClaim = claims[0]!;
       const firstEphemeralPubKey = resolved[0]!.ephemeralPubKey;
+      // Pre-compute the claims-tree root the same way the authorize
+      // circuit will when the order eventually settles on-chain.
+      // Stored on the order record so the claim reconciler can match
+      // an emitted `PrivateClaim` event back to this order without
+      // re-deriving from chain state.
+      const { root: claimsRoot } = await buildClaimsTree(claims);
       const order = addOrder({
         nonce,
         noteId: note.id,
@@ -448,6 +454,7 @@ export function OrderModal({
           amount: firstClaim.amount,
           releaseTime: firstClaim.releaseTime,
           leafIndex: 0,
+          claimsRoot: toBytes32Hex(claimsRoot),
           ...(firstEphemeralPubKey && { ephemeralPubKey: firstEphemeralPubKey }),
         },
       });

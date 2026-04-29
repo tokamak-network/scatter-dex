@@ -27,6 +27,12 @@ export interface OrderClaim {
   /** Index of this claim in the settlement's claims tree (0 for
    *  the demo's single-claim distribution). */
   leafIndex: number;
+  /** Bytes32 hex of the claims-tree root the order was settled
+   *  under. The reconciler uses this together with `secret` and
+   *  `leafIndex` to compute the per-row nullifier and match against
+   *  on-chain `PrivateClaim` events. Optional because seeded demo
+   *  rows don't carry it. */
+  claimsRoot?: string;
   /** Compressed secp256k1 ephemeral public key from
    *  `generateStealthAddress`, when the recipient was derived from
    *  a meta-address. The recipient needs this to derive their
