@@ -470,12 +470,18 @@ export class PrivateOrderDB {
     // matches authorize_orders rows whose settle_tx == this settlement
     // tx hash. settleAuth produces 2 rows (maker + taker); scatterDirectAuth
     // produces 1. Same camelCase aliases as selectAuthByNullifier.
+    //
+    // settle_tx writes (markAuthorizeOrderSettled / setAuthTxHash /
+    // updateAuthStatus) currently store the hash verbatim, while
+    // settlement_history.tx_hash is lowercased on insert. Compare via
+    // LOWER(settle_tx) so a checksummed settle_tx still joins. Caller
+    // is responsible for passing the lowercase form via lowerHex().
     this.selectAuthOrdersBySettleTx = this.db.prepare(
       `SELECT nullifier, status, submitted_at as submittedAt, updated_at as updatedAt,
               attempt, next_retry_at as nextRetryAt, last_error as lastError,
               settle_tx as settleTx, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy,
               order_json as orderJson
-         FROM authorize_orders WHERE settle_tx = @txHash ORDER BY submitted_at ASC`,
+         FROM authorize_orders WHERE LOWER(settle_tx) = @txHash ORDER BY submitted_at ASC`,
     );
     // Per-token totals via row iteration. SQLite's SUM uses INTEGER
     // and would lose precision on amounts > 2^63; GROUP_CONCAT into a

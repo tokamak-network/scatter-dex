@@ -231,6 +231,26 @@ describe("PrivateOrderDB settlement history", () => {
     expect(found!.processing[0].status).toBe("settled");
   });
 
+  it("matches processing rows even when settle_tx was stored with a different casing", () => {
+    db.insertAcceptedOrder({
+      nullifier: "0xnulMix",
+      submittedAt: Date.now(),
+      orderJson: JSON.stringify({ publicSignals: { expiry: "9999999999" } }),
+    });
+    // Mimic an upstream that wrote the tx hash verbatim (uppercase).
+    db.markAuthorizeOrderSettled("0xnulMix", "0xMIXEDcase");
+    // Settlement history insert lowercases via recordSettlementEvent.
+    db.recordSettlementEvent({
+      txHash: "0xmixedcase",
+      type: "scatterDirectAuth",
+      status: "confirmed",
+    });
+    const found = db.getSettlementByTxHash("0xMIXEDcase");
+    expect(found).not.toBeNull();
+    expect(found!.processing).toHaveLength(1);
+    expect(found!.processing[0].nullifier).toBe("0xnulMix");
+  });
+
   it("returns an empty processing array when no authorize_orders rows match", () => {
     db.recordSettlementEvent({
       txHash: "0xorphan",
