@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { OperatorIdentityBar } from "../../components/OperatorIdentityBar";
 import { DEMO_NETWORK } from "../../lib/network";
 import { adminGet, type AdminAuth, readAdminAuth } from "../../lib/adminApi";
+import { formatRelative } from "../../lib/format";
 
 type Auth = AdminAuth | null;
 
@@ -30,6 +31,20 @@ interface FeeRow {
   amount_wei: string;
   block_number: number | null;
   created_at: number;
+}
+
+interface ProcessingRow {
+  nullifier: string;
+  status: string;
+  submittedAt: number;
+  updatedAt: number;
+  attempt: number;
+  nextRetryAt: number | null;
+  lastError: string | null;
+  settleTx: string | null;
+  pubKeyAx: string | null;
+  pubKeyAy: string | null;
+  orderJson: string;
 }
 
 export default function OrderDetailPage() {
@@ -94,7 +109,7 @@ function DetailInner() {
 }
 
 function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string }) {
-  const [data, setData] = useState<{ settlement: SettlementRow; fees: FeeRow[] } | null>(null);
+  const [data, setData] = useState<{ settlement: SettlementRow; fees: FeeRow[]; processing: ProcessingRow[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,7 +120,7 @@ function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string 
       try {
         // Lowercase the tx hash so a checksummed/uppercase URL still
         // hits the lowercase storage form (DB normalises on insert).
-        const res = await adminGet<{ settlement: SettlementRow; fees: FeeRow[] }>(
+        const res = await adminGet<{ settlement: SettlementRow; fees: FeeRow[]; processing: ProcessingRow[] }>(
           auth,
           `/api/admin/history/by-tx/${encodeURIComponent(txHash.toLowerCase())}`,
           signal,
@@ -140,7 +155,7 @@ function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string 
   }
   if (!data) return null;
 
-  const { settlement: s, fees } = data;
+  const { settlement: s, fees, processing } = data;
   const explorerUrl = DEMO_NETWORK.explorerBase
     ? `${DEMO_NETWORK.explorerBase}/tx/${s.tx_hash}`
     : null;
@@ -227,7 +242,72 @@ function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string 
           </div>
         )}
       </section>
+
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h2 className="mb-3 font-semibold">Order processing ({processing.length})</h2>
+        {processing.length === 0 ? (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            No <code className="font-mono">authorize_orders</code> rows match
+            this settlement tx. Common reasons: the row was purged after the
+            terminal-retention window, or the settlement pre-dates the
+            <code className="font-mono"> settle_tx</code> column being wired.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {processing.map((p) => (
+              <ProcessingCard key={p.nullifier} row={p} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
+  );
+}
+
+function ProcessingCard({ row }: { row: ProcessingRow }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex items-center justify-between">
+        <code className="font-mono text-xs">{row.nullifier}</code>
+        <StatusPill status={row.status} />
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
+        <Field label="Attempts" mono>
+          {row.attempt}
+        </Field>
+        <Field label="Submitted" mono>
+          {formatRelative(row.submittedAt)}
+        </Field>
+        <Field label="Updated" mono>
+          {new Date(row.updatedAt).toLocaleString()}
+        </Field>
+        <Field label="Next retry" mono>
+          {row.nextRetryAt
+            ? new Date(row.nextRetryAt).toLocaleString()
+            : "—"}
+        </Field>
+      </dl>
+      {row.lastError && (
+        <div className="mt-3 rounded-md bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          <div className="font-semibold">Last error</div>
+          <p className="mt-1 font-mono">{row.lastError}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const cls =
+    status === "settled"
+      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+      : status === "failed" || status === "dead_letter"
+      ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : "bg-[var(--color-bg)] text-[var(--color-text-subtle)]";
+  return (
+    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}>
+      {status}
+    </span>
   );
 }
 
