@@ -274,14 +274,12 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
           >
             Go to registration
           </Link>
-          <a
-            href="https://github.com/tokamak-network/scatter-dex/tree/main/docs/operations"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/docs"
             className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-white"
           >
             Read the full operator docs
-          </a>
+          </Link>
         </div>
       </section>
     </div>
