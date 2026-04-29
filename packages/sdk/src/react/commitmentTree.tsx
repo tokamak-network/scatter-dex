@@ -114,8 +114,15 @@ export function CommitmentTreeProvider({
   const [ready, setReady] = useState(!isLive);
 
   useEffect(() => {
-    treeRef.current = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
-    indexRef.current = new Map();
+    // Capture fresh tree + index instances LOCALLY so any in-flight
+    // insert() that resumes after a poolAddress / readProvider swap
+    // cannot accidentally write into the new effect's tree. Refs are
+    // updated to point at this iteration's instances; the cancelled
+    // flag below also gates resumed callbacks from publishing.
+    const tree = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+    const index = new Map<string, number>();
+    treeRef.current = tree;
+    indexRef.current = index;
     setLeafCount(0);
 
     const live = poolAddress !== ZERO_ADDRESS;
@@ -138,7 +145,7 @@ export function CommitmentTreeProvider({
         if (cancelled) return;
         for (const row of past) {
           if (cancelled) return;
-          const idx = await treeRef.current.insert(row.commitment);
+          const idx = await tree.insert(row.commitment);
           // A divergence means the RPC dropped a log or returned
           // out of order — building proofs against a corrupted tree
           // would silently fail at settle time, so refuse to mark
@@ -148,10 +155,10 @@ export function CommitmentTreeProvider({
               `[commitmentTree] hydrate mismatch at idx ${row.leafIndex}: insert returned ${idx}. RPC may have returned an incomplete log set; refresh to retry.`,
             );
           }
-          indexRef.current.set(row.commitment.toString(), idx);
+          index.set(row.commitment.toString(), idx);
         }
         if (cancelled) return;
-        setLeafCount(treeRef.current.nextIndex);
+        setLeafCount(tree.nextIndex);
         setReady(true);
       } catch (err) {
         // Keep `ready=false` so spend flows don't use an empty
@@ -164,16 +171,25 @@ export function CommitmentTreeProvider({
     const unsubscribe = subscribeCommitmentInserted(readProvider, poolAddress, (row) => {
       if (cancelled) return;
       chain = chain.then(async () => {
-        if (cancelled) return;
-        if (row.leafIndex !== treeRef.current.nextIndex) {
-          console.warn(
-            `[commitmentTree] skipping out-of-order event: expected idx ${treeRef.current.nextIndex}, got ${row.leafIndex}`,
-          );
-          return;
+        // Wrap the per-event work in try/catch so a single insert()
+        // failure (tree full, poseidon init flake, …) doesn't poison
+        // `chain` into a rejected state and silently drop every
+        // subsequent event.
+        try {
+          if (cancelled) return;
+          if (row.leafIndex !== tree.nextIndex) {
+            console.warn(
+              `[commitmentTree] skipping out-of-order event: expected idx ${tree.nextIndex}, got ${row.leafIndex}`,
+            );
+            return;
+          }
+          const idx = await tree.insert(row.commitment);
+          if (cancelled) return;
+          index.set(row.commitment.toString(), idx);
+          setLeafCount(tree.nextIndex);
+        } catch (err) {
+          console.error("[commitmentTree] live event processing failed:", err);
         }
-        const idx = await treeRef.current.insert(row.commitment);
-        indexRef.current.set(row.commitment.toString(), idx);
-        setLeafCount(treeRef.current.nextIndex);
       });
     });
 
