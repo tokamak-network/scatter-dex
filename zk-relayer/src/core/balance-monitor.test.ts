@@ -23,6 +23,7 @@ function buildSubmitter(getBalance: () => bigint | Promise<bigint>): PrivateSubm
 
 describe("balance-monitor transitions", () => {
   const originalThreshold = config.lowBalanceWei;
+  const originalUrl = config.webhookUrl;
 
   beforeEach(() => {
     _resetBalanceMonitorForTests();
@@ -33,6 +34,7 @@ describe("balance-monitor transitions", () => {
 
   afterEach(() => {
     config.lowBalanceWei = originalThreshold;
+    config.webhookUrl = originalUrl;
     _resetBalanceMonitorForTests();
   });
 

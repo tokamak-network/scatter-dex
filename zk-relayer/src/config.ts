@@ -90,11 +90,16 @@ export const config = {
 /** Decimal-ETH env var → wei. Falls back on bad input with a warn. */
 function parseLowBalanceWei(name: string, fallback: string): bigint {
   const raw = (process.env[name] ?? fallback).trim();
-  if (!/^[0-9]*\.?[0-9]+$/.test(raw)) {
-    console.warn(`[config] Invalid ${name}="${raw}", using ${fallback} ETH`);
-    return parseLowBalanceWei(name, "0.05");
+  if (/^[0-9]*\.?[0-9]+$/.test(raw)) {
+    const [whole, frac = ""] = raw.split(".");
+    const fracPadded = frac.slice(0, 18).padEnd(18, "0");
+    return BigInt(whole || "0") * 10n ** 18n + BigInt(fracPadded || "0");
   }
-  const [whole, frac = ""] = raw.split(".");
+  // Invalid env value — parse the fallback directly, never recurse
+  // through `process.env[name]` again or we'd stack-overflow on a
+  // permanently bad value.
+  console.warn(`[config] Invalid ${name}="${raw}", using ${fallback} ETH`);
+  const [whole, frac = ""] = fallback.split(".");
   const fracPadded = frac.slice(0, 18).padEnd(18, "0");
   return BigInt(whole || "0") * 10n ** 18n + BigInt(fracPadded || "0");
 }

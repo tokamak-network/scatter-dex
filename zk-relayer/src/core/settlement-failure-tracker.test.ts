@@ -16,6 +16,7 @@ import {
 
 describe("settlement-failure-tracker", () => {
   const originalThreshold = config.settlementFailureThreshold;
+  const originalUrl = config.webhookUrl;
 
   beforeEach(() => {
     _resetSettlementFailureTrackerForTests();
@@ -26,6 +27,7 @@ describe("settlement-failure-tracker", () => {
 
   afterEach(() => {
     config.settlementFailureThreshold = originalThreshold;
+    config.webhookUrl = originalUrl;
   });
 
   it("does not alert below the threshold", () => {
