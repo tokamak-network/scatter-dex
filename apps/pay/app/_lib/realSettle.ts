@@ -67,6 +67,12 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
   if (source.spend !== batch.totalAmount) {
     throw new Error(PHASE_1B_PARTIAL_SPEND_MSG);
   }
+  // Solidity encodes maxFee as uint16 and the circuit reads it as bps;
+  // clamp before proving so a stale UI input can't (a) authorize a
+  // >100% fee or (b) overflow the ABI encoder.
+  if (!Number.isInteger(maxFeeBps) || maxFeeBps < 0 || maxFeeBps > 10_000) {
+    throw new Error(`maxFeeBps must be an integer in [0, 10000]; got ${maxFeeBps}`);
+  }
 
   // self-pay invariant: sellToken == buyToken, sellAmount == buyAmount
   const sellAmount = batch.totalAmount;

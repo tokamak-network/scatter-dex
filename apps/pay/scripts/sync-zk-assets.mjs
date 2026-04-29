@@ -20,12 +20,22 @@ if (!existsSync(src)) {
 }
 mkdirSync(dst, { recursive: true });
 
+const force = process.argv.includes("--force") || process.env.SYNC_ZK_FORCE === "1";
+
 for (const f of FILES) {
   const s = resolve(src, f);
   const d = resolve(dst, f);
-  // Skip when dst is already an up-to-date copy — avoids a 19 MB
-  // re-write on every dev / build invocation.
-  if (existsSync(d) && statSync(s).size === statSync(d).size) continue;
+  // Skip the 19 MB re-write only when dst is byte-equivalent AND not
+  // older than src. Size alone is not enough — if a circuit rebuild
+  // produces a same-size zkey (rare but possible), Pay would silently
+  // keep stale assets and the prover would fail with an opaque
+  // verifier mismatch. mtime catches that. `--force` (or
+  // SYNC_ZK_FORCE=1) bypasses the cache entirely.
+  if (!force && existsSync(d)) {
+    const ss = statSync(s);
+    const ds = statSync(d);
+    if (ss.size === ds.size && ds.mtimeMs >= ss.mtimeMs) continue;
+  }
   copyFileSync(s, d);
   console.log(`[sync-zk-assets] copied ${f} (${statSync(d).size} bytes)`);
 }
