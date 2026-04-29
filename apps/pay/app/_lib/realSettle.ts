@@ -19,16 +19,6 @@ import { authorizeProver } from "./authorizeProver";
 import type { CommitmentTreeState } from "./commitmentTree";
 import type { PickedNote } from "./sourceNotes";
 
-/** User-facing copy for the staged-rollout limits. Single source so
- *  page.tsx and realSettle.ts can't drift on the wording. Naming
- *  intentionally drops the phase prefix — the *limit* is what's
- *  load-bearing; the phase number rotates as we ship and would force
- *  identifier renames every iteration. */
-export const MULTI_BATCH_UNSUPPORTED_MSG =
-  "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1d.";
-export const MULTI_NOTE_UNSUPPORTED_MSG =
-  "This run needs more than one source note — multi-note coverage arrives in Phase 1d.";
-
 export interface RealSettleArgs {
   batch: PayoutBatch;
   tokenAddress: string;
