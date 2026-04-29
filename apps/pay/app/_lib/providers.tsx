@@ -9,6 +9,7 @@ import { RelayersProvider } from "./relayers";
 import { FolderStorageProvider } from "./folderStorage";
 import { WalletBookProvider } from "./walletBook";
 import { CommitmentTreeProvider } from "./commitmentTree";
+import { VaultReconciler } from "./vaultReconciler";
 
 export function PayProviders({ children }: { children: React.ReactNode }) {
   const network = useMemo(() => getNetworkConfig(), []);
@@ -19,6 +20,7 @@ export function PayProviders({ children }: { children: React.ReactNode }) {
           <RelayersProvider>
             <VaultProvider>
               <CommitmentTreeProvider>
+                <VaultReconciler />
                 <WalletBookProvider>{children}</WalletBookProvider>
               </CommitmentTreeProvider>
             </VaultProvider>
