@@ -89,9 +89,12 @@ export interface AuthorizeOrderFile {
 
   /**
    * Raw public signals array as produced by snarkjs (decimal strings,
-   * length 14). Passed directly to the on-chain verifier. Redundant
-   * with the named `publicSignals` above but kept for compatibility
-   * with the Groth16 verifier's `uint[15]` calldata layout.
+   * length 15 — `pubKeyBind` is the circuit's only output and lands at
+   * index 0, followed by the 14 public inputs). Passed directly to the
+   * on-chain verifier; redundant with the named `publicSignals` above
+   * but kept because the Groth16 verifier's `uint[15]` calldata layout
+   * is positional. {@link validateAuthorizeOrder} hard-rejects any
+   * other length.
    */
   publicSignalsArray: string[];
 
@@ -336,7 +339,13 @@ export function validateAuthorizeOrder(
   // jsdoc). When present, must be one of the wired tiers; missing means
   // legacy client and is read as tier 16 by the consumer.
   if (order.tier !== undefined && !ALLOWED_TIERS.has(order.tier)) {
-    return `tier must be one of 16 / 64 / 128 (got ${order.tier})`;
+    // JSON.stringify renders `"16"` and `16` distinguishably, and
+    // surfaces `null` / `{}` as themselves rather than the JS
+    // coercion string. (`undefined` never reaches here — the outer
+    // `!== undefined` guard short-circuits the legacy-client path.)
+    // Include `typeof` for non-string/number payloads so the operator
+    // can tell a malformed body apart from a wrong-but-valid number.
+    return `tier must be one of 16 / 64 / 128 (got ${JSON.stringify(order.tier)} of type ${typeof order.tier})`;
   }
 
   return null;
