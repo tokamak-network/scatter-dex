@@ -2,6 +2,9 @@ import { Wallet } from "ethers";
 import WebSocket from "ws";
 import type { OrderSummary } from "../types/order.js";
 import { eqAddr } from "../lib/address.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("shared-orderbook");
 
 /**
  * Shared Orderbook Client — connects relayer to the shared orderbook server.
@@ -152,11 +155,11 @@ export class SharedOrderbookClient {
       });
       if (res.ok) {
         this.serverOnline = true;
-        console.log("[shared-orderbook] Registered with server");
+        log.info("Registered with server");
       }
     } catch {
       this.serverOnline = false;
-      console.warn("[shared-orderbook] Server unreachable, using P2P mode");
+      log.warn("Server unreachable, using P2P mode");
     }
   }
 
@@ -168,16 +171,15 @@ export class SharedOrderbookClient {
       this.ws.onopen = () => {
         this.serverOnline = true;
         this.wsReconnectDelay = 1000; // reset backoff on success
-        console.log("[shared-orderbook] WebSocket connected");
+        log.info("WebSocket connected");
         // Reconcile on every open (first connect + each reconnect). The
         // shared-OB WS stream only broadcasts NEW events, so without this
         // a relayer that joins/restarts after others have already posted
         // will never see (and thus never match) those existing orders.
         this.syncOpenOrders().catch((err) => {
-          console.warn(
-            "[shared-orderbook] Snapshot reconcile failed:",
-            err instanceof Error ? err.message : "unknown",
-          );
+          log.warn("Snapshot reconcile failed", {
+            err: err instanceof Error ? err.message : "unknown",
+          });
         });
       };
 
@@ -201,7 +203,9 @@ export class SharedOrderbookClient {
             this.onCancelCallback?.(data.orderId);
           }
         } catch (err) {
-          console.warn("[shared-orderbook] Failed to parse WS message:", err instanceof Error ? err.message : "unknown");
+          log.warn("Failed to parse WS message", {
+            err: err instanceof Error ? err.message : "unknown",
+          });
         }
       };
 
@@ -210,7 +214,7 @@ export class SharedOrderbookClient {
         if (this.stopped) return; // Don't reconnect after explicit stop()
         const delay = this.wsReconnectDelay;
         this.wsReconnectDelay = Math.min(delay * 2, SharedOrderbookClient.WS_MAX_RECONNECT_DELAY);
-        console.warn(`[shared-orderbook] WebSocket disconnected, reconnecting in ${delay}ms...`);
+        log.warn("WebSocket disconnected, reconnecting", { delayMs: delay });
         setTimeout(() => { if (!this.stopped) this.connectWS(); }, delay);
       };
 
@@ -260,11 +264,13 @@ export class SharedOrderbookClient {
         return data.id;
       }
       const body = await res.text().catch(() => "");
-      console.warn(`[shared-orderbook] postOrder rejected: HTTP ${res.status} ${body.slice(0, 200)}`);
+      log.warn("postOrder rejected", { status: res.status, body: body.slice(0, 200) });
       return null;
     } catch (err) {
       this.serverOnline = false;
-      console.warn(`[shared-orderbook] postOrder server unreachable, falling back to P2P:`, err instanceof Error ? err.message : err);
+      log.warn("postOrder server unreachable, falling back to P2P", {
+        err: err instanceof Error ? err.message : String(err),
+      });
       return this.postOrderToPeers(order);
     }
   }
@@ -291,15 +297,14 @@ export class SharedOrderbookClient {
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.warn(`[shared-orderbook] pushSettlement HTTP ${res.status}: ${text.slice(0, 200)}`);
+        log.warn("pushSettlement non-OK response", { status: res.status, body: text.slice(0, 200) });
         return false;
       }
       return true;
     } catch (err) {
-      console.warn(
-        "[shared-orderbook] pushSettlement failed:",
-        err instanceof Error ? err.message : "unknown",
-      );
+      log.warn("pushSettlement failed", {
+        err: err instanceof Error ? err.message : "unknown",
+      });
       return false;
     }
   }
@@ -343,15 +348,14 @@ export class SharedOrderbookClient {
         added++;
       }
       if (added > 0) {
-        console.log(`[shared-orderbook] Reconciled ${added} open order(s) from snapshot`);
+        log.info("Reconciled open orders from snapshot", { added });
       }
     } catch (err) {
       // Network failure here isn't fatal — the WS stream is still live
       // and the next reconnect will retry.
-      console.warn(
-        "[shared-orderbook] syncOpenOrders fetch failed:",
-        err instanceof Error ? err.message : "unknown",
-      );
+      log.warn("syncOpenOrders fetch failed", {
+        err: err instanceof Error ? err.message : "unknown",
+      });
     }
   }
 
@@ -392,7 +396,7 @@ export class SharedOrderbookClient {
         }
       }
     } catch (err) {
-      console.warn("[shared-orderbook] Peer sync failed:", err instanceof Error ? err.message : "unknown");
+      log.warn("Peer sync failed", { err: err instanceof Error ? err.message : "unknown" });
     }
   }
 

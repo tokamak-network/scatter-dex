@@ -15,6 +15,14 @@ import { getRecentAlerts, isWebhookConfigured, sendAlert } from "../core/alerts.
 import { getLastHealth } from "../core/health-monitor.js";
 import { getLastBalance } from "../core/balance-monitor.js";
 import { getSettlementFailureState } from "../core/settlement-failure-tracker.js";
+import {
+  createLogger,
+  getRecentLogs,
+  getLoggerConfig,
+  type LogLevel,
+} from "../core/logger.js";
+
+const log = createLogger("admin");
 
 let paused = false;
 
@@ -37,7 +45,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   const savedPause = db.getMeta("paused");
   paused = savedPause === "true";
   if (paused) {
-    console.log("[admin] Relayer is paused (restored from DB)");
+    log.info("Relayer is paused (restored from DB)");
   }
 
   const router = Router();
@@ -110,7 +118,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     updateRelayerFee(feeBps);
     db.setMeta("relayerFee", feeBps.toString());
 
-    console.log(`[admin] Fee changed: ${oldFee} → ${feeBps} bps`);
+    log.info("Fee changed", { oldBps: oldFee, newBps: feeBps });
     res.json({ status: "updated", oldFeeBps: oldFee, newFeeBps: feeBps });
   });
 
@@ -121,7 +129,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
     paused = true;
     db.setMeta("paused", "true");
-    console.log("[admin] Relayer PAUSED — new orders will be rejected");
+    log.info("Relayer PAUSED — new orders will be rejected");
     res.json({ status: "paused" });
   });
 
@@ -132,13 +140,13 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
     paused = false;
     db.setMeta("paused", "false");
-    console.log("[admin] Relayer RESUMED — accepting orders");
+    log.info("Relayer RESUMED — accepting orders");
     res.json({ status: "resumed" });
   });
 
   router.post("/drain", ...wl, (_req: Request, res: Response) => {
     const authRemoved = drainAuthFn();
-    console.log(`[admin] Drained orders: ${authRemoved} authorize`);
+    log.info("Drained orders", { authorize: authRemoved });
     res.json({
       status: "drained",
       authorizeOrdersCancelled: authRemoved,
@@ -177,7 +185,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     for (const e of entries) {
       if (addSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) added++;
     }
-    console.log(`[admin] Added ${added} sanctioned pubKeys`);
+    log.info("Added sanctioned pubKeys", { added });
     res.json({ added });
   });
 
@@ -205,7 +213,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     for (const e of entries) {
       if (removeSanctionedPubKey(e.pubKeyAx, e.pubKeyAy)) removed++;
     }
-    console.log(`[admin] Removed ${removed} sanctioned pubKeys`);
+    log.info("Removed sanctioned pubKeys", { removed });
     res.json({ removed });
   });
 
@@ -221,7 +229,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     try {
       const patch = validateProfile(req.body);
       const next = updateProfile(db, patch);
-      console.log("[admin] Profile updated");
+      log.info("Profile updated");
       res.json(next);
     } catch (e: unknown) {
       res.status(400).json({ error: e instanceof Error ? e.message : "invalid profile" });
@@ -242,7 +250,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       const { rows, total } = db.getSettlementHistory({ limit, offset, type, status });
       res.json({ rows, total, limit, offset });
     } catch (err) {
-      console.error("[admin] history failed:", err instanceof Error ? err.message : err);
+      log.error("history failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load settlement history" });
     }
   });
@@ -266,7 +274,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       }
       res.json(found);
     } catch (err) {
-      console.error("[admin] history/by-tx failed:", err instanceof Error ? err.message : err);
+      log.error("history/by-tx failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load settlement detail" });
     }
   });
@@ -291,7 +299,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       const filtered = token ? totals.filter((t) => t.token === token) : totals;
       res.json({ totals: filtered });
     } catch (err) {
-      console.error("[admin] history/fees failed:", err instanceof Error ? err.message : err);
+      log.error("history/fees failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load fee history" });
     }
   });
@@ -328,7 +336,34 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     res.json({ delivery });
   });
 
+  // GET /api/admin/logs — bounded ring-buffer of recent structured
+  // log records. Lets the operator console diagnose without SSH.
+  // Query params:
+  //   ?level=debug|info|warn|error  — minimum level to return
+  //   ?mod=<module-name>             — exact module-name match
+  //   ?since=<unix-ms>               — only records emitted >= this ts
+  //   ?limit=<n>                     — cap returned rows (server clamps to bufferCap)
+  router.get("/logs", (req: Request, res: Response) => {
+    const cfg = getLoggerConfig();
+    const level = parseLogLevel(req.query.level);
+    const mod = typeof req.query.mod === "string" ? req.query.mod : undefined;
+    const since = Number(req.query.since) || 0;
+    const limit = Math.min(
+      cfg.bufferCap,
+      Math.max(1, Number(req.query.limit) || cfg.bufferCap),
+    );
+    const records = getRecentLogs({ level, mod, since, limit });
+    res.json({ records, config: cfg });
+  });
+
   return router;
+}
+
+function parseLogLevel(v: unknown): LogLevel | undefined {
+  if (typeof v !== "string") return undefined;
+  return (["debug", "info", "warn", "error"] as const).includes(v as LogLevel)
+    ? (v as LogLevel)
+    : undefined;
 }
 
 const SETTLEMENT_TYPES = new Set(["settleAuth", "scatterDirectAuth"] as const);

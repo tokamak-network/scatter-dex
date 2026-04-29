@@ -7,6 +7,9 @@
 
 import { ethers } from "ethers";
 import { config } from "../config.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("provider");
 
 let _provider: ethers.JsonRpcProvider | ethers.FallbackProvider | null = null;
 
@@ -37,6 +40,6 @@ export function getProvider(): ethers.JsonRpcProvider | ethers.FallbackProvider 
     { quorum: 1 },
   );
 
-  console.log(`[R-4] FallbackProvider: primary + ${fallbacks.length} fallback(s)`);
+  log.info("[R-4] FallbackProvider initialized", { fallbacks: fallbacks.length });
   return _provider;
 }

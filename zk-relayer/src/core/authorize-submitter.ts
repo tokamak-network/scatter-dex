@@ -13,6 +13,10 @@ import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
 import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import type { PrivateOrderDB } from "./db.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("authorize-submitter");
+const gasLog = createLogger("gas-guard");
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -124,10 +128,9 @@ export class AuthorizeSubmitter {
     Promise.resolve()
       .then(() => fn(ctx))
       .catch((err) => {
-        console.warn(
-          "[authorize-submitter] settlementPusher threw:",
-          err instanceof Error ? err.message : "unknown",
-        );
+        log.warn("settlementPusher threw", {
+          err: err instanceof Error ? err.message : "unknown",
+        });
       });
   }
 
@@ -170,20 +173,22 @@ export class AuthorizeSubmitter {
     this.settlement.on(
       "PrivateCancel",
       (escrowNullifier: string, nonceNullifier: string, newCommitment: string, relayer: string) => {
-        console.log(
-          `[authorize-submitter] PrivateCancel detected: ` +
-          `escrow=${escrowNullifier.slice(0, 18)}... nonce=${nonceNullifier.slice(0, 18)}...`,
-        );
+        log.info("PrivateCancel detected", {
+          escrow: escrowNullifier.slice(0, 18) + "...",
+          nonce: nonceNullifier.slice(0, 18) + "...",
+        });
         for (const listener of this.cancelListeners) {
           try {
             listener(escrowNullifier, nonceNullifier, newCommitment, relayer);
           } catch (err) {
-            console.error("[authorize-submitter] Cancel listener error:", err);
+            log.error("Cancel listener error", {
+              err: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       },
     );
-    console.log("[authorize-submitter] Listening for PrivateCancel events");
+    log.info("Listening for PrivateCancel events");
   }
 
   /**
@@ -219,10 +224,12 @@ export class AuthorizeSubmitter {
       const { estimateAndGuard } = await import("./gas-guard.js");
       const gasCheck = await estimateAndGuard(this.settlement, "settleAuth", [params], 0n);
       if (!gasCheck.profitable) {
-        console.warn(`[gas-guard] settleAuth rejected: ${gasCheck.reason}`);
+        gasLog.warn("settleAuth rejected", { reason: gasCheck.reason });
         throw new Error(`Settlement rejected: ${gasCheck.reason}`);
       }
-      console.log(`[gas-guard] settleAuth: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+      gasLog.info("settleAuth gas estimate (profitability check skipped — fees are token-denominated)", {
+        gasCostEth: gasCheck.gasCostEth,
+      });
 
       // [R-2] Safe TX send with retry + timeout + receipt recovery
       const authSettleStart = Date.now();
@@ -259,7 +266,9 @@ export class AuthorizeSubmitter {
           ],
         });
       } catch (e) {
-        console.warn("[authorize-submitter] settleAuth history persist failed:", e);
+        log.warn("settleAuth history persist failed", {
+          err: e instanceof Error ? e.message : String(e),
+        });
       }
       // Same fix as scatterDirectAuth: record both maker and taker
       // claimsRoots so the gasless `/api/private-claim/...` route
@@ -270,7 +279,7 @@ export class AuthorizeSubmitter {
       // promise after the on-chain tx already succeeded.
       this.persistSettledClaimsRoot(params.maker.claimsRoot, "settleAuth maker", txHash);
       this.persistSettledClaimsRoot(params.taker.claimsRoot, "settleAuth taker", txHash);
-      console.log(`[authorize-submitter] settleAuth tx: ${txHash}`);
+      log.info("settleAuth tx", { txHash });
 
       // Best-effort push to the shared-OB indexer. Reuses the receipt we
       // already have from sendAndWait (no extra RPC). Skipped entirely
@@ -326,7 +335,7 @@ export class AuthorizeSubmitter {
       const { estimateAndGuard } = await import("./gas-guard.js");
       const gasCheck = await estimateAndGuard(this.settlement, "scatterDirectAuth", [params], 0n);
       if (!gasCheck.profitable) {
-        console.warn(`[gas-guard] scatterDirectAuth rejected: ${gasCheck.reason}`);
+        gasLog.warn("scatterDirectAuth rejected", { reason: gasCheck.reason });
         throw new Error(`ScatterDirectAuth rejected: ${gasCheck.reason}`);
       }
 
@@ -357,7 +366,9 @@ export class AuthorizeSubmitter {
           ],
         });
       } catch (e) {
-        console.warn("[authorize-submitter] scatterDirectAuth history persist failed:", e);
+        log.warn("scatterDirectAuth history persist failed", {
+          err: e instanceof Error ? e.message : String(e),
+        });
       }
       // Record the claimsRoot so the gasless `/api/private-claim/...`
       // route knows this relayer settled this batch and is willing to
@@ -368,7 +379,7 @@ export class AuthorizeSubmitter {
       // `params.proof` and tolerates DB-write failures so a transient
       // I/O error doesn't reject after a successful tx.
       this.persistSettledClaimsRoot(params.proof.claimsRoot, "scatterDirectAuth", txHash);
-      console.log(`[authorize-submitter] scatterDirectAuth tx: ${txHash}`);
+      log.info("scatterDirectAuth tx", { txHash });
       return txHash;
     });
   }
@@ -418,10 +429,12 @@ export class AuthorizeSubmitter {
     try {
       this.db?.saveSettledClaimsRoot(claimsRoot);
     } catch (err) {
-      console.warn(
-        `[authorize-submitter] ${label} settled on-chain (tx ${txHash}) but failed to persist claimsRoot ${claimsRoot}:`,
-        err,
-      );
+      log.warn("settled on-chain but failed to persist claimsRoot", {
+        label,
+        txHash,
+        claimsRoot,
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

@@ -21,6 +21,9 @@
  */
 
 import { config } from "../config.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("alerts");
 
 export const ALERT_SEVERITIES = ["info", "warn", "critical"] as const;
 export type AlertSeverity = typeof ALERT_SEVERITIES[number];
@@ -95,7 +98,7 @@ export function sendAlert(event: AlertEvent): Promise<RecentAlert["delivery"]> {
     .catch((err: Error) => {
       const reason = err.message || "unknown error";
       entry.delivery = { ok: false, reason };
-      console.warn(`[alerts] webhook POST failed (${event.type}): ${reason}`);
+      log.warn("webhook POST failed", { type: event.type, reason });
       return entry.delivery;
     });
 }

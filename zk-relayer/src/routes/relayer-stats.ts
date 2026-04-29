@@ -4,6 +4,9 @@ import type { PrivateOrderDB } from "../core/db.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { getMetrics } from "../core/metrics.js";
 import { authorizeOrders } from "./authorize-orders.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("relayer-stats");
 
 /**
  * Relayer stats & audit trail API.
@@ -38,7 +41,9 @@ export function createRelayerStatsRoutes(
         metrics: getMetrics(),
       });
     } catch (err) {
-      console.error("[relayer-stats] Failed to load stats:", err instanceof Error ? err.message : err);
+      log.error("Failed to load stats", {
+        err: err instanceof Error ? err.message : String(err),
+      });
       res.status(500).json({ error: "Failed to load stats" });
     }
   });
@@ -54,7 +59,9 @@ export function createRelayerStatsRoutes(
       const offers = db.getTradeOffers(limit, offset);
       res.json({ offers, count: offers.length, offset });
     } catch (err) {
-      console.error("[relayer-stats] Failed to load trade offers:", err instanceof Error ? err.message : err);
+      log.error("Failed to load trade offers", {
+        err: err instanceof Error ? err.message : String(err),
+      });
       res.status(500).json({ error: "Failed to load trade offers" });
     }
   });

@@ -10,6 +10,10 @@
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("authorize-orders");
+const diagLog = createLogger("diag-auth");
 import {
   validateAuthorizeOrder,
   isTokenCompatible,
@@ -214,12 +218,15 @@ export function createAuthorizeOrderRoutes(
         }
         restored++;
       } catch (err) {
-        console.error(`[R-6] Skipping corrupt authorize order ${row.nullifier}:`, err);
+        log.error("[R-6] Skipping corrupt authorize order", {
+          nullifier: row.nullifier,
+          err: err instanceof Error ? err.message : String(err),
+        });
         db.deleteAuthorizeOrder(row.nullifier);
       }
     }
     if (restored > 0) {
-      console.log(`[R-6] Restored ${restored} pending authorize orders from DB`);
+      log.info("[R-6] Restored pending authorize orders from DB", { restored });
     }
   }
   const router = Router();
@@ -250,11 +257,12 @@ export function createAuthorizeOrderRoutes(
       if (error) {
         // SPIKE diagnostic: surface why validation rejected the body so the
         // mobile-side `Aborted` diagnosis isn't blocked on opaque 400s.
-        console.log(`[diag-auth] VALIDATION_400 reason="${error}" proof_keys=${
-          Object.keys(order.proof ?? {}).join(",")
-        } ps_keys=${
-          Object.keys(order.publicSignals ?? {}).join(",")
-        } psa_len=${order.publicSignalsArray?.length ?? "n/a"}`);
+        diagLog.info("VALIDATION_400", {
+          reason: error,
+          proofKeys: Object.keys(order.proof ?? {}).join(","),
+          psKeys: Object.keys(order.publicSignals ?? {}).join(","),
+          psaLen: order.publicSignalsArray?.length ?? null,
+        });
         res.status(400).json({ error });
         return;
       }
@@ -387,13 +395,13 @@ export function createAuthorizeOrderRoutes(
       indexAuthorizeOrder(nullifier, order);
       recordOrderSubmitted();
 
-      console.log(
-        `[authorize-orders] Accepted: sell=${order.publicSignals.sellToken} ` +
-        `buy=${order.publicSignals.buyToken} ` +
-        `amount=${order.publicSignals.sellAmount} ` +
-        `nullifier=${nullifier.slice(0, 18)}...` +
-        ` pubKey=${pubKeyAx.slice(0, 12)}...`,
-      );
+      log.info("Accepted", {
+        sell: order.publicSignals.sellToken,
+        buy: order.publicSignals.buyToken,
+        amount: order.publicSignals.sellAmount,
+        nullifier: nullifier.slice(0, 18) + "...",
+        pubKey: pubKeyAx.slice(0, 12) + "...",
+      });
 
       // ── 5b. Publish cross-token orders to the shared orderbook so
       // counterparty relayers can find them. Same-token (scatter) doesn't
@@ -415,7 +423,9 @@ export function createAuthorizeOrderRoutes(
           maxFee: Number(ps.maxFee),
           expiry: Number(ps.expiry),
         }).catch((err) => {
-          console.warn("[authorize-orders] shared-OB publish failed:", err instanceof Error ? err.message : err);
+          log.warn("shared-OB publish failed", {
+            err: err instanceof Error ? err.message : String(err),
+          });
         });
       }
 
@@ -431,7 +441,7 @@ export function createAuthorizeOrderRoutes(
         pollUrl,
       });
     } catch (err: unknown) {
-      console.error("[authorize-orders] Error:", err);
+      log.error("handler error", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Internal server error" });
     }
   }) as RequestHandler);

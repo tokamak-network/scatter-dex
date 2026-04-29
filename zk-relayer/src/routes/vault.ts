@@ -3,6 +3,9 @@ import { ethers } from "ethers";
 import { config } from "../config.js";
 import { adminAuth } from "../middleware/admin-auth.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("vault");
 
 const FEE_VAULT_ABI = [
   "function balances(address relayer, address token) view returns (uint256)",
@@ -80,7 +83,7 @@ export function createVaultRoutes(
       res.json({ status: "claimed", txHash });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "unknown";
-      console.error("Vault claim failed:", msg);
+      log.error("Vault claim failed", { err: msg });
       if (msg.includes("No fees to claim")) {
         res.status(400).json({ error: msg });
       } else {

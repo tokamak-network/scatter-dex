@@ -22,6 +22,17 @@ import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js"
 import { startBalanceMonitor, stopBalanceMonitor } from "./core/balance-monitor.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
+import { createLogger } from "./core/logger.js";
+
+const log = createLogger("main");
+const adminLog = createLogger("admin");
+const txRecoveryLog = createLogger("tx-recovery");
+const sharedOBLog = createLogger("shared-orderbook");
+const authCrossLog = createLogger("authorize-cross");
+const diagLog = createLogger("diag-auth");
+const settlementLog = createLogger("settlement-worker");
+const expiryLog = createLogger("expiry-sweeper");
+const netLog = createLogger("net");
 
 const MAX_ORDERBOOK_SIZE = 10_000;
 
@@ -35,7 +46,7 @@ async function main() {
     const parsedFee = parseInt(savedFee, 10);
     if (Number.isFinite(parsedFee) && parsedFee >= 0 && parsedFee <= 10_000) {
       updateRelayerFee(parsedFee);
-      console.log(`[admin] Restored fee from DB: ${parsedFee} bps`);
+      adminLog.info("Restored fee from DB", { feeBps: parsedFee });
     }
   }
 
@@ -56,29 +67,38 @@ async function main() {
   // R-2: Recover pending TXs from previous run (receipt check only, no resend)
   const pendingTxs = db.getPendingTxs();
   if (pendingTxs.length > 0) {
-    console.log(`[tx-recovery] Found ${pendingTxs.length} pending TX(s) from previous run`);
+    txRecoveryLog.info("Found pending TX(s) from previous run", { count: pendingTxs.length });
     const provider = submitter.getProvider();
     await Promise.all(pendingTxs.map(async (ptx) => {
       try {
         const receipt = await provider.getTransactionReceipt(ptx.tx_hash);
         if (receipt) {
           const status = receipt.status === 1 ? "confirmed" : "reverted";
-          console.log(`[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... → ${status}`);
+          txRecoveryLog.info("pending tx resolved", {
+            label: ptx.label,
+            txHash: ptx.tx_hash.slice(0, 18) + "...",
+            status,
+          });
           db.removePendingTx(ptx.tx_hash);
         } else {
           const ageMin = Math.round((Date.now() - ptx.created_at) / 60_000);
-          console.warn(
-            `[tx-recovery] ${ptx.label} ${ptx.tx_hash.slice(0, 18)}... still pending (${ageMin}min old). Check manually.`,
-          );
+          txRecoveryLog.warn("tx still pending — check manually", {
+            label: ptx.label,
+            txHash: ptx.tx_hash.slice(0, 18) + "...",
+            ageMin,
+          });
         }
       } catch (err) {
-        console.warn(`[tx-recovery] Failed to check ${ptx.tx_hash.slice(0, 18)}...:`, err);
+        txRecoveryLog.warn("Failed to check tx", {
+          txHash: ptx.tx_hash.slice(0, 18) + "...",
+          err: err instanceof Error ? err.message : String(err),
+        });
       }
     }));
   }
 
   // Index existing commitments on startup
-  console.log("Indexing on-chain commitments...");
+  log.info("Indexing on-chain commitments...");
   await submitter.indexCommitments();
 
   // ─── Shared orderbook integration (optional) ───
@@ -103,7 +123,7 @@ async function main() {
     sharedClient.onOrder((summary) => {
       remoteOrderbook!.add(summary);
       authorizeCrossRelayerService!.onRemoteOrderArrived(summary).catch((err) => {
-        console.warn("[authorize-cross] Reactive match error:", err instanceof Error ? err.message : "unknown");
+        authCrossLog.warn("Reactive match error", { err: err instanceof Error ? err.message : "unknown" });
       });
     });
 
@@ -130,9 +150,9 @@ async function main() {
 
     try {
       await sharedClient.start();
-      console.log(`[shared-orderbook] Connected to ${config.sharedOrderbookUrl}`);
+      sharedOBLog.info("Connected", { url: config.sharedOrderbookUrl });
     } catch (err) {
-      console.warn("[shared-orderbook] Failed to connect:", err instanceof Error ? err.message : "unknown");
+      sharedOBLog.warn("Failed to connect", { err: err instanceof Error ? err.message : "unknown" });
     }
   }
 
@@ -150,7 +170,7 @@ async function main() {
   ).map(s => s.trim()).filter(Boolean);
   const corsWildcard = allowedOrigins.includes("*");
   if (corsWildcard) {
-    console.warn("[WARN] CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
+    log.warn("CORS_ORIGINS includes '*' — all origins allowed. Set explicit origins for production.");
   }
   app.use(cors({ origin: corsWildcard ? "*" : allowedOrigins }));
 
@@ -165,28 +185,28 @@ async function main() {
     const t0 = Date.now();
     const cl = req.headers["content-length"] ?? "?";
     const ua = String(req.headers["user-agent"] ?? "").slice(0, 60);
-    console.log(`[diag-auth] REQ ${req.method} cl=${cl} ua="${ua}" t=0`);
+    diagLog.info("REQ", { method: req.method, cl, ua, t: 0 });
     let firstChunk = -1;
     let bytes = 0;
     req.on("data", (chunk: Buffer) => {
       if (firstChunk < 0) {
         firstChunk = Date.now() - t0;
-        console.log(`[diag-auth] FIRST_CHUNK ${firstChunk}ms`);
+        diagLog.info("FIRST_CHUNK", { ms: firstChunk });
       }
       bytes += chunk.length;
     });
     req.on("end", () => {
-      console.log(`[diag-auth] BODY_END ${Date.now() - t0}ms bytes=${bytes}`);
+      diagLog.info("BODY_END", { ms: Date.now() - t0, bytes });
     });
     req.on("aborted", () => {
-      console.log(`[diag-auth] ABORTED ${Date.now() - t0}ms bytes=${bytes}`);
+      diagLog.info("ABORTED", { ms: Date.now() - t0, bytes });
     });
     res.on("finish", () => {
-      console.log(`[diag-auth] RES_FINISH ${Date.now() - t0}ms status=${res.statusCode}`);
+      diagLog.info("RES_FINISH", { ms: Date.now() - t0, status: res.statusCode });
     });
     res.on("close", () => {
       if (!res.writableEnded) {
-        console.log(`[diag-auth] RES_CLOSE_EARLY ${Date.now() - t0}ms`);
+        diagLog.info("RES_CLOSE_EARLY", { ms: Date.now() - t0 });
       }
     });
     next();
@@ -273,7 +293,7 @@ async function main() {
       // the route's validation with the canonical OrderSummary shape, so
       // authorize summaries now reach this matcher hook.
       authorizeCrossRelayerService?.onRemoteOrderArrived(order).catch((err) => {
-        console.warn("[authorize-cross] P2P match error:", err instanceof Error ? err.message : "unknown");
+        authCrossLog.warn("P2P match error", { err: err instanceof Error ? err.message : "unknown" });
       });
     },
     (orderId) => { remoteOrderbook?.remove(orderId); },
@@ -289,7 +309,7 @@ async function main() {
     try {
       await submitter.indexCommitments();
     } catch (err) {
-      console.error("Commitment re-indexing failed:", err instanceof Error ? err.message : "unknown");
+      log.error("Commitment re-indexing failed", { err: err instanceof Error ? err.message : "unknown" });
     }
   }, 5 * 60_000);
 
@@ -297,21 +317,21 @@ async function main() {
   const remoteExpireInterval = setInterval(() => {
     if (remoteOrderbook) {
       const removed = remoteOrderbook.purgeExpired();
-      if (removed > 0) console.log(`Purged ${removed} expired remote orders`);
+      if (removed > 0) log.info("Purged expired remote orders", { removed });
     }
   }, 60_000);
 
   // Periodic authorize-order cleanup (settled/cancelled/expired)
   const authPurgeInterval = setInterval(() => {
     const removed = purgeNonPendingAuthorizeOrders();
-    if (removed > 0) console.log(`Purged ${removed} non-pending authorize orders`);
+    if (removed > 0) log.info("Purged non-pending authorize orders", { removed });
   }, 60_000);
 
   // Async-settlement sprint #1: reset orphaned 'settling' rows from a prior
   // crash, then start the worker that drains the accepted/retrying queue.
   // See docs/design/async-settlement-protocol.md.
   const orphans = db.resetOrphanedSettlingOrders();
-  if (orphans > 0) console.log(`[settlement-worker] Reset ${orphans} orphaned 'settling' row(s) → 'accepted'`);
+  if (orphans > 0) settlementLog.info("Reset orphaned 'settling' rows to 'accepted'", { orphans });
   const settlementWorker = new SettlementWorker({
     db,
     submitter: authSubmitter,
@@ -323,13 +343,13 @@ async function main() {
     getFeeBps: () => BigInt(config.relayerFee),
   });
   settlementWorker.start();
-  console.log("[settlement-worker] Started");
+  settlementLog.info("Started");
 
   // Expiry sweeper — bulk-mark accepted/retrying/settling rows whose
   // circuit expiry passed without settlement (design §2.8).
   const expirySweepInterval = setInterval(() => {
     const expired = db.sweepExpiredAuthorizeOrders();
-    if (expired > 0) console.log(`[expiry-sweeper] Marked ${expired} expired authorize order(s)`);
+    if (expired > 0) expiryLog.info("Marked expired authorize order(s)", { expired });
   }, 60_000);
 
   // Periodic health probe — emits webhook alerts on healthy↔degraded
@@ -343,19 +363,17 @@ async function main() {
   startBalanceMonitor(submitter);
 
   const server = app.listen(config.port, () => {
-    console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
-    console.log(`Relayer address: ${submitter.getAddress()}`);
-    console.log(`CommitmentPool: ${config.commitmentPoolAddress}`);
-    console.log(`PrivateSettlement: ${config.privateSettlementAddress}`);
-    console.log(`Fee: ${config.relayerFee} bps`);
-    console.log(`Index confirmations: ${config.indexConfirmations}`);
-    if (config.feeVaultAddress) {
-      console.log(`FeeVault: ${config.feeVaultAddress}`);
-    }
-    if (config.sharedOrderbookUrl) {
-      console.log(`Shared Orderbook: ${config.sharedOrderbookUrl}`);
-      console.log(`Public URL: ${config.relayerPublicUrl}`);
-    }
+    log.info("ScatterDEX ZK Relayer started", {
+      port: config.port,
+      relayerAddress: submitter.getAddress(),
+      commitmentPool: config.commitmentPoolAddress,
+      privateSettlement: config.privateSettlementAddress,
+      feeBps: config.relayerFee,
+      indexConfirmations: config.indexConfirmations,
+      feeVault: config.feeVaultAddress || undefined,
+      sharedOrderbookUrl: config.sharedOrderbookUrl || undefined,
+      publicUrl: config.relayerPublicUrl || undefined,
+    });
   });
   // Disable Nagle's algorithm on every accepted TCP connection.
   // Express's default keeps Nagle on, which interacts with TCP
@@ -383,7 +401,7 @@ async function main() {
         ws.send(data, { binary: isBinary });
       });
     });
-    console.log("[net] echo probe enabled at POST /api/echo and WS /ws/echo");
+    netLog.info("echo probe enabled at POST /api/echo and WS /ws/echo");
   }
 
   // Graceful shutdown
@@ -391,7 +409,7 @@ async function main() {
   const shutdown = () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    console.log("Shutting down...");
+    log.info("Shutting down...");
     clearInterval(reindexInterval);
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
@@ -418,6 +436,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal:", err);
+  log.error("Fatal", { err: err instanceof Error ? err.message : String(err) });
   process.exit(1);
 });

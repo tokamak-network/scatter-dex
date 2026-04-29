@@ -4,6 +4,9 @@ import type { PrivateOrderDB } from "../core/db.js";
 import { config } from "../config.js";
 import { authorizeOrders } from "./authorize-orders.js";
 import { getProfile } from "../core/profile.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("info");
 
 function countPending(): number {
   let n = 0;
@@ -50,7 +53,9 @@ export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB
       const proof = await submitter.getCommitmentMerkleProof(leafIndex);
       res.json(proof);
     } catch (err) {
-      console.error("[info] Failed to get merkle proof:", err instanceof Error ? err.message : err);
+      log.error("Failed to get merkle proof", {
+        err: err instanceof Error ? err.message : String(err),
+      });
       res.status(500).json({ error: "Failed to compute merkle proof" });
     }
   });

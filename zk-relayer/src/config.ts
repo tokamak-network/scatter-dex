@@ -2,6 +2,13 @@ import dotenv from "dotenv";
 import { readFileSync } from "fs";
 dotenv.config();
 
+// Note: this module deliberately does NOT import the structured
+// logger. logger.ts reads from `config` at module load, so wiring
+// a logger here would create an init cycle that breaks under
+// vitest's ESM loader. Config-load warnings stay on `console.warn`
+// — they fire once at startup, before the logger ring buffer
+// matters anyway.
+
 function requireEnv(name: string): string {
   const val = process.env[name];
   if (!val) throw new Error(`Missing required env var: ${name}`);

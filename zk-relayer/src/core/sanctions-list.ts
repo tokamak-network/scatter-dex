@@ -12,6 +12,9 @@
  */
 
 import { readFileSync, existsSync } from "fs";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("sanctions-list");
 
 /** Normalized key: "bigint_ax:bigint_ay" */
 const sanctionedPubKeys = new Set<string>();
@@ -71,7 +74,7 @@ export function getSanctionedCount(): number {
  */
 export function loadSanctionsFile(filePath: string): number {
   if (!existsSync(filePath)) {
-    console.warn(`[R-10] Sanctions file not found: ${filePath} — starting with empty list`);
+    log.warn("[R-10] Sanctions file not found — starting with empty list", { filePath });
     return 0;
   }
 
@@ -80,12 +83,15 @@ export function loadSanctionsFile(filePath: string): number {
     const raw = readFileSync(filePath, "utf-8");
     entries = JSON.parse(raw);
   } catch (err) {
-    console.error(`[R-10] Failed to parse sanctions file ${filePath}:`, err);
+    log.error("[R-10] Failed to parse sanctions file", {
+      filePath,
+      err: err instanceof Error ? err.message : String(err),
+    });
     return 0;
   }
 
   if (!Array.isArray(entries)) {
-    console.error(`[R-10] Sanctions file must contain a JSON array`);
+    log.error("[R-10] Sanctions file must contain a JSON array");
     return 0;
   }
 
@@ -97,11 +103,11 @@ export function loadSanctionsFile(filePath: string): number {
           loaded++;
         }
       } catch {
-        console.warn(`[R-10] Skipping invalid entry: ${JSON.stringify(entry)}`);
+        log.warn("[R-10] Skipping invalid entry", { entry });
       }
     }
   }
 
-  console.log(`[R-10] Loaded ${loaded} new sanctioned pubKeys from ${filePath}`);
+  log.info("[R-10] Loaded new sanctioned pubKeys", { loaded, filePath });
   return loaded;
 }

@@ -62,6 +62,7 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
       <ProfileSection auth={auth} />
       <SanctionsSection auth={auth} />
       <WebhookSection auth={auth} />
+      <LogsSection auth={auth} />
     </div>
   );
 }
@@ -775,6 +776,166 @@ function DeliveryPill({
   return (
     <span className="text-[var(--color-warning)]" title={delivery.reason}>
       failed: {delivery.reason.slice(0, 40)}
+    </span>
+  );
+}
+
+interface LogRecord {
+  ts: string;
+  level: "debug" | "info" | "warn" | "error";
+  mod: string;
+  msg: string;
+  meta?: Record<string, unknown>;
+}
+
+interface LogsBody {
+  records: LogRecord[];
+  config: {
+    level: "debug" | "info" | "warn" | "error";
+    bufferCap: number;
+    bufferSize: number;
+  };
+}
+
+type LogLevelFilter = "all" | "debug" | "info" | "warn" | "error";
+
+function LogsSection({ auth }: { auth: NonNullable<AuthState> }) {
+  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>("all");
+  const [modFilter, setModFilter] = useState("");
+  const [tick, setTick] = useState(0);
+
+  const fetcher = useCallback(
+    (signal: AbortSignal) => {
+      const params = new URLSearchParams();
+      params.set("limit", "200");
+      if (levelFilter !== "all") params.set("level", levelFilter);
+      if (modFilter.trim()) params.set("mod", modFilter.trim());
+      return adminGet<LogsBody>(
+        auth,
+        `/api/admin/logs?${params.toString()}`,
+        signal,
+      );
+    },
+    [auth.url, auth.key, levelFilter, modFilter],
+  );
+  const { data, error, loading } = useAdmin(fetcher, [tick]);
+
+  return (
+    <Panel
+      title="Logs"
+      eyebrow="GET /api/admin/logs"
+      action={
+        <button
+          onClick={() => setTick((n) => n + 1)}
+          disabled={loading}
+          className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      }
+    >
+      <p className="mb-3 text-sm text-[var(--color-text-muted)]">
+        Recent structured log records from the relayer&apos;s in-memory ring
+        buffer (capped per <code className="font-mono">LOG_BUFFER_SIZE</code>,
+        default 500). Stdout still emits the same JSON-line records for any
+        external sink you wire up.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1">
+          <span className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+            Level
+          </span>
+          {(["all", "debug", "info", "warn", "error"] as const).map((l) => (
+            <button
+              key={l}
+              onClick={() => setLevelFilter(l)}
+              className={
+                levelFilter === l
+                  ? "rounded-full bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white"
+                  : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+              }
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          value={modFilter}
+          onChange={(e) => setModFilter(e.target.value)}
+          placeholder="mod filter (e.g. settlement-worker)"
+          aria-label="Module filter"
+          className="min-w-[220px] flex-1 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-sm font-mono"
+        />
+      </div>
+
+      {error && <ErrorLine text={error} />}
+      {data && data.records.length === 0 && (
+        <p className="mt-4 text-sm text-[var(--color-text-muted)]">
+          No records match the current filter. Buffer holds {data.config.bufferSize} of
+          up to {data.config.bufferCap} entries; minimum level{" "}
+          <code className="font-mono">{data.config.level}</code>.
+        </p>
+      )}
+      {data && data.records.length > 0 && (
+        <div className="mt-4 overflow-hidden rounded-md border border-[var(--color-border)]">
+          <table className="w-full text-xs">
+            <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Time</th>
+                <th className="px-3 py-2 text-left font-medium">Level</th>
+                <th className="px-3 py-2 text-left font-medium">Mod</th>
+                <th className="px-3 py-2 text-left font-medium">Message</th>
+                <th className="px-3 py-2 text-left font-medium">Meta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.records.map((r, i) => (
+                <tr
+                  key={`${r.ts}-${r.mod}-${i}`}
+                  className="border-t border-[var(--color-border)] align-top"
+                >
+                  <td className="px-3 py-2 font-mono text-[var(--color-text-muted)]">
+                    {new Date(r.ts).toLocaleTimeString()}
+                  </td>
+                  <td className="px-3 py-2">
+                    <LevelPill level={r.level} />
+                  </td>
+                  <td className="px-3 py-2 font-mono">{r.mod}</td>
+                  <td className="px-3 py-2">{r.msg}</td>
+                  <td className="px-3 py-2 font-mono text-[var(--color-text-subtle)]">
+                    {r.meta ? JSON.stringify(r.meta) : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data && (
+        <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
+          Showing {data.records.length} of {data.config.bufferSize} records · buffer cap{" "}
+          {data.config.bufferCap} · min level{" "}
+          <code className="font-mono">{data.config.level}</code>
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+function LevelPill({ level }: { level: LogRecord["level"] }) {
+  const cls =
+    level === "error"
+      ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : level === "warn"
+      ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : level === "debug"
+      ? "bg-[var(--color-bg)] text-[var(--color-text-subtle)]"
+      : "bg-[var(--color-success-soft)] text-[var(--color-success)]";
+  return (
+    <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>
+      {level}
     </span>
   );
 }
