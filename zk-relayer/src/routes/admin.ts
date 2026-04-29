@@ -224,5 +224,71 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
+  // Persisted settlement + fee history. Mounted under /api/admin so
+  // these reads inherit the x-admin-key gate — settlement history
+  // includes per-token fee accrual which is operator-private.
+  // Query params: ?limit=50&offset=0&type=...&status=...
+  router.get("/history", (req: Request, res: Response) => {
+    try {
+      const limit = clampHistoryLimit(req.query.limit);
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const type = parseSettlementType(req.query.type);
+      const status = parseSettlementStatus(req.query.status);
+      const { rows, total } = db.getSettlementHistory({ limit, offset, type, status });
+      res.json({ rows, total, limit, offset });
+    } catch (err) {
+      console.error("[admin] history failed:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Failed to load settlement history" });
+    }
+  });
+
+  // Per-token fee totals by default; pass ?detail=1 for raw rows.
+  // Query params: ?token=0x…&since=<unix-ms>[&detail=1&limit=&offset=]
+  router.get("/history/fees", (req: Request, res: Response) => {
+    try {
+      const since = Number(req.query.since) || 0;
+      // Lowercase the address here as well as in the DB layer so a
+      // checksummed query matches the lowercase storage form.
+      const token =
+        typeof req.query.token === "string" ? req.query.token.toLowerCase() : undefined;
+      if (req.query.detail === "1" || req.query.detail === "true") {
+        const limit = clampHistoryLimit(req.query.limit, 500, 100);
+        const offset = Math.max(0, Number(req.query.offset) || 0);
+        const rows = db.getFeeHistory({ limit, offset, since, token });
+        res.json({ rows, count: rows.length, limit, offset });
+        return;
+      }
+      const totals = db.getFeeTotals(since);
+      const filtered = token ? totals.filter((t) => t.token === token) : totals;
+      res.json({ totals: filtered });
+    } catch (err) {
+      console.error("[admin] history/fees failed:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Failed to load fee history" });
+    }
+  });
+
   return router;
+}
+
+const SETTLEMENT_TYPES = new Set(["settleAuth", "scatterDirectAuth"] as const);
+const SETTLEMENT_STATUSES = new Set(["confirmed", "failed"] as const);
+
+function parseSettlementType(v: unknown): "settleAuth" | "scatterDirectAuth" | undefined {
+  if (typeof v !== "string") return undefined;
+  return (SETTLEMENT_TYPES as Set<string>).has(v)
+    ? (v as "settleAuth" | "scatterDirectAuth")
+    : undefined;
+}
+
+function parseSettlementStatus(v: unknown): "confirmed" | "failed" | undefined {
+  if (typeof v !== "string") return undefined;
+  return (SETTLEMENT_STATUSES as Set<string>).has(v)
+    ? (v as "confirmed" | "failed")
+    : undefined;
+}
+
+function clampHistoryLimit(raw: unknown, max = 200, fallback = 50): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(max, Math.floor(n));
 }
