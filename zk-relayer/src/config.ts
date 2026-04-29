@@ -72,7 +72,32 @@ export const config = {
   // per event with a 5s timeout; missed alerts are logged but
   // not redelivered, so the channel must be reasonably available.
   webhookUrl: process.env.WEBHOOK_URL || null,
+
+  // Number of consecutive terminal settlement failures (failed +
+  // dead_letter) that trip a critical webhook alert. Reset to 0
+  // on the next settled order. Only tripped once per streak so a
+  // sustained outage doesn't repeatedly page the channel.
+  settlementFailureThreshold: parseEnvInt("SETTLEMENT_FAILURE_THRESHOLD", 5, 1),
+
+  // ETH balance below which the relayer wallet is considered low
+  // and a warn alert is emitted (units: wei). Recovery alert fires
+  // once the balance climbs back above the threshold. Default ≈
+  // 0.05 ETH — enough headroom for several settlement txs at
+  // typical L1 gas. Override with LOW_BALANCE_ETH (decimal ETH).
+  lowBalanceWei: parseLowBalanceWei("LOW_BALANCE_ETH", "0.05"),
 };
+
+/** Decimal-ETH env var → wei. Falls back on bad input with a warn. */
+function parseLowBalanceWei(name: string, fallback: string): bigint {
+  const raw = (process.env[name] ?? fallback).trim();
+  if (!/^[0-9]*\.?[0-9]+$/.test(raw)) {
+    console.warn(`[config] Invalid ${name}="${raw}", using ${fallback} ETH`);
+    return parseLowBalanceWei(name, "0.05");
+  }
+  const [whole, frac = ""] = raw.split(".");
+  const fracPadded = frac.slice(0, 18).padEnd(18, "0");
+  return BigInt(whole || "0") * 10n ** 18n + BigInt(fracPadded || "0");
+}
 
 /** Parse a non-negative integer env var with a default. Logs a warn and
  *  uses the default when the value is missing, non-numeric, or below `min`. */

@@ -19,6 +19,7 @@ import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthor
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
+import { startBalanceMonitor, stopBalanceMonitor } from "./core/balance-monitor.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
 
@@ -335,6 +336,11 @@ async function main() {
   // transitions. The /health route still serves k8s/load-balancer
   // readiness; this monitor adds proactive operator notifications.
   startHealthMonitor(submitter, db);
+  // Balance monitor reuses the PrivateSubmitter (same wallet key as
+  // authSubmitter today; keeps the API surface narrow — only
+  // getProvider + getWallet are needed). Emits warn/info alerts on
+  // healthy↔low transitions per LOW_BALANCE_ETH.
+  startBalanceMonitor(submitter);
 
   const server = app.listen(config.port, () => {
     console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
@@ -390,10 +396,11 @@ async function main() {
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
     clearInterval(expirySweepInterval);
-    // Stop the periodic probe before draining the worker so we
+    // Stop the periodic probes before draining the worker so we
     // don't kick off an extra DB write (or alert) once shutdown
     // is in motion.
     stopHealthMonitor();
+    stopBalanceMonitor();
     sharedClient?.stop();
     // `settlementWorker.stop()` awaits any in-flight tick, which itself
     // runs SQLite statements through `db`. If we closed `db` before the

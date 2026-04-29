@@ -18,6 +18,7 @@
 
 import type { PrivateOrderDB, AuthorizeOrderRow } from "./db.js";
 import type { AuthorizeSubmitter } from "./authorize-submitter.js";
+import { recordSettlementOutcome } from "./settlement-failure-tracker.js";
 import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
@@ -165,6 +166,7 @@ export class SettlementWorker {
       order = stored ? stored.order : (JSON.parse(job.orderJson) as AuthorizeOrderFile);
     } catch {
       this.deps.db.markAuthorizeOrderFailed(job.nullifier, "corrupt order_json");
+      recordSettlementOutcome("failed");
       console.error(
         `[settlement-worker] ${job.nullifier.slice(0, 12)}… corrupt order_json; marked failed`,
       );
@@ -191,6 +193,7 @@ export class SettlementWorker {
         stored.settleTxHash = txHash;
       }
       this.releasePubKeySlot(job, stored);
+      recordSettlementOutcome("settled");
       console.log(
         `[settlement-worker] scatter ${job.nullifier.slice(0, 12)}… settled tx=${txHash}`,
       );
@@ -247,6 +250,7 @@ export class SettlementWorker {
         void sc.cancelOrder(this.deps.nullifierToOfferHandle(takerN)).catch(() => {});
       }
 
+      recordSettlementOutcome("settled");
       console.log(
         `[settlement-worker] settleAuth ${makerN.slice(0, 12)}…/${takerN.slice(0, 12)}… tx=${txHash}`,
       );
@@ -275,6 +279,7 @@ export class SettlementWorker {
       // that bucket by status.
       if (stored) stored.status = "failed";
       this.releasePubKeySlot(job, stored);
+      recordSettlementOutcome("failed");
       console.error(
         `[settlement-worker] ${job.nullifier.slice(0, 12)}… permanent failure: ${msg}`,
       );
@@ -294,6 +299,7 @@ export class SettlementWorker {
         if (stored) stored.status = "failed";
       }
       this.releasePubKeySlot(job, stored);
+      recordSettlementOutcome("failed");
       console.error(
         `[settlement-worker] ${job.nullifier.slice(0, 12)}… exhausted ${kind} retries: ${msg}`,
       );

@@ -13,6 +13,8 @@ import type { PrivateOrderDB } from "../core/db.js";
 import { getProfile, updateProfile, validateProfile } from "../core/profile.js";
 import { getRecentAlerts, isWebhookConfigured, sendAlert } from "../core/alerts.js";
 import { getLastHealth } from "../core/health-monitor.js";
+import { getLastBalance } from "../core/balance-monitor.js";
+import { getSettlementFailureState } from "../core/settlement-failure-tracker.js";
 
 let paused = false;
 
@@ -301,6 +303,8 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     res.json({
       configured: isWebhookConfigured(),
       health: getLastHealth(),
+      balance: getLastBalance(),
+      settlementFailureStreak: getSettlementFailureState(),
       recent: getRecentAlerts(),
     });
   });
