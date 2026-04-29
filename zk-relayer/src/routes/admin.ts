@@ -243,6 +243,30 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
+  // GET /api/admin/history/by-tx/:txHash — single settlement + fees.
+  // Returns 404 when the tx_hash isn't in settlement_history.
+  router.get("/history/by-tx/:txHash", (req: Request, res: Response) => {
+    try {
+      const { txHash } = req.params;
+      // Cheap shape check before going to the DB; tx hashes are
+      // 32-byte hex (0x + 64 chars) and a malformed param almost
+      // certainly came from a typo, not a real lookup.
+      if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        res.status(400).json({ error: "txHash must be a 0x-prefixed 32-byte hex string" });
+        return;
+      }
+      const found = db.getSettlementByTxHash(txHash);
+      if (!found) {
+        res.status(404).json({ error: "tx_hash not found in settlement_history" });
+        return;
+      }
+      res.json(found);
+    } catch (err) {
+      console.error("[admin] history/by-tx failed:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Failed to load settlement detail" });
+    }
+  });
+
   // Per-token fee totals by default; pass ?detail=1 for raw rows.
   // Query params: ?token=0x…&since=<unix-ms>[&detail=1&limit=&offset=]
   router.get("/history/fees", (req: Request, res: Response) => {

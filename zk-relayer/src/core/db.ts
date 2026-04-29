@@ -211,6 +211,8 @@ export class PrivateOrderDB {
   private countSettlementHistoryByTypeStatus: ReturnType<Database.Database["prepare"]>;
   private selectFeeHistory: ReturnType<Database.Database["prepare"]>;
   private selectFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementByTxHash: ReturnType<Database.Database["prepare"]>;
+  private selectFeesByTxHash: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
@@ -457,6 +459,12 @@ export class PrivateOrderDB {
     this.selectFeeHistoryByToken = this.db.prepare(
       `SELECT * FROM fee_history WHERE token = @token AND created_at >= @since ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
+    this.selectSettlementByTxHash = this.db.prepare(
+      `SELECT * FROM settlement_history WHERE tx_hash = @txHash LIMIT 1`,
+    );
+    this.selectFeesByTxHash = this.db.prepare(
+      `SELECT * FROM fee_history WHERE tx_hash = @txHash ORDER BY id ASC`,
+    );
     // Per-token totals via row iteration. SQLite's SUM uses INTEGER
     // and would lose precision on amounts > 2^63; GROUP_CONCAT into a
     // single string would balloon memory once history grows. Streaming
@@ -551,6 +559,22 @@ export class PrivateOrderDB {
       total = (this.countSettlementHistory.get({}) as { count: number }).count;
     }
     return { rows, total };
+  }
+
+  /** Single settlement + its fee rows by tx_hash. Lowercases the
+   *  input so checksummed and lowercase queries return the same row.
+   *  Returns null when the tx isn't in the table — distinct from a
+   *  recorded-but-feeless settlement, which returns `{settlement, fees: []}`. */
+  getSettlementByTxHash(
+    txHash: string,
+  ): { settlement: SettlementHistoryRow; fees: FeeAccrualRow[] } | null {
+    const lowered = lowerHex(txHash);
+    const settlement = this.selectSettlementByTxHash.get({ txHash: lowered }) as
+      | SettlementHistoryRow
+      | undefined;
+    if (!settlement) return null;
+    const fees = this.selectFeesByTxHash.all({ txHash: lowered }) as FeeAccrualRow[];
+    return { settlement, fees };
   }
 
   getFeeHistory(opts: FeeHistoryQueryOpts): FeeAccrualRow[] {

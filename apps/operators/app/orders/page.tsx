@@ -1,42 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
+import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 
-type OrderStatus = "pending" | "settled" | "expired" | "cancelled";
+type Auth = AdminAuth | null;
+// Type/status enum values must match zk-relayer/src/routes/admin.ts
+// SETTLEMENT_TYPES / SETTLEMENT_STATUSES. The server validates the
+// query string before hitting SQL, so a drift here just means the
+// chip silently filters to nothing — fail loud is preferable but
+// not worth a shared types package for two tiny enums today.
+type TypeFilter = "all" | "settleAuth" | "scatterDirectAuth";
+type StatusFilter = "all" | "confirmed" | "failed";
 
-interface OrderRow {
-  id: string;
-  pair: string;
-  side: "buy" | "sell";
-  size: string;
-  maker: string;
-  fee: string;
-  submittedAt: string;
-  status: OrderStatus;
+interface SettlementRow {
+  id: number;
+  tx_hash: string;
+  type: "settleAuth" | "scatterDirectAuth";
+  status: "confirmed" | "failed";
+  block_number: number | null;
+  gas_cost_eth: string | null;
+  sell_token: string | null;
+  buy_token: string | null;
+  error_reason: string | null;
+  created_at: number;
 }
 
-const filters: { key: "all" | OrderStatus; label: string }[] = [
-  { key: "all",       label: "All" },
-  { key: "pending",   label: "Pending" },
-  { key: "settled",   label: "Settled" },
-  { key: "expired",   label: "Expired" },
-  { key: "cancelled", label: "Cancelled" },
-];
-
-const orders: OrderRow[] = [
-  { id: "0xab12…", pair: "USDC/WETH", side: "buy",  size: "8,400",  maker: "0x4f…91", fee: "2.52", submittedAt: "09:14:22", status: "settled" },
-  { id: "0xcd34…", pair: "USDT/WBTC", side: "sell", size: "55,100", maker: "0x12…ab", fee: "16.53", submittedAt: "08:51:08", status: "settled" },
-  { id: "0xef56…", pair: "USDC/TON",  side: "buy",  size: "12,800", maker: "0x88…c2", fee: "3.84",  submittedAt: "08:32:55", status: "settled" },
-  { id: "0x1278…", pair: "USDC/WETH", side: "sell", size: "4,200",  maker: "0xa9…d3", fee: "1.26",  submittedAt: "09:18:01", status: "pending" },
-  { id: "0x9abc…", pair: "USDT/TON",  side: "buy",  size: "2,100",  maker: "0xb1…e7", fee: "0.63",  submittedAt: "09:17:44", status: "pending" },
-  { id: "0xdef0…", pair: "USDC/WBTC", side: "buy",  size: "780",    maker: "0xc4…f8", fee: "0.23",  submittedAt: "07:02:11", status: "expired" },
-];
+const PAGE_SIZE = 25;
 
 export default function OrdersPage() {
-  const [filter, setFilter] = useState<"all" | OrderStatus>("all");
-  const visible = filter === "all" ? orders : orders.filter((o) => o.status === filter);
+  const [auth, setAuth] = useState<Auth>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setAuth(readAdminAuth());
+    setHydrated(true);
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -45,65 +45,170 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold">Routed orders</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Live feed of orders flowing through this relayer. Per-order detail
-            (signed payload, claim status, settlement tx) ships in v1.1.
+            Persisted settlement history sourced from{" "}
+            <code className="font-mono">/api/admin/history</code>. Click any row
+            for the per-tx debug view.
           </p>
         </div>
-        <Link
-          href="/dashboard"
-          className="text-sm text-[var(--color-primary)] hover:underline"
-        >
+        <Link href="/dashboard" className="text-sm text-[var(--color-primary)] hover:underline">
           ← Dashboard
         </Link>
       </header>
 
-      <div className="flex items-center gap-2">
-        {filters.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={
-              filter === f.key
-                ? "rounded-full bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white"
-                : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
-            }
-          >
-            {f.label}
-          </button>
-        ))}
+      {hydrated && !auth ? (
+        <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
+          Connect your relayer on{" "}
+          <Link href="/dashboard" className="text-[var(--color-primary)] underline">
+            /dashboard
+          </Link>{" "}
+          (or{" "}
+          <Link href="/runtime" className="text-[var(--color-primary)] underline">
+            /runtime
+          </Link>
+          ) — auth is shared across the tab.
+        </div>
+      ) : auth ? (
+        <OrdersTable auth={auth} />
+      ) : null}
+    </div>
+  );
+}
+
+function OrdersTable({ auth }: { auth: NonNullable<Auth> }) {
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [page, setPage] = useState(0);
+  const [data, setData] = useState<{ rows: SettlementRow[]; total: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(page * PAGE_SIZE));
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const res = await adminGet<{ rows: SettlementRow[]; total: number }>(
+        auth,
+        `/api/admin/history?${params.toString()}`,
+      );
+      setData(res);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [auth, page, typeFilter, statusFilter]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Reset to page 0 when filters change so we don't read past the
+  // end of the new filtered set on the next refresh.
+  const onTypeFilter = (v: TypeFilter) => {
+    setTypeFilter(v);
+    setPage(0);
+  };
+  const onStatusFilter = (v: StatusFilter) => {
+    setStatusFilter(v);
+    setPage(0);
+  };
+
+  const lastPage = data ? Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) : 0;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-4">
+        <FilterChips
+          label="Type"
+          value={typeFilter}
+          onChange={onTypeFilter}
+          options={[
+            { key: "all", label: "All" },
+            { key: "settleAuth", label: "settleAuth" },
+            { key: "scatterDirectAuth", label: "scatterDirectAuth" },
+          ]}
+        />
+        <FilterChips
+          label="Status"
+          value={statusFilter}
+          onChange={onStatusFilter}
+          options={[
+            { key: "all", label: "All" },
+            { key: "confirmed", label: "Confirmed" },
+            { key: "failed", label: "Failed" },
+          ]}
+        />
+        <button
+          onClick={refresh}
+          disabled={loading}
+          className="ml-auto rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
+
+      {error && (
+        <div className="rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
+          {error}
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
             <tr>
-              <th className="px-5 py-3 text-left">Order</th>
-              <th className="px-5 py-3 text-left">Pair</th>
-              <th className="px-5 py-3 text-left">Side</th>
-              <th className="px-5 py-3 text-right">Size (USD)</th>
-              <th className="px-5 py-3 text-left">Maker</th>
-              <th className="px-5 py-3 text-right">Fee</th>
-              <th className="px-5 py-3 text-left">Submitted</th>
+              <th className="px-5 py-3 text-left">Tx hash</th>
+              <th className="px-5 py-3 text-left">Type</th>
               <th className="px-5 py-3 text-left">Status</th>
+              <th className="px-5 py-3 text-right">Block</th>
+              <th className="px-5 py-3 text-right">Gas (ETH)</th>
+              <th className="px-5 py-3 text-left">Sell → Buy</th>
+              <th className="px-5 py-3 text-left">When</th>
             </tr>
           </thead>
           <tbody>
-            {visible.map((o) => (
-              <tr key={o.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]">
-                <td className="px-5 py-3 font-mono text-xs">{o.id}</td>
-                <td className="px-5 py-3">{o.pair}</td>
-                <td className="px-5 py-3 capitalize">{o.side}</td>
-                <td className="px-5 py-3 text-right font-mono">{o.size}</td>
-                <td className="px-5 py-3 font-mono text-xs">{o.maker}</td>
-                <td className="px-5 py-3 text-right font-mono text-[var(--color-success)]">{o.fee}</td>
-                <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">{o.submittedAt}</td>
-                <td className="px-5 py-3"><StatusPill status={o.status} /></td>
+            {data?.rows.map((r) => (
+              <tr
+                key={r.tx_hash}
+                className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]"
+              >
+                <td className="px-5 py-3 font-mono text-xs">
+                  <Link
+                    href={`/orders/detail?tx=${r.tx_hash}`}
+                    className="text-[var(--color-primary)] hover:underline"
+                  >
+                    {shortTx(r.tx_hash)}
+                  </Link>
+                </td>
+                <td className="px-5 py-3 text-xs">{r.type}</td>
+                <td className="px-5 py-3">
+                  <StatusPill status={r.status} />
+                </td>
+                <td className="px-5 py-3 text-right font-mono text-xs">
+                  {r.block_number ?? "—"}
+                </td>
+                <td className="px-5 py-3 text-right font-mono text-xs">
+                  {r.gas_cost_eth ?? "—"}
+                </td>
+                <td className="px-5 py-3 font-mono text-xs">
+                  {r.sell_token && r.buy_token
+                    ? `${shortAddr(r.sell_token)} → ${shortAddr(r.buy_token)}`
+                    : "—"}
+                </td>
+                <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
+                  {formatRelative(r.created_at)}
+                </td>
               </tr>
             ))}
-            {visible.length === 0 && (
+            {data && data.rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
-                  No orders for this filter.
+                <td colSpan={7} className="px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
+                  No settlements match the current filters.
                 </td>
               </tr>
             )}
@@ -111,23 +216,93 @@ export default function OrdersPage() {
         </table>
       </div>
 
-      <p className="text-xs text-[var(--color-text-subtle)]">
-        Showing mock data. Wired through SDK <code className="font-mono">relayerClient.getOrderHistory()</code> in v1.1.
-      </p>
+      {data && data.total > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
+          <span>
+            Page {page + 1} of {lastPage + 1} · {data.total} rows total
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0 || loading}
+              className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              ← Prev
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage || loading}
+              className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function FilterChips<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: Array<{ key: T; label: string }>;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+        {label}
+      </span>
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={() => onChange(opt.key)}
+          className={
+            value === opt.key
+              ? "rounded-full bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-white"
+              : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+          }
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }
 
-function StatusPill({ status }: { status: OrderStatus }) {
-  const styles: Record<OrderStatus, string> = {
-    pending:   "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
-    settled:   "bg-[var(--color-success-soft)] text-[var(--color-success)]",
-    expired:   "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
-    cancelled: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
-  };
+function StatusPill({ status }: { status: "confirmed" | "failed" }) {
+  const cls =
+    status === "confirmed"
+      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+      : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]";
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
+    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
       {status}
     </span>
   );
 }
+
+function shortTx(s: string): string {
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 10)}…${s.slice(-6)}`;
+}
+
+function shortAddr(s: string): string {
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+function formatRelative(unixMs: number): string {
+  const diff = Math.max(0, Date.now() - unixMs);
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
