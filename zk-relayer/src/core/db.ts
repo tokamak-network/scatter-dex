@@ -77,6 +77,23 @@ function lowerHex<T extends string | null | undefined>(v: T): T {
   return (typeof v === "string" ? v.toLowerCase() : v) as T;
 }
 
+/** Compute multiple p-percentiles (0–100) over an unsorted sample
+ *  in one pass: sorts a copy of `values` once, then indexes the
+ *  requested ranks. Returns null entries for an empty sample so
+ *  callers can render "no data yet" rather than a misleading 0.
+ *  Doesn't mutate the input. */
+function percentiles(
+  values: number[],
+  ps: number[],
+): Array<number | null> {
+  if (values.length === 0) return ps.map(() => null);
+  const sorted = [...values].sort((a, b) => a - b);
+  return ps.map((p) => {
+    const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+    return sorted[Math.max(0, idx)];
+  });
+}
+
 export interface TradeOfferRow {
   id: number;
   direction: "sent" | "received";
@@ -104,6 +121,9 @@ export interface SettlementHistoryRow {
   sell_token: string | null;
   buy_token: string | null;
   error_reason: string | null;
+  /** Wall-clock milliseconds from worker claim to confirmation.
+   *  Null on rows recorded before the column existed. */
+  duration_ms: number | null;
   created_at: number;
 }
 
@@ -132,6 +152,10 @@ export interface SettlementEventInput {
   sellToken?: string | null;
   buyToken?: string | null;
   errorReason?: string | null;
+  /** Settlement duration in ms (worker claim → on-chain confirmation).
+   *  Optional — recorded when known; older callers without timing
+   *  data leave it undefined and the row stores NULL. */
+  durationMs?: number | null;
   fees?: Array<{
     side: FeeAccrualRow["side"];
     token: string;
@@ -217,6 +241,7 @@ export class PrivateOrderDB {
   private selectSettlementByTxHash: ReturnType<Database.Database["prepare"]>;
   private selectFeesByTxHash: ReturnType<Database.Database["prepare"]>;
   private selectAuthOrdersBySettleTx: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementBucketRows: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
@@ -427,9 +452,9 @@ export class PrivateOrderDB {
     // instead of producing dupes.
     this.insertSettlementEvent = this.db.prepare(`
       INSERT OR IGNORE INTO settlement_history
-        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, error_reason, created_at)
+        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, error_reason, duration_ms, created_at)
       VALUES
-        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @errorReason, @createdAt)
+        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @errorReason, @durationMs, @createdAt)
     `);
     this.insertFeeAccrual = this.db.prepare(`
       INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at)
@@ -488,6 +513,15 @@ export class PrivateOrderDB {
               order_json as orderJson
          FROM authorize_orders WHERE LOWER(settle_tx) = @txHash ORDER BY submitted_at ASC`,
     );
+    // Settlement-bucket scan: range query over settlement_history
+    // by created_at, projecting only the columns the bucketer needs.
+    // Inclusive `until` so an event whose created_at lands exactly
+    // on the upper boundary still counts in the most recent bucket.
+    this.selectSettlementBucketRows = this.db.prepare(
+      `SELECT status, gas_cost_eth, duration_ms, created_at
+         FROM settlement_history
+        WHERE created_at >= @since AND created_at <= @until`,
+    );
     // Per-token totals via row iteration. SQLite's SUM uses INTEGER
     // and would lose precision on amounts > 2^63; GROUP_CONCAT into a
     // single string would balloon memory once history grows. Streaming
@@ -525,6 +559,7 @@ export class PrivateOrderDB {
         sellToken,
         buyToken,
         errorReason: evt.errorReason ? truncErr(evt.errorReason) : null,
+        durationMs: evt.durationMs ?? null,
         createdAt,
       });
       if (result.changes === 0 || !evt.fees?.length) return;
@@ -593,6 +628,94 @@ export class PrivateOrderDB {
    *  `processing` array can be empty even on a hit (settle_tx wasn't
    *  written, the row was purged after the terminal-retention window,
    *  or this settle_tx pre-dates the indexer migration). */
+  /** Time-bucketed settlement aggregates for the SLA / performance
+   *  dashboard. Returns one entry per bucket starting at `since`,
+   *  spanning `bucketMs` milliseconds each. Each bucket carries:
+   *  - `settled` / `failed` row counts
+   *  - average gas across the confirmed rows (ETH, parsed via parseFloat)
+   *  - p50 / p95 / p99 latency in ms (only over rows with non-null
+   *    duration_ms; `null` when the bucket has no measured row).
+   *
+   *  Buckets with no rows are returned as zero-count gaps so the
+   *  caller can render a continuous time series without filling in
+   *  missing slots client-side. */
+  getSettlementBuckets(opts: {
+    since: number;
+    bucketMs: number;
+    until?: number;
+  }): Array<{
+    bucketStart: number;
+    settled: number;
+    failed: number;
+    avgGasEth: number | null;
+    p50Ms: number | null;
+    p95Ms: number | null;
+    p99Ms: number | null;
+  }> {
+    const until = opts.until ?? Date.now();
+    if (opts.bucketMs <= 0 || until <= opts.since) return [];
+    const numBuckets = Math.ceil((until - opts.since) / opts.bucketMs);
+    // Cap to prevent runaway responses if the caller passes a tiny
+    // bucket size against a long window. 1024 keeps the response
+    // serialisable and the SVG charts on the operator side renderable.
+    if (numBuckets > 1024) return [];
+    const out = Array.from({ length: numBuckets }, (_, i) => ({
+      bucketStart: opts.since + i * opts.bucketMs,
+      settled: 0,
+      failed: 0,
+      gasSum: 0,
+      gasCount: 0,
+      durations: [] as number[],
+    }));
+    // Stream rows via iterate() so a long window (7d) over a
+    // populous history doesn't materialise the whole result in
+    // memory before bucketing — we only ever hold the per-bucket
+    // accumulators plus one row at a time.
+    const iter = this.selectSettlementBucketRows.iterate({
+      since: opts.since,
+      until,
+    }) as Iterable<{
+      status: string;
+      gas_cost_eth: string | null;
+      duration_ms: number | null;
+      created_at: number;
+    }>;
+    for (const r of iter) {
+      // Clamp idx so an event at exactly @until (now reachable via
+      // the inclusive filter above) lands in the last bucket
+      // instead of one past it.
+      const rawIdx = Math.floor((r.created_at - opts.since) / opts.bucketMs);
+      const idx = Math.min(numBuckets - 1, rawIdx);
+      if (idx < 0) continue;
+      const b = out[idx];
+      if (r.status === "confirmed") {
+        b.settled++;
+        const g = parseFloat(r.gas_cost_eth ?? "");
+        if (Number.isFinite(g)) {
+          b.gasSum += g;
+          b.gasCount++;
+        }
+        if (r.duration_ms != null) b.durations.push(r.duration_ms);
+      } else if (r.status === "failed") {
+        b.failed++;
+      }
+    }
+    return out.map((b) => {
+      // Compute p50/p95/p99 in a single sort instead of three
+      // independent in-place sorts of the same buffer.
+      const [p50, p95, p99] = percentiles(b.durations, [50, 95, 99]);
+      return {
+        bucketStart: b.bucketStart,
+        settled: b.settled,
+        failed: b.failed,
+        avgGasEth: b.gasCount > 0 ? b.gasSum / b.gasCount : null,
+        p50Ms: p50,
+        p95Ms: p95,
+        p99Ms: p99,
+      };
+    });
+  }
+
   getSettlementByTxHash(
     txHash: string,
   ): {
@@ -837,7 +960,16 @@ export class PrivateOrderDB {
       CREATE INDEX IF NOT EXISTS idx_sh_created ON settlement_history(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_sh_type_created ON settlement_history(type, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_sh_status_created ON settlement_history(status, created_at DESC);
+    `);
+    // Migration: add duration_ms (settlement latency, ms from worker
+    // claim to confirmation). Idempotent ALTER so existing operator
+    // DBs upgrade in place. Used by the SLA / performance buckets
+    // endpoint for p50/p95/p99 latency.
+    try {
+      this.db.exec(`ALTER TABLE settlement_history ADD COLUMN duration_ms INTEGER`);
+    } catch { /* column already exists */ }
 
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS fee_history (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         tx_hash       TEXT NOT NULL,

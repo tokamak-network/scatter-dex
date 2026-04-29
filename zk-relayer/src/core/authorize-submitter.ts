@@ -260,6 +260,7 @@ export class AuthorizeSubmitter {
           gasCostEth: gasCheck.gasCostEth,
           sellToken,
           buyToken,
+          durationMs: Date.now() - authSettleStart,
           fees: [
             { side: "maker", token: buyToken, amountWei: feeTokenMaker.toString() },
             { side: "taker", token: sellToken, amountWei: feeTokenTaker.toString() },
@@ -339,6 +340,7 @@ export class AuthorizeSubmitter {
         throw new Error(`ScatterDirectAuth rejected: ${gasCheck.reason}`);
       }
 
+      const scatterStart = Date.now();
       const { txHash, receipt } = await sendAndWait(
         () => this.settlement.scatterDirectAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
@@ -359,6 +361,7 @@ export class AuthorizeSubmitter {
           status: "confirmed",
           blockNumber: receipt.blockNumber,
           gasCostEth: gasCheck.gasCostEth,
+          durationMs: Date.now() - scatterStart,
           sellToken,
           buyToken: sellToken,
           fees: [
