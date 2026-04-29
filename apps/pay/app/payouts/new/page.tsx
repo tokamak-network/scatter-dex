@@ -13,19 +13,27 @@ import {
   TIERS,
   type CircuitTier,
 } from "@zkscatter/sdk/zk";
-import {
-  realSettle,
-  MULTI_BATCH_UNSUPPORTED_MSG,
-  MULTI_NOTE_UNSUPPORTED_MSG,
-} from "../../_lib/realSettle";
+import { realSettle } from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
 import { encodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
 
-// Largest tier with a live verifier — this caps Pay's per-run recipient
-// count. Computed at module scope because ACTIVE_TIERS is a compile-time
-// constant; recomputing it per render would be wasted work.
-const MAX_ACTIVE_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
+// Largest tier with a live verifier — caps each individual settlement
+// transaction's anonymity set. With multi-batch (Phase 1d-α) each
+// batch is one settlement. `splitPayout` chunks by the SDK's fixed
+// `MAX_CLAIMS_PER_SIDE` constant, which today equals this value
+// (`TIER_16.cap = 16`); the two will diverge once a larger live tier
+// ships and `splitPayout` is taught to chunk per the picked tier.
+const MAX_TIER_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
+// Soft cap on batches per run. Each batch = one signed scatterDirectAuth
+// tx + one source note from the vault. 4 keeps proving wall-clock
+// reasonable (~5–9s mobile × 4 ≈ 20–36s) and the user signs four
+// times in sequence — beyond that the UX gets unwieldy without a
+// progress indicator + parallel proving. Not a contract / SDK limit;
+// bumping is purely a UX call.
+const MAX_BATCHES_PER_RUN = 4;
+// Effective per-run recipient cap: 4 batches × 16 = 64 recipients.
+const MAX_RECIPIENTS_PER_RUN = MAX_TIER_CAP * MAX_BATCHES_PER_RUN;
 // Tiers known to the SDK but not yet wired on-chain — used to surface
 // the roadmap signal in user-facing validation messages without hard-
 // coding "64 / 128" copy that drifts as tiers ship.
@@ -42,7 +50,12 @@ import { useEdDSAKey } from "../../_lib/eddsaKey";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
-import { autoPickSourceNotes, type SourceNotesPick } from "../../_lib/sourceNotes";
+import {
+  autoPickSourceNotes,
+  describeBatchFitError,
+  pickPerBatchNotes,
+  type SourceNotesPick,
+} from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
 import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
@@ -226,57 +239,124 @@ export default function NewPayout() {
       // scatterDirectAuth needs. The env-not-configured path stays as
       // a record-only demo so the dashboard still has something to
       // render in unwired environments.
+      // Persist what we have so far. Returns the saved record's id
+      // so the caller can navigate. `allowFailure` swallows the
+      // save error on the partial-recovery path so we re-throw the
+      // batch error rather than masking it with a save failure.
+      const persist = async (allowFailure: boolean): Promise<string | null> => {
+        if (!folder.ready) return null;
+        const record = buildRunRecord({
+          templateId,
+          label,
+          token,
+          tokenAddress,
+          operatorAddress: account,
+          chainId,
+          rows,
+          total,
+          claimFrom,
+          walletBook: walletBook.entries,
+          txHash,
+          claimPackages,
+        });
+        try {
+          await saveRun(record);
+          return record.id;
+        } catch (saveErr) {
+          if (!allowFailure) throw saveErr;
+          console.warn("[Pay] partial run record save failed", saveErr);
+          return null;
+        }
+      };
+
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        if (batches.length > 1) throw new Error(MULTI_BATCH_UNSUPPORTED_MSG);
+        if (batches.length > MAX_BATCHES_PER_RUN) {
+          throw new Error(
+            `This run needs ${batches.length} settlement transactions; Pay caps at ${MAX_BATCHES_PER_RUN} per payout. Split into multiple runs.`,
+          );
+        }
+        // Block signing when no notes folder is picked. The settle
+        // would land on-chain but we'd have no place to persist the
+        // RunRecord / ClaimPackages, permanently losing recipient
+        // claim links — the `if (!folder.ready)` redirect-to-sample
+        // at the bottom of doSubmit assumes nothing settled.
+        if (!folder.ready) {
+          throw new Error(
+            "Pick a notes folder in the dashboard before signing — without it, your settled run can't persist the claim links recipients need.",
+          );
+        }
         if (!signer) throw new Error("Connect a wallet before signing.");
         if (!relayer) throw new Error("Pick a relayer in the Funds step.");
-        if (!sourcePick.covered || sourcePick.notes.length === 0) {
-          throw new Error("No source note covers this run total — top up in the Funds step.");
+        if (!multiBatchFit?.covered) {
+          const reason = multiBatchFit?.reason;
+          if (reason) {
+            const { title, body } = describeBatchFitError(reason, batches.length);
+            throw new Error(`${title} — ${body}`);
+          }
+          throw new Error("No source notes cover this run — top up in the Funds step.");
         }
-        if (sourcePick.notes.length > 1) throw new Error(MULTI_NOTE_UNSUPPORTED_MSG);
-        // Overlap the EdDSA derivation with the worker boot + asset
-        // warm-up. The zkey is ~19 MB; on a cold cache its fetch can
-        // dwarf the ECDSA-derive round-trip with the wallet. Both
-        // promises are independent so Promise.all is safe.
+        // Overlap EdDSA derivation with worker boot + asset warm-up.
+        // The zkey is ~19 MB; on cold cache its fetch dwarfs the
+        // ECDSA-derive wallet round-trip.
         const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
-        const sourceNote = sourcePick.notes[0]!;
-        const result = await realSettle({
-          batch: batches[0]!,
-          tokenAddress,
-          tokenSymbol: token,
-          tokenDecimals: decimals,
-          source: sourceNote,
-          relayer,
-          chain: {
-            signer,
-            settlementAddress: cfg.contracts.privateSettlement,
-            chainId: cfg.chainId,
-          },
-          maxFeeBps: safeMaxFeeBps,
-          eddsaPrivateKey: kp.privateKey,
-          tree,
-          labels: { sender: account ?? undefined, run: label },
-        });
-        txHash = result.txHash;
-        claimPackages = result.claimPackages;
-        // Persist the change UTXO BEFORE removing the spent note —
-        // an interrupted IDB write between the two would otherwise
-        // lose the residual. If add() fails we still hold the spent
-        // note locally (already nullified on-chain, so unspendable),
-        // which is recoverable; the reverse order is not. leafIndex
-        // starts -1; a follow-up phase wires reconciliation against
-        // the commitment-tree event stream so spends can resume
-        // without a manual refresh.
-        if (result.change) {
-          await vault.add({
-            symbol: token,
-            amount: ethers.formatUnits(result.change.amount, decimals),
-            note: result.change.note,
-            commitment: result.change.commitment,
-            txHash: result.txHash,
-          });
+        // Each batch consumes one distinct source note (no change-
+        // UTXO chaining yet — change from batch i lands with
+        // leafIndex=-1 and isn't re-spendable until the reconciler
+        // back-fills it post-event). Per-batch vault ordering: add
+        // change → remove spent note (PR #539 crash-safety
+        // invariant). On mid-loop failure the catch below still
+        // saves a partial RunRecord so already-settled recipients
+        // keep their claim packages — `/payouts/detail`'s Copy-link
+        // button is gated on `claimPackage` so unprocessed
+        // recipients just can't share links until a resume flow
+        // ships.
+        const aggClaimPackages: ClaimPackage[] = [];
+        let lastTxHash: string | undefined;
+        let partialBatchError: Error | null = null;
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i]!;
+          const sourcePick = multiBatchFit.byBatch[i]!;
+          try {
+            const result = await realSettle({
+              batch,
+              tokenAddress,
+              tokenSymbol: token,
+              tokenDecimals: decimals,
+              source: sourcePick,
+              relayer,
+              chain: {
+                signer,
+                settlementAddress: cfg.contracts.privateSettlement,
+                chainId: cfg.chainId,
+              },
+              maxFeeBps: safeMaxFeeBps,
+              eddsaPrivateKey: kp.privateKey,
+              tree,
+              labels: { sender: account ?? undefined, run: label },
+            });
+            lastTxHash = result.txHash;
+            aggClaimPackages.push(...result.claimPackages);
+            if (result.change) {
+              await vault.add({
+                symbol: token,
+                amount: ethers.formatUnits(result.change.amount, decimals),
+                note: result.change.note,
+                commitment: result.change.commitment,
+                txHash: result.txHash,
+              });
+            }
+            await vault.remove(sourcePick.note.id);
+          } catch (err) {
+            partialBatchError = err instanceof Error ? err : new Error(String(err));
+            break;
+          }
         }
-        await vault.remove(sourceNote.note.id);
+        txHash = lastTxHash;
+        claimPackages = aggClaimPackages;
+        if (partialBatchError) {
+          await persist(/* allowFailure */ true);
+          throw partialBatchError;
+        }
       }
 
       if (!folder.ready) {
@@ -287,22 +367,10 @@ export default function NewPayout() {
         return;
       }
 
-      const record = buildRunRecord({
-        templateId,
-        label,
-        token,
-        tokenAddress,
-        operatorAddress: account,
-        chainId,
-        rows,
-        total,
-        claimFrom,
-        walletBook: walletBook.entries,
-        txHash,
-        claimPackages,
-      });
-      await saveRun(record);
-      router.push(`/payouts/detail?id=${encodeURIComponent(record.id)}`);
+      const savedId = await persist(/* allowFailure */ false);
+      if (savedId) {
+        router.push(`/payouts/detail?id=${encodeURIComponent(savedId)}`);
+      }
     } catch (err) {
       console.error("[Pay] settle failed", err);
       setSubmitError(err instanceof Error ? err.message : String(err));
@@ -416,13 +484,24 @@ export default function NewPayout() {
     }
   }, [rows, tokenAddress, decimals, claimFrom]);
 
-  // The picked tier governs the on-chain settlement layout for this
-  // run. Returns null when the recipient count is empty or exceeds
-  // the active-tier ceiling — `validation` below surfaces the latter
-  // as a user-facing error so we don't need a separate guard here.
+  // Pre-flight the multi-batch picker so the Funds step can warn
+  // BEFORE Sign — without this, the user sees "covered" via
+  // sourcePick (which sums totals across all notes) but doSubmit
+  // throws at sign time because pickPerBatchNotes also requires
+  // each batch to fit in a single reconciled note.
+  const multiBatchFit = useMemo(() => {
+    if (!tokenAddress || batches.length === 0) return null;
+    return pickPerBatchNotes(notes, batches, tokenAddress);
+  }, [notes, batches, tokenAddress]);
+
+  // The tier governs each batch's anonymity set. Multi-batch runs
+  // settle one batch per `scatterDirectAuth` tx; every batch shares
+  // the same tier (the largest available — TIER_16 today). Returns
+  // null only on an empty list; the `MAX_RECIPIENTS_PER_RUN` ceiling
+  // is enforced by `validation` below.
   const tier = useMemo<CircuitTier | null>(() => {
-    if (rows.length === 0 || rows.length > MAX_ACTIVE_CAP) return null;
-    const picked = pickTier(rows.length);
+    if (rows.length === 0) return null;
+    const picked = pickTier(Math.min(rows.length, MAX_TIER_CAP));
     return ACTIVE_TIERS.includes(picked) ? picked : null;
   }, [rows.length]);
 
@@ -431,12 +510,12 @@ export default function NewPayout() {
     // Cap-exceeded comes first because it blocks the run regardless of
     // per-row fixes — and slice(0, 5) below would otherwise hide it
     // behind five ordinary validation errors.
-    if (rows.length > MAX_ACTIVE_CAP) {
+    if (rows.length > MAX_RECIPIENTS_PER_RUN) {
       const roadmap = PLANNED_TIER_CAPS.length > 0
-        ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — split this list across runs for now.`
+        ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
         : "";
       issues.push(
-        `Pay supports up to ${MAX_ACTIVE_CAP} recipients per payout.${roadmap}`,
+        `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${MAX_BATCHES_PER_RUN} batches × ${MAX_TIER_CAP}).${roadmap}`,
       );
     }
     const seen = new Set<string>();
@@ -674,6 +753,8 @@ export default function NewPayout() {
             availableRaw={availableRaw}
             shortfallRaw={shortfallRaw}
             sourcePick={sourcePick}
+            batchCount={batches.length}
+            multiBatchFit={multiBatchFit}
             account={account}
             vaultLoaded={vaultLoaded}
             relayers={relayers}
@@ -719,9 +800,21 @@ export default function NewPayout() {
                   Privacy plan
                 </div>
                 <div className="text-[var(--color-text-muted)]">
-                  Tier {tier.cap} settlement — one private transaction with{" "}
-                  <strong>{rows.length}</strong> real recipients hidden inside an
-                  anonymity set of <strong>{tier.cap}</strong>. One signature.
+                  {batches.length === 1 ? (
+                    <>
+                      Tier {tier.cap} settlement — one private transaction with{" "}
+                      <strong>{rows.length}</strong> real recipients hidden inside
+                      an anonymity set of <strong>{tier.cap}</strong>. One signature.
+                    </>
+                  ) : (
+                    <>
+                      <strong>{batches.length}</strong> private transactions —
+                      tier {tier.cap} per settlement, with{" "}
+                      <strong>{rows.length}</strong> recipients spread across the
+                      batches. One signature per batch (
+                      <strong>{batches.length}</strong> total).
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -1005,6 +1098,14 @@ interface FundsStepProps {
   availableRaw: bigint;
   shortfallRaw: bigint;
   sourcePick: SourceNotesPick;
+  /** Number of batches `splitPayout` produced. >1 means the run
+   *  needs multi-batch settlement; the per-batch picker fit
+   *  becomes load-bearing. */
+  batchCount: number;
+  /** Result of the per-batch picker. Null until rows + token are
+   *  ready. When `covered=false`, the corresponding `reason` is
+   *  surfaced to the user so they can act before signing. */
+  multiBatchFit: ReturnType<typeof pickPerBatchNotes> | null;
   account: string | null;
   vaultLoaded: boolean;
   relayers: RelayerInfo[];
@@ -1025,6 +1126,8 @@ function FundsStep({
   availableRaw,
   shortfallRaw,
   sourcePick,
+  batchCount,
+  multiBatchFit,
   account,
   vaultLoaded,
   relayers,
@@ -1170,6 +1273,23 @@ function FundsStep({
           />
         </div>
       )}
+
+      {/* Multi-batch picker pre-flight: warn at Funds step rather
+          than throwing at sign time. shortfallRaw is the sum-of-totals
+          check; this is the per-batch fit check (each batch needs one
+          confirmed note ≥ its totalAmount). */}
+      {batchCount > 1 && multiBatchFit && !multiBatchFit.covered && multiBatchFit.reason && shortfallRaw === 0n && (() => {
+        // Render the same copy `doSubmit` would throw with — single
+        // source via `describeBatchFitError` so the warning here and
+        // the thrown error can't drift.
+        const { title, body } = describeBatchFitError(multiBatchFit.reason, batchCount);
+        return (
+          <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+            <div className="mb-1 font-semibold">{title}</div>
+            <p>{body}</p>
+          </div>
+        );
+      })()}
     </div>
   );
 }

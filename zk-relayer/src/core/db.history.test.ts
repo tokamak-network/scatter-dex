@@ -286,6 +286,64 @@ describe("PrivateOrderDB settlement history", () => {
     expect(db.getSettlementByTxHash("0xnope")).toBeNull();
   });
 
+  it("buckets settlements into time slots with p50/p95/p99 + avgGas", () => {
+    const t0 = Date.now() - 3 * 60 * 60 * 1000;
+    for (let i = 0; i < 4; i++) {
+      db.recordSettlementEvent({
+        txHash: `0xb${i}`,
+        type: "settleAuth",
+        status: "confirmed",
+        gasCostEth: String(0.001 * (i + 1)),
+        durationMs: 100 * (i + 1),
+      });
+    }
+    db.recordSettlementEvent({
+      txHash: "0xfail1",
+      type: "settleAuth",
+      status: "failed",
+      errorReason: "boom",
+    });
+    const buckets = db.getSettlementBuckets({
+      since: t0,
+      bucketMs: 60 * 60 * 1000,
+    });
+    expect(buckets.length).toBeGreaterThan(0);
+    const last = buckets[buckets.length - 1];
+    expect(last.settled).toBe(4);
+    expect(last.failed).toBe(1);
+    expect(last.avgGasEth).toBeCloseTo((0.001 + 0.002 + 0.003 + 0.004) / 4, 6);
+    expect(last.p50Ms).toBe(200);
+    expect(last.p95Ms).toBe(400);
+    expect(last.p99Ms).toBe(400);
+  });
+
+  it("returns empty buckets for slots with no settlements (continuous series)", () => {
+    const t0 = Date.now() - 2 * 60 * 60 * 1000;
+    const buckets = db.getSettlementBuckets({
+      since: t0,
+      until: t0 + 2 * 60 * 60 * 1000,
+      bucketMs: 60 * 60 * 1000,
+    });
+    expect(buckets).toHaveLength(2);
+    expect(buckets[0]).toMatchObject({
+      settled: 0,
+      failed: 0,
+      avgGasEth: null,
+      p50Ms: null,
+      p95Ms: null,
+      p99Ms: null,
+    });
+  });
+
+  it("returns no buckets when the requested density would exceed the cap", () => {
+    const t0 = Date.now() - 1025 * 60 * 60 * 1000;
+    const buckets = db.getSettlementBuckets({
+      since: t0,
+      bucketMs: 60 * 60 * 1000,
+    });
+    expect(buckets).toEqual([]);
+  });
+
   it("aggregates cross-relayer trade offers per peer", () => {
     db.recordTradeOffer({
       direction: "sent",
@@ -338,7 +396,6 @@ describe("PrivateOrderDB settlement history", () => {
       takerNonce: "1",
       status: "settled",
     });
-    // since in the future — should exclude every row.
     expect(db.getPeerStats(Date.now() + 1_000_000)).toEqual([]);
   });
 
