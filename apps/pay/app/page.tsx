@@ -16,8 +16,8 @@ export default function Landing() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
           One-to-many private payouts for crypto-native companies and DAOs.
-          Send to 100 people in a single on-chain transaction — each recipient sees only their own amount,
-          and you get an audit-ready accounting export.
+          Send to up to 16 recipients in a single private settlement — each recipient sees only their own amount,
+          and you get an audit-ready accounting export. Larger circuits (64 / 128 recipients) are on the roadmap.
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
@@ -132,12 +132,12 @@ export default function Landing() {
           🎉 Launch event: every plan free until Dec 31, 2026 — no card on file.
         </p>
         <div className="grid grid-cols-3 gap-4">
-          <PriceCard plan="Free" price="$0" sub="3 payouts/mo, ≤ 20 recipients" features={["Stealth claim links", "Basic export"]} />
+          <PriceCard plan="Free" price="$0" sub="3 payouts/mo, ≤ 16 recipients" features={["Stealth claim links", "Basic export"]} />
           <PriceCard
             plan="Team"
             price="$19"
             per="/mo"
-            sub="Unlimited payouts, ≤ 100 recipients/run"
+            sub="Unlimited payouts, ≤ 16 recipients/run (64+ on roadmap)"
             features={["Everything in Free", "CSV + Safe import", "Email notifications"]}
             featured
           />

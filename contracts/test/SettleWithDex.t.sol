@@ -101,7 +101,7 @@ contract SettleWithDexTest is Test {
         settlement.setTokenWhitelist(address(usdc), true);
         pool.setAuthorizedSettlement(address(settlement));
 
-        settlement.setAuthorizeVerifier(address(authVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
         settlement.setDexRouterWhitelist(address(dexRouter), true);
 
         // Fund pool with WETH (user's escrowed sell token)
@@ -145,7 +145,8 @@ contract SettleWithDexTest is Test {
                 claimsRoot: CLAIMS_ROOT,
                 totalLocked: 19_000e18,
                 relayer: user,
-                orderHash: ORDER_HASH
+                orderHash: ORDER_HASH,
+                tier: 16
             }),
             dexRouter: address(dexRouter),
             dexCalldata: _encodeDexCalldata(),
@@ -166,7 +167,7 @@ contract SettleWithDexTest is Test {
         assertTrue(settlement.nonceNullifiers(NULL_NONCE));
 
         // Claims group registered
-        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked, uint128 claimed, address token,) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
         assertEq(claimed, 0);
@@ -363,7 +364,8 @@ contract SettleWithDexTest is Test {
                 sellAmount: 10 ether, buyAmount: 19_000e18, maxFee: 0,
                 expiry: uint64(block.timestamp + 300),
                 claimsRoot: CLAIMS_ROOT, totalLocked: 19_000e18,
-                relayer: user, orderHash: ORDER_HASH
+                relayer: user, orderHash: ORDER_HASH,
+                tier: 16
             }),
             dexRouter: address(dexRouter),
             dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),
@@ -379,7 +381,7 @@ contract SettleWithDexTest is Test {
         assertEq(weth.balanceOf(treasury), 0, "Treasury must not hold WETH directly");
 
         // Claims group should still be registered
-        (uint128 locked,, address token) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked,, address token,) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
     }

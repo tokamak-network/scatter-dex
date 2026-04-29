@@ -45,7 +45,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error OnlyWETH();
     error DuplicateClaimsRoot();
     error NotActiveRelayer();
-    error AuthorizeVerifierNotSet();
+    /// @notice Reverts when `settleAuth` receives a proof for a tier that
+    ///         has no verifier configured. Owner must call
+    ///         `setAuthorizeVerifier(tier, addr)` for the tier first.
+    error TierNotConfigured(uint8 tier);
     error CancelVerifierNotSet();
 
     // Errors that are actually reverted from SettleVerifyLib but re-declared
@@ -89,9 +92,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     event PausedUpdated(bool paused);
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
     event FeeVaultUpdated(address oldVault, address newVault);
-    event AuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
+    event AuthorizeVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
     event CancelVerifierUpdated(address oldVerifier, address newVerifier);
-    event BatchAuthorizeVerifierUpdated(address oldVerifier, address newVerifier);
+    event ClaimVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
+    event BatchAuthorizeVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
 
     /// @notice Emitted by `cancelPrivate`. Relayers listen for this event
     ///         to detect cancelled orders and remove them from their
@@ -163,29 +167,36 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
     CommitmentPool public immutable pool;
-    IClaimVerifier public immutable claimVerifier;
+    /// @notice Verifier registry for `circuits/claim.circom`, keyed by
+    ///         the originating settlement's tier. Each tier has its
+    ///         own `claimsTreeDepth` (4 / 6 / 7) so a single claim
+    ///         verifier cannot serve all tiers. Constructor seeds
+    ///         tier 16; new tiers register via `setClaimVerifier`.
+    mapping(uint8 => IClaimVerifier) public claimVerifierByTier;
     address public immutable weth;
 
     /// @notice Optional relayer registry — if set, only active relayers can settle.
     RelayerRegistry public relayerRegistry;
     /// @notice Optional fee vault — if set, fees go to vault instead of msg.sender.
     FeeVault public feeVault;
-    /// @notice Verifier for `circuits/authorize.circom` (Half-proof).
-    ///         Must be set via `setAuthorizeVerifier` before `settleAuth` is
-    ///         callable. Mutable rather than immutable so existing deployments
-    ///         can adopt the Half-proof flow without redeploying the
-    ///         settlement contract. Setting back to `address(0)` disables
-    ///         `settleAuth` (it reverts with `AuthorizeVerifierNotSet`).
-    IAuthorizeVerifier public authorizeVerifier;
+    /// @notice Verifier registry for `circuits/authorize.circom`, keyed by
+    ///         circuit tier (= max claims per side). Tier 16 is the only
+    ///         circuit live today; the registry shape lets future tiers
+    ///         (64 / 128) attach without redeploying or rewiring this
+    ///         settlement contract — `setAuthorizeVerifier(tier, addr)` is
+    ///         the only owner action needed. Setting back to `address(0)`
+    ///         disables `settleAuth` for that tier (reverts with
+    ///         `TierNotConfigured`).
+    mapping(uint8 => IAuthorizeVerifier) public authorizeVerifierByTier;
     /// @notice Verifier for `circuits/cancel.circom` (escrow rotation cancel).
     ICancelVerifier public cancelVerifier;
-    /// @notice Optional batched verifier for `settleAuth`. When set, `settleAuth`
-    ///         uses a single 5-pairing batch check instead of 2× separate verifications,
-    ///         saving ~70-100K gas per settlement (3 fewer pairings minus extra EC ops).
-    ///         Pass `address(0)` to use separate verifications.
-    ///         NOTE: `authorizeVerifier` must still be set — this is an optimization overlay,
-    ///         not a replacement. The fallback path uses `authorizeVerifier` directly.
-    IBatchAuthorizeVerifier public batchAuthorizeVerifier;
+    /// @notice Optional batched verifier registry, keyed by tier. When the
+    ///         maker and taker proofs share a tier and that tier has a
+    ///         batched verifier set, `settleAuth` uses a single 5-pairing
+    ///         batch check instead of 2× separate verifications (~70-100K
+    ///         gas savings). Mixed-tier settlements always fall back to
+    ///         per-side verification.
+    mapping(uint8 => IBatchAuthorizeVerifier) public batchAuthorizeVerifierByTier;
     /// @notice Whitelisted DEX routers for `settleWithDex`.
     ///         Supports any DEX (Uniswap, 1inch, Curve, PancakeSwap, etc.).
     ///         Each router must be explicitly whitelisted by the owner.
@@ -221,7 +232,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
         pool = CommitmentPool(_pool);
-        claimVerifier = IClaimVerifier(_claimVerifier);
+        // Seed the claim-verifier registry with tier 16 — the only live
+        // circuit today. New tiers attach post-deploy via setClaimVerifier.
+        claimVerifierByTier[16] = IClaimVerifier(_claimVerifier);
         weth = _weth;
     }
 
@@ -251,12 +264,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         feeVault = FeeVault(_vault);
     }
 
-    /// @notice Set (or replace) the AuthorizeVerifier used by `settleAuth`.
-    ///         Pass `address(0)` to disable the Half-proof path entirely.
-    function setAuthorizeVerifier(address _verifier) external onlyOwner {
+    /// @notice Register (or replace) the AuthorizeVerifier for a tier.
+    ///         `tier` is the circuit's max-claims-per-side (16, 64, 128 …).
+    ///         Pass `address(0)` to disable `settleAuth` for that tier.
+    function setAuthorizeVerifier(uint8 tier, address _verifier) external onlyOwner {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
-        emit AuthorizeVerifierUpdated(address(authorizeVerifier), _verifier);
-        authorizeVerifier = IAuthorizeVerifier(_verifier);
+        emit AuthorizeVerifierUpdated(tier, address(authorizeVerifierByTier[tier]), _verifier);
+        authorizeVerifierByTier[tier] = IAuthorizeVerifier(_verifier);
     }
 
     /// @notice Set (or replace) the CancelVerifier used by `cancelPrivate`.
@@ -266,14 +280,26 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         cancelVerifier = ICancelVerifier(_verifier);
     }
 
-    /// @notice Set (or replace) the optional BatchAuthorizeVerifier.
-    ///         When set, `settleAuth` uses batched 5-pairing verification (~70-100K gas savings).
-    ///         Pass `address(0)` to fall back to separate 2× verifications.
-    ///         Requires `authorizeVerifier` to also be set (this is an optimization overlay).
-    function setBatchAuthorizeVerifier(address _verifier) external onlyOwner {
+    /// @notice Register (or replace) the ClaimVerifier for a tier.
+    ///         `tier` is the originating settlement's tier (= claims
+    ///         tree depth → 16/64/128). Pass `address(0)` to disable
+    ///         claims for that tier — recipients then revert with
+    ///         `TierNotConfigured(tier)` until a verifier registers.
+    function setClaimVerifier(uint8 tier, address _verifier) external onlyOwner {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
-        emit BatchAuthorizeVerifierUpdated(address(batchAuthorizeVerifier), _verifier);
-        batchAuthorizeVerifier = IBatchAuthorizeVerifier(_verifier);
+        emit ClaimVerifierUpdated(tier, address(claimVerifierByTier[tier]), _verifier);
+        claimVerifierByTier[tier] = IClaimVerifier(_verifier);
+    }
+
+    /// @notice Register (or replace) the optional BatchAuthorizeVerifier
+    ///         for a tier. Only used when both maker and taker proofs in a
+    ///         settlement share that tier; mixed-tier settlements always
+    ///         fall back to per-side verification. `address(0)` disables
+    ///         the optimisation for that tier.
+    function setBatchAuthorizeVerifier(uint8 tier, address _verifier) external onlyOwner {
+        if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
+        emit BatchAuthorizeVerifierUpdated(tier, address(batchAuthorizeVerifierByTier[tier]), _verifier);
+        batchAuthorizeVerifierByTier[tier] = IBatchAuthorizeVerifier(_verifier);
     }
 
     /// @notice Whitelist or revoke a DEX router for `settleWithDex`.
@@ -365,10 +391,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
         if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
-        // Cache once — authorizeVerifier is read here (null-check) and again
-        // in the fallback verifyProof call below.
-        IAuthorizeVerifier _verifier = authorizeVerifier;
-        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
+        // Resolve the verifier for each side's tier. Mixed tiers are allowed
+        // (e.g. maker tier-16 ↔ taker tier-64) — the registry is per-tier so
+        // each side gets the right Groth16 verifier independently. Today
+        // only tier 16 is wired, but the lookup is the same shape that will
+        // serve tier 64 / 128 once those circuits ship. Same-tier
+        // settlements (the only path until tier 64 ships) skip the second
+        // SLOAD by reusing the maker's verifier.
+        IAuthorizeVerifier _makerVerifier = authorizeVerifierByTier[p.maker.tier];
+        if (address(_makerVerifier) == address(0)) revert TierNotConfigured(p.maker.tier);
+        IAuthorizeVerifier _takerVerifier = p.maker.tier == p.taker.tier
+            ? _makerVerifier
+            : authorizeVerifierByTier[p.taker.tier];
+        if (address(_takerVerifier) == address(0)) revert TierNotConfigured(p.taker.tier);
 
         // Cross-side invariants: non-zero amounts, whitelist, token
         // compatibility (C1), price (C2), claims+fee cap (C4), fee
@@ -419,12 +454,16 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (!pool.isKnownRoot(p.taker.commitmentRoot)) revert UnknownRoot();
 
         // 10. Verify both Groth16 proofs.
-        //     When batchAuthorizeVerifier is set, uses a single 5-pairing batch
-        //     check (~70-100K gas savings). Otherwise falls back to 2× separate.
+        //     The batched 5-pairing optimisation only applies when both
+        //     sides share a tier (the batch verifier is itself tier-specific
+        //     because the IC base points differ per circuit). Mixed-tier
+        //     settlements always fall back to per-side verification.
         uint[15] memory makerSignals = SettleVerifyLib.packAuthSignals(p.maker);
         uint[15] memory takerSignals = SettleVerifyLib.packAuthSignals(p.taker);
 
-        IBatchAuthorizeVerifier _batchVerifier = batchAuthorizeVerifier;
+        IBatchAuthorizeVerifier _batchVerifier = p.maker.tier == p.taker.tier
+            ? batchAuthorizeVerifierByTier[p.maker.tier]
+            : IBatchAuthorizeVerifier(address(0));
         if (address(_batchVerifier) != address(0)) {
             if (!_batchVerifier.verifyBatchProof(
                 p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals,
@@ -433,10 +472,10 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
                 revert InvalidProof();
             }
         } else {
-            if (!_verifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
+            if (!_makerVerifier.verifyProof(p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals)) {
                 revert InvalidProof();
             }
-            if (!_verifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
+            if (!_takerVerifier.verifyProof(p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals)) {
                 revert InvalidProof();
             }
         }
@@ -481,8 +520,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         SettleVerifyLib.requireDistinctClaimsRoots(
             p.maker.claimsRoot, p.taker.claimsRoot, p.maker.totalLocked, p.taker.totalLocked
         );
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked);
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked, p.maker.tier);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked, p.taker.tier);
 
         emit PrivateSettledAuth(
             p.maker.nullifier,
@@ -614,12 +653,11 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         _requireNotSanctioned(msg.sender);
         // Cache storage refs used multiple times in this function so each is
         // loaded once instead of at every reference.
-        IAuthorizeVerifier _verifier = authorizeVerifier;
-        FeeVault _feeVault = feeVault;
-        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
-        if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
-
         SettleVerifyLib.AuthorizeProof calldata proof = p.proof;
+        IAuthorizeVerifier _verifier = authorizeVerifierByTier[proof.tier];
+        FeeVault _feeVault = feeVault;
+        if (address(_verifier) == address(0)) revert TierNotConfigured(proof.tier);
+        if (!whitelistedDexRouters[p.dexRouter]) revert DexRouterNotWhitelisted();
 
         SettleVerifyLib.validateDexProof(proof, msg.sender, p.deadline, whitelistedTokens);
 
@@ -696,7 +734,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
 
         // 13. Register claims group
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked, proof.tier);
 
         // 14. Surplus handling: positive slippage is transferred to FeeVault
         //     and credited to FeeVault.platformRevenue (independent of
@@ -712,6 +750,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             }
         }
 
+        _emitSettledWithDex(proof, amountOut);
+    }
+
+    /// @dev Helper extracted from {settleWithDex} to keep the parent
+    ///      function under solc's stack-depth limit (the `tier` field
+    ///      added to AuthorizeProof bumped the calldata-decode pressure
+    ///      enough to push the emit-site over the 16-slot ceiling
+    ///      without via_ir). The split is purely for compilation; the
+    ///      event semantics are unchanged.
+    function _emitSettledWithDex(
+        SettleVerifyLib.AuthorizeProof calldata proof,
+        uint256 amountOut
+    ) internal {
         emit SettledWithDex(
             proof.nullifier,
             proof.claimsRoot,
@@ -776,8 +827,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Mark nullifier
         nullifiers[p.nullifier] = true;
 
-        // Register claims group (prevent overwriting existing group)
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked);
+        // Register claims group (prevent overwriting existing group).
+        // scatterDirect uses a withdraw proof (no authorize tier on the
+        // params), so we record tier 16 — the only depth the live claim
+        // verifier handles. Future tier-aware scatter variants would
+        // thread the tier through ScatterDirectParams.
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked, 16);
 
         // Transfer fee
         if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
@@ -809,8 +864,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Order-of-checks preserved from before: cheap calldata compare gates
         // state reads, and relayer registry is checked before proof verify.
         if (paused) revert ContractPaused();
-        IAuthorizeVerifier _verifier = authorizeVerifier;
-        if (address(_verifier) == address(0)) revert AuthorizeVerifierNotSet();
+        IAuthorizeVerifier _verifier = authorizeVerifierByTier[ap.tier];
+        if (address(_verifier) == address(0)) revert TierNotConfigured(ap.tier);
         _requireNotSanctioned(msg.sender);
 
         // Relayer binding, same-token invariant, whitelist, non-zero
@@ -853,7 +908,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 15. Route fee from pool to relayer (or FeeVault)
         if (p.fee > 0) _routeFeeFromPool(ap.sellToken, p.fee);
 
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked, ap.tier);
 
         emit ScatterDirectAuthSettled(ap.nullifier, ap.nonceNullifier, ap.claimsRoot, ap.relayer, p.fee);
     }
@@ -950,7 +1005,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             releaseTime
         ];
 
-        if (!claimVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+        IClaimVerifier _verifier = claimVerifierByTier[group.tier];
+        if (address(_verifier) == address(0)) revert TierNotConfigured(group.tier);
+        if (!_verifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
             revert InvalidProof();
         }
 

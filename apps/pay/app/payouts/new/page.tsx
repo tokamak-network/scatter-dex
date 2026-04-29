@@ -5,7 +5,24 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
-import { randomFieldElement, splitPayout, type PayoutBatch } from "@zkscatter/sdk/zk";
+import {
+  randomFieldElement,
+  splitPayout,
+  type PayoutBatch,
+  pickTier,
+  ACTIVE_TIERS,
+  TIERS,
+  type CircuitTier,
+} from "@zkscatter/sdk/zk";
+
+// Largest tier with a live verifier — this caps Pay's per-run recipient
+// count. Computed at module scope because ACTIVE_TIERS is a compile-time
+// constant; recomputing it per render would be wasted work.
+const MAX_ACTIVE_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
+// Tiers known to the SDK but not yet wired on-chain — used to surface
+// the roadmap signal in user-facing validation messages without hard-
+// coding "64 / 128" copy that drifts as tiers ship.
+const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   saveRun,
@@ -337,8 +354,29 @@ export default function NewPayout() {
     }
   }, [rows, tokenAddress, decimals, claimFrom]);
 
+  // The picked tier governs the on-chain settlement layout for this
+  // run. Returns null when the recipient count is empty or exceeds
+  // the active-tier ceiling — `validation` below surfaces the latter
+  // as a user-facing error so we don't need a separate guard here.
+  const tier = useMemo<CircuitTier | null>(() => {
+    if (rows.length === 0 || rows.length > MAX_ACTIVE_CAP) return null;
+    const picked = pickTier(rows.length);
+    return ACTIVE_TIERS.includes(picked) ? picked : null;
+  }, [rows.length]);
+
   const validation = useMemo(() => {
     const issues: string[] = [];
+    // Cap-exceeded comes first because it blocks the run regardless of
+    // per-row fixes — and slice(0, 5) below would otherwise hide it
+    // behind five ordinary validation errors.
+    if (rows.length > MAX_ACTIVE_CAP) {
+      const roadmap = PLANNED_TIER_CAPS.length > 0
+        ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — split this list across runs for now.`
+        : "";
+      issues.push(
+        `Pay supports up to ${MAX_ACTIVE_CAP} recipients per payout.${roadmap}`,
+      );
+    }
     const seen = new Set<string>();
     for (const r of rows) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(r.address)) {
@@ -613,24 +651,16 @@ export default function NewPayout() {
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
               {template.exportNote}
             </div>
-            {batches.length > 1 && (
+            {tier && (
               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
                 <div className="mb-1 font-semibold text-[var(--color-text-muted)]">
-                  Signing plan
+                  Privacy plan
                 </div>
                 <div className="text-[var(--color-text-muted)]">
-                  {rows.length} recipients exceed the per-settlement cap of 16 — Pay will split into{" "}
-                  <strong>{batches.length} batches</strong>, requiring{" "}
-                  <strong>{batches.length} signatures</strong>.
+                  Tier {tier.cap} settlement — one private transaction with{" "}
+                  <strong>{rows.length}</strong> real recipients hidden inside an
+                  anonymity set of <strong>{tier.cap}</strong>. One signature.
                 </div>
-                <ul className="mt-2 space-y-0.5 font-mono">
-                  {batches.map((b, i) => (
-                    <li key={i}>
-                      Batch {i + 1}/{batches.length}: {b.claims.length} recipients ·{" "}
-                      {ethers.formatUnits(b.totalAmount, decimals)} {token}
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
             <button

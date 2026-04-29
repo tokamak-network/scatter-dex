@@ -33,6 +33,13 @@ library SettleVerifyLib {
         uint128 totalLocked;
         uint128 totalClaimed;
         address token;
+        // Circuit tier the originating settlement was proven against —
+        // claimWithProof needs it to dispatch to the matching tier-N
+        // claim verifier (each tier has its own claimsTreeDepth, so a
+        // single claim circuit cannot serve all tiers). Stored on the
+        // group rather than re-derived from the proof so recipients
+        // never have to know the tier their settlement used.
+        uint8 tier;
     }
     struct AuthorizeProof {
         uint[2] proofA;
@@ -53,6 +60,14 @@ library SettleVerifyLib {
         uint128 totalLocked;
         address relayer;
         bytes32 orderHash;
+        // Tier selects which authorize.circom variant produced this proof —
+        // tier 16 is the only circuit live today, but keeping the field on
+        // the struct lets the verifier registry on PrivateSettlement
+        // dispatch to the right Groth16 verifier when 64 / 128 ship.
+        // The Groth16 public signals (packAuthSignals) are unchanged across
+        // tiers — claimsRoot already hashes the variable-length claims set
+        // inside the circuit — so this byte never reaches the verifier.
+        uint8 tier;
     }
 
     // ─── Pack helpers (pure) ────────────────────────────────────
@@ -205,13 +220,15 @@ library SettleVerifyLib {
         mapping(bytes32 => ClaimsGroup) storage claimsGroups,
         bytes32 root,
         address token,
-        uint128 totalLocked
+        uint128 totalLocked,
+        uint8 tier
     ) internal {
         if (claimsGroups[root].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[root] = ClaimsGroup({
             totalLocked: totalLocked,
             totalClaimed: 0,
-            token: token
+            token: token,
+            tier: tier
         });
     }
 }
