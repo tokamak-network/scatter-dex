@@ -15,7 +15,7 @@
  *   4. Generate authorize.circom proof in Node.js
  *   5. Call settleWithDex on-chain (user submits directly, no relayer)
  *   6. Verify: nullifiers spent, claims group registered
- *   7. Verify: platform fee sent to treasury (DexPlatformFeeCollected event)
+ *   7. Verify: platform fee routed to FeeVault (DexPlatformFeeCollected event)
  *   8. Advance time + claim via claim.circom proof
  *   9. Verify: recipient received buyToken (USDC via WETH→USDC mock swap)
  */
@@ -24,11 +24,8 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// Relative-path imports rather than `@zkscatter/sdk` because zk-relayer
-// has no `@zkscatter/sdk` package linkage in its node_modules; the
-// monorepo's TS path resolver picks up the SDK source directly.
-import { AUTHORIZE_PROOF_TUPLE } from "../../packages/sdk/src/core/contracts.js";
-import { TIER_16 } from "../../packages/sdk/src/zk/constants.js";
+import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+import { TIER_16 } from "@zkscatter/sdk/zk";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 import { eqAddr } from "../src/lib/address.js";
@@ -90,7 +87,10 @@ const SETTLEMENT_ABI = [
   "function weth() view returns (address)",
   "function owner() view returns (address)",
   "event SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address sellToken, address buyToken, uint128 sellAmount, uint256 amountOut, uint128 totalLocked, address indexed submitter)",
-  "event DexPlatformFeeCollected(bytes32 indexed nullifier, address indexed token, uint256 amount, address treasury)",
+  // 4th arg is the FeeVault address (where the fee was routed),
+  // not the FeeVault's `treasury()` account. Name matches the
+  // contract event signature in PrivateSettlement.sol.
+  "event DexPlatformFeeCollected(bytes32 indexed nullifier, address indexed token, uint256 amount, address vault)",
 ];
 
 const CLAIM_ABI = [
@@ -470,8 +470,8 @@ async function main() {
       `Fee event amount: ${ethers.formatEther(feeEventArgs!.amount)} WETH`,
     );
     assert(
-      eqAddr(feeEventArgs!.treasury, feeVaultAddr),
-      `Fee routed to vault: ${feeEventArgs!.treasury}`,
+      eqAddr(feeEventArgs!.vault, feeVaultAddr),
+      `Fee routed to vault: ${feeEventArgs!.vault}`,
     );
 
     // Verify the FeeVault actually holds the fee. PrivateSettlement

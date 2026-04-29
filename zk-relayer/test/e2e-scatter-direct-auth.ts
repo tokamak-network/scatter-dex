@@ -30,8 +30,8 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { AUTHORIZE_PROOF_TUPLE } from "../../packages/sdk/src/core/contracts.js";
-import { TIER_16, padClaims } from "../../packages/sdk/src/zk/constants.js";
+import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+import { TIER_16, padClaims, COMMIT_TREE_DEPTH } from "@zkscatter/sdk/zk";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import {
   TAG_ESCROW_NULL,
@@ -167,6 +167,11 @@ async function main() {
   await (await settlementAsOwner.setRelayerRegistry(ethers.ZeroAddress)).wait();
   console.log(`  ✓ RelayerRegistry cleared (single-user test)`);
 
+  // Stop impersonating before user-facing steps so any later misuse
+  // of the owner role surfaces as a permission revert instead of
+  // silently succeeding under the lingering impersonation.
+  await provider.send("anvil_stopImpersonatingAccount", [ownerAddr]);
+
   // ─── Step 2: Mint USDC + deposit ──────────────────────────
   console.log("\n[2/8] Mint USDC + deposit into CommitmentPool...");
 
@@ -257,24 +262,38 @@ async function main() {
     },
   ];
 
-  // Build commitment tree from on-chain events. Bound the scan to
-  // the deposit's own block — keeps the test correct on a re-used
-  // anvil that may already have unrelated commitments at the same
-  // leaf indices, and avoids a full-history scan once the pool grows.
+  // Build commitment tree from on-chain events. Scan from genesis
+  // up to (and including) the deposit's own block — anvil's chain
+  // is short-lived so genesis is fine, and the upper bound keeps the
+  // tree state pinned to what the proof was built against (later
+  // commitments would change the root).
+  //
+  // Pre-allocate by `leafIndex + 1` so out-of-order log delivery
+  // can't grow the array past the deposit's index, and sort by
+  // (block, transactionIndex, logIndex) so multi-deposit blocks
+  // produce a stable order.
   const depositBlock = depositReceipt.blockNumber;
   const events = await pool.queryFilter(
     pool.filters.CommitmentInserted(),
-    depositBlock,
+    0,
     depositBlock,
   );
-  const leaves: bigint[] = [];
+  events.sort(
+    (a, b) =>
+      a.blockNumber - b.blockNumber ||
+      a.transactionIndex - b.transactionIndex ||
+      a.index - b.index,
+  );
+  const leaves: bigint[] = new Array(leafIndex + 1).fill(0n);
   for (const ev of events) {
     const e = ev as ethers.EventLog;
     const idx = Number(e.args.leafIndex);
-    while (leaves.length <= idx) leaves.push(0n);
-    leaves[idx] = BigInt(e.args.commitment);
+    if (idx < leaves.length) leaves[idx] = BigInt(e.args.commitment);
   }
-  const commitTree = buildTree(leaves, 20);
+  // Reference the SDK constant so this test breaks loudly if the
+  // commitment-tree depth ever changes (it's consensus-critical and
+  // must match circuits/IncrementalMerkleTree.sol).
+  const commitTree = buildTree(leaves, COMMIT_TREE_DEPTH);
   const commitProof = getMerkleProof(commitTree.layers, leafIndex);
 
   // Claims tree — pad up to the tier capacity with the standard
