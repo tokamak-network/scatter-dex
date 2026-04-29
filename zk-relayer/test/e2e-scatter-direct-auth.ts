@@ -345,9 +345,19 @@ async function main() {
   );
   const leaves: bigint[] = new Array(leafIndex + 1).fill(0n);
   for (const ev of events) {
-    const e = ev as ethers.EventLog;
-    const idx = Number(e.args.leafIndex);
-    if (idx < leaves.length) leaves[idx] = BigInt(e.args.commitment);
+    // `instanceof` narrows `(EventLog | Log)` to `EventLog` and skips
+    // any future variant where ABI parsing failed (the test ABI is
+    // a subset of the contract's full event surface).
+    if (!(ev instanceof ethers.EventLog)) continue;
+    // `leafIndex` is `uint32` (always ≤ 2^32-1), so promoting through
+    // bigint and back to number is lossless. The bigint compare keeps
+    // us off the `Number` precision-loss path the repo rule warns
+    // against; the array index needs a number so we coerce only after
+    // bound-checking.
+    const idxBn = BigInt(ev.args.leafIndex);
+    if (idxBn < BigInt(leaves.length)) {
+      leaves[Number(idxBn)] = BigInt(ev.args.commitment);
+    }
   }
   // Reference the SDK constant so this test breaks loudly if the
   // commitment-tree depth ever changes (it's consensus-critical and
