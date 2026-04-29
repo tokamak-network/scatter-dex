@@ -216,6 +216,7 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
       pathIndices: proof.pathIndices,
       ...(args.labels?.sender ? { senderLabel: args.labels.sender } : {}),
       ...(args.labels?.run ? { runLabel: args.labels.run } : {}),
+      ...(relayer.url ? { relayerUrl: relayer.url } : {}),
     };
   });
 
