@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useEffect, useState, type ReactNode } from "react";
+import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { loadRegistrationStatus, NATIVE_BOND_TOKEN } from "@zkscatter/sdk/relayer";
 import { useOperator } from "../lib/useOperator";
 import { DEMO_NETWORK } from "../lib/network";
@@ -29,7 +29,7 @@ function WalletCheck() {
       title="Operator wallet connected"
       detail={
         account ? (
-          <span className="font-mono">{shortAddress(account)}</span>
+          <span className="font-mono">{shortAddr(account)}</span>
         ) : (
           "Connect a wallet from the header to enable the rest of the checks."
         )
@@ -39,40 +39,35 @@ function WalletCheck() {
 }
 
 function ChainCheck() {
-  const { readProvider } = useWallet();
-  const [chainId, setChainId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { account, chainId } = useWallet();
+  const expected = DEMO_NETWORK.chainId;
 
-  useEffect(() => {
-    let cancelled = false;
-    readProvider
-      .getNetwork()
-      .then((n) => {
-        if (!cancelled) setChainId(Number(n.chainId));
-      })
-      .catch((e) => {
-        if (!cancelled) setError(String(e?.message ?? e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [readProvider]);
-
-  if (error) {
-    return <StatusRow status="fail" title="Chain match" detail={error} />;
+  if (!account) {
+    return (
+      <StatusRow
+        status="skip"
+        title="Wallet on the right chain"
+        detail={`Connect a wallet to check it is on ${DEMO_NETWORK.name} (chainId ${expected}).`}
+      />
+    );
   }
   if (chainId === null) {
-    return <StatusRow status="pending" title="Chain match" detail="Reading network id…" />;
+    return (
+      <StatusRow
+        status="pending"
+        title="Wallet on the right chain"
+        detail="Reading wallet chain…"
+      />
+    );
   }
-  const expected = DEMO_NETWORK.chainId;
   return (
     <StatusRow
       status={chainId === expected ? "ok" : "fail"}
-      title="Chain match"
+      title="Wallet on the right chain"
       detail={
         chainId === expected
           ? `${DEMO_NETWORK.name} (chainId ${expected}).`
-          : `Provider reports chainId ${chainId}; this app expects ${expected} (${DEMO_NETWORK.name}).`
+          : `Wallet reports chainId ${chainId}; this app expects ${expected} (${DEMO_NETWORK.name}). Switch network in your wallet.`
       }
     />
   );
@@ -245,7 +240,10 @@ function BondCheck() {
   }
 
   const { nativeBalance, minBond, isErc20, allowance } = state;
-  const minLabel = isErc20 ? `${formatUnits18(minBond)} (bond token)` : `${formatUnits18(minBond)} ETH`;
+  const nativeUnit = "native token";
+  const minLabel = isErc20
+    ? `${formatUnits18(minBond)} (bond token)`
+    : `${formatUnits18(minBond)} ${nativeUnit}`;
 
   if (isErc20) {
     const allowanceOk = allowance >= minBond;
@@ -268,8 +266,8 @@ function BondCheck() {
       title="Bond balance"
       detail={
         enough
-          ? `${formatUnits18(nativeBalance)} ETH available, registry requires ≥ ${minLabel}.`
-          : `Have ${formatUnits18(nativeBalance)} ETH, registry requires ≥ ${minLabel}. Top up before Step 4.`
+          ? `${formatUnits18(nativeBalance)} ${nativeUnit} available, registry requires ≥ ${minLabel}.`
+          : `Have ${formatUnits18(nativeBalance)} ${nativeUnit}, registry requires ≥ ${minLabel}. Top up before Step 4.`
       }
     />
   );
@@ -331,7 +329,7 @@ function HealthCheck() {
       ? "pending"
       : "skip";
 
-  let detail: React.ReactNode;
+  let detail: ReactNode;
   if (state.kind === "ok") {
     const checksLine = Object.entries(state.checks)
       .map(([k, v]) => `${k}: ${v}`)
@@ -368,6 +366,7 @@ function HealthCheck() {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://relayer.example.com"
+              aria-label="Relayer service base URL"
               className="min-w-0 flex-1 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-sm font-mono"
             />
             <button
@@ -391,7 +390,7 @@ function StatusRow({
 }: {
   status: Status;
   title: string;
-  detail: React.ReactNode;
+  detail: ReactNode;
 }) {
   return (
     <div className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -438,6 +437,3 @@ function StatusBadge({ status }: { status: Status }) {
   );
 }
 
-function shortAddress(addr: string): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
