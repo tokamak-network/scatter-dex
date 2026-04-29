@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   loadRun,
+  recordClaimedRecipients,
   recordSentNotification,
   recordSentNotificationsBatch,
   RunRecordCorruptError,
+  type ClaimedRecipientInput,
   type RunRecord,
   type SendNotificationInput,
 } from "@zkscatter/sdk/storage";
@@ -21,6 +23,11 @@ interface RunRecordState {
   error: string | null;
   markSent(input: SendNotificationInput): Promise<boolean>;
   markSentBatch(entries: SendNotificationInput[]): Promise<boolean>;
+  /** Stamp one or more rows as claimed. The reconciler calls this
+   *  with the rows it matched from `PrivateClaim` events. Returns
+   *  the number of rows that actually flipped (already-claimed
+   *  duplicates count as 0). */
+  markClaimed(entries: ClaimedRecipientInput[]): Promise<number>;
   refresh(): Promise<void>;
 }
 
@@ -100,5 +107,21 @@ export function useRunRecord(id: string | undefined): RunRecordState {
     [id],
   );
 
-  return { record, loaded, corrupt, error, markSent, markSentBatch, refresh };
+  const markClaimed = useCallback(
+    async (entries: ClaimedRecipientInput[]) => {
+      if (!id || entries.length === 0) return 0;
+      try {
+        const next = await recordClaimedRecipients({ runId: id, entries });
+        setRecord(next.record);
+        setError(null);
+        return next.updated;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to record claim");
+        return 0;
+      }
+    },
+    [id],
+  );
+
+  return { record, loaded, corrupt, error, markSent, markSentBatch, markClaimed, refresh };
 }
