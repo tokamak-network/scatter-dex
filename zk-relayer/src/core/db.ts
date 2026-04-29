@@ -80,6 +80,68 @@ export interface TradeOfferRow {
   created_at: number;
 }
 
+/** Persisted settlement event — written after a successful on-chain
+ *  settlement so dashboards can query history without the live
+ *  rolling-window metrics. */
+export interface SettlementHistoryRow {
+  id: number;
+  tx_hash: string;
+  type: "settleAuth" | "scatterDirectAuth";
+  status: "confirmed" | "failed";
+  block_number: number | null;
+  gas_cost_eth: string | null;
+  sell_token: string | null;
+  buy_token: string | null;
+  error_reason: string | null;
+  created_at: number;
+}
+
+/** Per-side fee accrued by this relayer at a settlement. One row per
+ *  side (maker/taker) for two-sided settles; one row total for
+ *  scatterDirectAuth. */
+export interface FeeAccrualRow {
+  id: number;
+  tx_hash: string;
+  side: "maker" | "taker" | "scatterDirect";
+  token: string;
+  amount_wei: string;
+  block_number: number | null;
+  created_at: number;
+}
+
+/** Caller-supplied payload for `recordSettlementEvent`. The DB fills
+ *  in the auto-incrementing id and the canonical `created_at`
+ *  timestamp. */
+export interface SettlementEventInput {
+  txHash: string;
+  type: SettlementHistoryRow["type"];
+  status: SettlementHistoryRow["status"];
+  blockNumber?: number | null;
+  gasCostEth?: string | null;
+  sellToken?: string | null;
+  buyToken?: string | null;
+  errorReason?: string | null;
+  fees?: Array<{
+    side: FeeAccrualRow["side"];
+    token: string;
+    amountWei: string;
+  }>;
+}
+
+export interface HistoryQueryOpts {
+  limit: number;
+  offset: number;
+  type?: SettlementHistoryRow["type"];
+  status?: SettlementHistoryRow["status"];
+}
+
+export interface FeeHistoryQueryOpts {
+  limit: number;
+  offset: number;
+  token?: string;
+  since?: number;
+}
+
 interface ClaimRow {
   pub_key_ax: string;
   nonce: string;
@@ -128,6 +190,20 @@ export class PrivateOrderDB {
   private insertPendingTx: ReturnType<Database.Database["prepare"]>;
   private deletePendingTx: ReturnType<Database.Database["prepare"]>;
   private selectPendingTxs: ReturnType<Database.Database["prepare"]>;
+  // Settlement / fee history
+  private insertSettlementEvent: ReturnType<Database.Database["prepare"]>;
+  private insertFeeAccrual: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementHistory: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementHistoryByType: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementHistoryByStatus: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementHistoryByTypeStatus: ReturnType<Database.Database["prepare"]>;
+  private countSettlementHistory: ReturnType<Database.Database["prepare"]>;
+  private countSettlementHistoryByType: ReturnType<Database.Database["prepare"]>;
+  private countSettlementHistoryByStatus: ReturnType<Database.Database["prepare"]>;
+  private countSettlementHistoryByTypeStatus: ReturnType<Database.Database["prepare"]>;
+  private selectFeeHistory: ReturnType<Database.Database["prepare"]>;
+  private selectFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
+  private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -329,6 +405,171 @@ export class PrivateOrderDB {
     );
     this.deletePendingTx = this.db.prepare("DELETE FROM pending_txs WHERE tx_hash = @txHash");
     this.selectPendingTxs = this.db.prepare("SELECT * FROM pending_txs ORDER BY created_at ASC");
+
+    // Settlement / fee history. UNIQUE on tx_hash means re-records (e.g.
+    // worker re-running after a transient DB failure) silently no-op
+    // instead of producing dupes.
+    this.insertSettlementEvent = this.db.prepare(`
+      INSERT OR IGNORE INTO settlement_history
+        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, error_reason, created_at)
+      VALUES
+        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @errorReason, @createdAt)
+    `);
+    this.insertFeeAccrual = this.db.prepare(`
+      INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at)
+      VALUES (@txHash, @side, @token, @amountWei, @blockNumber, @createdAt)
+    `);
+    // Four selects + four counts so the route can apply each filter
+    // combo without resorting to dynamic SQL string concat.
+    this.selectSettlementHistory = this.db.prepare(
+      `SELECT * FROM settlement_history ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    this.selectSettlementHistoryByType = this.db.prepare(
+      `SELECT * FROM settlement_history WHERE type = @type ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    this.selectSettlementHistoryByStatus = this.db.prepare(
+      `SELECT * FROM settlement_history WHERE status = @status ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    this.selectSettlementHistoryByTypeStatus = this.db.prepare(
+      `SELECT * FROM settlement_history WHERE type = @type AND status = @status ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    this.countSettlementHistory = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history");
+    this.countSettlementHistoryByType = this.db.prepare(
+      "SELECT COUNT(*) as count FROM settlement_history WHERE type = @type",
+    );
+    this.countSettlementHistoryByStatus = this.db.prepare(
+      "SELECT COUNT(*) as count FROM settlement_history WHERE status = @status",
+    );
+    this.countSettlementHistoryByTypeStatus = this.db.prepare(
+      "SELECT COUNT(*) as count FROM settlement_history WHERE type = @type AND status = @status",
+    );
+    this.selectFeeHistory = this.db.prepare(
+      `SELECT * FROM fee_history WHERE created_at >= @since ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    this.selectFeeHistoryByToken = this.db.prepare(
+      `SELECT * FROM fee_history WHERE token = @token AND created_at >= @since ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+    );
+    // Aggregate: per-token total amount + count, optionally bounded by `since`.
+    // Uses TEXT amount_wei but SQLite SUM coerces; we re-stringify in code
+    // to preserve bigint semantics for the JSON response.
+    this.sumFeeHistoryByToken = this.db.prepare(`
+      SELECT token, COUNT(*) as count, GROUP_CONCAT(amount_wei) as amounts
+        FROM fee_history
+       WHERE created_at >= @since
+       GROUP BY token
+    `);
+  }
+
+  /** Record a settlement (success or failure) plus any per-side fees
+   *  in a single transaction. Idempotent on tx_hash — safe to call
+   *  twice if the worker recovers a tx after a process restart. */
+  recordSettlementEvent(input: SettlementEventInput): void {
+    const createdAt = Date.now();
+    const insertAll = this.db.transaction((evt: SettlementEventInput) => {
+      const result = this.insertSettlementEvent.run({
+        txHash: evt.txHash,
+        type: evt.type,
+        status: evt.status,
+        blockNumber: evt.blockNumber ?? null,
+        gasCostEth: evt.gasCostEth ?? null,
+        sellToken: evt.sellToken ?? null,
+        buyToken: evt.buyToken ?? null,
+        errorReason: evt.errorReason ? truncErr(evt.errorReason) : null,
+        createdAt,
+      });
+      // Skip fee inserts on duplicate settlement_history insert so a
+      // retry doesn't double-count fees against the same tx.
+      if (result.changes === 0 || !evt.fees?.length) return;
+      for (const fee of evt.fees) {
+        this.insertFeeAccrual.run({
+          txHash: evt.txHash,
+          side: fee.side,
+          token: fee.token,
+          amountWei: fee.amountWei,
+          blockNumber: evt.blockNumber ?? null,
+          createdAt,
+        });
+      }
+    });
+    insertAll(input);
+  }
+
+  /** Page through settlement history (newest first). Filter by type
+   *  and/or status. Returns rows + total count for pagination UIs. */
+  getSettlementHistory(opts: HistoryQueryOpts): {
+    rows: SettlementHistoryRow[];
+    total: number;
+  } {
+    const params = { limit: opts.limit, offset: opts.offset };
+    let rows: SettlementHistoryRow[];
+    let total: number;
+    if (opts.type && opts.status) {
+      rows = this.selectSettlementHistoryByTypeStatus.all({
+        ...params,
+        type: opts.type,
+        status: opts.status,
+      }) as SettlementHistoryRow[];
+      total = (this.countSettlementHistoryByTypeStatus.get({
+        type: opts.type,
+        status: opts.status,
+      }) as { count: number }).count;
+    } else if (opts.type) {
+      rows = this.selectSettlementHistoryByType.all({
+        ...params,
+        type: opts.type,
+      }) as SettlementHistoryRow[];
+      total = (this.countSettlementHistoryByType.get({
+        type: opts.type,
+      }) as { count: number }).count;
+    } else if (opts.status) {
+      rows = this.selectSettlementHistoryByStatus.all({
+        ...params,
+        status: opts.status,
+      }) as SettlementHistoryRow[];
+      total = (this.countSettlementHistoryByStatus.get({
+        status: opts.status,
+      }) as { count: number }).count;
+    } else {
+      rows = this.selectSettlementHistory.all(params) as SettlementHistoryRow[];
+      total = (this.countSettlementHistory.get({}) as { count: number }).count;
+    }
+    return { rows, total };
+  }
+
+  getFeeHistory(opts: FeeHistoryQueryOpts): FeeAccrualRow[] {
+    const since = opts.since ?? 0;
+    const params = { limit: opts.limit, offset: opts.offset, since };
+    if (opts.token) {
+      return this.selectFeeHistoryByToken.all({
+        ...params,
+        token: opts.token,
+      }) as FeeAccrualRow[];
+    }
+    return this.selectFeeHistory.all(params) as FeeAccrualRow[];
+  }
+
+  /** Per-token aggregate: sum of amount_wei (as bigint string) and
+   *  count of fee rows. Bounded by `since` (default 0 = all time). */
+  getFeeTotals(since = 0): Array<{ token: string; count: number; totalWei: string }> {
+    const rows = this.sumFeeHistoryByToken.all({ since }) as Array<{
+      token: string;
+      count: number;
+      amounts: string | null;
+    }>;
+    return rows.map((r) => {
+      let total = 0n;
+      if (r.amounts) {
+        for (const a of r.amounts.split(",")) {
+          try {
+            total += BigInt(a);
+          } catch {
+            // Skip malformed rows rather than crashing the aggregate;
+            // a 0-string will simply not contribute.
+          }
+        }
+      }
+      return { token: r.token, count: r.count, totalWei: total.toString() };
+    });
   }
 
   private migrate(): void {
@@ -479,6 +720,41 @@ export class PrivateOrderDB {
         label      TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+    `);
+
+    // Persistent settlement & fee history. Powers /api/relayer/history
+    // so the operator dashboard can show real numbers instead of the
+    // rolling-window metrics. One row per settlement attempt; fees are
+    // recorded per side in fee_history (FK by tx_hash, no cascade —
+    // a settlement row is never deleted, only marked failed).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settlement_history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        tx_hash       TEXT NOT NULL UNIQUE,
+        type          TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        block_number  INTEGER,
+        gas_cost_eth  TEXT,
+        sell_token    TEXT,
+        buy_token     TEXT,
+        error_reason  TEXT,
+        created_at    INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sh_created ON settlement_history(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sh_type_created ON settlement_history(type, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sh_status_created ON settlement_history(status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS fee_history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        tx_hash       TEXT NOT NULL,
+        side          TEXT NOT NULL,
+        token         TEXT NOT NULL,
+        amount_wei    TEXT NOT NULL,
+        block_number  INTEGER,
+        created_at    INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fh_token_created ON fee_history(token, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_fh_tx ON fee_history(tx_hash);
     `);
   }
 
