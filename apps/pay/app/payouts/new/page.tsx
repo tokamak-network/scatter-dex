@@ -46,7 +46,7 @@ import {
   type RunRecord,
 } from "@zkscatter/sdk/storage";
 import { useVault } from "../../_lib/vault";
-import { useEdDSAKey } from "../../_lib/eddsaKey";
+import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";

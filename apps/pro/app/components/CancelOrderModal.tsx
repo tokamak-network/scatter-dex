@@ -9,7 +9,7 @@ import {
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
-import { useEdDSAKey } from "../lib/eddsaKey";
+import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
 import { cancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";

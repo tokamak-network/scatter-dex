@@ -8,19 +8,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
-import {
-  deriveEdDSAKey,
-  wipeBytes,
-  type EdDSAKeyPair,
-} from "@zkscatter/sdk/zk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { deriveEdDSAKey, wipeBytes, type EdDSAKeyPair } from "../zk";
+import { useWallet } from "./wallet";
 
-interface EdDSAKeyState {
+export interface EdDSAKeyState {
   /** Derived keypair, or null until the first successful derivation. */
   keyPair: EdDSAKeyPair | null;
   /** Original ECDSA signature used for derivation — kept so flows that
-   *  also need to wrap material (Phase 6 vault backup) don't have to
+   *  also need to wrap material (e.g. vault backup) don't have to
    *  prompt the wallet a second time. */
   signature: string | null;
   /** True while a `derive()` call is in flight. */
@@ -43,7 +40,7 @@ export function useEdDSAKey(): EdDSAKeyState {
   return ctx;
 }
 
-export function EdDSAKeyProvider({ children }: { children: React.ReactNode }) {
+export function EdDSAKeyProvider({ children }: { children: ReactNode }) {
   const { signer, account } = useWallet();
   const [keyPair, setKeyPair] = useState<EdDSAKeyPair | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
