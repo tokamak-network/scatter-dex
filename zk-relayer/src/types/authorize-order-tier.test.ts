@@ -78,5 +78,19 @@ describe("AuthorizeOrderFile.tier", () => {
       const bad = makeOrder({ tier: 32 as unknown as 16 });
       expect(validateAuthorizeOrder(bad, RELAYER, now)).toMatch(/tier must be one of/);
     });
+
+    it("renders a non-numeric tier distinguishably in the error", () => {
+      // A string "16" looks identical to a number 16 in template-literal
+      // interpolation. JSON.stringify keeps the quotes so the operator
+      // can tell a stringified payload apart from a real number.
+      const stringTier = makeOrder({ tier: "16" as unknown as 16 });
+      const err = validateAuthorizeOrder(stringTier, RELAYER, now)!;
+      expect(err).toContain('"16"');
+      expect(err).toContain("of type string");
+
+      const objTier = makeOrder({ tier: {} as unknown as 16 });
+      const err2 = validateAuthorizeOrder(objTier, RELAYER, now)!;
+      expect(err2).toContain("of type object");
+    });
   });
 });
