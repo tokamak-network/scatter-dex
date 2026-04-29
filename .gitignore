@@ -26,6 +26,11 @@ circuits/node_modules/
 # ZK artifacts in frontend (copied by circuit build)
 frontend/public/zk/
 
+# Pay's authorize circuit assets are mirrored from apps/pro/public/zk
+# at predev / prebuild time (apps/pay/scripts/sync-zk-assets.mjs) to
+# avoid duplicating 24 MB of binaries in git.
+apps/pay/public/zk/
+
 # Generated Groth16 verifier contracts. Each phase-2 setup uses a fresh
 # random beacon, so the embedded vkey constants change per build. Committing
 # them would let the tracked copy disagree with the locally-built zkey →
