@@ -48,6 +48,13 @@ export type ClaimReader = (operator: string, token: string) => Promise<bigint>;
 // probe, no alert".
 const lastProbe = new Map<string, TokenProbe>();
 let intervalHandle: NodeJS.Timeout | null = null;
+// Guards against overlapping ticks: if N tokens × RPC latency >
+// intervalMs the next setInterval fire would run a second probe
+// concurrently, which can interleave lastProbe updates and emit
+// transition alerts in the wrong order. While true, the next tick
+// is skipped — health-monitor will still surface the underlying
+// RPC slowness.
+let probeInFlight = false;
 
 export function getClaimProbes(): Record<string, TokenProbe> {
   return Object.fromEntries(lastProbe);
@@ -56,6 +63,7 @@ export function getClaimProbes(): Record<string, TokenProbe> {
 export function _resetClaimMonitorForTests(): void {
   stopClaimMonitor();
   lastProbe.clear();
+  probeInFlight = false;
 }
 
 export function stopClaimMonitor(): void {
@@ -83,10 +91,17 @@ export function startClaimMonitor(
   if (intervalHandle) return () => stopClaimMonitor();
   if (config.feeClaimTokens.length === 0) return () => {};
   const reader = ethersClaimReader(submitter);
-  void runProbe(submitter.getAddress(), db, reader);
-  intervalHandle = setInterval(() => {
-    void runProbe(submitter.getAddress(), db, reader);
-  }, intervalMs);
+  const tick = async (): Promise<void> => {
+    if (probeInFlight) return; // skip overlap; see probeInFlight comment
+    probeInFlight = true;
+    try {
+      await runProbe(submitter.getAddress(), db, reader);
+    } finally {
+      probeInFlight = false;
+    }
+  };
+  void tick();
+  intervalHandle = setInterval(() => void tick(), intervalMs);
   return () => stopClaimMonitor();
 }
 

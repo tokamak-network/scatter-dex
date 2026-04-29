@@ -1212,7 +1212,10 @@ export class PrivateOrderDB {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const out: Record<string, string> = {};
         for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-          if (typeof v === "string") out[k.toLowerCase()] = v;
+          // Apply the same wire-format guard as the setter so a
+          // corrupt/legacy blob can't surface a value that later
+          // crashes BigInt() in the claim-monitor probe loop.
+          if (isWeiString(v)) out[k.toLowerCase()] = v;
         }
         return out;
       }

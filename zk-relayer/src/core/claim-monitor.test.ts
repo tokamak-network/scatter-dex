@@ -125,6 +125,23 @@ describe("claim-monitor transitions", () => {
     expect(getRecentAlerts()).toHaveLength(0);
   });
 
+  it("getClaimThresholds drops corrupt blob values (defensive parse)", () => {
+    // Bypass the setter's filter to seed a corrupt blob, simulating
+    // a legacy/manual write to relayer_meta. The reader must still
+    // return a clean record so the monitor's BigInt() never blows up.
+    db.setMeta(
+      "claim_thresholds_json",
+      JSON.stringify({
+        [TOKEN_A.toLowerCase()]: "1000",
+        [TOKEN_B.toLowerCase()]: "1e18", // not a wei string
+        bogus: "abc",
+      }),
+    );
+    const round = db.getClaimThresholds();
+    expect(round[TOKEN_A.toLowerCase()]).toBe("1000");
+    expect(Object.keys(round)).toHaveLength(1);
+  });
+
   it("getClaimThresholds round-trips through relayer_meta", () => {
     db.setClaimThresholds({
       [TOKEN_A]: "1000",
