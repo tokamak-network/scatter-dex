@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import {
-  randomFieldElement,
   splitPayout,
   type PayoutBatch,
   pickTier,
@@ -14,6 +13,8 @@ import {
   TIERS,
   type CircuitTier,
 } from "@zkscatter/sdk/zk";
+import { realSettle } from "../../_lib/realSettle";
+import { useCommitmentTree } from "../../_lib/commitmentTree";
 
 // Largest tier with a live verifier — this caps Pay's per-run recipient
 // count. Computed at module scope because ACTIVE_TIERS is a compile-time
@@ -174,9 +175,11 @@ export default function NewPayout() {
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const router = useRouter();
 
-  const { account, chainId } = useWallet();
+  const { account, chainId, signer } = useWallet();
+  const tree = useCommitmentTree();
   const { notes, loaded: vaultLoaded } = useVault();
   const {
     relayers,
@@ -206,20 +209,44 @@ export default function NewPayout() {
   async function doSubmit() {
     setShowConfirm(false);
     setSubmitting(true);
+    setSubmitError(null);
+    let txHash: string | undefined;
     try {
-      // The dry-run is the only validation we have until the real
-      // settle path lands; skip it when the env hasn't been wired
-      // with deployed contract addresses so the wizard still
-      // produces a record end-to-end for demos.
-      if (isNetworkConfigured(getNetworkConfig()) && tokenAddress) {
-        await dryRunSettle({
-          batches,
+      const cfg = getNetworkConfig();
+      // Real submit is only attempted when the network is wired AND
+      // the wizard has all the dependencies a single-batch
+      // scatterDirectAuth needs. The env-not-configured path stays as
+      // a record-only demo so the dashboard still has something to
+      // render in unwired environments.
+      if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
+        if (batches.length > 1) {
+          throw new Error(
+            "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1c.",
+          );
+        }
+        if (!signer) throw new Error("Connect a wallet before signing.");
+        if (!relayer) throw new Error("Pick a relayer in the Funds step.");
+        if (!sourcePick.covered || sourcePick.notes.length === 0) {
+          throw new Error("No source note covers this run total — top up in the Funds step.");
+        }
+        if (sourcePick.notes.length > 1) {
+          throw new Error(
+            "This run needs more than one source note — multi-note coverage arrives in Phase 1c.",
+          );
+        }
+        const kp = await eddsa.derive();
+        const result = await realSettle({
+          batch: batches[0]!,
           tokenAddress,
-          account,
-          notes,
-          relayerAddress: relayer?.address,
-          eddsa,
+          source: sourcePick.notes[0]!,
+          relayer,
+          signer,
+          settlementAddress: cfg.contracts.privateSettlement,
+          maxFeeBps: safeMaxFeeBps,
+          eddsaPrivateKey: kp.privateKey,
+          tree,
         });
+        txHash = result.txHash;
       }
 
       if (!folder.ready) {
@@ -241,9 +268,13 @@ export default function NewPayout() {
         total,
         claimFrom,
         walletBook: walletBook.entries,
+        txHash,
       });
       await saveRun(record);
       router.push(`/payouts/detail?id=${encodeURIComponent(record.id)}`);
+    } catch (err) {
+      console.error("[Pay] settle failed", err);
+      setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }
@@ -671,8 +702,14 @@ export default function NewPayout() {
               }}
               className="w-full rounded-lg bg-[var(--color-primary)] py-3 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
             >
-              {submitting ? "Building proof inputs…" : "Sign & submit"}
+              {submitting ? "Proving + submitting…" : "Sign & submit"}
             </button>
+            {submitError && (
+              <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+                <strong className="mb-0.5 block">Submit failed</strong>
+                {submitError}
+              </div>
+            )}
             <div className="text-center text-xs text-[var(--color-text-muted)]">
               You&apos;ll be asked to sign once. Recipients claim individually.
             </div>
@@ -926,66 +963,6 @@ async function dryRunDeposit({ tokenSymbol, amountRaw, account, eddsa }: DryRunD
     account,
     publicKey: publicKey ? [publicKey[0].toString(), publicKey[1].toString()] : null,
   });
-}
-
-interface DryRunSettleArgs {
-  batches: PayoutBatch[];
-  tokenAddress: string;
-  account: string | null;
-  notes: ReturnType<typeof useVault>["notes"];
-  relayerAddress: string | undefined;
-  eddsa: ReturnType<typeof useEdDSAKey>;
-}
-
-async function dryRunSettle({
-  batches,
-  tokenAddress,
-  account,
-  notes,
-  relayerAddress,
-  eddsa,
-}: DryRunSettleArgs) {
-  if (!account || batches.length === 0) return;
-  const cfg = getNetworkConfig();
-
-  let kp;
-  try {
-    kp = await eddsa.derive();
-  } catch (err) {
-    console.warn("[Pay dry-run] EdDSA key not derived — proceeding with partial input", err);
-  }
-
-  // Pay's notes hold per-token escrow notes; we pick the first matching
-  // note as a placeholder. Phase B will replace this with a proper
-  // largest-first picker that bin-packs across batches and tracks the
-  // residual change UTXO.
-  const note = notes.find((n) => tokenBigIntToAddress(n.note.token) === tokenAddress);
-  const expirySec = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
-
-  console.info("[Pay dry-run] settle plan", {
-    chainId: cfg.chainId,
-    settlement: cfg.contracts.privateSettlement,
-    token: tokenAddress,
-    relayer: relayerAddress ?? "(no relayer selected)",
-    batches: batches.length,
-    totalRecipients: batches.reduce((sum, b) => sum + b.claims.length, 0),
-  });
-  for (let i = 0; i < batches.length; i++) {
-    const b = batches[i];
-    console.info(`[Pay dry-run] batch ${i + 1}/${batches.length} input`, {
-      sellAmount: b.totalAmount.toString(),
-      buyAmount: b.totalAmount.toString(),
-      buyToken: tokenAddress,
-      noteId: note?.id ?? "(no matching note in vault)",
-      relayer: relayerAddress ?? null,
-      expiry: expirySec.toString(),
-      nonce: randomFieldElement().toString(),
-      eddsaPublicKey: kp
-        ? [kp.publicKey[0].toString(), kp.publicKey[1].toString()]
-        : null,
-      claimsCount: b.claims.length,
-    });
-  }
 }
 
 interface FundsStepProps {
@@ -1251,6 +1228,9 @@ function buildRunRecord(input: {
   total: number;
   claimFrom: string | undefined;
   walletBook: WalletEntry[];
+  /** Real settle tx hash when scatterDirectAuth was submitted; falls
+   *  back to a deterministic zero hash for env-not-configured demos. */
+  txHash?: string;
 }): RunRecord {
   const now = Math.floor(Date.now() / 1000);
   const claimFromUnix = input.claimFrom
@@ -1292,7 +1272,7 @@ function buildRunRecord(input: {
     createdAt: now,
     settledAt: now,
     chainId: input.chainId ?? 0,
-    txHash: "0x" + "0".repeat(64),
+    txHash: input.txHash ?? "0x" + "0".repeat(64),
     tokenSymbol: input.token,
     tokenAddress: input.tokenAddress ?? "",
     totalAmount: formatTotal(input.total),

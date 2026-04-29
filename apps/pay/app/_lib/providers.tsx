@@ -8,6 +8,7 @@ import { EdDSAKeyProvider } from "./eddsaKey";
 import { RelayersProvider } from "./relayers";
 import { FolderStorageProvider } from "./folderStorage";
 import { WalletBookProvider } from "./walletBook";
+import { CommitmentTreeProvider } from "./commitmentTree";
 
 export function PayProviders({ children }: { children: React.ReactNode }) {
   const network = useMemo(() => getNetworkConfig(), []);
@@ -17,7 +18,9 @@ export function PayProviders({ children }: { children: React.ReactNode }) {
         <EdDSAKeyProvider>
           <RelayersProvider>
             <VaultProvider>
-              <WalletBookProvider>{children}</WalletBookProvider>
+              <CommitmentTreeProvider>
+                <WalletBookProvider>{children}</WalletBookProvider>
+              </CommitmentTreeProvider>
             </VaultProvider>
           </RelayersProvider>
         </EdDSAKeyProvider>
