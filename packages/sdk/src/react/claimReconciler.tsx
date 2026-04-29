@@ -9,7 +9,7 @@ import { useWallet } from "./wallet";
 /** One row the reconciler watches. `rowKey` is the app's identity
  *  for the claim — Pay uses `recipientRow.rowIndex`, Pro could use
  *  the order id. Anything that round-trips through onClaimed. */
-export interface ClaimWatchKey<K = string | number> {
+export interface ClaimWatchKey<K extends string | number = string | number> {
   rowKey: K;
   /** Per-claim secret from the original ClaimEntry / OrderClaim. */
   secret: bigint;
@@ -19,7 +19,7 @@ export interface ClaimWatchKey<K = string | number> {
   claimsRoot: string;
 }
 
-export interface UseClaimReconcilerArgs<K = string | number> {
+export interface UseClaimReconcilerArgs<K extends string | number = string | number> {
   settlementAddress: string;
   /** Rows to watch. App pre-decodes its storage shape into this list.
    *  Empty list short-circuits the effect — no subscribe, no query. */
@@ -53,7 +53,7 @@ function topicHex(v: bigint | string): string {
  *  for live events AND queries history once on mount so a page
  *  revisit picks up claims that completed before the user opened
  *  the dashboard. */
-export function useClaimReconciler<K = string | number>({
+export function useClaimReconciler<K extends string | number = string | number>({
   settlementAddress,
   watchKeys,
   onClaimed,
@@ -65,16 +65,18 @@ export function useClaimReconciler<K = string | number>({
   useEffect(() => {
     onClaimedRef.current = onClaimed;
   }, [onClaimed]);
-  const settleTxHashRef = useRef(settleTxHash);
-  useEffect(() => {
-    settleTxHashRef.current = settleTxHash;
-  }, [settleTxHash]);
+  // Note: `settleTxHash` is a main-effect dep below, NOT mirrored in
+  // a ref. If the host app first renders with a placeholder hash
+  // (e.g. record loaded with `txHash: "0x000…"`) and later replaces
+  // it with the real one, we want the historical sweep to re-run
+  // against the correct anchor block — a ref-only read would silently
+  // keep the old fromBlock = head − 50k fallback forever.
 
   // Pre-compute (rowKey, nullifierHex, claimsRootHex) for every
-  // watched row. `keysVersion` is a content hash of `watchKeys`, so
-  // the Promise only rebuilds when the watched set actually changes
-  // — caller can pass a fresh `watchKeys` array each render without
-  // re-Poseidoning.
+  // watched row. `keysVersion` is a content hash of `watchKeys`;
+  // gating the rebuild on it (and NOT on `watchKeys` identity) lets
+  // a caller pass a fresh array each render without re-Poseidoning
+  // when the content's unchanged.
   const keysVersion = useMemo(
     () =>
       watchKeys
@@ -82,10 +84,14 @@ export function useClaimReconciler<K = string | number>({
         .join("|"),
     [watchKeys],
   );
+  const watchKeysRef = useRef(watchKeys);
+  useEffect(() => {
+    watchKeysRef.current = watchKeys;
+  }, [watchKeys]);
   const resolvedPromise = useMemo<Promise<ResolvedKey<K>[]>>(
     () =>
       Promise.all(
-        watchKeys.map(async (k): Promise<ResolvedKey<K>> => {
+        watchKeysRef.current.map(async (k): Promise<ResolvedKey<K>> => {
           const nullifier = await computeClaimNullifier(k.secret, BigInt(k.leafIndex));
           return {
             rowKey: k.rowKey,
@@ -94,9 +100,12 @@ export function useClaimReconciler<K = string | number>({
           };
         }),
       ),
-    // `watchKeys` is read freshly at render time (no ref); rebuild
-    // only when its content has changed.
-    [keysVersion, watchKeys],
+    // Only rebuild when the keysVersion content hash changes; reading
+    // watchKeys via ref keeps a fresh-array-every-render caller from
+    // re-Poseidoning. The Promise body runs in a microtask after the
+    // commit phase, so the ref has already mirrored the latest value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keysVersion],
   );
 
   useEffect(() => {
@@ -128,7 +137,7 @@ export function useClaimReconciler<K = string | number>({
 
       const claimsRoots = Array.from(new Set(keys.map((k) => k.claimsRootHex)));
       try {
-        const fromBlock = await resolveFromBlock(readProvider, settleTxHashRef.current);
+        const fromBlock = await resolveFromBlock(readProvider, settleTxHash);
         const history = await contract.queryFilter(
           contract.filters.PrivateClaim(claimsRoots),
           fromBlock,
@@ -174,7 +183,7 @@ export function useClaimReconciler<K = string | number>({
       cancelled = true;
       if (detachLive) detachLive();
     };
-  }, [settlementAddress, readProvider, resolvedPromise, label]);
+  }, [settlementAddress, readProvider, resolvedPromise, settleTxHash, label]);
 }
 
 /** Resolve `fromBlock` for the historical PrivateClaim queryFilter:
