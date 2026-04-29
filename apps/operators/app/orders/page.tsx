@@ -82,30 +82,44 @@ function OrdersTable({ auth }: { auth: NonNullable<Auth> }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams();
-      params.set("limit", String(PAGE_SIZE));
-      params.set("offset", String(page * PAGE_SIZE));
-      if (typeFilter !== "all") params.set("type", typeFilter);
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      const res = await adminGet<{ rows: SettlementRow[]; total: number }>(
-        auth,
-        `/api/admin/history?${params.toString()}`,
-      );
-      setData(res);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [auth, page, typeFilter, statusFilter]);
+  const fetchPage = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(page * PAGE_SIZE));
+        if (typeFilter !== "all") params.set("type", typeFilter);
+        if (statusFilter !== "all") params.set("status", statusFilter);
+        const res = await adminGet<{ rows: SettlementRow[]; total: number }>(
+          auth,
+          `/api/admin/history?${params.toString()}`,
+          signal,
+        );
+        if (!signal?.aborted) setData(res);
+      } catch (e) {
+        if (signal?.aborted || (e as Error).name === "AbortError") return;
+        setError((e as Error).message);
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [auth, page, typeFilter, statusFilter],
+  );
+
+  // Manual refresh — fires its own request without an abort signal
+  // because the user explicitly asked for fresh data; let it run to
+  // completion even if a deps-driven effect kicks off after.
+  const refresh = useCallback(() => {
+    void fetchPage();
+  }, [fetchPage]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const ctrl = new AbortController();
+    void fetchPage(ctrl.signal);
+    return () => ctrl.abort();
+  }, [fetchPage]);
 
   // Reset to page 0 when filters change so we don't read past the
   // end of the new filtered set on the next refresh.

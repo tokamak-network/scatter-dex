@@ -98,28 +98,35 @@ function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Lowercase the tx hash so a checksummed/uppercase URL still
-      // hits the lowercase storage form (DB normalises on insert).
-      const res = await adminGet<{ settlement: SettlementRow; fees: FeeRow[] }>(
-        auth,
-        `/api/admin/history/by-tx/${encodeURIComponent(txHash.toLowerCase())}`,
-      );
-      setData(res);
-    } catch (e) {
-      setError((e as Error).message);
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [auth, txHash]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      setError(null);
+      try {
+        // Lowercase the tx hash so a checksummed/uppercase URL still
+        // hits the lowercase storage form (DB normalises on insert).
+        const res = await adminGet<{ settlement: SettlementRow; fees: FeeRow[] }>(
+          auth,
+          `/api/admin/history/by-tx/${encodeURIComponent(txHash.toLowerCase())}`,
+          signal,
+        );
+        if (!signal?.aborted) setData(res);
+      } catch (e) {
+        if (signal?.aborted || (e as Error).name === "AbortError") return;
+        setError((e as Error).message);
+        setData(null);
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [auth, txHash],
+  );
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
 
   if (loading && !data) {
     return <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>;
