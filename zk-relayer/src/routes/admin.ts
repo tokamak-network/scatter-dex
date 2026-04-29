@@ -257,7 +257,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       }
       const found = db.getSettlementByTxHash(txHash);
       if (!found) {
-        res.status(404).json({ error: "tx_hash not found in settlement_history" });
+        res.status(404).json({ error: "Settlement not found for that tx hash" });
         return;
       }
       res.json(found);
