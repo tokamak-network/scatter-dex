@@ -410,7 +410,66 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     res.json({ records, config: cfg });
   });
 
+  // GET /api/admin/trade-offers — paginated cross-relayer audit
+  // trail with optional filters. Same data as the public
+  // /api/relayer/trade-offers but admin-gated so operator-private
+  // peer associations / failure reasons aren't scrapeable by
+  // unauthenticated callers.
+  // Query params:
+  //   ?direction=sent|received
+  //   ?status=settled|rejected|error
+  //   ?peer=0x…
+  //   ?since=<unix-ms>
+  //   ?limit=&offset=
+  router.get("/trade-offers", (req: Request, res: Response) => {
+    try {
+      const limit = clampHistoryLimit(req.query.limit, 200, 50);
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const direction = parseDirection(req.query.direction);
+      const status =
+        typeof req.query.status === "string" ? req.query.status : undefined;
+      const peer =
+        typeof req.query.peer === "string" ? req.query.peer : undefined;
+      const since = Number(req.query.since) || 0;
+      const rows = db.getTradeOffersFiltered({
+        limit,
+        offset,
+        direction,
+        status,
+        peer,
+        since,
+      });
+      const total = db.countTradeOffers({ direction, status, peer, since });
+      // `count` is the page size (kept for back-compat), `total` is
+      // the full filter-match count so paginated UIs can render an
+      // accurate "page X of N".
+      res.json({ rows, count: rows.length, total, limit, offset });
+    } catch (err) {
+      log.error("trade-offers failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to load trade offers" });
+    }
+  });
+
+  // GET /api/admin/peer-stats — per-peer aggregate of cross-relayer
+  // activity. `since` defaults to all-time; pass a unix-ms timestamp
+  // to scope to a window.
+  router.get("/peer-stats", (req: Request, res: Response) => {
+    try {
+      const since = Number(req.query.since) || 0;
+      const peers = db.getPeerStats(since);
+      res.json({ peers, since });
+    } catch (err) {
+      log.error("peer-stats failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to load peer stats" });
+    }
+  });
+
   return router;
+}
+
+function parseDirection(v: unknown): "sent" | "received" | undefined {
+  if (v === "sent" || v === "received") return v;
+  return undefined;
 }
 
 function parseLogLevel(v: unknown): LogLevel | undefined {

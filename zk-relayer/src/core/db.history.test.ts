@@ -318,10 +318,6 @@ describe("PrivateOrderDB settlement history", () => {
   });
 
   it("returns empty buckets for slots with no settlements (continuous series)", () => {
-    // Pass an explicit `until` so the bucket count doesn't drift
-    // by ±1 with the few-ms gap between this line and the call
-    // inside getSettlementBuckets — the previous version used the
-    // function's default Date.now() and was timing-flaky.
     const t0 = Date.now() - 2 * 60 * 60 * 1000;
     const buckets = db.getSettlementBuckets({
       since: t0,
@@ -346,6 +342,102 @@ describe("PrivateOrderDB settlement history", () => {
       bucketMs: 60 * 60 * 1000,
     });
     expect(buckets).toEqual([]);
+  });
+
+  it("aggregates cross-relayer trade offers per peer", () => {
+    db.recordTradeOffer({
+      direction: "sent",
+      peerRelayer: "0xpeera",
+      makerPubKey: "1",
+      makerNonce: "1",
+      takerPubKey: "2",
+      takerNonce: "1",
+      status: "settled",
+      txHash: "0xt1",
+    });
+    db.recordTradeOffer({
+      direction: "received",
+      peerRelayer: "0xpeera",
+      makerPubKey: "3",
+      makerNonce: "1",
+      takerPubKey: "4",
+      takerNonce: "1",
+      status: "rejected",
+      reason: "stale",
+    });
+    db.recordTradeOffer({
+      direction: "sent",
+      peerRelayer: "0xpeerb",
+      makerPubKey: "5",
+      makerNonce: "1",
+      takerPubKey: "6",
+      takerNonce: "1",
+      status: "error",
+      reason: "timeout",
+    });
+    const peers = db.getPeerStats();
+    expect(peers).toHaveLength(2);
+    const a = peers.find((p) => p.peer === "0xpeera")!;
+    const b = peers.find((p) => p.peer === "0xpeerb")!;
+    expect(a).toMatchObject({ sent: 1, received: 1, settled: 1, rejected: 1, errored: 0 });
+    expect(b).toMatchObject({ sent: 1, received: 0, settled: 0, rejected: 0, errored: 1 });
+    expect(a.lastAt).not.toBeNull();
+    // peerA has more activity (2 vs 1) so it should sort first.
+    expect(peers[0].peer).toBe("0xpeera");
+  });
+
+  it("scopes peer stats to a since window", () => {
+    db.recordTradeOffer({
+      direction: "sent",
+      peerRelayer: "0xpeera",
+      makerPubKey: "1",
+      makerNonce: "1",
+      takerPubKey: "2",
+      takerNonce: "1",
+      status: "settled",
+    });
+    expect(db.getPeerStats(Date.now() + 1_000_000)).toEqual([]);
+  });
+
+  it("filters trade offers by direction / status / peer / since", () => {
+    const t0 = Date.now();
+    db.recordTradeOffer({
+      direction: "sent",
+      peerRelayer: "0xpeera",
+      makerPubKey: "1",
+      makerNonce: "1",
+      takerPubKey: "2",
+      takerNonce: "1",
+      status: "settled",
+    });
+    db.recordTradeOffer({
+      direction: "received",
+      peerRelayer: "0xpeerb",
+      makerPubKey: "3",
+      makerNonce: "1",
+      takerPubKey: "4",
+      takerNonce: "1",
+      status: "rejected",
+    });
+
+    expect(db.getTradeOffersFiltered({ limit: 10, offset: 0 })).toHaveLength(2);
+    expect(
+      db.getTradeOffersFiltered({ limit: 10, offset: 0, direction: "sent" }),
+    ).toHaveLength(1);
+    expect(
+      db.getTradeOffersFiltered({ limit: 10, offset: 0, status: "rejected" }),
+    ).toHaveLength(1);
+    expect(
+      db.getTradeOffersFiltered({ limit: 10, offset: 0, peer: "0xPEERa" }),
+    ).toHaveLength(1); // case-insensitive thanks to lowerHex
+    // since strictly in the future excludes both rows.
+    expect(
+      db.getTradeOffersFiltered({
+        limit: 10,
+        offset: 0,
+        since: t0 + 10_000_000,
+      }),
+    ).toHaveLength(0);
   });
 
   it("filters fee history by token and since", () => {
