@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import type { CommitmentTreeState } from "./commitmentTree";
 
 /** Minimal note shape the reconciler needs: a stable id, the
  *  on-chain index it's waiting for, and the commitment to look up
@@ -16,21 +17,25 @@ export interface LeafIndexNote {
   commitment: bigint;
 }
 
-/** Subset of `CommitmentTreeState` the reconciler reads. Apps can
- *  pass either the SDK provider's value directly or any wrapper
- *  whose shape matches. */
-export interface LeafIndexTree {
-  ready: boolean;
-  mode: "demo" | "live";
-  /** Bumped each time the tree absorbs a new event — the only thing
-   *  the reconciler effect needs to retrigger on. */
-  leafCount: number;
-  findIndex(commitment: bigint): number;
-}
+/** Subset of `CommitmentTreeState` the reconciler reads. Picked
+ *  rather than redefined so a future field addition on the
+ *  provider doesn't drift this contract. */
+export type LeafIndexTree = Pick<
+  CommitmentTreeState,
+  "ready" | "mode" | "leafCount" | "findIndex"
+>;
 
 export interface UseLeafIndexReconcilerArgs {
   notes: readonly LeafIndexNote[];
+  /** Atomic id → leafIndex updater. **Must be referentially stable**
+   *  (wrap in `useCallback` with a stable dep set) — the hook lists
+   *  it in the effect deps, so a fresh identity every render would
+   *  retrigger the reconciliation pass even when nothing changed. */
   setLeafIndex(id: string, leafIndex: number): Promise<void>;
+  /** Live tree state. `findIndex` must also be referentially stable;
+   *  the SDK's `CommitmentTreeProvider` already returns a
+   *  `useCallback`'d value, so passing the provider's value through
+   *  unchanged is the easiest way to satisfy this. */
   tree: LeafIndexTree;
   /** Optional logger label used in the dropped-write warning so
    *  multi-app debug logs can tell who rejected. Defaults to
