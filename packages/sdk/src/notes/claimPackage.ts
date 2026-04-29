@@ -136,18 +136,18 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
   return true;
 }
 
-/** Reject anything that won't reach a real HTTP(S) endpoint. The
- *  recipient page would `fetch(relayerUrl + "/api/private-claim")`
- *  blindly otherwise — caps the surface for `javascript:`,
- *  `data:`, file:, gopher:, etc. and keeps a length sane so a
- *  pathological 2 MB string can't crowd out a QR code or URL.
- *  Strict-but-not-paranoid: full URL parsing happens at fetch. */
+/** Reject anything that won't reach a real HTTP(S) endpoint. Also
+ *  requires a non-empty hostname because `new URL("http:foo")`
+ *  parses with `protocol === "http:"` but empty `hostname` (legal
+ *  opaque-path URL) and would fail at fetch time with an opaque
+ *  error rather than this clear up-front rejection. */
 function isPlausibleHttpUrl(v: unknown): v is string {
   if (typeof v !== "string") return false;
   if (v.length === 0 || v.length > 2048) return false;
   try {
     const u = new URL(v);
-    return u.protocol === "http:" || u.protocol === "https:";
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return u.hostname.length > 0;
   } catch {
     return false;
   }

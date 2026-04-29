@@ -294,6 +294,21 @@ function ClaimInner() {
               <div className="font-mono">{shortAddr(phase.txHash)}</div>
             </div>
           ) : (() => {
+              // App-chain mismatch is terminal — neither path can
+              // work because the SDK / contract addresses are wired
+              // for a different deployment. Surface this BEFORE the
+              // wallet-connect prompt so the recipient doesn't go
+              // through MetaMask only to be told to switch apps.
+              if (parsed && wrongAppChain) {
+                return (
+                  <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-center text-xs text-[var(--color-warning)]">
+                    <strong className="mb-0.5 block">Wrong Pay deployment</strong>
+                    This Pay build targets chain {cfg.chainId}, but the link
+                    is for chain {parsed.pkg.chainId}. Open it on the right
+                    deployment to claim.
+                  </div>
+                );
+              }
               // Wallet is required only for the self-pay fallback —
               // gasless dispatches through the operator's relayer
               // and binds the recipient on-chain via the proof, so
@@ -322,7 +337,9 @@ function ClaimInner() {
                   </>
                 );
               }
-              const blockingChain = wrongAppChain || (needWallet && wrongWalletChain);
+              // wrongAppChain is already handled by the early bail
+              // above; only the wallet-chain mismatch remains a
+              // possible blocker here, and only on the self-pay path.
               return (
                 <>
                   {needWallet && account && (
@@ -330,12 +347,7 @@ function ClaimInner() {
                       Connected: <span className="font-mono">{shortAddr(account)}</span>
                     </div>
                   )}
-                  {wrongAppChain && (
-                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                      This Pay build targets chain {cfg.chainId}, but the link is for chain {parsed!.pkg.chainId}. Open it on the right deployment to claim.
-                    </div>
-                  )}
-                  {needWallet && wrongWalletChain && !wrongAppChain && (
+                  {needWallet && wrongWalletChain && (
                     <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
                       Switch your wallet to chain {parsed!.pkg.chainId} — submitting on the wrong network would target the wrong contract at the same address.
                     </div>
@@ -351,7 +363,7 @@ function ClaimInner() {
                     disabled={
                       !parsed ||
                       !isAvailable ||
-                      blockingChain ||
+                      (needWallet && wrongWalletChain) ||
                       (needWallet && wrongRecipient) ||
                       busy
                     }
