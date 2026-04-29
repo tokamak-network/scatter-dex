@@ -279,6 +279,33 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
+  // GET /api/admin/history/buckets — time-bucketed performance data
+  // for the SLA dashboard. Returns one entry per bucket with settled
+  // / failed counts, average gas, and p50/p95/p99 latency over the
+  // confirmed rows in that bucket. Buckets with no rows are emitted
+  // as zeros so the client can render a continuous time series.
+  // Query params:
+  //   ?since=<unix-ms>     required; window start
+  //   ?until=<unix-ms>     optional; defaults to now
+  //   ?bucketMs=<n>        bucket width in ms; default 1h
+  //                        capped to keep numBuckets <= 1024
+  router.get("/history/buckets", (req: Request, res: Response) => {
+    try {
+      const since = Number(req.query.since);
+      if (!Number.isFinite(since) || since <= 0) {
+        res.status(400).json({ error: "since must be a positive unix-ms timestamp" });
+        return;
+      }
+      const until = Number(req.query.until) || Date.now();
+      const bucketMs = Math.max(60_000, Number(req.query.bucketMs) || 3_600_000);
+      const buckets = db.getSettlementBuckets({ since, until, bucketMs });
+      res.json({ buckets, since, until, bucketMs });
+    } catch (err) {
+      console.error("[admin] history/buckets failed:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Failed to load settlement buckets" });
+    }
+  });
+
   // Per-token fee totals by default; pass ?detail=1 for raw rows.
   // Query params: ?token=0x…&since=<unix-ms>[&detail=1&limit=&offset=]
   router.get("/history/fees", (req: Request, res: Response) => {
