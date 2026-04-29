@@ -224,9 +224,10 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
-  // Persisted settlement + fee history. Mounted under /api/admin so
-  // these reads inherit the x-admin-key gate — settlement history
-  // includes per-token fee accrual which is operator-private.
+  // Persisted settlement history. Mounted under /api/admin so this
+  // (and the per-token fee accrual at /history/fees below) inherit
+  // the x-admin-key gate — both expose operator-private revenue
+  // information that other relayers shouldn't be able to scrape.
   // Query params: ?limit=50&offset=0&type=...&status=...
   router.get("/history", (req: Request, res: Response) => {
     try {

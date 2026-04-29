@@ -253,7 +253,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   if (error) {
     return (
       <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-5 text-sm text-[var(--color-warning)]">
-        Failed to load runtime data: {error}
+        Failed to load dashboard data: {error}
       </section>
     );
   }
@@ -261,8 +261,12 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   const last24h = (recent ?? []).filter(
     (r) => Date.now() - r.created_at < ONE_DAY_MS,
   );
-  const settled24h = last24h.filter((r) => r.status === "confirmed").length;
-  const totalGasEth = last24h.reduce((acc, r) => {
+  const confirmed24h = last24h.filter((r) => r.status === "confirmed");
+  const settled24h = confirmed24h.length;
+  // Sum gas only over confirmed rows so the divisor (settled24h)
+  // matches the numerator. Failed rows can still carry a non-null
+  // gas_cost_eth, which would otherwise inflate the displayed mean.
+  const totalGasEth = confirmed24h.reduce((acc, r) => {
     const v = parseFloat(r.gas_cost_eth ?? "0");
     return Number.isFinite(v) ? acc + v : acc;
   }, 0);
