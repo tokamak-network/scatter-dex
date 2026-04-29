@@ -42,6 +42,16 @@ export function adminPost<T = unknown>(
   return adminFetch<T>(auth, path, { method: "POST", body });
 }
 
+/** PUT helper — for endpoints that replace a config map (e.g.
+ *  claim thresholds). Same JSON-body contract as `adminPost`. */
+export function adminPut<T = unknown>(
+  auth: AdminAuth,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  return adminFetch<T>(auth, path, { method: "PUT", body });
+}
+
 /** Generic admin fetch. Resolves the path against `auth.url` so a
  *  pasted base URL with a trailing path still hits the correct
  *  endpoint. Returns `{}` cast as T on empty bodies (e.g. 204) so

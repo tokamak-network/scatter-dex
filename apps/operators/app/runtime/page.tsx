@@ -5,6 +5,7 @@ import {
   adminFetch,
   adminGet,
   adminPost,
+  adminPut,
   type AdminAuth,
   readAdminAuth,
 } from "../lib/adminApi";
@@ -62,6 +63,7 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
       <ProfileSection auth={auth} />
       <SanctionsSection auth={auth} />
       <WebhookSection auth={auth} />
+      <ClaimThresholdsSection auth={auth} />
       <CrossRelayerSection auth={auth} />
       <LogsSection auth={auth} />
     </div>
@@ -1133,6 +1135,163 @@ function LevelPill({ level }: { level: LogRecord["level"] }) {
     <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${cls}`}>
       {level}
     </span>
+  );
+}
+
+interface ClaimThresholdsBody {
+  tokens: string[];
+  thresholds: Record<string, string>;
+  probes: Record<
+    string,
+    { state: "below" | "ready"; balanceWei: string; thresholdWei: string; at: number }
+  >;
+}
+
+function ClaimThresholdsSection({ auth }: { auth: NonNullable<AuthState> }) {
+  const [tick, setTick] = useState(0);
+  const fetcher = useCallback(
+    (signal: AbortSignal) =>
+      adminGet<ClaimThresholdsBody>(auth, "/api/admin/claim-thresholds", signal),
+    [auth.url, auth.key],
+  );
+  const { data, error, loading } = useAdmin(fetcher, [tick]);
+  // Pending edits — keyed by lowercase token. Cleared on save success.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // The persisted threshold for a token is the source of truth; the
+  // input shows either the in-progress draft or the saved value.
+  const inputValue = (token: string): string => {
+    const lc = token.toLowerCase();
+    if (lc in drafts) return drafts[lc];
+    return data?.thresholds[lc] ?? "0";
+  };
+
+  const dirty = Object.keys(drafts).length > 0;
+
+  const onSave = async () => {
+    if (!data) return;
+    // Send the whole map so the backend's "replace" semantics give
+    // us a single round-trip. Merge drafts onto the saved map first.
+    const merged: Record<string, string> = { ...data.thresholds };
+    for (const [k, v] of Object.entries(drafts)) merged[k] = v;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await adminPut(auth, "/api/admin/claim-thresholds", { thresholds: merged });
+      setDrafts({});
+      setTick((n) => n + 1);
+    } catch (e) {
+      setSaveError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="Claim reminders"
+      eyebrow="GET/PUT /api/admin/claim-thresholds"
+      action={
+        dirty ? (
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save thresholds"}
+          </button>
+        ) : null
+      }
+    >
+      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+        Per-token FeeVault claim threshold. The relayer fires a{" "}
+        <code className="font-mono text-xs">claim_ready</code> webhook when the
+        accrued balance crosses your threshold, and a{" "}
+        <code className="font-mono text-xs">claim_settled</code> info webhook
+        once the balance drops back (you just claimed). Tracked tokens come
+        from the <code className="font-mono text-xs">FEE_CLAIM_TOKENS</code>{" "}
+        env var on the relayer.
+      </p>
+
+      {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}
+      {error && <ErrorLine text={error} />}
+
+      {data && data.tokens.length === 0 && (
+        <div className="rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] p-4 text-sm text-[var(--color-text-muted)]">
+          No tokens are configured. Set{" "}
+          <code className="font-mono text-xs">FEE_CLAIM_TOKENS</code> on the
+          relayer (comma-separated 0x addresses) and restart to start
+          tracking.
+        </div>
+      )}
+
+      {data && data.tokens.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-[10px] uppercase tracking-wider text-[var(--color-text-subtle)]">
+              <tr>
+                <th className="py-2 pr-3">Token</th>
+                <th className="py-2 pr-3 text-right">Claimable (wei)</th>
+                <th className="py-2 pr-3 text-right">Threshold (wei)</th>
+                <th className="py-2 pr-3">State</th>
+                <th className="py-2">Last probe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.tokens.map((token) => {
+                const lc = token.toLowerCase();
+                const probe = data.probes[lc];
+                return (
+                  <tr key={lc} className="border-t border-[var(--color-border)]">
+                    <td className="py-2 pr-3 font-mono text-xs">{token}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-xs">
+                      {probe?.balanceWei ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-right">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={inputValue(token)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          // Only accept digits or empty (treated as 0 on save).
+                          if (v !== "" && !/^[0-9]+$/.test(v)) return;
+                          setDrafts((d) => ({ ...d, [lc]: v === "" ? "0" : v }));
+                        }}
+                        className="w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-right font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+                      />
+                    </td>
+                    <td className="py-2 pr-3">
+                      {probe ? (
+                        <span
+                          className={
+                            probe.state === "ready"
+                              ? "rounded bg-[var(--color-warning-soft)] px-2 py-0.5 text-xs text-[var(--color-warning)]"
+                              : "rounded bg-[var(--color-bg)] px-2 py-0.5 text-xs text-[var(--color-text-muted)]"
+                          }
+                        >
+                          {probe.state}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[var(--color-text-subtle)]">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-xs text-[var(--color-text-muted)]">
+                      {probe ? formatRelative(probe.at) : "Awaiting first probe"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {saveError && <ErrorLine text={saveError} />}
+    </Panel>
   );
 }
 
