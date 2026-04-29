@@ -99,7 +99,12 @@ export function createRelayerStatsRoutes(
   router.get("/history/fees", ...limiter, (req, res) => {
     try {
       const since = Number(req.query.since) || 0;
-      const token = typeof req.query.token === "string" ? req.query.token : undefined;
+      // Lowercase the address here as well as in the DB layer so a
+      // checksummed query string compares against the lowercase
+      // storage form. Without this, the post-query filter on totals
+      // would silently return empty.
+      const token =
+        typeof req.query.token === "string" ? req.query.token.toLowerCase() : undefined;
       if (req.query.detail === "1" || req.query.detail === "true") {
         const limit = clampLimit(req.query.limit, 500, 100);
         const offset = Math.max(0, Number(req.query.offset) || 0);

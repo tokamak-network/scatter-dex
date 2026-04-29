@@ -52,8 +52,8 @@ describe("PrivateOrderDB settlement history", () => {
     const totals = db.getFeeTotals();
     expect(totals).toHaveLength(2);
     const byToken = Object.fromEntries(totals.map((t) => [t.token, t]));
-    expect(byToken["0xB"]).toMatchObject({ count: 1, totalWei: "1000" });
-    expect(byToken["0xS"]).toMatchObject({ count: 1, totalWei: "2000" });
+    expect(byToken["0xb"]).toMatchObject({ count: 1, totalWei: "1000" });
+    expect(byToken["0xs"]).toMatchObject({ count: 1, totalWei: "2000" });
   });
 
   it("is idempotent on tx_hash — second insert is a no-op", () => {
@@ -73,7 +73,7 @@ describe("PrivateOrderDB settlement history", () => {
     expect(total).toBe(1);
     // Fees must not double-count on the duplicate insert.
     const totals = db.getFeeTotals();
-    expect(totals).toEqual([{ token: "0xT", count: 1, totalWei: "500" }]);
+    expect(totals).toEqual([{ token: "0xt", count: 1, totalWei: "500" }]);
   });
 
   it("filters by type and status", () => {
@@ -133,16 +133,16 @@ describe("PrivateOrderDB settlement history", () => {
       txHash: "0xt1",
       type: "settleAuth",
       status: "confirmed",
-      fees: [{ side: "maker", token: "0xUSDC", amountWei: "1000000" }],
+      fees: [{ side: "maker", token: "0xusdc", amountWei: "1000000" }],
     });
     db.recordSettlementEvent({
       txHash: "0xt2",
       type: "settleAuth",
       status: "confirmed",
-      fees: [{ side: "maker", token: "0xUSDC", amountWei: "2500000" }],
+      fees: [{ side: "maker", token: "0xusdc", amountWei: "2500000" }],
     });
     const totals = db.getFeeTotals();
-    expect(totals).toEqual([{ token: "0xUSDC", count: 2, totalWei: "3500000" }]);
+    expect(totals).toEqual([{ token: "0xusdc", count: 2, totalWei: "3500000" }]);
   });
 
   it("skips malformed amount_wei in totals rather than crashing the aggregate", () => {
@@ -158,7 +158,7 @@ describe("PrivateOrderDB settlement history", () => {
     const totals = db.getFeeTotals();
     // count is 2 (both rows recorded), but only the parseable amount
     // contributes to totalWei.
-    expect(totals).toEqual([{ token: "0xX", count: 2, totalWei: "1000" }]);
+    expect(totals).toEqual([{ token: "0xx", count: 2, totalWei: "1000" }]);
   });
 
   it("records a settlement with no fees array without inserting fee rows", () => {
@@ -170,6 +170,34 @@ describe("PrivateOrderDB settlement history", () => {
     expect(db.getSettlementHistory({ limit: 10, offset: 0 }).total).toBe(1);
     expect(db.getFeeTotals()).toEqual([]);
     expect(db.getFeeHistory({ limit: 10, offset: 0 })).toHaveLength(0);
+  });
+
+  it("normalises tx_hash and token casing on insert and query", () => {
+    // Mixed-case tx_hash + checksummed token address. Insert once;
+    // a second insert with all-lowercase casing must be the
+    // idempotent no-op (proves UNIQUE(tx_hash) compares lowercase).
+    db.recordSettlementEvent({
+      txHash: "0xABCdef",
+      type: "settleAuth",
+      status: "confirmed",
+      fees: [{ side: "maker", token: "0xAbCdEf123", amountWei: "777" }],
+    });
+    db.recordSettlementEvent({
+      txHash: "0xabcdef",
+      type: "settleAuth",
+      status: "confirmed",
+      fees: [{ side: "maker", token: "0xabcdef123", amountWei: "777" }],
+    });
+    const { total, rows } = db.getSettlementHistory({ limit: 10, offset: 0 });
+    expect(total).toBe(1);
+    expect(rows[0].tx_hash).toBe("0xabcdef");
+    // Totals key is the lowercase form; querying by either casing
+    // returns the same row via the route-layer .toLowerCase().
+    const totals = db.getFeeTotals();
+    expect(totals).toEqual([{ token: "0xabcdef123", count: 1, totalWei: "777" }]);
+    expect(
+      db.getFeeHistory({ limit: 10, offset: 0, token: "0xABCDEF123" }),
+    ).toHaveLength(1);
   });
 
   it("filters fee history by token and since", () => {

@@ -66,6 +66,14 @@ function truncErr(err: string): string {
   return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
 }
 
+/** Lowercase hex strings (addresses + tx hashes) so equality checks
+ *  and the UNIQUE(tx_hash) constraint don't split rows by casing.
+ *  null/undefined pass through unchanged so optional fields stay
+ *  optional in callers. */
+function lowerHex<T extends string | null | undefined>(v: T): T {
+  return (typeof v === "string" ? v.toLowerCase() : v) as T;
+}
+
 export interface TradeOfferRow {
   id: number;
   direction: "sent" | "received";
@@ -243,7 +251,7 @@ export class PrivateOrderDB {
       VALUES (@direction, @peerRelayer, @makerPubKey, @makerNonce, @takerPubKey, @takerNonce, @status, @txHash, @reason, @createdAt)
     `);
     this.selectTradeOffers = this.db.prepare(`
-      SELECT * FROM trade_offers ORDER BY created_at DESC LIMIT @limit OFFSET @offset
+      SELECT * FROM trade_offers ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset
     `);
     this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
     this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
@@ -422,16 +430,16 @@ export class PrivateOrderDB {
     // Four selects + four counts so the route can apply each filter
     // combo without resorting to dynamic SQL string concat.
     this.selectSettlementHistory = this.db.prepare(
-      `SELECT * FROM settlement_history ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM settlement_history ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
     this.selectSettlementHistoryByType = this.db.prepare(
-      `SELECT * FROM settlement_history WHERE type = @type ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM settlement_history WHERE type = @type ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
     this.selectSettlementHistoryByStatus = this.db.prepare(
-      `SELECT * FROM settlement_history WHERE status = @status ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM settlement_history WHERE status = @status ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
     this.selectSettlementHistoryByTypeStatus = this.db.prepare(
-      `SELECT * FROM settlement_history WHERE type = @type AND status = @status ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM settlement_history WHERE type = @type AND status = @status ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
     this.countSettlementHistory = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history");
     this.countSettlementHistoryByType = this.db.prepare(
@@ -444,47 +452,56 @@ export class PrivateOrderDB {
       "SELECT COUNT(*) as count FROM settlement_history WHERE type = @type AND status = @status",
     );
     this.selectFeeHistory = this.db.prepare(
-      `SELECT * FROM fee_history WHERE created_at >= @since ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM fee_history WHERE created_at >= @since ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
     this.selectFeeHistoryByToken = this.db.prepare(
-      `SELECT * FROM fee_history WHERE token = @token AND created_at >= @since ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+      `SELECT * FROM fee_history WHERE token = @token AND created_at >= @since ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
-    // Aggregate: per-token total amount + count, optionally bounded by `since`.
-    // Uses TEXT amount_wei but SQLite SUM coerces; we re-stringify in code
-    // to preserve bigint semantics for the JSON response.
+    // Per-token totals via row iteration. SQLite's SUM uses INTEGER
+    // and would lose precision on amounts > 2^63; GROUP_CONCAT into a
+    // single string would balloon memory once history grows. Streaming
+    // rows in token order lets the caller reduce in JS bigint without
+    // ever materialising the full set in either layer.
     this.sumFeeHistoryByToken = this.db.prepare(`
-      SELECT token, COUNT(*) as count, GROUP_CONCAT(amount_wei) as amounts
+      SELECT token, amount_wei
         FROM fee_history
        WHERE created_at >= @since
-       GROUP BY token
+       ORDER BY token
     `);
   }
 
   /** Record a settlement (success or failure) plus any per-side fees
    *  in a single transaction. Idempotent on tx_hash — safe to call
-   *  twice if the worker recovers a tx after a process restart. */
+   *  twice if the worker recovers a tx after a process restart.
+   *
+   *  All hex identifiers (tx_hash, token addresses) are normalised to
+   *  lowercase on insert so a checksummed-vs-lowercase mismatch can't
+   *  bypass the UNIQUE(tx_hash) idempotency check or split a token's
+   *  fee totals across two rows. Query callers apply the same
+   *  normalisation via `lowerHex`. */
   recordSettlementEvent(input: SettlementEventInput): void {
     const createdAt = Date.now();
+    const txHash = lowerHex(input.txHash) as string;
+    const sellToken = lowerHex(input.sellToken ?? null);
+    const buyToken = lowerHex(input.buyToken ?? null);
     const insertAll = this.db.transaction((evt: SettlementEventInput) => {
       const result = this.insertSettlementEvent.run({
-        txHash: evt.txHash,
+        txHash,
         type: evt.type,
         status: evt.status,
         blockNumber: evt.blockNumber ?? null,
         gasCostEth: evt.gasCostEth ?? null,
-        sellToken: evt.sellToken ?? null,
-        buyToken: evt.buyToken ?? null,
+        sellToken,
+        buyToken,
         errorReason: evt.errorReason ? truncErr(evt.errorReason) : null,
         createdAt,
       });
-      // Skip fee inserts on duplicate settlement_history insert so a
-      // retry doesn't double-count fees against the same tx.
       if (result.changes === 0 || !evt.fees?.length) return;
       for (const fee of evt.fees) {
         this.insertFeeAccrual.run({
-          txHash: evt.txHash,
+          txHash,
           side: fee.side,
-          token: fee.token,
+          token: lowerHex(fee.token) as string,
           amountWei: fee.amountWei,
           blockNumber: evt.blockNumber ?? null,
           createdAt,
@@ -539,37 +556,51 @@ export class PrivateOrderDB {
   getFeeHistory(opts: FeeHistoryQueryOpts): FeeAccrualRow[] {
     const since = opts.since ?? 0;
     const params = { limit: opts.limit, offset: opts.offset, since };
-    if (opts.token) {
+    const token = opts.token ? lowerHex(opts.token) : undefined;
+    if (token) {
       return this.selectFeeHistoryByToken.all({
         ...params,
-        token: opts.token,
+        token,
       }) as FeeAccrualRow[];
     }
     return this.selectFeeHistory.all(params) as FeeAccrualRow[];
   }
 
-  /** Per-token aggregate: sum of amount_wei (as bigint string) and
-   *  count of fee rows. Bounded by `since` (default 0 = all time). */
+  /** Per-token aggregate: bigint sum of amount_wei and row count.
+   *  Bounded by `since` (default 0 = all time). Rows are streamed
+   *  via better-sqlite3's iterator so the JS heap holds at most one
+   *  row at a time even when history runs to millions. Malformed
+   *  amount_wei values are counted but excluded from the sum, so a
+   *  single bad row never breaks the aggregate. */
   getFeeTotals(since = 0): Array<{ token: string; count: number; totalWei: string }> {
-    const rows = this.sumFeeHistoryByToken.all({ since }) as Array<{
-      token: string;
-      count: number;
-      amounts: string | null;
-    }>;
-    return rows.map((r) => {
-      let total = 0n;
-      if (r.amounts) {
-        for (const a of r.amounts.split(",")) {
-          try {
-            total += BigInt(a);
-          } catch {
-            // Skip malformed rows rather than crashing the aggregate;
-            // a 0-string will simply not contribute.
-          }
-        }
+    const result: Array<{ token: string; count: number; totalWei: string }> = [];
+    let current: { token: string; count: number; total: bigint } | null = null;
+    const flush = () => {
+      if (current) {
+        result.push({
+          token: current.token,
+          count: current.count,
+          totalWei: current.total.toString(),
+        });
       }
-      return { token: r.token, count: r.count, totalWei: total.toString() };
-    });
+    };
+    for (const row of this.sumFeeHistoryByToken.iterate({ since }) as Iterable<{
+      token: string;
+      amount_wei: string;
+    }>) {
+      if (!current || current.token !== row.token) {
+        flush();
+        current = { token: row.token, count: 0, total: 0n };
+      }
+      try {
+        current.total += BigInt(row.amount_wei);
+      } catch {
+        // Malformed row — count it but skip the sum contribution.
+      }
+      current.count++;
+    }
+    flush();
+    return result;
   }
 
   private migrate(): void {
@@ -724,9 +755,13 @@ export class PrivateOrderDB {
 
     // Persistent settlement & fee history. Powers /api/relayer/history
     // so the operator dashboard can show real numbers instead of the
-    // rolling-window metrics. One row per settlement attempt; fees are
-    // recorded per side in fee_history (FK by tx_hash, no cascade —
-    // a settlement row is never deleted, only marked failed).
+    // rolling-window metrics. One row per settlement attempt; fees
+    // are recorded per side in fee_history. fee_history.tx_hash is a
+    // logical reference to settlement_history.tx_hash (enforced by
+    // recordSettlementEvent inserting both in one transaction), not
+    // a SQL FOREIGN KEY — settlement_history rows are never deleted,
+    // and skipping the constraint avoids cascade-on-detach surprises
+    // if a future migration trims old history.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS settlement_history (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
