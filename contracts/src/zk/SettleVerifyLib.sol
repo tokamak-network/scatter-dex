@@ -33,6 +33,13 @@ library SettleVerifyLib {
         uint128 totalLocked;
         uint128 totalClaimed;
         address token;
+        // Circuit tier the originating settlement was proven against —
+        // claimWithProof needs it to dispatch to the matching tier-N
+        // claim verifier (each tier has its own claimsTreeDepth, so a
+        // single claim circuit cannot serve all tiers). Stored on the
+        // group rather than re-derived from the proof so recipients
+        // never have to know the tier their settlement used.
+        uint8 tier;
     }
     struct AuthorizeProof {
         uint[2] proofA;
@@ -213,13 +220,15 @@ library SettleVerifyLib {
         mapping(bytes32 => ClaimsGroup) storage claimsGroups,
         bytes32 root,
         address token,
-        uint128 totalLocked
+        uint128 totalLocked,
+        uint8 tier
     ) internal {
         if (claimsGroups[root].token != address(0)) revert ClaimsGroupAlreadyExists();
         claimsGroups[root] = ClaimsGroup({
             totalLocked: totalLocked,
             totalClaimed: 0,
-            token: token
+            token: token,
+            tier: tier
         });
     }
 }

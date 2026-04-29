@@ -164,7 +164,7 @@ contract SettleWithDexForkTest is Test {
         assertTrue(settlement.nonceNullifiers(nonceNull));
 
         // Verify: claims group registered with at least totalLocked
-        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xe4)));
+        (uint128 locked,, address token,) = settlement.claimsGroups(bytes32(uint256(0xe4)));
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 
@@ -225,7 +225,7 @@ contract SettleWithDexForkTest is Test {
         assertTrue(settlement.nullifiers(nullifier));
 
         // Verify: claims group registered
-        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xc4)));
+        (uint128 locked,, address token,) = settlement.claimsGroups(bytes32(uint256(0xc4)));
         assertEq(token, DAI);
         assertEq(locked, totalLocked);
 
@@ -329,7 +329,7 @@ contract SettleWithDexForkTest is Test {
         assertEq(IERC20(WETH).balanceOf(treasury), 0, "Treasury EOA must not hold WETH directly");
 
         // Claims group registered
-        (uint128 locked,, address token) = settlement.claimsGroups(bytes32(uint256(0xd4)));
+        (uint128 locked,, address token,) = settlement.claimsGroups(bytes32(uint256(0xd4)));
         assertEq(token, USDC);
         assertEq(locked, totalLocked);
 

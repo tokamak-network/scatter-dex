@@ -167,7 +167,7 @@ contract SettleWithDexTest is Test {
         assertTrue(settlement.nonceNullifiers(NULL_NONCE));
 
         // Claims group registered
-        (uint128 locked, uint128 claimed, address token) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked, uint128 claimed, address token,) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
         assertEq(claimed, 0);
@@ -381,7 +381,7 @@ contract SettleWithDexTest is Test {
         assertEq(weth.balanceOf(treasury), 0, "Treasury must not hold WETH directly");
 
         // Claims group should still be registered
-        (uint128 locked,, address token) = settlement.claimsGroups(CLAIMS_ROOT);
+        (uint128 locked,, address token,) = settlement.claimsGroups(CLAIMS_ROOT);
         assertEq(token, address(usdc));
         assertEq(locked, 19_000e18);
     }

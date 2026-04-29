@@ -173,12 +173,12 @@ contract SettleAuthTest is Test {
         assertTrue(settlement.nonceNullifiers(T_NONCE_NULL));
 
         // Maker claims group: token = USDC (maker.buyToken), locked = 20k USDC
-        (uint128 ml,, address mt) = settlement.claimsGroups(M_CLAIMS_R);
+        (uint128 ml,, address mt,) = settlement.claimsGroups(M_CLAIMS_R);
         assertEq(mt, address(usdc));
         assertEq(ml, uint128(20_000e18));
 
         // Taker claims group: token = WETH (taker.buyToken), locked = 10 WETH
-        (uint128 tl,, address tt) = settlement.claimsGroups(T_CLAIMS_R);
+        (uint128 tl,, address tt,) = settlement.claimsGroups(T_CLAIMS_R);
         assertEq(tt, address(weth));
         assertEq(tl, uint128(10 ether));
     }
@@ -724,6 +724,56 @@ contract SettleAuthTest is Test {
     }
 
     // ────────────────────────────────────────────────────────────
+    //  setClaimVerifier setter + claim tier dispatch
+    // ────────────────────────────────────────────────────────────
+
+    function test_setClaimVerifier_registersByTier() public {
+        MockClaimVerifier verifier64 = new MockClaimVerifier();
+        vm.expectEmit(true, true, false, false);
+        emit PrivateSettlement.ClaimVerifierUpdated(64, address(0), address(verifier64));
+        settlement.setClaimVerifier(64, address(verifier64));
+
+        assertEq(address(settlement.claimVerifierByTier(64)), address(verifier64));
+        // Tier 16 must remain wired (constructor seeded it).
+        assertEq(address(settlement.claimVerifierByTier(16)), address(claimVerifier));
+    }
+
+    function test_setClaimVerifier_disableWithZero() public {
+        // Settlement registers a tier-16 group + claim. Disable the tier
+        // verifier and the recipient must hit TierNotConfigured(16) on
+        // claimWithProof rather than silently use a tier-64 verifier or
+        // the previous tier-16 one.
+        PrivateSettlement.SettleAuthParams memory p = _defaultParams();
+        vm.prank(makerRelayer);
+        settlement.settleAuth(p);
+
+        settlement.setClaimVerifier(16, address(0));
+
+        vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(16)));
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            M_CLAIMS_R,
+            bytes32(uint256(0xDEAD)),
+            1 ether,
+            address(usdc),
+            address(0xBEEF),
+            uint64(block.timestamp)
+        );
+    }
+
+    function test_setClaimVerifier_rejectsEOA() public {
+        vm.expectRevert();
+        settlement.setClaimVerifier(64, address(0xDEAD));
+    }
+
+    function test_setClaimVerifier_onlyOwner() public {
+        MockClaimVerifier verifier = new MockClaimVerifier();
+        vm.prank(address(0xBAD));
+        vm.expectRevert();
+        settlement.setClaimVerifier(64, address(verifier));
+    }
+
+    // ────────────────────────────────────────────────────────────
     //  setBatchAuthorizeVerifier setter tests
     // ────────────────────────────────────────────────────────────
 
@@ -806,7 +856,7 @@ contract SettleAuthTest is Test {
 
         assertTrue(settlement.nullifiers(SD_NULL));
         assertTrue(settlement.nonceNullifiers(SD_NONCE_NULL));
-        (uint128 locked,, address token) = settlement.claimsGroups(SD_CLAIMS_R);
+        (uint128 locked,, address token,) = settlement.claimsGroups(SD_CLAIMS_R);
         assertEq(token, address(usdc));
         assertEq(locked, uint128(9_900e18));
     }

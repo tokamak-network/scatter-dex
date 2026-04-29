@@ -94,6 +94,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     event FeeVaultUpdated(address oldVault, address newVault);
     event AuthorizeVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
     event CancelVerifierUpdated(address oldVerifier, address newVerifier);
+    event ClaimVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
     event BatchAuthorizeVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
 
     /// @notice Emitted by `cancelPrivate`. Relayers listen for this event
@@ -166,7 +167,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
     CommitmentPool public immutable pool;
-    IClaimVerifier public immutable claimVerifier;
+    /// @notice Verifier registry for `circuits/claim.circom`, keyed by
+    ///         the originating settlement's tier. Each tier has its
+    ///         own `claimsTreeDepth` (4 / 6 / 7) so a single claim
+    ///         verifier cannot serve all tiers. Constructor seeds
+    ///         tier 16; new tiers register via `setClaimVerifier`.
+    mapping(uint8 => IClaimVerifier) public claimVerifierByTier;
     address public immutable weth;
 
     /// @notice Optional relayer registry — if set, only active relayers can settle.
@@ -226,7 +232,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
         pool = CommitmentPool(_pool);
-        claimVerifier = IClaimVerifier(_claimVerifier);
+        // Seed the claim-verifier registry with tier 16 — the only live
+        // circuit today. New tiers attach post-deploy via setClaimVerifier.
+        claimVerifierByTier[16] = IClaimVerifier(_claimVerifier);
         weth = _weth;
     }
 
@@ -270,6 +278,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
         emit CancelVerifierUpdated(address(cancelVerifier), _verifier);
         cancelVerifier = ICancelVerifier(_verifier);
+    }
+
+    /// @notice Register (or replace) the ClaimVerifier for a tier.
+    ///         `tier` is the originating settlement's tier (= claims
+    ///         tree depth → 16/64/128). Pass `address(0)` to disable
+    ///         claims for that tier — recipients then revert with
+    ///         `TierNotConfigured(tier)` until a verifier registers.
+    function setClaimVerifier(uint8 tier, address _verifier) external onlyOwner {
+        if (_verifier != address(0) && _verifier.code.length == 0) revert NotAContract();
+        emit ClaimVerifierUpdated(tier, address(claimVerifierByTier[tier]), _verifier);
+        claimVerifierByTier[tier] = IClaimVerifier(_verifier);
     }
 
     /// @notice Register (or replace) the optional BatchAuthorizeVerifier
@@ -501,8 +520,8 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         SettleVerifyLib.requireDistinctClaimsRoots(
             p.maker.claimsRoot, p.taker.claimsRoot, p.maker.totalLocked, p.taker.totalLocked
         );
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked);
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked, p.maker.tier);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked, p.taker.tier);
 
         emit PrivateSettledAuth(
             p.maker.nullifier,
@@ -715,7 +734,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
 
         // 13. Register claims group
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked, proof.tier);
 
         // 14. Surplus handling: positive slippage is transferred to FeeVault
         //     and credited to FeeVault.platformRevenue (independent of
@@ -808,8 +827,12 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // Mark nullifier
         nullifiers[p.nullifier] = true;
 
-        // Register claims group (prevent overwriting existing group)
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked);
+        // Register claims group (prevent overwriting existing group).
+        // scatterDirect uses a withdraw proof (no authorize tier on the
+        // params), so we record tier 16 — the only depth the live claim
+        // verifier handles. Future tier-aware scatter variants would
+        // thread the tier through ScatterDirectParams.
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked, 16);
 
         // Transfer fee
         if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
@@ -885,7 +908,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // 15. Route fee from pool to relayer (or FeeVault)
         if (p.fee > 0) _routeFeeFromPool(ap.sellToken, p.fee);
 
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked);
+        SettleVerifyLib.registerClaimsGroup(claimsGroups, ap.claimsRoot, ap.sellToken, ap.totalLocked, ap.tier);
 
         emit ScatterDirectAuthSettled(ap.nullifier, ap.nonceNullifier, ap.claimsRoot, ap.relayer, p.fee);
     }
@@ -982,7 +1005,9 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
             releaseTime
         ];
 
-        if (!claimVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
+        IClaimVerifier _verifier = claimVerifierByTier[group.tier];
+        if (address(_verifier) == address(0)) revert TierNotConfigured(group.tier);
+        if (!_verifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
             revert InvalidProof();
         }
 
