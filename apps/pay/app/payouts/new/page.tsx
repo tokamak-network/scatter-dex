@@ -20,8 +20,10 @@ import { encodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
 
 // Largest tier with a live verifier — caps each individual settlement
 // transaction's anonymity set. With multi-batch (Phase 1d-α) each
-// batch is one settlement, and `splitPayout` chunks recipients into
-// batches of `MAX_TIER_CAP` each.
+// batch is one settlement. `splitPayout` chunks by the SDK's fixed
+// `MAX_CLAIMS_PER_SIDE` constant, which today equals this value
+// (`TIER_16.cap = 16`); the two will diverge once a larger live tier
+// ships and `splitPayout` is taught to chunk per the picked tier.
 const MAX_TIER_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
 // Soft cap on batches per run. Each batch = one signed scatterDirectAuth
 // tx + one source note from the vault. 4 keeps proving wall-clock
@@ -271,6 +273,16 @@ export default function NewPayout() {
         if (batches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
             `This run needs ${batches.length} settlement transactions; Pay caps at ${MAX_BATCHES_PER_RUN} per payout. Split into multiple runs.`,
+          );
+        }
+        // Block signing when no notes folder is picked. The settle
+        // would land on-chain but we'd have no place to persist the
+        // RunRecord / ClaimPackages, permanently losing recipient
+        // claim links — the `if (!folder.ready)` redirect-to-sample
+        // at the bottom of doSubmit assumes nothing settled.
+        if (!folder.ready) {
+          throw new Error(
+            "Pick a notes folder in the dashboard before signing — without it, your settled run can't persist the claim links recipients need.",
           );
         }
         if (!signer) throw new Error("Connect a wallet before signing.");
@@ -1266,34 +1278,18 @@ function FundsStep({
           than throwing at sign time. shortfallRaw is the sum-of-totals
           check; this is the per-batch fit check (each batch needs one
           confirmed note ≥ its totalAmount). */}
-      {batchCount > 1 && multiBatchFit && !multiBatchFit.covered && shortfallRaw === 0n && (
-        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-          <div className="mb-1 font-semibold">
-            {batchCount} batches need {batchCount} source notes
+      {batchCount > 1 && multiBatchFit && !multiBatchFit.covered && multiBatchFit.reason && shortfallRaw === 0n && (() => {
+        // Render the same copy `doSubmit` would throw with — single
+        // source via `describeBatchFitError` so the warning here and
+        // the thrown error can't drift.
+        const { title, body } = describeBatchFitError(multiBatchFit.reason, batchCount);
+        return (
+          <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+            <div className="mb-1 font-semibold">{title}</div>
+            <p>{body}</p>
           </div>
-          {multiBatchFit.reason === "insufficient-note-count" && (
-            <p>
-              Your balance covers the total, but the run splits into{" "}
-              <strong>{batchCount}</strong> settlement transactions and you have
-              fewer confirmed notes than batches. Each batch consumes one note —
-              top up so every batch has its own.
-            </p>
-          )}
-          {multiBatchFit.reason === "smallest-batch-uncovered" && (
-            <p>
-              Your batches don&apos;t fit your largest notes — at least one
-              batch is bigger than every available note. Deposit a single note
-              big enough for the largest batch.
-            </p>
-          )}
-          {multiBatchFit.reason === "no-eligible-notes" && (
-            <p>
-              No reconciled notes for this token. Recently-deposited notes need
-              one block to confirm before they're spendable.
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

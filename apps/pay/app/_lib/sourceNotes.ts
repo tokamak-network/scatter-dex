@@ -192,10 +192,12 @@ export function describeBatchFitError(
       };
     case "smallest-batch-uncovered":
       return {
-        title: "Largest batch doesn't fit any note",
+        title: "Notes don't fit batch-by-batch",
         body:
-          "At least one batch is bigger than every available note. Deposit a " +
-          "single note big enough for the largest batch.",
+          "Each batch needs its own note ≥ that batch's total. The picker " +
+          "pairs largest-with-largest; one of those pairings came up short. " +
+          "Top up so you have at least one large-enough note for every batch " +
+          "(not just for the biggest one).",
       };
   }
 }
