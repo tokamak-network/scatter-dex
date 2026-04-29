@@ -132,8 +132,25 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
     !o.pathIndices.every((i) => i === 0 || i === 1)
   )
     return false;
-  if (o.relayerUrl !== undefined && typeof o.relayerUrl !== "string") return false;
+  if (o.relayerUrl !== undefined && !isPlausibleHttpUrl(o.relayerUrl)) return false;
   return true;
+}
+
+/** Reject anything that won't reach a real HTTP(S) endpoint. Also
+ *  requires a non-empty hostname because `new URL("http:foo")`
+ *  parses with `protocol === "http:"` but empty `hostname` (legal
+ *  opaque-path URL) and would fail at fetch time with an opaque
+ *  error rather than this clear up-front rejection. */
+function isPlausibleHttpUrl(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  if (v.length === 0 || v.length > 2048) return false;
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return u.hostname.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {

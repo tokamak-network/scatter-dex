@@ -68,10 +68,15 @@ type Phase =
 function ClaimInner() {
   const searchParams = useSearchParams();
   const link = searchParams?.get("id") ?? "";
-  const { account, signer, readProvider, connect, connectError } = useWallet();
+  const { account, chainId: walletChainId, signer, readProvider, connect, connectError } = useWallet();
   const [parsed, setParsed] = useState<ParsedClaim | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  /** Sticky once the user opts out of the gasless path — either
+   *  because they hit "Submit with my wallet instead" after a
+   *  relayer error, or chose self-pay up front. Lets us fall through
+   *  to the wallet path even when `pkg.relayerUrl` is set. */
+  const [forceSelfPay, setForceSelfPay] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -86,9 +91,17 @@ function ClaimInner() {
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix
     : undefined;
-  const wrongChain = parsed && parsed.pkg.chainId !== cfg.chainId;
+  // Two distinct mismatches surface to the recipient:
+  //   1. App was built for a different chain than the package — no
+  //      submit path can work; abort.
+  //   2. Connected wallet is on a different chain than the package
+  //      — only blocks the self-pay path; gasless still works.
+  const wrongAppChain = parsed && parsed.pkg.chainId !== cfg.chainId;
+  const wrongWalletChain =
+    !!parsed && walletChainId !== null && walletChainId !== parsed.pkg.chainId;
   const wrongRecipient =
     !!parsed && !!account && account.toLowerCase() !== parsed.recipientLower;
+  const gasless = !!parsed?.pkg.relayerUrl && !forceSelfPay;
 
   // Phase 2b: prefer the operator's relayer to dispatch the claim
   // (no gas for the recipient). When the package has no relayerUrl,
@@ -97,7 +110,6 @@ function ClaimInner() {
   // proof generation, meta validation. Only the final submit differs.
   async function doClaim() {
     if (!parsed) return;
-    const gasless = !!parsed.pkg.relayerUrl;
     if (!gasless && !signer) return;
     try {
       setPhase({ kind: "validating" });
@@ -282,7 +294,21 @@ function ClaimInner() {
               <div className="font-mono">{shortAddr(phase.txHash)}</div>
             </div>
           ) : (() => {
-              const gasless = !!parsed?.pkg.relayerUrl;
+              // App-chain mismatch is terminal — neither path can
+              // work because the SDK / contract addresses are wired
+              // for a different deployment. Surface this BEFORE the
+              // wallet-connect prompt so the recipient doesn't go
+              // through MetaMask only to be told to switch apps.
+              if (parsed && wrongAppChain) {
+                return (
+                  <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-center text-xs text-[var(--color-warning)]">
+                    <strong className="mb-0.5 block">Wrong Pay deployment</strong>
+                    This Pay build targets chain {cfg.chainId}, but the link
+                    is for chain {parsed.pkg.chainId}. Open it on the right
+                    deployment to claim.
+                  </div>
+                );
+              }
               // Wallet is required only for the self-pay fallback —
               // gasless dispatches through the operator's relayer
               // and binds the recipient on-chain via the proof, so
@@ -311,6 +337,9 @@ function ClaimInner() {
                   </>
                 );
               }
+              // wrongAppChain is already handled by the early bail
+              // above; only the wallet-chain mismatch remains a
+              // possible blocker here, and only on the self-pay path.
               return (
                 <>
                   {needWallet && account && (
@@ -318,9 +347,9 @@ function ClaimInner() {
                       Connected: <span className="font-mono">{shortAddr(account)}</span>
                     </div>
                   )}
-                  {wrongChain && (
+                  {needWallet && wrongWalletChain && (
                     <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                      Wrong chain — switch to chain id {parsed!.pkg.chainId} to claim.
+                      Switch your wallet to chain {parsed!.pkg.chainId} — submitting on the wrong network would target the wrong contract at the same address.
                     </div>
                   )}
                   {needWallet && wrongRecipient && (
@@ -334,7 +363,7 @@ function ClaimInner() {
                     disabled={
                       !parsed ||
                       !isAvailable ||
-                      !!wrongChain ||
+                      (needWallet && wrongWalletChain) ||
                       (needWallet && wrongRecipient) ||
                       busy
                     }
@@ -353,6 +382,17 @@ function ClaimInner() {
                       {phase.message}
                     </div>
                   )}
+                  {gasless && phase.kind === "error" && (
+                    <button
+                      onClick={() => {
+                        setForceSelfPay(true);
+                        setPhase({ kind: "idle" });
+                      }}
+                      className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)]"
+                    >
+                      Submit with my wallet instead (you pay gas)
+                    </button>
+                  )}
                 </>
               );
             })()}
@@ -360,7 +400,7 @@ function ClaimInner() {
 
         <div className="mt-6 flex items-center justify-between border-t border-[var(--color-border)] pt-3 text-xs">
           <span className="text-[var(--color-text-muted)]">
-            {parsed?.pkg.relayerUrl
+            {gasless
               ? "Gasless — the operator's relayer pays the gas."
               : "Self-pay — gas comes from your wallet."}
           </span>
