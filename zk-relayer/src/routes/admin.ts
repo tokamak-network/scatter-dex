@@ -342,16 +342,18 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   //   ?level=debug|info|warn|error  — minimum level to return
   //   ?mod=<module-name>             — exact module-name match
   //   ?since=<unix-ms>               — only records emitted >= this ts
-  //   ?limit=<n>                     — cap returned rows (server clamps to bufferCap)
+  //   ?limit=<n>                     — cap returned rows. Logger
+  //                                     internally clamps to
+  //                                     min(bufferCap, hardQueryLimit)
+  //                                     so a misconfigured cap can't
+  //                                     materialise an unbounded list.
   router.get("/logs", (req: Request, res: Response) => {
     const cfg = getLoggerConfig();
     const level = parseLogLevel(req.query.level);
     const mod = typeof req.query.mod === "string" ? req.query.mod : undefined;
     const since = Number(req.query.since) || 0;
-    const limit = Math.min(
-      cfg.bufferCap,
-      Math.max(1, Number(req.query.limit) || cfg.bufferCap),
-    );
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : undefined;
     const records = getRecentLogs({ level, mod, since, limit });
     res.json({ records, config: cfg });
   });
