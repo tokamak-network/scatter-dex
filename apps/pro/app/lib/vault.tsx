@@ -26,9 +26,11 @@ const { VaultProvider, useVault } = createVaultProvider({
   // Random UUID — Pro's note storage is keyed on the in-memory id,
   // not the commitment, so collisions across deposits are fine.
   makeId: () => newId(),
-  // Single shared IDB across chainIds — keep notes whose chainId
-  // matches the active one (legacy notes without a chainId tag are
-  // grandfathered through).
+  // Belt-and-suspenders chainId filter: even though the adapter is
+  // already keyed per-chain via dbName, legacy v1 notes (pre-keying)
+  // may have lived in the unkeyed DB. Filter at hydrate so a note
+  // tagged with the wrong chainId can't re-enter the active vault.
+  // Notes without a `chainId` tag are grandfathered through.
   filterHydrated: (notes, chainId) =>
     notes.filter((n) => n.chainId === undefined || n.chainId === chainId),
 });
