@@ -69,8 +69,8 @@ export default function Onboarding() {
             body="A reachable public URL (e.g. https://relayer.example.com) that you will publish on-chain. Clients route orders to this URL. Behind a reverse proxy with TLS termination."
           />
           <Prereq
-            title="Admin API key"
-            body="A strong random secret you generate locally (openssl rand -hex 32). Required to call pause/resume, fee updates, and sanctions endpoints."
+            title="Admin API key (optional but recommended)"
+            body="A strong random secret (openssl rand -hex 32, ≥ 32 bytes). The relayer runs without one, but every /api/admin/* endpoint returns 403 until it is set, so pause/resume, fee updates, and sanctions management are inaccessible."
           />
         </div>
       </section>
@@ -87,19 +87,19 @@ export default function Onboarding() {
             n={1}
             title="Clone the repo and install dependencies"
             time="~5 min"
-            body="Pull the monorepo, install Node deps, and verify the build is clean before configuring."
+            body="Each package in the monorepo is standalone (no root npm workspace) — install and build inside zk-relayer/."
             code={`git clone https://github.com/tokamak-network/scatter-dex.git
-cd scatter-dex
+cd scatter-dex/zk-relayer
 npm install
-npm --workspace zk-relayer run build`}
+npm run build`}
           />
           <Step
             n={2}
             title="Configure your .env"
             time="~5 min"
-            body="Copy the example file and fill in the six required fields. The remaining fields have safe defaults."
-            code={`cp zk-relayer/.env.example zk-relayer/.env
-# then edit zk-relayer/.env`}
+            body="Copy the example file and fill in the five required fields (RPC_URL, RELAYER_PRIVATE_KEY, and the three contract addresses). ADMIN_API_KEY is optional but recommended. Other fields have safe defaults."
+            code={`cp .env.example .env
+# then edit .env`}
             extra={<EnvTable />}
           />
           <Step
@@ -107,15 +107,15 @@ npm --workspace zk-relayer run build`}
             title="Start the relayer service"
             time="~2 min"
             body="Run the service locally first to verify your config. Once /health returns 200, you are ready to register."
-            code={`# from repo root
-npm --workspace zk-relayer run start
+            code={`# from zk-relayer/
+npm start
 
 # in another shell:
 curl -s http://localhost:3002/health | jq`}
             extra={
               <p className="text-xs text-[var(--color-text-muted)]">
-                Expected: <code className="font-mono">{`{ "status": "ok", "checks": { "rpc": "ok", "db": "ok" } }`}</code>.
-                If RPC fails, double-check <code className="font-mono">RPC_URL</code> in your .env.
+                Expected: <code className="font-mono">{`{ "status": "healthy", "uptime": <seconds>, "checks": { "rpc": "ok", "db": "ok" } }`}</code>.
+                A 503 with <code className="font-mono">status: "degraded"</code> means one of the checks failed — inspect the response body.
               </p>
             }
           />
@@ -138,10 +138,19 @@ curl -s http://localhost:3002/health | jq`}
             title="Verify the relayer is live"
             time="~3 min"
             body="Confirm registration on-chain, then check that orders can reach your endpoint. Your registry entry must list the same URL the service is exposing."
-            code={`# check on-chain registration:
+            code={`# inspect the relayer's self-reported state:
 curl -s https://YOUR_PUBLIC_URL/api/info | jq
 
-# expected: { name, feeBps, registry: { registered: true, url: "..." }, ... }`}
+# expected shape:
+# {
+#   name: "ScatterDEX ZK Relayer", version: "0.1.0",
+#   address: "0x...", fee: 30, orderCount: 0,
+#   commitmentPool: "0x...", privateSettlement: "0x...",
+#   profile: { name, description, ... }
+# }
+#
+# cross-check on-chain registration via the leaderboard page or
+# the RelayerRegistry contract directly.`}
             extra={
               <Link
                 href="/dashboard"
@@ -177,7 +186,7 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Concept term="Bond">
-            ETH (or governance-approved token) you escrow in <span className="font-mono text-xs">RelayerRegistry</span> when registering. Acts as collateral against slashing for misbehaviour. Recoverable on exit after a 7-day cooldown.
+            ETH you escrow in <span className="font-mono text-xs">RelayerRegistry</span> when registering. Acts as a registration deposit. Recoverable in full on exit after a 7-day cooldown — the current contract has no bond-slashing mechanism (a misbehaving relayer only loses gas on failed <code className="font-mono">settle()</code> attempts).
           </Concept>
           <Concept term="Fee bps">
             Your per-trade fee in basis points (1 bp = 0.01%). Published on-chain at registration; updatable via <code className="font-mono">/profile</code>. Default reference: 30 bps (0.30%).
@@ -191,14 +200,16 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
           <Concept term="Half-proof / authorize flow">
             Each side of a trade submits an <span className="font-mono text-xs">authorize.circom</span> proof; the relayer combines them in <code className="font-mono">settleAuth</code>. You never hold witness data — only proofs and public signals.
           </Concept>
-          <Concept term="Sanctions list">
-            On-chain and operator-local list of banned EdDSA pubkeys. Orders from listed keys are rejected before settlement. Manage via the admin API or the upcoming admin panel.
+          <Concept term="Sanctions lists (two of them)">
+            <span className="font-medium">On-chain</span>: <span className="font-mono text-xs">SanctionsList</span> contract — a blocklist of <em>EVM addresses</em> (e.g. OFAC SDN). Enforced by <code className="font-mono">PrivateSettlement</code> for claim/settle paths.
+            <br />
+            <span className="font-medium">Operator-local</span>: a JSON file (or admin-API-managed) blocklist of <em>EdDSA pubkeys</em>. Rejects matching orders before they reach the chain.
           </Concept>
           <Concept term="Exit cooldown">
-            Time between <code className="font-mono">requestExit</code> and <code className="font-mono">executeExit</code> on the registry — 7 days. Your bond is locked during this window; the relayer can keep settling but cannot accept new orders.
+            Time between <code className="font-mono">requestExit</code> and <code className="font-mono">executeExit</code> on the registry — 7 days. <code className="font-mono">isActiveRelayer</code> returns <code className="font-mono">false</code> as soon as <code className="font-mono">requestExit</code> is called, so settlement is blocked for the entire cooldown — plan to drain your queue before requesting exit.
           </Concept>
-          <Concept term="Slashing">
-            Bond reduction triggered by on-chain rules (e.g. settling an invalid proof). Visible on <code className="font-mono">/profile</code> once the indexer ships.
+          <Concept term="Slashing — not implemented">
+            Despite the term being common in relayer designs, the current <code className="font-mono">RelayerRegistry</code> has no slashing path. If/when it ships, it will appear on <code className="font-mono">/profile</code>.
           </Concept>
         </div>
       </section>
@@ -221,7 +232,7 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
           />
           <FAQ
             q="Orders arrive but never settle"
-            a="Check the relayer's stdout for [tx-recovery] failures. Most often: gas price spiked above MAX_GAS_PRICE_GWEI. Either raise the cap in .env or wait for gas to subside — pending orders survive a process restart."
+            a="Check the relayer's stdout for [gas-guard] or [tx-recovery] lines. If gas-guard rejected the settlement (gasPrice above MAX_GAS_PRICE_GWEI), the SettlementWorker classifies the failure as 'unknown' and does not auto-retry — the order will likely be picked up by another relayer. Raise the cap in .env (then restart) or accept that some flow will route around you during fee spikes."
           />
           <FAQ
             q="I rotated my admin key — old shells are still authorised"
@@ -366,7 +377,11 @@ function EnvTable() {
       note: "From contracts/deployments.",
     },
     { key: "FEE_VAULT_ADDRESS", required: true, note: "From contracts/deployments." },
-    { key: "ADMIN_API_KEY", required: true, note: "openssl rand -hex 32" },
+    {
+      key: "ADMIN_API_KEY",
+      required: false,
+      note: "openssl rand -hex 32 (≥ 32 bytes). Without it, /api/admin/* returns 403.",
+    },
     {
       key: "RELAYER_PUBLIC_URL",
       required: false,
