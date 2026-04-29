@@ -24,6 +24,15 @@ import type { WritePhase } from "../lib/useChainWrite";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
+/** Render bond amount with a unit. Native bonds get "ETH"; ERC20
+ *  bonds drop the unit because we don't carry the token symbol on
+ *  the operator row, and labelling an arbitrary ERC20 amount as
+ *  "ETH" would mislead operators on networks where the registry
+ *  is configured in token mode. */
+function bondLabel(row: NonNullable<OperatorState["row"]>): string {
+  return row.bondToken === NATIVE_BOND_TOKEN ? `${row.bondEth} ETH` : row.bondEth;
+}
+
 export default function ProfilePage() {
   const operator = useOperator();
   const { registryDeployed: deployed } = operator;
@@ -191,10 +200,15 @@ function BondPanel({ operator }: { operator: OperatorState }) {
         <Stat
           compact
           label="Current bond"
-          value={row ? `${row.bondEth} ETH` : "—"}
+          value={row ? bondLabel(row) : "—"}
           sub={row ? `Status: ${row.status}` : "Connect wallet to load"}
         />
-        <Stat compact label="Slashed to date" value="—" sub="Indexer pending" />
+        <Stat
+          compact
+          label="Bond at risk"
+          value="None today"
+          sub="No slashing path in current registry"
+        />
       </div>
       <div className="mt-5 flex items-end gap-3">
         <Field label="Add bond">
@@ -264,23 +278,7 @@ function ExitPanel({ operator }: { operator: OperatorState }) {
   if (loading || !row) return <ExitHint>Reading registry…</ExitHint>;
 
   if (row.status === "active") {
-    return (
-      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
-        <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
-        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-          Stops accepting orders and starts a 7-day cool-down. Bond becomes
-          withdrawable after the cool-down. You can re-register after exit.
-        </p>
-        <button
-          onClick={() => signer && write.run(() => requestRelayerExit(REGISTRY, signer))}
-          disabled={!signer || write.phase.kind === "submitting"}
-          className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {write.phase.kind === "submitting" ? "Submitting…" : "Request exit"}
-        </button>
-        <WriteResult phase={write.phase} />
-      </section>
-    );
+    return <ActiveExitPanel row={row} signer={signer} write={write} />;
   }
 
   if (row.status === "cooldown") {
@@ -302,6 +300,86 @@ function ExitPanel({ operator }: { operator: OperatorState }) {
     );
   }
   return <ExitHint>Relayer is offline. Re-register before performing further actions.</ExitHint>;
+}
+
+function ActiveExitPanel({
+  row,
+  signer,
+  write,
+}: {
+  row: NonNullable<OperatorState["row"]>;
+  signer: ReturnType<typeof useWallet>["signer"];
+  write: ReturnType<typeof useRegistryWrite>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const submitting = write.phase.kind === "submitting";
+
+  const onCancel = () => {
+    setConfirming(false);
+    write.reset();
+  };
+
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
+      <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
+      <p className="mb-3 text-sm text-[var(--color-text-muted)]">
+        Starts a {Math.round(EXIT_COOLDOWN_SECONDS / 86400)}-day cool-down on{" "}
+        <code className="font-mono">RelayerRegistry</code>. After the cool-down,
+        executing exit returns your full bond ({bondLabel(row)}) and removes
+        you from the active relayer set.
+      </p>
+
+      <ul className="mb-4 space-y-1.5 rounded-lg border border-[var(--color-warning)] bg-white px-4 py-3 text-xs text-[var(--color-text-muted)]">
+        <li>
+          <span className="font-medium text-[var(--color-text)]">Effective immediately:</span>{" "}
+          <code className="font-mono">isActiveRelayer</code> returns{" "}
+          <code className="font-mono">false</code>. New orders <em>and</em>{" "}
+          settlement of in-flight orders both revert with{" "}
+          <code className="font-mono">NotActiveRelayer</code>.
+        </li>
+        <li>
+          <span className="font-medium text-[var(--color-text)]">Recommended before clicking:</span>{" "}
+          drain your pending settlement queue, otherwise those orders will
+          fail and likely be picked up by another relayer.
+        </li>
+        <li>
+          <span className="font-medium text-[var(--color-text)]">Re-registration:</span>{" "}
+          allowed after <code className="font-mono">executeExit</code> — same
+          bond requirement as a fresh registration.
+        </li>
+      </ul>
+
+      {!confirming ? (
+        <button
+          onClick={() => setConfirming(true)}
+          disabled={!signer}
+          className="rounded-lg border border-[var(--color-warning)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Request exit…
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() =>
+              signer && write.run(() => requestRelayerExit(REGISTRY, signer))
+            }
+            disabled={!signer || submitting}
+            className="rounded-lg bg-[var(--color-warning)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? "Submitting…" : "Confirm — request exit"}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-[var(--color-border-strong)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      <WriteResult phase={write.phase} />
+    </section>
+  );
 }
 
 function ExitHint({ children }: { children: React.ReactNode }) {
@@ -353,9 +431,22 @@ function CooldownPanel({
         {ready ? "Bond ready to withdraw" : "Cool-down in progress"}
       </h2>
       <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-        {ready
-          ? `Cool-down complete. Withdrawing returns ${row.bondEth} ETH and removes you from the active relayer set.`
-          : <>Exit requested. Bond will be withdrawable in <span className="font-mono font-semibold text-[var(--color-text)]">{formatRemaining(remaining)}</span>. The relayer is no longer accepting new orders.</>}
+        {ready ? (
+          `Cool-down complete. Withdrawing returns ${bondLabel(row)} and removes you from the active relayer set.`
+        ) : (
+          <>
+            Exit requested. Bond will be withdrawable in{" "}
+            <span className="font-mono font-semibold text-[var(--color-text)]">
+              {formatRemaining(remaining)}
+            </span>
+            . <code className="font-mono">isActiveRelayer</code> is{" "}
+            <code className="font-mono">false</code> for the whole window —
+            both new orders and settlement of in-flight orders revert with{" "}
+            <code className="font-mono">NotActiveRelayer</code>. Cancelling
+            the exit is not supported by the current registry; you must wait
+            and re-register after <code className="font-mono">executeExit</code>.
+          </>
+        )}
       </p>
       <button
         onClick={onExecute}
@@ -364,7 +455,7 @@ function CooldownPanel({
       >
         {phase.kind === "submitting"
           ? "Submitting…"
-          : ready ? `Execute exit · withdraw ${row.bondEth} ETH` : "Withdraw bond (cool-down active)"}
+          : ready ? `Execute exit · withdraw ${bondLabel(row)}` : "Withdraw bond (cool-down active)"}
       </button>
       <WriteResult phase={phase} />
     </section>
