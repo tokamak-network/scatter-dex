@@ -467,7 +467,16 @@ export default function NewPayout() {
   const shortfallRaw = totalEscrowRaw > availableRaw ? totalEscrowRaw - availableRaw : 0n;
 
   const sourcePick = useMemo<SourceNotesPick>(
-    () => autoPickSourceNotes(notes, tokenAddress ?? "", totalEscrowRaw),
+    // Pre-filter to reconciled notes so the displayed pick matches
+    // what `pickPerBatchNotes` + realSettle can actually spend; an
+    // unreconciled note in the auto-pick would silently advertise
+    // coverage the proof path has to reject.
+    () =>
+      autoPickSourceNotes(
+        notes.filter((n) => n.leafIndex >= 0),
+        tokenAddress ?? "",
+        totalEscrowRaw,
+      ),
     [notes, tokenAddress, totalEscrowRaw],
   );
 
@@ -1245,12 +1254,18 @@ function FundsStep({
           <div className="mb-2 text-[var(--color-text-muted)]">
             Available: <span className="font-mono">{fmt(availableRaw)} {token}</span>
             {pendingRaw > 0n && (
-              <span title="Deposited but the next block hasn't been observed yet — wait or top up.">
+              <>
                 {" · Pending: "}
                 <span className="font-mono">{fmt(pendingRaw)} {token}</span>
-              </span>
+              </>
             )}
           </div>
+          {pendingRaw > 0n && (
+            <div className="mb-2 text-[var(--color-text-subtle)]">
+              Pending notes are deposited but waiting for the next block —
+              they become spendable once the reconciler observes them.
+            </div>
+          )}
           {sourcePick.notes.length > 0 ? (
             <ul className="space-y-0.5 font-mono">
               {sourcePick.notes.map(({ note: n, spend }) => (
