@@ -619,7 +619,7 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
   return (
     <Panel
       title="Webhook alerts"
-      eyebrow="GET / POST /api/admin/webhook"
+      eyebrow="GET /api/admin/webhook · POST /api/admin/webhook/test"
       action={
         data?.configured ? (
           <button
@@ -710,9 +710,9 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.recent.map((a) => (
+                    {data.recent.map((a, i) => (
                       <tr
-                        key={`${a.emittedAt}-${a.type}`}
+                        key={`${a.emittedAt}-${a.type}-${i}`}
                         className="border-t border-[var(--color-border)]"
                       >
                         <td className="px-3 py-2 text-[var(--color-text-muted)]">
