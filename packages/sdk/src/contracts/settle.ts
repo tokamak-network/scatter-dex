@@ -72,3 +72,26 @@ export async function callSettleAuth(
     feeTokenTaker: fees.feeTokenTaker,
   }) as Promise<ethers.TransactionResponse>;
 }
+
+/** Send `PrivateSettlement.scatterDirectAuth(...)` — Pay-style same-
+ *  token self-pay (no counterparty, no DEX). The contract enforces:
+ *  - `proof.sellToken === proof.buyToken` (same-token invariant)
+ *  - `msg.sender == proof.relayer` is registered (or registry unset)
+ *  - the authorize proof's tier has a verifier registered
+ *
+ *  The single `fee` is in the same token as the proof — drawn from
+ *  the user's totalLocked, capped against the user-signed `maxFee`,
+ *  and routed to `proof.relayer` via FeeVault (or directly when
+ *  FeeVault is unset). Pass 0 for self-relayer flows. */
+export async function callScatterDirectAuth(
+  signer: ethers.Signer,
+  settlementAddress: string,
+  side: SettleAuthSide,
+  fee: bigint,
+): Promise<ethers.TransactionResponse> {
+  const settlement = new ethers.Contract(settlementAddress, PRIVATE_SETTLEMENT_IFACE, signer);
+  return settlement.scatterDirectAuth({
+    proof: packAuthorize(side),
+    fee,
+  }) as Promise<ethers.TransactionResponse>;
+}

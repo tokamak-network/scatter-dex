@@ -30,7 +30,10 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { performance } from "perf_hooks";
+
 import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+import { callScatterDirectAuth, type SettleAuthSide } from "@zkscatter/sdk/contracts";
 import { TIER_16, padClaims, COMMIT_TREE_DEPTH } from "@zkscatter/sdk/zk";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import {
@@ -63,8 +66,6 @@ const SETTLEMENT_ADDR = process.env.E2E_SETTLEMENT_ADDRESS!;
 const USDC_ADDRESS = process.env.E2E_USDC_ADDRESS!;
 const USER_KEY = process.env.E2E_PRIVATE_KEY
   ?? "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-const RECIPIENT = process.env.E2E_RECIPIENT
-  ?? "0x627306090abaB3A6e1400e9345bC60c78a8BEf57";
 
 if (!POOL_ADDR || !SETTLEMENT_ADDR || !USDC_ADDRESS) {
   throw new Error(
@@ -72,7 +73,58 @@ if (!POOL_ADDR || !SETTLEMENT_ADDR || !USDC_ADDRESS) {
   );
 }
 
+// Number of recipient claims to put on the maker side. Capped by the
+// active circuit tier (16 today). N=1 measures the floor; N=16 measures
+// the worst case Pay v1 will hit. 64 / 128 require their own circuits
+// (B.5 ceremony track) and aren't reachable from this script today.
+const RECIPIENTS_N = (() => {
+  const v = Number(process.env.E2E_RECIPIENTS ?? 1);
+  if (!Number.isInteger(v) || v < 1 || v > TIER_16.cap) {
+    throw new Error(
+      `E2E_RECIPIENTS must be 1..${TIER_16.cap} (got ${process.env.E2E_RECIPIENTS}). ` +
+        `Higher counts need tier 64 / 128 circuits, which are not yet shipped.`,
+    );
+  }
+  return v;
+})();
+
 const CLAIMS_TREE_DEPTH = TIER_16.claimsTreeDepth;
+
+/** Deterministic recipient addresses derived from a seed.
+ *  Each recipient is `keccak256("pay-recipient-i") -> first 20 bytes`,
+ *  so the same N always produces the same set across runs and the
+ *  test stays reproducible. */
+function deterministicRecipients(n: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const hash = ethers.keccak256(ethers.toUtf8Bytes(`pay-recipient-${i}`));
+    out.push(ethers.getAddress("0x" + hash.slice(-40)));
+  }
+  return out;
+}
+
+/** Step-timing collector. Records elapsed milliseconds per labelled
+ *  block so the run prints a per-step / total breakdown at the end —
+ *  the headline output for the N=1/8/16 latency comparison. */
+class Timing {
+  private steps: { label: string; ms: number }[] = [];
+  private last = performance.now();
+  mark(label: string) {
+    const now = performance.now();
+    this.steps.push({ label, ms: now - this.last });
+    this.last = now;
+  }
+  report() {
+    const total = this.steps.reduce((s, x) => s + x.ms, 0);
+    console.log("\n──────── Timing report ────────");
+    console.log(`  Recipients (N): ${RECIPIENTS_N}`);
+    for (const s of this.steps) {
+      console.log(`    ${s.label.padEnd(30)} ${s.ms.toFixed(1).padStart(8)} ms`);
+    }
+    console.log(`    ${"TOTAL".padEnd(30)} ${total.toFixed(1).padStart(8)} ms`);
+    console.log("───────────────────────────────");
+  }
+}
 
 // ─── ABIs ──────────────────────────────────────────────────
 
@@ -109,8 +161,9 @@ const SETTLEMENT_ABI = [
 
 async function main() {
   console.log("═══════════════════════════════════════════════════════");
-  console.log("  E2E: scatterDirectAuth (Pay-style same-token self-pay)");
+  console.log(`  E2E: scatterDirectAuth (N=${RECIPIENTS_N} recipients)`);
   console.log("═══════════════════════════════════════════════════════\n");
+  const timing = new Timing();
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const chainId = (await provider.getNetwork()).chainId;
@@ -171,6 +224,7 @@ async function main() {
   // of the owner role surfaces as a permission revert instead of
   // silently succeeding under the lingering impersonation.
   await provider.send("anvil_stopImpersonatingAccount", [ownerAddr]);
+  timing.mark("setup (mock verifier + registry)");
 
   // ─── Step 2: Mint USDC + deposit ──────────────────────────
   console.log("\n[2/8] Mint USDC + deposit into CommitmentPool...");
@@ -233,6 +287,7 @@ async function main() {
     }
   }
   assert(leafIndex >= 0, `Deposit at leaf #${leafIndex}`);
+  timing.mark("deposit (proof + tx)");
 
   // ─── Step 3: Build authorize proof inputs (same-token!) ────
   console.log("\n[3/8] Building self-pay order (sellToken == buyToken)...");
@@ -251,16 +306,20 @@ async function main() {
   const changeAmount = depositAmount - sellAmount;
   const changeSalt = randomFieldElement();
 
-  const claimSecret = randomFieldElement();
-  const claims = [
-    {
-      secret: claimSecret,
-      recipient: BigInt(RECIPIENT),
-      token: BigInt(USDC_ADDRESS),
-      amount: totalLocked,
-      releaseTime,
-    },
-  ];
+  // Spread `totalLocked` evenly across N recipients. Any rounding
+  // remainder lands on the last recipient so the per-claim sum still
+  // equals totalLocked exactly (the circuit + contract both check
+  // this — a 1-wei drift fails the proof).
+  const recipientAddrs = deterministicRecipients(RECIPIENTS_N);
+  const perRecipient = totalLocked / BigInt(RECIPIENTS_N);
+  const remainder = totalLocked - perRecipient * BigInt(RECIPIENTS_N);
+  const claims = recipientAddrs.map((addr, i) => ({
+    secret: randomFieldElement(),
+    recipient: BigInt(addr),
+    token: BigInt(USDC_ADDRESS),
+    amount: i === RECIPIENTS_N - 1 ? perRecipient + remainder : perRecipient,
+    releaseTime,
+  }));
 
   // Build commitment tree from on-chain events. Scan from genesis
   // up to (and including) the deposit's own block — anvil's chain
@@ -370,38 +429,50 @@ async function main() {
 
   const ps = proofResult.publicSignals;
   assert(ps.length === 15, `Proof has 15 public signals`);
+  timing.mark("authorize proof (snarkjs)");
 
-  // ─── Step 5: scatterDirectAuth ────────────────────────────
+  // ─── Step 5: scatterDirectAuth via SDK helper ─────────────
   console.log("\n[5/8] Calling scatterDirectAuth...");
 
-  const proofStruct = {
-    proofA: proofResult.formatted.proofA,
-    proofB: proofResult.formatted.proofB,
-    proofC: proofResult.formatted.proofC,
-    pubKeyBind: toHex(BigInt(ps[0]), 32),
-    commitmentRoot: ps[1],
-    nullifier: toHex(BigInt(ps[2]), 32),
-    nonceNullifier: toHex(BigInt(ps[3]), 32),
-    newCommitment: toHex(BigInt(ps[4]), 32),
+  // SDK's `callScatterDirectAuth` packs the AuthorizeProof tuple from
+  // the proof result + side scalars and submits the tx. Same shape
+  // Pay UI / Pro will use post-Phase-1b — keeping the test on the
+  // same path proves the helper handles every field correctly.
+  const side: SettleAuthSide = {
+    proof: {
+      // SDK's AuthorizeProofResult expects the Solidity-formatted
+      // Groth16 tuple (proofA / proofB swapped pairs / proofC) under
+      // `.proof.{a,b,c}`. The local `formatted` field already has
+      // exactly that shape; the public signals are decimal strings
+      // from snarkjs that need to be promoted to bigints.
+      proof: {
+        a: proofResult.formatted.proofA,
+        b: proofResult.formatted.proofB,
+        c: proofResult.formatted.proofC,
+      },
+      publicSignals: ps.map((s: string) => BigInt(s)),
+      pubKeyBind: BigInt(ps[0]),
+      commitmentRoot: BigInt(ps[1]),
+      nullifier: BigInt(ps[2]),
+      nonceNullifier: BigInt(ps[3]),
+      newCommitment: BigInt(ps[4]),
+      claimsRoot: BigInt(ps[11]),
+      totalLocked: BigInt(ps[12]),
+      orderHash: BigInt(ps[14]),
+    },
     sellToken: USDC_ADDRESS,
     buyToken: USDC_ADDRESS,
     sellAmount,
     buyAmount,
-    maxFee: 0,
+    maxFee: 0n,
     expiry,
-    claimsRoot: toHex(claimsRootValue, 32),
-    totalLocked,
     relayer: userAddr,
-    orderHash: toHex(BigInt(ps[14]), 32),
     tier: TIER_16.cap,
   };
-
-  const settleTx = await settlement.scatterDirectAuth(
-    { proof: proofStruct, fee },
-    { gasLimit: 5_000_000 },
-  );
+  const settleTx = await callScatterDirectAuth(wallet, SETTLEMENT_ADDR, side, fee);
   const settleReceipt = await settleTx.wait();
   assert(settleReceipt?.status === 1, `scatterDirectAuth tx: ${settleTx.hash}`);
+  timing.mark("scatterDirectAuth tx");
 
   // ─── Step 6: Verify on-chain state ────────────────────────
   console.log("\n[6/8] Verifying on-chain state...");
@@ -430,8 +501,13 @@ async function main() {
     await provider.send("evm_mine", []);
   }
 
+  // Claim only recipient #0 — the scatter step already proved every
+  // recipient is reachable from the claims root, and timing the
+  // single-recipient claim flow keeps the Step 7 measurement clean
+  // (linear-in-N would obscure the per-claim cost).
   const claim = claims[0]!;
   const claimIdx = 0;
+  const claimRecipient = recipientAddrs[claimIdx]!;
   const claimNullifier = poseidonHash([TAG_CLAIM_NULL, claim.secret, BigInt(claimIdx)]);
   const claimMerkleProof = getMerkleProof(claimsLayers, claimIdx);
 
@@ -444,7 +520,7 @@ async function main() {
       nullifier: claimNullifier.toString(),
       amount: claim.amount.toString(),
       token: BigInt(USDC_ADDRESS).toString(),
-      recipient: BigInt(RECIPIENT).toString(),
+      recipient: BigInt(claimRecipient).toString(),
       releaseTime: claim.releaseTime.toString(),
       secret: claim.secret.toString(),
       leafIndex: claimIdx.toString(),
@@ -455,7 +531,7 @@ async function main() {
     CLAIM_ZKEY,
   );
 
-  const recipientUsdcBefore = (await usdc.balanceOf(RECIPIENT)) as bigint;
+  const recipientUsdcBefore = (await usdc.balanceOf(claimRecipient)) as bigint;
   const claimTx = await settlement.claimWithProof(
     [claimZkProof.pi_a[0], claimZkProof.pi_a[1]],
     [
@@ -467,23 +543,25 @@ async function main() {
     toHex(claimNullifier, 32),
     claim.amount,
     USDC_ADDRESS,
-    RECIPIENT,
+    claimRecipient,
     claim.releaseTime,
     { gasLimit: 1_000_000 },
   );
   await claimTx.wait();
   assert(true, `claimWithProof tx: ${claimTx.hash}`);
+  timing.mark("claim (proof + tx)");
 
   // ─── Step 8: Verify recipient received USDC ───────────────
   console.log("\n[8/8] Verifying recipient balance...");
 
-  const recipientUsdcAfter = (await usdc.balanceOf(RECIPIENT)) as bigint;
+  const recipientUsdcAfter = (await usdc.balanceOf(claimRecipient)) as bigint;
   const delta = recipientUsdcAfter - recipientUsdcBefore;
   assert(delta === claim.amount, `Recipient delta = ${ethers.formatEther(delta)} USDC`);
 
   console.log("\n═══════════════════════════════════════════════════════");
   console.log("  ✅ E2E scatterDirectAuth — ALL 8 STEPS PASSED");
   console.log("═══════════════════════════════════════════════════════");
+  timing.report();
 }
 
 main()
