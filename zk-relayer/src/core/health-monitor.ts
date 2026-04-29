@@ -64,6 +64,17 @@ export function _resetHealthMonitorForTests(): void {
   lastProbeAt = null;
 }
 
+/** Test-only hook: run a single probe synchronously, bypassing the
+ *  interval machinery, so tests can assert the no-spam transition
+ *  semantics without a setTimeout race. Production startup uses
+ *  startHealthMonitor. */
+export async function _runProbeOnceForTests(
+  submitter: PrivateSubmitter,
+  db: PrivateOrderDB,
+): Promise<void> {
+  await runProbe(submitter, db);
+}
+
 async function runProbe(
   submitter: PrivateSubmitter,
   db: PrivateOrderDB,

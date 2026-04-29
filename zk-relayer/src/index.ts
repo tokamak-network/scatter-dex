@@ -18,7 +18,7 @@ import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle } from "./routes/authorize-orders.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
-import { startHealthMonitor } from "./core/health-monitor.js";
+import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
 
@@ -390,6 +390,10 @@ async function main() {
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
     clearInterval(expirySweepInterval);
+    // Stop the periodic probe before draining the worker so we
+    // don't kick off an extra DB write (or alert) once shutdown
+    // is in motion.
+    stopHealthMonitor();
     sharedClient?.stop();
     // `settlementWorker.stop()` awaits any in-flight tick, which itself
     // runs SQLite statements through `db`. If we closed `db` before the

@@ -12,9 +12,12 @@
  * - Recent buffer is capped (last 50 entries) so a flapping
  *   condition doesn't grow the heap. Newer entries push older ones
  *   out, FIFO.
- * - The `text` field renders directly in Slack; `payload.*` is
- *   structured context so a Discord/webhook bot can render richer
- *   embeds if it cares.
+ * - The wire format is flat: `{ type, severity, text, ...payload }`.
+ *   The three reserved fields are spread *after* the payload so a
+ *   producer that accidentally puts a `type` / `severity` / `text`
+ *   key in the payload bag can't override the canonical envelope.
+ *   Slack reads `text`; richer bots can pull anything from the
+ *   payload keys.
  */
 
 import { config } from "../config.js";
@@ -111,10 +114,13 @@ export async function postWebhook(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        // Spread payload first so `type` / `severity` / `text`
+        // overwrite any same-named key the producer accidentally
+        // included — preserves the canonical envelope.
+        ...(event.payload ?? {}),
         type: event.type,
         severity: event.severity,
         text: event.text,
-        ...(event.payload ?? {}),
       }),
       signal: ctrl.signal,
     });
