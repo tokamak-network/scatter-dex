@@ -24,8 +24,11 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
-import { TIER_16 } from "@zkscatter/sdk/zk";
+// Relative-path imports rather than `@zkscatter/sdk` because zk-relayer
+// has no `@zkscatter/sdk` package linkage in its node_modules; the
+// monorepo's TS path resolver picks up the SDK source directly.
+import { AUTHORIZE_PROOF_TUPLE } from "../../packages/sdk/src/core/contracts.js";
+import { TIER_16 } from "../../packages/sdk/src/zk/constants.js";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 import { eqAddr } from "../src/lib/address.js";
@@ -94,10 +97,6 @@ const CLAIM_ABI = [
   "function claimWithProof(uint256[2],uint256[2][2],uint256[2],bytes32,bytes32,uint256,address,address,uint256) external",
 ];
 
-const FEE_VAULT_ABI = [
-  "function treasury() view returns (address)",
-];
-
 // MockDexRouter bytecode — simple swap: pull tokenIn, push tokenOut at 1:1 rate
 // We'll deploy it via CREATE opcode in the test
 const MOCK_DEX_ROUTER_ABI = [
@@ -124,12 +123,24 @@ async function main() {
   const userAddr = baseWallet.address;
   console.log(`User: ${userAddr}`);
 
-  // Get contract addresses from relayer
-  const infoRes = await fetch(`${ZK_RELAYER_URL}/api/info`);
-  if (!infoRes.ok) throw new Error("zk-relayer not running");
-  const info = await infoRes.json();
-  const poolAddr = info.commitmentPool;
-  const settlementAddr = info.privateSettlement;
+  // Resolve contract addresses. The relayer's `/api/info` endpoint is
+  // the canonical source under `dev.sh --mock`, but env vars let the
+  // test run against a bare anvil + DeployLocal stack — useful when
+  // shared-orderbook / better-sqlite3 won't boot under the current
+  // arch. Both paths are equivalent once the addresses are loaded.
+  let poolAddr: string;
+  let settlementAddr: string;
+  if (process.env.E2E_POOL_ADDRESS && process.env.E2E_SETTLEMENT_ADDRESS) {
+    poolAddr = process.env.E2E_POOL_ADDRESS;
+    settlementAddr = process.env.E2E_SETTLEMENT_ADDRESS;
+    console.log(`Using addresses from env (relayer skipped)`);
+  } else {
+    const infoRes = await fetch(`${ZK_RELAYER_URL}/api/info`);
+    if (!infoRes.ok) throw new Error("zk-relayer not running (or pass E2E_POOL_ADDRESS + E2E_SETTLEMENT_ADDRESS)");
+    const info = await infoRes.json();
+    poolAddr = info.commitmentPool;
+    settlementAddr = info.privateSettlement;
+  }
 
   const settlementForWeth = new ethers.Contract(settlementAddr, ["function weth() view returns (address)"], provider);
   const weth: string = await settlementForWeth.weth();
@@ -191,9 +202,12 @@ async function main() {
 
   // Whitelist MockDexRouter + set AuthorizeVerifier + set platform fee
   await (await settlementAsOwner.setDexRouterWhitelist(mockDexAddress, true)).wait();
-  const setAuthAbi = ["function setAuthorizeVerifier(address) external"];
+  // Multi-tier signature — `setAuthorizeVerifier(uint8 tier, address)`.
+  // Pre-PR #528 this was a single-arg setter; the test is the last
+  // place still on the old shape.
+  const setAuthAbi = ["function setAuthorizeVerifier(uint8,address) external"];
   const settlementForAuth = new ethers.Contract(settlementAddr, setAuthAbi, ownerSigner);
-  await (await settlementForAuth.setAuthorizeVerifier(mockAuthAddress)).wait();
+  await (await settlementForAuth.setAuthorizeVerifier(TIER_16.cap, mockAuthAddress)).wait();
   await (await settlementAsOwner.setDexPlatformFee(PLATFORM_FEE_BPS)).wait();
   await provider.send("anvil_stopImpersonatingAccount", [ownerAddr]);
 
@@ -430,27 +444,43 @@ async function main() {
 
   const feeVaultAddr: string = await settlement.feeVault();
   if (feeVaultAddr !== ethers.ZeroAddress) {
-    const feeVaultContract = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
-    const treasury: string = await feeVaultContract.treasury();
-
-    // Check DexPlatformFeeCollected event in settle receipt
+    // Check DexPlatformFeeCollected event in settle receipt. The 4th
+    // event arg is the FeeVault address (where the platform fee was
+    // routed) — `treasury` is one indirection further (the FeeVault's
+    // own treasury account), so we compare against `feeVaultAddr` here
+    // and check the actual treasury balance below.
+    //
+    // Capture the parsed args outside the parseLog try-block, then
+    // assert *after* the loop — keeps `parseLog` failures (which the
+    // catch is meant to swallow) from masking assertion errors below.
     const settleIface = new ethers.Interface(SETTLEMENT_ABI);
-    let feeEventFound = false;
+    let feeEventArgs: ethers.Result | null = null;
     for (const log of settleReceipt.logs) {
       try {
         const parsed = settleIface.parseLog({ topics: log.topics as string[], data: log.data });
         if (parsed?.name === "DexPlatformFeeCollected") {
-          assert(parsed.args.amount === feeAmount, `Fee event amount: ${ethers.formatEther(parsed.args.amount)} WETH`);
-          assert(eqAddr(parsed.args.treasury, treasury), "Fee sent to treasury");
-          feeEventFound = true;
+          feeEventArgs = parsed.args;
+          break;
         }
-      } catch { /* skip */ }
+      } catch { /* not a settlement-known event — skip */ }
     }
-    assert(feeEventFound, "DexPlatformFeeCollected event emitted");
+    assert(feeEventArgs !== null, "DexPlatformFeeCollected event emitted");
+    assert(
+      feeEventArgs!.amount === feeAmount,
+      `Fee event amount: ${ethers.formatEther(feeEventArgs!.amount)} WETH`,
+    );
+    assert(
+      eqAddr(feeEventArgs!.treasury, feeVaultAddr),
+      `Fee routed to vault: ${feeEventArgs!.treasury}`,
+    );
 
-    // Verify treasury actually received the fee
-    const treasuryWeth = await (new ethers.Contract(weth, WETH_ABI, provider)).balanceOf(treasury);
-    assert(treasuryWeth >= feeAmount, `Treasury WETH: ${ethers.formatEther(treasuryWeth)} (expected ≥ ${ethers.formatEther(feeAmount)})`);
+    // Verify the FeeVault actually holds the fee. PrivateSettlement
+    // sends the platform fee into FeeVault.platformRevenue rather
+    // than transferring straight to `treasury` — treasury withdraws
+    // it later via `withdrawPlatformRevenue`. So the right post-
+    // condition here is the vault's WETH balance, not treasury's.
+    const vaultWeth = await (new ethers.Contract(weth, WETH_ABI, provider)).balanceOf(feeVaultAddr);
+    assert(vaultWeth >= feeAmount, `FeeVault WETH: ${ethers.formatEther(vaultWeth)} (expected ≥ ${ethers.formatEther(feeAmount)})`);
   } else {
     console.log("  (FeeVault not set — skipping fee checks)");
   }

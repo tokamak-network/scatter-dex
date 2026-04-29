@@ -7,7 +7,11 @@
  */
 
 import { ethers } from "ethers";
-import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+// Relative path because zk-relayer doesn't list @zkscatter/sdk as a
+// runtime dep — the monorepo links to the SDK source directly. Keeping
+// the relative import means `npm run build` in zk-relayer doesn't need
+// any new package linkage.
+import { AUTHORIZE_PROOF_TUPLE } from "../../../packages/sdk/src/core/contracts.js";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
