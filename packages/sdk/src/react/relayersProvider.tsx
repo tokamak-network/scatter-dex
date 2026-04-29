@@ -17,9 +17,11 @@ export interface RelayersState {
   relayers: RelayerInfo[];
   selected: RelayerInfo | null;
   loading: boolean;
-  /** True when no on-chain registry is configured for the network
-   *  (e.g. a placeholder demo network). UI uses this to render
-   *  "no registry" instead of an empty-list fallback. */
+  /** True when an on-chain registry IS configured for the network.
+   *  False for unconfigured / placeholder addresses (e.g. a demo
+   *  network with a zero-address relayer registry). UI branches on
+   *  `!registryConfigured` to render a "no registry" state instead
+   *  of an empty-list fallback. */
   registryConfigured: boolean;
   error: string | null;
   refresh(): void;

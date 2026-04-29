@@ -52,7 +52,13 @@ export function EdDSAKeyProvider({ children }: { children: ReactNode }) {
   // Memoizes the in-flight derivation Promise so two concurrent
   // callers (e.g. DepositModal and OrderModal racing on first
   // user click) share one wallet prompt instead of opening two.
+  // `inflightForRef` is set synchronously at the start of derive()
+  // — before the await — so the second concurrent caller can match
+  // even though `derivedForRef` doesn't get set until the promise
+  // resolves. Without this, the de-dupe guard would race against
+  // its own first call and reintroduce the double-prompt.
   const inflightRef = useRef<Promise<EdDSAKeyPair> | null>(null);
+  const inflightForRef = useRef<string | null>(null);
 
   // Account-switch cache invalidation runs in an effect, not during
   // render — setting state during render breaks Strict Mode and
@@ -78,7 +84,7 @@ export function EdDSAKeyProvider({ children }: { children: ReactNode }) {
     // otherwise return the previous account's cached keypair. Reject
     // the stale cache here in addition to the cleanup effect.
     if (keyPair && derivedForRef.current === account) return keyPair;
-    if (inflightRef.current && derivedForRef.current === account) {
+    if (inflightRef.current && inflightForRef.current === account) {
       return inflightRef.current;
     }
     if (!signer) {
@@ -107,9 +113,11 @@ export function EdDSAKeyProvider({ children }: { children: ReactNode }) {
       } finally {
         setIsDeriving(false);
         inflightRef.current = null;
+        inflightForRef.current = null;
       }
     })();
     inflightRef.current = promise;
+    inflightForRef.current = account;
     return promise;
   }, [signer, account, keyPair]);
 
