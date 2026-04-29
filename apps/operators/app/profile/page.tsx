@@ -302,12 +302,13 @@ function ActiveExitPanel({
   signer: ReturnType<typeof useWallet>["signer"];
   write: ReturnType<typeof useRegistryWrite>;
 }) {
-  // Two-stage UI: the first click flips into a confirmation block
-  // that spells out exactly what requestExit does (because in the
-  // current registry it blocks settlement for the entire cooldown,
-  // not just new-order acceptance — easy to misread otherwise).
   const [confirming, setConfirming] = useState(false);
   const submitting = write.phase.kind === "submitting";
+
+  const onCancel = () => {
+    setConfirming(false);
+    write.reset();
+  };
 
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
@@ -359,7 +360,7 @@ function ActiveExitPanel({
             {submitting ? "Submitting…" : "Confirm — request exit"}
           </button>
           <button
-            onClick={() => setConfirming(false)}
+            onClick={onCancel}
             disabled={submitting}
             className="rounded-lg border border-[var(--color-border-strong)] bg-white px-4 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
           >
