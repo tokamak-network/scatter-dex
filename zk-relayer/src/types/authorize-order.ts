@@ -340,10 +340,11 @@ export function validateAuthorizeOrder(
   // legacy client and is read as tier 16 by the consumer.
   if (order.tier !== undefined && !ALLOWED_TIERS.has(order.tier)) {
     // JSON.stringify renders `"16"` and `16` distinguishably, and
-    // surfaces `null` / `{}` / `undefined` as themselves rather than
-    // the JS coercion string. Include `typeof` for non-string/number
-    // payloads so the operator can tell a malformed body apart from a
-    // wrong-but-valid number.
+    // surfaces `null` / `{}` as themselves rather than the JS
+    // coercion string. (`undefined` never reaches here — the outer
+    // `!== undefined` guard short-circuits the legacy-client path.)
+    // Include `typeof` for non-string/number payloads so the operator
+    // can tell a malformed body apart from a wrong-but-valid number.
     return `tier must be one of 16 / 64 / 128 (got ${JSON.stringify(order.tier)} of type ${typeof order.tier})`;
   }
 
