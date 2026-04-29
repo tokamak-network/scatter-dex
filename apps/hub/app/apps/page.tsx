@@ -36,8 +36,8 @@ export default function AppsPage() {
           Run the network
         </h2>
         <p className="mt-2 max-w-2xl text-[var(--color-text-muted)]">
-          The four user apps run on a permissionless relayer network. Anyone
-          can register a node, match orders, and earn fees.
+          Every zkScatter user app runs on a permissionless relayer
+          network. Anyone can register a node, match orders, and earn fees.
         </p>
         <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           {OPERATOR_APPS.map((app) => (

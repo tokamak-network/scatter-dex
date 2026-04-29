@@ -6,39 +6,6 @@
 @source "../components/**/*.{ts,tsx}";
 @source "../content/**/*.{md,mdx}";
 
-/* Cross-app return bar — shared shell strip above the Nextra layout
- * so docs visitors can jump back to the hub from any page. */
-.zs-app-bar {
-  display: flex;
-  justify-content: flex-start;
-  padding: 0.5rem 1.25rem;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(247, 248, 251, 0.9);
-  font-size: 0.8125rem;
-}
-
-.dark .zs-app-bar {
-  border-bottom-color: rgba(255, 255, 255, 0.08);
-  background: rgba(15, 23, 42, 0.6);
-}
-
-.zs-app-bar-link {
-  color: rgb(107, 114, 128);
-  text-decoration: none;
-}
-
-.zs-app-bar-link:hover {
-  color: rgb(17, 24, 39);
-}
-
-.dark .zs-app-bar-link {
-  color: rgb(156, 163, 175);
-}
-
-.dark .zs-app-bar-link:hover {
-  color: rgb(243, 244, 246);
-}
-
 /* ─────────────────────────────────────────────────────────────────
  * zkScatter docs theme tokens
  * Layered on top of nextra-theme-docs so its sidebar / TOC / search

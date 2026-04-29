@@ -11,7 +11,7 @@ import { FeeVaultProvider } from "./lib/useFeeVault";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Scatter Operators — Run a zkScatter relayer",
+  title: "Scatter Relayer — Run a zkScatter relayer node",
   description:
     "Register a relayer, manage your fee policy, and monitor settlement performance on the zkScatter network.",
 };
@@ -32,10 +32,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </Pill>
               }
               walletSlot={<ConnectWalletPill />}
-              hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
               topRibbon={
                 <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-                  Operator preview — Sepolia testnet. Pages with mock data are tagged inline.
+                  Relayer preview — Sepolia testnet. Pages with mock data are tagged inline.
                 </div>
               }
               navLinks={
@@ -53,7 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <WrongChainBanner />
             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-              Scatter Operators · Powered by zkScatter · Tokamak Network
+              Scatter Relayer · Powered by zkScatter · Tokamak Network
             </footer>
             </FeeVaultProvider>
           </OperatorProvider>

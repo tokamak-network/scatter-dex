@@ -24,7 +24,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             brand={<Brand />}
             chainPill={<PayNetworkPill />}
             walletSlot={<ConnectWalletPill />}
-            hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter.xyz"}
             topRibbon={
               <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                 🎉 Launch event — all plans free until Dec 31, 2026. No credit card required.

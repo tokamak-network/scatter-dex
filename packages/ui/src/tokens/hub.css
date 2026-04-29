@@ -13,13 +13,13 @@
   --color-primary: #0c4a6e;
   --color-primary-hover: #075985;
   --color-primary-soft: #e0f2fe;
-  --color-accent-pro: #0ea5e9;
+  --color-accent-pro: #0284c7;
   --color-accent-pay: #2563eb;
   --color-accent-drop: #7c3aed;
-  --color-accent-mobile: #0d9488;
-  --color-accent-mobile-hover: #0f766e;
-  --color-accent-mobile-soft: #f0fdfa;
-  --color-accent-relayer: #ec4899;
+  --color-accent-mobile: #d97706;
+  --color-accent-mobile-hover: #b45309;
+  --color-accent-mobile-soft: #fef3c7;
+  --color-accent-relayer: #0f766e;
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }

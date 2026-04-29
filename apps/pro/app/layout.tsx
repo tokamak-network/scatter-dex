@@ -42,7 +42,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                               brand={<Brand />}
                               chainPill={<NetworkSwitcher />}
                               walletSlot={<ConnectWalletPill />}
-                              hubUrl={process.env.NEXT_PUBLIC_HUB_URL ?? "https://zkscatter-hub.web.app"}
                               topRibbon={
                                 <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                                   🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
