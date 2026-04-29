@@ -24,6 +24,8 @@ import { ethers } from "ethers";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+import { TIER_16 } from "@zkscatter/sdk/zk";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 import { eqAddr } from "../src/lib/address.js";
@@ -71,11 +73,13 @@ const POOL_ABI = [
 ];
 
 const SETTLEMENT_ABI = [
-  "function settleWithDex(tuple(tuple(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash) proof, address dexRouter, bytes dexCalldata, uint256 deadline) params) external",
+  // Pull the AuthorizeProof field list straight from @zkscatter/sdk so
+  // a future struct change only needs the SDK constant updated.
+  `function settleWithDex(tuple(tuple${AUTHORIZE_PROOF_TUPLE} proof, address dexRouter, bytes dexCalldata, uint256 deadline) params) external`,
   "function nullifiers(bytes32) view returns (bool)",
   "function nonceNullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",
-  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token)",
+  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token, uint8 tier)",
   "function setDexRouterWhitelist(address,bool) external",
   "function setDexPlatformFee(uint256) external",
   "function dexPlatformFeeBps() view returns (uint256)",
@@ -362,6 +366,7 @@ async function main() {
         totalLocked,
         relayer: userAddr,
         orderHash: toHex(BigInt(ps[14]), 32),
+        tier: TIER_16.cap,
       },
       dexRouter: mockDexAddress,
       dexCalldata,
@@ -396,6 +401,7 @@ async function main() {
       totalLocked,
       relayer: userAddr,
       orderHash: toHex(BigInt(ps[14]), 32),
+      tier: TIER_16.cap,
     },
     dexRouter: mockDexAddress,
     dexCalldata,

@@ -7,6 +7,8 @@
  */
 
 import { ethers } from "ethers";
+import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
+import { TIER_16 } from "@zkscatter/sdk/zk";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
@@ -18,19 +20,11 @@ import type {
 } from "../types/authorize-order.js";
 import { publicSignalToAddress } from "../types/authorize-order.js";
 
-// AuthorizeProof tuple — shared between maker and taker in settleAuth
-// Must match contracts/src/zk/SettleVerifyLib.sol AuthorizeProof struct exactly.
-const AUTH_PROOF_TUPLE = `tuple(
-  uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
-  bytes32 pubKeyBind,
-  uint256 commitmentRoot,
-  bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment,
-  address sellToken, address buyToken,
-  uint128 sellAmount, uint128 buyAmount,
-  uint16 maxFee, uint64 expiry,
-  bytes32 claimsRoot, uint128 totalLocked,
-  address relayer, bytes32 orderHash
-)`;
+// `tuple(...)` form the runtime ABI fragments below use. Concatenated
+// onto the SDK constant so this file can never drift from the
+// contract — adding a field anywhere in `SettleVerifyLib.AuthorizeProof`
+// only needs the SDK's `AUTHORIZE_PROOF_TUPLE` updated.
+const AUTH_PROOF_TUPLE = `tuple${AUTHORIZE_PROOF_TUPLE}`;
 
 // settleAuth ABI — matches the SettleAuthParams struct in PrivateSettlement.sol
 const SETTLE_AUTH_ABI = [
@@ -361,6 +355,11 @@ export class AuthorizeSubmitter {
       totalLocked: BigInt(ps.totalLocked),
       relayer: toAddress(ps.relayer),
       orderHash: toBytes32(ps.orderHash),
+      // Tier 16 is the only authorize circuit shipped today. Once
+      // tier 64 / 128 ceremonies land, this comes from the user's
+      // proof bundle (carries the tier alongside the wasm/zkey
+      // selection on the client side) rather than this constant.
+      tier: TIER_16.cap,
     };
   }
 
