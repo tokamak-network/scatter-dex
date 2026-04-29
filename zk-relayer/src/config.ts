@@ -65,6 +65,13 @@ export const config = {
 
   // [R-1] Gas guard: max gas price in gwei.
   maxGasPriceGwei: parseEnvInt("MAX_GAS_PRICE_GWEI", 100, 1),
+
+  // Optional outbound webhook (Slack/Discord/Telegram/...) for
+  // operator alerts. Posts a JSON payload on health transitions
+  // and other significant events. No retry queue — single POST
+  // per event with a 5s timeout; missed alerts are logged but
+  // not redelivered, so the channel must be reasonably available.
+  webhookUrl: process.env.WEBHOOK_URL || null,
 };
 
 /** Parse a non-negative integer env var with a default. Logs a warn and

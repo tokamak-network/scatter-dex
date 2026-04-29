@@ -26,6 +26,8 @@ import {
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { useRunRecord } from "../../_lib/runRecord";
+import { ClaimReconciler } from "../../_lib/claimReconciler";
+import { getNetworkConfig } from "../../_lib/network";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -136,17 +138,27 @@ function PayoutDetailInner() {
   }
 
   const record = run.record;
-  return shell(<PayoutBody
-    record={record}
-    busy={busy}
-    setBusy={setBusy}
-    openMenu={openMenu}
-    setOpenMenu={setOpenMenu}
-    closeMenu={closeMenu}
-    markSentBatch={run.markSentBatch}
-    markSent={run.markSent}
-    error={run.error}
-  />);
+  const settlementAddress = getNetworkConfig().contracts.privateSettlement;
+  return shell(
+    <>
+      <ClaimReconciler
+        record={record}
+        settlementAddress={settlementAddress}
+        markClaimed={run.markClaimed}
+      />
+      <PayoutBody
+        record={record}
+        busy={busy}
+        setBusy={setBusy}
+        openMenu={openMenu}
+        setOpenMenu={setOpenMenu}
+        closeMenu={closeMenu}
+        markSentBatch={run.markSentBatch}
+        markSent={run.markSent}
+        error={run.error}
+      />
+    </>,
+  );
 }
 
 function PayoutBody({
