@@ -9,7 +9,7 @@ import {
   padClaims,
   MAX_CLAIMS_PER_SIDE,
   CLAIMS_TREE_DEPTH,
-} from "../../../packages/sdk/src/zk";
+} from "../../../packages/sdk/src/zk/constants";
 
 // Lightweight unit tests for the multi-tier circuit helpers added to
 // the SDK. Lives in zk-relayer because the SDK has no test runner of
