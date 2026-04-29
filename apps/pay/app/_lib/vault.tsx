@@ -84,6 +84,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     notesRef.current = notes;
   }, [notes]);
+  // Synchronously-updated set of ids `remove()` was called for. The
+  // useEffect-mirrored `notesRef` is one tick behind a setNotes
+  // queued by `remove`; setLeafIndex's remove-race guard reads this
+  // ref to detect a same-tick removal and undo the IDB resurrection.
+  const removedIdsRef = useRef<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
   // Carries over across chain switches: hydration uses
@@ -130,6 +135,9 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       setLoaded(false);
     }
     isFirstHydrateRef.current = false;
+    // Reset on every (re)hydrate so a stale id from the previous
+    // chain doesn't block a re-loaded note that happens to share it.
+    removedIdsRef.current = new Set();
     void (async () => {
       try {
         const list = await adapter.loadAll();
@@ -203,6 +211,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const remove = useCallback(
     async (id: string) => {
+      // Mark removed BEFORE any await so a concurrent setLeafIndex
+      // sees this synchronously, even if its `notesRef` mirror
+      // hasn't ticked yet. Without this, the put-after-remove race
+      // would resurrect the IDB row.
+      removedIdsRef.current.add(id);
       await adapter.remove(id);
       setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
     },
@@ -211,18 +224,20 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const setLeafIndex = useCallback(
     async (id: string, leafIndex: number) => {
-      // Read via ref so the callback stays referentially stable.
-      // Bail when the note has been removed (spent) or is already
-      // at this index — both make the write a no-op.
+      // Bail synchronously if remove(id) was called this tick or
+      // earlier — notesRef is one commit behind, so we need the
+      // synchronous removedIdsRef set to catch the race.
+      if (removedIdsRef.current.has(id)) return;
       const target = notesRef.current.find((n) => n.id === id);
       if (!target || target.leafIndex === leafIndex) return;
       const next: VaultNote = { ...target, leafIndex };
       await adapter.put(next);
-      // A concurrent `remove(id)` racing with this put would
-      // otherwise resurrect a deleted note: remove finishes first,
-      // then our put writes the row back to IDB. Re-check the ref
-      // after the put — if the note's gone, undo by deleting again.
-      if (!notesRef.current.some((n) => n.id === id)) {
+      // Re-check post-await: a remove() that landed during the put
+      // would have added the id to the set. Undo the resurrection.
+      if (
+        removedIdsRef.current.has(id) ||
+        !notesRef.current.some((n) => n.id === id)
+      ) {
         await adapter.remove(id);
         return;
       }

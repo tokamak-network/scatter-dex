@@ -17,7 +17,16 @@ export function VaultReconciler() {
     for (const n of notes) {
       if (n.leafIndex >= 0) continue;
       const idx = tree.findIndex(n.commitment);
-      if (idx >= 0) void setLeafIndex(n.id, idx);
+      if (idx >= 0) {
+        // Folder-backed adapters (File System Access API) can throw
+        // if the user revokes permission or moves the folder mid-
+        // session. Swallow + log so the recurring tick doesn't
+        // surface as an unhandled rejection — the next leafCount
+        // change retries automatically.
+        setLeafIndex(n.id, idx).catch((err) =>
+          console.warn("[vaultReconciler] setLeafIndex failed:", err),
+        );
+      }
     }
   }, [notes, tree.ready, tree.mode, tree.leafCount, tree.findIndex, setLeafIndex]);
 
