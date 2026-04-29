@@ -89,6 +89,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // queued by `remove`; setLeafIndex's remove-race guard reads this
   // ref to detect a same-tick removal and undo the IDB resurrection.
   const removedIdsRef = useRef<Set<string>>(new Set());
+  // Bumped on every (re)hydrate. Async vault writers (setLeafIndex)
+  // capture the current value at call-start and bail if it's
+  // changed by post-await time — without this, an in-flight write
+  // crossing a chain / account switch would see the new chain's
+  // empty `notesRef` and erroneously call `adapter.remove(id)` on
+  // the OLD adapter, evicting a still-valid note from the prior
+  // chain's IDB.
+  const generationRef = useRef(0);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
   // Carries over across chain switches: hydration uses
@@ -138,6 +146,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     // Reset on every (re)hydrate so a stale id from the previous
     // chain doesn't block a re-loaded note that happens to share it.
     removedIdsRef.current = new Set();
+    // Bump the generation so any in-flight async write captured a
+    // pre-switch value sees the change and bails on post-await
+    // checks. Bumped synchronously inside the effect body — the
+    // async hydrate IIFE below runs against the new generation.
+    generationRef.current += 1;
     void (async () => {
       try {
         const list = await adapter.loadAll();
@@ -224,6 +237,10 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const setLeafIndex = useCallback(
     async (id: string, leafIndex: number) => {
+      // Capture the generation at call-start so a chain/account
+      // switch landing during the put resolves to "different chain,
+      // bail" rather than "note removed, undo resurrection".
+      const startGen = generationRef.current;
       // Bail synchronously if remove(id) was called this tick or
       // earlier — notesRef is one commit behind, so we need the
       // synchronous removedIdsRef set to catch the race.
@@ -232,6 +249,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       if (!target || target.leafIndex === leafIndex) return;
       const next: VaultNote = { ...target, leafIndex };
       await adapter.put(next);
+      // Generation moved → we crossed a chain/account switch. Don't
+      // touch the new chain's state and don't re-evict; the put
+      // landed on the OLD adapter, which is still the correct file
+      // for that note's chain. Leave it.
+      if (generationRef.current !== startGen) return;
       // Re-check post-await: a remove() that landed during the put
       // would have added the id to the set. Undo the resurrection.
       if (
