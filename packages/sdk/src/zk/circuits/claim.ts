@@ -95,6 +95,48 @@ export async function singleClaimTree(
   return { claimLeaf, allClaimLeaves };
 }
 
+/** N-leaf variant of `singleClaimTree` for an entire batch — hashes
+ *  every claim into its leaf, zero-pads up to `CLAIMS_TREE_SIZE`,
+ *  and builds the Poseidon tree. Returns the layers so callers can
+ *  pull a per-leaf inclusion proof via `getMerkleProof(layers, i)`
+ *  without rebuilding. The hash recipe matches the authorize circuit
+ *  exactly — keep in lock-step with `generateAuthorizeProof`'s
+ *  internal claim-leaf construction. */
+export async function buildClaimsTree(
+  claims: ReadonlyArray<{
+    secret: bigint;
+    recipient: bigint | string;
+    token: bigint | string;
+    amount: bigint;
+    releaseTime: bigint;
+  }>,
+): Promise<{ root: bigint; layers: bigint[][]; leaves: bigint[] }> {
+  if (claims.length > CLAIMS_TREE_SIZE) {
+    throw new Error(
+      `buildClaimsTree: too many claims (${claims.length} > ${CLAIMS_TREE_SIZE})`,
+    );
+  }
+  const leaves: bigint[] = [];
+  for (let i = 0; i < CLAIMS_TREE_SIZE; i++) {
+    if (i < claims.length) {
+      const c = claims[i]!;
+      leaves.push(
+        await poseidonHash([
+          c.secret,
+          BigInt(c.recipient),
+          BigInt(c.token),
+          c.amount,
+          c.releaseTime,
+        ]),
+      );
+    } else {
+      leaves.push(0n);
+    }
+  }
+  const { root, layers } = await buildMerkleTree(leaves, CLAIMS_TREE_DEPTH);
+  return { root, layers, leaves };
+}
+
 interface ResolvedTree {
   claimsRoot: bigint;
   pathElements: bigint[];

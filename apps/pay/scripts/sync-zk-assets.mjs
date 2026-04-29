@@ -12,7 +12,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, "../../pro/public/zk");
 const dst = resolve(here, "../public/zk");
 
-const FILES = ["authorize.wasm", "authorize_final.zkey"];
+const FILES = [
+  "authorize.wasm",
+  "authorize_final.zkey",
+  "claim.wasm",
+  "claim_final.zkey",
+];
 
 if (!existsSync(src)) {
   console.error(`[sync-zk-assets] source missing: ${src}`);
