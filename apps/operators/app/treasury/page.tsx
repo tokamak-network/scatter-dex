@@ -213,7 +213,12 @@ function FeeAccrualLive({
               <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
                 <tr>
                   <th className="px-5 py-3 text-left">Token</th>
-                  <th className="px-5 py-3 text-right">Fills</th>
+                  <th
+                    className="px-5 py-3 text-right"
+                    title="fee_history row count. settleAuth records two rows per settlement (maker + taker); scatterDirectAuth records one."
+                  >
+                    Fee events
+                  </th>
                   <th className="px-5 py-3 text-right">Total</th>
                 </tr>
               </thead>

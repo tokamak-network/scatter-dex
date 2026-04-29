@@ -8,10 +8,11 @@ import { formatRelative } from "../lib/format";
 
 type Auth = AdminAuth | null;
 // Type/status enum values must match zk-relayer/src/routes/admin.ts
-// SETTLEMENT_TYPES / SETTLEMENT_STATUSES. The server validates the
-// query string before hitting SQL, so a drift here just means the
-// chip silently filters to nothing — fail loud is preferable but
-// not worth a shared types package for two tiny enums today.
+// SETTLEMENT_TYPES / SETTLEMENT_STATUSES. The server's parse helpers
+// drop unknown values back to `undefined`, which means an unrecognised
+// chip would render *unfiltered* results, not nothing — surprising
+// but not silently wrong. A shared types package would catch the
+// drift at compile time; not worth it for two tiny enums today.
 type TypeFilter = "all" | "settleAuth" | "scatterDirectAuth";
 type StatusFilter = "all" | "confirmed" | "failed";
 
