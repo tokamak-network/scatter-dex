@@ -3,6 +3,9 @@
  *  behind it. Workers can override the reporter via `setProveReporter`
  *  to relay timings back to the main thread. */
 
+import type { Prover } from "./prover";
+import type { ProveOpts, ProveRequest, ProveResult } from "./types";
+
 export type ZkCircuit =
   | "authorize"
   | "cancel"
@@ -70,4 +73,17 @@ declare global {
   interface WindowEventMap {
     "zk-perf:prove": CustomEvent<ProveTiming>;
   }
+}
+
+/** Wrap a `Prover` so each `prove()` call is bracketed by
+ *  `timeProve(circuit, ...)`. Telemetry runs on the main thread —
+ *  workers can't dispatch the `zk-perf:prove` window event, and the
+ *  postMessage round-trip is in the noise on a 1–9 s proof. */
+export function wrapProverWithTimer(circuit: ZkCircuit, inner: Prover): Prover {
+  return {
+    ready: () => inner.ready(),
+    prove: (req: ProveRequest, opts?: ProveOpts): Promise<ProveResult> =>
+      timeProve(circuit, () => inner.prove(req, opts)),
+    dispose: () => inner.dispose(),
+  };
 }
