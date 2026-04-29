@@ -11,7 +11,7 @@ import {
 import { useWallet } from "@zkscatter/sdk/react";
 import { useOrders } from "../lib/orders";
 import { useEdDSAKey } from "../lib/eddsaKey";
-import { getAuthorizeProver } from "../lib/authorizeProver";
+import { authorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
@@ -406,9 +406,8 @@ export function OrderModal({
       };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
-      const prover = getAuthorizeProver();
-      await prover.ready();
-      await prover.prove(
+      await authorizeProver.ready();
+      await authorizeProver.prove(
         { circuitId: "authorize", input: input as unknown as Record<string, unknown> },
         {
           signal: ctrl.signal,

@@ -11,15 +11,18 @@ import {
 } from "@zkscatter/sdk/zk";
 import { callScatterDirectAuth, type SettleAuthSide } from "@zkscatter/sdk/contracts";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
-import { getAuthorizeProver } from "./authorizeProver";
+import { authorizeProver } from "./authorizeProver";
 import type { CommitmentTreeState } from "./commitmentTree";
 import type { PickedNote } from "./sourceNotes";
 
 /** User-facing copy for the staged-rollout limits. Single source so
- *  page.tsx and realSettle.ts can't drift on the wording. */
-export const PHASE_1C_MULTI_BATCH_MSG =
+ *  page.tsx and realSettle.ts can't drift on the wording. Naming
+ *  intentionally drops the phase prefix — the *limit* is what's
+ *  load-bearing; the phase number rotates as we ship and would force
+ *  identifier renames every iteration. */
+export const MULTI_BATCH_UNSUPPORTED_MSG =
   "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1d.";
-export const PHASE_1C_MULTI_NOTE_MSG =
+export const MULTI_NOTE_UNSUPPORTED_MSG =
   "This run needs more than one source note — multi-note coverage arrives in Phase 1d.";
 
 export interface RealSettleArgs {
@@ -91,8 +94,7 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
   const nonce = randomFieldElement();
   const newSalt = randomFieldElement();
 
-  const prover = getAuthorizeProver();
-  const result = await prover.prove({
+  const result = await authorizeProver.prove({
     circuitId: "authorize",
     input: {
       note: stored.note,

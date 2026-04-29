@@ -15,11 +15,11 @@ import {
 } from "@zkscatter/sdk/zk";
 import {
   realSettle,
-  PHASE_1C_MULTI_BATCH_MSG,
-  PHASE_1C_MULTI_NOTE_MSG,
+  MULTI_BATCH_UNSUPPORTED_MSG,
+  MULTI_NOTE_UNSUPPORTED_MSG,
 } from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
-import { getAuthorizeProver } from "../../_lib/authorizeProver";
+import { authorizeProver } from "../../_lib/authorizeProver";
 
 // Largest tier with a live verifier — this caps Pay's per-run recipient
 // count. Computed at module scope because ACTIVE_TIERS is a compile-time
@@ -225,19 +225,18 @@ export default function NewPayout() {
       // a record-only demo so the dashboard still has something to
       // render in unwired environments.
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        if (batches.length > 1) throw new Error(PHASE_1C_MULTI_BATCH_MSG);
+        if (batches.length > 1) throw new Error(MULTI_BATCH_UNSUPPORTED_MSG);
         if (!signer) throw new Error("Connect a wallet before signing.");
         if (!relayer) throw new Error("Pick a relayer in the Funds step.");
         if (!sourcePick.covered || sourcePick.notes.length === 0) {
           throw new Error("No source note covers this run total — top up in the Funds step.");
         }
-        if (sourcePick.notes.length > 1) throw new Error(PHASE_1C_MULTI_NOTE_MSG);
+        if (sourcePick.notes.length > 1) throw new Error(MULTI_NOTE_UNSUPPORTED_MSG);
         // Overlap the EdDSA derivation with the worker boot + asset
         // warm-up. The zkey is ~19 MB; on a cold cache its fetch can
         // dwarf the ECDSA-derive round-trip with the wallet. Both
         // promises are independent so Promise.all is safe.
-        const prover = getAuthorizeProver();
-        const [kp] = await Promise.all([eddsa.derive(), prover.ready()]);
+        const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
         const sourceNote = sourcePick.notes[0]!;
         const result = await realSettle({
           batch: batches[0]!,
