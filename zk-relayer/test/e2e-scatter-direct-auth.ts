@@ -286,9 +286,21 @@ async function main() {
   );
   const leaves: bigint[] = new Array(leafIndex + 1).fill(0n);
   for (const ev of events) {
+    // queryFilter can return raw `Log` objects when ABI parsing fails
+    // (e.g. a future event variant that's been added on-chain but not
+    // to our test ABI). Skip those instead of casting through and
+    // accessing `args` on a `Log` without the parsed signal.
     const e = ev as ethers.EventLog;
-    const idx = Number(e.args.leafIndex);
-    if (idx < leaves.length) leaves[idx] = BigInt(e.args.commitment);
+    if (!e.args) continue;
+    // `leafIndex` is `uint32` (always ≤ 2^32-1), so promoting through
+    // bigint and back to number is lossless. The bigint compare keeps
+    // us off the `Number` precision-loss path the repo rule warns
+    // against; the array index needs a number so we coerce only after
+    // bound-checking.
+    const idxBn = BigInt(e.args.leafIndex);
+    if (idxBn < BigInt(leaves.length)) {
+      leaves[Number(idxBn)] = BigInt(e.args.commitment);
+    }
   }
   // Reference the SDK constant so this test breaks loudly if the
   // commitment-tree depth ever changes (it's consensus-critical and

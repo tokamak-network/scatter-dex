@@ -7,6 +7,14 @@ COPY packages/types/ /packages/types/
 WORKDIR /packages/types
 RUN npm ci --include=dev && npm run build
 
+# `@zkscatter/sdk` is a `file:../packages/sdk` dependency in
+# zk-relayer/package.json. Copy the SDK source into the image at the
+# expected sibling path so `npm ci` below can resolve the file: link.
+# The SDK is TS-only (`exports` point to `./src/*.ts`) and the runtime
+# entrypoint below is `npx tsx`, which loads .ts directly — no SDK
+# build step is needed inside the image.
+COPY packages/sdk/ /packages/sdk/
+
 WORKDIR /app
 COPY zk-relayer/package*.json ./
 RUN npm ci --production=false
