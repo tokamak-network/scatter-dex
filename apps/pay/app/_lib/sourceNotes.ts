@@ -1,6 +1,28 @@
 import type { StoredNote } from "@zkscatter/sdk/notes";
 import { tokenBigIntToAddress } from "./format";
 
+/** Per-token vault summary. `availableRaw` only counts notes the
+ *  picker can actually spend (`leafIndex >= 0`); `pendingRaw` is
+ *  what's deposited but the leafIndex reconciler hasn't observed
+ *  yet. Splitting them lets the Funds step explain "balance looks
+ *  enough but can't sign yet — wait" instead of a confusing
+ *  shortfall=0 + deposit-blocked state. Mirrors the same
+ *  reconciliation gate `pickPerBatchNotes` enforces. */
+export function summarizeBalance(
+  notes: readonly StoredNote[],
+  tokenAddress: string,
+): { availableRaw: bigint; pendingRaw: bigint } {
+  const tokenLower = tokenAddress.toLowerCase();
+  let availableRaw = 0n;
+  let pendingRaw = 0n;
+  for (const n of notes) {
+    if (tokenBigIntToAddress(n.note.token) !== tokenLower) continue;
+    if (n.leafIndex >= 0) availableRaw += n.note.amount;
+    else pendingRaw += n.note.amount;
+  }
+  return { availableRaw, pendingRaw };
+}
+
 /** A note picked to fund a run, with the partial-spend amount the
  *  settlement will charge against it. The last note in the picked
  *  list usually has `amount > spend` — the leftover is returned as

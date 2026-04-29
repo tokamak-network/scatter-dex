@@ -49,11 +49,12 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
+import { parseRecipientRows } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
   pickPerBatchNotes,
+  summarizeBalance,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
@@ -435,14 +436,10 @@ export default function NewPayout() {
   const tokenAddress = tokenInfo?.address?.toLowerCase();
   const decimals = tokenInfo?.decimals ?? 18;
 
-  const availableRaw = useMemo<bigint>(() => {
-    if (!tokenAddress) return 0n;
-    let sum = 0n;
-    for (const n of notes) {
-      if (tokenBigIntToAddress(n.note.token) === tokenAddress) sum += n.note.amount;
-    }
-    return sum;
-  }, [notes, tokenAddress]);
+  const { availableRaw, pendingRaw } = useMemo(
+    () => (tokenAddress ? summarizeBalance(notes, tokenAddress) : { availableRaw: 0n, pendingRaw: 0n }),
+    [notes, tokenAddress],
+  );
 
   // Sum per-row bigints rather than going through the JS-float
   // `total`; otherwise 0.1 + 0.2 = 0.30000000000000004 turns into a
@@ -470,7 +467,16 @@ export default function NewPayout() {
   const shortfallRaw = totalEscrowRaw > availableRaw ? totalEscrowRaw - availableRaw : 0n;
 
   const sourcePick = useMemo<SourceNotesPick>(
-    () => autoPickSourceNotes(notes, tokenAddress ?? "", totalEscrowRaw),
+    // Pre-filter to reconciled notes so the displayed pick matches
+    // what `pickPerBatchNotes` + realSettle can actually spend; an
+    // unreconciled note in the auto-pick would silently advertise
+    // coverage the proof path has to reject.
+    () =>
+      autoPickSourceNotes(
+        notes.filter((n) => n.leafIndex >= 0),
+        tokenAddress ?? "",
+        totalEscrowRaw,
+      ),
     [notes, tokenAddress, totalEscrowRaw],
   );
 
@@ -752,6 +758,7 @@ export default function NewPayout() {
               feeRaw,
               totalEscrowRaw,
               availableRaw,
+              pendingRaw,
               shortfallRaw,
             }}
             pick={{ sourcePick, batchCount: batches.length, multiBatchFit }}
@@ -1097,7 +1104,10 @@ interface FundsStepProps {
     requiredRaw: bigint;
     feeRaw: bigint;
     totalEscrowRaw: bigint;
+    /** Sum of *reconciled* notes (leafIndex >= 0). `pendingRaw` is
+     *  what's deposited but not yet observable to the picker. */
     availableRaw: bigint;
+    pendingRaw: bigint;
     shortfallRaw: bigint;
   };
   /** `multiBatchFit` is null until rows + token are ready; when
@@ -1137,7 +1147,7 @@ function FundsStep({
   relayer,
   onDeposit,
 }: FundsStepProps) {
-  const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, shortfallRaw } = funds;
+  const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
   const { sourcePick, batchCount, multiBatchFit } = pick;
   const { account, vaultLoaded } = wallet;
   const {
@@ -1243,7 +1253,19 @@ function FundsStep({
           </div>
           <div className="mb-2 text-[var(--color-text-muted)]">
             Available: <span className="font-mono">{fmt(availableRaw)} {token}</span>
+            {pendingRaw > 0n && (
+              <>
+                {" · Pending: "}
+                <span className="font-mono">{fmt(pendingRaw)} {token}</span>
+              </>
+            )}
           </div>
+          {pendingRaw > 0n && (
+            <div className="mb-2 text-[var(--color-text-subtle)]">
+              Pending notes are deposited but waiting for the next block —
+              they become spendable once the reconciler observes them.
+            </div>
+          )}
           {sourcePick.notes.length > 0 ? (
             <ul className="space-y-0.5 font-mono">
               {sourcePick.notes.map(({ note: n, spend }) => (
@@ -1277,6 +1299,12 @@ function FundsStep({
             Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before
             advancing to Review.
           </div>
+          {pendingRaw >= shortfallRaw && (
+            <div className="mb-1 text-[var(--color-text-muted)]">
+              {fmt(pendingRaw)} {token} is pending confirmation — waiting one
+              block clears the shortfall without another deposit.
+            </div>
+          )}
           <DepositButton
             account={account}
             configured={configured}
