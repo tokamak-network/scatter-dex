@@ -31,8 +31,9 @@ export function AdminConnectBar({
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
 
-  // Keep the form in sync when the auth prop changes (e.g. another
-  // tab page wrote sessionStorage and the parent re-read it).
+  // Keep the form in sync when the auth prop changes (e.g. the
+  // parent re-read sessionStorage after navigating between routes
+  // in this tab — sessionStorage is per-tab, not cross-tab).
   useEffect(() => {
     setUrl(auth?.url ?? "");
     setKey(auth?.key ?? "");
@@ -119,7 +120,7 @@ export function AdminConnectBar({
         ) : (
           <button
             onClick={onConnect}
-            disabled={verifying || !url || !key}
+            disabled={verifying || !url.trim() || !key.trim()}
             className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {verifying ? "Verifying…" : "Connect"}
