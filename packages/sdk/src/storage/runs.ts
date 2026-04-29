@@ -728,6 +728,40 @@ export async function recordSentNotificationsBatch(input: {
   });
 }
 
+export interface ClaimedRecipientInput {
+  rowIndex: number;
+  /** Unix-seconds — when the on-chain `PrivateClaim` event was
+   *  observed. Pass the block timestamp when available so the
+   *  display matches what an explorer would show. */
+  claimedAt: number;
+}
+
+/** Mark one or more recipient rows as claimed in a single
+ *  load/save round-trip. Idempotent — already-claimed rows are
+ *  skipped; mismatched rowIndex values are silently ignored so a
+ *  stale event subscription can't corrupt the file. Returns the
+ *  count of rows that actually flipped status. */
+export async function recordClaimedRecipients(input: {
+  runId: string;
+  entries: ClaimedRecipientInput[];
+}): Promise<{ record: RunRecord; updated: number }> {
+  if (!hasFolder()) throw new NoFolderSelectedError();
+  return withRunLock(input.runId, async () => {
+    const record = await loadRun(input.runId);
+    if (!record) throw new Error(`Run ${input.runId} not found`);
+    let updated = 0;
+    for (const e of input.entries) {
+      const row = record.recipients.find((r) => r.rowIndex === e.rowIndex);
+      if (!row || row.status === "claimed") continue;
+      row.status = "claimed";
+      row.claimedAt = e.claimedAt;
+      updated += 1;
+    }
+    if (updated > 0) await saveRun(record);
+    return { record, updated };
+  });
+}
+
 /** Build a `rowIndex → latest NotificationLog` map in a single pass.
  *  Use once per render rather than calling `latestNotification` per row,
  *  which would scan `record.notifications` each time. */
