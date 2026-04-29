@@ -8,6 +8,7 @@ import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { VaultProvider } from "./lib/vault";
 import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
+import { ClaimReconciler } from "./lib/claimReconciler";
 import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <VaultProvider>
                       <VaultReconciler />
                       <OrdersProvider>
+                        <ClaimReconciler />
                         <TradeFormProvider>
                           <ToastProvider>
                             <AppShellHeader
