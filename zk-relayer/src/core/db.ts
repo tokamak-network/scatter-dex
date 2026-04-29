@@ -9,6 +9,12 @@ const log = createLogger("db");
 
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "zk-relayer.db");
 
+/** Non-negative decimal integer (wei) — the canonical wire format
+ *  for token amounts that exceed JS's safe-integer range. */
+export function isWeiString(v: unknown): v is string {
+  return typeof v === "string" && /^[0-9]+$/.test(v);
+}
+
 interface OrderRow {
   pub_key_ax: string;
   pub_key_ay: string;
@@ -1192,6 +1198,37 @@ export class PrivateOrderDB {
   getMeta(key: string): string | null {
     const row = this.selectMeta.get({ key }) as { value: string } | undefined;
     return row?.value ?? null;
+  }
+
+  /** Per-token claim-reminder thresholds (wei strings, keyed by
+   *  lowercase token address). Stored as a single JSON blob in
+   *  relayer_meta. Returns `{}` if the blob is missing or corrupt
+   *  — a bad value loses the config but doesn't kill the monitor. */
+  getClaimThresholds(): Record<string, string> {
+    const raw = this.getMeta("claim_thresholds_json");
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof v === "string") out[k.toLowerCase()] = v;
+        }
+        return out;
+      }
+    } catch {
+      /* fall through */
+    }
+    return {};
+  }
+
+  setClaimThresholds(thresholds: Record<string, string>): void {
+    const normalised: Record<string, string> = {};
+    for (const [k, v] of Object.entries(thresholds)) {
+      if (!isWeiString(v)) continue;
+      normalised[k.toLowerCase()] = v;
+    }
+    this.setMeta("claim_thresholds_json", JSON.stringify(normalised));
   }
 
   // ─── [R-6] Authorize order persistence ───

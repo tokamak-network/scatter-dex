@@ -92,6 +92,26 @@ export const config = {
   // 0.05 ETH — enough headroom for several settlement txs at
   // typical L1 gas. Override with LOW_BALANCE_ETH (decimal ETH).
   lowBalanceWei: parseLowBalanceWei("LOW_BALANCE_ETH", "0.05"),
+
+  // Tokens to monitor for FeeVault claim-reminder alerts.
+  // Comma-separated 0x-prefixed addresses; an empty list disables
+  // the monitor (default — operators opt in once they know which
+  // fee tokens accrue meaningfully). Per-token alert thresholds
+  // are configured via PUT /api/admin/claim-thresholds and stored
+  // in relayer_meta, not here.
+  feeClaimTokens: (process.env.FEE_CLAIM_TOKENS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^0x[0-9a-fA-F]{40}$/.test(s)),
+
+  // Probe cadence for the claim monitor. 5 min default — claim
+  // accruals move on the order of settled-trade frequency, so a
+  // sub-minute probe would just thrash the RPC.
+  feeClaimProbeIntervalMs: parseEnvInt(
+    "FEE_CLAIM_PROBE_INTERVAL_MS",
+    5 * 60_000,
+    10_000,
+  ),
 };
 
 /** Decimal-ETH env var → wei. Falls back on bad input with a warn. */

@@ -20,6 +20,7 @@ import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
 import { startBalanceMonitor, stopBalanceMonitor } from "./core/balance-monitor.js";
+import { startClaimMonitor, stopClaimMonitor } from "./core/claim-monitor.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
 import { createLogger } from "./core/logger.js";
@@ -361,6 +362,10 @@ async function main() {
   // getProvider + getWallet are needed). Emits warn/info alerts on
   // healthy↔low transitions per LOW_BALANCE_ETH.
   startBalanceMonitor(submitter);
+  // Per-token FeeVault claim-reminder monitor. No-op when
+  // FEE_CLAIM_TOKENS is empty — operators opt in once tokens are
+  // worth tracking.
+  startClaimMonitor(submitter, db);
 
   const server = app.listen(config.port, () => {
     log.info("ScatterDEX ZK Relayer started", {
@@ -419,6 +424,7 @@ async function main() {
     // is in motion.
     stopHealthMonitor();
     stopBalanceMonitor();
+    stopClaimMonitor();
     sharedClient?.stop();
     // `settlementWorker.stop()` awaits any in-flight tick, which itself
     // runs SQLite statements through `db`. If we closed `db` before the

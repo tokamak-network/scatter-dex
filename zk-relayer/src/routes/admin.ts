@@ -9,11 +9,12 @@ import { adminAuth } from "../middleware/admin-auth.js";
 import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
-import type { PrivateOrderDB } from "../core/db.js";
+import { isWeiString, type PrivateOrderDB } from "../core/db.js";
 import { getProfile, updateProfile, validateProfile } from "../core/profile.js";
 import { getRecentAlerts, isWebhookConfigured, sendAlert } from "../core/alerts.js";
 import { getLastHealth } from "../core/health-monitor.js";
 import { getLastBalance } from "../core/balance-monitor.js";
+import { getClaimProbes } from "../core/claim-monitor.js";
 import { getSettlementFailureState } from "../core/settlement-failure-tracker.js";
 import {
   createLogger,
@@ -462,6 +463,58 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       log.error("peer-stats failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load peer stats" });
     }
+  });
+
+  // GET /api/admin/claim-thresholds — per-token claim-reminder
+  // configuration plus the latest probe state from the claim
+  // monitor. `tokens` reflects FEE_CLAIM_TOKENS (env-pinned), so
+  // the UI can render rows even before any threshold is set.
+  router.get("/claim-thresholds", (_req: Request, res: Response) => {
+    res.json({
+      tokens: config.feeClaimTokens,
+      thresholds: db.getClaimThresholds(),
+      probes: getClaimProbes(),
+    });
+  });
+
+  // PUT /api/admin/claim-thresholds — replace the per-token
+  // threshold map. Body: `{ thresholds: { [tokenAddr]: weiString } }`.
+  // Wei is enforced as a positive-decimal-integer string (no
+  // floats, no BigInt round-trip risk). Tokens not in
+  // FEE_CLAIM_TOKENS are silently dropped — the env-pinned list
+  // is the source of truth for what the monitor actually probes.
+  router.put("/claim-thresholds", ...wl, (req: Request, res: Response) => {
+    const body = req.body as { thresholds?: unknown };
+    if (
+      !body.thresholds ||
+      typeof body.thresholds !== "object" ||
+      Array.isArray(body.thresholds)
+    ) {
+      res
+        .status(400)
+        .json({ error: "thresholds must be an object of { token: weiString }" });
+      return;
+    }
+    const allowed = new Set(config.feeClaimTokens.map((t) => t.toLowerCase()));
+    const accepted: Record<string, string> = {};
+    for (const [token, wei] of Object.entries(
+      body.thresholds as Record<string, unknown>,
+    )) {
+      const tokenLc = token.toLowerCase();
+      if (!allowed.has(tokenLc)) continue;
+      if (!isWeiString(wei)) {
+        res
+          .status(400)
+          .json({ error: `wei value for ${token} must be a non-negative decimal string` });
+        return;
+      }
+      accepted[tokenLc] = wei;
+    }
+    db.setClaimThresholds(accepted);
+    // `accepted` is already in the canonical lowercase/wei-string
+    // shape that `getClaimThresholds` would return — echoing it
+    // skips an unnecessary getMeta + JSON.parse round-trip.
+    res.json({ thresholds: accepted });
   });
 
   return router;
