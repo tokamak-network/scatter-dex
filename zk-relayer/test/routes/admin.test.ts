@@ -306,3 +306,39 @@ describe("/api/admin/profile", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("/api/admin/webhook", () => {
+  it("GET returns configured flag + health + balance + settlement-failure streak + recent", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/webhook")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.configured).toBe("boolean");
+    expect(res.body.health).toHaveProperty("state");
+    expect(res.body.health).toHaveProperty("at");
+    expect(res.body.balance).toHaveProperty("state");
+    expect(res.body.balance).toHaveProperty("thresholdWei");
+    expect(typeof res.body.balance.thresholdWei).toBe("string");
+    expect(res.body.settlementFailureStreak).toEqual({
+      consecutiveFailures: expect.any(Number),
+      alerted: expect.any(Boolean),
+      threshold: expect.any(Number),
+    });
+    expect(Array.isArray(res.body.recent)).toBe(true);
+  });
+
+  it("requires admin auth", async () => {
+    const res = await request(buildApp()).get("/api/admin/webhook");
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /webhook/test returns 409 when no URL configured", async () => {
+    // Test setup has no WEBHOOK_URL — the test endpoint short-circuits.
+    const res = await request(buildApp())
+      .post("/api/admin/webhook/test")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/WEBHOOK_URL/);
+  });
+});
