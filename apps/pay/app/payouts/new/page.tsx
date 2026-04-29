@@ -185,7 +185,8 @@ export default function NewPayout() {
 
   const { account, chainId, signer } = useWallet();
   const tree = useCommitmentTree();
-  const { notes, loaded: vaultLoaded } = useVault();
+  const vault = useVault();
+  const { notes, loaded: vaultLoaded } = vault;
   const {
     relayers,
     selected: relayer,
@@ -237,10 +238,11 @@ export default function NewPayout() {
         // promises are independent so Promise.all is safe.
         const prover = getAuthorizeProver();
         const [kp] = await Promise.all([eddsa.derive(), prover.ready()]);
+        const sourceNote = sourcePick.notes[0]!;
         const result = await realSettle({
           batch: batches[0]!,
           tokenAddress,
-          source: sourcePick.notes[0]!,
+          source: sourceNote,
           relayer,
           chain: { signer, settlementAddress: cfg.contracts.privateSettlement },
           maxFeeBps: safeMaxFeeBps,
@@ -248,6 +250,24 @@ export default function NewPayout() {
           tree,
         });
         txHash = result.txHash;
+        // Persist the change UTXO BEFORE removing the spent note —
+        // an interrupted IDB write between the two would otherwise
+        // lose the residual. If add() fails we still hold the spent
+        // note locally (already nullified on-chain, so unspendable),
+        // which is recoverable; the reverse order is not. leafIndex
+        // starts -1; a follow-up phase wires reconciliation against
+        // the commitment-tree event stream so spends can resume
+        // without a manual refresh.
+        if (result.change) {
+          await vault.add({
+            symbol: token,
+            amount: ethers.formatUnits(result.change.amount, decimals),
+            note: result.change.note,
+            commitment: result.change.commitment,
+            txHash: result.txHash,
+          });
+        }
+        await vault.remove(sourceNote.note.id);
       }
 
       if (!folder.ready) {

@@ -3,8 +3,10 @@
 import { ethers } from "ethers";
 import {
   assembleAuthorizeProofResult,
+  computeCommitment,
   randomFieldElement,
   TIER_16,
+  type CommitmentNote,
   type PayoutBatch,
 } from "@zkscatter/sdk/zk";
 import { callScatterDirectAuth, type SettleAuthSide } from "@zkscatter/sdk/contracts";
@@ -16,11 +18,9 @@ import type { PickedNote } from "./sourceNotes";
 /** User-facing copy for the staged-rollout limits. Single source so
  *  page.tsx and realSettle.ts can't drift on the wording. */
 export const PHASE_1C_MULTI_BATCH_MSG =
-  "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1c.";
+  "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1d.";
 export const PHASE_1C_MULTI_NOTE_MSG =
-  "This run needs more than one source note — multi-note coverage arrives in Phase 1c.";
-export const PHASE_1B_PARTIAL_SPEND_MSG =
-  "Phase 1b only supports a single source note that exactly covers the run total.";
+  "This run needs more than one source note — multi-note coverage arrives in Phase 1d.";
 
 export interface RealSettleArgs {
   batch: PayoutBatch;
@@ -43,6 +43,10 @@ export interface RealSettleResult {
   txHash: string;
   nullifier: bigint;
   claimsRoot: bigint;
+  /** Residual change UTXO when the source note exceeded the spend.
+   *  Caller persists this as a new vault note so the user can spend
+   *  the leftover later; `null` when the note was fully consumed. */
+  change: { note: CommitmentNote; commitment: bigint; amount: bigint } | null;
 }
 
 /** Pay's single-batch real settle. Mirrors zk-relayer/test/
@@ -64,8 +68,14 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
       "Source note isn't in the on-chain commitment tree yet — try again once the tree finishes syncing.",
     );
   }
-  if (source.spend !== batch.totalAmount) {
-    throw new Error(PHASE_1B_PARTIAL_SPEND_MSG);
+  // Source note must at least cover the run total. The picker enforces
+  // this at the UI layer, but keep a defensive check here so a stale
+  // sourcePick (e.g. note removed after the user advanced past Funds)
+  // can't slip a too-small note into the proof.
+  if (stored.note.amount < batch.totalAmount) {
+    throw new Error(
+      `Source note (${stored.note.amount}) is smaller than the run total (${batch.totalAmount}).`,
+    );
   }
   // Solidity encodes maxFee as uint16 and the circuit reads it as bps;
   // clamp before proving so a stale UI input can't (a) authorize a
@@ -118,9 +128,38 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
   if (!receipt || receipt.status !== 1) {
     throw new Error(`scatterDirectAuth tx failed: ${tx.hash}`);
   }
+  // Reconstruct the change-UTXO preimage so the caller can persist it
+  // as a new vault note. Salt is the same one we passed into the
+  // prover; the on-chain `newCommitment` we just verified must match
+  // the locally-recomputed value (otherwise the change would be
+  // unspendable). The match is implicit — `generateAuthorizeProof`
+  // uses `computeCommitment` with the same fields — but recomputing
+  // here gives us a CommitmentNote object the vault adapter can
+  // serialize.
+  const changeAmount = stored.note.amount - sellAmount;
+  let change: RealSettleResult["change"] = null;
+  if (changeAmount > 0n) {
+    const changeNote: CommitmentNote = {
+      ownerSecret: stored.note.ownerSecret,
+      token: stored.note.token,
+      amount: changeAmount,
+      salt: newSalt,
+      pubKeyAx: stored.note.pubKeyAx,
+      pubKeyAy: stored.note.pubKeyAy,
+    };
+    const changeCommitment = await computeCommitment(changeNote);
+    if (changeCommitment !== authResult.newCommitment) {
+      throw new Error(
+        "Recomputed change commitment does not match the proof's newCommitment — vault would store an unspendable note.",
+      );
+    }
+    change = { note: changeNote, commitment: changeCommitment, amount: changeAmount };
+  }
+
   return {
     txHash: tx.hash,
     nullifier: authResult.nullifier,
     claimsRoot: authResult.claimsRoot,
+    change,
   };
 }
