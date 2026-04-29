@@ -745,24 +745,25 @@ export default function NewPayout() {
 
         {step === 4 && (
           <FundsStep
-            token={token}
-            decimals={decimals}
-            requiredRaw={requiredRaw}
-            feeRaw={feeRaw}
-            totalEscrowRaw={totalEscrowRaw}
-            availableRaw={availableRaw}
-            shortfallRaw={shortfallRaw}
-            sourcePick={sourcePick}
-            batchCount={batches.length}
-            multiBatchFit={multiBatchFit}
-            account={account}
-            vaultLoaded={vaultLoaded}
-            relayers={relayers}
-            relayer={relayer}
-            registryConfigured={registryConfigured}
-            selectRelayer={selectRelayer}
-            maxFeeBps={maxFeeBps}
-            setMaxFeeBps={setMaxFeeBps}
+            funds={{
+              token,
+              decimals,
+              requiredRaw,
+              feeRaw,
+              totalEscrowRaw,
+              availableRaw,
+              shortfallRaw,
+            }}
+            pick={{ sourcePick, batchCount: batches.length, multiBatchFit }}
+            wallet={{ account, vaultLoaded }}
+            relayer={{
+              list: relayers,
+              selected: relayer,
+              registryConfigured,
+              select: selectRelayer,
+              maxFeeBps,
+              setMaxFeeBps,
+            }}
             onDeposit={() =>
               dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
             }
@@ -1090,54 +1091,63 @@ async function dryRunDeposit({ tokenSymbol, amountRaw, account, eddsa }: DryRunD
 }
 
 interface FundsStepProps {
-  token: string;
-  decimals: number;
-  requiredRaw: bigint;
-  feeRaw: bigint;
-  totalEscrowRaw: bigint;
-  availableRaw: bigint;
-  shortfallRaw: bigint;
-  sourcePick: SourceNotesPick;
-  /** Number of batches `splitPayout` produced. >1 means the run
-   *  needs multi-batch settlement; the per-batch picker fit
+  funds: {
+    token: string;
+    decimals: number;
+    requiredRaw: bigint;
+    feeRaw: bigint;
+    totalEscrowRaw: bigint;
+    availableRaw: bigint;
+    shortfallRaw: bigint;
+  };
+  /** `multiBatchFit` is null until rows + token are ready; when
+   *  `covered=false`, its `reason` is surfaced as a pre-flight
+   *  warning so users act before signing. `batchCount > 1` means
+   *  the run needs multi-batch settlement and the per-batch fit
    *  becomes load-bearing. */
-  batchCount: number;
-  /** Result of the per-batch picker. Null until rows + token are
-   *  ready. When `covered=false`, the corresponding `reason` is
-   *  surfaced to the user so they can act before signing. */
-  multiBatchFit: ReturnType<typeof pickPerBatchNotes> | null;
-  account: string | null;
-  vaultLoaded: boolean;
-  relayers: RelayerInfo[];
-  relayer: RelayerInfo | null;
-  registryConfigured: boolean;
-  selectRelayer: (address: string) => void;
-  maxFeeBps: number;
-  setMaxFeeBps: (bps: number) => void;
+  pick: {
+    sourcePick: SourceNotesPick;
+    batchCount: number;
+    multiBatchFit: ReturnType<typeof pickPerBatchNotes> | null;
+  };
+  /** Gates the source-notes panel — until the vault has loaded,
+   *  "your notes" would flicker between empty and populated. */
+  wallet: {
+    account: string | null;
+    vaultLoaded: boolean;
+  };
+  /** `registryConfigured` distinguishes "registry env not wired"
+   *  from "registry wired but no online relayers" so the UI can
+   *  show the right empty state. */
+  relayer: {
+    list: RelayerInfo[];
+    selected: RelayerInfo | null;
+    registryConfigured: boolean;
+    select: (address: string) => void;
+    maxFeeBps: number;
+    setMaxFeeBps: (bps: number) => void;
+  };
   onDeposit: () => void;
 }
 
 function FundsStep({
-  token,
-  decimals,
-  requiredRaw,
-  feeRaw,
-  totalEscrowRaw,
-  availableRaw,
-  shortfallRaw,
-  sourcePick,
-  batchCount,
-  multiBatchFit,
-  account,
-  vaultLoaded,
-  relayers,
+  funds,
+  pick,
+  wallet,
   relayer,
-  registryConfigured,
-  selectRelayer,
-  maxFeeBps,
-  setMaxFeeBps,
   onDeposit,
 }: FundsStepProps) {
+  const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, shortfallRaw } = funds;
+  const { sourcePick, batchCount, multiBatchFit } = pick;
+  const { account, vaultLoaded } = wallet;
+  const {
+    list: relayers,
+    selected: selectedRelayer,
+    registryConfigured,
+    select: selectRelayer,
+    maxFeeBps,
+    setMaxFeeBps,
+  } = relayer;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
   const configured = isNetworkConfigured(getNetworkConfig());
   const onlineRelayers = relayers.filter((r) => r.online);
@@ -1147,7 +1157,9 @@ function FundsStep({
   // entry). The offline option is rendered with a "(offline)" suffix
   // so the user can still see what they had picked.
   const relayerOptions =
-    relayer && !relayer.online ? [relayer, ...onlineRelayers] : onlineRelayers;
+    selectedRelayer && !selectedRelayer.online
+      ? [selectedRelayer, ...onlineRelayers]
+      : onlineRelayers;
 
   return (
     <div className="space-y-5">
@@ -1171,7 +1183,7 @@ function FundsStep({
           <div className="grid grid-cols-2 gap-3">
             <Field label="Selected relayer">
               <select
-                value={relayer?.address ?? ""}
+                value={selectedRelayer?.address ?? ""}
                 onChange={(e) => selectRelayer(e.target.value)}
                 className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
               >
