@@ -18,6 +18,7 @@ import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle } from "./routes/authorize-orders.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
+import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
 import { createAdminRoutes, isPaused } from "./routes/admin.js";
 import { loadSanctionsFile } from "./core/sanctions-list.js";
 
@@ -330,6 +331,11 @@ async function main() {
     if (expired > 0) console.log(`[expiry-sweeper] Marked ${expired} expired authorize order(s)`);
   }, 60_000);
 
+  // Periodic health probe — emits webhook alerts on healthy↔degraded
+  // transitions. The /health route still serves k8s/load-balancer
+  // readiness; this monitor adds proactive operator notifications.
+  startHealthMonitor(submitter, db);
+
   const server = app.listen(config.port, () => {
     console.log(`ScatterDEX ZK Relayer running on port ${config.port}`);
     console.log(`Relayer address: ${submitter.getAddress()}`);
@@ -384,6 +390,10 @@ async function main() {
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
     clearInterval(expirySweepInterval);
+    // Stop the periodic probe before draining the worker so we
+    // don't kick off an extra DB write (or alert) once shutdown
+    // is in motion.
+    stopHealthMonitor();
     sharedClient?.stop();
     // `settlementWorker.stop()` awaits any in-flight tick, which itself
     // runs SQLite statements through `db`. If we closed `db` before the

@@ -11,6 +11,8 @@ import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSa
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
 import { getProfile, updateProfile, validateProfile } from "../core/profile.js";
+import { getRecentAlerts, isWebhookConfigured, sendAlert } from "../core/alerts.js";
+import { getLastHealth } from "../core/health-monitor.js";
 
 let paused = false;
 
@@ -290,6 +292,36 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       console.error("[admin] history/fees failed:", err instanceof Error ? err.message : err);
       res.status(500).json({ error: "Failed to load fee history" });
     }
+  });
+
+  // GET /api/admin/webhook — recent alert deliveries + config state.
+  // The URL itself is not echoed back; operators see whether one is
+  // configured and the last 50 alerts that were attempted.
+  router.get("/webhook", (_req: Request, res: Response) => {
+    res.json({
+      configured: isWebhookConfigured(),
+      health: getLastHealth(),
+      recent: getRecentAlerts(),
+    });
+  });
+
+  // POST /api/admin/webhook/test — send a synthetic info alert so
+  // the operator can verify the channel is reachable. Body is
+  // optional; defaults are good enough for a smoke test.
+  router.post("/webhook/test", ...wl, async (req: Request, res: Response) => {
+    if (!isWebhookConfigured()) {
+      res.status(409).json({ error: "WEBHOOK_URL is not configured" });
+      return;
+    }
+    const customText =
+      typeof req.body?.text === "string" ? req.body.text.slice(0, 256) : null;
+    const delivery = await sendAlert({
+      type: "test",
+      severity: "info",
+      text: customText ?? "Webhook test from /api/admin/webhook/test.",
+      payload: { source: "admin-test", at: Date.now() },
+    });
+    res.json({ delivery });
   });
 
   return router;
