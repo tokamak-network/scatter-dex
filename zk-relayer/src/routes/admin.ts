@@ -286,9 +286,11 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   // as zeros so the client can render a continuous time series.
   // Query params:
   //   ?since=<unix-ms>     required; window start
-  //   ?until=<unix-ms>     optional; defaults to now
-  //   ?bucketMs=<n>        bucket width in ms; default 1h
-  //                        capped to keep numBuckets <= 1024
+  //   ?until=<unix-ms>     optional; defaults to now. Validated as a
+  //                        finite positive ms timestamp >= since.
+  //   ?bucketMs=<n>        bucket width in ms; default 1h. Floor 1m;
+  //                        also clamped *upward* so numBuckets never
+  //                        exceeds the DB layer's hard cap (1024).
   router.get("/history/buckets", (req: Request, res: Response) => {
     try {
       const since = Number(req.query.since);
@@ -296,12 +298,35 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         res.status(400).json({ error: "since must be a positive unix-ms timestamp" });
         return;
       }
-      const until = Number(req.query.until) || Date.now();
-      const bucketMs = Math.max(60_000, Number(req.query.bucketMs) || 3_600_000);
+      let until: number;
+      if (req.query.until === undefined) {
+        until = Date.now();
+      } else {
+        const parsed = Number(req.query.until);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          res.status(400).json({ error: "until must be a positive unix-ms timestamp" });
+          return;
+        }
+        until = parsed;
+      }
+      if (until < since) {
+        res.status(400).json({ error: "until must be >= since" });
+        return;
+      }
+      const requested = Number(req.query.bucketMs) || 3_600_000;
+      // Floor at 1m and ceiling-clamp upward so numBuckets <= 1024;
+      // the DB layer otherwise refuses and returns []. This way the
+      // operator gets a coarser-than-asked but actionable response
+      // instead of an empty one.
+      const minPerCap = Math.ceil((until - since) / 1024);
+      const bucketMs = Math.max(60_000, minPerCap, requested);
       const buckets = db.getSettlementBuckets({ since, until, bucketMs });
       res.json({ buckets, since, until, bucketMs });
     } catch (err) {
-      console.error("[admin] history/buckets failed:", err instanceof Error ? err.message : err);
+      log.error("history/buckets failed", {
+        err: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       res.status(500).json({ error: "Failed to load settlement buckets" });
     }
   });

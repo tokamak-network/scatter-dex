@@ -77,15 +77,21 @@ function lowerHex<T extends string | null | undefined>(v: T): T {
   return (typeof v === "string" ? v.toLowerCase() : v) as T;
 }
 
-/** p-percentile (0–100) over an unsorted numeric sample using the
- *  nearest-rank method. Returns null on an empty sample so callers
- *  can render "no data yet" rather than a misleading 0. The sort
- *  is in-place — callers that retain the array see it sorted. */
-function percentile(values: number[], p: number): number | null {
-  if (values.length === 0) return null;
-  values.sort((a, b) => a - b);
-  const idx = Math.min(values.length - 1, Math.ceil((p / 100) * values.length) - 1);
-  return values[Math.max(0, idx)];
+/** Compute multiple p-percentiles (0–100) over an unsorted sample
+ *  in one pass: sorts a copy of `values` once, then indexes the
+ *  requested ranks. Returns null entries for an empty sample so
+ *  callers can render "no data yet" rather than a misleading 0.
+ *  Doesn't mutate the input. */
+function percentiles(
+  values: number[],
+  ps: number[],
+): Array<number | null> {
+  if (values.length === 0) return ps.map(() => null);
+  const sorted = [...values].sort((a, b) => a - b);
+  return ps.map((p) => {
+    const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+    return sorted[Math.max(0, idx)];
+  });
 }
 
 export interface TradeOfferRow {
@@ -661,16 +667,20 @@ export class PrivateOrderDB {
       gasCount: 0,
       durations: [] as number[],
     }));
-    const rows = this.selectSettlementBucketRows.all({
+    // Stream rows via iterate() so a long window (7d) over a
+    // populous history doesn't materialise the whole result in
+    // memory before bucketing — we only ever hold the per-bucket
+    // accumulators plus one row at a time.
+    const iter = this.selectSettlementBucketRows.iterate({
       since: opts.since,
       until,
-    }) as Array<{
+    }) as Iterable<{
       status: string;
       gas_cost_eth: string | null;
       duration_ms: number | null;
       created_at: number;
     }>;
-    for (const r of rows) {
+    for (const r of iter) {
       // Clamp idx so an event at exactly @until (now reachable via
       // the inclusive filter above) lands in the last bucket
       // instead of one past it.
@@ -690,15 +700,20 @@ export class PrivateOrderDB {
         b.failed++;
       }
     }
-    return out.map((b) => ({
-      bucketStart: b.bucketStart,
-      settled: b.settled,
-      failed: b.failed,
-      avgGasEth: b.gasCount > 0 ? b.gasSum / b.gasCount : null,
-      p50Ms: percentile(b.durations, 50),
-      p95Ms: percentile(b.durations, 95),
-      p99Ms: percentile(b.durations, 99),
-    }));
+    return out.map((b) => {
+      // Compute p50/p95/p99 in a single sort instead of three
+      // independent in-place sorts of the same buffer.
+      const [p50, p95, p99] = percentiles(b.durations, [50, 95, 99]);
+      return {
+        bucketStart: b.bucketStart,
+        settled: b.settled,
+        failed: b.failed,
+        avgGasEth: b.gasCount > 0 ? b.gasSum / b.gasCount : null,
+        p50Ms: p50,
+        p95Ms: p95,
+        p99Ms: p99,
+      };
+    });
   }
 
   getSettlementByTxHash(

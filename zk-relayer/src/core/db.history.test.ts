@@ -318,9 +318,14 @@ describe("PrivateOrderDB settlement history", () => {
   });
 
   it("returns empty buckets for slots with no settlements (continuous series)", () => {
+    // Pass an explicit `until` so the bucket count doesn't drift
+    // by ±1 with the few-ms gap between this line and the call
+    // inside getSettlementBuckets — the previous version used the
+    // function's default Date.now() and was timing-flaky.
     const t0 = Date.now() - 2 * 60 * 60 * 1000;
     const buckets = db.getSettlementBuckets({
       since: t0,
+      until: t0 + 2 * 60 * 60 * 1000,
       bucketMs: 60 * 60 * 1000,
     });
     expect(buckets).toHaveLength(2);

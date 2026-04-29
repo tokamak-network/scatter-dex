@@ -154,7 +154,12 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
       setPerf(p);
       setRefreshedAt(Date.now());
     } catch (e) {
-      setError((e as Error).message);
+      // Type-narrow before reading .message so a non-Error thrown
+      // value (e.g. a string from a misbehaving fetch wrapper)
+      // still produces a useful banner.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[dashboard] refresh failed", e);
+      setError(msg);
     } finally {
       setRefreshing(false);
     }
@@ -439,9 +444,12 @@ function PerformanceSection({ perf }: { perf: BucketsBody | null }) {
         </ChartCard>
         <ChartCard title="Hourly p95 latency (ms)">
           <BarChart
+            // Pass null through for buckets with no measured
+            // duration_ms — BarChart renders a gap rather than a
+            // misleading "0 ms" bar / tooltip.
             data={perf.buckets.map((b) => ({
               start: b.bucketStart,
-              value: b.p95Ms ?? 0,
+              value: b.p95Ms,
             }))}
             tone="latency"
           />
@@ -470,7 +478,9 @@ function ChartCard({
 
 interface Bar {
   start: number;
-  value: number;
+  /** null → render as a gap (no bar, "no data" tooltip). 0 → render
+   *  a zero-height rect that still hovers cleanly. */
+  value: number | null;
   /** Optional secondary value rendered as an amber overlay on top
    *  of the primary bar — used to surface failed counts inside the
    *  settled chart without doubling the number of charts. */
@@ -484,7 +494,10 @@ function BarChart({
   data: Bar[];
   tone?: "latency";
 }) {
-  const max = Math.max(1, ...data.map((d) => d.value + (d.second ?? 0)));
+  const max = Math.max(
+    1,
+    ...data.map((d) => (d.value ?? 0) + (d.second ?? 0)),
+  );
   const W = 480;
   const H = 100;
   const barW = data.length > 0 ? W / data.length : 0;
@@ -501,6 +514,24 @@ function BarChart({
     >
       {data.map((d, i) => {
         const x = i * barW;
+        if (d.value === null) {
+          // Faint dashed marker so a "no data" hour is visible but
+          // not confusable with a real zero. Tooltip explains.
+          return (
+            <g key={d.start}>
+              <line
+                x1={x + barW * 0.5}
+                x2={x + barW * 0.5}
+                y1={H - 4}
+                y2={H}
+                stroke="var(--color-text-subtle)"
+                strokeDasharray="2 2"
+              >
+                <title>{new Date(d.start).toLocaleString()} — no data</title>
+              </line>
+            </g>
+          );
+        }
         const totalH = (d.value / max) * H;
         const secondH = d.second ? (d.second / max) * H : 0;
         const primaryH = totalH;
