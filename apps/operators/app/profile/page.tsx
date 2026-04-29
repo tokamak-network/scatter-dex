@@ -24,6 +24,15 @@ import type { WritePhase } from "../lib/useChainWrite";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
+/** Render bond amount with a unit. Native bonds get "ETH"; ERC20
+ *  bonds drop the unit because we don't carry the token symbol on
+ *  the operator row, and labelling an arbitrary ERC20 amount as
+ *  "ETH" would mislead operators on networks where the registry
+ *  is configured in token mode. */
+function bondLabel(row: NonNullable<OperatorState["row"]>): string {
+  return row.bondToken === NATIVE_BOND_TOKEN ? `${row.bondEth} ETH` : row.bondEth;
+}
+
 export default function ProfilePage() {
   const operator = useOperator();
   const { registryDeployed: deployed } = operator;
@@ -191,7 +200,7 @@ function BondPanel({ operator }: { operator: OperatorState }) {
         <Stat
           compact
           label="Current bond"
-          value={row ? `${row.bondEth} ETH` : "—"}
+          value={row ? bondLabel(row) : "—"}
           sub={row ? `Status: ${row.status}` : "Connect wallet to load"}
         />
         <Stat
@@ -316,7 +325,7 @@ function ActiveExitPanel({
       <p className="mb-3 text-sm text-[var(--color-text-muted)]">
         Starts a {Math.round(EXIT_COOLDOWN_SECONDS / 86400)}-day cool-down on{" "}
         <code className="font-mono">RelayerRegistry</code>. After the cool-down,
-        executing exit returns your full bond ({row.bondEth} ETH) and removes
+        executing exit returns your full bond ({bondLabel(row)}) and removes
         you from the active relayer set.
       </p>
 
@@ -423,7 +432,7 @@ function CooldownPanel({
       </h2>
       <p className="mb-4 text-sm text-[var(--color-text-muted)]">
         {ready ? (
-          `Cool-down complete. Withdrawing returns ${row.bondEth} ETH and removes you from the active relayer set.`
+          `Cool-down complete. Withdrawing returns ${bondLabel(row)} and removes you from the active relayer set.`
         ) : (
           <>
             Exit requested. Bond will be withdrawable in{" "}
@@ -446,7 +455,7 @@ function CooldownPanel({
       >
         {phase.kind === "submitting"
           ? "Submitting…"
-          : ready ? `Execute exit · withdraw ${row.bondEth} ETH` : "Withdraw bond (cool-down active)"}
+          : ready ? `Execute exit · withdraw ${bondLabel(row)}` : "Withdraw bond (cool-down active)"}
       </button>
       <WriteResult phase={phase} />
     </section>
