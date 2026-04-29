@@ -9,7 +9,7 @@ import { VaultProvider } from "./lib/vault";
 import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
 import { ClaimReconciler } from "./lib/claimReconciler";
-import { EdDSAKeyProvider } from "./lib/eddsaKey";
+import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";

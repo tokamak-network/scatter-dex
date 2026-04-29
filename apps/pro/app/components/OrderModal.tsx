@@ -10,7 +10,7 @@ import {
 } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useOrders } from "../lib/orders";
-import { useEdDSAKey } from "../lib/eddsaKey";
+import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { authorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";

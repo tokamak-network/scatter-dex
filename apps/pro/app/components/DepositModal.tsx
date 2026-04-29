@@ -8,7 +8,7 @@ import {
 } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useVault } from "../lib/vault";
-import { useEdDSAKey } from "../lib/eddsaKey";
+import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { DEMO_NETWORK } from "../lib/network";

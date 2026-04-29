@@ -5,3 +5,5 @@ export * from "./commitmentTree";
 export * from "./leafIndexReconciler";
 export * from "./claimReconciler";
 export * from "./vaultProvider";
+export * from "./eddsaKey";
+export * from "./relayersProvider";
