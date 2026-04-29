@@ -42,6 +42,12 @@ export interface ClaimPackage {
   /** Optional display labels — purely informational, not signed. */
   senderLabel?: string;
   runLabel?: string;
+  /** Optional relayer base URL the operator settled through. When
+   *  present, the recipient page can offer a gasless claim path
+   *  (`POST <relayerUrl>/api/private-claim`) — the relayer pays gas
+   *  in exchange for having settled the run. Absent for runs whose
+   *  relayer was unreachable / offline at settle time. */
+  relayerUrl?: string;
 }
 
 const VERSION = 1 as const;
@@ -126,6 +132,7 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
     !o.pathIndices.every((i) => i === 0 || i === 1)
   )
     return false;
+  if (o.relayerUrl !== undefined && typeof o.relayerUrl !== "string") return false;
   return true;
 }
 

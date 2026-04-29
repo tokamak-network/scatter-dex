@@ -109,6 +109,45 @@ export class RelayerClient {
     );
     if (!res.ok) throw await httpError("cancel", res);
   }
+
+  /** Submit a recipient's claim for the relayer to dispatch. Pairs
+   *  with `POST /api/private-claim` on zk-relayer (route validates
+   *  the proof + the claimsRoot the relayer settled). The relayer
+   *  pays gas in exchange for having earned the settle fee. */
+  async submitClaim(
+    body: GaslessClaimBody,
+    signal?: AbortSignal,
+  ): Promise<{ status: string; txHash: string }> {
+    const res = await this.fetchImpl(`${this.baseUrl}/api/private-claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: timeoutSignal(this.timeoutMs, signal),
+    });
+    if (!res.ok) throw await httpError("claim", res);
+    return (await res.json()) as { status: string; txHash: string };
+  }
+}
+
+/** Wire-format request body for `POST /api/private-claim`. The
+ *  relayer revalidates every field on-chain so the recipient page
+ *  doesn't have to sign anything; submitting through a relayer is
+ *  purely a gas-payment relationship. */
+export interface GaslessClaimBody {
+  /** Decimal-string scalars to keep BigInts JSON-safe. */
+  proofA: [string, string];
+  proofB: [[string, string], [string, string]];
+  proofC: [string, string];
+  /** Bytes32 hex. */
+  claimsRoot: string;
+  claimNullifier: string;
+  /** Decimal-string bigint. */
+  amount: string;
+  /** Address. */
+  token: string;
+  recipient: string;
+  /** Decimal-string bigint. */
+  releaseTime: string;
 }
 
 /** Build a clear Error from a non-OK Response. Tries to parse a

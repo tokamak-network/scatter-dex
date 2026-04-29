@@ -13,6 +13,8 @@ import {
   PRIVATE_SETTLEMENT_ABI,
 } from "@zkscatter/sdk";
 import type { ClaimProofInput } from "@zkscatter/sdk/zk";
+import { RelayerClient, type GaslessClaimBody } from "@zkscatter/sdk/relayer";
+import { toBytes32Hex } from "@zkscatter/sdk/zk";
 import { getNetworkConfig } from "../_lib/network";
 import { claimProver } from "../_lib/claimProver";
 
@@ -88,8 +90,15 @@ function ClaimInner() {
   const wrongRecipient =
     !!parsed && !!account && account.toLowerCase() !== parsed.recipientLower;
 
+  // Phase 2b: prefer the operator's relayer to dispatch the claim
+  // (no gas for the recipient). When the package has no relayerUrl,
+  // or the relayer rejects, fall back to the recipient's wallet.
+  // Both paths share everything up to packing the call: chain probe,
+  // proof generation, meta validation. Only the final submit differs.
   async function doClaim() {
-    if (!parsed || !signer) return;
+    if (!parsed) return;
+    const gasless = !!parsed.pkg.relayerUrl;
+    if (!gasless && !signer) return;
     try {
       setPhase({ kind: "validating" });
       // Overlap the chain read with the prover boot — claimsGroups()
@@ -151,28 +160,51 @@ function ClaimInner() {
       }
 
       setPhase({ kind: "submitting" });
-      const inputs: ClaimCallInputs = {
-        recipient: parsed.pkg.recipient,
-        token: parsed.pkg.token,
-        amount: parsed.amountRaw,
-        releaseTime: BigInt(parsed.pkg.releaseTime),
-      };
-      const tx = await callClaimWithProof(
-        signer,
-        parsed.pkg.settlementAddress,
-        {
-          proof: result.proof,
-          publicSignals: result.publicSignals,
-          claimsRoot: meta.claimsRoot,
-          nullifier: meta.nullifier,
-        },
-        inputs,
-      );
-      const receipt = await tx.wait();
-      if (!receipt || receipt.status !== 1) {
-        throw new Error(`claimWithProof tx failed: ${tx.hash}`);
+      let txHash: string;
+      if (gasless && parsed.pkg.relayerUrl) {
+        const body: GaslessClaimBody = {
+          proofA: [result.proof.a[0].toString(), result.proof.a[1].toString()],
+          proofB: [
+            [result.proof.b[0][0].toString(), result.proof.b[0][1].toString()],
+            [result.proof.b[1][0].toString(), result.proof.b[1][1].toString()],
+          ],
+          proofC: [result.proof.c[0].toString(), result.proof.c[1].toString()],
+          claimsRoot: toBytes32Hex(meta.claimsRoot),
+          claimNullifier: toBytes32Hex(meta.nullifier),
+          amount: parsed.amountRaw.toString(),
+          token: parsed.pkg.token,
+          recipient: parsed.pkg.recipient,
+          releaseTime: parsed.pkg.releaseTime,
+        };
+        const client = new RelayerClient(parsed.pkg.relayerUrl);
+        const resp = await client.submitClaim(body);
+        txHash = resp.txHash;
+      } else {
+        if (!signer) throw new Error("Wallet disconnected mid-flow.");
+        const inputs: ClaimCallInputs = {
+          recipient: parsed.pkg.recipient,
+          token: parsed.pkg.token,
+          amount: parsed.amountRaw,
+          releaseTime: BigInt(parsed.pkg.releaseTime),
+        };
+        const tx = await callClaimWithProof(
+          signer,
+          parsed.pkg.settlementAddress,
+          {
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            claimsRoot: meta.claimsRoot,
+            nullifier: meta.nullifier,
+          },
+          inputs,
+        );
+        const receipt = await tx.wait();
+        if (!receipt || receipt.status !== 1) {
+          throw new Error(`claimWithProof tx failed: ${tx.hash}`);
+        }
+        txHash = tx.hash;
       }
-      setPhase({ kind: "done", txHash: tx.hash });
+      setPhase({ kind: "done", txHash });
     } catch (err) {
       console.error("[Pay] claim failed", err);
       setPhase({
@@ -244,76 +276,93 @@ function ClaimInner() {
         </div>
 
         <div className="mt-5 space-y-3">
-          {!account ? (
-            <>
-              <button
-                onClick={() => void connect()}
-                className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-              >
-                Connect wallet to claim
-              </button>
-              {connectError && (
-                <div className="text-center text-xs text-[var(--color-error,#dc2626)]">
-                  {connectError === "no-wallet"
-                    ? "Install MetaMask to continue."
-                    : connectError}
-                </div>
-              )}
-            </>
-          ) : phase.kind === "done" ? (
+          {phase.kind === "done" ? (
             <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-center text-xs text-[var(--color-success)]">
               <div className="mb-1 font-semibold">✓ Claimed</div>
               <div className="font-mono">{shortAddr(phase.txHash)}</div>
             </div>
-          ) : (
-            <>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-center text-xs text-[var(--color-text-muted)]">
-                Connected: <span className="font-mono">{shortAddr(account)}</span>
-              </div>
-              {wrongChain && (
-                <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                  Wrong chain — switch to chain id {parsed!.pkg.chainId} to
-                  claim.
-                </div>
-              )}
-              {wrongRecipient && (
-                <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                  This claim is bound to {shortAddr(parsed!.pkg.recipient)} —
-                  switch wallets to claim.
-                </div>
-              )}
-              <button
-                onClick={() => void doClaim()}
-                disabled={
-                  !parsed ||
-                  !isAvailable ||
-                  wrongChain ||
-                  wrongRecipient ||
-                  phase.kind === "validating" ||
-                  phase.kind === "proving" ||
-                  phase.kind === "submitting"
-                }
-                className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-              >
-                {phase.kind === "validating" && "Verifying on-chain claim group…"}
-                {phase.kind === "proving" && "Generating ZK claim proof…"}
-                {phase.kind === "submitting" && "Submitting…"}
-                {phase.kind === "idle" && "Claim"}
-                {phase.kind === "error" && "Try again"}
-              </button>
-              {phase.kind === "error" && (
-                <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
-                  <strong className="mb-0.5 block">Claim failed</strong>
-                  {phase.message}
-                </div>
-              )}
-            </>
-          )}
+          ) : (() => {
+              const gasless = !!parsed?.pkg.relayerUrl;
+              // Wallet is required only for the self-pay fallback —
+              // gasless dispatches through the operator's relayer
+              // and binds the recipient on-chain via the proof, so
+              // the recipient never needs to sign anything.
+              const needWallet = !gasless;
+              const busy =
+                phase.kind === "validating" ||
+                phase.kind === "proving" ||
+                phase.kind === "submitting";
+              if (needWallet && !account) {
+                return (
+                  <>
+                    <button
+                      onClick={() => void connect()}
+                      className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+                    >
+                      Connect wallet to claim
+                    </button>
+                    {connectError && (
+                      <div className="text-center text-xs text-[var(--color-error,#dc2626)]">
+                        {connectError === "no-wallet"
+                          ? "Install MetaMask to continue."
+                          : connectError}
+                      </div>
+                    )}
+                  </>
+                );
+              }
+              return (
+                <>
+                  {needWallet && account && (
+                    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-center text-xs text-[var(--color-text-muted)]">
+                      Connected: <span className="font-mono">{shortAddr(account)}</span>
+                    </div>
+                  )}
+                  {wrongChain && (
+                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
+                      Wrong chain — switch to chain id {parsed!.pkg.chainId} to claim.
+                    </div>
+                  )}
+                  {needWallet && wrongRecipient && (
+                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
+                      This claim is bound to {shortAddr(parsed!.pkg.recipient)} —
+                      switch wallets to claim.
+                    </div>
+                  )}
+                  <button
+                    onClick={() => void doClaim()}
+                    disabled={
+                      !parsed ||
+                      !isAvailable ||
+                      !!wrongChain ||
+                      (needWallet && wrongRecipient) ||
+                      busy
+                    }
+                    className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+                  >
+                    {phase.kind === "validating" && "Verifying on-chain claim group…"}
+                    {phase.kind === "proving" && "Generating ZK claim proof…"}
+                    {phase.kind === "submitting" &&
+                      (gasless ? "Dispatching via relayer…" : "Submitting…")}
+                    {phase.kind === "idle" && (gasless ? "Claim — gasless" : "Claim")}
+                    {phase.kind === "error" && "Try again"}
+                  </button>
+                  {phase.kind === "error" && (
+                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
+                      <strong className="mb-0.5 block">Claim failed</strong>
+                      {phase.message}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
         </div>
 
         <div className="mt-6 flex items-center justify-between border-t border-[var(--color-border)] pt-3 text-xs">
           <span className="text-[var(--color-text-muted)]">
-            No gas relayer yet — claim is paid by your wallet.
+            {parsed?.pkg.relayerUrl
+              ? "Gasless — the operator's relayer pays the gas."
+              : "Self-pay — gas comes from your wallet."}
           </span>
           <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">{link}</span>
         </div>
