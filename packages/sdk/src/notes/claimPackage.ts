@@ -132,8 +132,25 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
     !o.pathIndices.every((i) => i === 0 || i === 1)
   )
     return false;
-  if (o.relayerUrl !== undefined && typeof o.relayerUrl !== "string") return false;
+  if (o.relayerUrl !== undefined && !isPlausibleHttpUrl(o.relayerUrl)) return false;
   return true;
+}
+
+/** Reject anything that won't reach a real HTTP(S) endpoint. The
+ *  recipient page would `fetch(relayerUrl + "/api/private-claim")`
+ *  blindly otherwise — caps the surface for `javascript:`,
+ *  `data:`, file:, gopher:, etc. and keeps a length sane so a
+ *  pathological 2 MB string can't crowd out a QR code or URL.
+ *  Strict-but-not-paranoid: full URL parsing happens at fetch. */
+function isPlausibleHttpUrl(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  if (v.length === 0 || v.length > 2048) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
