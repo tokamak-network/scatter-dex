@@ -36,6 +36,12 @@ interface VaultState {
   loaded: boolean;
   add(n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">): Promise<VaultNote>;
   remove(id: string): Promise<void>;
+  /** Patch the leafIndex on a stored note. Used by the reconciler
+   *  to back-fill the tree position once the deposit's
+   *  `CommitmentInserted` event lands. No-op when the note is
+   *  already at the supplied index — re-runs cost one IDB hit, not
+   *  a re-render. */
+  setLeafIndex(id: string, leafIndex: number): Promise<void>;
 }
 
 const VaultCtx = createContext<VaultState | null>(null);
@@ -70,6 +76,19 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const { account } = useWallet();
   const accountKey = account?.toLowerCase() ?? "anon";
   const [notes, setNotes] = useState<VaultNote[]>([]);
+  const notesRef = useRef<VaultNote[]>([]);
+  // Mirror `notes` into a ref so async callbacks (setLeafIndex below)
+  // can read the current vault without taking `notes` as a dep —
+  // putting it in the dep would re-create the callback on every
+  // mutation and trip the reconciler's effect on every change.
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+  // Synchronously-updated set of ids `remove()` was called for. The
+  // useEffect-mirrored `notesRef` is one tick behind a setNotes
+  // queued by `remove`; setLeafIndex's remove-race guard reads this
+  // ref to detect a same-tick removal and undo the IDB resurrection.
+  const removedIdsRef = useRef<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
   // Carries over across chain switches: hydration uses
@@ -116,6 +135,9 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       setLoaded(false);
     }
     isFirstHydrateRef.current = false;
+    // Reset on every (re)hydrate so a stale id from the previous
+    // chain doesn't block a re-loaded note that happens to share it.
+    removedIdsRef.current = new Set();
     void (async () => {
       try {
         const list = await adapter.loadAll();
@@ -189,15 +211,46 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const remove = useCallback(
     async (id: string) => {
+      // Mark removed BEFORE any await so a concurrent setLeafIndex
+      // sees this synchronously, even if its `notesRef` mirror
+      // hasn't ticked yet. Without this, the put-after-remove race
+      // would resurrect the IDB row.
+      removedIdsRef.current.add(id);
       await adapter.remove(id);
       setNotes((prev) => (prev.some((n) => n.id === id) ? prev.filter((n) => n.id !== id) : prev));
     },
     [adapter],
   );
 
+  const setLeafIndex = useCallback(
+    async (id: string, leafIndex: number) => {
+      // Bail synchronously if remove(id) was called this tick or
+      // earlier — notesRef is one commit behind, so we need the
+      // synchronous removedIdsRef set to catch the race.
+      if (removedIdsRef.current.has(id)) return;
+      const target = notesRef.current.find((n) => n.id === id);
+      if (!target || target.leafIndex === leafIndex) return;
+      const next: VaultNote = { ...target, leafIndex };
+      await adapter.put(next);
+      // Re-check post-await: a remove() that landed during the put
+      // would have added the id to the set. Undo the resurrection.
+      if (
+        removedIdsRef.current.has(id) ||
+        !notesRef.current.some((n) => n.id === id)
+      ) {
+        await adapter.remove(id);
+        return;
+      }
+      setNotes((prev) =>
+        prev.some((n) => n.id === id) ? prev.map((n) => (n.id === id ? next : n)) : prev,
+      );
+    },
+    [adapter],
+  );
+
   const value = useMemo<VaultState>(
-    () => ({ notes, loaded, add, remove }),
-    [notes, loaded, add, remove],
+    () => ({ notes, loaded, add, remove, setLeafIndex }),
+    [notes, loaded, add, remove, setLeafIndex],
   );
 
   return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;
