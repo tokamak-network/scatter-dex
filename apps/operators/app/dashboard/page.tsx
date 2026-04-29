@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Stat } from "../components/Stat";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { SectionHeader } from "../components/SectionHeader";
-import { formatIsoDate } from "../lib/format";
+import { formatIsoDate, formatRelative } from "../lib/format";
 import { useOperator, type OperatorState } from "../lib/useOperator";
 
 // Reuse the same sessionStorage keys as /runtime so the operator
@@ -544,14 +544,6 @@ function formatEth(weiStr: string): string {
   } catch {
     return weiStr;
   }
-}
-
-function formatRelative(unixMs: number): string {
-  const diff = Date.now() - unixMs;
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
 function formatUptime(uptimeSince: string | number): string {
