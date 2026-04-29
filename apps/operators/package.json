@@ -2,6 +2,9 @@
   "name": "@zkscatter/operators",
   "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev -p 4004",
     "build": "next build",
@@ -12,6 +15,7 @@
     "@zkscatter/sdk": "file:../../packages/sdk",
     "@zkscatter/ui": "file:../../packages/ui",
     "lucide-react": "^1.7.0",
+    "marked": "^18.0.2",
     "next": "16.2.1",
     "react": "19.2.4",
     "react-dom": "19.2.4"
