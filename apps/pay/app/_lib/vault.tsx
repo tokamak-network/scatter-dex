@@ -38,9 +38,10 @@ interface VaultState {
   remove(id: string): Promise<void>;
   /** Patch the leafIndex on a stored note. Used by the reconciler
    *  to back-fill the tree position once the deposit's
-   *  `CommitmentInserted` event lands. No-op when the note is
-   *  already at the supplied index — re-runs cost one IDB hit, not
-   *  a re-render. */
+   *  `CommitmentInserted` event lands. Idempotent: if the note is
+   *  already at the supplied index, returns immediately with zero
+   *  IDB writes and no re-render; otherwise persists via
+   *  `adapter.put` and triggers one re-render of vault consumers. */
   setLeafIndex(id: string, leafIndex: number): Promise<void>;
 }
 
