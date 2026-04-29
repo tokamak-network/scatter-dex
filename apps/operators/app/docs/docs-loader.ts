@@ -1,8 +1,16 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
-import { marked } from "marked";
+import { marked, Renderer } from "marked";
 import { DOCS, type DocContent, type DocSlug } from "./docs-data";
+
+// Defence-in-depth: drop any raw HTML the markdown might contain.
+// Our docs don't currently use raw HTML, but stripping it at the
+// renderer level means a future doc edit can't accidentally turn
+// into a `dangerouslySetInnerHTML` XSS surface. We override both the
+// block- and inline-HTML token renderers to emit empty strings.
+const renderer = new Renderer();
+renderer.html = () => "";
 
 // Resolved at module load: `next build` always runs from the package
 // dir (apps/operators), so cwd + ../../docs/operations is reliable in
@@ -25,7 +33,11 @@ export function loadDoc(slug: DocSlug): DocContent {
   const raw = fs.readFileSync(path.join(DOCS_DIR, `${slug}.md`), "utf8");
   // `async: false` makes the return type a plain string — without it,
   // marked's signature widens to `string | Promise<string>`.
-  const html = marked.parse(raw, { async: false, gfm: true }) as string;
+  const html = marked.parse(raw, {
+    async: false,
+    gfm: true,
+    renderer,
+  }) as string;
   return { meta, html };
 }
 

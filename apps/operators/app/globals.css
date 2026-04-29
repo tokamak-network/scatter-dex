@@ -23,6 +23,12 @@
   --color-warning: #d97706;
   --color-warning-soft: #fffbeb;
   --color-danger: #dc2626;
+  /* Docs prose code-block surface — kept dark for readability of
+   * shell snippets regardless of the (currently light-only) app
+   * theme. Promoted to tokens so they live alongside the rest of
+   * the palette and are easy to retheme later. */
+  --color-code-bg: #0f172a;
+  --color-code-fg: #e2e8f0;
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -63,8 +69,8 @@ html, body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .docs-prose pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--color-code-bg);
+  color: var(--color-code-fg);
   border-radius: 8px;
   padding: 1rem 1.1rem;
   overflow-x: auto;

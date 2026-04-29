@@ -16,6 +16,17 @@ const NAV_IDLE = "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]
 export function DocsViewer({ docs, index }: Props) {
   const params = useSearchParams();
   const selected = params.get("d") ?? "operations-guide";
+
+  // `docs` is built at build time from a non-empty curated `DOCS`
+  // index, but guarding here means a future `DOCS = []` can't crash
+  // the route — it renders an explicit empty state instead.
+  if (docs.length === 0) {
+    return (
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
+        No documentation available.
+      </div>
+    );
+  }
   const current = docs.find((d) => d.meta.slug === selected) ?? docs[0];
 
   return (
@@ -30,16 +41,20 @@ export function DocsViewer({ docs, index }: Props) {
                 {cat}
               </div>
               <ul className="space-y-1">
-                {items.map((d) => (
-                  <li key={d.slug}>
-                    <Link
-                      href={`/docs?d=${d.slug}`}
-                      className={`${NAV_BASE} ${d.slug === current.meta.slug ? NAV_ACTIVE : NAV_IDLE}`}
-                    >
-                      {d.title}
-                    </Link>
-                  </li>
-                ))}
+                {items.map((d) => {
+                  const active = d.slug === current.meta.slug;
+                  return (
+                    <li key={d.slug}>
+                      <Link
+                        href={`/docs?d=${d.slug}`}
+                        aria-current={active ? "page" : undefined}
+                        className={`${NAV_BASE} ${active ? NAV_ACTIVE : NAV_IDLE}`}
+                      >
+                        {d.title}
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           );
