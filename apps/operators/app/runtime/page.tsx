@@ -118,6 +118,7 @@ function AuthBar({
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://relayer.example.com"
+          aria-label="Relayer URL"
           className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
         />
         <input
@@ -125,6 +126,7 @@ function AuthBar({
           value={key}
           onChange={(e) => setKey(e.target.value)}
           placeholder="Admin API key"
+          aria-label="Admin API key"
           className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
         />
         {auth ? (
@@ -309,7 +311,12 @@ function FeeSection({
   }, [data]);
 
   const onSave = async () => {
-    const n = Number(draft);
+    const trimmed = draft.trim();
+    if (trimmed.length === 0) {
+      setError("Enter a fee in bps before saving.");
+      return;
+    }
+    const n = Number(trimmed);
     if (!Number.isInteger(n) || n < 0 || n > 10_000) {
       setError("feeBps must be an integer between 0 and 10000.");
       return;
@@ -645,8 +652,8 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
                 </tr>
               </thead>
               <tbody>
-                {data.entries.map((e, i) => (
-                  <tr key={`${e.pubKeyAx}-${e.pubKeyAy}-${i}`} className="border-t border-[var(--color-border)]">
+                {data.entries.map((e) => (
+                  <tr key={`${e.pubKeyAx}-${e.pubKeyAy}`} className="border-t border-[var(--color-border)]">
                     <td className="px-3 py-2 font-mono">{shortHex(e.pubKeyAx)}</td>
                     <td className="px-3 py-2 font-mono">{shortHex(e.pubKeyAy)}</td>
                     <td className="px-3 py-2 text-right">
@@ -845,10 +852,21 @@ async function adminFetch<T>(
       parsed && typeof parsed === "object" && "error" in parsed
         ? (parsed as { error: unknown }).error
         : undefined;
-    const fallback = text ? text.slice(0, 120) : `HTTP ${res.status}`;
-    throw new Error(errField !== undefined ? String(errField) : fallback);
+    const formatted =
+      errField === undefined
+        ? text
+          ? text.slice(0, 120)
+          : `HTTP ${res.status}`
+        : typeof errField === "string"
+        ? errField
+        : JSON.stringify(errField);
+    throw new Error(formatted);
   }
-  return parsed as T;
+  // 204 / empty body: callers asking for `T` shouldn't crash on field
+  // access. Return an empty object cast — the only callsites that
+  // depend on a field (fee update echoes oldFeeBps/newFeeBps) speak
+  // to endpoints that always return a JSON body.
+  return (parsed ?? ({} as unknown)) as T;
 }
 
 function formatEth(weiStr: string): string {
