@@ -49,16 +49,39 @@ export const MOCK_TOKEN_ABI = [
   "function mint(address to, uint256 amount) external",
 ] as const;
 
+/** Inner-tuple shape of `SettleVerifyLib.AuthorizeProof`. Exported so
+ *  ethers callers, the relayer's runtime tuple builder, and any
+ *  ad-hoc test ABI strings can share one source of truth — the field
+ *  list otherwise drifts on the next struct change (PR #528 added
+ *  `tier`; the previous version was dropped in three places before
+ *  this PR caught it). Keep in lock-step with
+ *  `contracts/src/zk/SettleVerifyLib.sol#AuthorizeProof`. */
+export const AUTHORIZE_PROOF_TUPLE =
+  "(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, " +
+  "bytes32 pubKeyBind, uint256 commitmentRoot, " +
+  "bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, " +
+  "address sellToken, address buyToken, " +
+  "uint128 sellAmount, uint128 buyAmount, " +
+  "uint16 maxFee, uint64 expiry, " +
+  "bytes32 claimsRoot, uint128 totalLocked, " +
+  "address relayer, bytes32 orderHash, " +
+  "uint8 tier)";
+
 export const PRIVATE_SETTLEMENT_ABI = [
   "function nullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",
   "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token, uint8 tier)",
+  // Verifier-registry getters — read by ops/admin scripts that need
+  // to inspect or audit which tiers are wired without parsing
+  // contract events. JS clients today only consume tier 16
+  // implicitly, but the registry shape is what this PR is wiring
+  // up so the tooling already has the keys it needs.
   "function authorizeVerifierByTier(uint8) view returns (address)",
   "function claimVerifierByTier(uint8) view returns (address)",
   "function dexPlatformFeeBps() view returns (uint256)",
   "function cancelPrivate((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitmentRoot, bytes32 oldNullifier, bytes32 oldNonceNullifier, bytes32 newCommitment) p) external",
-  "function settleWithDex(((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash, uint8 tier) proof, address dexRouter, bytes dexCalldata, uint256 deadline) p) external",
-  "function settleAuth(((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash, uint8 tier) maker, (uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 pubKeyBind, uint256 commitmentRoot, bytes32 nullifier, bytes32 nonceNullifier, bytes32 newCommitment, address sellToken, address buyToken, uint128 sellAmount, uint128 buyAmount, uint16 maxFee, uint64 expiry, bytes32 claimsRoot, uint128 totalLocked, address relayer, bytes32 orderHash, uint8 tier) taker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external",
+  `function settleWithDex((${AUTHORIZE_PROOF_TUPLE} proof, address dexRouter, bytes dexCalldata, uint256 deadline) p) external`,
+  `function settleAuth((${AUTHORIZE_PROOF_TUPLE} maker, ${AUTHORIZE_PROOF_TUPLE} taker, uint96 feeTokenMaker, uint96 feeTokenTaker) p) external`,
   "function claimWithProof(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimWithProofBatch((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime)[] claims) external",
   "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",

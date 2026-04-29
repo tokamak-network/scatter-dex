@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { PRIVATE_SETTLEMENT_IFACE } from "../core/contracts";
 import { toBytes32Hex } from "../zk/commitment";
 import type { AuthorizeProofResult } from "../zk/circuits/authorize";
+import type { CircuitTier } from "../zk/constants";
 
 /** Per-side fee in token units the relayer charges, capped by the
  *  user's signed `maxFee` on each side. */
@@ -22,10 +23,11 @@ export interface SettleAuthSide {
   maxFee: bigint;
   expiry: bigint;
   relayer: string;
-  /** Circuit tier this proof was generated against (16 / 64 / 128).
-   *  Picked off the SDK's `TIERS` registry — the on-chain settlement
-   *  uses it to dispatch to the matching authorize verifier. */
-  tier: number;
+  /** Circuit tier this proof was generated against — passed straight
+   *  through to the verifier-registry dispatch on-chain. Use a
+   *  {@link CircuitTier}'s `cap` from `@zkscatter/sdk/zk` rather than
+   *  a literal so an unsupported tier fails at compile time. */
+  tier: CircuitTier["cap"];
 }
 
 function packAuthorize(side: SettleAuthSide) {
