@@ -13,6 +13,9 @@ import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 import { eqAddr } from "../lib/address.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("authorize-cross");
 
 /**
  * Cross-relayer trade-offer for the authorize (half-proof) path.
@@ -103,10 +106,11 @@ export class AuthorizeCrossRelayerMatchService {
       // 'retrying' (drifting in-memory state from the DB-backed FSM).
       const priorStatus = local.status;
       try {
-        console.log(
-          `[authorize-cross] Match: local taker ${nullifier.slice(0, 18)}... ` +
-          `↔ remote maker ${summary.id.slice(0, 18)}... (relayer ${summary.relayerUrl})`,
-        );
+        log.info("Match local taker with remote maker", {
+          taker: nullifier.slice(0, 18) + "...",
+          maker: summary.id.slice(0, 18) + "...",
+          relayerUrl: summary.relayerUrl,
+        });
         // Persist 'matched' to the DB *before* sending the offer so
         // SettlementWorker.claimNextSettlementJob (which selects rows
         // with status IN ('accepted','retrying')) can't race us by
@@ -139,14 +143,13 @@ export class AuthorizeCrossRelayerMatchService {
 
         // Rejection path — restore the prior live-queue status so a
         // future remote (or the local SettlementWorker) can retry.
-        console.warn(`[authorize-cross] Trade offer rejected: ${result.reason ?? "unknown"}`);
+        log.warn("Trade offer rejected", { reason: result.reason ?? "unknown" });
         local.status = priorStatus;
         this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
       } catch (err) {
-        console.warn(
-          `[authorize-cross] Trade offer error:`,
-          err instanceof Error ? err.message : "unknown",
-        );
+        log.warn("Trade offer error", {
+          err: err instanceof Error ? err.message : "unknown",
+        });
         if (local.status === "matched") {
           local.status = priorStatus;
           this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
@@ -296,10 +299,11 @@ export class AuthorizeCrossRelayerMatchService {
       // Cancel maker's listing from shared OB.
       this.sharedClient.cancelOrder(nullifierToOfferHandle(mapKey)).catch(() => {});
 
-      console.log(
-        `[authorize-cross] Settled: maker=${mapKey.slice(0, 18)}... ` +
-        `taker=(from ${senderAddress}) tx=${txHash}`,
-      );
+      log.info("Settled cross-relayer match", {
+        maker: mapKey.slice(0, 18) + "...",
+        takerFrom: senderAddress,
+        tx: txHash,
+      });
       return { status: "settled", txHash };
     } catch (err) {
       // Don't leave the maker stuck in "matched" — restore the captured
@@ -308,7 +312,7 @@ export class AuthorizeCrossRelayerMatchService {
       makerStored.status = priorMakerStatus;
       this.db?.updateAuthorizeOrderStatus(mapKey, priorMakerStatus);
       const reason = err instanceof Error ? err.message : "settleAuth failed";
-      console.warn(`[authorize-cross] settleAuth failed:`, reason);
+      log.warn("settleAuth failed", { reason });
       return { status: "error", reason };
     } finally {
       this.lockingOrders.delete(mapKey);

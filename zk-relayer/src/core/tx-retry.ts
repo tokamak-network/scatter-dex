@@ -8,6 +8,9 @@
  */
 
 import type { ethers } from "ethers";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("tx-retry");
 
 export interface TxSendResult {
   txHash: string;
@@ -116,10 +119,13 @@ export async function sendAndWait(
     } catch (err) {
       if (attempt < sendRetries && isTransientSendError(err)) {
         const delay = sendRetryBaseMs * 2 ** (attempt - 1);
-        console.warn(
-          `[tx-retry] ${label} send attempt ${attempt}/${sendRetries} failed (transient), ` +
-          `retrying in ${delay}ms: ${err instanceof Error ? err.message : err}`,
-        );
+        log.warn("send attempt failed (transient), retrying", {
+          label,
+          attempt,
+          sendRetries,
+          delayMs: delay,
+          err: err instanceof Error ? err.message : String(err),
+        });
         await sleep(delay);
         continue;
       }
@@ -130,16 +136,18 @@ export async function sendAndWait(
   if (!tx) throw new Error(`[tx-retry] ${label}: send failed after ${sendRetries} attempts`);
 
   const txHash = tx.hash;
-  console.log(`[tx-retry] ${label} sent: ${txHash}`);
+  log.info("sent", { label, txHash });
   onTxHash?.(txHash);
 
   // ── Phase 2: Wait with timeout ────────────────────────────
   let receipt = await waitWithTimeout(tx, waitTimeoutMs);
 
   if (!receipt) {
-    console.warn(
-      `[tx-retry] ${label} wait timed out after ${waitTimeoutMs}ms, polling receipt for ${txHash}...`,
-    );
+    log.warn("wait timed out, polling receipt", {
+      label,
+      waitTimeoutMs,
+      txHash,
+    });
     receipt = await pollReceipt(provider, txHash, receiptPollRetries, receiptPollIntervalMs);
   }
 
@@ -193,10 +201,11 @@ async function pollReceipt(
       const receipt = await provider.getTransactionReceipt(txHash);
       if (receipt) return receipt;
     } catch (err) {
-      console.warn(
-        `[tx-retry] receipt poll ${i + 1}/${retries} failed: ` +
-        `${err instanceof Error ? err.message : err}`,
-      );
+      log.warn("receipt poll failed", {
+        attempt: i + 1,
+        retries,
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return null;

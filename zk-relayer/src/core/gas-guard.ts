@@ -8,6 +8,9 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 import { sendAndWait, type SendAndWaitOptions } from "./tx-retry.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("gas-guard");
 
 const GAS_BUFFER_NUMERATOR = 12n;
 const GAS_BUFFER_DENOMINATOR = 10n;
@@ -86,10 +89,13 @@ export async function guardedSubmit(
 ): Promise<ethers.TransactionReceipt> {
   const gasCheck = await estimateAndGuard(contract, method, args, 0n);
   if (!gasCheck.profitable) {
-    console.warn(`[gas-guard] ${label} rejected: ${gasCheck.reason}`);
+    log.warn("rejected", { label, reason: gasCheck.reason });
     throw new Error(`${label} rejected: ${gasCheck.reason}`);
   }
-  console.log(`[gas-guard] ${label}: gas=${gasCheck.gasCostEth} ETH (profitability check skipped — fees are token-denominated)`);
+  log.info("gas estimate (profitability check skipped — fees are token-denominated)", {
+    label,
+    gasCostEth: gasCheck.gasCostEth,
+  });
 
   const tx = await contract[method](...args, { gasLimit: gasCheck.estimatedGas });
   const receipt = await tx.wait();

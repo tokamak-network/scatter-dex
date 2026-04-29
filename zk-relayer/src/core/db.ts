@@ -1,6 +1,9 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("db");
 // Private-flow types removed with the tracker #29 cleanup. Authorize-flow
 // row shapes are inlined below.
 
@@ -234,7 +237,9 @@ export class PrivateOrderDB {
       if (fs.existsSync(`${dbPath}-wal`)) fs.chmodSync(`${dbPath}-wal`, 0o600);
       if (fs.existsSync(`${dbPath}-shm`)) fs.chmodSync(`${dbPath}-shm`, 0o600);
     } catch (e) {
-      console.warn(`[M-10] Failed to set DB permissions: ${e instanceof Error ? e.message : e}`);
+      log.warn("[M-10] Failed to set DB permissions", {
+        err: e instanceof Error ? e.message : String(e),
+      });
     }
 
     // Private-flow CRUD prepared statements (insertOrder, insertClaim,

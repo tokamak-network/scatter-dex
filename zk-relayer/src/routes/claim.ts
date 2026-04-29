@@ -1,6 +1,9 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import type { PrivateOrderDB } from "../core/db.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("claim");
 
 const HEX_RE = /^0x[0-9a-fA-F]+$/;
 
@@ -93,7 +96,7 @@ export function createPrivateClaimRoutes(
       res.json({ status: "claimed", txHash });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "unknown";
-      console.error("gasless ZK claim failed:", msg);
+      log.error("gasless ZK claim failed", { err: msg });
       // Client errors (invalid proof, spent nullifier) → 400
       if (msg.includes("Invalid claim proof") || msg.includes("nullifier already spent")) {
         res.status(400).json({ error: msg });

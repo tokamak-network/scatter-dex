@@ -12,6 +12,9 @@
 import { config } from "../config.js";
 import type { PrivateSubmitter } from "./private-submitter.js";
 import { sendAlert } from "./alerts.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("balance-monitor");
 
 export type BalanceState = "healthy" | "low";
 
@@ -75,7 +78,7 @@ async function runProbe(submitter: PrivateSubmitter): Promise<void> {
   } catch (e) {
     // Don't transition on a probe error — the RPC could be flaky and
     // the health monitor already flags that. Silently skip this tick.
-    console.warn("[balance-monitor] probe failed:", e instanceof Error ? e.message : e);
+    log.warn("probe failed", { err: e instanceof Error ? e.message : String(e) });
     return;
   }
   lastProbeAt = Date.now();

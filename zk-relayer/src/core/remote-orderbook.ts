@@ -1,4 +1,7 @@
 import type { OrderSummary } from "../types/order.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("remote-orderbook");
 
 /**
  * In-memory store for remote OrderSummary objects received from
@@ -47,7 +50,7 @@ export class RemoteOrderStore {
       BigInt(order.sellAmount);
       BigInt(order.buyAmount);
     } catch {
-      console.warn(`[remote-orderbook] Skipping malformed order ${order.id}: invalid amount`);
+      log.warn("Skipping malformed order: invalid amount", { id: order.id });
       return;
     }
 

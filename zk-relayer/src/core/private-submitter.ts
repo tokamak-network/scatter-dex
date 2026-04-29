@@ -19,8 +19,11 @@ import type { PrivateOrderDB } from "./db.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
 import { FEE_BPS_DENOMINATOR } from "./fees.js";
+import { createLogger } from "./logger.js";
 import path from "path";
 import { fileURLToPath } from "url";
+
+const log = createLogger("private-submitter");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -149,7 +152,7 @@ export class PrivateSubmitter {
       const parsed = raw !== undefined ? Number(raw) : 0;
       fromBlock = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
       if (raw !== undefined && fromBlock !== parsed) {
-        console.warn(`INDEX_FROM_BLOCK=${raw} is not a non-negative integer; falling back to 0`);
+        log.warn("INDEX_FROM_BLOCK is not a non-negative integer; falling back to 0", { raw });
       }
       this.commitmentLeaves = [];
     }
@@ -165,10 +168,12 @@ export class PrivateSubmitter {
     const toBlock = tip - config.indexConfirmations;
     if (toBlock < 0 || fromBlock > toBlock) {
       if (!this.warnedIndexStall) {
-        console.warn(
-          `[indexer] paused: tip=${tip} confirmations=${config.indexConfirmations} ` +
-          `fromBlock=${fromBlock} toBlock=${toBlock} — waiting for tip to advance`,
-        );
+        log.warn("indexer paused — waiting for tip to advance", {
+          tip,
+          confirmations: config.indexConfirmations,
+          fromBlock,
+          toBlock,
+        });
         this.warnedIndexStall = true;
       }
       return;
@@ -190,7 +195,12 @@ export class PrivateSubmitter {
     }
     this.lastIndexedBlock = toBlock;
     if (events.length > 0) {
-      console.log(`Indexed ${this.commitmentLeaves.length} commitments (+${events.length} new, tip=${tip} indexed=${toBlock})`);
+      log.info("Indexed commitments", {
+        total: this.commitmentLeaves.length,
+        added: events.length,
+        tip,
+        indexed: toBlock,
+      });
     }
   }
 
@@ -276,7 +286,7 @@ export class PrivateSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
-      console.log(`Gasless claim tx: ${txHash}`);
+      log.info("Gasless claim tx", { txHash });
       return txHash;
     });
   }
@@ -302,7 +312,7 @@ export class PrivateSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
-      console.log(`FeeVault claim: ${txHash} (token: ${token}, balance: ${balance})`);
+      log.info("FeeVault claim", { txHash, token, balance: balance.toString() });
       return txHash;
     });
   }

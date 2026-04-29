@@ -25,6 +25,9 @@ import type {
   StoredAuthorizeOrder,
 } from "../types/authorize-order.js";
 import type { SharedOrderbookClient } from "./shared-orderbook-client.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("settlement-worker");
 
 export const SETTLEMENT_RETRY_SCHEDULE_MS = [
   2_000, 8_000, 30_000, 120_000, 300_000,
@@ -153,7 +156,9 @@ export class SettlementWorker {
     } catch (err) {
       // A thrown error here is not one of the per-job outcomes (those are
       // caught inside handleJob); it indicates a bug in the worker itself.
-      console.error("[settlement-worker] unexpected tick error:", err);
+      log.error("unexpected tick error", {
+        err: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       this.running = false;
     }
@@ -167,9 +172,9 @@ export class SettlementWorker {
     } catch {
       this.deps.db.markAuthorizeOrderFailed(job.nullifier, "corrupt order_json");
       recordSettlementOutcome("failed");
-      console.error(
-        `[settlement-worker] ${job.nullifier.slice(0, 12)}… corrupt order_json; marked failed`,
-      );
+      log.error("corrupt order_json; marked failed", {
+        nullifier: job.nullifier.slice(0, 12) + "...",
+      });
       return;
     }
 
@@ -194,9 +199,10 @@ export class SettlementWorker {
       }
       this.releasePubKeySlot(job, stored);
       recordSettlementOutcome("settled");
-      console.log(
-        `[settlement-worker] scatter ${job.nullifier.slice(0, 12)}… settled tx=${txHash}`,
-      );
+      log.info("scatter settled", {
+        nullifier: job.nullifier.slice(0, 12) + "...",
+        txHash,
+      });
     } catch (err) {
       this.handleSettleError(job, err, stored);
     }
@@ -251,9 +257,11 @@ export class SettlementWorker {
       }
 
       recordSettlementOutcome("settled");
-      console.log(
-        `[settlement-worker] settleAuth ${makerN.slice(0, 12)}…/${takerN.slice(0, 12)}… tx=${txHash}`,
-      );
+      log.info("settleAuth pair settled", {
+        maker: makerN.slice(0, 12) + "...",
+        taker: takerN.slice(0, 12) + "...",
+        txHash,
+      });
     } catch (err) {
       // Revert both ends back to pending so a subsequent match attempt can
       // re-pair them. The counterparty stays in its own accepted queue row;
@@ -280,9 +288,10 @@ export class SettlementWorker {
       if (stored) stored.status = "failed";
       this.releasePubKeySlot(job, stored);
       recordSettlementOutcome("failed");
-      console.error(
-        `[settlement-worker] ${job.nullifier.slice(0, 12)}… permanent failure: ${msg}`,
-      );
+      log.error("permanent failure", {
+        nullifier: job.nullifier.slice(0, 12) + "...",
+        err: msg,
+      });
       return;
     }
 
@@ -300,9 +309,11 @@ export class SettlementWorker {
       }
       this.releasePubKeySlot(job, stored);
       recordSettlementOutcome("failed");
-      console.error(
-        `[settlement-worker] ${job.nullifier.slice(0, 12)}… exhausted ${kind} retries: ${msg}`,
-      );
+      log.error("exhausted retries", {
+        nullifier: job.nullifier.slice(0, 12) + "...",
+        kind,
+        err: msg,
+      });
       return;
     }
 
@@ -319,9 +330,13 @@ export class SettlementWorker {
     // Mirror the durable 'retrying' state in-memory so matching/polling
     // code paths that read the map see the same FSM slice as the DB.
     if (stored) stored.status = "retrying";
-    console.warn(
-      `[settlement-worker] ${job.nullifier.slice(0, 12)}… ${kind} error, retry ${nextAttempt} in ${delay}ms: ${msg}`,
-    );
+    log.warn("retry scheduled", {
+      nullifier: job.nullifier.slice(0, 12) + "...",
+      kind,
+      attempt: nextAttempt,
+      delayMs: delay,
+      err: msg,
+    });
   }
 
   /** Decrement the per-pubKey pending counter on a terminal outcome.
