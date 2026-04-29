@@ -46,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Link href="/treasury" className="hover:text-[var(--color-text)]">Treasury</Link>
                   <Link href="/leaderboard" className="hover:text-[var(--color-text)]">Leaderboard</Link>
                   <Link href="/profile" className="hover:text-[var(--color-text)]">Profile</Link>
+                  <Link href="/runtime" className="hover:text-[var(--color-text)]">Runtime</Link>
                   <Link href="/register" className="hover:text-[var(--color-text)]">Register</Link>
                 </>
               }
