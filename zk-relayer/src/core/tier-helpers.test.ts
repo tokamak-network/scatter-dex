@@ -40,13 +40,13 @@ describe("CircuitTier registry", () => {
 
 describe("pickTier", () => {
   it.each([
-    [1, TIER_16],
-    [16, TIER_16],
-    [17, TIER_64],
-    [64, TIER_64],
-    [65, TIER_128],
-    [128, TIER_128],
-  ])("recipientCount=%i -> cap=%i", (count, expected) => {
+    { count: 1, expected: TIER_16 },
+    { count: 16, expected: TIER_16 },
+    { count: 17, expected: TIER_64 },
+    { count: 64, expected: TIER_64 },
+    { count: 65, expected: TIER_128 },
+    { count: 128, expected: TIER_128 },
+  ])("recipientCount=$count -> cap=$expected.cap", ({ count, expected }) => {
     expect(pickTier(count)).toBe(expected);
   });
 

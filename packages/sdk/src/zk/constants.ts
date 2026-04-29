@@ -18,8 +18,14 @@ export const COMMIT_TREE_DEPTH = 20;
  *  compiled wasm/zkey assets, the on-chain verifier address, and how
  *  many claims fit per settlement. The 15 Groth16 public signals are
  *  shared across tiers (claimsRoot already aggregates the variable-
- *  length claims set inside the circuit), so the SDK proof helpers
- *  take a tier parameter rather than re-deriving from constants. */
+ *  length claims set inside the circuit).
+ *
+ *  **Migration status:** today only `generateAuthorizeProof` /
+ *  `splitPayout` are wired against {@link MAX_CLAIMS_PER_SIDE} —
+ *  those callers still resolve the tier-16 cap implicitly through
+ *  the deprecated re-export. As tier 64 / 128 ship, the proof
+ *  helpers will be re-shaped to take a {@link CircuitTier} so the
+ *  cap is no longer derived from a module-level constant. */
 export interface CircuitTier {
   /** Max claims per side (= 2^claimsTreeDepth). Doubles as the
    *  on-chain verifier registry key on PrivateSettlement. */
@@ -74,10 +80,13 @@ export function pickTier(recipientCount: number): CircuitTier {
   );
 }
 
-/** Pad a claims array up to `tier.cap` with copies of `dummy`.
- *  Returns a new array — does not mutate the input. Throws if the
- *  input already exceeds the tier capacity (the caller picked the
- *  wrong tier for this list).
+/** Pad a claims array up to `tier.cap` by appending the same `dummy`
+ *  value in every empty slot. The returned array is a new outer
+ *  array (the input is not mutated), but each padded slot **shares
+ *  one reference** to `dummy` — pass a frozen / immutable sentinel
+ *  when `T` is an object type, or callers will see ghost mutations
+ *  across slots. Throws when the input already exceeds the tier
+ *  capacity (the caller picked the wrong tier for this list).
  *
  *  Padding is mandatory for anonymity: every tier-N settlement looks
  *  like every other tier-N settlement at the on-chain layer because
