@@ -73,3 +73,89 @@ export function autoPickSourceNotes(
     covered: true,
   };
 }
+
+export interface BatchPick {
+  note: StoredNote;
+  /** Equal to the paired batch's `totalAmount`. realSettle uses this
+   *  as `sellAmount`; the residual `note.amount - spend` becomes the
+   *  change UTXO returned by that settle's proof. */
+  spend: bigint;
+}
+
+export interface PerBatchPick {
+  /** Aligned 1:1 with the input `batches`. \`byBatch[i]\` is the
+   *  source note paired with batch[i]. Empty when not covered. */
+  byBatch: BatchPick[];
+  /** Combined leftover across every paired note. */
+  changeRaw: bigint;
+  /** True when every batch could be matched against an eligible
+   *  note ≥ batch.totalAmount. */
+  covered: boolean;
+  /** When covered=false, names the failure mode so the wizard can
+   *  surface a specific error rather than a generic "no funds". */
+  reason?:
+    | "no-eligible-notes"
+    | "insufficient-note-count"
+    | "smallest-batch-uncovered";
+}
+
+/** Multi-batch picker: pair every batch with its own source note so
+ *  multi-recipient runs can settle as N sequential
+ *  `scatterDirectAuth` calls (one per batch). Strategy: sort batches
+ *  desc by totalAmount, sort eligible notes desc by amount, pair
+ *  i-th largest batch with i-th largest note. The fit succeeds only
+ *  when the smallest paired note still covers its smallest paired
+ *  batch — otherwise the user has at least one batch that doesn't
+ *  fit any single note. Notes whose `leafIndex < 0` are excluded
+ *  because the spend path's authorize proof needs the on-chain
+ *  index reconciled. */
+export function pickPerBatchNotes(
+  notes: readonly StoredNote[],
+  batches: readonly { totalAmount: bigint }[],
+  tokenAddress: string,
+): PerBatchPick {
+  if (batches.length === 0) {
+    return { byBatch: [], changeRaw: 0n, covered: true };
+  }
+  const tokenLower = tokenAddress.toLowerCase();
+  const eligible = notes
+    .filter((n) => tokenBigIntToAddress(n.note.token) === tokenLower)
+    .filter((n) => n.leafIndex >= 0)
+    .slice()
+    .sort((a, b) =>
+      a.note.amount === b.note.amount ? 0 : a.note.amount < b.note.amount ? 1 : -1,
+    );
+  if (eligible.length === 0) {
+    return { byBatch: [], changeRaw: 0n, covered: false, reason: "no-eligible-notes" };
+  }
+  if (eligible.length < batches.length) {
+    return {
+      byBatch: [],
+      changeRaw: 0n,
+      covered: false,
+      reason: "insufficient-note-count",
+    };
+  }
+  const sortedBatches = batches
+    .map((b, originalIndex) => ({ totalAmount: b.totalAmount, originalIndex }))
+    .sort((a, b) =>
+      a.totalAmount === b.totalAmount ? 0 : a.totalAmount < b.totalAmount ? 1 : -1,
+    );
+  const byBatch: BatchPick[] = new Array(batches.length);
+  let changeRaw = 0n;
+  for (let i = 0; i < sortedBatches.length; i++) {
+    const b = sortedBatches[i]!;
+    const note = eligible[i]!;
+    if (note.note.amount < b.totalAmount) {
+      return {
+        byBatch: [],
+        changeRaw: 0n,
+        covered: false,
+        reason: "smallest-batch-uncovered",
+      };
+    }
+    byBatch[b.originalIndex] = { note, spend: b.totalAmount };
+    changeRaw += note.note.amount - b.totalAmount;
+  }
+  return { byBatch, changeRaw, covered: true };
+}
