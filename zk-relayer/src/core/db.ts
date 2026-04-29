@@ -91,6 +91,25 @@ export interface TradeOfferRow {
   created_at: number;
 }
 
+export interface TradeOfferQueryOpts {
+  limit: number;
+  offset: number;
+  direction?: "sent" | "received";
+  status?: string;
+  peer?: string;
+  since?: number;
+}
+
+export interface PeerStatsRow {
+  peer: string;
+  sent: number;
+  received: number;
+  settled: number;
+  rejected: number;
+  errored: number;
+  lastAt: number | null;
+}
+
 /** Persisted settlement event — written after a successful on-chain
  *  settlement so dashboards can query history without the live
  *  rolling-window metrics. */
@@ -170,6 +189,11 @@ export class PrivateOrderDB {
   private selectClaimsRoot: ReturnType<Database.Database["prepare"]>;
   private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
   private selectTradeOffers: ReturnType<Database.Database["prepare"]>;
+  // Filtered + aggregate trade-offer queries for the operator
+  // Cross-relayer view. We pre-prepare every filter combo so the
+  // route doesn't have to concatenate SQL.
+  private selectTradeOffersFiltered: ReturnType<Database.Database["prepare"]>;
+  private selectPeerStats: ReturnType<Database.Database["prepare"]>;
   private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
   private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
   private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
@@ -260,6 +284,35 @@ export class PrivateOrderDB {
     `);
     this.selectTradeOffers = this.db.prepare(`
       SELECT * FROM trade_offers ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset
+    `);
+    // Single filtered query — every optional filter is applied via
+    // `(@param IS NULL OR col = @param)` so the prepared plan stays
+    // stable regardless of which filters the caller chose. SQLite
+    // optimises the no-op branches away once the params are bound.
+    this.selectTradeOffersFiltered = this.db.prepare(`
+      SELECT * FROM trade_offers
+       WHERE (@direction IS NULL OR direction = @direction)
+         AND (@status IS NULL OR status = @status)
+         AND (@peer IS NULL OR peer_relayer = @peer)
+         AND created_at >= @since
+       ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset
+    `);
+    // Per-peer aggregate. SUM(CASE …) gives one row per peer with
+    // counters split by direction and outcome. Ordered by total
+    // activity (most-engaged peers first) so the operator sees the
+    // ones that matter at the top.
+    this.selectPeerStats = this.db.prepare(`
+      SELECT peer_relayer as peer,
+             SUM(CASE WHEN direction = 'sent'     THEN 1 ELSE 0 END) as sent,
+             SUM(CASE WHEN direction = 'received' THEN 1 ELSE 0 END) as received,
+             SUM(CASE WHEN status    = 'settled'  THEN 1 ELSE 0 END) as settled,
+             SUM(CASE WHEN status    = 'rejected' THEN 1 ELSE 0 END) as rejected,
+             SUM(CASE WHEN status    = 'error'    THEN 1 ELSE 0 END) as errored,
+             MAX(created_at) as lastAt
+        FROM trade_offers
+       WHERE created_at >= @since
+       GROUP BY peer_relayer
+       ORDER BY (sent + received) DESC, lastAt DESC
     `);
     this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
     this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
@@ -892,6 +945,49 @@ export class PrivateOrderDB {
 
   getTradeOffers(limit = 50, offset = 0): TradeOfferRow[] {
     return this.selectTradeOffers.all({ limit, offset }) as TradeOfferRow[];
+  }
+
+  /** Filtered Trade Offer query for the operator Cross-relayer view.
+   *  Every filter is optional; an unset filter is passed as `null`
+   *  and matched permissively in SQL. `peer` is lowercased for the
+   *  same casing-safety reason every hex column gets in this file. */
+  getTradeOffersFiltered(opts: TradeOfferQueryOpts): TradeOfferRow[] {
+    return this.selectTradeOffersFiltered.all({
+      limit: opts.limit,
+      offset: opts.offset,
+      direction: opts.direction ?? null,
+      status: opts.status ?? null,
+      peer: opts.peer ? lowerHex(opts.peer) : null,
+      since: opts.since ?? 0,
+    }) as TradeOfferRow[];
+  }
+
+  /** Per-peer aggregate of trade-offer activity since `since`
+   *  (default: all time). Surfaces sent/received counts plus
+   *  settled/rejected/error split so an operator can spot a peer
+   *  that's repeatedly rejecting. Sorted most-engaged-first.
+   *  Note: `peer` is the lowercase form (matches the storage
+   *  contract of `recordTradeOffer`); callers comparing against
+   *  user input should lowercase that input first. */
+  getPeerStats(since = 0): PeerStatsRow[] {
+    const rows = this.selectPeerStats.all({ since }) as Array<{
+      peer: string;
+      sent: number;
+      received: number;
+      settled: number;
+      rejected: number;
+      errored: number;
+      lastAt: number | null;
+    }>;
+    return rows.map((r) => ({
+      peer: r.peer,
+      sent: r.sent,
+      received: r.received,
+      settled: r.settled,
+      rejected: r.rejected,
+      errored: r.errored,
+      lastAt: r.lastAt,
+    }));
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
