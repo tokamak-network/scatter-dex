@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StatusChecks } from "./StatusChecks";
 
 export const metadata = {
   title: "Onboarding — Scatter Relayer",
@@ -24,18 +25,28 @@ export default function Onboarding() {
         </p>
         <div className="mt-6 flex justify-center gap-3">
           <a
-            href="#prereqs"
+            href="#status"
             className="rounded-lg bg-[var(--color-primary)] px-5 py-2.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
           >
-            Start the checklist ↓
+            Check my readiness ↓
           </a>
           <a
-            href="#concepts"
+            href="#prereqs"
             className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-2.5 text-sm font-medium hover:bg-[var(--color-primary-soft)]"
           >
-            Glossary
+            Read the guide
           </a>
         </div>
+      </section>
+
+      {/* Live status */}
+      <section id="status">
+        <SectionHeader
+          eyebrow="Live status"
+          title="Where you are right now"
+          body="Auto-checks of your wallet, RPC, and on-chain state. Service health needs your relayer URL."
+        />
+        <StatusChecks />
       </section>
 
       {/* Prerequisites */}
