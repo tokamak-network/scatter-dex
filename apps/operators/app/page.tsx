@@ -23,16 +23,16 @@ export default function Landing() {
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
-            href="/register"
+            href="/onboarding"
             className="rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
           >
-            Register a relayer →
+            Get started — six steps →
           </Link>
           <Link
-            href="/dashboard"
+            href="/register"
             className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-[var(--color-primary-soft)]"
           >
-            See operator dashboard
+            Skip to registration
           </Link>
         </div>
         <p className="mt-4 text-xs text-[var(--color-text-subtle)]">

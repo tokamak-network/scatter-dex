@@ -40,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               navLinks={
                 <>
                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
+                  <Link href="/onboarding" className="hover:text-[var(--color-text)]">Get started</Link>
                   <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
                   <Link href="/treasury" className="hover:text-[var(--color-text)]">Treasury</Link>
