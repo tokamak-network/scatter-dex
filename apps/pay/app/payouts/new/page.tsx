@@ -20,6 +20,7 @@ import {
 } from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
+import { encodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
 
 // Largest tier with a live verifier — this caps Pay's per-run recipient
 // count. Computed at module scope because ACTIVE_TIERS is a compile-time
@@ -217,6 +218,7 @@ export default function NewPayout() {
     setSubmitting(true);
     setSubmitError(null);
     let txHash: string | undefined;
+    let claimPackages: ClaimPackage[] | undefined;
     try {
       const cfg = getNetworkConfig();
       // Real submit is only attempted when the network is wired AND
@@ -241,14 +243,22 @@ export default function NewPayout() {
         const result = await realSettle({
           batch: batches[0]!,
           tokenAddress,
+          tokenSymbol: token,
+          tokenDecimals: decimals,
           source: sourceNote,
           relayer,
-          chain: { signer, settlementAddress: cfg.contracts.privateSettlement },
+          chain: {
+            signer,
+            settlementAddress: cfg.contracts.privateSettlement,
+            chainId: cfg.chainId,
+          },
           maxFeeBps: safeMaxFeeBps,
           eddsaPrivateKey: kp.privateKey,
           tree,
+          labels: { sender: account ?? undefined, run: label },
         });
         txHash = result.txHash;
+        claimPackages = result.claimPackages;
         // Persist the change UTXO BEFORE removing the spent note —
         // an interrupted IDB write between the two would otherwise
         // lose the residual. If add() fails we still hold the spent
@@ -289,6 +299,7 @@ export default function NewPayout() {
         claimFrom,
         walletBook: walletBook.entries,
         txHash,
+        claimPackages,
       });
       await saveRun(record);
       router.push(`/payouts/detail?id=${encodeURIComponent(record.id)}`);
@@ -1251,6 +1262,9 @@ function buildRunRecord(input: {
   /** Real settle tx hash when scatterDirectAuth was submitted; falls
    *  back to a deterministic zero hash for env-not-configured demos. */
   txHash?: string;
+  /** Per-recipient claim payloads from `realSettle`. Aligned with
+   *  `rows` by index. Absent for env-not-configured demo runs. */
+  claimPackages?: ClaimPackage[];
 }): RunRecord {
   const now = Math.floor(Date.now() / 1000);
   const claimFromUnix = input.claimFrom
@@ -1264,6 +1278,7 @@ function buildRunRecord(input: {
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
     const lower = r.address.toLowerCase();
     const book = bookByAddress.get(lower);
+    const pkg = input.claimPackages?.[i];
     return {
       rowIndex: i,
       name: r.name || book?.label || lower,
@@ -1276,6 +1291,7 @@ function buildRunRecord(input: {
       ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
       ...(book?.email ? { email: book.email } : {}),
       ...(book?.discordHandle ? { discordHandle: book.discordHandle } : {}),
+      ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };
   });
 

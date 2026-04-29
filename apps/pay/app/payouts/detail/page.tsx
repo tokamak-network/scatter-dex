@@ -413,6 +413,7 @@ function RecipientTable({
                       onClose={closeMenu}
                       onCopy={() => copyClaimLink(record, r)}
                       onSend={() => void onMarkSent(r)}
+                      hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}
                       alreadySent={!!log?.sentAt}
                       busy={busy !== null}
@@ -506,6 +507,7 @@ interface RowMenuProps {
   onClose: () => void;
   onCopy: () => void;
   onSend: () => void;
+  hasClaimPackage: boolean;
   hasEmail: boolean;
   alreadySent: boolean;
   busy: boolean;
@@ -518,6 +520,7 @@ function RowMenu({
   onClose,
   onCopy,
   onSend,
+  hasClaimPackage,
   hasEmail,
   alreadySent,
   busy,
@@ -537,7 +540,13 @@ function RowMenu({
         <div className="absolute right-0 z-10 mt-1 w-56 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
           <button
             onClick={onCopy}
-            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            disabled={!hasClaimPackage}
+            title={
+              hasClaimPackage
+                ? undefined
+                : "This run was settled before the claim flow shipped — no encoded package."
+            }
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
           >
             Copy claim link
           </button>
@@ -604,12 +613,12 @@ function CorruptBanner({ message, filename }: { message: string; filename: strin
 }
 
 function copyClaimLink(record: RunRecord, row: RecipientRow): void {
-  // Real claim URL is `/claim?id=<linkId>#<secret>`; the per-row
-  // secret is populated by the wizard on settle (Phase B). Fall back
-  // to a deterministic placeholder so demos work end-to-end until
-  // then. Query-string form (instead of `/claim/[link]`) keeps the
-  // page statically exportable for Firebase Hosting.
-  const url = `${window.location.origin}/claim?id=${record.id}_${row.rowIndex}#demo-secret`;
+  // Real claim URL is `/claim?id=<linkId>#<base64url(ClaimPackage)>`.
+  // The button is gated on `row.claimPackage` so this function only
+  // runs when a real package exists. Query-string form (instead of
+  // `/claim/[link]`) keeps the page statically exportable.
+  if (!row.claimPackage) return;
+  const url = `${window.location.origin}/claim?id=${record.id}_${row.rowIndex}#${row.claimPackage}`;
   void navigator.clipboard.writeText(url);
 }
 

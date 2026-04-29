@@ -48,6 +48,11 @@ export interface RecipientRow {
    *  is edited or removed later. */
   email?: string;
   discordHandle?: string;
+  /** Base64url-encoded `ClaimPackage` (from `@zkscatter/sdk/notes`)
+   *  the operator hands to the recipient. Populated for runs settled
+   *  via Pay's real submit path; absent for env-not-configured demo
+   *  runs and v1 records that predate the claim flow. */
+  claimPackage?: string;
 }
 
 export type NotificationChannel = "email" | "discord" | "slack";
