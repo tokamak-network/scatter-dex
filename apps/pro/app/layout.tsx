@@ -6,6 +6,7 @@ import { WrongChainBanner } from "./components/WrongChainBanner";
 import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { VaultProvider } from "./lib/vault";
+import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
 import { EdDSAKeyProvider } from "./lib/eddsaKey";
 import { RelayersProvider } from "./lib/relayers";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <EdDSAKeyProvider>
                   <RelayersProvider>
                     <VaultProvider>
+                      <VaultReconciler />
                       <OrdersProvider>
                         <TradeFormProvider>
                           <ToastProvider>
