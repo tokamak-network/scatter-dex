@@ -213,6 +213,7 @@ export class PrivateOrderDB {
   private selectFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
   private selectSettlementByTxHash: ReturnType<Database.Database["prepare"]>;
   private selectFeesByTxHash: ReturnType<Database.Database["prepare"]>;
+  private selectAuthOrdersBySettleTx: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
@@ -465,6 +466,17 @@ export class PrivateOrderDB {
     this.selectFeesByTxHash = this.db.prepare(
       `SELECT * FROM fee_history WHERE tx_hash = @txHash ORDER BY id ASC`,
     );
+    // Order-processing detail for the /orders/detail debug view —
+    // matches authorize_orders rows whose settle_tx == this settlement
+    // tx hash. settleAuth produces 2 rows (maker + taker); scatterDirectAuth
+    // produces 1. Same camelCase aliases as selectAuthByNullifier.
+    this.selectAuthOrdersBySettleTx = this.db.prepare(
+      `SELECT nullifier, status, submitted_at as submittedAt, updated_at as updatedAt,
+              attempt, next_retry_at as nextRetryAt, last_error as lastError,
+              settle_tx as settleTx, pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy,
+              order_json as orderJson
+         FROM authorize_orders WHERE settle_tx = @txHash ORDER BY submitted_at ASC`,
+    );
     // Per-token totals via row iteration. SQLite's SUM uses INTEGER
     // and would lose precision on amounts > 2^63; GROUP_CONCAT into a
     // single string would balloon memory once history grows. Streaming
@@ -561,20 +573,32 @@ export class PrivateOrderDB {
     return { rows, total };
   }
 
-  /** Single settlement + its fee rows by tx_hash. Lowercases the
-   *  input so checksummed and lowercase queries return the same row.
-   *  Returns null when the tx isn't in the table — distinct from a
-   *  recorded-but-feeless settlement, which returns `{settlement, fees: []}`. */
+  /** Single settlement + its fee rows + the authorize_orders rows that
+   *  ended up at this settlement tx (one for scatterDirectAuth, two —
+   *  maker + taker — for settleAuth). Powers the /orders/detail debug
+   *  view, which needs the per-order `attempt` / `last_error` /
+   *  `next_retry_at` to explain why a settlement looks the way it does.
+   *  Returns null when the tx isn't in settlement_history; the
+   *  `processing` array can be empty even on a hit (settle_tx wasn't
+   *  written, the row was purged after the terminal-retention window,
+   *  or this settle_tx pre-dates the indexer migration). */
   getSettlementByTxHash(
     txHash: string,
-  ): { settlement: SettlementHistoryRow; fees: FeeAccrualRow[] } | null {
+  ): {
+    settlement: SettlementHistoryRow;
+    fees: FeeAccrualRow[];
+    processing: AuthorizeOrderRow[];
+  } | null {
     const lowered = lowerHex(txHash);
     const settlement = this.selectSettlementByTxHash.get({ txHash: lowered }) as
       | SettlementHistoryRow
       | undefined;
     if (!settlement) return null;
     const fees = this.selectFeesByTxHash.all({ txHash: lowered }) as FeeAccrualRow[];
-    return { settlement, fees };
+    const processing = this.selectAuthOrdersBySettleTx.all({
+      txHash: lowered,
+    }) as AuthorizeOrderRow[];
+    return { settlement, fees, processing };
   }
 
   getFeeHistory(opts: FeeHistoryQueryOpts): FeeAccrualRow[] {

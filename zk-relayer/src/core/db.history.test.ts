@@ -200,6 +200,48 @@ describe("PrivateOrderDB settlement history", () => {
     ).toHaveLength(1);
   });
 
+  it("includes matching authorize_orders rows in the by-tx detail (processing)", () => {
+    db.insertAcceptedOrder({
+      nullifier: "0xnul1",
+      submittedAt: Date.now() - 5000,
+      orderJson: JSON.stringify({ publicSignals: { expiry: "9999999999" } }),
+      pubKeyAx: "1",
+      pubKeyAy: "2",
+    });
+    db.insertAcceptedOrder({
+      nullifier: "0xnul2",
+      submittedAt: Date.now() - 4000,
+      orderJson: JSON.stringify({ publicSignals: { expiry: "9999999999" } }),
+      pubKeyAx: "3",
+      pubKeyAy: "4",
+    });
+    db.markAuthorizeOrderSettled("0xnul1", "0xsettle");
+    db.markAuthorizeOrderSettled("0xnul2", "0xsettle");
+    db.recordSettlementEvent({
+      txHash: "0xsettle",
+      type: "settleAuth",
+      status: "confirmed",
+    });
+
+    const found = db.getSettlementByTxHash("0xsettle");
+    expect(found).not.toBeNull();
+    expect(found!.processing).toHaveLength(2);
+    const nullifiers = found!.processing.map((p) => p.nullifier).sort();
+    expect(nullifiers).toEqual(["0xnul1", "0xnul2"]);
+    expect(found!.processing[0].status).toBe("settled");
+  });
+
+  it("returns an empty processing array when no authorize_orders rows match", () => {
+    db.recordSettlementEvent({
+      txHash: "0xorphan",
+      type: "scatterDirectAuth",
+      status: "confirmed",
+    });
+    const found = db.getSettlementByTxHash("0xorphan");
+    expect(found).not.toBeNull();
+    expect(found!.processing).toEqual([]);
+  });
+
   it("looks up a settlement + its fees by tx_hash, with case normalisation", () => {
     db.recordSettlementEvent({
       txHash: "0xLOOKUP",
