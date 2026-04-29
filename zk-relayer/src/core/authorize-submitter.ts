@@ -8,7 +8,6 @@
 
 import { ethers } from "ethers";
 import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
-import { TIER_16 } from "@zkscatter/sdk/zk";
 import { config } from "../config.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
@@ -18,7 +17,7 @@ import type {
   AuthorizeOrderFile,
   AuthorizeMatch,
 } from "../types/authorize-order.js";
-import { publicSignalToAddress } from "../types/authorize-order.js";
+import { publicSignalToAddress, tierForOrder } from "../types/authorize-order.js";
 
 // `tuple(...)` form the runtime ABI fragments below use. Concatenated
 // onto the SDK constant so this file can never drift from the
@@ -355,11 +354,13 @@ export class AuthorizeSubmitter {
       totalLocked: BigInt(ps.totalLocked),
       relayer: toAddress(ps.relayer),
       orderHash: toBytes32(ps.orderHash),
-      // Tier 16 is the only authorize circuit shipped today. Once
-      // tier 64 / 128 ceremonies land, this comes from the user's
-      // proof bundle (carries the tier alongside the wasm/zkey
-      // selection on the client side) rather than this constant.
-      tier: TIER_16.cap,
+      // Read off the user's proof bundle so different tiers (16/64/128)
+      // dispatch to the matching on-chain verifier. Legacy clients that
+      // don't send `tier` are routed to tier 16 by `tierForOrder` —
+      // safe today because that is the only ceremony shipped, but the
+      // fallback should be removed once enough time has passed for
+      // every client to upgrade past the schema change.
+      tier: tierForOrder(order),
     };
   }
 

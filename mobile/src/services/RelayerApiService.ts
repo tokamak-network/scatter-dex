@@ -188,6 +188,10 @@ export const RelayerApiService = {
       proof: { a: [string, string]; b: [[string, string], [string, string]]; c: [string, string] } | any;
       publicSignals: Record<string, string>;
       publicSignalsArray: string[];
+      /** Circuit tier the proof was generated against (16 / 64 / 128).
+       *  Optional during the multi-tier rollout — unset means the
+       *  legacy tier-16 default on the relayer. */
+      tier?: 16 | 64 | 128;
       pubKeyAx: string;
       pubKeyAy: string;
     },

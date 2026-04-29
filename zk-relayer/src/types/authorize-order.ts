@@ -94,6 +94,18 @@ export interface AuthorizeOrderFile {
    * with the Groth16 verifier's `uint[15]` calldata layout.
    */
   publicSignalsArray: string[];
+
+  /**
+   * Circuit tier this proof was generated against (16 | 64 | 128).
+   * NOT a Groth16 public signal — the verifier-registry dispatch on
+   * `PrivateSettlement` keys off this byte to pick the matching
+   * `AuthorizeVerifier` for the proof. Optional for transitional
+   * back-compat: clients that haven't upgraded yet implicitly mean
+   * tier 16 (the only ceremony shipped today). New clients should
+   * always set it explicitly off the SDK's `pickTier(recipientCount)`
+   * helper.
+   */
+  tier?: 16 | 64 | 128;
 }
 
 // ─── Stored order (in-memory + SQLite) ──────────────────────────
@@ -320,6 +332,27 @@ export function validateAuthorizeOrder(
   if (BigInt(ps.nullifier) === 0n) return "nullifier must be nonzero";
   if (BigInt(ps.nonceNullifier) === 0n) return "nonceNullifier must be nonzero";
 
+  // Tier (optional during the multi-tier rollout — see AuthorizeOrderFile
+  // jsdoc). When present, must be one of the wired tiers; missing means
+  // legacy client and is read as tier 16 by the consumer.
+  if (order.tier !== undefined && !ALLOWED_TIERS.has(order.tier)) {
+    return `tier must be one of 16 / 64 / 128 (got ${order.tier})`;
+  }
+
   return null;
+}
+
+/** Tier values the on-chain verifier registry knows how to dispatch.
+ *  Keep in sync with `@zkscatter/sdk/zk` TIERS. Hardcoded here rather
+ *  than imported from the SDK so this types module stays free of cross-
+ *  package dependencies — the SDK is the canonical authority and any
+ *  drift surfaces in tests. */
+const ALLOWED_TIERS = new Set<number>([16, 64, 128]);
+
+/** Resolve the dispatch tier off an order, falling back to tier 16 for
+ *  transitional clients that haven't upgraded yet. Centralised here so
+ *  the relayer's authorize-submitter and the matcher use the same rule. */
+export function tierForOrder(order: AuthorizeOrderFile): 16 | 64 | 128 {
+  return order.tier ?? 16;
 }
 

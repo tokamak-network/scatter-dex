@@ -503,6 +503,10 @@ export const OrderService = {
               proof: solidityProof,
               publicSignals: namedSignals,
               publicSignalsArray: ps,
+              // Tier 16 is the only authorize circuit live today.
+              // When tier 64 / 128 land, this comes from the SDK's
+              // `pickTier(recipientCount)` helper.
+              tier: 16,
               pubKeyAx: keyPair.pubKeyAx,
               pubKeyAy: keyPair.pubKeyAy,
             },
