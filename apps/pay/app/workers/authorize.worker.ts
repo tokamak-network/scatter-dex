@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import {
+  authorizeMetaFrom,
   generateAuthorizeProof,
   setupProverWorker,
   warmProverAssets,
@@ -28,22 +29,12 @@ setupProverWorker({
     const input = req.input as unknown as AuthorizeProofInput;
     return withCachedAssets(CIRCUIT_ASSETS, async (urls) => {
       const result = await generateAuthorizeProof(input, urls);
-      // Surface the named scalars `generateAuthorizeProof` already
-      // extracted from publicSignals so the main thread can pack the
-      // SettleAuthSide tuple without re-deriving by signal index.
+      // Surface the named scalars via meta so the main thread can pack
+      // SettleAuthSide without re-deriving by public-signal index.
       return {
         proof: result.proof,
         publicSignals: result.publicSignals,
-        meta: {
-          pubKeyBind: result.pubKeyBind,
-          commitmentRoot: result.commitmentRoot,
-          nullifier: result.nullifier,
-          nonceNullifier: result.nonceNullifier,
-          newCommitment: result.newCommitment,
-          claimsRoot: result.claimsRoot,
-          totalLocked: result.totalLocked,
-          orderHash: result.orderHash,
-        },
+        meta: authorizeMetaFrom(result),
       };
     });
   },

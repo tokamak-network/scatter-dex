@@ -13,8 +13,13 @@ import {
   TIERS,
   type CircuitTier,
 } from "@zkscatter/sdk/zk";
-import { realSettle } from "../../_lib/realSettle";
+import {
+  realSettle,
+  PHASE_1C_MULTI_BATCH_MSG,
+  PHASE_1C_MULTI_NOTE_MSG,
+} from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
+import { getAuthorizeProver } from "../../_lib/authorizeProver";
 
 // Largest tier with a live verifier — this caps Pay's per-run recipient
 // count. Computed at module scope because ACTIVE_TIERS is a compile-time
@@ -219,29 +224,25 @@ export default function NewPayout() {
       // a record-only demo so the dashboard still has something to
       // render in unwired environments.
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        if (batches.length > 1) {
-          throw new Error(
-            "This run needs more than one settlement transaction — multi-batch payouts arrive in Phase 1c.",
-          );
-        }
+        if (batches.length > 1) throw new Error(PHASE_1C_MULTI_BATCH_MSG);
         if (!signer) throw new Error("Connect a wallet before signing.");
         if (!relayer) throw new Error("Pick a relayer in the Funds step.");
         if (!sourcePick.covered || sourcePick.notes.length === 0) {
           throw new Error("No source note covers this run total — top up in the Funds step.");
         }
-        if (sourcePick.notes.length > 1) {
-          throw new Error(
-            "This run needs more than one source note — multi-note coverage arrives in Phase 1c.",
-          );
-        }
-        const kp = await eddsa.derive();
+        if (sourcePick.notes.length > 1) throw new Error(PHASE_1C_MULTI_NOTE_MSG);
+        // Overlap the EdDSA derivation with the worker boot + asset
+        // warm-up. The zkey is ~19 MB; on a cold cache its fetch can
+        // dwarf the ECDSA-derive round-trip with the wallet. Both
+        // promises are independent so Promise.all is safe.
+        const prover = getAuthorizeProver();
+        const [kp] = await Promise.all([eddsa.derive(), prover.ready()]);
         const result = await realSettle({
           batch: batches[0]!,
           tokenAddress,
           source: sourcePick.notes[0]!,
           relayer,
-          signer,
-          settlementAddress: cfg.contracts.privateSettlement,
+          chain: { signer, settlementAddress: cfg.contracts.privateSettlement },
           maxFeeBps: safeMaxFeeBps,
           eddsaPrivateKey: kp.privateKey,
           tree,

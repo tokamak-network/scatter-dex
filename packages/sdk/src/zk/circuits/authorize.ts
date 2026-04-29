@@ -16,7 +16,7 @@ import {
 } from "../constants";
 import { wipeBytes } from "../secureWipe";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
-import type { Groth16Proof } from "../types";
+import type { Groth16Proof, ProveResult } from "../types";
 import type { CircuitAssets } from "./deposit";
 
 /** One claim distribution within an authorize proof — "send X of
@@ -396,5 +396,72 @@ export async function generateAuthorizeProof(
     claimsRoot,
     totalLocked,
     orderHash,
+  };
+}
+
+/** Extracted scalars an authorize-circuit Web Worker should pass back
+ *  via `ProveResult.meta`. They duplicate fields the worker already
+ *  has on `AuthorizeProofResult` so the main thread can pack
+ *  `SettleAuthSide` without re-deriving by public-signal index. */
+export const AUTHORIZE_PROOF_META_KEYS = [
+  "pubKeyBind",
+  "commitmentRoot",
+  "nullifier",
+  "nonceNullifier",
+  "newCommitment",
+  "claimsRoot",
+  "totalLocked",
+  "orderHash",
+] as const;
+
+export type AuthorizeProofMetaKey = (typeof AUTHORIZE_PROOF_META_KEYS)[number];
+
+export type AuthorizeProofMeta = Record<AuthorizeProofMetaKey, bigint>;
+
+/** Pluck the worker-meta subset out of an `AuthorizeProofResult`.
+ *  Used inside the worker to populate `ProveResult.meta`. */
+export function authorizeMetaFrom(result: AuthorizeProofResult): AuthorizeProofMeta {
+  return {
+    pubKeyBind: result.pubKeyBind,
+    commitmentRoot: result.commitmentRoot,
+    nullifier: result.nullifier,
+    nonceNullifier: result.nonceNullifier,
+    newCommitment: result.newCommitment,
+    claimsRoot: result.claimsRoot,
+    totalLocked: result.totalLocked,
+    orderHash: result.orderHash,
+  };
+}
+
+/** Reassemble an `AuthorizeProofResult` from a `ProveResult` whose
+ *  worker populated `meta` via {@link authorizeMetaFrom}. Validates
+ *  every required field so callers don't paper over a worker that
+ *  forgot to surface a scalar — the alternative is a chain of `!`
+ *  non-null asserts at the call site. */
+export function assembleAuthorizeProofResult(
+  proveResult: ProveResult,
+): AuthorizeProofResult {
+  if (!proveResult.meta) {
+    throw new Error(
+      "assembleAuthorizeProofResult: ProveResult.meta is missing — worker must populate AuthorizeProofMeta via authorizeMetaFrom().",
+    );
+  }
+  const meta = proveResult.meta;
+  for (const k of AUTHORIZE_PROOF_META_KEYS) {
+    if (typeof meta[k] !== "bigint") {
+      throw new Error(`assembleAuthorizeProofResult: meta.${k} is missing or not a bigint`);
+    }
+  }
+  return {
+    proof: proveResult.proof,
+    publicSignals: proveResult.publicSignals,
+    pubKeyBind: meta.pubKeyBind!,
+    commitmentRoot: meta.commitmentRoot!,
+    nullifier: meta.nullifier!,
+    nonceNullifier: meta.nonceNullifier!,
+    newCommitment: meta.newCommitment!,
+    claimsRoot: meta.claimsRoot!,
+    totalLocked: meta.totalLocked!,
+    orderHash: meta.orderHash!,
   };
 }
