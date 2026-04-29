@@ -49,8 +49,12 @@ export function autoPickSourceNotes(
   };
   if (totalRaw <= 0n) return empty;
 
+  // Normalize token-address case so callers don't have to.
+  // `tokenBigIntToAddress` returns lowercase, so a checksummed
+  // input would silently match nothing without this.
+  const tokenLower = tokenAddress.toLowerCase();
   const filtered = notes
-    .filter((n) => tokenBigIntToAddress(n.note.token) === tokenAddress)
+    .filter((n) => tokenBigIntToAddress(n.note.token) === tokenLower)
     .slice()
     .sort((a, b) => (a.note.amount === b.note.amount ? 0 : a.note.amount < b.note.amount ? 1 : -1));
 
@@ -158,4 +162,40 @@ export function pickPerBatchNotes(
     changeRaw += note.note.amount - b.totalAmount;
   }
   return { byBatch, changeRaw, covered: true };
+}
+
+/** Map a `PerBatchPick.reason` to a user-facing title + body. Used
+ *  both inside `doSubmit` (as thrown error message bodies) and the
+ *  Funds-step pre-flight banner — single source so the two surfaces
+ *  can't drift on copy. */
+export function describeBatchFitError(
+  reason: NonNullable<PerBatchPick["reason"]>,
+  batchCount: number,
+): { title: string; body: string } {
+  switch (reason) {
+    case "no-eligible-notes":
+      return {
+        title: "No reconciled notes for this token",
+        body:
+          "Recently-deposited notes need one block to confirm before " +
+          "they're spendable. Wait for the next block or top up.",
+      };
+    case "insufficient-note-count":
+      return {
+        title: `${batchCount} batches need ${batchCount} source notes`,
+        body:
+          `Your balance covers the total, but the run splits into ${batchCount} ` +
+          "settlement transactions and you have fewer confirmed notes than " +
+          "batches. Each batch consumes one note — top up so every batch has " +
+          "its own. Change UTXOs from earlier batches don't yet flow into " +
+          "later ones.",
+      };
+    case "smallest-batch-uncovered":
+      return {
+        title: "Largest batch doesn't fit any note",
+        body:
+          "At least one batch is bigger than every available note. Deposit a " +
+          "single note big enough for the largest batch.",
+      };
+  }
 }

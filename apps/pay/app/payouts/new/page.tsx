@@ -50,6 +50,7 @@ import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { parseRecipientRows, tokenBigIntToAddress } from "../../_lib/format";
 import {
   autoPickSourceNotes,
+  describeBatchFitError,
   pickPerBatchNotes,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
@@ -236,6 +237,36 @@ export default function NewPayout() {
       // scatterDirectAuth needs. The env-not-configured path stays as
       // a record-only demo so the dashboard still has something to
       // render in unwired environments.
+      // Persist what we have so far. Returns the saved record's id
+      // so the caller can navigate. `allowFailure` swallows the
+      // save error on the partial-recovery path so we re-throw the
+      // batch error rather than masking it with a save failure.
+      const persist = async (allowFailure: boolean): Promise<string | null> => {
+        if (!folder.ready) return null;
+        const record = buildRunRecord({
+          templateId,
+          label,
+          token,
+          tokenAddress,
+          operatorAddress: account,
+          chainId,
+          rows,
+          total,
+          claimFrom,
+          walletBook: walletBook.entries,
+          txHash,
+          claimPackages,
+        });
+        try {
+          await saveRun(record);
+          return record.id;
+        } catch (saveErr) {
+          if (!allowFailure) throw saveErr;
+          console.warn("[Pay] partial run record save failed", saveErr);
+          return null;
+        }
+      };
+
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
         if (batches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
@@ -244,48 +275,35 @@ export default function NewPayout() {
         }
         if (!signer) throw new Error("Connect a wallet before signing.");
         if (!relayer) throw new Error("Pick a relayer in the Funds step.");
-        const perBatchPick = pickPerBatchNotes(notes, batches, tokenAddress);
-        if (!perBatchPick.covered) {
-          if (perBatchPick.reason === "insufficient-note-count") {
-            throw new Error(
-              `This run needs ${batches.length} source notes (one per batch). Top up to fund every batch independently — change UTXOs from earlier batches don't yet flow into later ones.`,
-            );
-          }
-          if (perBatchPick.reason === "smallest-batch-uncovered") {
-            throw new Error(
-              "One of your batches is larger than every available note. Top up a single note big enough for the largest batch.",
-            );
+        if (!multiBatchFit?.covered) {
+          const reason = multiBatchFit?.reason;
+          if (reason) {
+            const { title, body } = describeBatchFitError(reason, batches.length);
+            throw new Error(`${title} — ${body}`);
           }
           throw new Error("No source notes cover this run — top up in the Funds step.");
         }
         // Overlap EdDSA derivation with worker boot + asset warm-up.
         // The zkey is ~19 MB; on cold cache its fetch dwarfs the
-        // ECDSA-derive wallet round-trip. Independent → Promise.all.
+        // ECDSA-derive wallet round-trip.
         const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
-        // Settle each batch sequentially, threading the claim
-        // packages back in batch order so they line up with
-        // `rows[]` for the run-record. Each batch consumes one
-        // distinct source note (no change-UTXO chaining yet — the
-        // change from batch i lands with leafIndex=-1 and isn't
-        // re-spendable until the reconciler back-fills it post-
-        // event, which we don't wait for in-flow). Vault writes per
-        // batch: persist any change first, then remove the spent
-        // note — same crash-safe ordering as PR #539.
-        // Aggregate state across batches so a mid-loop failure
-        // doesn't strand the recipients in already-settled batches:
-        // the catch below still reaches the buildRunRecord +
-        // saveRun path with whatever made it through, persisting
-        // their claim packages. Recipients in unprocessed batches
-        // simply have no claimPackage on disk; /payouts/detail's
-        // Copy-link button is already gated on that field, so the
-        // operator just won't be able to share their links until a
-        // resume-flow ships.
+        // Each batch consumes one distinct source note (no change-
+        // UTXO chaining yet — change from batch i lands with
+        // leafIndex=-1 and isn't re-spendable until the reconciler
+        // back-fills it post-event). Per-batch vault ordering: add
+        // change → remove spent note (PR #539 crash-safety
+        // invariant). On mid-loop failure the catch below still
+        // saves a partial RunRecord so already-settled recipients
+        // keep their claim packages — `/payouts/detail`'s Copy-link
+        // button is gated on `claimPackage` so unprocessed
+        // recipients just can't share links until a resume flow
+        // ships.
         const aggClaimPackages: ClaimPackage[] = [];
         let lastTxHash: string | undefined;
         let partialBatchError: Error | null = null;
         for (let i = 0; i < batches.length; i++) {
           const batch = batches[i]!;
-          const sourcePick = perBatchPick.byBatch[i]!;
+          const sourcePick = multiBatchFit.byBatch[i]!;
           try {
             const result = await realSettle({
               batch,
@@ -323,33 +341,8 @@ export default function NewPayout() {
         }
         txHash = lastTxHash;
         claimPackages = aggClaimPackages;
-        // Re-throw AFTER the run-record save below so the operator
-        // sees both the persisted partial progress and the error.
         if (partialBatchError) {
-          // Save the partial record now (we'd otherwise skip it on
-          // throw) so the recipients in already-settled batches
-          // keep their claim packages.
-          if (folder.ready) {
-            const partialRecord = buildRunRecord({
-              templateId,
-              label,
-              token,
-              tokenAddress,
-              operatorAddress: account,
-              chainId,
-              rows,
-              total,
-              claimFrom,
-              walletBook: walletBook.entries,
-              txHash,
-              claimPackages,
-            });
-            try {
-              await saveRun(partialRecord);
-            } catch (saveErr) {
-              console.warn("[Pay] partial run record save failed", saveErr);
-            }
-          }
+          await persist(/* allowFailure */ true);
           throw partialBatchError;
         }
       }
@@ -362,22 +355,10 @@ export default function NewPayout() {
         return;
       }
 
-      const record = buildRunRecord({
-        templateId,
-        label,
-        token,
-        tokenAddress,
-        operatorAddress: account,
-        chainId,
-        rows,
-        total,
-        claimFrom,
-        walletBook: walletBook.entries,
-        txHash,
-        claimPackages,
-      });
-      await saveRun(record);
-      router.push(`/payouts/detail?id=${encodeURIComponent(record.id)}`);
+      const savedId = await persist(/* allowFailure */ false);
+      if (savedId) {
+        router.push(`/payouts/detail?id=${encodeURIComponent(savedId)}`);
+      }
     } catch (err) {
       console.error("[Pay] settle failed", err);
       setSubmitError(err instanceof Error ? err.message : String(err));
