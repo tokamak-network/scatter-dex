@@ -23,15 +23,18 @@ export function ClaimReconciler() {
   const { network } = useActiveNetwork();
   const settlementAddress = network.contracts.privateSettlement;
 
-  // `recipientsKey` content-hash gates the SDK hook's Poseidon
-  // rebuild — unrelated order-list mutations (status flips on other
-  // rows, label edits) shouldn't churn the watch set.
+  // `ordersKey` is a content hash that gates the SDK hook's
+  // Poseidon rebuild. Includes only the fields that actually
+  // change `watchKeys` membership — collapsing `status` to a
+  // claimed/non-claimed bit so normal lifecycle transitions
+  // (matching → claimable) don't churn re-Poseidon work the
+  // watch set is invariant under.
   const ordersKey = useMemo(
     () =>
       orders
         .map(
           (o) =>
-            `${o.id}:${o.status}:${o.claim?.claimsRoot ?? ""}:${o.claim?.secret ?? ""}:${o.claim?.leafIndex ?? ""}`,
+            `${o.id}:${o.status === "claimed" ? "C" : "U"}:${o.claim?.claimsRoot ?? ""}:${o.claim?.secret ?? ""}:${o.claim?.leafIndex ?? ""}`,
         )
         .join("|"),
     [orders],

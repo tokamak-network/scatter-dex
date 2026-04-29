@@ -440,6 +440,10 @@ export function OrderModal({
       // an emitted `PrivateClaim` event back to this order without
       // re-deriving from chain state.
       const { root: claimsRoot } = await buildClaimsTree(claims);
+      // Honor a Cancel that landed during buildClaimsTree — without
+      // this the order would still post to addOrder + the success
+      // toast would fire after the user explicitly aborted.
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
       const order = addOrder({
         nonce,
         noteId: note.id,
