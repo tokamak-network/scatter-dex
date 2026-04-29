@@ -11,6 +11,7 @@ import {
   type PayoutBatch,
   pickTier,
   ACTIVE_TIERS,
+  TIERS,
   type CircuitTier,
 } from "@zkscatter/sdk/zk";
 
@@ -18,6 +19,10 @@ import {
 // count. Computed at module scope because ACTIVE_TIERS is a compile-time
 // constant; recomputing it per render would be wasted work.
 const MAX_ACTIVE_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
+// Tiers known to the SDK but not yet wired on-chain — used to surface
+// the roadmap signal in user-facing validation messages without hard-
+// coding "64 / 128" copy that drifts as tiers ship.
+const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   saveRun,
@@ -361,6 +366,17 @@ export default function NewPayout() {
 
   const validation = useMemo(() => {
     const issues: string[] = [];
+    // Cap-exceeded comes first because it blocks the run regardless of
+    // per-row fixes — and slice(0, 5) below would otherwise hide it
+    // behind five ordinary validation errors.
+    if (rows.length > MAX_ACTIVE_CAP) {
+      const roadmap = PLANNED_TIER_CAPS.length > 0
+        ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — split this list across runs for now.`
+        : "";
+      issues.push(
+        `Pay supports up to ${MAX_ACTIVE_CAP} recipients per payout.${roadmap}`,
+      );
+    }
     const seen = new Set<string>();
     for (const r of rows) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(r.address)) {
@@ -373,12 +389,6 @@ export default function NewPayout() {
       if (!r.amount || !Number.isFinite(n) || n <= 0) {
         issues.push(`Invalid amount for ${r.name || r.address}`);
       }
-    }
-    if (rows.length > MAX_ACTIVE_CAP) {
-      issues.push(
-        `Pay v1 supports up to ${MAX_ACTIVE_CAP} recipients per payout. ` +
-          `Larger circuits (64 / 128) are planned — split this list across runs for now.`,
-      );
     }
     return issues.slice(0, 5);
   }, [rows]);
