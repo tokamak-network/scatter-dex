@@ -400,6 +400,7 @@ describe("PrivateOrderDB settlement history", () => {
   });
 
   it("filters trade offers by direction / status / peer / since", () => {
+    const t0 = Date.now();
     db.recordTradeOffer({
       direction: "sent",
       peerRelayer: "0xpeera",
@@ -429,6 +430,14 @@ describe("PrivateOrderDB settlement history", () => {
     expect(
       db.getTradeOffersFiltered({ limit: 10, offset: 0, peer: "0xPEERa" }),
     ).toHaveLength(1); // case-insensitive thanks to lowerHex
+    // since strictly in the future excludes both rows.
+    expect(
+      db.getTradeOffersFiltered({
+        limit: 10,
+        offset: 0,
+        since: t0 + 10_000_000,
+      }),
+    ).toHaveLength(0);
   });
 
   it("filters fee history by token and since", () => {

@@ -439,7 +439,11 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         peer,
         since,
       });
-      res.json({ rows, count: rows.length, limit, offset });
+      const total = db.countTradeOffers({ direction, status, peer, since });
+      // `count` is the page size (kept for back-compat), `total` is
+      // the full filter-match count so paginated UIs can render an
+      // accurate "page X of N".
+      res.json({ rows, count: rows.length, total, limit, offset });
     } catch (err) {
       log.error("trade-offers failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load trade offers" });

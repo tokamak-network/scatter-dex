@@ -214,9 +214,12 @@ export class PrivateOrderDB {
   private insertTradeOffer: ReturnType<Database.Database["prepare"]>;
   private selectTradeOffers: ReturnType<Database.Database["prepare"]>;
   // Filtered + aggregate trade-offer queries for the operator
-  // Cross-relayer view. We pre-prepare every filter combo so the
-  // route doesn't have to concatenate SQL.
+  // Cross-relayer view. Single statement per query shape, with
+  // optional filters expressed as `(@param IS NULL OR col = @param)`
+  // — SQLite optimises the no-op branches once params are bound,
+  // so the route keeps SQL static instead of string-concatenating.
   private selectTradeOffersFiltered: ReturnType<Database.Database["prepare"]>;
+  private countTradeOffersFiltered: ReturnType<Database.Database["prepare"]>;
   private selectPeerStats: ReturnType<Database.Database["prepare"]>;
   private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
   private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
@@ -321,6 +324,17 @@ export class PrivateOrderDB {
          AND (@peer IS NULL OR peer_relayer = @peer)
          AND created_at >= @since
        ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset
+    `);
+    // Companion count query for the same filter — used by the
+    // route to surface a total-records value separate from the
+    // current page's row count, so paginated UIs can render
+    // accurate page counts.
+    this.countTradeOffersFiltered = this.db.prepare(`
+      SELECT COUNT(*) as count FROM trade_offers
+       WHERE (@direction IS NULL OR direction = @direction)
+         AND (@status IS NULL OR status = @status)
+         AND (@peer IS NULL OR peer_relayer = @peer)
+         AND created_at >= @since
     `);
     // Per-peer aggregate. SUM(CASE …) gives one row per peer with
     // counters split by direction and outcome. Ordered by total
@@ -1094,6 +1108,21 @@ export class PrivateOrderDB {
     }) as TradeOfferRow[];
   }
 
+  /** Total-records count for the same filter combo as
+   *  `getTradeOffersFiltered`. Powers the paginated UI's "page X
+   *  of N" indicator. Limit/offset are intentionally absent here
+   *  — `since` and the three optional filters fully determine the
+   *  set being counted. */
+  countTradeOffers(opts: Omit<TradeOfferQueryOpts, "limit" | "offset">): number {
+    const row = this.countTradeOffersFiltered.get({
+      direction: opts.direction ?? null,
+      status: opts.status ?? null,
+      peer: opts.peer ? lowerHex(opts.peer) : null,
+      since: opts.since ?? 0,
+    }) as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   /** Per-peer aggregate of trade-offer activity since `since`
    *  (default: all time). Surfaces sent/received counts plus
    *  settled/rejected/error split so an operator can spot a peer
@@ -1102,24 +1131,10 @@ export class PrivateOrderDB {
    *  contract of `recordTradeOffer`); callers comparing against
    *  user input should lowercase that input first. */
   getPeerStats(since = 0): PeerStatsRow[] {
-    const rows = this.selectPeerStats.all({ since }) as Array<{
-      peer: string;
-      sent: number;
-      received: number;
-      settled: number;
-      rejected: number;
-      errored: number;
-      lastAt: number | null;
-    }>;
-    return rows.map((r) => ({
-      peer: r.peer,
-      sent: r.sent,
-      received: r.received,
-      settled: r.settled,
-      rejected: r.rejected,
-      errored: r.errored,
-      lastAt: r.lastAt,
-    }));
+    // SQL aliases (peer / sent / received / …) already match
+    // PeerStatsRow's field names, so a direct cast is enough — no
+    // intermediate map required.
+    return this.selectPeerStats.all({ since }) as PeerStatsRow[];
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
