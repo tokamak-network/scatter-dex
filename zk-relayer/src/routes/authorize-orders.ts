@@ -236,6 +236,11 @@ export function createAuthorizeOrderRoutes(
         proof: body.proof as AuthorizeOrderFile["proof"],
         publicSignals: body.publicSignals as AuthorizePublicSignals,
         publicSignalsArray: body.publicSignalsArray as string[],
+        // tier is optional during the multi-tier rollout. The
+        // validator below rejects any value outside {16, 64, 128};
+        // missing means legacy client and falls back to tier 16 in
+        // the consumer (see tierForOrder).
+        tier: body.tier as AuthorizeOrderFile["tier"],
       };
 
       // ── 2. Validate structure + public signals ──

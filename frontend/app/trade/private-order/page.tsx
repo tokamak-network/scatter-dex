@@ -572,6 +572,11 @@ function PrivateOrderPageInner() {
           proof: proofResult.proof,
           publicSignals: namedSignals,
           publicSignalsArray: proofResult.publicSignals,
+          // Tier 16 is the only authorize circuit live today; once
+          // tier 64 / 128 ceremonies ship, this is picked off the
+          // SDK's `pickTier(recipientCount)` helper based on the
+          // claim count this proof was generated for.
+          tier: 16,
           // pubKey for compliance logging (relayer verifies via pubKeyBind)
           pubKeyAx: kp.publicKey[0].toString(),
           pubKeyAy: kp.publicKey[1].toString(),
