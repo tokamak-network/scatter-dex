@@ -200,6 +200,30 @@ describe("PrivateOrderDB settlement history", () => {
     ).toHaveLength(1);
   });
 
+  it("looks up a settlement + its fees by tx_hash, with case normalisation", () => {
+    db.recordSettlementEvent({
+      txHash: "0xLOOKUP",
+      type: "settleAuth",
+      status: "confirmed",
+      blockNumber: 11,
+      gasCostEth: "0.0005",
+      sellToken: "0xSell",
+      buyToken: "0xBuy",
+      fees: [
+        { side: "maker", token: "0xBuy", amountWei: "10" },
+        { side: "taker", token: "0xSell", amountWei: "20" },
+      ],
+    });
+    const found = db.getSettlementByTxHash("0xLOOKUP");
+    expect(found).not.toBeNull();
+    expect(found!.settlement.tx_hash).toBe("0xlookup");
+    expect(found!.fees).toHaveLength(2);
+    // Look up with a different casing — must return the same row.
+    const found2 = db.getSettlementByTxHash("0xlookup");
+    expect(found2!.settlement.tx_hash).toBe("0xlookup");
+    expect(db.getSettlementByTxHash("0xnope")).toBeNull();
+  });
+
   it("filters fee history by token and since", () => {
     const t0 = Date.now();
     db.recordSettlementEvent({
