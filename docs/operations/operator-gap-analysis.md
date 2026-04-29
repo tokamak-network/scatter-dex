@@ -1,130 +1,130 @@
 # Operator Gap Analysis & Reinforcement Plan
 
-_Audit date: 2026-04-29_
+_v1 audit: 2026-04-29 · v2 update: 2026-04-29 (Phase 1 + Phase 2 ship review)_
 _Scope: `apps/operators/` (Next.js operator console) + `zk-relayer/` (Node service) from a relayer operator's POV._
 
-This document captures the gaps a real relayer operator would hit today and lays out a phased plan to close them. It is the working spec for the `feat/operator-ops-*` branch series.
+This document captures the gaps a real relayer operator would hit today and lays out a phased plan to close them. v2 marks the v1 plan against what shipped, retires items overtaken by other work, and lists the new gaps that surfaced once the operator console moved off mock data.
+
+> **In-flight when v2 was written.** PR #564 (Phase 2 #8 — structured logging + `/api/admin/logs` + `/runtime` Logs section) is open as of this writing. The §1 status table reflects what's expected on `main` once #564 merges; if you're reading this earlier, the logger module / `/admin/logs` route may not exist yet. Other "✅ shipped" items are already on `main` at the time of this commit.
 
 ---
 
-## 1. What exists today
+## 1. v1 plan — status
 
-### `apps/operators/` routes
-| Route | Purpose | State |
-|---|---|---|
-| `/` | Landing / personas / CTA | Live |
-| `/register` | On-chain `RelayerRegistry.register()` flow | Live |
-| `/profile` | Update URL/fee, top-up bond, request/execute exit | Live (UX minimal) |
-| `/dashboard` | On-chain bond/fee + ops stats (24h revenue, latency, recent settlements) | **Mock data** |
-| `/orders` | Live order feed, settled/pending/expired/cancelled filter | **Mock data** |
-| `/leaderboard` | All registered relayers, ranked by bond | Live (cross-relayer fetch) |
-| `/treasury` | FeeVault balances, claim UI, withdrawals table | **Partially mock** |
+### Phase 1 — "operate at all" — ✅ COMPLETE
 
-### `zk-relayer/` HTTP surface (≈35 endpoints, 11 groups)
-- **Admin** (`/api/admin/*`) — `pause/resume`, `drain`, `fee` update, `sanctions` CRUD, `profile` metadata. Header-auth via `x-admin-key`.
-- **Public** — `/api/info`, `/api/authorize-orders`, `/api/private-claim`, `/api/vault`, `/api/relayer/stats`, `/api/p2p`, `/health`.
-- **Metrics** — in-memory rolling window only (no Prometheus, no persistence).
-- **Logs** — stdout only, unstructured.
-
-### Operator-facing docs
-- `docs/operations/{deployment, operations-guide, fee-architecture, gas-cost-analysis, local-setup, mev-protection, relayer-security}.md`
-- Not surfaced inside the operators app.
-
----
-
-## 2. Operator-journey gap map
-
-| Stage | What the operator does | Today | Critical gap |
+| # | Item | Status | PRs |
 |---|---|---|---|
-| **Day 0 — onboarding** | Understand requirements (key, RPC, bond, hardware) | Marketing landing only | No Getting Started checklist |
-| **Day 1 — registration** | Post bond, set URL/fee | `/register` works | No pre-flight gas/bond simulation |
-| **Day 2 — bring-up** | Fill `.env`, run process | Docs only, not in app | No in-app setup wizard / `.env` validator |
-| **Day 3 — monitoring** | "Are orders flowing? Are they settling? Gas spend?" | `/dashboard`, `/orders` mocked | **No persistent indexer → biggest hole** |
-| **Week 1 — earnings** | Track per-token fee accrual, claim | Backend `/api/vault` works; UI mocked | No real-time accrual, no auto-claim policy |
-| **Week 2+ — incidents** | Diagnose settlement failures, RPC drops, gas spikes | `/health` 200/503; stdout logs | No alerting, no log search, no tx-retry visibility |
-| **Month 1 — operational tweaks** | Adjust fee, sanctions list, pause | Admin API exists, UI absent | Admin actions only via curl |
-| **Exit** | Recover bond | `requestExit`/`executeExit` work | No cooldown countdown, no warning about pending orders |
-| **Security** | Rotate keys after suspected compromise | Not supported | **Zero key-rotation flow** |
+| 1 | Persistent indexer + real-data dashboards | ✅ Shipped | #545 schema · #548 dashboard · #550 orders · #552 treasury |
+| 2 | In-app setup wizard (`/onboarding`) | ✅ Shipped | #537 guide · #540 live status |
+| 3 | Admin panel UI | ✅ Shipped (renamed `/runtime`) | #543 · #553 (shared `<AdminConnectBar>`) |
+| 4 | Exit-flow polish | ✅ Shipped | #538 |
+
+Notes:
+- The admin panel landed at `/runtime` rather than `/admin` to avoid the protocol-admin connotation — it's the operator's own runtime knobs. Backend keeps `/api/admin/*` for historical reasons; UI eyebrow tags map each section to the route.
+- All four Phase-1-#1 slices completed; the major operator pages (`/dashboard`, `/orders`, `/orders/detail`, `/treasury`) all read live data. One leftover: `/runtime` Status surfaces `db.getRelayerStats()`, which still queries the retired `private_orders` table — values render as zeros today and the section will switch to the indexer once a small follow-up replaces that helper. Tracking under "stale stats helper" in §2.
+- Auth is `x-admin-key` paste-and-verify, persisted in tab `sessionStorage`. Wallet-signature auth (deferred from v1) was not pursued — the header model has held up fine for single-operator scope.
+
+### Phase 2 — "stable operations" — ✅ COMPLETE
+
+| # | Item | Status | PRs |
+|---|---|---|---|
+| 5 | Real-time alerting (webhook) | ✅ Shipped | #555 backend · #559 UI · #561 settlement-failure + low-balance hooks |
+| 6 | Order/transaction debug view | ✅ Shipped | #557 (`/orders/detail` `processing` join) |
+| 7 | Auto-claim policy | ❌ **Retired** | See §4 |
+| 8 | Structured logging + search | ✅ Shipped | #564 logger + `/api/admin/logs` + `/runtime` Logs section |
+
+Notes:
+- Webhook covers three signals: health transitions, consecutive-settlement-failure streaks, low-balance crossings. No retry queue; one POST per event with a 5 s timeout.
+- `/orders/detail` joins `authorize_orders` on `settle_tx` so the per-order `attempt` / `last_error` / `next_retry_at` are visible without dropping into SQLite.
+- Logger is a 130-line module with no dependencies — JSON-line stdout + 500-entry ring buffer. 117 `console.*` call sites migrated.
+
+### Phase 3 — see §3.
 
 ---
 
-## 3. Reinforcement plan
+## 2. New gaps surfaced by Phase 1 + 2
 
-### Phase 1 — "operate at all" (must-have, 2–3 weeks)
+Things that became obvious *after* the operator could actually monitor their relayer end-to-end:
 
-1. **Persistent indexer + real-data dashboards** *(highest impact)*
-   - Persist settlement events, fee accruals, gas spend in `zk-relayer` SQLite.
-   - New endpoint: `GET /api/relayer/history` (paginated, filterable).
-   - Replace mocks in `/dashboard`, `/orders`, `/treasury` with this feed.
-   - Deliverable: 24h settle count, avg gas, per-token fee accrual, recent settlements.
+1. **No historical performance view.** `/dashboard` shows the last 24 h. There's no week-over-week or month-over-month trend, and no p50/p95/p99 latency. Operators comparing relayers (or tuning fees) need historical aggregates.
+2. **`/leaderboard` is read-only.** Operators see the bond/fee landscape but can't compare *their* settle latency / volume against peers — the data isn't aggregated cross-relayer in any one place.
+3. **No fee-claim reminder.** With auto-claim retired (§4), operators still benefit from a "USDC claimable: 124 — /treasury" nudge once accruals cross a threshold. Lighter than auto-claim, same alerting infra (#555/#561).
+4. **`/help` doesn't exist.** Every "common error → fix" lookup forces an SSH+grep cycle. The `docs/operations/*.md` files are fine source material.
+5. **No CSV export.** Compliance/finance often want "give me all settlements from <date> to <date>" in CSV. Currently the only path is to query the DB by hand.
+6. **`/orders/detail` shows internal state, not proof contents.** When a settlement reverts, the operator sees `last_error` but can't inspect the proof's public signals or the calldata. Useful for nullifier / commitment debugging.
+7. **`/runtime` does not show the relayer process's wallet address.** Trivial but operators repeatedly ask "is this the right relayer?" — surface `relayerAddress` from `/api/admin/status` more prominently.
+8. **No webhook test history beyond 50 entries.** A flapping condition can drown out the recent log; the buffer cap is fine but the list has no severity filter or text search.
+9. **Cross-relayer trade offers are persisted but not surfaced.** `trade_offers` table exists; no operator UI reads it.
+10. **No Prometheus / metrics endpoint.** External monitoring stacks (Grafana, Datadog) currently have nothing to scrape — operators relying on them get no signal.
+11. **`/runtime` Webhook section omits the alert thresholds.** The backend returns `balance.thresholdWei` and `settlementFailureStreak.threshold` from `GET /api/admin/webhook`, but the UI only renders the configured/health/probe cells and the recent-alerts table — operators can't see the *thresholds* without reading `.env`. Easy fix; rolling into the next webhook-UI pass.
 
-2. **In-app setup wizard (`/onboarding`)**
-   - Per-field `.env` checklist with OK/FAIL signals.
-   - RPC ping, contract-address validation, bond balance + approval check, ADMIN_API_KEY presence.
-   - Single-screen "ready to start" status.
-
-3. **Admin panel UI (`/admin`)**
-   - Surfaces existing `/api/admin/*` endpoints in the app:
-     - `pause/resume`, `drain`, fee update, sanctions add/remove, profile metadata.
-   - Auth: paste ADMIN_API_KEY (Phase 2: signature-based via owner address).
-
-4. **Exit-flow polish**
-   - `/profile` shows cooldown countdown, warns about unsettled in-flight orders, surfaces re-registration guidance.
-
-### Phase 2 — "stable operations" (3–4 weeks)
-
-5. **Real-time alerting**
-   - `/health` polling + slashing-event subscription → in-app toast + optional webhook (Slack/Discord/Telegram).
-   - Triggers: RPC down, consecutive settlement failures, low bond, gas-cap breach.
-
-6. **Order/transaction debug view**
-   - `/orders/[id]` shows proof state, public signals, settlement tx hash, failure reason, retry history.
-   - Wire the existing `tx-recovery` module's data into the UI.
-
-7. **Auto-claim policy for fees**
-   - On `/treasury`: per-token threshold ("auto-claim when ≥ X").
-   - Compare expected gas vs. claim value automatically.
-
-8. **Structured logging + search**
-   - Replace stdout logs with JSON-line logging (`pino` or similar).
-   - `/admin/logs` page with level/module/text filter.
-
-### Phase 3 — "compete and optimise" (4 weeks+)
-
-9. **SLA / performance dashboard** — settlement latency p50/p95/p99, throughput trend, peer comparison via extended leaderboard.
-
-10. **Key rotation flow** *(security-critical)* — new key registration → dual-sign window → revoke old key. Likely needs a contract change; spec separately before building.
-
-11. **P2P / cross-relayer visibility** — trade-offer negotiation history, peer connection state, shared-orderbook sync indicators.
-
-12. **Compliance / audit export** — sanctions-match logs CSV, settlement history export, regulator-ready report.
-
-13. **In-app docs** — embed `docs/operations/*.md` under `/help`; per-error-code troubleshooting linked from inline failures.
+Items 1–2 are the most operator-visible. Items 3, 5, 11 are small and stackable.
 
 ---
 
-## 4. Open planner decisions
+## 3. Phase 3 — re-prioritised
 
-- **Indexer placement** — Single-process SQLite inside `zk-relayer` (Phase 1 default; matches single-operator topology) vs. separate service (multi-instance future). Defaulting to in-process unless we hit a clustering need.
-- **Admin auth model** — Keep `x-admin-key` header for Phase 1 simplicity; upgrade to wallet-signature (registered owner address) in Phase 2. Wallet-sig requires a small backend change.
-- **Alert channels** — Webhook-first (operators usually want Slack/Discord pings) vs. in-app only (no extra infra). Start with webhook because operators don't keep the console open.
+The original Phase 3 list (#9–#13) folds in with the new gaps from §2. Re-ranked by operator value:
+
+| New # | Theme | Source | Effort | Notes |
+|---|---|---|---|---|
+| **9** | **SLA / performance dashboard** | v1 #9 + new gap #1 | Large | Historical p50/p95/p99 latency, throughput time-series, optional cross-relayer comparison. Backend needs a time-bucket aggregate over `settlement_history`; frontend needs a chart lib (or hand-rolled SVG). |
+| 10 | **In-app docs (`/help`)** | v1 #13 + new gap #4 | Medium | Embed `docs/operations/*.md` via MDX or a server-rendered list. Per-error-code anchors so `last_error` rows can deep-link. |
+| 11 | **Cross-relayer visibility** | v1 #11 + new gap #9 | Medium | Surface `trade_offers` (audit trail of cross-relayer matches) under `/runtime` or an extended `/leaderboard`. Schema already exists. |
+| 12 | **Compliance export (CSV)** | v1 #12 + new gap #5 | Small-medium | `GET /api/admin/history.csv` and `GET /api/admin/sanctions-events.csv`. Pure backend + a download button. |
+| 13 | **Fee-claim reminder + threshold UI** | new gaps #3, #11 | Small | `/runtime` Webhook section already shows recent alerts; add per-token claim threshold setting (persisted in `relayer_meta`) and a corresponding monitor. Reuses #555/#561 alerting infra. |
+| 14 | **Prometheus `/metrics` endpoint** | new gap #10 | Small | One handler that emits the in-memory + DB stats in Prometheus exposition format. Unlocks Grafana for any operator running it. |
+| 15 | **Key rotation flow** *(security-critical)* | v1 #10 | Large + contract change | Defer until governance defines the rotation semantics on `RelayerRegistry`; documenting the gap, not pre-spec'ing. |
+| 16 | **Proof inspection on `/orders/detail`** | new gap #6 | Small-medium | Pull public signals + calldata into the by-tx response; render in a collapsible. Mostly a backend addition (parsing tx receipt logs). |
+
+### Recommended next big PR: **#9 SLA / performance dashboard**
+
+Why:
+- Highest operator value of the unshipped items. Operators tuning fees / monitoring competition need this.
+- All upstream data already exists — `settlement_history` has timestamps, types, and gas. No schema change.
+- Naturally large PR (backend aggregate endpoint + chart-bearing UI page) — fits the "prefer big PR" preference.
+- Independent of #564 (logging) — can run in parallel with that PR's review/merge.
 
 ---
 
-## 5. Recommended starting cut
+## 4. Retired items (and why)
 
-Begin with **Phase 1 #1 (persistent indexer + real data)** and **Phase 1 #3 (admin panel UI)**:
+### v1 #7 — Auto-claim policy
 
-- No contract changes, no spec churn.
-- Removes the largest UX hole (mock dashboards) and the most awkward operational gap (curl-only admin).
-- Each ships as its own PR; can run in parallel after the SQLite schema lands.
+Originally proposed: a periodic worker that auto-calls `FeeVault.claim()` when accruals cross a per-token threshold.
 
-Subsequent PR sequence (suggested):
-1. `feat/operator-indexer-schema` — SQLite schema + writer for settle/fee/gas events.
-2. `feat/operator-history-api` — `GET /api/relayer/history` + `/api/vault/history`.
-3. `feat/operator-dashboard-live` — `/dashboard` consumes real data; remove mocks.
-4. `feat/operator-orders-live` — `/orders` + `/orders/[id]` consume real data.
-5. `feat/operator-treasury-live` — `/treasury` consumes real fee accrual.
-6. `feat/operator-admin-panel` — `/admin` UI for existing admin API.
-7. `feat/operator-onboarding-wizard` — `/onboarding` setup checklist.
-8. `feat/operator-exit-polish` — cooldown countdown + pending-orders warning on `/profile`.
+**Retired** after Phase 2 review. Rationale:
+- FeeVault has no expiry / slashing — un-claimed funds are not at risk.
+- Manual claim from `/treasury` is one click, infrequent.
+- Automation cost (in-process worker, lock, gas-vs-value comparison, failure handling) >> the manual-effort it removes.
+- The same alerting infra now in place (#555/#561) covers the "you should claim soon" need via a much lighter reminder (Phase 3 #13).
+
+### Wallet-signature admin auth
+
+Originally proposed: replace `x-admin-key` paste with a wallet signature from the registered relayer owner.
+
+**Deferred indefinitely**. The header-key model has worked through Phase 1 + 2 with zero operator pain reports. Touching the auth path adds risk for marginal benefit on a single-operator surface; revisit if multi-operator (delegated keys) ever ships.
+
+---
+
+## 5. v1 sections retained for archival
+
+§4 Open planner decisions and §5 Recommended starting cut from v1 are no longer relevant — see the v1 commit history (`docs/operations/operator-gap-analysis.md` at `8197a8a`) for the original wording.
+
+---
+
+## Appendix — `apps/operators/` route map (current)
+
+| Route | What | Live data source |
+|---|---|---|
+| `/` | Landing | static |
+| `/onboarding` | Six-step Get Started + live status checks | wallet · `/health` |
+| `/dashboard` | Operator overview | `/api/admin/status` + history |
+| `/orders` | Settlement history list (filter, paginate) | `/api/admin/history` |
+| `/orders/detail` | Single-tx debug view | `/api/admin/history/by-tx/:txHash` |
+| `/treasury` | FeeVault balances + fee accrual | on-chain · `/api/admin/history/fees` |
+| `/leaderboard` | All registered relayers | cross-relayer fetch |
+| `/profile` | Update URL/fee, bond, exit | `RelayerRegistry` |
+| `/register` | First-time registration | `RelayerRegistry` |
+| `/runtime` | Pause/resume, fee, drain, sanctions, profile, webhook, logs | `/api/admin/*` |
