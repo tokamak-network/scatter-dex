@@ -143,11 +143,12 @@ export function createVaultProvider(
         try {
           const list = await adapter.loadAll();
           if (cancelled) return;
-          // Adapter returns oldest → newest. `add()` prepends, so
-          // the in-memory invariant is **newest-first** — sort then
-          // (optionally) filter.
-          const sorted = list.slice().sort((a, b) => b.createdAt - a.createdAt);
-          const filtered = filterHydrated ? filterHydrated(sorted, chainId) : sorted;
+          // NoteStorageAdapter.loadAll is documented to return rows
+          // already ordered oldest → newest. `add()` prepends, so the
+          // in-memory invariant is **newest-first** — reverse without
+          // re-sorting (preserves stable order for equal createdAt).
+          const reversed = list.slice().reverse();
+          const filtered = filterHydrated ? filterHydrated(reversed, chainId) : reversed;
           // Merge with anything `add()` may have inserted before
           // hydration completed. Without this, a deposit fired
           // during the initial async load would be visible in IDB
@@ -157,12 +158,25 @@ export function createVaultProvider(
             const seen = new Set(filtered.map((n) => n.id));
             const fresh = prev.filter((n) => !seen.has(n.id));
             if (fresh.length === 0) return filtered;
+            // `prev` is newest-first; concat keeps that order.
+            // Use a final sort here only — fresh entries from
+            // `add()` may have createdAt slightly older than the
+            // most recent hydrated entry (clock skew).
             return [...fresh, ...filtered].sort((a, b) => b.createdAt - a.createdAt);
           });
           labelCounter.current = Math.max(
             labelCounter.current,
             deriveLabelCounter(filtered),
           );
+        } catch (err) {
+          // Folder-backed adapters can throw on permission revocation
+          // / missing folder; IDB can throw on quota or schema
+          // upgrade conflicts. Log and leave `notes` empty rather
+          // than surfacing as an unhandled rejection — UI shows the
+          // empty-vault state, and a refresh / re-mount retries.
+          if (!cancelled) {
+            console.warn("[vaultProvider] hydrate failed:", err);
+          }
         } finally {
           if (!cancelled) setLoaded(true);
         }
@@ -176,6 +190,12 @@ export function createVaultProvider(
       async (
         n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">,
       ) => {
+        // Capture generation so a chain / account switch crossing
+        // the put doesn't inject the prior chain's note into the
+        // new chain's React state. The put itself lands on the OLD
+        // adapter (correct for that note), but `setNotes` below
+        // would otherwise prepend it to the new vault.
+        const startGen = generationRef.current;
         const seq = ++labelCounter.current;
         const note: VaultNote = {
           ...n,
@@ -188,6 +208,7 @@ export function createVaultProvider(
           leafIndex: -1,
         };
         await adapter.put(note);
+        if (generationRef.current !== startGen) return note;
         setNotes((prev) => [note, ...prev]);
         return note;
       },
