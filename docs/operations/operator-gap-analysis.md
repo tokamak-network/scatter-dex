@@ -5,6 +5,8 @@ _Scope: `apps/operators/` (Next.js operator console) + `zk-relayer/` (Node servi
 
 This document captures the gaps a real relayer operator would hit today and lays out a phased plan to close them. v2 marks the v1 plan against what shipped, retires items overtaken by other work, and lists the new gaps that surfaced once the operator console moved off mock data.
 
+> **In-flight when v2 was written.** PR #564 (Phase 2 #8 — structured logging + `/api/admin/logs` + `/runtime` Logs section) is open as of this writing. The §1 status table reflects what's expected on `main` once #564 merges; if you're reading this earlier, the logger module / `/admin/logs` route may not exist yet. Other "✅ shipped" items are already on `main` at the time of this commit.
+
 ---
 
 ## 1. v1 plan — status
@@ -20,7 +22,7 @@ This document captures the gaps a real relayer operator would hit today and lays
 
 Notes:
 - The admin panel landed at `/runtime` rather than `/admin` to avoid the protocol-admin connotation — it's the operator's own runtime knobs. Backend keeps `/api/admin/*` for historical reasons; UI eyebrow tags map each section to the route.
-- All four Phase-1-#1 slices completed; no operator page renders mock data.
+- All four Phase-1-#1 slices completed; the major operator pages (`/dashboard`, `/orders`, `/orders/detail`, `/treasury`) all read live data. One leftover: `/runtime` Status surfaces `db.getRelayerStats()`, which still queries the retired `private_orders` table — values render as zeros today and the section will switch to the indexer once a small follow-up replaces that helper. Tracking under "stale stats helper" in §2.
 - Auth is `x-admin-key` paste-and-verify, persisted in tab `sessionStorage`. Wallet-signature auth (deferred from v1) was not pursued — the header model has held up fine for single-operator scope.
 
 ### Phase 2 — "stable operations" — ✅ COMPLETE
@@ -55,7 +57,7 @@ Things that became obvious *after* the operator could actually monitor their rel
 8. **No webhook test history beyond 50 entries.** A flapping condition can drown out the recent log; the buffer cap is fine but the list has no severity filter or text search.
 9. **Cross-relayer trade offers are persisted but not surfaced.** `trade_offers` table exists; no operator UI reads it.
 10. **No Prometheus / metrics endpoint.** External monitoring stacks (Grafana, Datadog) currently have nothing to scrape — operators relying on them get no signal.
-11. **`/runtime` does not surface the new alert thresholds.** `/api/admin/webhook` returns the settlement-failure threshold and balance threshold; the UI omits them. Easy fix; rolling into the next webhook-UI pass.
+11. **`/runtime` Webhook section omits the alert thresholds.** The backend returns `balance.thresholdWei` and `settlementFailureStreak.threshold` from `GET /api/admin/webhook`, but the UI only renders the configured/health/probe cells and the recent-alerts table — operators can't see the *thresholds* without reading `.env`. Easy fix; rolling into the next webhook-UI pass.
 
 Items 1–2 are the most operator-visible. Items 3, 5, 11 are small and stackable.
 
@@ -120,7 +122,7 @@ Originally proposed: replace `x-admin-key` paste with a wallet signature from th
 | `/onboarding` | Six-step Get Started + live status checks | wallet · `/health` |
 | `/dashboard` | Operator overview | `/api/admin/status` + history |
 | `/orders` | Settlement history list (filter, paginate) | `/api/admin/history` |
-| `/orders/detail` | Single-tx debug view | `/api/admin/history/by-tx/:tx` |
+| `/orders/detail` | Single-tx debug view | `/api/admin/history/by-tx/:txHash` |
 | `/treasury` | FeeVault balances + fee accrual | on-chain · `/api/admin/history/fees` |
 | `/leaderboard` | All registered relayers | cross-relayer fetch |
 | `/profile` | Update URL/fee, bond, exit | `RelayerRegistry` |
