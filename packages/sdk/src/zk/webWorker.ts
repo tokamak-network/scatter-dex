@@ -1,4 +1,5 @@
 import type { Prover } from "./prover";
+import { wrapProverWithTimer, type ZkCircuit } from "./proveTimer";
 import type { Groth16Proof, ProveOpts, ProveRequest, ProveResult } from "./types";
 
 /** Wire-format messages exchanged with a prover Web Worker.
@@ -315,6 +316,50 @@ export function createWebWorkerProver(opts: WebWorkerProverOpts): Prover {
       tearDown();
       // Reject anything still queued so callers don't hang.
       failAllPending(new Error(`[${label}] disposed`));
+    },
+  };
+}
+
+export interface LazyWorkerProverOpts {
+  /** Circuit name — used for the timing wrapper's label and as the
+   *  `WebWorkerProverOpts.label` for fallback warnings. */
+  circuit: ZkCircuit;
+  /** Spawn the per-circuit worker. Lazily invoked on first
+   *  `ready()` / `prove()` so apps that never use the prover don't
+   *  pay the ~24 MB asset fetch. */
+  createWorker: () => Worker;
+}
+
+/** Lazy-singleton authorize/claim/deposit/etc prover, wrapped with
+ *  the standard timing reporter. Apps used to hand-roll this five-line
+ *  pattern per circuit (`apps/pro/app/lib/{authorize,cancel,claim,
+ *  deposit}Prover.ts`); this single helper supersedes them. The
+ *  worker URL stays at the call site because Webpack/Turbopack
+ *  resolves `import.meta.url` only when seen as a literal there. */
+export function createLazyWorkerProver(opts: LazyWorkerProverOpts): Prover {
+  let inner: Prover | null = null;
+  function get(): Prover {
+    if (!inner) {
+      inner = wrapProverWithTimer(
+        opts.circuit,
+        createWebWorkerProver({
+          label: opts.circuit,
+          createWorker: opts.createWorker,
+        }),
+      );
+    }
+    return inner;
+  }
+  return {
+    ready: () => get().ready(),
+    prove: (req, proveOpts) => get().prove(req, proveOpts),
+    dispose: () => {
+      // Only forward dispose to an inner that actually got built;
+      // disposing before first use is a no-op so callers can call
+      // it unconditionally on app shutdown without the lazy spawn
+      // firing just to be torn down.
+      if (inner) inner.dispose();
+      inner = null;
     },
   };
 }
