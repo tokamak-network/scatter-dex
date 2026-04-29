@@ -46,9 +46,9 @@ interface RowKey {
  *  claims that completed before the user opened the dashboard.
  *
  *  Pure side-effect component (returns null); persistence lives in
- *  `markClaimedBatch`. The reconciler's only state is the
- *  pre-computed row keys, kept in a ref so resubscribes don't
- *  rebuild Poseidon every render. */
+ *  `markClaimed`. The reconciler's only state is the pre-computed
+ *  row keys, kept in a ref so resubscribes don't rebuild Poseidon
+ *  every render. */
 export function ClaimReconciler({
   record,
   settlementAddress,
@@ -99,6 +99,7 @@ export function ClaimReconciler({
       return;
     }
     let cancelled = false;
+    let detachLive: (() => void) | null = null;
     const contract = new ethers.Contract(
       settlementAddress,
       PRIVATE_SETTLEMENT_IFACE,
@@ -162,31 +163,35 @@ export function ClaimReconciler({
       } catch (err) {
         console.warn("[claimReconciler] historical query failed:", err);
       }
-    })();
 
-    // Live subscription — fires for any future claim against this
-    // settlement, then we filter against our key set in the handler.
-    const handler = (
-      claimsRoot: unknown,
-      nullifier: unknown,
-    ) => {
-      void (async () => {
-        const keys = await rowKeysPromise;
-        const byNullifier = new Map<string, RowKey>();
-        for (const k of keys) byNullifier.set(k.nullifierHex, k);
+      if (cancelled) return;
+      // Live subscription. Narrow to the run's own claimsRoots so a
+      // busy settlement contract doesn't push every unrelated claim
+      // event to the operator's tab — public RPC providers (Alchemy
+      // / Infura) bill polling traffic by event volume. The
+      // claimsRoot filter is the indexed topic, so the RPC layer
+      // does the OR-match and only matching events reach the
+      // handler.
+      const liveFilter = contract.filters.PrivateClaim(claimsRoots);
+      const handler = (
+        claimsRoot: unknown,
+        nullifier: unknown,
+      ) => {
         const k = byNullifier.get(topicHex(nullifier as string | bigint));
         if (!k) return;
         if (k.claimsRootHex !== topicHex(claimsRoot as string | bigint)) return;
         const now = Math.floor(Date.now() / 1000);
-        await markClaimed([{ rowIndex: k.rowIndex, claimedAt: now }]);
-      })();
-    };
-    const filter = contract.filters.PrivateClaim();
-    contract.on(filter, handler);
+        void markClaimed([{ rowIndex: k.rowIndex, claimedAt: now }]).catch(
+          (err) => console.warn("[claimReconciler] markClaimed failed:", err),
+        );
+      };
+      contract.on(liveFilter, handler);
+      detachLive = () => contract.off(liveFilter, handler);
+    })();
 
     return () => {
       cancelled = true;
-      contract.off(filter, handler);
+      if (detachLive) detachLive();
     };
   }, [settlementAddress, readProvider, rowKeysPromise, markClaimed]);
 

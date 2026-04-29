@@ -755,6 +755,16 @@ export async function recordClaimedRecipients(input: {
       if (!row || row.status === "claimed") continue;
       row.status = "claimed";
       row.claimedAt = e.claimedAt;
+      // Stamp every existing notification log for this row so the
+      // detail page's "✓ Claimed" stage (driven by
+      // NotificationLog.claimedAt — the post-send stage past
+      // delivered/opened/clicked) reflects the on-chain truth.
+      // Idempotent: leaves already-stamped entries untouched.
+      for (const log of record.notifications) {
+        if (log.rowIndex === e.rowIndex && !log.claimedAt) {
+          log.claimedAt = e.claimedAt;
+        }
+      }
       updated += 1;
     }
     if (updated > 0) await saveRun(record);
