@@ -22,6 +22,10 @@ export interface SettleAuthSide {
   maxFee: bigint;
   expiry: bigint;
   relayer: string;
+  /** Circuit tier this proof was generated against (16 / 64 / 128).
+   *  Picked off the SDK's `TIERS` registry — the on-chain settlement
+   *  uses it to dispatch to the matching authorize verifier. */
+  tier: number;
 }
 
 function packAuthorize(side: SettleAuthSide) {
@@ -45,6 +49,7 @@ function packAuthorize(side: SettleAuthSide) {
     totalLocked: r.totalLocked,
     relayer: side.relayer,
     orderHash: toBytes32Hex(r.orderHash),
+    tier: side.tier,
   };
 }
 

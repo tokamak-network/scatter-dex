@@ -108,7 +108,7 @@ const SETTLEMENT_ABI = [
   "function nullifiers(bytes32) view returns (bool)",
   "function nonceNullifiers(bytes32) view returns (bool)",
   "function claimNullifiers(bytes32) view returns (bool)",
-  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token)",
+  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token, uint8 tier)",
   "function feeVault() view returns (address)",
   "function weth() view returns (address)",
 ];

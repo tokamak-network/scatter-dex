@@ -18,8 +18,10 @@ import type {
 } from "../types/authorize-order.js";
 import { publicSignalToAddress } from "../types/authorize-order.js";
 
-// AuthorizeProof tuple — shared between maker and taker in settleAuth
-// Must match contracts/src/zk/SettleVerifyLib.sol AuthorizeProof struct exactly.
+// AuthorizeProof tuple — shared between maker and taker in settleAuth.
+// Must match contracts/src/zk/SettleVerifyLib.sol AuthorizeProof struct
+// exactly, including the trailing `uint8 tier` dispatch byte added by
+// the multi-tier infrastructure (PR #528).
 const AUTH_PROOF_TUPLE = `tuple(
   uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC,
   bytes32 pubKeyBind,
@@ -29,7 +31,8 @@ const AUTH_PROOF_TUPLE = `tuple(
   uint128 sellAmount, uint128 buyAmount,
   uint16 maxFee, uint64 expiry,
   bytes32 claimsRoot, uint128 totalLocked,
-  address relayer, bytes32 orderHash
+  address relayer, bytes32 orderHash,
+  uint8 tier
 )`;
 
 // settleAuth ABI — matches the SettleAuthParams struct in PrivateSettlement.sol
@@ -361,6 +364,11 @@ export class AuthorizeSubmitter {
       totalLocked: BigInt(ps.totalLocked),
       relayer: toAddress(ps.relayer),
       orderHash: toBytes32(ps.orderHash),
+      // Tier 16 is the only authorize circuit shipped today. Once
+      // tier 64 / 128 ceremonies land, this comes from the user's
+      // proof bundle (carries the tier alongside the wasm/zkey
+      // selection on the client side) rather than a hardcoded value.
+      tier: 16,
     };
   }
 
