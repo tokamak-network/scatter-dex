@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@scatter-dex/types": "file:../packages/types",
+    "@zkscatter/sdk": "file:../packages/sdk",
     "better-sqlite3": "^12.8.0",
     "circomlibjs": "^0.1.7",
     "cors": "^2.8.5",
