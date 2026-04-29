@@ -91,9 +91,9 @@ const RECIPIENTS_N = (() => {
 const CLAIMS_TREE_DEPTH = TIER_16.claimsTreeDepth;
 
 /** Deterministic recipient addresses derived from a seed.
- *  Each recipient is `keccak256("pay-recipient-i") -> first 20 bytes`,
- *  so the same N always produces the same set across runs and the
- *  test stays reproducible. */
+ *  Each recipient is the **last 20 bytes** of `keccak256("pay-recipient-i")`
+ *  (the standard EVM address derivation), so the same N always produces
+ *  the same set across runs and the test stays reproducible. */
 function deterministicRecipients(n: number): string[] {
   const out: string[] = [];
   for (let i = 0; i < n; i++) {

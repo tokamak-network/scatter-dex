@@ -82,7 +82,7 @@ export async function callSettleAuth(
  *  The single `fee` is in the same token as the proof — drawn from
  *  the user's totalLocked, capped against the user-signed `maxFee`,
  *  and routed to `proof.relayer` via FeeVault (or directly when
- *  FeeVault is unset). Pass 0 for self-relayer flows. */
+ *  FeeVault is unset). Pass `0n` for self-relayer flows. */
 export async function callScatterDirectAuth(
   signer: ethers.Signer,
   settlementAddress: string,
