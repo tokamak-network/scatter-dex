@@ -446,22 +446,17 @@ export function assembleAuthorizeProofResult(
       "assembleAuthorizeProofResult: ProveResult.meta is missing — worker must populate AuthorizeProofMeta via authorizeMetaFrom().",
     );
   }
-  const meta = proveResult.meta;
+  const validated: Partial<AuthorizeProofMeta> = {};
   for (const k of AUTHORIZE_PROOF_META_KEYS) {
-    if (typeof meta[k] !== "bigint") {
+    const v = proveResult.meta[k];
+    if (typeof v !== "bigint") {
       throw new Error(`assembleAuthorizeProofResult: meta.${k} is missing or not a bigint`);
     }
+    validated[k] = v;
   }
   return {
     proof: proveResult.proof,
     publicSignals: proveResult.publicSignals,
-    pubKeyBind: meta.pubKeyBind!,
-    commitmentRoot: meta.commitmentRoot!,
-    nullifier: meta.nullifier!,
-    nonceNullifier: meta.nonceNullifier!,
-    newCommitment: meta.newCommitment!,
-    claimsRoot: meta.claimsRoot!,
-    totalLocked: meta.totalLocked!,
-    orderHash: meta.orderHash!,
+    ...(validated as AuthorizeProofMeta),
   };
 }

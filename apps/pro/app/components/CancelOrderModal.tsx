@@ -11,7 +11,7 @@ import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
 import { useRelayers } from "../lib/relayers";
-import { getCancelProver } from "../lib/cancelProver";
+import { cancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
 import { computeCommitment } from "@zkscatter/sdk/zk";
@@ -115,9 +115,8 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       };
 
       setPhase({ kind: "proving", message: "Generating ZK cancel proof…" });
-      const prover = getCancelProver();
-      await prover.ready();
-      const proveResult = await prover.prove(
+      await cancelProver.ready();
+      const proveResult = await cancelProver.prove(
         { circuitId: "cancel", input: input as unknown as Record<string, unknown> },
         {
           signal: ctrl.signal,

@@ -9,7 +9,7 @@ import {
 import { useWallet } from "@zkscatter/sdk/react";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "../lib/eddsaKey";
-import { getDepositProver } from "../lib/depositProver";
+import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { DEMO_NETWORK } from "../lib/network";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
@@ -110,15 +110,14 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
-      const prover = getDepositProver();
-      await prover.ready();
+      await depositProver.ready();
       // Pass the BigInt CommitmentNote directly — structured-clone
       // supports BigInt natively. `generateDepositProof` derives the
       // commitment internally and returns it as `publicSignals[0]`,
       // so we read it from the prove result instead of running a
       // second `computeCommitment` on the main thread (which would
       // boot circomlibjs's Poseidon tables a second time).
-      const proveResult = await prover.prove(
+      const proveResult = await depositProver.prove(
         {
           circuitId: "deposit",
           input: note as unknown as Record<string, unknown>,

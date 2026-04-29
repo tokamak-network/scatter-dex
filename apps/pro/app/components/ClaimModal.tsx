@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { useOrders, type OrderRecord } from "../lib/orders";
-import { getClaimProver } from "../lib/claimProver";
+import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
 type Phase =
@@ -64,9 +64,8 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
       };
 
       setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
-      const prover = getClaimProver();
-      await prover.ready();
-      await prover.prove(
+      await claimProver.ready();
+      await claimProver.prove(
         {
           circuitId: "claim",
           input: { entry, leafIndex: order.claim.leafIndex } as unknown as Record<

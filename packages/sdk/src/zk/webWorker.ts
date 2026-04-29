@@ -338,7 +338,18 @@ export interface LazyWorkerProverOpts {
  *  resolves `import.meta.url` only when seen as a literal there. */
 export function createLazyWorkerProver(opts: LazyWorkerProverOpts): Prover {
   let inner: Prover | null = null;
+  let disposed = false;
   function get(): Prover {
+    // Match `createWebWorkerProver`'s post-dispose contract: any
+    // further use is a programming error rather than a silent
+    // worker re-spawn. Without this, dispose() then prove() would
+    // resurrect the prover and the timing reporter would think the
+    // app shut down.
+    if (disposed) {
+      throw new Error(
+        `[${opts.circuit}] createLazyWorkerProver: prover used after dispose()`,
+      );
+    }
     if (!inner) {
       inner = wrapProverWithTimer(
         opts.circuit,
@@ -354,10 +365,12 @@ export function createLazyWorkerProver(opts: LazyWorkerProverOpts): Prover {
     ready: () => get().ready(),
     prove: (req, proveOpts) => get().prove(req, proveOpts),
     dispose: () => {
-      // Only forward dispose to an inner that actually got built;
-      // disposing before first use is a no-op so callers can call
+      // Disposing before first use is a no-op so callers can call
       // it unconditionally on app shutdown without the lazy spawn
-      // firing just to be torn down.
+      // firing just to be torn down. After dispose, `inner` stays
+      // null and `disposed` blocks further use.
+      if (disposed) return;
+      disposed = true;
       if (inner) inner.dispose();
       inner = null;
     },

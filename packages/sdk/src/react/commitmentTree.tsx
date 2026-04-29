@@ -99,6 +99,9 @@ export function CommitmentTreeProvider({
   children,
 }: CommitmentTreeProviderProps) {
   const { readProvider } = useWallet();
+  // Derived in render so React state stays a single source of truth;
+  // the useEffect also recomputes locally so its deps stay [poolAddress,
+  // readProvider] without listing this synthetic value.
   const isLive = poolAddress !== ZERO_ADDRESS;
 
   // Tree is keyed on `poolAddress` — switching invalidates state.
@@ -115,7 +118,8 @@ export function CommitmentTreeProvider({
     indexRef.current = new Map();
     setLeafCount(0);
 
-    if (!isLive) {
+    const live = poolAddress !== ZERO_ADDRESS;
+    if (!live) {
       setReady(true);
       return;
     }
@@ -177,7 +181,7 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, isLive, readProvider]);
+  }, [poolAddress, readProvider]);
 
   const findIndex = useCallback((commitment: bigint): number => {
     return indexRef.current.get(commitment.toString()) ?? -1;
