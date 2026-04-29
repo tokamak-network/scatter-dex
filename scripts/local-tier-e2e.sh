@@ -29,30 +29,37 @@ SETTLE=${SETTLE:-}
 TIER16_AUTHORIZE=${TIER16_AUTHORIZE:-}
 TIER16_CLAIM=${TIER16_CLAIM:-}
 
+# Each branch reads `${2:-}` (not bare `$2`) so a flag at the end of
+# the line — e.g. `local-tier-e2e.sh --settlement` with no value —
+# fails the post-loop required-args check below instead of tripping
+# `set -u` with an opaque "unbound variable" error.
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --settlement)        SETTLE=$2;          shift 2 ;;
-    --tier16-authorize)  TIER16_AUTHORIZE=$2; shift 2 ;;
-    --tier16-claim)      TIER16_CLAIM=$2;    shift 2 ;;
-    --rpc)               RPC=$2;             shift 2 ;;
-    *) echo "unknown arg: $1"; exit 64 ;;
+    --settlement)        SETTLE="${2:-}";          shift 2 ;;
+    --tier16-authorize)  TIER16_AUTHORIZE="${2:-}"; shift 2 ;;
+    --tier16-claim)      TIER16_CLAIM="${2:-}";    shift 2 ;;
+    --rpc)               RPC="${2:-}";             shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 
-if [[ -z "$SETTLE" || -z "$TIER16_AUTHORIZE" || -z "$TIER16_CLAIM" ]]; then
-  echo "Missing required addresses. Pass --settlement / --tier16-authorize / --tier16-claim or set env vars." >&2
+if [[ -z "$SETTLE" || -z "$TIER16_AUTHORIZE" || -z "$TIER16_CLAIM" || -z "$RPC" ]]; then
+  echo "Missing required arg. Need --settlement / --tier16-authorize / --tier16-claim / --rpc (or env vars)." >&2
   exit 64
 fi
 
 ZERO=0x0000000000000000000000000000000000000000
 
 step()  { printf "\n\033[1m== %s ==\033[0m\n" "$1"; }
+# Lowercase via `tr` rather than `${var,,}` so the script keeps running
+# under macOS's default /bin/bash 3.2 (the same constraint scripts/dev.sh
+# guards against). cast's checksum casing otherwise breaks equality
+# against arguments the user pasted in lower or mixed case.
 expect() {
-  # Compare lowercased addresses so cast's checksum casing doesn't break
-  # equality against arguments the user paste-pasted in lower or mixed case.
-  local actual=${1,,}
-  local want=${2,,}
-  local label=$3
+  local actual want label
+  actual=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  want=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  label=$3
   if [[ "$actual" != "$want" ]]; then
     printf "FAIL [%s]: expected %s, got %s\n" "$label" "$want" "$actual" >&2
     exit 1
@@ -60,7 +67,7 @@ expect() {
   printf "  ok  %s -> %s\n" "$label" "$actual"
 }
 
-step "Read tier 16 — wired by constructor + setAuthorizeVerifier(16, _)"
+step "Read tier 16 — claim verifier seeded by constructor; authorize verifier registered post-deploy"
 expect "$(cast call "$SETTLE" 'authorizeVerifierByTier(uint8)(address)' 16 --rpc-url "$RPC")" \
        "$TIER16_AUTHORIZE" "authorizeVerifierByTier(16)"
 expect "$(cast call "$SETTLE" 'claimVerifierByTier(uint8)(address)' 16 --rpc-url "$RPC")" \
