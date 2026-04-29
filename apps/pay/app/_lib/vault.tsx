@@ -36,6 +36,12 @@ interface VaultState {
   loaded: boolean;
   add(n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">): Promise<VaultNote>;
   remove(id: string): Promise<void>;
+  /** Patch the leafIndex on a stored note. Used by the reconciler
+   *  to back-fill the tree position once the deposit's
+   *  `CommitmentInserted` event lands. No-op when the note is
+   *  already at the supplied index — re-runs cost one IDB hit, not
+   *  a re-render. */
+  setLeafIndex(id: string, leafIndex: number): Promise<void>;
 }
 
 const VaultCtx = createContext<VaultState | null>(null);
@@ -70,6 +76,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const { account } = useWallet();
   const accountKey = account?.toLowerCase() ?? "anon";
   const [notes, setNotes] = useState<VaultNote[]>([]);
+  const notesRef = useRef<VaultNote[]>([]);
+  // Mirror `notes` into a ref so async callbacks (setLeafIndex below)
+  // can read the current vault without taking `notes` as a dep —
+  // putting it in the dep would re-create the callback on every
+  // mutation and trip the reconciler's effect on every change.
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
   // Carries over across chain switches: hydration uses
@@ -195,9 +209,33 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     [adapter],
   );
 
+  const setLeafIndex = useCallback(
+    async (id: string, leafIndex: number) => {
+      // Read via ref so the callback stays referentially stable.
+      // Bail when the note has been removed (spent) or is already
+      // at this index — both make the write a no-op.
+      const target = notesRef.current.find((n) => n.id === id);
+      if (!target || target.leafIndex === leafIndex) return;
+      const next: VaultNote = { ...target, leafIndex };
+      await adapter.put(next);
+      // A concurrent `remove(id)` racing with this put would
+      // otherwise resurrect a deleted note: remove finishes first,
+      // then our put writes the row back to IDB. Re-check the ref
+      // after the put — if the note's gone, undo by deleting again.
+      if (!notesRef.current.some((n) => n.id === id)) {
+        await adapter.remove(id);
+        return;
+      }
+      setNotes((prev) =>
+        prev.some((n) => n.id === id) ? prev.map((n) => (n.id === id ? next : n)) : prev,
+      );
+    },
+    [adapter],
+  );
+
   const value = useMemo<VaultState>(
-    () => ({ notes, loaded, add, remove }),
-    [notes, loaded, add, remove],
+    () => ({ notes, loaded, add, remove, setLeafIndex }),
+    [notes, loaded, add, remove, setLeafIndex],
   );
 
   return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;
