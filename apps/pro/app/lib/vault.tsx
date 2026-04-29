@@ -86,6 +86,12 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   // queued by `remove`; setLeafIndex's remove-race guard reads this
   // ref to detect a same-tick removal and undo the IDB resurrection.
   const removedIdsRef = useRef<Set<string>>(new Set());
+  // Bumped on every (re)hydrate so async writers can detect that
+  // their in-flight put crossed a chain switch. Without this, an
+  // in-flight setLeafIndex would post-await against the new chain's
+  // empty `notesRef` and call adapter.remove(id) on the OLD adapter,
+  // evicting a still-valid note from the prior chain.
+  const generationRef = useRef(0);
   const [loaded, setLoaded] = useState(false);
   // Ref so two adds in the same tick get distinct sequence numbers.
   // Carries over across chain switches: hydration uses
@@ -129,6 +135,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     // Reset on every (re)hydrate so a stale id from the previous
     // chain doesn't block a re-loaded note that happens to share it.
     removedIdsRef.current = new Set();
+    // Bump the generation so any in-flight async write that crossed
+    // this hydrate sees the change and bails on its post-await
+    // checks rather than falsely interpreting the new chain's
+    // empty `notesRef` as a removal.
+    generationRef.current += 1;
     void (async () => {
       try {
         const list = await adapter.loadAll();
@@ -211,14 +222,19 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const setLeafIndex = useCallback(
     async (id: string, leafIndex: number) => {
-      // Bail synchronously if remove(id) was called this tick or
-      // earlier — notesRef is one commit behind, so we need the
-      // synchronous removedIdsRef set to catch the race.
+      // Capture the generation so a chain switch crossing this put
+      // is detected as "different chain, leave it" rather than
+      // "removed, undo resurrection".
+      const startGen = generationRef.current;
       if (removedIdsRef.current.has(id)) return;
       const target = notesRef.current.find((n) => n.id === id);
       if (!target || target.leafIndex === leafIndex) return;
       const next: VaultNote = { ...target, leafIndex };
       await adapter.put(next);
+      // Generation moved → the put landed on the OLD adapter for the
+      // OLD chain (correct), but the new chain's notesRef is empty
+      // and would falsely trigger the resurrection-undo path. Bail.
+      if (generationRef.current !== startGen) return;
       // Re-check post-await: a remove() that landed during the put
       // would have added the id to the set. Undo the resurrection.
       if (
