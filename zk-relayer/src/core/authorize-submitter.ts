@@ -237,6 +237,30 @@ export class AuthorizeSubmitter {
       this.db?.removePendingTx(txHash);
       // [R-8] Record settlement metrics
       recordSettlement(parseFloat(gasCheck.gasCostEth), Date.now() - authSettleStart);
+      // Persist a row in settlement_history (+ per-side fee_history)
+      // so /api/relayer/history can query past settlements without
+      // relying on the in-memory rolling-window metrics. Best-effort —
+      // a DB failure here must not reject after the on-chain tx
+      // already succeeded.
+      try {
+        const sellToken = publicSignalToAddress(makerPs.sellToken);
+        const buyToken = publicSignalToAddress(makerPs.buyToken);
+        this.db?.recordSettlementEvent({
+          txHash,
+          type: "settleAuth",
+          status: "confirmed",
+          blockNumber: receipt.blockNumber,
+          gasCostEth: gasCheck.gasCostEth,
+          sellToken,
+          buyToken,
+          fees: [
+            { side: "maker", token: buyToken, amountWei: feeTokenMaker.toString() },
+            { side: "taker", token: sellToken, amountWei: feeTokenTaker.toString() },
+          ],
+        });
+      } catch (e) {
+        console.warn("[authorize-submitter] settleAuth history persist failed:", e);
+      }
       // Same fix as scatterDirectAuth: record both maker and taker
       // claimsRoots so the gasless `/api/private-claim/...` route
       // accepts claims against this relayer's settlement. Reuses the
@@ -306,7 +330,7 @@ export class AuthorizeSubmitter {
         throw new Error(`ScatterDirectAuth rejected: ${gasCheck.reason}`);
       }
 
-      const { txHash } = await sendAndWait(
+      const { txHash, receipt } = await sendAndWait(
         () => this.settlement.scatterDirectAuth(params, { gasLimit: gasCheck.estimatedGas }),
         this.provider,
         {
@@ -315,6 +339,26 @@ export class AuthorizeSubmitter {
         },
       );
       this.db?.removePendingTx(txHash);
+      // Persist settlement_history row + the single fee accrual.
+      // Same-token scatter — sellToken === buyToken — so we only
+      // emit one fee row tagged 'scatterDirect'.
+      try {
+        const sellToken = publicSignalToAddress(ps.sellToken);
+        this.db?.recordSettlementEvent({
+          txHash,
+          type: "scatterDirectAuth",
+          status: "confirmed",
+          blockNumber: receipt.blockNumber,
+          gasCostEth: gasCheck.gasCostEth,
+          sellToken,
+          buyToken: sellToken,
+          fees: [
+            { side: "scatterDirect", token: sellToken, amountWei: fee.toString() },
+          ],
+        });
+      } catch (e) {
+        console.warn("[authorize-submitter] scatterDirectAuth history persist failed:", e);
+      }
       // Record the claimsRoot so the gasless `/api/private-claim/...`
       // route knows this relayer settled this batch and is willing to
       // pay gas to submit individual claims. Without this, every claim
