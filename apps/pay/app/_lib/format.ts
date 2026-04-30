@@ -14,6 +14,22 @@ export interface RecipientRow {
   amount: string;
 }
 
+/** Strip CSV-breaking characters from a free-form label. The wizard's
+ *  CSV parser is `line.split(",")` with no quoting, so a comma or
+ *  newline in the label would shift columns silently. */
+export function csvSafeLabel(label: string): string {
+  return (label || "").replace(/[,\n\r]/g, " ").trim();
+}
+
+/** Local-timezone `YYYY-MM-DD` for `<input type="date">` values.
+ *  Locale-free format avoids the SSR/client locale split. */
+export function toIsoDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /** Parse the wizard's textarea rows into the shape `splitPayout` and
  *  `dryRunSettle` both consume. Throws on the first invalid row so
  *  callers fall back to an empty plan rather than producing batches

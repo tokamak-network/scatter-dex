@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import {
@@ -40,16 +40,22 @@ const MAX_RECIPIENTS_PER_RUN = MAX_TIER_CAP * MAX_BATCHES_PER_RUN;
 const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
 import { useWallet } from "@zkscatter/sdk/react";
 import {
+  loadRun,
   saveRun,
   type RecipientRow,
   type RunCategory,
   type RunRecord,
 } from "@zkscatter/sdk/storage";
+import {
+  mergeResumedClaimPackages,
+  partialRunStats,
+  recipientsToCsv,
+} from "../../_lib/resumeRun";
 import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { parseRecipientRows } from "../../_lib/format";
+import { csvSafeLabel, parseRecipientRows, toIsoDate } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -157,11 +163,7 @@ const DEFAULT_MAX_FEE_BPS = 30;
 const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  return toIsoDate(new Date());
 }
 
 const REASON_PLACEHOLDER: Record<TemplateId, string> = {
@@ -179,7 +181,37 @@ function parseAmount(input: string): number {
   return parseFloat(cleaned);
 }
 
-export default function NewPayout() {
+/** Pay ships as a static export, so `useSearchParams` (used to read
+ *  `?resume=<id>` for the resume-partial-run flow) needs a Suspense
+ *  boundary or Next 15's prerender bails out — same pattern as the
+ *  `/payouts/detail` page. */
+export default function NewPayoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <p className="text-sm text-[var(--color-text-muted)]">Loading payout…</p>
+      }
+    >
+      <NewPayout />
+    </Suspense>
+  );
+}
+
+type ResumeState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; record: RunRecord; unsettled: RecipientRow[] }
+  | { kind: "error"; message: string };
+
+function NewPayout() {
+  const searchParams = useSearchParams();
+  const resumeId = searchParams?.get("resume") ?? undefined;
+  const [resume, setResume] = useState<ResumeState>(
+    resumeId ? { kind: "loading" } : { kind: "idle" },
+  );
+  const resumeRecord = resume.kind === "ready" ? resume.record : null;
+  const resumeUnsettled = resume.kind === "ready" ? resume.unsettled : null;
+
   const [step, setStep] = useState(1);
   const [templateId, setTemplateId] = useState<TemplateId>("payroll");
   const template = TEMPLATES.find((t) => t.id === templateId)!;
@@ -227,6 +259,60 @@ export default function NewPayout() {
     setClaimFrom(today());
   }, []);
 
+  // Resume only starts once the notes folder is mounted — the run
+  // lives there. Template / token / label / claim-from edits are
+  // locked downstream so the merged record stays a faithful
+  // continuation of the original.
+  useEffect(() => {
+    if (!resumeId) return;
+    if (!folder.ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await loadRun(resumeId);
+        if (cancelled) return;
+        if (!r) {
+          setResume({ kind: "error", message: `Run ${resumeId} not found in this folder.` });
+          return;
+        }
+        const { partial, unsettled } = partialRunStats(r);
+        if (!partial) {
+          setResume({
+            kind: "error",
+            message:
+              "This run isn't partial — every recipient already has a claim package. Open the dashboard to share links.",
+          });
+          return;
+        }
+        const tpl = TEMPLATES.find((t) => t.id === r.category) ?? TEMPLATES[0]!;
+        setTemplateId(tpl.id);
+        setLabel(r.label);
+        setToken(r.tokenSymbol);
+        setCsv(recipientsToCsv(unsettled));
+        // `claimFrom` on RecipientRow is per-row Unix seconds set
+        // from `new Date("YYYY-MM-DD").getTime()` (UTC midnight).
+        // Round-trip with UTC getters so non-UTC operators don't
+        // see the date shift by a day. Any row carries the same
+        // value, so the first one with the field is enough.
+        const firstClaimFrom = unsettled.find((u) => u.claimFrom)?.claimFrom;
+        if (firstClaimFrom) {
+          setClaimFrom(new Date(firstClaimFrom * 1000).toISOString().slice(0, 10));
+        }
+        setStep(4);
+        setResume({ kind: "ready", record: r, unsettled });
+      } catch (err) {
+        if (cancelled) return;
+        setResume({
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId, folder.ready]);
+
   async function doSubmit() {
     setShowConfirm(false);
     setSubmitting(true);
@@ -246,20 +332,40 @@ export default function NewPayout() {
       // batch error rather than masking it with a save failure.
       const persist = async (allowFailure: boolean): Promise<string | null> => {
         if (!folder.ready) return null;
-        const record = buildRunRecord({
-          templateId,
-          label,
-          token,
-          tokenAddress,
-          operatorAddress: account,
-          chainId,
-          rows,
-          total,
-          claimFrom,
-          walletBook: walletBook.entries,
-          txHash,
-          claimPackages,
-        });
+        // Resume path keeps one RunRecord per logical payout — the
+        // helper stamps new claim packages onto the original by
+        // `rowIndex` so already-issued packages stay intact and a
+        // mid-loop failure leaves the remaining recipients pickable
+        // by a follow-up resume. `settledAt` / `txHash` only advance
+        // when this attempt actually produced something on-chain;
+        // otherwise the dashboard would show a freshly-stamped
+        // submission timestamp for a no-op resume (e.g. batch 1
+        // failed before sending, or the env-not-configured demo
+        // path).
+        const advanced =
+          (claimPackages?.length ?? 0) > 0 ||
+          (!!txHash && !!resumeRecord && txHash !== resumeRecord.txHash);
+        const record: RunRecord = resumeRecord
+          ? mergeResumedClaimPackages({
+              existing: resumeRecord,
+              newPackages: claimPackages ?? [],
+              txHash: advanced ? (txHash ?? resumeRecord.txHash) : resumeRecord.txHash,
+              settledAt: advanced ? Math.floor(Date.now() / 1000) : resumeRecord.settledAt,
+            })
+          : buildRunRecord({
+              templateId,
+              label,
+              token,
+              tokenAddress,
+              operatorAddress: account,
+              chainId,
+              rows,
+              total,
+              claimFrom,
+              walletBook: walletBook.entries,
+              txHash,
+              claimPackages,
+            });
         try {
           await saveRun(record);
           return record.id;
@@ -392,15 +498,6 @@ export default function NewPayout() {
     if (rowsToAdd.length === 0) return;
     const trimmed = csv.trimEnd();
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
-  }
-
-  // Strip CSV-breaking characters from a free-form label so a comma
-  // or newline in the address-book entry doesn't shift columns.
-  // The wizard's CSV parser is `line.split(",")` (no quoting), so the
-  // simplest correctness guarantee is "labels can't contain commas
-  // or newlines."
-  function csvSafeLabel(label: string): string {
-    return label.replace(/[,\n\r]/g, " ").trim();
   }
 
   function pickTemplate(id: TemplateId) {
@@ -550,6 +647,33 @@ export default function NewPayout() {
 
       <WorkspaceBar />
 
+      {resume.kind === "error" && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          <strong className="mb-0.5 block">Couldn&apos;t load run to resume</strong>
+          {resume.message}
+        </div>
+      )}
+      {resume.kind === "loading" && (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+          Loading partial run…
+        </div>
+      )}
+      {resume.kind === "ready" && resumeUnsettled && (
+        <div className="rounded-md border border-[var(--color-primary)] bg-[var(--color-primary-soft)] p-3 text-xs">
+          <div className="font-semibold">
+            Resuming partial run — {resumeUnsettled.length} of{" "}
+            {resume.record.recipients.length} recipients still need their claim
+            package
+          </div>
+          <div className="mt-1 text-[var(--color-text-muted)]">
+            Template, label, token, and recipient list are locked so the
+            merged record stays a faithful continuation. Pick fresh source
+            notes in the Funds step — vault state has shifted since the
+            original run.
+          </div>
+        </div>
+      )}
+
       <Stepper step={step} onJump={setStep} />
 
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -565,8 +689,9 @@ export default function NewPayout() {
               {TEMPLATES.map((t) => (
                 <button
                   key={t.id}
+                  disabled={!!resumeRecord}
                   onClick={() => pickTemplate(t.id)}
-                  className={`rounded-xl border p-4 text-left transition ${
+                  className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                     templateId === t.id
                       ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)]"
                       : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-strong)]"
@@ -590,8 +715,9 @@ export default function NewPayout() {
               <Field label="Run label">
                 <input
                   value={label}
+                  disabled={!!resumeRecord}
                   onChange={(e) => setLabel(e.target.value)}
-                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
+                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </Field>
               <Field label="Chain">
@@ -609,8 +735,9 @@ export default function NewPayout() {
               <Field label="Token">
                 <select
                   value={token}
+                  disabled={!!resumeRecord}
                   onChange={(e) => setToken(e.target.value)}
-                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
+                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option>USDC</option>
                   <option>USDT</option>
@@ -671,9 +798,10 @@ export default function NewPayout() {
             </div>
             <textarea
               value={csv}
+              readOnly={!!resumeRecord}
               onChange={(e) => setCsv(e.target.value)}
               rows={8}
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white p-3 font-mono text-sm"
+              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white p-3 font-mono text-sm read-only:cursor-not-allowed read-only:opacity-70"
               placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
             />
             {template.reasonLabel && (
@@ -732,8 +860,9 @@ export default function NewPayout() {
                     type="date"
                     value={claimFrom ?? ""}
                     min={claimFrom ?? ""}
+                    disabled={!!resumeRecord}
                     onChange={(e) => setClaimFrom(e.target.value)}
-                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </Field>
               </div>
