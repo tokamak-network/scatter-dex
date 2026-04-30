@@ -34,10 +34,30 @@ export interface RelayerApiInfo {
   profile?: RelayerProfile;
 }
 
+/** Public stats from a relayer's `/api/relayer/stats`. Surfaced for
+ *  cross-relayer comparison (leaderboard performance columns). Both
+ *  `avgSettleTimeMs` and `uptimeSince` are nullable when the relayer
+ *  hasn't recorded any confirmed settlements yet. */
+export interface RelayerStatsResponse {
+  address: string;
+  totalOrders: number;
+  settledOrders: number;
+  successRate: number;
+  crossRelayerSettled: number;
+  totalTradeOffers: number;
+  settledTradeOffers: number;
+  avgSettleTimeMs: number | null;
+  uptimeSince: number | null;
+  pendingOrders: number;
+}
+
 /** Combined view: on-chain registry data + live `/api/info` probe.
- *  `api` is undefined when the relayer is offline / unreachable. */
+ *  `api` is undefined when the relayer is offline / unreachable.
+ *  `stats` is undefined when the stats probe failed (older relayer
+ *  build, network error, or feature not enabled). */
 export interface RelayerInfo extends RelayerOnChain {
   api?: RelayerApiInfo;
+  stats?: RelayerStatsResponse;
   online: boolean;
 }
 
