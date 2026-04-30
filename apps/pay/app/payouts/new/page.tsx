@@ -1028,6 +1028,7 @@ function NewPayout() {
 
 const DEPOSIT_PHASE_COPY: Record<DepositPhase["kind"], string> = {
   preparing: "Preparing…",
+  wrapping: "Wrapping ETH → WETH…",
   approving: "Approving token allowance…",
   proving: "Generating deposit proof…",
   submitting: "Submitting deposit transaction…",

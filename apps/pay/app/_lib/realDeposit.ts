@@ -11,12 +11,24 @@ import type { useVault } from "./vault";
 
 export type DepositPhaseKind =
   | "preparing"
+  | "wrapping"
   | "approving"
   | "proving"
   | "submitting"
   | "confirming"
   | "done"
   | "error";
+
+// Minimal WETH9 surface — `deposit() payable` to wrap native ETH and
+// `balanceOf` to skip the wrap when the operator already has enough
+// WETH from a prior session. Inlined here rather than added to the
+// SDK's ERC20_IFACE because `deposit()` collides with the
+// CommitmentPool's same-named function and would confuse downstream
+// readers if the two shared an interface object.
+const WETH9_IFACE = new ethers.Interface([
+  "function deposit() payable",
+  "function balanceOf(address owner) view returns (uint256)",
+]);
 
 export interface DepositPhase {
   kind: DepositPhaseKind;
@@ -48,24 +60,28 @@ export interface RealDepositResult {
   note: CommitmentNote;
 }
 
-/** ERC-20 → CommitmentPool deposit. Sequential flow:
+/** ERC-20 (or native-ETH-via-WETH) → CommitmentPool deposit.
+ *  Sequential flow:
  *
  *  1. Derive (or unlock cached) EdDSA keypair.
- *  2. Build a fresh `CommitmentNote` bound to that pubkey.
- *  3. Prove off-thread (deposit circuit).
- *  4. `ensureAllowance` — approve the pool to pull `amountRaw`. Skips
- *     when the existing allowance covers it; resets to 0 first when
- *     a non-zero starting allowance can't be raised cleanly (USDT-
- *     style ERC-20s).
- *  5. `callDeposit` — submit `pool.deposit(...)`, wait for receipt.
- *  6. Vault add — record the note locally with `leafIndex = -1` so
+ *  2. Native ETH only — wrap any shortfall: read the operator's
+ *     existing WETH balance, then `weth.deposit{value: shortfall}()`
+ *     for whatever's missing. Skips the wrap entirely when the
+ *     operator already has enough WETH from a prior session.
+ *  3. Build a fresh `CommitmentNote` bound to the pubkey. The
+ *     commitment's `token` field is always the ERC-20 token (WETH
+ *     for native), never `ZERO_ADDRESS` — the pool only knows
+ *     ERC-20 tokens.
+ *  4. Prove off-thread (deposit circuit).
+ *  5. `ensureAllowance` — approve the pool to pull `amountRaw`.
+ *     Skips when the existing allowance covers it; resets to 0
+ *     first when a non-zero starting allowance can't be raised
+ *     cleanly (USDT-style ERC-20s).
+ *  6. `callDeposit` — submit `pool.deposit(...)`, wait for receipt.
+ *  7. Vault add — record the note locally with `leafIndex = -1` so
  *     the funds picker shows it as `pendingRaw` until the
  *     IncrementalMerkleTree reconciler observes the on-chain
  *     `CommitmentInserted` event and back-fills the index.
- *
- *  Native ETH (no token address) is intentionally out of scope for
- *  v1 — Pay launches with stablecoin / token pairs only. The wizard
- *  bails before this fires when `LAUNCH_TOKENS[symbol]` is missing.
  */
 export async function realDeposit(args: RealDepositArgs): Promise<RealDepositResult> {
   const { tokenSymbol, amountRaw, account, signer, eddsa, vault, onPhase } = args;
@@ -83,14 +99,48 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   if (!signer) throw new Error("Wallet signer not available.");
   if (amountRaw <= 0n) throw new Error("Deposit amount must be positive.");
 
+  // Resolve the on-chain ERC-20 address used for both the commitment
+  // and the pool's transferFrom. For native ETH this is WETH; the
+  // pool has no notion of a "native" token so the commitment must
+  // bind to WETH for the deposit / spend round-trip to work.
+  const erc20Address = tokenInfo.isNative ? cfg.contracts.weth : tokenInfo.address;
+  if (!erc20Address || erc20Address === ethers.ZeroAddress) {
+    throw new Error(
+      tokenInfo.isNative
+        ? "WETH address not configured — set NEXT_PUBLIC_PAY_WETH to deposit ETH."
+        : `Token ${tokenSymbol} has no on-chain address.`,
+    );
+  }
+
   phase({ kind: "preparing", message: "Deriving signing key…" });
   const kp = await eddsa.derive();
+
+  // Native ETH: wrap whatever WETH the operator is short of, in a
+  // separate tx that confirms before we kick off proving. Doing this
+  // before prove-time means the prover boot can run alongside the
+  // wrap's receipt wait.
+  if (tokenInfo.isNative) {
+    const weth = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
+    const wethBalance = (await weth.balanceOf(account)) as bigint;
+    if (wethBalance < amountRaw) {
+      const shortfall = amountRaw - wethBalance;
+      phase({
+        kind: "wrapping",
+        message: `Wrapping ${ethers.formatEther(shortfall)} ETH → WETH…`,
+      });
+      const wrapTx = (await weth.deposit({ value: shortfall })) as ethers.TransactionResponse;
+      const wrapReceipt = await wrapTx.wait();
+      if (!wrapReceipt || wrapReceipt.status !== 1) {
+        throw new Error(`WETH wrap tx failed: ${wrapTx.hash}`);
+      }
+    }
+  }
 
   // Build the note + warm the prover in parallel — the deposit zkey
   // is ~7 MB; on a cold cache its fetch dwarfs the synchronous note
   // construction.
   const [note] = await Promise.all([
-    Promise.resolve(generateNote(tokenInfo.address, amountRaw, kp.publicKey)),
+    Promise.resolve(generateNote(erc20Address, amountRaw, kp.publicKey)),
     depositProver.ready(),
   ]);
 
@@ -107,7 +157,7 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   phase({ kind: "approving", message: "Checking ERC-20 allowance…" });
   const allowanceTxs = await ensureAllowance(
     signer,
-    tokenInfo.address,
+    erc20Address,
     cfg.contracts.commitmentPool,
     amountRaw,
   );
@@ -127,7 +177,7 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     signer,
     cfg.contracts.commitmentPool,
     { proof: proveResult.proof, publicSignals: proveResult.publicSignals, commitment },
-    tokenInfo.address,
+    erc20Address,
     amountRaw,
   );
 
