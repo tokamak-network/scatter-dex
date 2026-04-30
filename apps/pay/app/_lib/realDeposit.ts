@@ -3,16 +3,15 @@
 import { ethers } from "ethers";
 import { COMMITMENT_POOL_IFACE, ERC20_IFACE, LAUNCH_TOKENS } from "@zkscatter/sdk";
 import { generateNote, type CommitmentNote } from "@zkscatter/sdk/zk";
+import { callDeposit, ensureAllowance } from "@zkscatter/sdk/contracts";
 import {
-  callDeposit,
-  ensureAllowance,
   Eip5792Unsupported,
   fetchCapabilities,
   sendCalls,
   supportsAtomicBatch,
   waitForCallsReceipt,
   type SendCallsCall,
-} from "@zkscatter/sdk/contracts";
+} from "@zkscatter/sdk/contracts/eip5792";
 import type { useEdDSAKey } from "@zkscatter/sdk/react";
 import { getNetworkConfig, isNetworkConfigured } from "./network";
 import { depositProver } from "./depositProver";

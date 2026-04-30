@@ -15,6 +15,7 @@
     "./relayer": "./src/relayer/index.ts",
     "./orderbook": "./src/orderbook/index.ts",
     "./contracts": "./src/contracts/index.ts",
+    "./contracts/eip5792": "./src/contracts/eip5792.ts",
     "./notes": "./src/notes/index.ts",
     "./storage": "./src/storage/index.ts",
     "./util": "./src/util/index.ts"
