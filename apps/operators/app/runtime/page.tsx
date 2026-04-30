@@ -604,7 +604,7 @@ interface WebhookStatusBody {
   };
   recent: Array<{
     type: string;
-    severity: "info" | "warn" | "critical";
+    severity: AlertSeverity;
     text: string;
     payload?: Record<string, unknown>;
     emittedAt: number;
@@ -615,10 +615,13 @@ interface WebhookStatusBody {
   }>;
 }
 
-// Single source of truth for the severity-chip set; the union type is
-// derived so a new severity (e.g. "debug") can't drift between the type
-// and the chip array.
-const ALERT_SEVERITY_FILTERS = ["all", "info", "warn", "critical"] as const;
+// Single source of truth for the alerting severity ladder. The
+// wire-format union (`AlertSeverity`), the chip array (which is the
+// ladder plus an "all" sentinel), and the chip-array union all derive
+// from this so a new severity can't drift across declarations.
+const ALERT_SEVERITIES = ["info", "warn", "critical"] as const;
+type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+const ALERT_SEVERITY_FILTERS = ["all", ...ALERT_SEVERITIES] as const;
 type AlertSeverityFilter = (typeof ALERT_SEVERITY_FILTERS)[number];
 
 function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
@@ -778,27 +781,36 @@ function RecentAlertsTable({ recent }: { recent: WebhookStatusBody["recent"] }) 
           Recent alerts ({filtered.length}
           {filtered.length !== recent.length ? ` of ${recent.length}` : ""})
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {ALERT_SEVERITY_FILTERS.map((sev) => (
-            <button
-              key={sev}
-              type="button"
-              onClick={() => setSeverityFilter(sev)}
-              className={
-                severityFilter === sev
-                  ? "rounded-full bg-[var(--color-primary)] px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white"
-                  : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
-              }
-            >
-              {sev}
-            </button>
-          ))}
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label="Filter recent alerts"
+        >
+          {ALERT_SEVERITY_FILTERS.map((sev) => {
+            const selected = severityFilter === sev;
+            return (
+              <button
+                key={sev}
+                type="button"
+                onClick={() => setSeverityFilter(sev)}
+                aria-pressed={selected}
+                className={
+                  selected
+                    ? "rounded-full bg-[var(--color-primary)] px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white"
+                    : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+                }
+              >
+                {sev}
+              </button>
+            );
+          })}
           <input
             type="search"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             placeholder="Filter by type or text…"
-            className="w-48 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs"
+            aria-label="Filter recent alerts by type or text"
+            className="w-48 rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1 text-xs"
           />
         </div>
       </div>
@@ -823,9 +835,9 @@ function RecentAlertsTable({ recent }: { recent: WebhookStatusBody["recent"] }) 
               </tr>
             </thead>
             <tbody>
-              {filtered.map((a, i) => (
+              {filtered.map((a) => (
                 <tr
-                  key={`${a.emittedAt}-${a.type}-${i}`}
+                  key={`${a.emittedAt}-${a.type}-${a.text}`}
                   className="border-t border-[var(--color-border)]"
                 >
                   <td className="px-3 py-2 text-[var(--color-text-muted)]">
@@ -852,7 +864,7 @@ function RecentAlertsTable({ recent }: { recent: WebhookStatusBody["recent"] }) 
 function SeverityPill({
   severity,
 }: {
-  severity: "info" | "warn" | "critical";
+  severity: AlertSeverity;
 }) {
   const cls =
     severity === "critical"
