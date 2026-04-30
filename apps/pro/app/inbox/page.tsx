@@ -40,7 +40,11 @@ export default function InboxPage() {
         </section>
       )}
 
-      {folder.available !== false && !folder.ready && (
+      {folder.available === null && (
+        <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+      )}
+
+      {folder.available === true && !folder.ready && (
         <FolderPickPrompt onPick={folder.select} />
       )}
 
@@ -84,7 +88,13 @@ function FolderPickPrompt({ onPick }: { onPick: () => Promise<boolean> }) {
         cross-device access.
       </p>
       <div className="mt-5">
-        <Button onClick={() => void onPick()}>Pick folder</Button>
+        <Button
+          onClick={() => {
+            onPick().catch((err) => console.error("Folder pick failed", err));
+          }}
+        >
+          Pick folder
+        </Button>
       </div>
     </section>
   );
@@ -113,7 +123,15 @@ function IdentitySection({
           (<code className="font-mono">zkscatter-stealth-keys.json</code>).
         </p>
         <div className="mt-5">
-          <Button onClick={() => void onGenerate()}>Generate meta-address</Button>
+          <Button
+            onClick={() => {
+              onGenerate().catch((err) =>
+                console.error("Failed to generate meta-address", err),
+              );
+            }}
+          >
+            Generate meta-address
+          </Button>
         </div>
       </section>
     );

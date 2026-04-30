@@ -96,15 +96,17 @@ export function FolderProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // `hasFolder()` is the source of truth at the SDK level. Keep
-  // local state in sync if the host page calls something that
-  // mutates the SDK singleton (e.g. switching folders from a
-  // future settings page).
+  // local state in sync if the SDK singleton was mutated outside
+  // this provider (e.g. switching folders from a future settings
+  // page). The check fires only when our `ready` flag flips, so
+  // the dep is `[ready]` — without it the effect would re-run on
+  // every render. */
   useEffect(() => {
     if (ready && !hasFolder()) {
       setReady(false);
       setFolderName(null);
     }
-  });
+  }, [ready]);
 
   const value = useMemo<FolderState>(
     () => ({ available, ready, folderName, select }),

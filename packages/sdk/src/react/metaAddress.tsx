@@ -95,10 +95,13 @@ export function useMetaAddress(): MetaAddressState {
  *  migrates) the keypair on the next render. */
 export function MetaAddressProvider({
   children,
-  /** Optional flag the host app passes when its folder context goes
-   *  ready. When omitted, the provider polls `hasFolder()` after
-   *  mount; passing a real signal avoids the polling fallback and
-   *  makes the load reactive to folder switches. */
+  /** Reactive folder-readiness signal the host app passes from its
+   *  folder-storage provider. **Strongly recommended.** When omitted
+   *  the provider falls back to a one-shot `hasFolder()` check at
+   *  mount, which means a folder picked *after* mount won't trigger
+   *  the keypair load — host apps with a dynamic folder picker
+   *  must pass this prop, otherwise the inbox stays at "no keys yet"
+   *  even after the user finishes folder selection. */
   folderReady,
 }: {
   children: ReactNode;

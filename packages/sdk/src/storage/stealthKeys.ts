@@ -25,7 +25,11 @@ export const STEALTH_KEYS_FILENAME = "zkscatter-stealth-keys.json";
 /** Legacy localStorage key — only read once during migration. */
 export const LEGACY_LOCAL_STORAGE_KEY = "zkscatter-pro-meta-address-v1";
 
-const HEX_64_RE = /^[0-9a-fA-F]{64}$/;
+/** Accept both `0x`-prefixed and bare 64-hex strings. The SDK's
+ *  stealth helpers (`deriveStealthPrivateKey` etc.) tolerate either,
+ *  so the storage validator should too — refusing only the prefix
+ *  trips legitimate import flows from external wallets. */
+const HEX_64_RE = /^(?:0x)?[0-9a-fA-F]{64}$/;
 
 interface StealthKeysFile {
   version: 1;
@@ -73,13 +77,18 @@ export async function loadStealthKeys(): Promise<MetaAddress | null> {
   if (
     !parsed ||
     typeof parsed !== "object" ||
-    (parsed as { version?: unknown }).version !== 1 ||
-    typeof (parsed as { keys?: unknown }).keys !== "object" ||
-    (parsed as { keys: { spendingKey?: unknown } }).keys.spendingKey === undefined
+    (parsed as { version?: unknown }).version !== 1
   ) {
     throw new StealthKeysCorruptError(`${STEALTH_KEYS_FILENAME} has an unexpected shape`);
   }
-  const keys = (parsed as StealthKeysFile).keys;
+  // `typeof null === "object"` so we have to reject it explicitly,
+  // otherwise the spendingKey field access below throws TypeError
+  // and bypasses the StealthKeysCorruptError path callers expect.
+  const candidateKeys = (parsed as { keys?: unknown }).keys;
+  if (!candidateKeys || typeof candidateKeys !== "object") {
+    throw new StealthKeysCorruptError(`${STEALTH_KEYS_FILENAME} has an unexpected shape`);
+  }
+  const keys = candidateKeys as MetaAddress;
   assertValidStealthKeys(keys);
   return keys;
 }
@@ -115,7 +124,16 @@ export async function migrateFromLocalStorage(): Promise<MetaAddress | null> {
   const existing = await loadFile(STEALTH_KEYS_FILENAME).catch(() => null);
   if (existing !== null) return null;
 
-  const raw = window.localStorage.getItem(LEGACY_LOCAL_STORAGE_KEY);
+  // `localStorage` access throws `SecurityError` in some private /
+  // sandboxed contexts (Safari ITP, iframes with restricted cookie
+  // policy, etc). Treat any read failure as "nothing to migrate"
+  // rather than letting it bubble up and stall provider hydration.
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(LEGACY_LOCAL_STORAGE_KEY);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   let parsed: unknown;
   try {
@@ -140,7 +158,14 @@ export async function migrateFromLocalStorage(): Promise<MetaAddress | null> {
   }
   await saveStealthKeys(candidate);
   // Only after the folder write succeeded — survives a mid-flight
-  // permission revoke.
-  window.localStorage.removeItem(LEGACY_LOCAL_STORAGE_KEY);
+  // permission revoke. Wrapped in try/catch for the same SecurityError
+  // reason as the read above; a failed remove leaves the legacy
+  // entry, but the folder copy is canonical so subsequent loads skip
+  // the migration anyway.
+  try {
+    window.localStorage.removeItem(LEGACY_LOCAL_STORAGE_KEY);
+  } catch {
+    /* swallow */
+  }
   return candidate;
 }
