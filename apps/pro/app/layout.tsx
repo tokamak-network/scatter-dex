@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
+import { StealthMenu } from "./components/StealthMenu";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
@@ -13,7 +14,7 @@ import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
-import { MetaAddressProvider } from "./lib/metaAddress";
+import { FolderProvider, FolderAwareMetaAddressProvider } from "./lib/folder";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
 import { ToastProvider } from "@zkscatter/ui";
 import { Brand } from "./components/Brand";
@@ -32,7 +33,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
-            <MetaAddressProvider>
+            <FolderProvider>
+              <FolderAwareMetaAddressProvider>
               <CommitmentTreeProvider>
                 <EdDSAKeyProvider>
                   <RelayersProvider>
@@ -56,7 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
-                                  <Link href="/inbox" className="hover:text-[var(--color-text)]">Inbox</Link>
+                                  <StealthMenu />
                                 </>
                               }
                             />
@@ -72,7 +74,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </RelayersProvider>
                 </EdDSAKeyProvider>
               </CommitmentTreeProvider>
-            </MetaAddressProvider>
+              </FolderAwareMetaAddressProvider>
+            </FolderProvider>
           </ActiveNetworkProvider>
         </WalletProvider>
       </body>

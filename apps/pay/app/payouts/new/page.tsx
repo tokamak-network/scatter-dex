@@ -30,7 +30,7 @@ import {
   Stepper,
   Toggle,
 } from "./_components/wizardChrome";
-import { BalancePanel, FundsStep } from "./_components/FundsStep";
+import { FundsStep } from "./_components/FundsStep";
 import {
   DepositCancelled,
   realDeposit,
@@ -73,7 +73,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDate } from "../../_lib/format";
+import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -101,7 +101,7 @@ const DEFAULT_MAX_FEE_BPS = 30;
 const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
-  return toIsoDate(new Date());
+  return toIsoDateTimeSec(new Date());
 }
 
 /** Pay ships as a static export, so `useSearchParams` (used to read
@@ -147,6 +147,15 @@ function NewPayout() {
   const [notify, setNotify] = useState(true);
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
+  // Captured once on first render — used as the input's `min` so the
+  // floor stays at "now" even after the user picks a future moment.
+  // Without this, binding `min={claimFrom}` would trap the user: any
+  // future selection would advance the floor and prevent moving the
+  // value back earlier.
+  const claimFromMinRef = useRef<string | null>(null);
+  if (claimFromMinRef.current === null) {
+    claimFromMinRef.current = today();
+  }
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -229,13 +238,14 @@ function NewPayout() {
         setToken(r.tokenSymbol);
         setCsv(recipientsToCsv(unsettled));
         // `claimFrom` on RecipientRow is per-row Unix seconds set
-        // from `new Date("YYYY-MM-DD").getTime()` (UTC midnight).
-        // Round-trip with UTC getters so non-UTC operators don't
-        // see the date shift by a day. Any row carries the same
-        // value, so the first one with the field is enough.
+        // from `new Date("YYYY-MM-DDTHH:mm:ss").getTime()` (LOCAL time).
+        // Round-trip with local getters via `toIsoDateTimeSec` so a
+        // mid-day unlock displays at the operator's wall-clock time
+        // rather than drifting by their UTC offset. Any row carries
+        // the same value, so the first one with the field is enough.
         const firstClaimFrom = unsettled.find((u) => u.claimFrom)?.claimFrom;
         if (firstClaimFrom) {
-          setClaimFrom(new Date(firstClaimFrom * 1000).toISOString().slice(0, 10));
+          setClaimFrom(toIsoDateTimeSec(new Date(firstClaimFrom * 1000)));
         }
         setStep(4);
         setResume({ kind: "ready", record: r, unsettled });
@@ -652,7 +662,7 @@ function NewPayout() {
             <div>
               <h2 className="text-lg font-semibold">Choose a template</h2>
               <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                Templates pre-fill labels, sample data, and export format. You can change anything later.
+                Templates pre-fill the run label, default token, and export format. You can change anything later.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -716,23 +726,6 @@ function NewPayout() {
                 </select>
               </Field>
             </div>
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-              Sender = the wallet connected in the header. Pay spends your
-              already-deposited notes — the wallet only signs the proof, no
-              transfer-from happens at sign time. Top up the source notes in
-              the Funds step.
-            </div>
-            <BalancePanel
-              token={token}
-              decimals={decimals}
-              availableRaw={availableRaw}
-              requiredRaw={0n}
-              shortfallRaw={0n}
-              account={account}
-              vaultLoaded={vaultLoaded}
-              showRequired={false}
-              onDeposit={() => undefined}
-            />
           </div>
         )}
 
@@ -754,7 +747,6 @@ function NewPayout() {
                     + Add from address book
                   </button>
                   <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Upload CSV</button>
-                  <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Import from Safe</button>
                 </div>
                 {addressBookHint && (
                   <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
@@ -822,14 +814,15 @@ function NewPayout() {
               <h3 className="text-sm font-semibold">Claim schedule</h3>
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">
                 When can recipients start claiming? All recipients use the same
-                date for now — per-row overrides arrive in a later release.
+                moment for now — per-row overrides arrive in a later release.
               </p>
               <div className="mt-3 max-w-xs">
                 <Field label="Available from">
                   <input
-                    type="date"
+                    type="datetime-local"
+                    step={1}
                     value={claimFrom ?? ""}
-                    min={claimFrom ?? ""}
+                    min={claimFromMinRef.current ?? ""}
                     disabled={!!resumeRecord}
                     onChange={(e) => setClaimFrom(e.target.value)}
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
@@ -837,7 +830,7 @@ function NewPayout() {
                 </Field>
               </div>
               <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                Recipients can claim any time after this date — there is no expiry.
+                Recipients can claim any time after the moment set above — there is no expiry.
               </p>
             </div>
 

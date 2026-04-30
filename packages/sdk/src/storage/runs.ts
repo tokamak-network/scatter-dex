@@ -344,23 +344,50 @@ export interface RunsIndexEntry {
   settleGasPaid?: string;
   /** True when the underlying record has a non-empty `notes` field —
    *  the dashboard renders a 📝 affordance on the row so operators
-   *  can spot annotated runs without opening each one. We hoist a
-   *  boolean rather than the note body so the index file stays small
-   *  and operators with paragraphs of context don't pay disk-read
-   *  cost on every dashboard load. */
+   *  can spot annotated runs without opening each one. */
   hasNotes?: boolean;
+  /** First chunk of the note body (whitespace-collapsed, truncated
+   *  to {@link RUN_NOTES_PREVIEW_LIMIT} chars) so the dashboard's
+   *  search box can match note text without loading every full
+   *  record. Operators with paragraph-long memos don't pay full
+   *  disk-read cost on every dashboard load — paragraph 2+ is
+   *  searchable only via the run-detail page. Absent when the
+   *  record has no notes. */
+  notesPreview?: string;
 }
 
+/** Cap on the substring of `notes` indexed into `RunsIndexEntry`.
+ *  160 chars — about a tweet — is enough to cover a typical
+ *  approval reference ("Approved by CFO ref INV-2026-05-12") and a
+ *  short audit note while keeping the index file small. Long
+ *  paragraph notes still match by their first ~25 words, which is
+ *  where operators typically put the searchable label anyway. */
+export const RUN_NOTES_PREVIEW_LIMIT = 160;
+
 interface RunsIndexFile {
-  version: 1;
+  /** v1 → v2 bump introduced `notesPreview`. Older indexes that
+   *  pass v1 schema validation are silently dropped via
+   *  `loadRunsIndex` so the next read forces a one-time full scan;
+   *  `saveRun` then writes v2 with the preview populated. */
+  version: 2;
   entries: RunsIndexEntry[];
 }
+
+const RUNS_INDEX_VERSION = 2;
 
 function summariseRecord(record: RunRecord): RunsIndexEntry {
   let claimed = 0;
   for (const r of record.recipients) {
     if (r.status === "claimed") claimed++;
   }
+  // Build the searchable note preview. Whitespace collapsed so a
+  // multiline note doesn't expand the index file with newlines, and
+  // the dashboard's `.includes(q)` substring match works against
+  // arbitrary inner whitespace.
+  const trimmedNotes = record.notes?.trim() ?? "";
+  const notesPreview = trimmedNotes
+    ? trimmedNotes.replace(/\s+/g, " ").slice(0, RUN_NOTES_PREVIEW_LIMIT)
+    : "";
   return {
     id: record.id,
     label: record.label,
@@ -374,7 +401,7 @@ function summariseRecord(record: RunRecord): RunsIndexEntry {
     totalRecipients: record.recipients.length,
     claimedRecipients: claimed,
     settleGasPaid: record.settleGasPaid,
-    ...(record.notes && record.notes.trim().length > 0 ? { hasNotes: true } : {}),
+    ...(trimmedNotes ? { hasNotes: true, notesPreview } : {}),
   };
 }
 
@@ -395,8 +422,21 @@ function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
     typeof v.totalRecipients === "number" &&
     typeof v.claimedRecipients === "number" &&
     isOptionalString(v.settleGasPaid) &&
-    (v.hasNotes === undefined || typeof v.hasNotes === "boolean")
+    (v.hasNotes === undefined || typeof v.hasNotes === "boolean") &&
+    isValidNotesPreview(v.notesPreview, v.hasNotes)
   );
+}
+
+/** Reject manually-edited / corrupted previews so a stuffed index
+ *  can't bloat the dashboard's in-memory list, and require
+ *  `hasNotes === true` whenever `notesPreview` is present so the
+ *  📝 indicator and the search filter never disagree. */
+function isValidNotesPreview(preview: unknown, hasNotes: unknown): boolean {
+  if (preview === undefined) return true;
+  if (typeof preview !== "string") return false;
+  if (preview.length > RUN_NOTES_PREVIEW_LIMIT) return false;
+  if (preview.length > 0 && hasNotes !== true) return false;
+  return true;
 }
 
 /** Read the on-disk index. Returns `null` when the file is missing,
@@ -413,7 +453,12 @@ async function loadRunsIndex(): Promise<RunsIndexEntry[] | null> {
   if (!text) return null;
   try {
     const parsed = JSON.parse(text) as { version?: unknown; entries?: unknown };
-    if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) return null;
+    if (parsed?.version !== RUNS_INDEX_VERSION || !Array.isArray(parsed.entries)) {
+      // v1 indexes lack `notesPreview` and would render note-search
+      // results blank; returning null forces a one-time full scan
+      // that rebuilds the index at v2 with the preview populated.
+      return null;
+    }
     if (!parsed.entries.every(isValidIndexEntry)) return null;
     return parsed.entries;
   } catch {
@@ -422,7 +467,7 @@ async function loadRunsIndex(): Promise<RunsIndexEntry[] | null> {
 }
 
 async function persistRunsIndex(entries: RunsIndexEntry[]): Promise<void> {
-  const payload: RunsIndexFile = { version: 1, entries };
+  const payload: RunsIndexFile = { version: RUNS_INDEX_VERSION, entries };
   await saveFile(RUNS_INDEX_FILENAME, JSON.stringify(payload, null, 2));
 }
 
