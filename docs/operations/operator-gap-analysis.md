@@ -54,7 +54,7 @@ Things that became obvious *after* the operator could actually monitor their rel
 5. **No CSV export.** Compliance/finance often want "give me all settlements from <date> to <date>" in CSV. Currently the only path is to query the DB by hand.
 6. **`/orders/detail` shows internal state, not proof contents.** When a settlement reverts, the operator sees `last_error` but can't inspect the proof's public signals or the calldata. Useful for nullifier / commitment debugging.
 7. **`/runtime` does not show the relayer process's wallet address.** ✅ Shipped — Status panel now surfaces `relayerAddress` in a dedicated row above the stat grid.
-8. **No webhook test history beyond 50 entries.** A flapping condition can drown out the recent log; the buffer cap is fine but the list has no severity filter or text search.
+8. **No webhook test history beyond 50 entries.** ✅ Shipped — Webhook section's recent-alerts table now has client-side severity chips (`all`/`info`/`warn`/`critical`) and a text-search input that matches `type` + `text` columns. Buffer cap is unchanged at 50 (which is fine for triage); the filter sits on top of it so flapping conditions can be sliced without scrolling.
 9. **Cross-relayer trade offers are persisted but not surfaced.** `trade_offers` table exists; no operator UI reads it.
 10. **No Prometheus / metrics endpoint.** External monitoring stacks (Grafana, Datadog) currently have nothing to scrape — operators relying on them get no signal.
 11. **`/runtime` Webhook section omits the alert thresholds.** ✅ Shipped — Webhook panel stat grid now also renders `balance.thresholdWei` (formatted as ETH), `balance.state`, and `settlementFailureStreak.consecutiveFailures of N`. Operators see thresholds directly without grepping `.env`.
