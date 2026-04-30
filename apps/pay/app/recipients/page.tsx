@@ -253,13 +253,16 @@ function RecipientForm({
           )
         : await book.update(initial!.id, {
             label: trimmedLabel,
-            memo: trimmedMemo || undefined,
-            email: trimmedEmail || undefined,
-            discordHandle: trimmedDiscord || undefined,
-            // Pass empty string when the user cleared the field so
-            // updateWallet writes `metaAddress: undefined` (its
-            // `trim() || undefined` rule). Skipping the field would
-            // leave the on-disk value untouched.
+            // Pass the raw trimmed string (including "") through to
+            // the SDK rather than `|| undefined`-ing it. SDK
+            // `updateWallet` treats `undefined` as "leave on-disk
+            // value untouched" and `""` as "clear", so collapsing
+            // empty strings to undefined would prevent the user
+            // from clearing memo / email / discord / metaAddress
+            // through the form.
+            memo: trimmedMemo,
+            email: trimmedEmail,
+            discordHandle: trimmedDiscord,
             metaAddress: trimmedMeta,
           });
       if (ok) onClose();
