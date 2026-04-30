@@ -48,7 +48,7 @@ Notes:
 Things that became obvious *after* the operator could actually monitor their relayer end-to-end:
 
 1. **No historical performance view.** `/dashboard` shows the last 24 h. There's no week-over-week or month-over-month trend, and no p50/p95/p99 latency. Operators comparing relayers (or tuning fees) need historical aggregates.
-2. **`/leaderboard` is read-only.** Operators see the bond/fee landscape but can't compare *their* settle latency / volume against peers — the data isn't aggregated cross-relayer in any one place.
+2. **`/leaderboard` is read-only.** ✅ Shipped — leaderboard table now includes Settled / Success / Avg-settle columns sourced from each peer's public `/api/relayer/stats`, plus a "You vs network median" panel that highlights the operator's standing in green/amber. SDK `loadRelayersWithApiInfo({withStats:true})` runs the info + stats probes in parallel per relayer.
 3. **No fee-claim reminder.** With auto-claim retired (§4), operators still benefit from a "USDC claimable: 124 — /treasury" nudge once accruals cross a threshold. Lighter than auto-claim, same alerting infra (#555/#561).
 4. **`/help` doesn't exist.** Every "common error → fix" lookup forces an SSH+grep cycle. The `docs/operations/*.md` files are fine source material.
 5. **No CSV export.** Compliance/finance often want "give me all settlements from <date> to <date>" in CSV. Currently the only path is to query the DB by hand.

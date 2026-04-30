@@ -35,7 +35,7 @@ export default function LeaderboardPage() {
     }
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
-    loadRelayersWithApiInfo(REGISTRY, readProvider)
+    loadRelayersWithApiInfo(REGISTRY, readProvider, { withStats: true })
       .then((rows) => { if (!cancelled) setState({ loading: false, rows, error: null }); })
       .catch((e) => {
         if (cancelled) return;
@@ -89,16 +89,124 @@ export default function LeaderboardPage() {
         </div>
       </section>
 
+      {me && (
+        <SelfComparison me={me} ranked={ranked} />
+      )}
+
       <section>
         <SectionHeader title="Ranking" badge="live" />
         <RelayerTable ranked={ranked} placeholder={placeholder} accountLc={accountLc} />
         <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
-          Status dot reflects a live <code className="font-mono">/api/info</code> probe. Settlements,
-          success rate, and volume metrics arrive once the shared indexer ships.
+          Status dot reflects a live <code className="font-mono">/api/info</code> probe. Settlement
+          counters and avg-settle latency come from each peer&apos;s public{" "}
+          <code className="font-mono">/api/relayer/stats</code> — older builds without the endpoint
+          fall back to <code className="font-mono">—</code>.
         </p>
       </section>
     </div>
   );
+}
+
+function SelfComparison({ me, ranked }: { me: RankedRelayer; ranked: RankedRelayer[] }) {
+  // Network medians exclude the operator's own row so the comparison
+  // is "me vs everyone else", not "me vs myself+everyone". Only peers
+  // with a stats probe contribute to the latency/success medians.
+  const peers = ranked.filter((r) => r.address !== me.address);
+  const { peerSettled, peerSuccess, peerAvg } = peers.reduce(
+    (acc, r) => {
+      const s = r.stats;
+      if (typeof s?.settledOrders === "number") acc.peerSettled.push(s.settledOrders);
+      if (typeof s?.successRate === "number") acc.peerSuccess.push(s.successRate);
+      if (typeof s?.avgSettleTimeMs === "number") acc.peerAvg.push(s.avgSettleTimeMs);
+      return acc;
+    },
+    { peerSettled: [] as number[], peerSuccess: [] as number[], peerAvg: [] as number[] },
+  );
+
+  const myStats = me.stats;
+  return (
+    <section>
+      <SectionHeader title="You vs network median" badge="live" />
+      <div className="grid grid-cols-3 gap-4">
+        <ComparisonStat
+          label="Settled orders"
+          mine={myStats?.settledOrders}
+          peerMedian={median(peerSettled)}
+          format={(n) => n.toString()}
+          higherIsBetter
+        />
+        <ComparisonStat
+          label="Success rate"
+          mine={myStats?.successRate}
+          peerMedian={median(peerSuccess)}
+          format={(n) => `${n}%`}
+          higherIsBetter
+        />
+        <ComparisonStat
+          label="Avg settle time"
+          mine={myStats?.avgSettleTimeMs ?? undefined}
+          peerMedian={median(peerAvg)}
+          format={(n) => `${Math.round(n)} ms`}
+          higherIsBetter={false}
+        />
+      </div>
+      {!myStats && (
+        <p className="mt-2 text-xs text-[var(--color-warning)]">
+          Your relayer didn&apos;t respond to the <code className="font-mono">/api/relayer/stats</code>{" "}
+          probe. Check that it&apos;s reachable from this browser at{" "}
+          <code className="font-mono">{me.url}</code>.
+        </p>
+      )}
+    </section>
+  );
+}
+
+type ComparisonTone = "good" | "bad" | "neutral";
+
+function ComparisonStat({
+  label,
+  mine,
+  peerMedian,
+  format,
+  higherIsBetter,
+}: {
+  label: string;
+  mine: number | undefined;
+  peerMedian: number | null;
+  format: (n: number) => string;
+  higherIsBetter: boolean;
+}) {
+  let tone: ComparisonTone = "neutral";
+  if (mine !== undefined && peerMedian !== null) {
+    const meetsBar = higherIsBetter ? mine >= peerMedian : mine <= peerMedian;
+    tone = meetsBar ? "good" : "bad";
+  }
+  const toneClass =
+    tone === "good"
+      ? "text-[var(--color-success)]"
+      : tone === "bad"
+      ? "text-[var(--color-warning)]"
+      : "text-[var(--color-text)]";
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+        {label}
+      </div>
+      <div className={`mt-1 font-mono text-2xl font-semibold ${toneClass}`}>
+        {mine === undefined ? "—" : format(mine)}
+      </div>
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Peer median: {peerMedian === null ? "—" : format(peerMedian)}
+      </div>
+    </div>
+  );
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 interface RankedRelayer extends RelayerInfo {
@@ -142,7 +250,7 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 6;
+const TABLE_COLUMNS = 9;
 
 function RelayerTable({
   ranked,
@@ -163,6 +271,9 @@ function RelayerTable({
             <th className="px-5 py-3 text-left">Address</th>
             <th className="px-5 py-3 text-right">Fee</th>
             <th className="px-5 py-3 text-right">Bond</th>
+            <th className="px-5 py-3 text-right">Settled</th>
+            <th className="px-5 py-3 text-right">Success</th>
+            <th className="px-5 py-3 text-right">Avg settle</th>
             <th className="px-5 py-3 text-right">Registered</th>
           </tr>
         </thead>
@@ -202,6 +313,15 @@ function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
       <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
       <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
       <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
+      <td className="px-5 py-3 text-right font-mono">
+        {row.stats ? row.stats.settledOrders : "—"}
+      </td>
+      <td className="px-5 py-3 text-right font-mono">
+        {row.stats ? `${row.stats.successRate}%` : "—"}
+      </td>
+      <td className="px-5 py-3 text-right font-mono">
+        {row.stats?.avgSettleTimeMs != null ? `${Math.round(row.stats.avgSettleTimeMs)} ms` : "—"}
+      </td>
       <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
         {formatIsoDate(row.registeredAt)}
       </td>
