@@ -52,7 +52,7 @@ import {
   waitForCallsReceipt,
   Eip5792Unsupported,
   type SendCallsCall,
-} from "@zkscatter/sdk/contracts";
+} from "@zkscatter/sdk/contracts/eip5792";
 import { friendlyError } from "../../lib/error-messages";
 import ExplorerLink from "../../components/ExplorerLink";
 import EmptyState from "../../components/EmptyState";
