@@ -725,7 +725,6 @@ function NewPayout() {
                     + Add from address book
                   </button>
                   <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Upload CSV</button>
-                  <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Import from Safe</button>
                 </div>
                 {addressBookHint && (
                   <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
