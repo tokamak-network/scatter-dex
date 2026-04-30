@@ -289,11 +289,15 @@ function NewPayout() {
         setLabel(r.label);
         setToken(r.tokenSymbol);
         setCsv(recipientsToCsv(unsettled));
-        // `claimFrom` on RecipientRow is per-row Unix seconds (set
-        // together in `buildRunRecord`). Any row carries the same
+        // `claimFrom` on RecipientRow is per-row Unix seconds set
+        // from `new Date("YYYY-MM-DD").getTime()` (UTC midnight).
+        // Round-trip with UTC getters so non-UTC operators don't
+        // see the date shift by a day. Any row carries the same
         // value, so the first one with the field is enough.
         const firstClaimFrom = unsettled.find((u) => u.claimFrom)?.claimFrom;
-        if (firstClaimFrom) setClaimFrom(toIsoDate(new Date(firstClaimFrom * 1000)));
+        if (firstClaimFrom) {
+          setClaimFrom(new Date(firstClaimFrom * 1000).toISOString().slice(0, 10));
+        }
         setStep(4);
         setResume({ kind: "ready", record: r, unsettled });
       } catch (err) {
@@ -332,13 +336,21 @@ function NewPayout() {
         // helper stamps new claim packages onto the original by
         // `rowIndex` so already-issued packages stay intact and a
         // mid-loop failure leaves the remaining recipients pickable
-        // by a follow-up resume.
+        // by a follow-up resume. `settledAt` / `txHash` only advance
+        // when this attempt actually produced something on-chain;
+        // otherwise the dashboard would show a freshly-stamped
+        // submission timestamp for a no-op resume (e.g. batch 1
+        // failed before sending, or the env-not-configured demo
+        // path).
+        const advanced =
+          (claimPackages?.length ?? 0) > 0 ||
+          (!!txHash && !!resumeRecord && txHash !== resumeRecord.txHash);
         const record: RunRecord = resumeRecord
           ? mergeResumedClaimPackages({
               existing: resumeRecord,
               newPackages: claimPackages ?? [],
-              txHash: txHash ?? resumeRecord.txHash,
-              settledAt: Math.floor(Date.now() / 1000),
+              txHash: advanced ? (txHash ?? resumeRecord.txHash) : resumeRecord.txHash,
+              settledAt: advanced ? Math.floor(Date.now() / 1000) : resumeRecord.settledAt,
             })
           : buildRunRecord({
               templateId,
