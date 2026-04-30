@@ -34,12 +34,13 @@ interface WalletBookState {
     memo?: string;
     email?: string;
     discordHandle?: string;
+    metaAddress?: string;
     addressByChain?: Record<number, string>;
   }): Promise<WalletEntry | null>;
   update(
     id: string,
     patch: Partial<
-      Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+      Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle" | "metaAddress"> & {
         addressByChain?: Record<number, string>;
       }
     >,

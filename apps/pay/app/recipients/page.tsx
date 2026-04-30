@@ -38,7 +38,8 @@ export default function RecipientsPage() {
         e.address.includes(q) ||
         (e.memo?.toLowerCase().includes(q) ?? false) ||
         (e.email?.toLowerCase().includes(q) ?? false) ||
-        (e.discordHandle?.toLowerCase().includes(q) ?? false),
+        (e.discordHandle?.toLowerCase().includes(q) ?? false) ||
+        (e.metaAddress?.toLowerCase().includes(q) ?? false),
     );
   }, [book.entries, search]);
 
@@ -164,7 +165,19 @@ function RecipientTable({
           {entries.map((e) => {
             return (
               <tr key={e.id} className="border-t border-[var(--color-border)]">
-                <td className="px-5 py-3 font-medium">{e.label}</td>
+                <td className="px-5 py-3 font-medium">
+                  <div className="flex items-center gap-2">
+                    {e.label}
+                    {e.metaAddress && (
+                      <span
+                        title={`Stealth-ready: ${e.metaAddress}`}
+                        className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
+                      >
+                        Stealth
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-5 py-3 font-mono text-xs">
                   {shortAddr(e.address)}
                 </td>
@@ -212,6 +225,7 @@ function RecipientForm({
   const [memo, setMemo] = useState(initial?.memo ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [discordHandle, setDiscordHandle] = useState(initial?.discordHandle ?? "");
+  const [metaAddress, setMetaAddress] = useState(initial?.metaAddress ?? "");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
@@ -221,6 +235,7 @@ function RecipientForm({
       const trimmedMemo = memo.trim();
       const trimmedEmail = email.trim();
       const trimmedDiscord = discordHandle.trim();
+      const trimmedMeta = metaAddress.trim();
       // Per-chain overrides are not surfaced in the form anymore.
       // Existing entries that already carry `addressByChain` keep
       // their map untouched on edit (we don't pass the field, so the
@@ -233,6 +248,7 @@ function RecipientForm({
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,
               discordHandle: trimmedDiscord || undefined,
+              metaAddress: trimmedMeta || undefined,
             }),
           )
         : await book.update(initial!.id, {
@@ -240,6 +256,11 @@ function RecipientForm({
             memo: trimmedMemo || undefined,
             email: trimmedEmail || undefined,
             discordHandle: trimmedDiscord || undefined,
+            // Pass empty string when the user cleared the field so
+            // updateWallet writes `metaAddress: undefined` (its
+            // `trim() || undefined` rule). Skipping the field would
+            // leave the on-disk value untouched.
+            metaAddress: trimmedMeta,
           });
       if (ok) onClose();
     } finally {
@@ -310,6 +331,27 @@ function RecipientForm({
               placeholder="alice#1234"
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
             />
+          </Field>
+        </FormSection>
+
+        <FormSection
+          title="Stealth"
+          hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
+        >
+          <Field label="Meta-address (optional)">
+            <input
+              value={metaAddress}
+              onChange={(e) => setMetaAddress(e.target.value)}
+              placeholder="st:eth:0x…"
+              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+            />
+            {metaAddress.trim().length > 0 &&
+              !metaAddress.trim().startsWith("st:eth:0x") && (
+                <p className="mt-1 text-xs text-[var(--color-warning)]">
+                  Meta-address should start with{" "}
+                  <code className="font-mono">st:eth:0x</code>.
+                </p>
+              )}
           </Field>
         </FormSection>
 
@@ -458,6 +500,7 @@ const CSV_COLUMNS = [
   "email",
   "discordHandle",
   "memo",
+  "metaAddress",
 ] as const;
 
 function entryToCsvRow(e: WalletEntry): string {
@@ -467,6 +510,7 @@ function entryToCsvRow(e: WalletEntry): string {
     e.email ?? "",
     e.discordHandle ?? "",
     e.memo ?? "",
+    e.metaAddress ?? "",
   ];
   return cells.map(csvEscape).join(",");
 }
