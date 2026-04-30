@@ -22,7 +22,7 @@ This document captures the gaps a real relayer operator would hit today and lays
 
 Notes:
 - The admin panel landed at `/runtime` rather than `/admin` to avoid the protocol-admin connotation — it's the operator's own runtime knobs. Backend keeps `/api/admin/*` for historical reasons; UI eyebrow tags map each section to the route.
-- All four Phase-1-#1 slices completed; the major operator pages (`/dashboard`, `/orders`, `/orders/detail`, `/treasury`) all read live data. One leftover: `/runtime` Status surfaces `db.getRelayerStats()`, which still queries the retired `private_orders` table — values render as zeros today and the section will switch to the indexer once a small follow-up replaces that helper. Tracking under "stale stats helper" in §2.
+- All four Phase-1-#1 slices completed; the major operator pages (`/dashboard`, `/orders`, `/orders/detail`, `/treasury`) all read live data. The "stale stats helper" leftover (Status pulled from the retired `private_orders` table) is fixed — `db.getRelayerStats()` and `db.getSettledVolume()` now read from `settlement_history` so `/runtime` Status shows live counts/avg-settle-time instead of zeros.
 - Auth is `x-admin-key` paste-and-verify, persisted in tab `sessionStorage`. Wallet-signature auth (deferred from v1) was not pursued — the header model has held up fine for single-operator scope.
 
 ### Phase 2 — "stable operations" — ✅ COMPLETE

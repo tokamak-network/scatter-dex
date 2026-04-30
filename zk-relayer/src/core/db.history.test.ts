@@ -462,4 +462,60 @@ describe("PrivateOrderDB settlement history", () => {
       db.getFeeHistory({ limit: 10, offset: 0, since: t0 + 10_000_000 }),
     ).toHaveLength(0);
   });
+
+  // Guards the migration off `private_orders` (retired post-S-M14) for
+  // the /runtime Status helper. The legacy queries returned all-zero
+  // because that table is dead-letter only; these now read from
+  // settlement_history (the live indexer target).
+  it("getRelayerStats reads from settlement_history (not private_orders)", () => {
+    db.setMeta("started_at", "1700000000000");
+    db.recordSettlementEvent({
+      txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
+      blockNumber: 1, gasCostEth: "0.001", sellToken: "0xT", buyToken: "0xU",
+      durationMs: 1000,
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
+      blockNumber: 2, gasCostEth: "0.001", sellToken: "0xT", buyToken: "0xU",
+      durationMs: 2000,
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "3".repeat(64), type: "scatterDirectAuth", status: "failed",
+      blockNumber: 3, gasCostEth: "0", errorReason: "out of gas",
+    });
+    const stats = db.getRelayerStats();
+    expect(stats.totalOrders).toBe(3);
+    expect(stats.settledOrders).toBe(2);
+    expect(stats.successRate).toBe(67);
+    expect(stats.avgSettleTimeMs).toBe(1500);
+    expect(stats.uptimeSince).toBe(1700000000000);
+  });
+
+  it("getSettledVolume groups by sell_token across confirmed settlements", () => {
+    const TOKEN_1 = "0x" + "11".repeat(20);
+    const TOKEN_2 = "0x" + "22".repeat(20);
+    const ADDR_X = "0x" + "33".repeat(20);
+    db.recordSettlementEvent({
+      txHash: "0x" + "a".repeat(64), type: "settleAuth", status: "confirmed",
+      blockNumber: 1, sellToken: TOKEN_1, buyToken: ADDR_X,
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "b".repeat(64), type: "settleAuth", status: "confirmed",
+      blockNumber: 2, sellToken: TOKEN_1, buyToken: ADDR_X,
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "c".repeat(64), type: "settleAuth", status: "confirmed",
+      blockNumber: 3, sellToken: TOKEN_2, buyToken: ADDR_X,
+    });
+    // Failed settlements must be excluded.
+    db.recordSettlementEvent({
+      txHash: "0x" + "d".repeat(64), type: "settleAuth", status: "failed",
+      blockNumber: 4, sellToken: TOKEN_1, buyToken: ADDR_X,
+    });
+    const volume = db.getSettledVolume();
+    const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v.count]));
+    expect(byToken[TOKEN_1]).toBe(2);
+    expect(byToken[TOKEN_2]).toBe(1);
+    expect(volume).toHaveLength(2);
+  });
 });

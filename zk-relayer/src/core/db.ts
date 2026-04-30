@@ -360,17 +360,35 @@ export class PrivateOrderDB {
        GROUP BY peer_relayer
        ORDER BY (sent + received) DESC, lastAt DESC
     `);
-    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
-    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
-    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1");
+    // Stats are sourced from `settlement_history` and `trade_offers` —
+    // the canonical persisted records of relayer activity. The prior
+    // `private_orders`-based queries returned zeros because that table
+    // is dead-letter only post-S-M14 (the live flow purges through
+    // `authorize_orders` and the per-row settlement event is what gets
+    // persisted long-term).
+    //   - totalOrders / settledOrders count attempts vs confirmations
+    //     in settlement_history (every submitted settle gets a row).
+    //   - avgSettleTimeMs uses the duration_ms column populated by the
+    //     submitter (worker claim → on-chain confirmation).
+    //   - crossRelayerSettled and trade-offer counts come from
+    //     trade_offers, the cross-relayer audit trail.
+    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history");
+    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history WHERE status = 'confirmed'");
+    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
     this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
     this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
     this.statsAvgSettleTime = this.db.prepare(
-      "SELECT AVG(settled_at - submitted_at) as avg_ms FROM private_orders WHERE status = 'settled' AND settled_at IS NOT NULL",
+      "SELECT AVG(duration_ms) as avg_ms FROM settlement_history WHERE status = 'confirmed' AND duration_ms IS NOT NULL",
     );
+    // Volume stays computed from settlement_history — sell/buy token
+    // and per-row counts are available, but settlement_history doesn't
+    // record sell_amount yet (only addresses + gas). For now expose the
+    // count-by-token, leaving totalVolume as "0" (a future migration
+    // will add sell_amount to the row, see gap-analysis §2 followup).
     this.statsSettledVolume = this.db.prepare(
-      `SELECT sell_token, COUNT(*) as count, GROUP_CONCAT(sell_amount) as amounts
-       FROM private_orders WHERE status = 'settled' GROUP BY sell_token`,
+      `SELECT sell_token, COUNT(*) as count, '0' as amounts
+       FROM settlement_history WHERE status = 'confirmed' AND sell_token IS NOT NULL
+       GROUP BY sell_token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
