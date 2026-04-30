@@ -21,6 +21,8 @@
 | 30 | relayer | `/api/p2p/orders` schema 정합성 — authorize 폴백 매칭 | ✅ | PR #318 / 커밋 `a046240` — POST 검증에서 `nonce` 제거, DELETE 권한 체크를 `lookupOrderRelayer` 콜백으로 교체. authorize 오더가 P2P fallback에서 정상 매칭됨 (2026-04-15) |
 | 31 | relayer | authorize 오더북 pair 인덱스 (O(N) → O(pair)) | ✅ | `routes/authorize-orders.ts` 에 `ordersByPair` 인덱스 추가. `findMatch` + `AuthorizeCrossRelayerMatchService.onRemoteOrderArrived` 모두 pair lookup 사용 (2026-04-15) |
 | R-14 | relayer | 부하 테스트 (k6/artillery) | ⬜ | 동시 주문/정산 부하 시나리오 |
+| 32 | apps/pro | 메타어드레스 비밀키를 폴더 스토리지로 이전 | ⬜ | 현재 `apps/pro/app/lib/metaAddress.tsx` 가 `localStorage` (`zkscatter-pro-meta-address-v1`) 에 spending/viewing 비밀키 저장. apps/pay 는 이미 `useFolderStorage` (File System Access API) 로 `zkscatter-wallets.json` 을 사용자가 고른 폴더에 보관 — 두 앱 간 일관성 + 백업/디바이스 이전성을 위해 pro 도 같은 패턴으로 옮김. 작업: localStorage 읽기/쓰기 → folder JSON (`zkscatter-meta-address.json`), `<FolderStorageProvider>` 마운트, "Pick a notes folder first" 가드, 한 번만 동작하는 localStorage→folder 마이그레이션. 별도 PR `feat/pro-meta-address-folder-storage` 로 처리 예정 (2026-04-30 기록) |
+| 33 | apps/pay | 수신자용 stealth wallet 인터페이스 | ⬜ | 현재 stealth 수신 흐름(메타어드레스 생성 / 공유 / ephemeralPubKey 입력 후 claim)이 `apps/pro /inbox` 에만 있음. pay 의 수신자(employees/contractors 등)는 pro 를 안 쓰기 때문에 pay 컨텍스트에서 자기 stealth wallet 을 다룰 수 있어야 함. 설계 옵션: (a) pay 에 `/wallet` 또는 `/inbox` 추가하고 pro 와 같은 메타어드레스 / ephemeralPubKey UI 복제, (b) shared `apps/wallet` 등으로 추출해 pro·pay 양쪽이 공유, (c) pay 의 claim link 페이지에서 메타어드레스 자동 생성·관리 통합. 항목 #32 (folder storage 이전) 와 같은 PR 또는 직후 PR 로 처리. (2026-04-30 기록) |
 
 ### #29 범위 메모 (2026-04-15 갱신)
 
