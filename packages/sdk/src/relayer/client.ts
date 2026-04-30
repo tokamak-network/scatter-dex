@@ -6,6 +6,7 @@ import type {
   OrderHistoryResponse,
   RelayerApiInfo,
   RelayerOrder,
+  RelayerStatsResponse,
 } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -38,6 +39,17 @@ export class RelayerClient {
     if (!res.ok) throw await httpError("info", res);
     const raw = (await res.json()) as RelayerApiInfo;
     return { ...raw, profile: sanitizeProfile(raw?.profile) };
+  }
+
+  /** Public stats from `/api/relayer/stats` — operational counters
+   *  (totalOrders, settledOrders, avgSettleTimeMs, …). No auth, no
+   *  PII; surfaces for cross-relayer comparison on the leaderboard. */
+  async getStats(signal?: AbortSignal): Promise<RelayerStatsResponse> {
+    const res = await this.fetchImpl(`${this.baseUrl}/api/relayer/stats`, {
+      signal: timeoutSignal(this.timeoutMs, signal),
+    });
+    if (!res.ok) throw await httpError("stats", res);
+    return (await res.json()) as RelayerStatsResponse;
   }
 
   async submitOrder(

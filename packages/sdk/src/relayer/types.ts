@@ -34,10 +34,51 @@ export interface RelayerApiInfo {
   profile?: RelayerProfile;
 }
 
+/** Per-token settled volume (one row per `sell_token`). `totalVolume`
+ *  is a wei-string (BigInt-safe) so callers can `BigInt()` it back. */
+export interface RelayerSettledVolume {
+  sellToken: string;
+  count: number;
+  totalVolume: string;
+}
+
+/** In-memory metrics shape returned alongside DB-derived counters.
+ *  Optional because older relayer builds don't compute it. */
+export interface RelayerRuntimeMetrics {
+  gas: { avgCostEth: number | null; minCostEth: number | null; maxCostEth: number | null; lastCostEth: number | null; totalSpentEth: number };
+  settlement: { avgDurationMs: number | null; minDurationMs: number | null; maxDurationMs: number | null; lastDurationMs: number | null; totalCount: number; perMinute: number };
+  orders: { submittedPerMinute: number };
+  sampleSize: number;
+}
+
+/** Public stats from a relayer's `/api/relayer/stats`. Surfaced for
+ *  cross-relayer comparison (leaderboard performance columns).
+ *  - `avgSettleTimeMs` is null when there are no confirmed settlements
+ *    in the window (the SQL AVG returns null).
+ *  - `uptimeSince` is null when the `started_at` meta key is missing
+ *    or unparseable — independent of settlement count. */
+export interface RelayerStatsResponse {
+  address: string;
+  totalOrders: number;
+  settledOrders: number;
+  successRate: number;
+  crossRelayerSettled: number;
+  totalTradeOffers: number;
+  settledTradeOffers: number;
+  avgSettleTimeMs: number | null;
+  uptimeSince: number | null;
+  pendingOrders: number;
+  settledVolume?: RelayerSettledVolume[];
+  metrics?: RelayerRuntimeMetrics;
+}
+
 /** Combined view: on-chain registry data + live `/api/info` probe.
- *  `api` is undefined when the relayer is offline / unreachable. */
+ *  `api` is undefined when the relayer is offline / unreachable.
+ *  `stats` is undefined when the stats probe failed (older relayer
+ *  build, network error, or feature not enabled). */
 export interface RelayerInfo extends RelayerOnChain {
   api?: RelayerApiInfo;
+  stats?: RelayerStatsResponse;
   online: boolean;
 }
 

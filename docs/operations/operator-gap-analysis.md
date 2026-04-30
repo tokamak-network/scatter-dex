@@ -70,17 +70,17 @@ The original Phase 3 list (#9–#13) folds in with the new gaps from §2. Re-ran
 | New # | Theme | Source | Effort | Notes |
 |---|---|---|---|---|
 | **9** ✅ | **SLA / performance dashboard** | v1 #9 + new gap #1 | Large | Shipped (PR #568). Historical p50/p95/p99 latency, throughput time-series via the `/api/admin/history/buckets` endpoint, hand-rolled SVG charts on `/dashboard`. |
-| 10 ✅ | **In-app docs (`/help`)** | v1 #13 + new gap #4 | Medium | Shipped (PR #571). `/docs?d=<slug>` viewer with 7 markdown guides; per-error-code anchors so `last_error` rows deep-link. Static-export friendly (`?d=` query, not a `[slug]` segment) per the operators-app convention. |
-| 11 ✅ | **Cross-relayer visibility** | v1 #11 + new gap #9 | Medium | Shipped (PR #569). `/runtime` Cross-relayer section + extended `/leaderboard` surface `trade_offers` and per-peer roll-up stats. |
+| 10 ✅ | **In-app docs (`/docs?d=<slug>`)** | v1 #13 + new gap #4 | Medium | Shipped (PR #571). Originally scoped as `/help`; landed at `/docs?d=<slug>` to fit the operators app's static-export convention (no `[param]` segments). 7 markdown guides served in-app, per-error-code anchors so `last_error` rows deep-link. |
+| 11 ✅ | **Cross-relayer visibility** | v1 #11 + new gap #9 | Medium | Shipped (PR #569). `/runtime` Cross-relayer section surfaces the `trade_offers` audit trail + per-peer roll-up stats. (Originally scoped to also extend `/leaderboard`; ended up consolidated under `/runtime` since that's where operators already manage cross-relayer config.) |
 | 12 ✅ (history) | **Compliance export (CSV)** | v1 #12 + new gap #5 | Small-medium | `GET /api/admin/history.csv` shipped (PR #578) — streamed via DB iterator + `Readable.from` for backpressure-safe export of arbitrary windows. Operators console exposes an "Export CSV" button on `/orders`. `sanctions-events.csv` deferred — sanctions events aren't persisted yet (in-memory only); will land alongside a sanctions-events table. |
 | 13 ✅ | **Fee-claim reminder + threshold UI** | new gaps #3, #11 | Small | Shipped (PR #575). Per-token threshold persisted in `relayer_meta`, monitored once a minute, reuses #555/#561 webhook infra; `/runtime` UI lets operators set the threshold inline. |
-| 14 | **Prometheus `/metrics` endpoint** ✅ | new gap #10 | Small | Shipped — `GET /metrics` on the relayer emits in-memory + DB stats in Prometheus exposition format. Scrape with any Prometheus-compatible agent (Grafana Agent, Datadog, vmagent). |
+| 14 ✅ | **Prometheus `/metrics` endpoint** | new gap #10 | Small | Shipped (PR #576). `GET /metrics` on the relayer emits in-memory + DB stats in Prometheus exposition format. Scrape with any Prometheus-compatible agent (Grafana Agent, Datadog, vmagent). |
 | 15 | **Key rotation flow** *(security-critical)* | v1 #10 | Large + contract change | Defer until governance defines the rotation semantics on `RelayerRegistry`; documenting the gap, not pre-spec'ing. |
-| 16 | **Proof inspection on `/orders/detail`** ✅ | new gap #6 | Small-medium | Shipped — `GET /api/admin/orders/by-tx/:txHash/proof` decodes a settlement tx's calldata into its public signals (settleAuth maker+taker or scatterDirectAuth single proof). `/orders/detail` renders a lazy-loaded "Proof inspection" section with each public signal labelled, plus the raw calldata as a nested collapsible. |
+| 16 ✅ | **Proof inspection on `/orders/detail`** | new gap #6 | Small-medium | Shipped (PR #579). `GET /api/admin/orders/by-tx/:txHash/proof` decodes a settlement tx's calldata into its public signals (settleAuth maker+taker or scatterDirectAuth single proof). `/orders/detail` renders a lazy-loaded "Proof inspection" section with each public signal labelled, plus the raw calldata as a nested collapsible. |
 
 ### Phase 3 — done.
 
-All 8 ranked items merged across PRs #568–#586. Only #15 (key rotation) remains explicitly deferred pending governance spec on `RelayerRegistry`.
+7 of 8 ranked items shipped (#9 #568, #10 #571, #11 #569, #12 #578, #13 #575, #14 #576, #16 #579). #15 (key rotation flow) remains explicitly deferred pending governance spec on `RelayerRegistry` — see the table row.
 
 ### What's next (when relevant)
 
@@ -125,9 +125,10 @@ Originally proposed: replace `x-admin-key` paste with a wallet signature from th
 | `/onboarding` | Six-step Get Started + live status checks | wallet · `/health` |
 | `/dashboard` | Operator overview | `/api/admin/status` + history |
 | `/orders` | Settlement history list (filter, paginate) | `/api/admin/history` |
-| `/orders/detail` | Single-tx debug view | `/api/admin/history/by-tx/:txHash` |
+| `/orders/detail` | Single-tx debug view + proof inspection | `/api/admin/history/by-tx/:txHash` · `/api/admin/orders/by-tx/:txHash/proof` |
 | `/treasury` | FeeVault balances + fee accrual | on-chain · `/api/admin/history/fees` |
-| `/leaderboard` | All registered relayers | cross-relayer fetch |
+| `/leaderboard` | All registered relayers + you-vs-network comparison | cross-relayer fetch (`/api/info` + `/api/relayer/stats`) |
+| `/docs` | In-app operations guides (`?d=<slug>`) | static markdown |
 | `/profile` | Update URL/fee, bond, exit | `RelayerRegistry` |
 | `/register` | First-time registration | `RelayerRegistry` |
-| `/runtime` | Pause/resume, fee, drain, sanctions, profile, webhook, logs | `/api/admin/*` |
+| `/runtime` | Pause/resume, fee, drain, sanctions, profile, webhook, claim reminders, cross-relayer, logs | `/api/admin/*` |
