@@ -34,12 +34,13 @@ interface WalletBookState {
     memo?: string;
     email?: string;
     discordHandle?: string;
+    metaAddress?: string;
     addressByChain?: Record<number, string>;
   }): Promise<WalletEntry | null>;
   update(
     id: string,
     patch: Partial<
-      Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+      Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle" | "metaAddress"> & {
         addressByChain?: Record<number, string>;
       }
     >,
@@ -111,6 +112,7 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
       memo?: string;
       email?: string;
       discordHandle?: string;
+      metaAddress?: string;
       addressByChain?: Record<number, string>;
     }) => {
       try {
@@ -130,7 +132,7 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
     async (
       id: string,
       patch: Partial<
-        Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle"> & {
+        Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle" | "metaAddress"> & {
           addressByChain?: Record<number, string>;
         }
       >,

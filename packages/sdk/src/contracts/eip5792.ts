@@ -114,7 +114,7 @@ function isMethodNotFound(err: unknown): boolean {
 /**
  * Returns the capabilities the wallet advertises for the given account.
  * Shape mirrors EIP-5792:
- *   { "0x7a69": { atomicBatch: { supported: true }, paymasterService: { ... } } }
+ * `{ "0x7a69": { atomicBatch: { supported: true }, paymasterService: { ... } } }`.
  * Null when the wallet doesn't implement `wallet_getCapabilities`.
  */
 export async function fetchCapabilities(
