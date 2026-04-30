@@ -1,14 +1,15 @@
 "use client";
 
 import { ethers } from "ethers";
-import { Field } from "@zkscatter/ui";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 import {
-  describeBatchFitError,
   type PerBatchPick,
   type SourceNotesPick,
 } from "../../../_lib/sourceNotes";
 import { getNetworkConfig, isNetworkConfigured } from "../../../_lib/network";
+import { BatchFitWarning } from "./BatchFitWarning";
+import { RelayerPanel } from "./RelayerPanel";
+import { SourceNotesPanel } from "./SourceNotesPanel";
 
 export function BalancePanel({
   token,
@@ -110,9 +111,6 @@ export interface FundsStepProps {
     account: string | null;
     vaultLoaded: boolean;
   };
-  /** `registryConfigured` distinguishes "registry env not wired"
-   *  from "registry wired but no online relayers" so the UI can
-   *  show the right empty state. */
   relayer: {
     list: RelayerInfo[];
     selected: RelayerInfo | null;
@@ -128,26 +126,8 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStep
   const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
   const { sourcePick, batchCount, multiBatchFit } = pick;
   const { account, vaultLoaded } = wallet;
-  const {
-    list: relayers,
-    selected: selectedRelayer,
-    registryConfigured,
-    select: selectRelayer,
-    maxFeeBps,
-    setMaxFeeBps,
-  } = relayer;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
   const configured = isNetworkConfigured(getNetworkConfig());
-  const onlineRelayers = relayers.filter((r) => r.online);
-  // Keep the currently-selected relayer in the dropdown even after it
-  // goes offline so the controlled <select> never has a `value` that
-  // doesn't match an `<option>` (React would warn + show the wrong
-  // entry). The offline option is rendered with a "(offline)" suffix
-  // so the user can still see what they had picked.
-  const relayerOptions =
-    selectedRelayer && !selectedRelayer.online
-      ? [selectedRelayer, ...onlineRelayers]
-      : onlineRelayers;
 
   return (
     <div className="space-y-5">
@@ -157,119 +137,33 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStep
         notes will fund this run. Top up via Deposit if there&apos;s a shortfall.
       </p>
 
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
-        <h3 className="mb-2 text-sm font-semibold">Relayer</h3>
-        {!registryConfigured ? (
-          <div className="text-[var(--color-warning)]">
-            No relayer registry configured. Set <span className="font-mono">NEXT_PUBLIC_PAY_RELAYER_REGISTRY</span> to enable signing.
-          </div>
-        ) : onlineRelayers.length === 0 ? (
-          <div className="text-[var(--color-warning)]">
-            No relayers online right now. Try again in a minute.
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Selected relayer">
-              <select
-                value={selectedRelayer?.address ?? ""}
-                onChange={(e) => selectRelayer(e.target.value)}
-                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
-              >
-                {relayerOptions.map((r) => (
-                  <option key={r.address} value={r.address}>
-                    {r.api?.name ?? r.address.slice(0, 10)}… · {r.fee} bps
-                    {r.online ? "" : " (offline)"}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Max fee (bps)">
-              <input
-                type="number"
-                min={0}
-                max={1000}
-                step={1}
-                value={maxFeeBps}
-                onChange={(e) =>
-                  setMaxFeeBps(Math.max(0, Math.min(1000, Math.trunc(Number(e.target.value) || 0))))
-                }
-                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
-              />
-            </Field>
-          </div>
-        )}
-      </div>
+      <RelayerPanel
+        list={relayer.list}
+        selected={relayer.selected}
+        registryConfigured={relayer.registryConfigured}
+        select={relayer.select}
+        maxFeeBps={relayer.maxFeeBps}
+        setMaxFeeBps={relayer.setMaxFeeBps}
+      />
 
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
         <h3 className="mb-2 text-sm font-semibold">Required to escrow</h3>
         <dl className="space-y-1 font-mono">
           <FundsRow k="Recipients total" v={`${fmt(requiredRaw)} ${token}`} />
-          <FundsRow k={`Fee at max (${maxFeeBps} bps)`} v={`${fmt(feeRaw)} ${token}`} />
+          <FundsRow k={`Fee at max (${relayer.maxFeeBps} bps)`} v={`${fmt(feeRaw)} ${token}`} />
           <FundsRow k="Total to escrow" v={`${fmt(totalEscrowRaw)} ${token}`} bold />
         </dl>
       </div>
 
-      {!account ? (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-          Connect a wallet to see your source notes.
-        </div>
-      ) : !vaultLoaded ? (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-          Reading your vault…
-        </div>
-      ) : (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Source notes (auto-pick)</h3>
-            <button
-              disabled
-              title="Manual selection arrives in Phase E"
-              className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-[var(--color-text-subtle)] opacity-40"
-            >
-              Change selection
-            </button>
-          </div>
-          <div className="mb-2 text-[var(--color-text-muted)]">
-            Available: <span className="font-mono">{fmt(availableRaw)} {token}</span>
-            {pendingRaw > 0n && (
-              <>
-                {" · Pending: "}
-                <span className="font-mono">{fmt(pendingRaw)} {token}</span>
-              </>
-            )}
-          </div>
-          {pendingRaw > 0n && (
-            <div className="mb-2 text-[var(--color-text-subtle)]">
-              Pending notes are deposited but waiting for the next block —
-              they become spendable once the reconciler observes them.
-            </div>
-          )}
-          {sourcePick.notes.length > 0 ? (
-            <ul className="space-y-0.5 font-mono">
-              {sourcePick.notes.map(({ note: n, spend }) => (
-                <li key={n.id} className="flex justify-between">
-                  <span>
-                    {n.label} · deposited {new Date(n.createdAt).toISOString().slice(0, 10)}
-                  </span>
-                  <span>
-                    {fmt(spend)} / {fmt(n.note.amount)} {token}
-                  </span>
-                </li>
-              ))}
-              <li className="mt-2 flex justify-between border-t border-[var(--color-border)] pt-2 text-[var(--color-text-muted)]">
-                <span>Change after run (new note)</span>
-                <span>{fmt(sourcePick.changeRaw)} {token}</span>
-              </li>
-            </ul>
-          ) : (
-            <div className="text-[var(--color-text-muted)]">
-              {availableRaw > 0n
-                ? "Matching notes are available, but they don't cover the run total. Deposit below to close the shortfall."
-                : "No matching notes yet. Deposit below to fund this run."}
-            </div>
-          )}
-        </div>
-      )}
+      <SourceNotesPanel
+        token={token}
+        decimals={decimals}
+        account={account}
+        vaultLoaded={vaultLoaded}
+        availableRaw={availableRaw}
+        pendingRaw={pendingRaw}
+        sourcePick={sourcePick}
+      />
 
       {shortfallRaw > 0n && (
         <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
@@ -292,22 +186,11 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStep
         </div>
       )}
 
-      {/* Multi-batch picker pre-flight: warn at Funds step rather
-          than throwing at sign time. shortfallRaw is the sum-of-totals
-          check; this is the per-batch fit check (each batch needs one
-          confirmed note ≥ its totalAmount). */}
-      {batchCount > 1 && multiBatchFit && !multiBatchFit.covered && multiBatchFit.reason && shortfallRaw === 0n && (() => {
-        // Render the same copy `doSubmit` would throw with — single
-        // source via `describeBatchFitError` so the warning here and
-        // the thrown error can't drift.
-        const { title, body } = describeBatchFitError(multiBatchFit.reason, batchCount);
-        return (
-          <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-            <div className="mb-1 font-semibold">{title}</div>
-            <p>{body}</p>
-          </div>
-        );
-      })()}
+      <BatchFitWarning
+        batchCount={batchCount}
+        multiBatchFit={multiBatchFit}
+        shortfallRaw={shortfallRaw}
+      />
     </div>
   );
 }

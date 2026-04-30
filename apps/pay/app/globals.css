@@ -32,3 +32,29 @@ html, body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* Print: hide UI chrome that doesn't belong on a printed payout
+ * sheet — workspace bars, action menus, breadcrumbs, primary
+ * buttons that operators wouldn't act on from paper. The detail
+ * page's body (header, summary stats, recipient table, claim links)
+ * is what should land on the page; everything else is interactive
+ * scaffolding around it. Components opt in by adding `data-print="hide"`
+ * (or by sitting under a parent that has it). */
+@media print {
+  [data-print="hide"],
+  [data-print="hide"] * {
+    display: none !important;
+  }
+  html,
+  body {
+    background: white;
+    color: black;
+  }
+  /* Open dropdowns are absolutely positioned over the page; if a user
+   * triggers print while one's open it would print on top of body
+   * content. Force them shut visually. */
+  [role="menu"],
+  [aria-expanded="true"] + [role="menu"] {
+    display: none !important;
+  }
+}
