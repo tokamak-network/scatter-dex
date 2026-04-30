@@ -31,7 +31,10 @@ const SETTLEMENT_FN_ABI = [
 const settlementInterface = new ethers.Interface(SETTLEMENT_FN_ABI);
 
 /** Public-signal fields of an authorize proof, normalized to JSON-safe
- *  primitives (BigInt → string for uints over 2^53). */
+ *  primitives. Wide uints (uint64 / uint128 / uint256) are stringified
+ *  unconditionally so consumers can `BigInt()` them back without having
+ *  to first check whether the value happened to fit under 2^53. Narrow
+ *  uints (uint8 tier, uint16 maxFee) safely round-trip as `number`. */
 export interface AuthorizeProofSignals {
   pubKeyBind: string;
   commitmentRoot: string;

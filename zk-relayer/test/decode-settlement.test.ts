@@ -92,18 +92,18 @@ describe("decodeSettlementCalldata", () => {
     expect(decoded.proof.tier).toBe(16);
   });
 
-  it("preserves BigInt precision on 128-bit fields beyond 2^53", () => {
-    const huge = 2n ** 100n; // way past Number.MAX_SAFE_INTEGER
-    // 128-bit fields cap at 2^128, so use a value that fits.
-    const fits128 = (1n << 127n) - 1n;
+  it("preserves BigInt precision on wide-uint fields beyond 2^53", () => {
+    const fits128 = (1n << 127n) - 1n;        // uint128 max-fitting test value
+    const fits256 = (1n << 250n) + 12345n;    // way past 2^53, fits uint256
     const data = iface.encodeFunctionData("settleAuth", [
-      [makeProof({ totalLocked: fits128 }), makeProof(), 0n, 0n],
+      [makeProof({ totalLocked: fits128, commitmentRoot: fits256 }), makeProof(), 0n, 0n],
     ]);
     const decoded = decodeSettlementCalldata(data);
     if (decoded?.function !== "settleAuth") throw new Error("expected settleAuth");
     expect(decoded.maker.totalLocked).toBe(fits128.toString());
     expect(BigInt(decoded.maker.totalLocked)).toBe(fits128);
-    // Plus a 256-bit commitmentRoot test for full coverage.
-    void huge;
+    // commitmentRoot is uint256 — round-trips via BigInt without precision loss.
+    expect(decoded.maker.commitmentRoot).toBe(fits256.toString());
+    expect(BigInt(decoded.maker.commitmentRoot)).toBe(fits256);
   });
 });

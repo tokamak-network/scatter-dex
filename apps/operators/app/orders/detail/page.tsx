@@ -366,10 +366,12 @@ function ProofInspectionSection({ auth, txHash }: { auth: NonNullable<Auth>; txH
   // Fetch only when the operator opens the section — proofs are large
   // and most page loads land here for fees/processing, not for proof
   // inspection. `data !== null` caches the result for the session;
-  // a prior error leaves data null so reopening retries.
+  // a prior error leaves data null so reopening retries. The `loading`
+  // guard prevents an open → close → open-while-in-flight race from
+  // firing duplicate fetches and double-applying setData/setError.
   const onToggle = useCallback(
     async (e: React.SyntheticEvent<HTMLDetailsElement>) => {
-      if (!e.currentTarget.open || data) return;
+      if (!e.currentTarget.open || data || loading) return;
       setLoading(true);
       setError(null);
       try {
@@ -384,7 +386,7 @@ function ProofInspectionSection({ auth, txHash }: { auth: NonNullable<Auth>; txH
         setLoading(false);
       }
     },
-    [auth, txHash, data],
+    [auth, txHash, data, loading],
   );
 
   return (
