@@ -17,6 +17,8 @@ const FILES = [
   "authorize_final.zkey",
   "claim.wasm",
   "claim_final.zkey",
+  "deposit.wasm",
+  "deposit_final.zkey",
 ];
 
 if (!existsSync(src)) {
