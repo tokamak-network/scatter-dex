@@ -88,6 +88,23 @@ function ClaimInner() {
   }, []);
 
   const cfg = useMemo(() => getNetworkConfig(), []);
+  // Resolve to a safe `<base>/tx/<hash>` URL or null. The base comes
+  // from a public env var, so a misconfigured `javascript:...` /
+  // `data:...` would render an unsafe link if rendered raw — guard
+  // by parsing through the URL constructor and accepting only http
+  // and https.
+  const explorerTxUrl = useMemo(() => {
+    const base = cfg.explorerBase;
+    if (!base) return null;
+    try {
+      const u = new URL(base);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      const trimmed = base.replace(/\/$/, "");
+      return (txHash: string) => `${trimmed}/tx/${txHash}`;
+    } catch {
+      return null;
+    }
+  }, [cfg.explorerBase]);
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix
     : undefined;
@@ -291,7 +308,25 @@ function ClaimInner() {
           {phase.kind === "done" ? (
             <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-center text-xs text-[var(--color-success)]">
               <div className="mb-1 font-semibold">✓ Claimed</div>
-              <div className="font-mono">{shortAddr(phase.txHash)}</div>
+              {explorerTxUrl ? (
+                <a
+                  href={explorerTxUrl(phase.txHash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono underline-offset-2 hover:underline"
+                >
+                  {shortAddr(phase.txHash)} ↗
+                </a>
+              ) : (
+                <div className="font-mono">{shortAddr(phase.txHash)}</div>
+              )}
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                {/* `parsed` is guaranteed here — the claim flow can't
+                    reach `done` without it, since doClaim() bails on
+                    `!parsed`. */}
+                Tokens are on-chain at {shortAddr(parsed!.pkg.recipient)}. Refresh
+                your wallet if the balance hasn&apos;t updated yet.
+              </div>
             </div>
           ) : (() => {
               // App-chain mismatch is terminal — neither path can
@@ -328,7 +363,7 @@ function ClaimInner() {
                       Connect wallet to claim
                     </button>
                     {connectError && (
-                      <div className="text-center text-xs text-[var(--color-error,#dc2626)]">
+                      <div className="text-center text-xs text-[var(--color-danger)]">
                         {connectError === "no-wallet"
                           ? "Install MetaMask to continue."
                           : connectError}
