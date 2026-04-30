@@ -229,7 +229,6 @@ export class PrivateOrderDB {
   private selectPeerStats: ReturnType<Database.Database["prepare"]>;
   private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
   private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
-  private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
   private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsAvgSettleTime: ReturnType<Database.Database["prepare"]>;
@@ -360,17 +359,39 @@ export class PrivateOrderDB {
        GROUP BY peer_relayer
        ORDER BY (sent + received) DESC, lastAt DESC
     `);
-    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders");
-    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled'");
-    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM private_orders WHERE status = 'settled' AND cross_relayer = 1");
+    // Stats are sourced from `settlement_history` and `trade_offers` —
+    // the canonical persisted records of relayer activity. The prior
+    // `private_orders`-based queries returned zeros because that table
+    // is dead-letter only post-S-M14 (the live flow purges through
+    // `authorize_orders` and the per-row settlement event is what gets
+    // persisted long-term).
+    //   - totalOrders / settledOrders count attempts vs confirmations
+    //     in settlement_history (every submitted settle gets a row).
+    //   - avgSettleTimeMs uses the duration_ms column populated by the
+    //     submitter (worker claim → on-chain confirmation).
+    //   - crossRelayerSettled and trade-offer counts come from
+    //     trade_offers, the cross-relayer audit trail.
+    this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history");
+    this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history WHERE status = 'confirmed'");
+    // crossRelayerSettled and settledTradeOffers are the same query —
+    // a trade_offer that reached `status='settled'` *is* a cross-relayer
+    // settlement. Prepared once, reused for both fields in
+    // `getRelayerStats()` so the API surface stays explicit while the
+    // SQL doesn't run twice.
     this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
     this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
     this.statsAvgSettleTime = this.db.prepare(
-      "SELECT AVG(settled_at - submitted_at) as avg_ms FROM private_orders WHERE status = 'settled' AND settled_at IS NOT NULL",
+      "SELECT AVG(duration_ms) as avg_ms FROM settlement_history WHERE status = 'confirmed' AND duration_ms IS NOT NULL",
     );
+    // Volume stays computed from settlement_history — sell/buy token
+    // and per-row counts are available, but settlement_history doesn't
+    // record sell_amount yet (only addresses + gas). For now expose the
+    // count-by-token, leaving totalVolume as "0" (a future migration
+    // will add sell_amount to the row, see gap-analysis §2 followup).
     this.statsSettledVolume = this.db.prepare(
-      `SELECT sell_token, COUNT(*) as count, GROUP_CONCAT(sell_amount) as amounts
-       FROM private_orders WHERE status = 'settled' GROUP BY sell_token`,
+      `SELECT sell_token, COUNT(*) as count, '0' as amounts
+       FROM settlement_history WHERE status = 'confirmed' AND sell_token IS NOT NULL
+       GROUP BY sell_token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
@@ -1179,6 +1200,15 @@ export class PrivateOrderDB {
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
+  /** Stats are aggregated from `settlement_history` (full-table COUNTs
+   *  + AVG over `duration_ms`) and `trade_offers`. Both `/api/admin/status`
+   *  and `/metrics` poll this on a tight cadence; cache the result for
+   *  a few seconds so we're not repeating the aggregate scan back-to-back
+   *  as the table grows. The TTL is short enough that staleness is
+   *  invisible to a refreshing operator console. */
+  private statsCache: { at: number; value: ReturnType<PrivateOrderDB["getRelayerStats"]> } | null = null;
+  private static STATS_TTL_MS = 5_000;
+
   getRelayerStats(): {
     totalOrders: number;
     settledOrders: number;
@@ -1189,18 +1219,24 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
+    const now = Date.now();
+    if (this.statsCache && now - this.statsCache.at < PrivateOrderDB.STATS_TTL_MS) {
+      return this.statsCache.value;
+    }
     const total = (this.statsTotalOrders.get({}) as { count: number }).count;
     const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
     const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
     const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    // Trade offers reach `status='settled'` only via cross-relayer
+    // settlement; reuse the same count rather than running it twice.
+    const crossRelayer = tradeSettled;
     const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");
     const startedAt = startedAtRaw !== null ? Number(startedAtRaw) : NaN;
 
-    return {
+    const value = {
       totalOrders: total,
       settledOrders: settled,
       successRate: total > 0 ? Math.round((settled / total) * 100) : 0,
@@ -1210,6 +1246,8 @@ export class PrivateOrderDB {
       avgSettleTimeMs,
       uptimeSince: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
     };
+    this.statsCache = { at: now, value };
+    return value;
   }
 
   /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
