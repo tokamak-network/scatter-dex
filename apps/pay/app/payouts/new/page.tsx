@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import {
@@ -31,7 +31,6 @@ import {
   Toggle,
 } from "./_components/wizardChrome";
 import { BalancePanel, FundsStep } from "./_components/FundsStep";
-import { dryRunDeposit } from "./_dryRunDeposit";
 import { realDeposit, type DepositPhase } from "../../_lib/realDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
@@ -180,6 +179,12 @@ function NewPayout() {
   // `done` / `error` so the operator sees the outcome until they
   // start a new deposit.
   const [depositPhase, setDepositPhase] = useState<DepositPhase | null>(null);
+  // Synchronous re-entry guard. State updates are async — two clicks
+  // in the same render frame would both pass a `depositPhase`-only
+  // check and start two deposits (double approve + double gas).
+  // The ref flips before any await, so the second click bails out
+  // immediately even though the corresponding state hasn't flushed.
+  const depositInFlightRef = useRef(false);
 
   useEffect(() => {
     setClaimFrom(today());
@@ -858,32 +863,18 @@ function NewPayout() {
               setMaxFeeBps,
             }}
             onDeposit={() => {
-              // Guard against re-entry: a second click while the
-              // first deposit is mid-flight would race two approve
-              // → submit pairs and likely double-pay gas. Done /
-              // error states are terminal and re-clickable.
-              if (
-                depositPhase &&
-                depositPhase.kind !== "done" &&
-                depositPhase.kind !== "error"
-              ) {
-                return;
-              }
-              const cfg = getNetworkConfig();
-              if (!isNetworkConfigured(cfg) || !signer || !account) {
-                // Env-not-configured / no-wallet path — keep the
-                // dev-side log so operators can verify the deposit
-                // args without on-chain plumbing in place.
-                void dryRunDeposit({
-                  tokenSymbol: token,
-                  amountRaw: shortfallRaw,
-                  account,
-                  eddsa,
-                });
-                return;
-              }
+              // Synchronous lock first — state-based checks would
+              // race a same-frame double-click and start two flows.
+              if (depositInFlightRef.current) return;
+              // The DepositButton inside FundsStep is already
+              // disabled when the network isn't configured or the
+              // wallet isn't connected, so we don't reach this
+              // handler in those cases. realDeposit's own throws
+              // backstop the contract.
+              if (!signer || !account) return;
+              depositInFlightRef.current = true;
               setDepositPhase({ kind: "preparing" });
-              void realDeposit({
+              realDeposit({
                 tokenSymbol: token,
                 amountRaw: shortfallRaw,
                 account,
@@ -891,13 +882,17 @@ function NewPayout() {
                 eddsa,
                 vault,
                 onPhase: setDepositPhase,
-              }).catch((err) => {
-                console.error("[Pay] realDeposit failed", err);
-                setDepositPhase({
-                  kind: "error",
-                  error: err instanceof Error ? err.message : String(err),
+              })
+                .catch((err) => {
+                  console.error("[Pay] realDeposit failed", err);
+                  setDepositPhase({
+                    kind: "error",
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                })
+                .finally(() => {
+                  depositInFlightRef.current = false;
                 });
-              });
             }}
           />
         )}

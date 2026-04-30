@@ -138,9 +138,12 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
 
   // Build the note + warm the prover in parallel — the deposit zkey
   // is ~7 MB; on a cold cache its fetch dwarfs the synchronous note
-  // construction.
+  // construction. `Promise.resolve(generateNote(...))` would still
+  // run `generateNote` synchronously *before* `depositProver.ready()`
+  // even gets a turn, so we push it onto the microtask queue with
+  // `.then` so the prover's fetch can start in parallel.
   const [note] = await Promise.all([
-    Promise.resolve(generateNote(erc20Address, amountRaw, kp.publicKey)),
+    Promise.resolve().then(() => generateNote(erc20Address, amountRaw, kp.publicKey)),
     depositProver.ready(),
   ]);
 
@@ -181,16 +184,16 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     amountRaw,
   );
 
-  phase({ kind: "confirming", message: `Waiting for ${tx.hash.slice(0, 10)}…` });
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`deposit tx failed: ${tx.hash}`);
-  }
-
-  // Persist the note before reporting done — a refresh between
-  // receipt and vault.add would lose the note even though the
-  // commitment is on-chain. The reconciler will back-fill `leafIndex`
-  // when it observes the `CommitmentInserted` event.
+  // Persist the note BEFORE waiting for the receipt. If the browser
+  // crashes between broadcast and `tx.wait()` settling, the on-chain
+  // deposit can still confirm — and without the local note (its
+  // ownerSecret + salt) the operator could never spend the resulting
+  // commitment. Storing speculatively means a subsequent revert
+  // would leave a phantom note at `leafIndex = -1`, which the
+  // reconciler can't promote and the funds picker hides; an operator
+  // can clean it up manually if needed. Trading a recoverable
+  // phantom for an unrecoverable lost-secret on crash is the safer
+  // direction.
   await vault.add({
     symbol: tokenSymbol,
     amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
@@ -198,6 +201,12 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     commitment,
     txHash: tx.hash,
   });
+
+  phase({ kind: "confirming", message: `Waiting for ${tx.hash.slice(0, 10)}…` });
+  const receipt = await tx.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`deposit tx failed: ${tx.hash}`);
+  }
 
   phase({ kind: "done", txHash: tx.hash });
   return { txHash: tx.hash, commitment, note };
