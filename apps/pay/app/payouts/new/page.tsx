@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import {
@@ -31,7 +31,7 @@ import {
   Toggle,
 } from "./_components/wizardChrome";
 import { FundsStep } from "./_components/FundsStep";
-import { dryRunDeposit } from "./_dryRunDeposit";
+import { realDeposit, type DepositPhase } from "../../_lib/realDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
 // transaction's anonymity set. With multi-batch (Phase 1d-α) each
@@ -69,7 +69,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
+import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -98,14 +98,6 @@ const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
   return toIsoDateTimeSec(new Date());
-}
-
-// `123,456.78` and `1_000` style separators are common in spreadsheets
-// — strip them before parseFloat so totals don't silently undercount.
-function parseAmount(input: string): number {
-  const cleaned = input.replace(/[,_\s]/g, "");
-  if (cleaned === "" || !/^-?\d+(\.\d+)?$/.test(cleaned)) return NaN;
-  return parseFloat(cleaned);
 }
 
 /** Pay ships as a static export, so `useSearchParams` (used to read
@@ -181,6 +173,18 @@ function NewPayout() {
         : walletBook.entries.length === 0
           ? "Add recipients in /recipients first."
           : null;
+
+  // Deposit progress state — `null` between attempts, set by
+  // `realDeposit`'s `onPhase` callback during a run, retained on
+  // `done` / `error` so the operator sees the outcome until they
+  // start a new deposit.
+  const [depositPhase, setDepositPhase] = useState<DepositPhase | null>(null);
+  // Synchronous re-entry guard. State updates are async — two clicks
+  // in the same render frame would both pass a `depositPhase`-only
+  // check and start two deposits (double approve + double gas).
+  // The ref flips before any await, so the second click bails out
+  // immediately even though the corresponding state hasn't flushed.
+  const depositInFlightRef = useRef(false);
 
   useEffect(() => {
     setClaimFrom(today());
@@ -842,10 +846,43 @@ function NewPayout() {
               maxFeeBps,
               setMaxFeeBps,
             }}
-            onDeposit={() =>
-              dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
-            }
+            onDeposit={() => {
+              // Synchronous lock first — state-based checks would
+              // race a same-frame double-click and start two flows.
+              if (depositInFlightRef.current) return;
+              // The DepositButton inside FundsStep is already
+              // disabled when the network isn't configured or the
+              // wallet isn't connected, so we don't reach this
+              // handler in those cases. realDeposit's own throws
+              // backstop the contract.
+              if (!signer || !account) return;
+              depositInFlightRef.current = true;
+              setDepositPhase({ kind: "preparing" });
+              realDeposit({
+                tokenSymbol: token,
+                amountRaw: shortfallRaw,
+                account,
+                signer,
+                eddsa,
+                vault,
+                onPhase: setDepositPhase,
+              })
+                .catch((err) => {
+                  console.error("[Pay] realDeposit failed", err);
+                  setDepositPhase({
+                    kind: "error",
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                })
+                .finally(() => {
+                  depositInFlightRef.current = false;
+                });
+            }}
           />
+        )}
+
+        {step === 4 && depositPhase && (
+          <DepositProgress phase={depositPhase} onDismiss={() => setDepositPhase(null)} />
         )}
 
         {step === 5 && (
@@ -963,6 +1000,58 @@ function NewPayout() {
             setShowBookPicker(false);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+const DEPOSIT_PHASE_COPY: Record<DepositPhase["kind"], string> = {
+  preparing: "Preparing…",
+  wrapping: "Wrapping ETH → WETH…",
+  approving: "Approving token allowance…",
+  proving: "Generating deposit proof…",
+  submitting: "Submitting deposit transaction…",
+  confirming: "Waiting for on-chain confirmation…",
+  done: "Deposited",
+  error: "Deposit failed",
+};
+
+function DepositProgress({
+  phase,
+  onDismiss,
+}: {
+  phase: DepositPhase;
+  onDismiss: () => void;
+}) {
+  const isDone = phase.kind === "done";
+  const isError = phase.kind === "error";
+  const tone = isDone
+    ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
+    : isError
+    ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+    : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  return (
+    <div className={`flex items-start gap-3 rounded-md border p-3 text-xs ${tone}`}>
+      <div className="flex-1">
+        <div className="font-semibold">
+          {isDone ? "✓ " : ""}
+          {DEPOSIT_PHASE_COPY[phase.kind]}
+        </div>
+        {phase.message && !isDone && !isError && (
+          <div className="mt-0.5 text-[var(--color-text-subtle)]">{phase.message}</div>
+        )}
+        {isDone && phase.txHash && (
+          <div className="mt-1 font-mono text-[10px]">{phase.txHash.slice(0, 18)}…</div>
+        )}
+        {isError && phase.error && <div className="mt-1">{phase.error}</div>}
+      </div>
+      {(isDone || isError) && (
+        <button
+          onClick={onDismiss}
+          className="rounded border border-current px-2 py-0.5 text-[10px]"
+        >
+          Dismiss
+        </button>
       )}
     </div>
   );

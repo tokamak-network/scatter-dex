@@ -164,6 +164,7 @@ function PayoutDetailInner() {
         closeMenu={closeMenu}
         markSentBatch={run.markSentBatch}
         markSent={run.markSent}
+        refresh={run.refresh}
         error={run.error}
       />
     </>,
@@ -179,6 +180,7 @@ function PayoutBody({
   closeMenu,
   markSentBatch,
   markSent,
+  refresh,
   error,
 }: {
   record: RunRecord;
@@ -189,6 +191,7 @@ function PayoutBody({
   closeMenu: () => void;
   markSentBatch: (entries: { rowIndex: number; channel: NotificationChannel; toAddress: string }[]) => Promise<boolean>;
   markSent: (input: { rowIndex: number; channel: NotificationChannel; toAddress: string }) => Promise<boolean>;
+  refresh: () => Promise<void>;
   error: string | null;
 }) {
   const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
@@ -230,6 +233,7 @@ function PayoutBody({
     <div className="space-y-8">
       <PayoutHeader record={record} />
       <SummaryStats record={record} logsByRow={logsByRow} />
+      <MemoSection record={record} refresh={refresh} />
       <NotificationsBar
         record={record}
         logsByRow={logsByRow}
@@ -333,6 +337,133 @@ function ExportMenu({ record }: { record: RunRecord }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Plain-text memo edited from the detail page. Stored on
+ *  `RunRecord.notes` and persisted via the same `saveRun` write path
+ *  used by the wizard. The collapsed view shows the saved text (or
+ *  an "Add a note" affordance when empty); clicking Edit swaps in a
+ *  textarea so operators can update without leaving the page. */
+function MemoSection({
+  record,
+  refresh,
+}: {
+  record: RunRecord;
+  refresh: () => Promise<void>;
+}) {
+  // `saved` collapses absent / empty for the display side; `savedRaw`
+  // preserves the distinction so onSave can clean up a present-but-
+  // empty `notes: ""` field that escaped a prior save.
+  const savedRaw = record.notes;
+  const saved = savedRaw ?? "";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Re-sync the draft if the record changes underfoot (e.g. another
+  // tab updated the notes, or a refresh fired). Only resyncs when the
+  // editor is closed so we don't clobber an in-progress edit.
+  useEffect(() => {
+    if (!editing) setDraft(saved);
+  }, [saved, editing]);
+
+  const onSave = async () => {
+    const next = draft.trim() === "" ? undefined : draft;
+    // Skip the write only when the on-disk shape would be identical:
+    // both undefined (no `notes` key on either side) or matching
+    // strings. A present-but-empty `notes: ""` still needs cleaning.
+    if (next === savedRaw) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated: RunRecord = next === undefined
+        ? (() => {
+            // Drop the field entirely on clear so the on-disk JSON
+            // doesn't carry an empty `notes: ""`.
+            const { notes: _omit, ...rest } = record;
+            void _omit;
+            return rest;
+          })()
+        : { ...record, notes: next };
+      await saveRun(updated);
+      await refresh();
+      setEditing(false);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save note");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onCancel = () => {
+    setDraft(saved);
+    setSaveError(null);
+    setEditing(false);
+  };
+
+  return (
+    <section
+      data-print={saved ? undefined : "hide"}
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
+    >
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">📝 Note</h2>
+        {!editing && (
+          <button
+            data-print="hide"
+            onClick={() => setEditing(true)}
+            className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
+          >
+            {saved ? "Edit" : "Add a note"}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={4}
+            aria-label="Run note"
+            placeholder="Approved by CFO · ref INV-2026-04-* · etc."
+            className="w-full rounded-md border border-[var(--color-border-strong)] bg-white p-3 text-sm"
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={onCancel}
+              disabled={saving}
+              className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save note"}
+            </button>
+          </div>
+          {saveError && (
+            <p className="text-xs text-[var(--color-warning)]">{saveError}</p>
+          )}
+        </div>
+      ) : saved ? (
+        <p className="mt-2 whitespace-pre-wrap text-sm text-[var(--color-text)]">
+          {saved}
+        </p>
+      ) : (
+        <p data-print="hide" className="mt-2 text-xs text-[var(--color-text-muted)]">
+          Add an internal note for this run — e.g. an approval reference or a finance memo.
+          Notes stay in your folder; recipients never see them.
+        </p>
+      )}
+    </section>
   );
 }
 

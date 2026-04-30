@@ -52,6 +52,17 @@ export function formatUtcStamp(unixSec: number | undefined): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 }
 
+/** Parse a free-form amount string into a JS number. Strips commas,
+ *  underscores, and whitespace (all common in spreadsheet exports);
+ *  returns NaN on anything that isn't a plain decimal so the caller
+ *  can fall back without producing a silently-wrong total. Mirrors
+ *  what the wizard's Recipients step does on each row. */
+export function parseAmount(input: string): number {
+  const cleaned = input.replace(/[,_\s]/g, "");
+  if (cleaned === "" || !/^-?\d+(\.\d+)?$/.test(cleaned)) return NaN;
+  return parseFloat(cleaned);
+}
+
 /** Parse the wizard's textarea rows into the shape `splitPayout` and
  *  `dryRunSettle` both consume. Throws on the first invalid row so
  *  callers fall back to an empty plan rather than producing batches

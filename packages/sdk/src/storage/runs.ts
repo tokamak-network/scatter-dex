@@ -108,6 +108,11 @@ export interface RunRecord {
    *  transfer cost. Optional — old records and tx receipts that
    *  failed to capture this leave it `undefined`. */
   settleGasPaid?: string;
+  /** Operator-authored memo, edited from `/payouts/detail` after the
+   *  fact. Plain text (no markdown rendering — keeps the detail page
+   *  free of an MD parser dependency and avoids HTML-injection paths).
+   *  Empty / undefined when the operator hasn't typed anything. */
+  notes?: string;
   recipients: RecipientRow[];
   notifications: NotificationLog[];
 }
@@ -204,6 +209,7 @@ function isValidRecord(r: unknown): r is RunRecord {
   if (!isValidOperatorAddress(v.operatorAddress)) return false;
   if (typeof v.category !== "string" || !RUN_CATEGORY_SET.has(v.category)) return false;
   if (!isOptionalString(v.settleGasPaid)) return false;
+  if (!isOptionalString(v.notes)) return false;
   return true;
 }
 
@@ -336,6 +342,13 @@ export interface RunsIndexEntry {
    *  files written before this field existed return `undefined`,
    *  same as the underlying record. */
   settleGasPaid?: string;
+  /** True when the underlying record has a non-empty `notes` field —
+   *  the dashboard renders a 📝 affordance on the row so operators
+   *  can spot annotated runs without opening each one. We hoist a
+   *  boolean rather than the note body so the index file stays small
+   *  and operators with paragraphs of context don't pay disk-read
+   *  cost on every dashboard load. */
+  hasNotes?: boolean;
 }
 
 interface RunsIndexFile {
@@ -361,6 +374,7 @@ function summariseRecord(record: RunRecord): RunsIndexEntry {
     totalRecipients: record.recipients.length,
     claimedRecipients: claimed,
     settleGasPaid: record.settleGasPaid,
+    ...(record.notes && record.notes.trim().length > 0 ? { hasNotes: true } : {}),
   };
 }
 
@@ -380,7 +394,8 @@ function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
     typeof v.tokenSymbol === "string" &&
     typeof v.totalRecipients === "number" &&
     typeof v.claimedRecipients === "number" &&
-    isOptionalString(v.settleGasPaid)
+    isOptionalString(v.settleGasPaid) &&
+    (v.hasNotes === undefined || typeof v.hasNotes === "boolean")
   );
 }
 
