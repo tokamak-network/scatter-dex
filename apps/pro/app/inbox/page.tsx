@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@zkscatter/ui";
 import { stealthWallet, type MetaAddress } from "@zkscatter/sdk/zk";
-import { useMetaAddress } from "../lib/metaAddress";
+import { useMetaAddress } from "@zkscatter/sdk/react";
+import { useFolder } from "../lib/folder";
 import { useConfirm } from "../lib/useConfirm";
 
 interface DerivedClaim {
@@ -14,7 +15,8 @@ interface DerivedClaim {
 }
 
 export default function InboxPage() {
-  const { keys, generate, clear } = useMetaAddress();
+  const folder = useFolder();
+  const { keys, ready: keysReady, error: keysError, generate, clear } = useMetaAddress();
 
   return (
     <div className="space-y-10">
@@ -24,13 +26,42 @@ export default function InboxPage() {
           Receive private orders without exposing a single recurring address.
           Each sender derives a fresh one-time stealth address from your
           meta-address; this page derives the matching spending key when an
-          ephemeral pubkey arrives.
+          ephemeral pubkey arrives. Your spending and viewing keys live in
+          your chosen notes folder (<code className="font-mono">zkscatter-stealth-keys.json</code>)
+          so they back up alongside the rest of your zkScatter data.
         </p>
       </header>
 
-      <IdentitySection keys={keys} onGenerate={generate} onClear={clear} />
+      {folder.available === false && (
+        <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-5 text-sm text-[var(--color-warning)]">
+          Your browser doesn&apos;t support the File System Access API. Stealth
+          keys can&apos;t be persisted here. Use a Chromium-based browser or
+          export your keys manually from another device.
+        </section>
+      )}
 
-      {keys && <ReceiveSection spendingKey={keys.spendingKey} viewingKey={keys.viewingKey} />}
+      {folder.available === null && (
+        <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+      )}
+
+      {folder.available === true && !folder.ready && (
+        <FolderPickPrompt onPick={folder.select} />
+      )}
+
+      {folder.ready && (
+        <>
+          {keysError && (
+            <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-4 text-sm text-[var(--color-warning)]">
+              Couldn&apos;t read your stealth keys: {keysError}
+            </section>
+          )}
+          {keysReady && (
+            <IdentitySection keys={keys} onGenerate={generate} onClear={clear} />
+          )}
+
+          {keys && <ReceiveSection spendingKey={keys.spendingKey} viewingKey={keys.viewingKey} />}
+        </>
+      )}
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-5 text-xs text-[var(--color-text-muted)]">
         <p className="font-semibold text-[var(--color-text)]">How discovery works today</p>
@@ -46,14 +77,37 @@ export default function InboxPage() {
   );
 }
 
+function FolderPickPrompt({ onPick }: { onPick: () => Promise<boolean> }) {
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+      <h2 className="font-semibold">Pick a notes folder</h2>
+      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        Stealth keys live in a folder you control — pick one to mint or
+        load your meta-address. The folder also holds anything else
+        zkScatter persists for you, so cloud-sync that folder for
+        cross-device access.
+      </p>
+      <div className="mt-5">
+        <Button
+          onClick={() => {
+            onPick().catch((err) => console.error("Folder pick failed", err));
+          }}
+        >
+          Pick folder
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function IdentitySection({
   keys,
   onGenerate,
   onClear,
 }: {
   keys: MetaAddress | null;
-  onGenerate: () => void;
-  onClear: () => void;
+  onGenerate: () => Promise<MetaAddress>;
+  onClear: () => Promise<void>;
 }) {
   const [showSecrets, setShowSecrets] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -65,10 +119,19 @@ function IdentitySection({
         <p className="mt-2 text-sm text-[var(--color-text-muted)]">
           A meta-address is the public string senders use to derive one-time
           recipient addresses for you. Mint one — the spending and viewing
-          keys stay on this device (in <code className="font-mono">localStorage</code>).
+          keys are persisted to your notes folder
+          (<code className="font-mono">zkscatter-stealth-keys.json</code>).
         </p>
         <div className="mt-5">
-          <Button onClick={onGenerate}>Generate meta-address</Button>
+          <Button
+            onClick={() => {
+              onGenerate().catch((err) =>
+                console.error("Failed to generate meta-address", err),
+              );
+            }}
+          >
+            Generate meta-address
+          </Button>
         </div>
       </section>
     );
@@ -100,7 +163,7 @@ function IdentitySection({
               confirmLabel: "Wipe",
               danger: true,
             });
-            if (ok) onClear();
+            if (ok) await onClear();
           }}
         >
           Clear

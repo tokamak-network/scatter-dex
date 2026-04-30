@@ -13,7 +13,7 @@ import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
-import { MetaAddressProvider } from "./lib/metaAddress";
+import { FolderProvider, FolderAwareMetaAddressProvider } from "./lib/folder";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
 import { ToastProvider } from "@zkscatter/ui";
 import { Brand } from "./components/Brand";
@@ -32,7 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
-            <MetaAddressProvider>
+            <FolderProvider>
+              <FolderAwareMetaAddressProvider>
               <CommitmentTreeProvider>
                 <EdDSAKeyProvider>
                   <RelayersProvider>
@@ -72,7 +73,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </RelayersProvider>
                 </EdDSAKeyProvider>
               </CommitmentTreeProvider>
-            </MetaAddressProvider>
+              </FolderAwareMetaAddressProvider>
+            </FolderProvider>
           </ActiveNetworkProvider>
         </WalletProvider>
       </body>
