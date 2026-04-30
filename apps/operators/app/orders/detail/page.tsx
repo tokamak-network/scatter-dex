@@ -33,6 +33,51 @@ interface FeeRow {
   created_at: number;
 }
 
+// Mirror of `zk-relayer/src/core/decode-settlement.ts` `AuthorizeProofSignals`.
+// Duplicated rather than imported because Next.js doesn't share a tsconfig
+// path with zk-relayer; if the proof tuple ever grows, both sides update.
+interface AuthorizeProofSignals {
+  pubKeyBind: string;
+  commitmentRoot: string;
+  nullifier: string;
+  nonceNullifier: string;
+  newCommitment: string;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  buyAmount: string;
+  maxFee: number;
+  expiry: string;
+  claimsRoot: string;
+  totalLocked: string;
+  relayer: string;
+  orderHash: string;
+  tier: number;
+}
+
+type DecodedSettlement =
+  | {
+      function: "settleAuth";
+      maker: AuthorizeProofSignals;
+      taker: AuthorizeProofSignals;
+      feeTokenMaker: string;
+      feeTokenTaker: string;
+    }
+  | {
+      function: "scatterDirectAuth";
+      proof: AuthorizeProofSignals;
+      fee: string;
+    };
+
+interface ProofResponse {
+  txHash: string;
+  from: string | null;
+  to: string | null;
+  blockNumber: number | null;
+  calldata: string;
+  decoded: DecodedSettlement | null;
+}
+
 interface ProcessingRow {
   nullifier: string;
   status: string;
@@ -243,6 +288,8 @@ function DetailBody({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string 
         )}
       </section>
 
+      <ProofInspectionSection auth={auth} txHash={s.tx_hash} />
+
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
         <h2 className="mb-3 font-semibold">Order processing ({processing.length})</h2>
         {processing.length === 0 ? (
@@ -308,6 +355,126 @@ function StatusPill({ status }: { status: string }) {
     <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}>
       {status}
     </span>
+  );
+}
+
+function ProofInspectionSection({ auth, txHash }: { auth: NonNullable<Auth>; txHash: string }) {
+  const [data, setData] = useState<ProofResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch only when the operator opens the section — proofs are large
+  // and most page loads land here for fees/processing, not for proof
+  // inspection. `data !== null` caches the result for the session;
+  // a prior error leaves data null so reopening retries. The `loading`
+  // guard prevents an open → close → open-while-in-flight race from
+  // firing duplicate fetches and double-applying setData/setError.
+  const onToggle = useCallback(
+    async (e: React.SyntheticEvent<HTMLDetailsElement>) => {
+      if (!e.currentTarget.open || data || loading) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await adminGet<ProofResponse>(
+          auth,
+          `/api/admin/orders/by-tx/${encodeURIComponent(txHash.toLowerCase())}/proof`,
+        );
+        setData(res);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [auth, txHash, data, loading],
+  );
+
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <details onToggle={onToggle}>
+        <summary className="cursor-pointer font-semibold">
+          Proof inspection
+          <span className="ml-2 text-xs font-normal text-[var(--color-text-subtle)]">
+            (decoded public signals + raw calldata, fetched on demand)
+          </span>
+        </summary>
+        <div className="mt-4">
+          {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}
+          {error && (
+            <div className="rounded-md bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+              {error}
+            </div>
+          )}
+          {data && <ProofBody res={data} />}
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function ProofBody({ res }: { res: ProofResponse }) {
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        <Field label="Function" mono>{res.decoded?.function ?? "unknown selector"}</Field>
+        <Field label="Block" mono>{res.blockNumber ?? "—"}</Field>
+        <Field label="From" mono>{res.from ?? "—"}</Field>
+        <Field label="To" mono>{res.to ?? "—"}</Field>
+      </dl>
+      {res.decoded?.function === "settleAuth" && (
+        <>
+          <ProofSignals title={`Maker proof — fee ${res.decoded.feeTokenMaker} (token-wei)`} signals={res.decoded.maker} />
+          <ProofSignals title={`Taker proof — fee ${res.decoded.feeTokenTaker} (token-wei)`} signals={res.decoded.taker} />
+        </>
+      )}
+      {res.decoded?.function === "scatterDirectAuth" && (
+        <ProofSignals title={`Proof — fee ${res.decoded.fee} (token-wei)`} signals={res.decoded.proof} />
+      )}
+      {!res.decoded && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          The transaction selector doesn't match settleAuth or
+          scatterDirectAuth. Calldata is shown raw below.
+        </p>
+      )}
+      <details>
+        <summary className="cursor-pointer text-xs text-[var(--color-text-subtle)]">
+          Raw calldata ({res.calldata.length} chars)
+        </summary>
+        <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-[var(--color-bg)] p-3 font-mono text-[10px] leading-relaxed">
+          {res.calldata}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+// Display order — debug-relevant identifiers first (nullifier-family),
+// then ordering data, then bookkeeping. Keep in sync with the
+// AuthorizeProofSignals interface above.
+const PROOF_FIELD_ORDER: ReadonlyArray<keyof AuthorizeProofSignals> = [
+  "nullifier", "nonceNullifier", "newCommitment", "commitmentRoot",
+  "claimsRoot", "orderHash", "pubKeyBind",
+  "sellToken", "buyToken", "sellAmount", "buyAmount",
+  "totalLocked", "relayer", "maxFee", "expiry", "tier",
+];
+
+function ProofSignals({ title, signals }: { title: string; signals: AuthorizeProofSignals }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
+        {title}
+      </h3>
+      <table className="w-full text-xs">
+        <tbody>
+          {PROOF_FIELD_ORDER.map((key) => (
+            <tr key={key} className="border-t border-[var(--color-border)] first:border-t-0">
+              <td className="py-1 pr-3 font-mono text-[var(--color-text-subtle)]">{key}</td>
+              <td className="py-1 break-all font-mono">{String(signals[key])}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
