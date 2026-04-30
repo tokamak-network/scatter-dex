@@ -344,12 +344,25 @@ export interface RunsIndexEntry {
   settleGasPaid?: string;
   /** True when the underlying record has a non-empty `notes` field —
    *  the dashboard renders a 📝 affordance on the row so operators
-   *  can spot annotated runs without opening each one. We hoist a
-   *  boolean rather than the note body so the index file stays small
-   *  and operators with paragraphs of context don't pay disk-read
-   *  cost on every dashboard load. */
+   *  can spot annotated runs without opening each one. */
   hasNotes?: boolean;
+  /** First chunk of the note body (whitespace-collapsed, truncated
+   *  to {@link RUN_NOTES_PREVIEW_LIMIT} chars) so the dashboard's
+   *  search box can match note text without loading every full
+   *  record. Operators with paragraph-long memos don't pay full
+   *  disk-read cost on every dashboard load — paragraph 2+ is
+   *  searchable only via the run-detail page. Absent when the
+   *  record has no notes. */
+  notesPreview?: string;
 }
+
+/** Cap on the substring of `notes` indexed into `RunsIndexEntry`.
+ *  160 chars — about a tweet — is enough to cover a typical
+ *  approval reference ("Approved by CFO ref INV-2026-05-12") and a
+ *  short audit note while keeping the index file small. Long
+ *  paragraph notes still match by their first ~25 words, which is
+ *  where operators typically put the searchable label anyway. */
+export const RUN_NOTES_PREVIEW_LIMIT = 160;
 
 interface RunsIndexFile {
   version: 1;
@@ -361,6 +374,14 @@ function summariseRecord(record: RunRecord): RunsIndexEntry {
   for (const r of record.recipients) {
     if (r.status === "claimed") claimed++;
   }
+  // Build the searchable note preview. Whitespace collapsed so a
+  // multiline note doesn't expand the index file with newlines, and
+  // the dashboard's `.includes(q)` substring match works against
+  // arbitrary inner whitespace.
+  const trimmedNotes = record.notes?.trim() ?? "";
+  const notesPreview = trimmedNotes
+    ? trimmedNotes.replace(/\s+/g, " ").slice(0, RUN_NOTES_PREVIEW_LIMIT)
+    : "";
   return {
     id: record.id,
     label: record.label,
@@ -374,7 +395,7 @@ function summariseRecord(record: RunRecord): RunsIndexEntry {
     totalRecipients: record.recipients.length,
     claimedRecipients: claimed,
     settleGasPaid: record.settleGasPaid,
-    ...(record.notes && record.notes.trim().length > 0 ? { hasNotes: true } : {}),
+    ...(trimmedNotes ? { hasNotes: true, notesPreview } : {}),
   };
 }
 
@@ -395,7 +416,8 @@ function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
     typeof v.totalRecipients === "number" &&
     typeof v.claimedRecipients === "number" &&
     isOptionalString(v.settleGasPaid) &&
-    (v.hasNotes === undefined || typeof v.hasNotes === "boolean")
+    (v.hasNotes === undefined || typeof v.hasNotes === "boolean") &&
+    isOptionalString(v.notesPreview)
   );
 }
 

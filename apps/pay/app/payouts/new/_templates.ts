@@ -25,7 +25,7 @@ export const TEMPLATES: readonly Template[] = [
     name: "Payroll",
     tagline: "Monthly salaries",
     body: "Monthly salary run for employees. Withholding-friendly export.",
-    defaultLabel: "April payroll",
+    defaultLabel: "May payroll",
     defaultToken: "USDC",
     identifierLabel: "Employee",
     sampleCsv: "",
@@ -60,7 +60,7 @@ export const TEMPLATES: readonly Template[] = [
     name: "Contractor batch",
     tagline: "Freelancer settlement",
     body: "Settle a wave of contractors at once without leaking per-contractor rates.",
-    defaultLabel: "April contractor settlement",
+    defaultLabel: "May contractor settlement",
     defaultToken: "USDC",
     identifierLabel: "Contractor",
     reasonLabel: "Invoice reference",
@@ -73,7 +73,7 @@ export const REASON_PLACEHOLDER: Record<TemplateId, string> = {
   payroll: "",
   grants: "https://snapshot.org/#/acme.eth/proposal/0x…",
   bonus: "Approved by CEO · EOY review cycle",
-  contractor: "INV-2026-04-*",
+  contractor: "INV-2026-05-*",
 };
 
 export const STEPPER_LABELS = [
