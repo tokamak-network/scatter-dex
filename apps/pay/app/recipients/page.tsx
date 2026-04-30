@@ -472,5 +472,5 @@ function entryToCsvRow(e: WalletEntry): string {
 function downloadAsCsv(entries: WalletEntry[]): void {
   const lines = [CSV_COLUMNS.join(","), ...entries.map(entryToCsvRow)];
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadCsv(lines.join("\n") + "\n", `zkscatter-contacts-${stamp}.csv`);
+  downloadCsv(lines.join("\n") + "\n", `zkscatter-wallets-${stamp}.csv`);
 }
