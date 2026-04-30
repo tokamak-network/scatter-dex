@@ -93,8 +93,11 @@ export default function Dashboard() {
   // further by label / token symbol / id (substring, case-insensitive).
   // Stats derive from the unfiltered `runs` so the headline KPIs reflect
   // the whole scope, not whatever the operator happens to be looking at.
+  const byTab = useMemo(
+    () => (tab === "all" ? runs : runs.filter((r) => r.category === tab)),
+    [runs, tab],
+  );
   const visible = useMemo(() => {
-    const byTab = tab === "all" ? runs : runs.filter((r) => r.category === tab);
     const q = search.trim().toLowerCase();
     if (!q) return byTab;
     return byTab.filter(
@@ -103,7 +106,7 @@ export default function Dashboard() {
         r.tokenSymbol.toLowerCase().includes(q) ||
         r.id.toLowerCase().includes(q),
     );
-  }, [runs, tab, search]);
+  }, [byTab, search]);
 
   const stats = useMemo(() => deriveStats(runs, mounted), [runs, mounted]);
 
@@ -191,7 +194,7 @@ export default function Dashboard() {
           folderReady={folder.ready}
           tab={tab}
           searching={search.trim().length > 0}
-          totalRuns={runs.length}
+          totalRuns={byTab.length}
           onClearSearch={() => setSearch("")}
         />
       </section>
@@ -266,11 +269,10 @@ function RunsList({
     );
   }
   if (runs.length === 0) {
-    if (searching) {
+    if (searching && totalRuns > 0) {
       return (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
-          No runs match this search across {totalRuns} payout
-          {totalRuns === 1 ? "" : "s"}.{" "}
+          No runs match this search across {totalRuns} payout{totalRuns === 1 ? "" : "s"}.{" "}
           <button
             onClick={onClearSearch}
             className="text-[var(--color-primary)] underline-offset-2 hover:underline"
