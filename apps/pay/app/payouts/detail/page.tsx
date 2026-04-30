@@ -674,8 +674,9 @@ function CorruptBanner({ message, filename }: { message: string; filename: strin
 }
 
 function copyClaimLink(record: RunRecord, row: RecipientRow): void {
-  // Caller gates the button on `row.claimPackage`; buildClaimUrl
-  // returns "" if it slips through, which clipboard still accepts.
+  // Caller gates the button on `row.claimPackage`; bail out as a
+  // belt-and-braces guard if it slips through and the URL builder
+  // returns an empty string.
   const url = buildClaimUrl(window.location.origin, record.id, row);
   if (!url) return;
   void navigator.clipboard.writeText(url);

@@ -1,11 +1,16 @@
 "use client";
 
 /** RFC 4180 cell escape. Excel / Numbers / Sheets all parse the
- *  doubled-quote escape. */
+ *  doubled-quote escape. Also neutralizes leading spreadsheet formula
+ *  markers (`=`, `+`, `-`, `@`) by prefixing a single quote — without
+ *  this, an attacker-controlled recipient name like `=HYPERLINK(...)`
+ *  would execute as a formula when the operator opens the CSV in
+ *  Excel / Sheets. */
 export function csvEscape(value: string | number | undefined | null): string {
   if (value === undefined || value === null) return "";
-  const s = String(value);
+  let s = String(value);
   if (s === "") return "";
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
@@ -15,7 +20,7 @@ export function csvEscape(value: string | number | undefined | null): string {
  *  recipient names) as Unicode instead of cp1252. The revoke is
  *  deferred a tick so Safari has time to start the download. */
 export function downloadCsv(body: string, filename: string): void {
-  const blob = new Blob(["﻿" + body], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob(["\uFEFF" + body], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");
