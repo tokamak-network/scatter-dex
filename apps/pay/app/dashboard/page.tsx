@@ -153,7 +153,12 @@ export default function Dashboard() {
       (r) =>
         r.label.toLowerCase().includes(q) ||
         r.tokenSymbol.toLowerCase().includes(q) ||
-        r.id.toLowerCase().includes(q),
+        r.id.toLowerCase().includes(q) ||
+        // notesPreview is the truncated, whitespace-collapsed first
+        // ~160 chars of the run's note. Long memos still match by
+        // their first sentence — operators put the searchable label
+        // ("Approved by CFO ref INV-2026-…") at the top anyway.
+        (r.notesPreview ?? "").toLowerCase().includes(q),
     );
   }, [byTab, search]);
   const visible = useMemo(
@@ -228,7 +233,7 @@ export default function Dashboard() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by label, token, or id…"
+                placeholder="Search by label, token, id, or note…"
                 aria-label="Search payouts"
                 className="w-64 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs"
               />
