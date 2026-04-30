@@ -4,10 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Field, Modal } from "@zkscatter/ui";
 import { shortAddr } from "@zkscatter/sdk/react";
-import {
-  isCanonicalChainKey,
-  type WalletEntry,
-} from "@zkscatter/sdk/storage";
+import { type WalletEntry } from "@zkscatter/sdk/storage";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
@@ -159,16 +156,12 @@ function RecipientTable({
             <th className="px-5 py-3 text-left">Label</th>
             <th className="px-5 py-3 text-left">Address</th>
             <th className="px-5 py-3 text-left">Email</th>
-            <th className="px-5 py-3 text-left">Chains</th>
             <th className="px-5 py-3 text-left">Memo</th>
             <th className="px-5 py-3 text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {entries.map((e) => {
-            const overrideCount = e.addressByChain
-              ? Object.keys(e.addressByChain).length
-              : 0;
             return (
               <tr key={e.id} className="border-t border-[var(--color-border)]">
                 <td className="px-5 py-3 font-medium">{e.label}</td>
@@ -177,11 +170,6 @@ function RecipientTable({
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
                   {e.email ?? "—"}
-                </td>
-                <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
-                  {overrideCount === 0
-                    ? "default only"
-                    : `${overrideCount} override${overrideCount === 1 ? "" : "s"}`}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
                   {e.memo ?? "—"}
@@ -209,38 +197,6 @@ function RecipientTable({
   );
 }
 
-/** Per-chain address override row. The form keeps these as a flat
- *  array of `{chainId, address}` pairs because objects in React state
- *  are awkward to edit row-by-row; the array gets folded into a
- *  `Record<number, string>` at submit time. */
-type ChainOverride = { chainId: string; address: string };
-
-function chainOverridesToArray(
-  m: Record<number, string> | undefined,
-): ChainOverride[] {
-  if (!m) return [];
-  return Object.entries(m).map(([chainId, address]) => ({ chainId, address }));
-}
-
-function chainOverridesToRecord(
-  arr: ChainOverride[],
-): Record<number, string> | undefined {
-  // Loose: skip anything the SDK would reject so the user can leave
-  // half-filled trailing rows during editing without the save failing.
-  // Validation surfacing on those rows is deliberately deferred to the
-  // SDK error banner above the submit button — see the issue tracker
-  // for a per-row inline-error follow-up.
-  const out: Record<number, string> = {};
-  for (const { chainId, address } of arr) {
-    const id = chainId.trim();
-    const addr = address.trim();
-    if (!id || !addr) continue;
-    if (!isCanonicalChainKey(id)) continue;
-    out[Number(id)] = addr.toLowerCase();
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 function RecipientForm({
   state,
   onClose,
@@ -256,9 +212,6 @@ function RecipientForm({
   const [memo, setMemo] = useState(initial?.memo ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [discordHandle, setDiscordHandle] = useState(initial?.discordHandle ?? "");
-  const [chainOverrides, setChainOverrides] = useState<ChainOverride[]>(
-    chainOverridesToArray(initial?.addressByChain),
-  );
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
@@ -268,14 +221,10 @@ function RecipientForm({
       const trimmedMemo = memo.trim();
       const trimmedEmail = email.trim();
       const trimmedDiscord = discordHandle.trim();
-      const overrides = chainOverridesToRecord(chainOverrides);
-      // The form is the source of truth for `addressByChain`: every
-      // save sends whatever the form has now, replacing the on-disk
-      // value. If the user emptied every row, an empty record is
-      // sent — `updateWallet` then writes `addressByChain: undefined`
-      // (its `Object.keys(out).length > 0` check). There is no
-      // "leave untouched" path because the form always re-renders
-      // every override row from disk on open.
+      // Per-chain overrides are not surfaced in the form anymore.
+      // Existing entries that already carry `addressByChain` keep
+      // their map untouched on edit (we don't pass the field, so the
+      // SDK's update helper leaves it as-is).
       const ok = isNew
         ? Boolean(
             await book.add({
@@ -284,7 +233,6 @@ function RecipientForm({
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,
               discordHandle: trimmedDiscord || undefined,
-              addressByChain: overrides,
             }),
           )
         : await book.update(initial!.id, {
@@ -292,7 +240,6 @@ function RecipientForm({
             memo: trimmedMemo || undefined,
             email: trimmedEmail || undefined,
             discordHandle: trimmedDiscord || undefined,
-            addressByChain: overrides ?? {},
           });
       if (ok) onClose();
     } finally {
@@ -301,20 +248,6 @@ function RecipientForm({
   }
 
   const emailInvalid = email.trim().length > 0 && !EMAIL_RE.test(email.trim());
-
-  function addOverrideRow() {
-    setChainOverrides((prev) => [...prev, { chainId: "", address: "" }]);
-  }
-
-  function updateOverrideRow(idx: number, patch: Partial<ChainOverride>) {
-    setChainOverrides((prev) =>
-      prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)),
-    );
-  }
-
-  function removeOverrideRow(idx: number) {
-    setChainOverrides((prev) => prev.filter((_, i) => i !== idx));
-  }
 
   return (
     <Modal open onClose={onClose} title={isNew ? "Add recipient" : "Edit recipient"}>
@@ -333,7 +266,7 @@ function RecipientForm({
             hint={
               !isNew
                 ? "Address is immutable. Remove and re-add to change it."
-                : "Used when the run's chain is not in the per-chain overrides below."
+                : "Default address used for every run unless this entry already carries a per-chain override (legacy field — not editable here)."
             }
           >
             <input
@@ -376,48 +309,6 @@ function RecipientForm({
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
             />
           </Field>
-        </FormSection>
-
-        <FormSection
-          title="Per-chain addresses"
-          hint="Use when the same person has different addresses on different chains (e.g., Ethereum vs an L2). Empty out every row to clear all overrides."
-        >
-          <div className="space-y-2">
-            {chainOverrides.map((row, idx) => (
-              <div key={idx} className="flex gap-2">
-                <input
-                  value={row.chainId}
-                  onChange={(e) =>
-                    updateOverrideRow(idx, { chainId: e.target.value })
-                  }
-                  placeholder="Chain id"
-                  inputMode="numeric"
-                  className="w-28 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
-                />
-                <input
-                  value={row.address}
-                  onChange={(e) =>
-                    updateOverrideRow(idx, { address: e.target.value })
-                  }
-                  placeholder="0x…"
-                  className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
-                />
-                <button
-                  onClick={() => removeOverrideRow(idx)}
-                  title="Remove this row"
-                  className="rounded border border-[var(--color-border-strong)] px-2 text-xs text-[var(--color-text-subtle)] hover:text-[var(--color-warning)]"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={addOverrideRow}
-              className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-primary-soft)]"
-            >
-              ＋ Add chain override
-            </button>
-          </div>
         </FormSection>
 
         <FormSection title="Notes">
