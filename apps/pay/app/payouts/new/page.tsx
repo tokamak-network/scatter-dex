@@ -32,6 +32,7 @@ import {
 } from "./_components/wizardChrome";
 import { BalancePanel, FundsStep } from "./_components/FundsStep";
 import { dryRunDeposit } from "./_dryRunDeposit";
+import { realDeposit, type DepositPhase } from "../../_lib/realDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
 // transaction's anonymity set. With multi-batch (Phase 1d-α) each
@@ -173,6 +174,12 @@ function NewPayout() {
         : walletBook.entries.length === 0
           ? "Add recipients in /recipients first."
           : null;
+
+  // Deposit progress state — `null` between attempts, set by
+  // `realDeposit`'s `onPhase` callback during a run, retained on
+  // `done` / `error` so the operator sees the outcome until they
+  // start a new deposit.
+  const [depositPhase, setDepositPhase] = useState<DepositPhase | null>(null);
 
   useEffect(() => {
     setClaimFrom(today());
@@ -850,10 +857,53 @@ function NewPayout() {
               maxFeeBps,
               setMaxFeeBps,
             }}
-            onDeposit={() =>
-              dryRunDeposit({ tokenSymbol: token, amountRaw: shortfallRaw, account, eddsa })
-            }
+            onDeposit={() => {
+              // Guard against re-entry: a second click while the
+              // first deposit is mid-flight would race two approve
+              // → submit pairs and likely double-pay gas. Done /
+              // error states are terminal and re-clickable.
+              if (
+                depositPhase &&
+                depositPhase.kind !== "done" &&
+                depositPhase.kind !== "error"
+              ) {
+                return;
+              }
+              const cfg = getNetworkConfig();
+              if (!isNetworkConfigured(cfg) || !signer || !account) {
+                // Env-not-configured / no-wallet path — keep the
+                // dev-side log so operators can verify the deposit
+                // args without on-chain plumbing in place.
+                void dryRunDeposit({
+                  tokenSymbol: token,
+                  amountRaw: shortfallRaw,
+                  account,
+                  eddsa,
+                });
+                return;
+              }
+              setDepositPhase({ kind: "preparing" });
+              void realDeposit({
+                tokenSymbol: token,
+                amountRaw: shortfallRaw,
+                account,
+                signer,
+                eddsa,
+                vault,
+                onPhase: setDepositPhase,
+              }).catch((err) => {
+                console.error("[Pay] realDeposit failed", err);
+                setDepositPhase({
+                  kind: "error",
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
+            }}
           />
+        )}
+
+        {step === 4 && depositPhase && (
+          <DepositProgress phase={depositPhase} onDismiss={() => setDepositPhase(null)} />
         )}
 
         {step === 5 && (
@@ -971,6 +1021,57 @@ function NewPayout() {
             setShowBookPicker(false);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+const DEPOSIT_PHASE_COPY: Record<DepositPhase["kind"], string> = {
+  preparing: "Preparing…",
+  approving: "Approving token allowance…",
+  proving: "Generating deposit proof…",
+  submitting: "Submitting deposit transaction…",
+  confirming: "Waiting for on-chain confirmation…",
+  done: "Deposited",
+  error: "Deposit failed",
+};
+
+function DepositProgress({
+  phase,
+  onDismiss,
+}: {
+  phase: DepositPhase;
+  onDismiss: () => void;
+}) {
+  const isDone = phase.kind === "done";
+  const isError = phase.kind === "error";
+  const tone = isDone
+    ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
+    : isError
+    ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+    : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  return (
+    <div className={`flex items-start gap-3 rounded-md border p-3 text-xs ${tone}`}>
+      <div className="flex-1">
+        <div className="font-semibold">
+          {isDone ? "✓ " : ""}
+          {DEPOSIT_PHASE_COPY[phase.kind]}
+        </div>
+        {phase.message && !isDone && !isError && (
+          <div className="mt-0.5 text-[var(--color-text-subtle)]">{phase.message}</div>
+        )}
+        {isDone && phase.txHash && (
+          <div className="mt-1 font-mono text-[10px]">{phase.txHash.slice(0, 18)}…</div>
+        )}
+        {isError && phase.error && <div className="mt-1">{phase.error}</div>}
+      </div>
+      {(isDone || isError) && (
+        <button
+          onClick={onDismiss}
+          className="rounded border border-current px-2 py-0.5 text-[10px]"
+        >
+          Dismiss
+        </button>
       )}
     </div>
   );
