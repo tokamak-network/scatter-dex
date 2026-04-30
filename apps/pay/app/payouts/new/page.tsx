@@ -30,7 +30,7 @@ import {
   Stepper,
   Toggle,
 } from "./_components/wizardChrome";
-import { BalancePanel, FundsStep } from "./_components/FundsStep";
+import { FundsStep } from "./_components/FundsStep";
 import { dryRunDeposit } from "./_dryRunDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
@@ -704,29 +704,6 @@ function NewPayout() {
                 </select>
               </Field>
             </div>
-            <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
-              <div className="text-[var(--color-text)]">
-                <span className="font-semibold">How sending works.</span>{" "}
-                Sender = the wallet connected in the header (it only signs the
-                proof; no <span className="font-mono">transferFrom</span> at sign time).
-                Funds come from your already-deposited notes.
-              </div>
-              <div className="text-[var(--color-text-subtle)]">
-                You'll pick the source notes — and top up if short — in
-                <span className="font-medium"> step 4 (Funds)</span>.
-              </div>
-            </div>
-            <BalancePanel
-              token={token}
-              decimals={decimals}
-              availableRaw={availableRaw}
-              requiredRaw={0n}
-              shortfallRaw={0n}
-              account={account}
-              vaultLoaded={vaultLoaded}
-              showRequired={false}
-              onDeposit={() => undefined}
-            />
           </div>
         )}
 
