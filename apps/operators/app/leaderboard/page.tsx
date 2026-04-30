@@ -112,15 +112,16 @@ function SelfComparison({ me, ranked }: { me: RankedRelayer; ranked: RankedRelay
   // is "me vs everyone else", not "me vs myself+everyone". Only peers
   // with a stats probe contribute to the latency/success medians.
   const peers = ranked.filter((r) => r.address !== me.address);
-  const peerSettled = peers
-    .map((r) => r.stats?.settledOrders)
-    .filter((n): n is number => typeof n === "number");
-  const peerSuccess = peers
-    .map((r) => r.stats?.successRate)
-    .filter((n): n is number => typeof n === "number");
-  const peerAvg = peers
-    .map((r) => r.stats?.avgSettleTimeMs)
-    .filter((n): n is number => typeof n === "number");
+  const { peerSettled, peerSuccess, peerAvg } = peers.reduce(
+    (acc, r) => {
+      const s = r.stats;
+      if (typeof s?.settledOrders === "number") acc.peerSettled.push(s.settledOrders);
+      if (typeof s?.successRate === "number") acc.peerSuccess.push(s.successRate);
+      if (typeof s?.avgSettleTimeMs === "number") acc.peerAvg.push(s.avgSettleTimeMs);
+      return acc;
+    },
+    { peerSettled: [] as number[], peerSuccess: [] as number[], peerAvg: [] as number[] },
+  );
 
   const myStats = me.stats;
   return (

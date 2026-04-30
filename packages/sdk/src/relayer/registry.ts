@@ -27,11 +27,15 @@ export async function loadActiveRelayers(
   );
 }
 
-interface LoadOpts {
+export interface LoadOpts {
   /** Per-relayer probe timeout. Defaults to 3 s — long enough for
    *  a healthy node, short enough that one stuck node doesn't drag
    *  the whole list. */
   probeTimeoutMs?: number;
+  /** When true, also probe `/api/relayer/stats` per relayer in
+   *  parallel with `/api/info`. Info-success / stats-failure leaves
+   *  `stats: undefined` (older relayer build, transport error). */
+  withStats?: boolean;
 }
 
 /** Combine on-chain registry data with a live `/api/info` probe per
@@ -45,7 +49,7 @@ interface LoadOpts {
 export async function loadRelayersWithApiInfo(
   registryAddress: string,
   provider: ethers.Provider,
-  opts: LoadOpts & { withStats?: boolean } = {},
+  opts: LoadOpts = {},
 ): Promise<RelayerInfo[]> {
   const onChain = await loadActiveRelayers(registryAddress, provider);
   const timeoutMs = opts.probeTimeoutMs ?? 3_000;
