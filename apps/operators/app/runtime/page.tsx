@@ -615,6 +615,12 @@ interface WebhookStatusBody {
   }>;
 }
 
+// Single source of truth for the severity-chip set; the union type is
+// derived so a new severity (e.g. "debug") can't drift between the type
+// and the chip array.
+const ALERT_SEVERITY_FILTERS = ["all", "info", "warn", "critical"] as const;
+type AlertSeverityFilter = (typeof ALERT_SEVERITY_FILTERS)[number];
+
 function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
   const [tick, setTick] = useState(0);
   const fetcher = useCallback(
@@ -742,53 +748,104 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
             </p>
           )}
 
-          <div className="mt-5">
-            <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
-              Recent alerts ({data.recent.length})
-            </div>
-            {data.recent.length === 0 ? (
-              <p className="text-sm text-[var(--color-text-muted)]">
-                No alerts attempted yet.
-              </p>
-            ) : (
-              <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-                <table className="w-full text-xs">
-                  <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium">When</th>
-                      <th className="px-3 py-2 text-left font-medium">Type</th>
-                      <th className="px-3 py-2 text-left font-medium">Severity</th>
-                      <th className="px-3 py-2 text-left font-medium">Text</th>
-                      <th className="px-3 py-2 text-left font-medium">Delivery</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.recent.map((a, i) => (
-                      <tr
-                        key={`${a.emittedAt}-${a.type}-${i}`}
-                        className="border-t border-[var(--color-border)]"
-                      >
-                        <td className="px-3 py-2 text-[var(--color-text-muted)]">
-                          {formatRelative(a.emittedAt)}
-                        </td>
-                        <td className="px-3 py-2 font-mono">{a.type}</td>
-                        <td className="px-3 py-2">
-                          <SeverityPill severity={a.severity} />
-                        </td>
-                        <td className="px-3 py-2">{a.text}</td>
-                        <td className="px-3 py-2">
-                          <DeliveryPill delivery={a.delivery} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <RecentAlertsTable recent={data.recent} />
         </>
       )}
     </Panel>
+  );
+}
+
+function RecentAlertsTable({ recent }: { recent: WebhookStatusBody["recent"] }) {
+  // Filter state lives here, not in WebhookSection — keystrokes don't
+  // need to re-render the parent panel (which polls). Buffer is
+  // bounded at 50 entries so the filter is pure client-side; lets
+  // an operator triage flapping conditions without scrolling.
+  const [severityFilter, setSeverityFilter] = useState<AlertSeverityFilter>("all");
+  const [searchText, setSearchText] = useState("");
+  const trimmedSearch = searchText.trim().toLowerCase();
+  const filtered = recent.filter((a) => {
+    if (severityFilter !== "all" && a.severity !== severityFilter) return false;
+    if (!trimmedSearch) return true;
+    return (
+      a.type.toLowerCase().includes(trimmedSearch) ||
+      a.text.toLowerCase().includes(trimmedSearch)
+    );
+  });
+  return (
+    <div className="mt-5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+          Recent alerts ({filtered.length}
+          {filtered.length !== recent.length ? ` of ${recent.length}` : ""})
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {ALERT_SEVERITY_FILTERS.map((sev) => (
+            <button
+              key={sev}
+              type="button"
+              onClick={() => setSeverityFilter(sev)}
+              className={
+                severityFilter === sev
+                  ? "rounded-full bg-[var(--color-primary)] px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white"
+                  : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+              }
+            >
+              {sev}
+            </button>
+          ))}
+          <input
+            type="search"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Filter by type or text…"
+            className="w-48 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs"
+          />
+        </div>
+      </div>
+      {recent.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-muted)]">
+          No alerts attempted yet.
+        </p>
+      ) : filtered.length === 0 ? (
+        <p className="rounded-md border border-dashed border-[var(--color-border)] px-3 py-6 text-center text-xs text-[var(--color-text-muted)]">
+          No alerts match this filter.
+        </p>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
+          <table className="w-full text-xs">
+            <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">When</th>
+                <th className="px-3 py-2 text-left font-medium">Type</th>
+                <th className="px-3 py-2 text-left font-medium">Severity</th>
+                <th className="px-3 py-2 text-left font-medium">Text</th>
+                <th className="px-3 py-2 text-left font-medium">Delivery</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((a, i) => (
+                <tr
+                  key={`${a.emittedAt}-${a.type}-${i}`}
+                  className="border-t border-[var(--color-border)]"
+                >
+                  <td className="px-3 py-2 text-[var(--color-text-muted)]">
+                    {formatRelative(a.emittedAt)}
+                  </td>
+                  <td className="px-3 py-2 font-mono">{a.type}</td>
+                  <td className="px-3 py-2">
+                    <SeverityPill severity={a.severity} />
+                  </td>
+                  <td className="px-3 py-2">{a.text}</td>
+                  <td className="px-3 py-2">
+                    <DeliveryPill delivery={a.delivery} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
