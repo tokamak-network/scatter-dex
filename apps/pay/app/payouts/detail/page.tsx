@@ -28,6 +28,7 @@ import { useFolderStorage } from "../../_lib/folderStorage";
 import { useRunRecord } from "../../_lib/runRecord";
 import { ClaimReconciler } from "../../_lib/claimReconciler";
 import { getNetworkConfig } from "../../_lib/network";
+import { partialRunStats } from "../../_lib/resumeRun";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -255,6 +256,9 @@ function PayoutHeader({ record }: { record: RunRecord }) {
   // ISO `YYYY-MM-DD HH:mm UTC` to avoid SSR / client locale mismatch
   // (operators app uses the same pattern in `app/lib/format.ts`).
   const submitted = formatUtcStamp(record.createdAt);
+  // Resume button replaces "Run again" for partial runs — cloning
+  // would orphan the claim packages already issued on the original.
+  const { partial, unsettled } = partialRunStats(record);
   return (
     <header className="flex items-end justify-between">
       <div>
@@ -264,12 +268,21 @@ function PayoutHeader({ record }: { record: RunRecord }) {
         </p>
       </div>
       <div className="flex gap-2">
-        <Link
-          href={`/payouts/new?clone=${record.id}`}
-          className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
-        >
-          Run again →
-        </Link>
+        {partial ? (
+          <Link
+            href={`/payouts/new?resume=${record.id}`}
+            className="rounded-md border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-3 py-2 text-sm font-medium text-[var(--color-primary)]"
+          >
+            Resume settlement ({unsettled.length} pending) →
+          </Link>
+        ) : (
+          <Link
+            href={`/payouts/new?clone=${record.id}`}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
+          >
+            Run again →
+          </Link>
+        )}
         <button
           disabled
           title="Phase E"
