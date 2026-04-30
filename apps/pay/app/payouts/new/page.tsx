@@ -84,13 +84,7 @@ import { useFolderStorage } from "../../_lib/folderStorage";
 import type { WalletEntry } from "@zkscatter/sdk/storage";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
-import {
-  REASON_PLACEHOLDER,
-  STEPPER_LABELS,
-  TEMPLATES,
-  type Template,
-  type TemplateId,
-} from "./_templates";
+import { REASON_PLACEHOLDER, TEMPLATES, type TemplateId } from "./_templates";
 
 import type { RecipientRow as Row } from "../../_lib/format";
 

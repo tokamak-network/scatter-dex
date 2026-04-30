@@ -5,7 +5,7 @@ import { Field } from "@zkscatter/ui";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 import {
   describeBatchFitError,
-  pickPerBatchNotes,
+  type PerBatchPick,
   type SourceNotesPick,
 } from "../../../_lib/sourceNotes";
 import { getNetworkConfig, isNetworkConfigured } from "../../../_lib/network";
@@ -102,7 +102,7 @@ export interface FundsStepProps {
   pick: {
     sourcePick: SourceNotesPick;
     batchCount: number;
-    multiBatchFit: ReturnType<typeof pickPerBatchNotes> | null;
+    multiBatchFit: PerBatchPick | null;
   };
   /** Gates the source-notes panel — until the vault has loaded,
    *  "your notes" would flicker between empty and populated. */
