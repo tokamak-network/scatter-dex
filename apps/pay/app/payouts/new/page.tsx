@@ -454,7 +454,7 @@ function NewPayout() {
         for (let i = 0; i < batches.length; i++) {
           try {
             const prep = await preparePromises[i]!;
-            const sent = await submitRealSettle(prep, { signer, settlementAddress });
+            const sent = await submitRealSettle(prep, signer);
             submitted.push({
               tx: sent.tx,
               ctx: sent.ctx,

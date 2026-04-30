@@ -134,7 +134,14 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
   // self-pay invariant: sellToken == buyToken, sellAmount == buyAmount
   const sellAmount = batch.totalAmount;
   const buyAmount = batch.totalAmount;
-  const expiry = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
+  // 2h window covers multi-batch pipelines where all proves are
+  // queued up front — the last batch's expiry is set when the first
+  // prepare runs, so the operator has the full window minus the
+  // time spent prove-queueing + signing earlier batches before the
+  // tail submits. Settlement reverts on `block.timestamp >= expiry`,
+  // and a stale UI input can't authorize a longer-than-allowed window
+  // because the circuit hashes `expiry` into the signed proof.
+  const expiry = BigInt(Math.floor(Date.now() / 1000) + 2 * 60 * 60);
   const nonce = randomFieldElement();
   const newSalt = randomFieldElement();
 
@@ -189,12 +196,19 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
 /** Phase 2 — submit `scatterDirectAuth`. Returns as soon as the wallet
  *  hands back the tx (user-sign + relayer dispatch); receipt wait is
  *  Phase 3. Caller must serialize calls with the same signer to keep
- *  the EOA's nonce monotonic. */
+ *  the EOA's nonce monotonic. The settlement address comes from the
+ *  prepared context — submitting against a different address would
+ *  point at a settlement the proof's commitments don't apply to. */
 export async function submitRealSettle(
   prep: PreparedSettle,
-  chain: { signer: ethers.Signer; settlementAddress: string },
+  signer: ethers.Signer,
 ): Promise<{ tx: ethers.TransactionResponse; ctx: FinalizeContext }> {
-  const tx = await callScatterDirectAuth(chain.signer, chain.settlementAddress, prep.side, 0n);
+  const tx = await callScatterDirectAuth(
+    signer,
+    prep.ctx.settlementAddress,
+    prep.side,
+    0n,
+  );
   return { tx, ctx: prep.ctx };
 }
 
@@ -290,6 +304,6 @@ export async function finalizeRealSettle(
  *  pipeline across batches. */
 export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult> {
   const prep = await prepareRealSettle(args);
-  const { tx, ctx } = await submitRealSettle(prep, args.chain);
+  const { tx, ctx } = await submitRealSettle(prep, args.chain.signer);
   return finalizeRealSettle(tx, ctx);
 }
