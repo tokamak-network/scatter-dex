@@ -53,11 +53,11 @@ Things that became obvious *after* the operator could actually monitor their rel
 4. **`/help` doesn't exist.** Every "common error → fix" lookup forces an SSH+grep cycle. The `docs/operations/*.md` files are fine source material.
 5. **No CSV export.** Compliance/finance often want "give me all settlements from <date> to <date>" in CSV. Currently the only path is to query the DB by hand.
 6. **`/orders/detail` shows internal state, not proof contents.** When a settlement reverts, the operator sees `last_error` but can't inspect the proof's public signals or the calldata. Useful for nullifier / commitment debugging.
-7. **`/runtime` does not show the relayer process's wallet address.** Trivial but operators repeatedly ask "is this the right relayer?" — surface `relayerAddress` from `/api/admin/status` more prominently.
+7. **`/runtime` does not show the relayer process's wallet address.** ✅ Shipped — Status panel now surfaces `relayerAddress` in a dedicated row above the stat grid.
 8. **No webhook test history beyond 50 entries.** A flapping condition can drown out the recent log; the buffer cap is fine but the list has no severity filter or text search.
 9. **Cross-relayer trade offers are persisted but not surfaced.** `trade_offers` table exists; no operator UI reads it.
 10. **No Prometheus / metrics endpoint.** External monitoring stacks (Grafana, Datadog) currently have nothing to scrape — operators relying on them get no signal.
-11. **`/runtime` Webhook section omits the alert thresholds.** The backend returns `balance.thresholdWei` and `settlementFailureStreak.threshold` from `GET /api/admin/webhook`, but the UI only renders the configured/health/probe cells and the recent-alerts table — operators can't see the *thresholds* without reading `.env`. Easy fix; rolling into the next webhook-UI pass.
+11. **`/runtime` Webhook section omits the alert thresholds.** ✅ Shipped — Webhook panel stat grid now also renders `balance.thresholdWei` (formatted as ETH), `balance.state`, and `settlementFailureStreak.consecutiveFailures of N`. Operators see thresholds directly without grepping `.env`.
 
 Items 1–2 are the most operator-visible. Items 3, 5, 11 are small and stackable.
 
