@@ -69,7 +69,10 @@ function PayoutDetailInner() {
   const closeMenu = useCallback(() => setOpenMenu(null), []);
 
   const breadcrumb = (
-    <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+    <div
+      data-print="hide"
+      className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]"
+    >
       <Link href="/dashboard" className="hover:text-[var(--color-text)]">Payouts</Link>
       <span>/</span>
       <span className="font-mono text-xs">{id ?? "—"}</span>
@@ -79,7 +82,9 @@ function PayoutDetailInner() {
   const shell = (children: ReactNode) => (
     <div className="space-y-4">
       {breadcrumb}
-      <WorkspaceBar />
+      <div data-print="hide">
+        <WorkspaceBar />
+      </div>
       {children}
     </div>
   );
@@ -270,7 +275,7 @@ function PayoutHeader({ record }: { record: RunRecord }) {
           Submitted {submitted} · One on-chain tx · Stealth claim links · No expiry
         </p>
       </div>
-      <div className="flex gap-2">
+      <div data-print="hide" className="flex gap-2">
         {partial ? (
           <Link
             href={`/payouts/new?resume=${record.id}`}
@@ -390,7 +395,10 @@ function NotificationsBar({
     : `Send to unsent (${unsentEmailable})`;
 
   return (
-    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+    <section
+      data-print="hide"
+      className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
+    >
       <div className="flex-1 text-sm">
         <div className="font-semibold">📧 Claim emails</div>
         <div className="text-xs text-[var(--color-text-muted)]">
@@ -446,7 +454,7 @@ function RecipientTable({
               <th className="px-5 py-3 text-right">Amount</th>
               <th className="px-5 py-3 text-left">Claim status</th>
               <th className="px-5 py-3 text-left">Notification</th>
-              <th className="px-5 py-3 text-right">Actions</th>
+              <th data-print="hide" className="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -465,7 +473,7 @@ function RecipientTable({
                   <td className="px-5 py-3">
                     <NotificationStatus log={log} hasEmail={!!r.email} />
                   </td>
-                  <td className="px-5 py-3 text-right">
+                  <td data-print="hide" className="px-5 py-3 text-right">
                     <RowMenu
                       open={openMenuRow === r.rowIndex}
                       onOpen={() =>
