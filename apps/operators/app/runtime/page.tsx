@@ -150,35 +150,43 @@ function StatusSection({
       {error && <ErrorLine text={error} />}
       {actionError && <ErrorLine text={actionError} />}
       {data && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Cell
-            label="Paused"
-            value={data.paused ? "Yes" : "No"}
-            tone={data.paused ? "warn" : "ok"}
-          />
-          <Cell label="Fee" value={`${data.feeBps} bps`} />
-          <Cell
-            label="ETH balance"
-            value={`${formatEth(data.ethBalance)} ETH`}
-          />
-          <Cell label="Pending txs" value={String(data.pendingTxs)} />
-          <Cell
-            label="Authorize orders"
-            value={`${data.authorizeOrders.pending} pending / ${data.authorizeOrders.matched} matched`}
-          />
-          <Cell
-            label="Settled"
-            value={`${data.stats.settledOrders} of ${data.stats.totalOrders}`}
-          />
-          <Cell
-            label="Avg settle"
-            value={`${Math.round(data.stats.avgSettleTimeMs)} ms`}
-          />
-          <Cell
-            label="Max gas"
-            value={`${data.maxGasPriceGwei} gwei`}
-          />
-        </div>
+        <>
+          <div className="mb-3 rounded-md bg-[var(--color-bg)] px-3 py-2">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
+              Relayer wallet
+            </div>
+            <div className="mt-0.5 break-all font-mono text-sm">{data.relayerAddress}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Cell
+              label="Paused"
+              value={data.paused ? "Yes" : "No"}
+              tone={data.paused ? "warn" : "ok"}
+            />
+            <Cell label="Fee" value={`${data.feeBps} bps`} />
+            <Cell
+              label="ETH balance"
+              value={`${formatEth(data.ethBalance)} ETH`}
+            />
+            <Cell label="Pending txs" value={String(data.pendingTxs)} />
+            <Cell
+              label="Authorize orders"
+              value={`${data.authorizeOrders.pending} pending / ${data.authorizeOrders.matched} matched`}
+            />
+            <Cell
+              label="Settled"
+              value={`${data.stats.settledOrders} of ${data.stats.totalOrders}`}
+            />
+            <Cell
+              label="Avg settle"
+              value={`${Math.round(data.stats.avgSettleTimeMs)} ms`}
+            />
+            <Cell
+              label="Max gas"
+              value={`${data.maxGasPriceGwei} gwei`}
+            />
+          </div>
+        </>
       )}
     </Panel>
   );
@@ -579,6 +587,17 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
 interface WebhookStatusBody {
   configured: boolean;
   health: { state: "healthy" | "degraded" | null; at: number | null };
+  balance: {
+    state: "healthy" | "low" | null;
+    at: number | null;
+    balanceWei: string | null;
+    thresholdWei: string;
+  };
+  settlementFailureStreak: {
+    consecutiveFailures: number;
+    alerted: boolean;
+    threshold: number;
+  };
   recent: Array<{
     type: string;
     severity: "info" | "warn" | "critical";
@@ -672,6 +691,26 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
             <Cell
               label="Probed at"
               value={data.health.at ? formatRelative(data.health.at) : "—"}
+            />
+            <Cell
+              label="Low-balance threshold"
+              value={`${formatEth(data.balance.thresholdWei)} ETH`}
+            />
+            <Cell
+              label="Balance state"
+              value={data.balance.state ?? "—"}
+              tone={
+                data.balance.state === "healthy"
+                  ? "ok"
+                  : data.balance.state === "low"
+                  ? "warn"
+                  : undefined
+              }
+            />
+            <Cell
+              label="Failure-streak alert"
+              value={`${data.settlementFailureStreak.consecutiveFailures} of ${data.settlementFailureStreak.threshold}`}
+              tone={data.settlementFailureStreak.alerted ? "warn" : undefined}
             />
           </div>
 
