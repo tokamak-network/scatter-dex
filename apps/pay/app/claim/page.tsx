@@ -291,7 +291,23 @@ function ClaimInner() {
           {phase.kind === "done" ? (
             <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-center text-xs text-[var(--color-success)]">
               <div className="mb-1 font-semibold">✓ Claimed</div>
-              <div className="font-mono">{shortAddr(phase.txHash)}</div>
+              {cfg.explorerBase ? (
+                <a
+                  href={`${cfg.explorerBase.replace(/\/$/, "")}/tx/${phase.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono underline-offset-2 hover:underline"
+                >
+                  {shortAddr(phase.txHash)} ↗
+                </a>
+              ) : (
+                <div className="font-mono">{shortAddr(phase.txHash)}</div>
+              )}
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                Tokens are on-chain at{" "}
+                {parsed ? shortAddr(parsed.pkg.recipient) : "your address"}. Refresh
+                your wallet if the balance hasn&apos;t updated yet.
+              </div>
             </div>
           ) : (() => {
               // App-chain mismatch is terminal — neither path can
@@ -328,7 +344,7 @@ function ClaimInner() {
                       Connect wallet to claim
                     </button>
                     {connectError && (
-                      <div className="text-center text-xs text-[var(--color-error,#dc2626)]">
+                      <div className="text-center text-xs text-[var(--color-danger)]">
                         {connectError === "no-wallet"
                           ? "Install MetaMask to continue."
                           : connectError}
