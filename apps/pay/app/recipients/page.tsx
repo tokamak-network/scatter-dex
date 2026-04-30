@@ -58,8 +58,8 @@ export default function RecipientsPage() {
               disabled={book.entries.length === 0}
               title={
                 book.entries.length === 0
-                  ? "No recipients to export yet"
-                  : `Download all ${book.entries.length} recipients as CSV`
+                  ? "No contacts to export yet"
+                  : `Download all ${book.entries.length} contacts as CSV`
               }
               className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             >
@@ -445,31 +445,26 @@ function FormSection({
 /** Header row + column order produced by the export. The
  *  forthcoming bulk-import path will accept the same shape so a
  *  round-trip (export → edit in a spreadsheet → re-import) lands
- *  byte-equivalent entries on disk. `addressByChain` is serialised
- *  as `chain:addr|chain:addr` because spreadsheets don't grow extra
- *  columns gracefully and JSON-in-a-cell trips on stray commas. */
+ *  byte-equivalent entries on disk. `addressByChain` is intentionally
+ *  excluded — the form no longer surfaces per-chain overrides, and
+ *  exporting a column the user can't edit just creates round-trip
+ *  drift. Legacy entries that still carry the field on disk keep it
+ *  there; only the export view drops it. */
 const CSV_COLUMNS = [
   "label",
   "address",
   "email",
   "discordHandle",
   "memo",
-  "addressByChain",
 ] as const;
 
 function entryToCsvRow(e: WalletEntry): string {
-  const overrides = e.addressByChain
-    ? Object.entries(e.addressByChain)
-        .map(([chainId, addr]) => `${chainId}:${addr}`)
-        .join("|")
-    : "";
   const cells = [
     e.label,
     e.address,
     e.email ?? "",
     e.discordHandle ?? "",
     e.memo ?? "",
-    overrides,
   ];
   return cells.map(csvEscape).join(",");
 }
@@ -477,5 +472,5 @@ function entryToCsvRow(e: WalletEntry): string {
 function downloadAsCsv(entries: WalletEntry[]): void {
   const lines = [CSV_COLUMNS.join(","), ...entries.map(entryToCsvRow)];
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadCsv(lines.join("\n") + "\n", `zkscatter-recipients-${stamp}.csv`);
+  downloadCsv(lines.join("\n") + "\n", `zkscatter-contacts-${stamp}.csv`);
 }
