@@ -11,6 +11,7 @@ import {
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
+import { parseAmount } from "../_lib/format";
 
 type Tab = "all" | RunCategory;
 type SortKey = "date" | "total" | "recipients" | "claimed";
@@ -27,18 +28,21 @@ const DEFAULT_SORT_DIR: Record<SortKey, SortDir> = {
   claimed: "asc",
 };
 
-/** Compare for the sort key. `total` parses the comma-separated
- *  display string back to a number — we don't keep the raw bigint
- *  in the index, but display strings are written by `formatTotal`
- *  with at most 2 fraction digits and JS-number range, so a `Number()`
- *  round-trip is faithful for any realistic payout total. */
+/** Compare for the sort key. `total` reuses `parseAmount` (same
+ *  helper the wizard's Recipients step uses) so a record whose
+ *  `totalAmount` was hand-edited to a `1_000` / whitespace-padded
+ *  form sorts the same way it would total. NaN falls back to 0 so
+ *  malformed entries land at the bottom of asc / top of desc rather
+ *  than throwing off the comparator. */
 function sortRuns(runs: RunsIndexEntry[], by: SortKey, dir: SortDir): RunsIndexEntry[] {
   const keyOf = (r: RunsIndexEntry): number => {
     switch (by) {
       case "date":
         return r.createdAt;
-      case "total":
-        return Number(r.totalAmount.replace(/,/g, "")) || 0;
+      case "total": {
+        const n = parseAmount(r.totalAmount);
+        return Number.isFinite(n) ? n : 0;
+      }
       case "recipients":
         return r.totalRecipients;
       case "claimed":
@@ -498,7 +502,12 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
     tokens.add(r.tokenSymbol);
     pendingClaims += r.totalRecipients - r.claimedRecipients;
     if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
-      thisMonthByToken[r.tokenSymbol] = (thisMonthByToken[r.tokenSymbol] ?? 0) + parseAmount(r.totalAmount);
+      // parseAmount returns NaN on a malformed total; treat that as
+      // 0 so a single bad record doesn't poison the running sum
+      // into NaN and blank out the headline.
+      const n = parseAmount(r.totalAmount);
+      thisMonthByToken[r.tokenSymbol] =
+        (thisMonthByToken[r.tokenSymbol] ?? 0) + (Number.isFinite(n) ? n : 0);
     }
     if (r.settleGasPaid) anyGas = true;
   }
@@ -533,19 +542,6 @@ function formatThisMonthSub(stats: DashboardStats): string {
 
 function formatAmount(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
-
-/** Parse a display-string amount (e.g. `"3,500.50"` or `"1_000"`) to
- *  a number. Strips commas, underscores, and whitespace, then requires
- *  the remainder to match a strict decimal pattern — `parseFloat`
- *  alone would accept `"123abc"` (→ 123) and silently undercount the
- *  monthly total when a record has a mis-edited amount. Returns 0 on
- *  any deviation so the stat at least stays additive instead of NaN. */
-function parseAmount(s: string): number {
-  const cleaned = s.replace(/[,_\s]/g, "");
-  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return 0;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
 }
 
 function formatIsoDate(unixSec: number): string {

@@ -352,7 +352,11 @@ function MemoSection({
   record: RunRecord;
   refresh: () => Promise<void>;
 }) {
-  const saved = record.notes ?? "";
+  // `saved` collapses absent / empty for the display side; `savedRaw`
+  // preserves the distinction so onSave can clean up a present-but-
+  // empty `notes: ""` field that escaped a prior save.
+  const savedRaw = record.notes;
+  const saved = savedRaw ?? "";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
@@ -367,7 +371,10 @@ function MemoSection({
 
   const onSave = async () => {
     const next = draft.trim() === "" ? undefined : draft;
-    if (next === saved || (next === undefined && saved === "")) {
+    // Skip the write only when the on-disk shape would be identical:
+    // both undefined (no `notes` key on either side) or matching
+    // strings. A present-but-empty `notes: ""` still needs cleaning.
+    if (next === savedRaw) {
       setEditing(false);
       return;
     }
@@ -377,8 +384,7 @@ function MemoSection({
       const updated: RunRecord = next === undefined
         ? (() => {
             // Drop the field entirely on clear so the on-disk JSON
-            // doesn't carry an empty `notes: ""` from a record that
-            // never had one.
+            // doesn't carry an empty `notes: ""`.
             const { notes: _omit, ...rest } = record;
             void _omit;
             return rest;
@@ -423,6 +429,7 @@ function MemoSection({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={4}
+            aria-label="Run note"
             placeholder="Approved by CFO · ref INV-2026-04-* · etc."
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white p-3 text-sm"
           />
