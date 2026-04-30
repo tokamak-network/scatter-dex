@@ -44,7 +44,7 @@ export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): Priva
 type DbStub = {
   getMeta: (k: string) => string | null;
   setMeta: (k: string, v: string) => void;
-  getRelayerStats: () => { totalOrders: number; settledOrders: number; successRate: number; crossRelayerSettled: number; avgSettleTimeMs: number; uptimeSince: number };
+  getRelayerStats: () => { totalOrders: number; settledOrders: number; successRate: number; crossRelayerSettled: number; totalTradeOffers: number; settledTradeOffers: number; avgSettleTimeMs: number; uptimeSince: number };
   getSettledVolume: () => Array<{ sellToken: string; count: number; totalVolume: string }>;
   getTradeOffers: (limit?: number, offset?: number) => unknown[];
   getPendingTxs: () => unknown[];
@@ -61,7 +61,8 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
     setMeta: (k, v) => { meta.set(k, v); },
     getRelayerStats: () => ({
       totalOrders: 0, settledOrders: 0, successRate: 0,
-      crossRelayerSettled: 0, avgSettleTimeMs: 0, uptimeSince: Date.now(),
+      crossRelayerSettled: 0, totalTradeOffers: 0, settledTradeOffers: 0,
+      avgSettleTimeMs: 0, uptimeSince: Date.now(),
     }),
     getSettledVolume: () => [],
     getTradeOffers: () => [],
