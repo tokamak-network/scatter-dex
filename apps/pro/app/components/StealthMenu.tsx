@@ -3,11 +3,17 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-/** Top-nav "Stealth ▾" dropdown — hover/focus opens, click outside
- *  or Escape closes. Plain DOM (no popover lib) since the menu has
- *  exactly two items and lives in a single nav row. Mirrors apps/pay's
- *  StealthMenu — kept duplicated for v1 to avoid premature shared
- *  ownership; future PR can extract to packages/ui. */
+/** Top-nav "Stealth" dropdown — opens on hover, focus, or click;
+ *  closes on click outside, Escape, or focus leaving the wrapper.
+ *  Treated as a plain styled list of nav links (not an ARIA `menu`)
+ *  because the contents are just two `<Link>`s — implementing the
+ *  full menu keyboard pattern (roving focus, arrow-key nav) would
+ *  add complexity without screen-reader benefit, and an
+ *  `aria-expanded` toggle on the button is enough.
+ *
+ *  Mirror of apps/pay's `_components/StealthMenu.tsx` — kept
+ *  duplicated for v1 to avoid premature shared ownership; future PR
+ *  can extract to packages/ui. */
 export function StealthMenu() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -34,10 +40,16 @@ export function StealthMenu() {
       className="relative"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setOpen(false);
+        }
+      }}
     >
       <button
         type="button"
-        aria-haspopup="menu"
+        aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="hover:text-[var(--color-text)]"
@@ -45,26 +57,27 @@ export function StealthMenu() {
         Stealth <span aria-hidden>▾</span>
       </button>
       {open && (
-        <div
-          role="menu"
-          className="absolute left-0 top-full z-10 mt-2 w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
-        >
-          <Link
-            href="/stealth/wallet"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
-          >
-            Wallet
-          </Link>
-          <Link
-            href="/stealth/inbox"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
-          >
-            Inbox
-          </Link>
+        // `pt-2` (padding, not margin) so the gap between the trigger
+        // and the panel stays inside the wrapper's hover area —
+        // moving the mouse from the button to the items doesn't trip
+        // onMouseLeave on the parent.
+        <div className="absolute left-0 top-full z-10 w-44 pt-2">
+          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
+            <Link
+              href="/stealth/wallet"
+              onClick={() => setOpen(false)}
+              className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
+            >
+              Wallet
+            </Link>
+            <Link
+              href="/stealth/inbox"
+              onClick={() => setOpen(false)}
+              className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
+            >
+              Inbox
+            </Link>
+          </div>
         </div>
       )}
     </div>

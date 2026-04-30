@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Button } from "@zkscatter/ui";
 import { stealthWallet } from "@zkscatter/sdk/zk";
 import { useMetaAddress } from "@zkscatter/sdk/react";
-import { CopyButton, SecretRow, StealthFolderGate } from "../_components";
+import { CopyButton, StealthFolderGate } from "../_components";
 
 interface DerivedClaim {
   ephemeralPubKey: string;
@@ -138,9 +137,8 @@ function ReceiveBody({
               <CopyButton value={derived.stealthAddress} />
             </div>
           </div>
-          <SecretRow label="Stealth private key" value={derived.stealthPrivateKey} />
+          <RevealableSecret label="Stealth private key" value={derived.stealthPrivateKey} />
           <div className="flex flex-wrap gap-2">
-            <CopyButton value={derived.stealthPrivateKey} label="Copy private key" />
             <Link
               href="/orders"
               className="inline-flex items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-primary-soft)]"
@@ -167,5 +165,34 @@ function ReceiveBody({
         </p>
       </section>
     </section>
+  );
+}
+
+function RevealableSecret({ label, value }: { label: string; value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-[var(--color-text-muted)]">{label}</div>
+        {revealed && <CopyButton value={value} label="Copy private key" />}
+      </div>
+      {revealed ? (
+        <div className="mt-1 break-all rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2 font-mono text-[11px]">
+          {value}
+        </div>
+      ) : (
+        <button
+          onClick={() => {
+            const ok = window.confirm(
+              "Reveal private key?\n\nAnyone who sees this string can spend the stealth funds at this address. Make sure no one is shoulder-surfing and that you're in a trusted environment.",
+            );
+            if (ok) setRevealed(true);
+          }}
+          className="mt-1 w-full rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] p-2 text-center text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-warning-soft)]"
+        >
+          Click to reveal — anyone seeing this can spend the funds
+        </button>
+      )}
+    </div>
   );
 }

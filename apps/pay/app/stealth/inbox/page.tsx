@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMetaAddress } from "@zkscatter/sdk/react";
 import { stealthWallet } from "@zkscatter/sdk/zk";
-import { CopyButton, SecretRow, StealthFolderGate } from "../_components";
+import { CopyButton, StealthFolderGate } from "../_components";
 
 interface DerivedClaim {
   ephemeralPubKey: string;
@@ -142,7 +142,7 @@ function ReceiveBody({
               <CopyButton value={derived.stealthAddress} />
             </div>
           </div>
-          <SecretRow label="Stealth private key" value={derived.stealthPrivateKey} />
+          <RevealableSecret label="Stealth private key" value={derived.stealthPrivateKey} />
           <p className="text-[11px] text-[var(--color-warning)]">
             Import this private key into a wallet (e.g. via MetaMask&apos;s
             "Import account") to spend the funds. Treat the key like any
@@ -161,5 +161,38 @@ function ReceiveBody({
         </p>
       </section>
     </section>
+  );
+}
+
+/** Renders a sensitive value behind a click-to-reveal gate so the
+ *  raw private key isn't visible at first glance and the operator
+ *  has to acknowledge the security note before exposing it. After
+ *  reveal, a copy button shows alongside. */
+function RevealableSecret({ label, value }: { label: string; value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-[var(--color-text-muted)]">{label}</div>
+        {revealed && <CopyButton value={value} label="Copy private key" />}
+      </div>
+      {revealed ? (
+        <div className="mt-1 break-all rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2 font-mono text-[11px]">
+          {value}
+        </div>
+      ) : (
+        <button
+          onClick={() => {
+            const ok = window.confirm(
+              "Reveal private key?\n\nAnyone who sees this string can spend the stealth funds at this address. Make sure no one is shoulder-surfing and that you're in a trusted environment.",
+            );
+            if (ok) setRevealed(true);
+          }}
+          className="mt-1 w-full rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] p-2 text-center text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-warning-soft)]"
+        >
+          Click to reveal — anyone seeing this can spend the funds
+        </button>
+      )}
+    </div>
   );
 }
