@@ -430,3 +430,52 @@ describe("/api/admin/history.csv", () => {
     expect(res.text.trim().split("\n")).toHaveLength(1);
   });
 });
+
+describe("/api/admin/orders/by-tx/:txHash/proof", () => {
+  const validHash = "0x" + "ab".repeat(32);
+  const decoyCalldata = "0xdeadbeef" + "00".repeat(32);
+
+  it("rejects malformed txHash with 400", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/orders/by-tx/not-a-hash/proof")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when the provider has no record of the tx", async () => {
+    const submitter = makeSubmitterStub();
+    const router = createAdminRoutes({
+      submitter, db: makeDbStub(),
+      drainAuthorizeOrders: () => 0,
+      getAuthorizeOrderStats: () => ({ pending: 0, matched: 0, total: 0 }),
+    });
+    const app = mountRouter("/api/admin", router);
+    const res = await request(app)
+      .get(`/api/admin/orders/by-tx/${validHash}/proof`)
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns calldata + null decoded for an unknown function selector", async () => {
+    const submitter = makeSubmitterStub({
+      getProvider: () => ({
+        getBlockNumber: async () => 1, getBalance: async () => 0n, getNetwork: async () => ({ chainId: 1n }),
+        getTransaction: async () => ({ data: decoyCalldata, from: "0xfrom", to: "0xto", blockNumber: 999 }),
+      }),
+    });
+    const router = createAdminRoutes({
+      submitter, db: makeDbStub(),
+      drainAuthorizeOrders: () => 0,
+      getAuthorizeOrderStats: () => ({ pending: 0, matched: 0, total: 0 }),
+    });
+    const app = mountRouter("/api/admin", router);
+    const res = await request(app)
+      .get(`/api/admin/orders/by-tx/${validHash}/proof`)
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.decoded).toBeNull();
+    expect(res.body.calldata).toBe(decoyCalldata);
+    expect(res.body.from).toBe("0xfrom");
+    expect(res.body.blockNumber).toBe(999);
+  });
+});

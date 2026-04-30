@@ -14,7 +14,7 @@ export function mountRouter(basePath: string, router: Router): Express {
 // casts to the full class type so route factories accept the stub.
 
 type SubmitterStub = {
-  getProvider: () => { getBlockNumber: () => Promise<number>; getBalance: () => Promise<bigint>; getNetwork: () => Promise<{ chainId: bigint }> };
+  getProvider: () => { getBlockNumber: () => Promise<number>; getBalance: () => Promise<bigint>; getNetwork: () => Promise<{ chainId: bigint }>; getTransaction: (hash: string) => Promise<{ data: string; from: string; to: string | null; blockNumber: number | null } | null> };
   getWallet: () => { address: string; provider?: unknown };
   getAddress: () => string;
   getCommitmentMerkleProof: (i: number) => Promise<unknown>;
@@ -27,6 +27,7 @@ export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): Priva
     getBlockNumber: async () => 12345,
     getBalance: async () => 10n ** 18n,
     getNetwork: async () => ({ chainId: 31337n }),
+    getTransaction: async (_hash: string) => null,
   };
   const wallet = { address: "0x" + "9".repeat(40), provider };
   const stub: SubmitterStub = {

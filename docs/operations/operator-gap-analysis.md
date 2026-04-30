@@ -76,7 +76,7 @@ The original Phase 3 list (#9–#13) folds in with the new gaps from §2. Re-ran
 | 13 | **Fee-claim reminder + threshold UI** | new gaps #3, #11 | Small | `/runtime` Webhook section already shows recent alerts; add per-token claim threshold setting (persisted in `relayer_meta`) and a corresponding monitor. Reuses #555/#561 alerting infra. |
 | 14 | **Prometheus `/metrics` endpoint** ✅ | new gap #10 | Small | Shipped — `GET /metrics` on the relayer emits in-memory + DB stats in Prometheus exposition format. Scrape with any Prometheus-compatible agent (Grafana Agent, Datadog, vmagent). |
 | 15 | **Key rotation flow** *(security-critical)* | v1 #10 | Large + contract change | Defer until governance defines the rotation semantics on `RelayerRegistry`; documenting the gap, not pre-spec'ing. |
-| 16 | **Proof inspection on `/orders/detail`** | new gap #6 | Small-medium | Pull public signals + calldata into the by-tx response; render in a collapsible. Mostly a backend addition (parsing tx receipt logs). |
+| 16 | **Proof inspection on `/orders/detail`** ✅ | new gap #6 | Small-medium | Shipped — `GET /api/admin/orders/by-tx/:txHash/proof` decodes a settlement tx's calldata into its public signals (settleAuth maker+taker or scatterDirectAuth single proof). `/orders/detail` renders a lazy-loaded "Proof inspection" section with each public signal labelled, plus the raw calldata as a nested collapsible. |
 
 ### Recommended next big PR: **#9 SLA / performance dashboard**
 

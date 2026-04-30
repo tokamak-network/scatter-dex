@@ -12,6 +12,7 @@ import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { isWeiString, type PrivateOrderDB } from "../core/db.js";
+import { decodeSettlementCalldata } from "../core/decode-settlement.js";
 import { getProfile, updateProfile, validateProfile } from "../core/profile.js";
 import { getRecentAlerts, isWebhookConfigured, sendAlert } from "../core/alerts.js";
 import { getLastHealth } from "../core/health-monitor.js";
@@ -327,6 +328,38 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       } else {
         res.destroy(err instanceof Error ? err : new Error(String(err)));
       }
+    }
+  });
+
+  // GET /api/admin/orders/by-tx/:txHash/proof — decode a settlement
+  // tx's calldata into its public signals (the proof itself stays
+  // off-chain — this is the on-chain tuple the verifier asserts).
+  // When a settlement reverts, the operator can compare these fields
+  // against `last_error` to debug nullifier/commitment issues.
+  router.get("/orders/by-tx/:txHash/proof", async (req: Request, res: Response) => {
+    try {
+      const { txHash } = req.params;
+      if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        res.status(400).json({ error: "txHash must be a 0x-prefixed 32-byte hex string" });
+        return;
+      }
+      const tx = await submitter.getProvider().getTransaction(txHash);
+      if (!tx) {
+        res.status(404).json({ error: "Transaction not found on-chain" });
+        return;
+      }
+      const decoded = decodeSettlementCalldata(tx.data);
+      res.json({
+        txHash,
+        from: tx.from,
+        to: tx.to,
+        blockNumber: tx.blockNumber,
+        calldata: tx.data,
+        decoded,
+      });
+    } catch (err) {
+      log.error("orders/by-tx/proof failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to decode settlement proof" });
     }
   });
 
