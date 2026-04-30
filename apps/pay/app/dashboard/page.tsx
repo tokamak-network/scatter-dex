@@ -11,8 +11,55 @@ import {
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
+import { parseAmount } from "../_lib/format";
 
 type Tab = "all" | RunCategory;
+type SortKey = "date" | "total" | "recipients" | "claimed";
+type SortDir = "asc" | "desc";
+
+/** Default direction per column: dates / amounts read descending
+ *  ("newest / largest first"); claim progress reads ascending so the
+ *  unfinished work bubbles up. Operators that want the inverse flip
+ *  with one more click. */
+const DEFAULT_SORT_DIR: Record<SortKey, SortDir> = {
+  date: "desc",
+  total: "desc",
+  recipients: "desc",
+  claimed: "asc",
+};
+
+/** Compare for the sort key. `total` reuses `parseAmount` (same
+ *  helper the wizard's Recipients step uses) so a record whose
+ *  `totalAmount` was hand-edited to a `1_000` / whitespace-padded
+ *  form sorts the same way it would total. NaN falls back to 0 so
+ *  malformed entries land at the bottom of asc / top of desc rather
+ *  than throwing off the comparator. */
+function sortRuns(runs: RunsIndexEntry[], by: SortKey, dir: SortDir): RunsIndexEntry[] {
+  const keyOf = (r: RunsIndexEntry): number => {
+    switch (by) {
+      case "date":
+        return r.createdAt;
+      case "total": {
+        const n = parseAmount(r.totalAmount);
+        return Number.isFinite(n) ? n : 0;
+      }
+      case "recipients":
+        return r.totalRecipients;
+      case "claimed":
+        return r.totalRecipients > 0 ? r.claimedRecipients / r.totalRecipients : 0;
+    }
+  };
+  // Stable sort: ties fall back to createdAt desc so two runs with the
+  // same total / recipient count keep a predictable order.
+  const out = [...runs];
+  const m = dir === "asc" ? 1 : -1;
+  out.sort((a, b) => {
+    const diff = keyOf(a) - keyOf(b);
+    if (diff !== 0) return diff * m;
+    return b.createdAt - a.createdAt;
+  });
+  return out;
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "all",        label: "All" },
@@ -41,6 +88,8 @@ export default function Dashboard() {
   const [scope, setScope] = useState<"context" | "all-wallets">("context");
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   // Race guard: workspace switch + scope toggle + wallet change can
   // all trigger a fresh fetch. A slower earlier call resolving after
@@ -97,7 +146,7 @@ export default function Dashboard() {
     () => (tab === "all" ? runs : runs.filter((r) => r.category === tab)),
     [runs, tab],
   );
-  const visible = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return byTab;
     return byTab.filter(
@@ -107,6 +156,19 @@ export default function Dashboard() {
         r.id.toLowerCase().includes(q),
     );
   }, [byTab, search]);
+  const visible = useMemo(
+    () => sortRuns(filtered, sortBy, sortDir),
+    [filtered, sortBy, sortDir],
+  );
+
+  const onSort = (key: SortKey) => {
+    if (key === sortBy) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      setSortDir(DEFAULT_SORT_DIR[key]);
+    }
+  };
 
   const stats = useMemo(() => deriveStats(runs, mounted), [runs, mounted]);
 
@@ -196,6 +258,9 @@ export default function Dashboard() {
           searching={search.trim().length > 0}
           totalRuns={byTab.length}
           onClearSearch={() => setSearch("")}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          onSort={onSort}
         />
       </section>
     </div>
@@ -245,6 +310,9 @@ function RunsList({
   searching,
   totalRuns,
   onClearSearch,
+  sortBy,
+  sortDir,
+  onSort,
 }: {
   runs: RunsIndexEntry[];
   loaded: boolean;
@@ -253,6 +321,9 @@ function RunsList({
   searching: boolean;
   totalRuns: number;
   onClearSearch: () => void;
+  sortBy: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
 }) {
   if (!folderReady) {
     return (
@@ -292,9 +363,49 @@ function RunsList({
   }
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <SortHeader sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
       {runs.map((r) => (
         <RunRow key={r.id} entry={r} />
       ))}
+    </div>
+  );
+}
+
+function SortHeader({
+  sortBy,
+  sortDir,
+  onSort,
+}: {
+  sortBy: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const arrow = (key: SortKey) => (sortBy === key ? (sortDir === "asc" ? "↑" : "↓") : "");
+  const cls = (key: SortKey) =>
+    `text-[10px] uppercase tracking-wider ${
+      sortBy === key
+        ? "text-[var(--color-text)] font-semibold"
+        : "text-[var(--color-text-subtle)] hover:text-[var(--color-text-muted)]"
+    }`;
+  return (
+    <div
+      data-print="hide"
+      className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-2 text-xs"
+    >
+      <button onClick={() => onSort("date")} className={cls("date")}>
+        Date / label {arrow("date")}
+      </button>
+      <div className="flex items-center gap-6">
+        <button onClick={() => onSort("recipients")} className={cls("recipients")}>
+          Recipients {arrow("recipients")}
+        </button>
+        <button onClick={() => onSort("total")} className={cls("total")}>
+          Total {arrow("total")}
+        </button>
+        <button onClick={() => onSort("claimed")} className={cls("claimed")}>
+          Claimed {arrow("claimed")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -315,6 +426,15 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{entry.label}</span>
+          {entry.hasNotes && (
+            <span
+              title="This run has an internal note"
+              aria-label="Has note"
+              className="text-xs"
+            >
+              📝
+            </span>
+          )}
           <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
             {CATEGORY_BADGE[entry.category]}
           </span>
@@ -382,7 +502,12 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
     tokens.add(r.tokenSymbol);
     pendingClaims += r.totalRecipients - r.claimedRecipients;
     if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
-      thisMonthByToken[r.tokenSymbol] = (thisMonthByToken[r.tokenSymbol] ?? 0) + parseAmount(r.totalAmount);
+      // parseAmount returns NaN on a malformed total; treat that as
+      // 0 so a single bad record doesn't poison the running sum
+      // into NaN and blank out the headline.
+      const n = parseAmount(r.totalAmount);
+      thisMonthByToken[r.tokenSymbol] =
+        (thisMonthByToken[r.tokenSymbol] ?? 0) + (Number.isFinite(n) ? n : 0);
     }
     if (r.settleGasPaid) anyGas = true;
   }
@@ -417,19 +542,6 @@ function formatThisMonthSub(stats: DashboardStats): string {
 
 function formatAmount(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
-
-/** Parse a display-string amount (e.g. `"3,500.50"` or `"1_000"`) to
- *  a number. Strips commas, underscores, and whitespace, then requires
- *  the remainder to match a strict decimal pattern — `parseFloat`
- *  alone would accept `"123abc"` (→ 123) and silently undercount the
- *  monthly total when a record has a mis-edited amount. Returns 0 on
- *  any deviation so the stat at least stays additive instead of NaN. */
-function parseAmount(s: string): number {
-  const cleaned = s.replace(/[,_\s]/g, "");
-  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return 0;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
 }
 
 function formatIsoDate(unixSec: number): string {

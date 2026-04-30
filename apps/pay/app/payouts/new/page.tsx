@@ -69,7 +69,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseRecipientRows, toIsoDate } from "../../_lib/format";
+import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDate } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -98,14 +98,6 @@ const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
   return toIsoDate(new Date());
-}
-
-// `123,456.78` and `1_000` style separators are common in spreadsheets
-// — strip them before parseFloat so totals don't silently undercount.
-function parseAmount(input: string): number {
-  const cleaned = input.replace(/[,_\s]/g, "");
-  if (cleaned === "" || !/^-?\d+(\.\d+)?$/.test(cleaned)) return NaN;
-  return parseFloat(cleaned);
 }
 
 /** Pay ships as a static export, so `useSearchParams` (used to read
