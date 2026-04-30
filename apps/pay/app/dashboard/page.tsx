@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [loaded, setLoaded] = useState(false);
   const [scope, setScope] = useState<"context" | "all-wallets">("context");
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   // Race guard: workspace switch + scope toggle + wallet change can
   // all trigger a fresh fetch. A slower earlier call resolving after
@@ -88,7 +89,24 @@ export default function Dashboard() {
     };
   }, [folder.ready, folder.currentId, wallet.chainId, wallet.account, scope]);
 
-  const visible = tab === "all" ? runs : runs.filter((r) => r.category === tab);
+  // Tab + search compose: tab narrows by category, search narrows
+  // further by label / token symbol / id (substring, case-insensitive).
+  // Stats derive from the unfiltered `runs` so the headline KPIs reflect
+  // the whole scope, not whatever the operator happens to be looking at.
+  const byTab = useMemo(
+    () => (tab === "all" ? runs : runs.filter((r) => r.category === tab)),
+    [runs, tab],
+  );
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return byTab;
+    return byTab.filter(
+      (r) =>
+        r.label.toLowerCase().includes(q) ||
+        r.tokenSymbol.toLowerCase().includes(q) ||
+        r.id.toLowerCase().includes(q),
+    );
+  }, [byTab, search]);
 
   const stats = useMemo(() => deriveStats(runs, mounted), [runs, mounted]);
 
@@ -140,22 +158,34 @@ export default function Dashboard() {
       )}
 
       <section>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Recent payouts</h2>
-          <div className="flex gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-xs">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`rounded px-2.5 py-1 ${
-                  tab === t.id
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by label, token, or id…"
+                aria-label="Search payouts"
+                className="w-64 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs"
+              />
+            </div>
+            <div className="flex gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-xs">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`rounded px-2.5 py-1 ${
+                    tab === t.id
+                      ? "bg-[var(--color-primary)] text-white"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <RunsList
@@ -163,6 +193,9 @@ export default function Dashboard() {
           loaded={loaded}
           folderReady={folder.ready}
           tab={tab}
+          searching={search.trim().length > 0}
+          totalRuns={byTab.length}
+          onClearSearch={() => setSearch("")}
         />
       </section>
     </div>
@@ -209,11 +242,17 @@ function RunsList({
   loaded,
   folderReady,
   tab,
+  searching,
+  totalRuns,
+  onClearSearch,
 }: {
   runs: RunsIndexEntry[];
   loaded: boolean;
   folderReady: boolean;
   tab: Tab;
+  searching: boolean;
+  totalRuns: number;
+  onClearSearch: () => void;
 }) {
   if (!folderReady) {
     return (
@@ -230,6 +269,19 @@ function RunsList({
     );
   }
   if (runs.length === 0) {
+    if (searching && totalRuns > 0) {
+      return (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
+          No runs match this search across {totalRuns} payout{totalRuns === 1 ? "" : "s"}.{" "}
+          <button
+            onClick={onClearSearch}
+            className="text-[var(--color-primary)] underline-offset-2 hover:underline"
+          >
+            Clear search
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
         {tab === "all"
