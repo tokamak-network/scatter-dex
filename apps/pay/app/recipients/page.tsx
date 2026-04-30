@@ -11,6 +11,7 @@ import {
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
+import { csvEscape, downloadCsv } from "../_lib/csv";
 
 /** Lightweight email shape check — RFC-5322 in full would be
  *  overkill; we just want "has an at-sign with something on either
@@ -565,16 +566,6 @@ const CSV_COLUMNS = [
   "addressByChain",
 ] as const;
 
-function csvEscape(value: string): string {
-  // Quote when the value contains the delimiter, a quote, or a
-  // newline — Excel / Numbers / Sheets all parse the doubled-quote
-  // escape (`"foo ""bar""`).
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
 function entryToCsvRow(e: WalletEntry): string {
   const overrides = e.addressByChain
     ? Object.entries(e.addressByChain)
@@ -594,23 +585,6 @@ function entryToCsvRow(e: WalletEntry): string {
 
 function downloadAsCsv(entries: WalletEntry[]): void {
   const lines = [CSV_COLUMNS.join(","), ...entries.map(entryToCsvRow)];
-  // Prepend a UTF-8 BOM so Excel on Windows reads non-ASCII labels
-  // (e.g. Korean recipient names) as Unicode instead of cp1252.
-  const blob = new Blob(["﻿" + lines.join("\n") + "\n"], {
-    type: "text/csv;charset=utf-8",
-  });
-  const url = URL.createObjectURL(blob);
-  try {
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `zkscatter-recipients-${stamp}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  } finally {
-    // Defer the revoke so Safari has time to start the download
-    // (matches the workspace export pattern in FolderPill).
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadCsv(lines.join("\n") + "\n", `zkscatter-recipients-${stamp}.csv`);
 }

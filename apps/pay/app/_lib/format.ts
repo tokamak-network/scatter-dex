@@ -30,6 +30,15 @@ export function toIsoDate(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** UTC `YYYY-MM-DD HH:mm UTC` stamp. Used wherever an SSR/client
+ *  locale split would cause hydration mismatch. Empty string for
+ *  undefined/zero so callers can render without conditional gating. */
+export function formatUtcStamp(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const iso = new Date(unixSec * 1000).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
 /** Parse the wizard's textarea rows into the shape `splitPayout` and
  *  `dryRunSettle` both consume. Throws on the first invalid row so
  *  callers fall back to an empty plan rather than producing batches

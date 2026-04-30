@@ -29,6 +29,9 @@ import { useRunRecord } from "../../_lib/runRecord";
 import { ClaimReconciler } from "../../_lib/claimReconciler";
 import { getNetworkConfig } from "../../_lib/network";
 import { partialRunStats } from "../../_lib/resumeRun";
+import { downloadRunCsv } from "../../_lib/exportRun";
+import { buildClaimUrl } from "../../_lib/claimUrl";
+import { formatUtcStamp } from "../../_lib/format";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -283,15 +286,48 @@ function PayoutHeader({ record }: { record: RunRecord }) {
             Run again →
           </Link>
         )}
-        <button
-          disabled
-          title="Phase E"
-          className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm opacity-60"
-        >
-          Export (CSV / PDF)
-        </button>
+        <ExportMenu record={record} />
       </div>
     </header>
+  );
+}
+
+function ExportMenu({ record }: { record: RunRecord }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClick({ enabled: open, ref, onClose: () => setOpen(false) });
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm hover:bg-[var(--color-primary-soft)]"
+      >
+        Export ▾
+      </button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-1 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-sm shadow-lg">
+          <button
+            onClick={() => {
+              downloadRunCsv(record);
+              setOpen(false);
+            }}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+          >
+            Download CSV
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              window.print();
+            }}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            title="Use the browser's Save as PDF option in the print dialog."
+          >
+            Print / Save as PDF
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -638,12 +674,10 @@ function CorruptBanner({ message, filename }: { message: string; filename: strin
 }
 
 function copyClaimLink(record: RunRecord, row: RecipientRow): void {
-  // Real claim URL is `/claim?id=<linkId>#<base64url(ClaimPackage)>`.
-  // The button is gated on `row.claimPackage` so this function only
-  // runs when a real package exists. Query-string form (instead of
-  // `/claim/[link]`) keeps the page statically exportable.
-  if (!row.claimPackage) return;
-  const url = `${window.location.origin}/claim?id=${record.id}_${row.rowIndex}#${row.claimPackage}`;
+  // Caller gates the button on `row.claimPackage`; buildClaimUrl
+  // returns "" if it slips through, which clipboard still accepts.
+  const url = buildClaimUrl(window.location.origin, record.id, row);
+  if (!url) return;
   void navigator.clipboard.writeText(url);
 }
 
@@ -659,12 +693,6 @@ function formatRelative(unixSec: number | undefined): string {
 /** Stable `YYYY-MM-DD HH:mm UTC` — used everywhere the markup is
  *  pre-rendered on the server, where `toLocaleString` would disagree
  *  with the client and trip Next's hydration warning. */
-function formatUtcStamp(unixSec: number | undefined): string {
-  if (!unixSec) return "";
-  const iso = new Date(unixSec * 1000).toISOString();
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
-}
-
 function buildSampleRun(): RunRecord {
   const now = Math.floor(Date.now() / 1000);
   const settled = now - 3 * 86400;
