@@ -52,6 +52,7 @@ type DbStub = {
   saveAuthorizeOrder: (...args: unknown[]) => void;
   updateAuthorizeOrderStatus: (...args: unknown[]) => void;
   hasSettledClaimsRoot: (root: string) => boolean;
+  iterateSettlementHistoryRange: (opts: { since: number; until: number; type?: string; status?: string }) => Iterable<unknown>;
 };
 
 export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
@@ -71,6 +72,7 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
     saveAuthorizeOrder: () => {},
     updateAuthorizeOrderStatus: () => {},
     hasSettledClaimsRoot: () => false,
+    iterateSettlementHistoryRange: () => [],
     ...overrides,
   };
   return stub as unknown as PrivateOrderDB;

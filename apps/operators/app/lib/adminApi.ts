@@ -82,22 +82,62 @@ export async function adminFetch<T>(
       parsed = text;
     }
   }
-  if (!res.ok) {
-    const errField =
-      parsed && typeof parsed === "object" && "error" in parsed
-        ? (parsed as { error: unknown }).error
-        : undefined;
-    const formatted =
-      errField === undefined
-        ? text
-          ? text.slice(0, 120)
-          : `HTTP ${res.status}`
-        : typeof errField === "string"
-        ? errField
-        : JSON.stringify(errField);
-    throw new Error(formatted);
-  }
+  if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
   return (parsed ?? ({} as unknown)) as T;
+}
+
+/** Shared `{error: ...}`-aware error message formatter so JSON and
+ *  blob endpoints surface identical text when the server rejects. */
+function formatAdminError(status: number, text: string, parsed: unknown): string {
+  const errField =
+    parsed && typeof parsed === "object" && "error" in parsed
+      ? (parsed as { error: unknown }).error
+      : undefined;
+  if (errField !== undefined) {
+    return typeof errField === "string" ? errField : JSON.stringify(errField);
+  }
+  return text ? text.slice(0, 120) : `HTTP ${status}`;
+}
+
+/** Download a binary admin response (CSV, etc.) and trigger a browser
+ *  save dialog. Authenticated via `x-admin-key` like the JSON helpers,
+ *  so the same sessionStorage credentials work. The default filename
+ *  comes from `Content-Disposition` when the server sends one. */
+export async function adminDownload(
+  auth: AdminAuth,
+  path: string,
+  fallbackFilename: string,
+): Promise<void> {
+  const target = new URL(path, auth.url).toString();
+  const res = await fetch(target, { headers: { "x-admin-key": auth.key } });
+  if (!res.ok) {
+    // Mirror adminFetch's parse-and-extract: if the server returned
+    // `{error: ...}` JSON, surface just the message; otherwise the
+    // truncated body text.
+    const text = await res.text();
+    let parsed: unknown = null;
+    if (text) {
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+    }
+    throw new Error(formatAdminError(res.status, text, parsed));
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match ? match[1] : fallbackFilename;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    // Defer revocation: Safari can race the click → download pipeline
+    // and reject the URL if it's revoked synchronously.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
 /** Read the cached auth from sessionStorage. Returns `null` when

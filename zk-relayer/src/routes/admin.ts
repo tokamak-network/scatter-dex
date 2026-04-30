@@ -5,6 +5,8 @@
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { adminAuth } from "../middleware/admin-auth.js";
 import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
@@ -277,6 +279,54 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     } catch (err) {
       log.error("history/by-tx failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load settlement detail" });
+    }
+  });
+
+  // GET /api/admin/history.csv — Compliance/finance export of the
+  // settlement_history table for a time window. Streamed via the DB
+  // iterator so memory stays bounded for large windows.
+  // Query params:
+  //   ?since=<unix-ms>   optional; defaults to 0 (all time)
+  //   ?until=<unix-ms>   optional; defaults to now
+  //   ?type=, ?status=   same filters as /history
+  router.get("/history.csv", async (req: Request, res: Response) => {
+    const since = parseTimestamp(req.query.since, 0);
+    const until = parseTimestamp(req.query.until, Date.now());
+    if (until < since) {
+      res.status(400).json({ error: "until must be >= since" });
+      return;
+    }
+    const type = parseSettlementType(req.query.type);
+    const status = parseSettlementStatus(req.query.status);
+
+    const filename = `settlements-${new Date(since).toISOString().slice(0, 10)}-to-${new Date(until).toISOString().slice(0, 10)}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    // Wrap the row iterator in a Readable so `pipeline()` honours
+    // backpressure on slow clients — without this, large exports
+    // accumulate in Node's socket buffer regardless of consumer speed.
+    function* csvLines(): Iterable<string> {
+      // UTF-8 BOM so Windows Excel detects the encoding for non-ASCII
+      // cells (e.g. error_reason text from upstream RPC errors).
+      yield "﻿" + SETTLEMENT_CSV_HEADER + "\n";
+      for (const row of db.iterateSettlementHistoryRange({ since, until, type, status })) {
+        yield settlementRowToCsv(row);
+      }
+    }
+    try {
+      await pipeline(Readable.from(csvLines(), { encoding: "utf8" }), res);
+    } catch (err) {
+      log.error("history.csv failed", { err: err instanceof Error ? err.message : String(err) });
+      // Mid-stream: headers are already flushed, so destroying the
+      // socket surfaces as a network error on the client rather than
+      // a clean EOF on a truncated file. Pre-stream errors won't reach
+      // here — pipeline() would have rejected before any header flush.
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to export settlement history" });
+      } else {
+        res.destroy(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   });
 
@@ -553,4 +603,43 @@ function clampHistoryLimit(raw: unknown, max = 200, fallback = 50): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(max, Math.floor(n));
+}
+
+function parseTimestamp(raw: unknown, fallback: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+function csvEscape(value: string | number | null): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+// Single source of truth for the CSV column order — header line and
+// per-row mapping are both derived from this so they cannot drift.
+type SettlementCsvCol = {
+  name: string;
+  get: (row: import("../core/db.js").SettlementHistoryRow) => string | number | null;
+};
+const SETTLEMENT_CSV_COLUMNS: readonly SettlementCsvCol[] = [
+  { name: "id", get: (r) => r.id },
+  { name: "tx_hash", get: (r) => r.tx_hash },
+  { name: "type", get: (r) => r.type },
+  { name: "status", get: (r) => r.status },
+  { name: "block_number", get: (r) => r.block_number },
+  { name: "gas_cost_eth", get: (r) => r.gas_cost_eth },
+  { name: "sell_token", get: (r) => r.sell_token },
+  { name: "buy_token", get: (r) => r.buy_token },
+  { name: "error_reason", get: (r) => r.error_reason },
+  { name: "duration_ms", get: (r) => r.duration_ms },
+  { name: "created_at", get: (r) => r.created_at },
+  { name: "created_at_iso", get: (r) => new Date(r.created_at).toISOString() },
+];
+const SETTLEMENT_CSV_HEADER = SETTLEMENT_CSV_COLUMNS.map((c) => c.name).join(",");
+
+function settlementRowToCsv(row: import("../core/db.js").SettlementHistoryRow): string {
+  return SETTLEMENT_CSV_COLUMNS.map((c) => csvEscape(c.get(row))).join(",") + "\n";
 }
