@@ -143,6 +143,15 @@ function NewPayout() {
   const [notify, setNotify] = useState(true);
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
+  // Captured once on first render — used as the input's `min` so the
+  // floor stays at "now" even after the user picks a future moment.
+  // Without this, binding `min={claimFrom}` would trap the user: any
+  // future selection would advance the floor and prevent moving the
+  // value back earlier.
+  const claimFromMinRef = useRef<string | null>(null);
+  if (claimFromMinRef.current === null) {
+    claimFromMinRef.current = today();
+  }
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -805,7 +814,7 @@ function NewPayout() {
                     type="datetime-local"
                     step={1}
                     value={claimFrom ?? ""}
-                    min={claimFrom ?? ""}
+                    min={claimFromMinRef.current ?? ""}
                     disabled={!!resumeRecord}
                     onChange={(e) => setClaimFrom(e.target.value)}
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
@@ -813,7 +822,7 @@ function NewPayout() {
                 </Field>
               </div>
               <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                Recipients can claim any time after the date set above.
+                Recipients can claim any time after the moment set above — there is no expiry.
               </p>
             </div>
 

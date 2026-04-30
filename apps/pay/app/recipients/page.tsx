@@ -264,9 +264,11 @@ function RecipientForm({
           <Field
             label="Default wallet address"
             hint={
-              !isNew
-                ? "Address is immutable. Remove and re-add to change it."
-                : "Default address used for every run unless this entry already carries a per-chain override (legacy field — not editable here)."
+              isNew
+                ? "Address used for every payout run to this recipient."
+                : initial?.addressByChain && Object.keys(initial.addressByChain).length > 0
+                  ? "Address is immutable. Remove and re-add to change it. This entry also carries per-chain overrides from an older app version (legacy field — not editable here)."
+                  : "Address is immutable. Remove and re-add to change it."
             }
           >
             <input
