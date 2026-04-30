@@ -587,13 +587,17 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
 interface WebhookStatusBody {
   configured: boolean;
   health: { state: "healthy" | "degraded" | null; at: number | null };
-  balance: {
+  // `balance` and `settlementFailureStreak` arrived with the
+  // settlement-failure / low-balance hooks (PR #561). Older relayer
+  // builds don't return them — keep both optional so this UI can
+  // point at any version of the relayer without throwing at render.
+  balance?: {
     state: "healthy" | "low" | null;
     at: number | null;
     balanceWei: string | null;
     thresholdWei: string;
   };
-  settlementFailureStreak: {
+  settlementFailureStreak?: {
     consecutiveFailures: number;
     alerted: boolean;
     threshold: number;
@@ -692,26 +696,32 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
               label="Probed at"
               value={data.health.at ? formatRelative(data.health.at) : "—"}
             />
-            <Cell
-              label="Low-balance threshold"
-              value={`${formatEth(data.balance.thresholdWei)} ETH`}
-            />
-            <Cell
-              label="Balance state"
-              value={data.balance.state ?? "—"}
-              tone={
-                data.balance.state === "healthy"
-                  ? "ok"
-                  : data.balance.state === "low"
-                  ? "warn"
-                  : undefined
-              }
-            />
-            <Cell
-              label="Failure-streak alert"
-              value={`${data.settlementFailureStreak.consecutiveFailures} of ${data.settlementFailureStreak.threshold}`}
-              tone={data.settlementFailureStreak.alerted ? "warn" : undefined}
-            />
+            {data.balance && (
+              <>
+                <Cell
+                  label="Low-balance threshold"
+                  value={`${formatEth(data.balance.thresholdWei)} ETH`}
+                />
+                <Cell
+                  label="Balance state"
+                  value={data.balance.state ?? "—"}
+                  tone={
+                    data.balance.state === "healthy"
+                      ? "ok"
+                      : data.balance.state === "low"
+                      ? "warn"
+                      : undefined
+                  }
+                />
+              </>
+            )}
+            {data.settlementFailureStreak && (
+              <Cell
+                label="Failure-streak alert"
+                value={`${data.settlementFailureStreak.consecutiveFailures} of ${data.settlementFailureStreak.threshold}`}
+                tone={data.settlementFailureStreak.alerted ? "warn" : undefined}
+              />
+            )}
           </div>
 
           {!data.configured && (
