@@ -18,6 +18,15 @@ const log = createLogger("metrics-prom");
 
 const CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
 
+// Settled-volume aggregation runs `GROUP_CONCAT(sell_amount)` and
+// sums the BigInts in JS — O(settled-row-count). At a typical 15 s
+// Prometheus scrape cadence that adds up; cache the result for
+// `VOLUME_CACHE_TTL_MS` so back-to-back scrapers (Prom + Datadog +
+// ad-hoc curl) only pay it once. Same TTL bound for /api/relayer/stats
+// would also benefit, but only the metrics path has a tight scrape
+// loop, so the cache lives here.
+const VOLUME_CACHE_TTL_MS = 10_000;
+
 type Sample = { name: string; help: string; type: "gauge" | "counter"; value: number; labels?: Record<string, string> };
 
 function fmt(samples: Sample[]): string {
@@ -54,12 +63,17 @@ function formatNumber(v: number): string {
 
 export function createMetricsRoutes(db: PrivateOrderDB): Router {
   const router = Router();
+  let volumeCache: { at: number; value: ReturnType<PrivateOrderDB["getSettledVolume"]> } | null = null;
 
   router.get("/", (_req: Request, res: Response) => {
     try {
       const m = getMetrics();
       const stats = db.getRelayerStats();
-      const volume = db.getSettledVolume();
+      const now = Date.now();
+      if (!volumeCache || now - volumeCache.at > VOLUME_CACHE_TTL_MS) {
+        volumeCache = { at: now, value: db.getSettledVolume() };
+      }
+      const volume = volumeCache.value;
 
       const { pending: pendingOrders } = getAuthorizeOrderStats();
 
@@ -150,7 +164,17 @@ export function createMetricsRoutes(db: PrivateOrderDB): Router {
       res.status(200).send(fmt(samples));
     } catch (err) {
       log.error("Failed to render metrics", { err: err instanceof Error ? err.message : String(err) });
-      res.status(500).setHeader("Content-Type", CONTENT_TYPE).send("# metrics_render_error 1\n");
+      // Emit a parseable metric (not a Prometheus comment) so scrapers
+      // and alerting rules can fire on a render failure rather than
+      // silently treating the whole scrape as missing.
+      const errorBody = fmt([{
+        name: "relayer_metrics_render_error",
+        help: "1 if the most recent /metrics render threw; 0 (or absent) on success.",
+        type: "gauge",
+        value: 1,
+      }]);
+      res.setHeader("Content-Type", CONTENT_TYPE);
+      res.status(500).send(errorBody);
     }
   });
 
