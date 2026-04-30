@@ -14,7 +14,26 @@
 
 import { ethers } from "ethers";
 import { hasFolder, loadFile, saveFile } from "./folder";
-import { isMetaAddress } from "../zk/stealth";
+import { isMetaAddress, parseMetaAddress } from "../zk/stealth";
+
+/** Strict meta-address validator used at the user-input boundary
+ *  (`addWallet` / `updateWallet`). Goes beyond the regex shape check
+ *  in `isMetaAddress` by actually decoding both compressed secp256k1
+ *  points — catches values that pass the prefix+length sniff but
+ *  would later make `generateStealthAddress()` throw when it parses
+ *  the points. Kept loose on the on-disk read path
+ *  (`isValidEntry` keeps the regex check) so an existing entry that
+ *  was once accepted doesn't fail to load if the strictness rule
+ *  changes later. */
+function isStrictMetaAddress(value: string): boolean {
+  if (!isMetaAddress(value)) return false;
+  try {
+    parseMetaAddress(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const WALLET_BOOK_FILENAME = "zkscatter-wallets.json";
 
@@ -219,8 +238,8 @@ export async function addWallet(input: {
   const address = input.address.toLowerCase();
   const addressByChain = normaliseAddressByChain(input.addressByChain);
   const trimmedMeta = input.metaAddress?.trim();
-  if (trimmedMeta && !isMetaAddress(trimmedMeta)) {
-    throw new Error("Invalid meta-address (expected st:eth:0x…)");
+  if (trimmedMeta && !isStrictMetaAddress(trimmedMeta)) {
+    throw new Error("Invalid meta-address (expected st:eth:0x… with two valid compressed pubkeys)");
   }
 
   return withLock(async () => {
@@ -264,8 +283,8 @@ export async function updateWallet(
       : undefined;
   if (patch.metaAddress !== undefined) {
     const trimmed = patch.metaAddress.trim();
-    if (trimmed && !isMetaAddress(trimmed)) {
-      throw new Error("Invalid meta-address (expected st:eth:0x…)");
+    if (trimmed && !isStrictMetaAddress(trimmed)) {
+      throw new Error("Invalid meta-address (expected st:eth:0x… with two valid compressed pubkeys)");
     }
   }
 
