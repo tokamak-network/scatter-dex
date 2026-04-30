@@ -4,6 +4,7 @@ import { PayProviders } from "./_lib/providers";
 import { ConnectWalletPill } from "./_components/ConnectWalletPill";
 import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
+import { StealthMenu } from "./_components/StealthMenu";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { chainName } from "@zkscatter/sdk";
 import { getNetworkConfig } from "./_lib/network";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                 <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
                 <Link href="/recipients" className="hover:text-[var(--color-text)]">Address book</Link>
+                <StealthMenu />
               </>
             }
           />
