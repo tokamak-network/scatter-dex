@@ -640,7 +640,7 @@ function NewPayout() {
             <div>
               <h2 className="text-lg font-semibold">Choose a template</h2>
               <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                Templates pre-fill labels, sample data, and export format. You can change anything later.
+                Templates pre-fill the run label, default token, and export format. You can change anything later.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">

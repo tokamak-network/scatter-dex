@@ -49,9 +49,9 @@ export default function RecipientsPage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Recipients</h1>
+          <h1 className="text-2xl font-semibold">Address book</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Reusable list of payees. Stored as <span className="font-mono">zkscatter-wallets.json</span> in your notes folder so finance ops can back it up alongside everything else.
+            Reusable list of payees. Pick entries here from the New-payout wizard's <span className="font-medium">Recipients</span> step. Stored as <span className="font-mono">zkscatter-wallets.json</span> in your notes folder so finance ops can back it up alongside everything else.
           </p>
         </div>
         {folder.ready && !book.corrupt && (
