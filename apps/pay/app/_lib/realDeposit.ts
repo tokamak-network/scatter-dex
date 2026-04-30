@@ -85,6 +85,34 @@ export class DepositCancelled extends Error {
   }
 }
 
+/** Race a promise (typically `tx.wait()`) against a signal-driven
+ *  rejection so a cancel during the await wins without leaving the
+ *  promise dangling. The original promise itself can't be aborted —
+ *  ethers v6 has no provider-level cancel — but the wizard only
+ *  needs the throw to flip the UI; the underlying tx still confirms
+ *  on-chain regardless. */
+function raceWithAbort<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(new DepositCancelled());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new DepositCancelled());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
 /** ERC-20 (or native-ETH-via-WETH) → CommitmentPool deposit.
  *
  *  Two paths:
@@ -194,16 +222,19 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     amountRaw,
   ]);
 
-  // Read existing balances/allowance once so both paths can decide
-  // whether to skip the wrap / approve.
+  // Read existing balances/allowance in parallel — independent
+  // RPC calls; the previous sequential await sat one round-trip
+  // longer for no reason.
   const weth = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
-  const wethBalance = tokenInfo.isNative ? ((await weth.balanceOf(account)) as bigint) : 0n;
-  const wrapShortfall = tokenInfo.isNative && wethBalance < amountRaw ? amountRaw - wethBalance : 0n;
   const erc20Read = new ethers.Contract(erc20Address, ERC20_IFACE, signer);
-  const currentAllowance = (await erc20Read.allowance(
-    account,
-    cfg.contracts.commitmentPool,
-  )) as bigint;
+  const [wethBalance, currentAllowance] = await Promise.all([
+    tokenInfo.isNative
+      ? (weth.balanceOf(account) as Promise<bigint>)
+      : Promise.resolve(0n),
+    erc20Read.allowance(account, cfg.contracts.commitmentPool) as Promise<bigint>,
+  ]);
+  const wrapShortfall =
+    tokenInfo.isNative && wethBalance < amountRaw ? amountRaw - wethBalance : 0n;
   const needsApprove = currentAllowance < amountRaw;
   const needsZeroReset = needsApprove && currentAllowance > 0n;
   checkAbort();
@@ -252,12 +283,27 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
         chainId: cfg.chainId,
         calls,
       });
-      checkAbort();
+      // Commit point: the wallet has accepted the batch. Persist the
+      // note immediately, before any await that could fail, throw, or
+      // be aborted. We don't have the deposit tx hash yet (the wallet
+      // hasn't broadcast each call individually) — leave txHash empty
+      // until waitForCallsReceipt finishes; the reconciler matches
+      // notes by commitment, not txHash, so spendability isn't gated
+      // on it. No `checkAbort()` between sendCalls and vault.add — a
+      // late cancel here would lose secrets for an already-broadcast
+      // batch.
+      await vault.add({
+        symbol: tokenSymbol,
+        amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
+        note,
+        commitment,
+        txHash: "",
+      });
       phase({ kind: "confirming", message: "Waiting for batch confirmation…" });
-      const status = await waitForCallsReceipt(browserProvider, result.id);
+      const status = await waitForCallsReceipt(browserProvider, result.id, { signal });
       // Per EIP-5792 every included tx must individually report
       // `0x1`; the last receipt corresponds to the deposit call and
-      // is the one we record on the vault note.
+      // is what we surface as the success tx.
       const receipts = status.receipts ?? [];
       if (receipts.length === 0) {
         throw new Error("Atomic batch completed but wallet returned no receipts.");
@@ -268,15 +314,6 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
         }
       }
       txHash = receipts[receipts.length - 1]!.transactionHash;
-      // Persist before reporting done — we already have the deposit
-      // tx hash from the batch's last receipt.
-      await vault.add({
-        symbol: tokenSymbol,
-        amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
-        note,
-        commitment,
-        txHash,
-      });
     } catch (err) {
       // Wallet method-not-found at sendCalls time despite caps probe
       // returning true — drop into sequential. Anything else is a
@@ -348,7 +385,12 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
       txHash,
     });
     phase({ kind: "confirming", message: `Waiting for ${txHash.slice(0, 10)}…` });
-    const receipt = await tx.wait();
+    // Race tx.wait against a signal-driven rejection so Cancel during
+    // confirming flips the wizard to the cancelled banner without
+    // waiting on the full receipt window. The note is already
+    // persisted at this point, so the cancelled-state caveat ("any
+    // already-broadcast tx keeps confirming on-chain") still holds.
+    const receipt = await raceWithAbort(tx.wait(), signal);
     if (!receipt || receipt.status !== 1) {
       throw new Error(`deposit tx failed: ${txHash}`);
     }

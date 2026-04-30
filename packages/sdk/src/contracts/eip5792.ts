@@ -50,10 +50,13 @@ export interface CallsStatus {
    *   "pending"   — still in flight
    *   "completed" — all included txs mined (individual `receipts[i].status`
    *                 still has to be checked for on-chain revert)
-   * Wallets may add extra states in future revisions; we treat any
-   * non-"pending" value other than "completed" as an error.
+   * Typed as `string` (not the closed union) so the runtime guard
+   * for future / wallet-specific states still type-checks under
+   * strict TS — narrowing on the closed union after the
+   * `=== "completed"` branch would mark the rejected-state guard
+   * as unreachable.
    */
-  status: "pending" | "completed";
+  status: string;
   receipts?: Array<{
     logs: Array<{ address: string; data: string; topics: string[] }>;
     status: string;                 // "0x0" | "0x1"
@@ -164,16 +167,26 @@ export async function sendCalls(
 /**
  * Poll `wallet_getCallsStatus` until the batch finalizes.
  *
- * `timeoutMs` bounds the wait so a never-confirming batch can't hang the
- * UI indefinitely; on timeout the promise rejects and the caller can
- * decide whether to retry or surface the error.
+ * `timeoutMs` bounds the wait so a never-confirming batch can't hang
+ * the UI indefinitely; on timeout the promise rejects and the caller
+ * can decide whether to retry or surface the error. `signal` lets
+ * the caller cancel the poll early — checked at the top and after
+ * each await so a Cancel during a slow RPC call also breaks out as
+ * soon as the in-flight request settles.
  */
 export async function waitForCallsReceipt(
   provider: ethers.BrowserProvider | ethers.JsonRpcApiProvider,
   id: string,
-  { timeoutMs = 180_000, pollIntervalMs = 1500 }: { timeoutMs?: number; pollIntervalMs?: number } = {},
+  {
+    timeoutMs = 180_000,
+    pollIntervalMs = 1500,
+    signal,
+  }: { timeoutMs?: number; pollIntervalMs?: number; signal?: AbortSignal } = {},
 ): Promise<CallsStatus> {
   const start = Date.now();
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new Error("wallet_getCallsStatus aborted");
+  };
   // Simple poll — wallets typically finalize within a couple of blocks
   // on local anvil, 10-30s on public chains. Per EIP-5792 the batch
   // state is a string: "pending" while in flight, "completed" once
@@ -181,7 +194,9 @@ export async function waitForCallsReceipt(
   // reported via `receipts[i].status` ("0x0"/"0x1") and is the
   // caller's responsibility to check.
   for (;;) {
+    throwIfAborted();
     const status = await providerSend<CallsStatus>(provider, "wallet_getCallsStatus", [id]);
+    throwIfAborted();
     if (status.status === "completed") return status;
     if (status.status !== "pending") {
       // Future-proofing: surface any state the spec adds later so
