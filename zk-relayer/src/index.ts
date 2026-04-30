@@ -18,6 +18,7 @@ import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle } from "./routes/authorize-orders.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
+import { createMetricsRoutes } from "./routes/metrics.js";
 import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
 import { startBalanceMonitor, stopBalanceMonitor } from "./core/balance-monitor.js";
 import { startClaimMonitor, stopClaimMonitor } from "./core/claim-monitor.js";
@@ -284,6 +285,10 @@ async function main() {
 
   // [R-3] Health check (no rate limiting — used by k8s/load-balancers)
   app.use("/health", createHealthRoutes(submitter, db));
+
+  // Prometheus exposition (no rate limiting — Prometheus scrapes at a
+  // fixed cadence configured on the scraper side, typically every 15s).
+  app.use("/metrics", createMetricsRoutes(db));
 
   // P2P routes (relayer-to-relayer communication)
   app.use("/api/p2p", createP2PRoutes(

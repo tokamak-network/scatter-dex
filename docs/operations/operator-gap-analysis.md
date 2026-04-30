@@ -74,7 +74,7 @@ The original Phase 3 list (#9–#13) folds in with the new gaps from §2. Re-ran
 | 11 | **Cross-relayer visibility** | v1 #11 + new gap #9 | Medium | Surface `trade_offers` (audit trail of cross-relayer matches) under `/runtime` or an extended `/leaderboard`. Schema already exists. |
 | 12 | **Compliance export (CSV)** | v1 #12 + new gap #5 | Small-medium | `GET /api/admin/history.csv` and `GET /api/admin/sanctions-events.csv`. Pure backend + a download button. |
 | 13 | **Fee-claim reminder + threshold UI** | new gaps #3, #11 | Small | `/runtime` Webhook section already shows recent alerts; add per-token claim threshold setting (persisted in `relayer_meta`) and a corresponding monitor. Reuses #555/#561 alerting infra. |
-| 14 | **Prometheus `/metrics` endpoint** | new gap #10 | Small | One handler that emits the in-memory + DB stats in Prometheus exposition format. Unlocks Grafana for any operator running it. |
+| 14 | **Prometheus `/metrics` endpoint** ✅ | new gap #10 | Small | Shipped — `GET /metrics` on the relayer emits in-memory + DB stats in Prometheus exposition format. Scrape with any Prometheus-compatible agent (Grafana Agent, Datadog, vmagent). |
 | 15 | **Key rotation flow** *(security-critical)* | v1 #10 | Large + contract change | Defer until governance defines the rotation semantics on `RelayerRegistry`; documenting the gap, not pre-spec'ing. |
 | 16 | **Proof inspection on `/orders/detail`** | new gap #6 | Small-medium | Pull public signals + calldata into the by-tx response; render in a collapsible. Mostly a backend addition (parsing tx receipt logs). |
 
