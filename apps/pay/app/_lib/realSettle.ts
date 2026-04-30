@@ -57,11 +57,39 @@ export interface RealSettleResult {
   claimPackages: ClaimPackage[];
 }
 
-/** Pay's single-batch real settle. Mirrors zk-relayer/test/
- *  e2e-scatter-direct-auth.ts steps 3–5: build merkle proof from the
- *  on-chain tree, prove off-thread in the worker, pack the
- *  AuthorizeProof tuple, and submit `scatterDirectAuth`. */
-export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult> {
+/** Output of {@link prepareRealSettle}: everything needed to submit
+ *  the tx ({@link submitRealSettle}) and finalize on the receipt
+ *  ({@link finalizeRealSettle}). Pulling these apart lets the
+ *  multi-batch caller queue all proves up front and run receipt
+ *  waits in parallel, while the user-sign step stays serialized for
+ *  wallet UX + nonce ordering. */
+export interface PreparedSettle {
+  side: SettleAuthSide;
+  ctx: FinalizeContext;
+}
+
+export interface FinalizeContext {
+  authResult: ReturnType<typeof assembleAuthorizeProofResult>;
+  /** Source note (with leafIndex + commitment); the inner
+   *  `note.amount` minus `batch.totalAmount` is the change UTXO. */
+  source: PickedNote["note"];
+  newSalt: bigint;
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  chainId: number;
+  settlementAddress: string;
+  batch: PayoutBatch;
+  labels?: { sender?: string; run?: string };
+  relayerUrl?: string;
+}
+
+/** Phase 1 — validate inputs, build the merkle proof, prove off-thread,
+ *  and assemble the SettleAuthSide tuple. Pure CPU + worker time; no
+ *  signer touched, no tx submitted. Concurrent calls are queued by
+ *  the worker (single-threaded) but the queueing eliminates the
+ *  prepare-prove latency between batches in a multi-batch run. */
+export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedSettle> {
   const {
     batch,
     tokenAddress,
@@ -141,32 +169,66 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
     relayer: relayer.address,
     tier: TIER_16.cap,
   };
-  const tx = await callScatterDirectAuth(chain.signer, chain.settlementAddress, side, 0n);
+
+  const ctx: FinalizeContext = {
+    authResult,
+    source: stored,
+    newSalt,
+    tokenAddress,
+    tokenSymbol,
+    tokenDecimals,
+    chainId: chain.chainId,
+    settlementAddress: chain.settlementAddress,
+    batch,
+    labels: args.labels,
+    relayerUrl: relayer.url,
+  };
+  return { side, ctx };
+}
+
+/** Phase 2 — submit `scatterDirectAuth`. Returns as soon as the wallet
+ *  hands back the tx (user-sign + relayer dispatch); receipt wait is
+ *  Phase 3. Caller must serialize calls with the same signer to keep
+ *  the EOA's nonce monotonic. */
+export async function submitRealSettle(
+  prep: PreparedSettle,
+  chain: { signer: ethers.Signer; settlementAddress: string },
+): Promise<{ tx: ethers.TransactionResponse; ctx: FinalizeContext }> {
+  const tx = await callScatterDirectAuth(chain.signer, chain.settlementAddress, prep.side, 0n);
+  return { tx, ctx: prep.ctx };
+}
+
+/** Phase 3 — wait for the receipt, then reconstruct the change UTXO
+ *  and the per-recipient claim packages. Safe to run for many batches
+ *  in parallel; the caller is responsible for ordering vault updates
+ *  by batch index so a later success can't re-spend a note an earlier
+ *  failure logically forfeited. */
+export async function finalizeRealSettle(
+  tx: ethers.TransactionResponse,
+  ctx: FinalizeContext,
+): Promise<RealSettleResult> {
   const receipt = await tx.wait();
   if (!receipt || receipt.status !== 1) {
     throw new Error(`scatterDirectAuth tx failed: ${tx.hash}`);
   }
   // Reconstruct the change-UTXO preimage so the caller can persist it
-  // as a new vault note. Salt is the same one we passed into the
-  // prover; the on-chain `newCommitment` we just verified must match
-  // the locally-recomputed value (otherwise the change would be
-  // unspendable). The match is implicit — `generateAuthorizeProof`
-  // uses `computeCommitment` with the same fields — but recomputing
-  // here gives us a CommitmentNote object the vault adapter can
-  // serialize.
-  const changeAmount = stored.note.amount - sellAmount;
+  // as a new vault note. The on-chain `newCommitment` we just verified
+  // must match the locally-recomputed value (otherwise the change would
+  // be unspendable).
+  const sourceNote = ctx.source.note;
+  const changeAmount = sourceNote.amount - ctx.batch.totalAmount;
   let change: RealSettleResult["change"] = null;
   if (changeAmount > 0n) {
     const changeNote: CommitmentNote = {
-      ownerSecret: stored.note.ownerSecret,
-      token: stored.note.token,
+      ownerSecret: sourceNote.ownerSecret,
+      token: sourceNote.token,
       amount: changeAmount,
-      salt: newSalt,
-      pubKeyAx: stored.note.pubKeyAx,
-      pubKeyAy: stored.note.pubKeyAy,
+      salt: ctx.newSalt,
+      pubKeyAx: sourceNote.pubKeyAx,
+      pubKeyAy: sourceNote.pubKeyAy,
     };
     const changeCommitment = await computeCommitment(changeNote);
-    if (changeCommitment !== authResult.newCommitment) {
+    if (changeCommitment !== ctx.authResult.newCommitment) {
       throw new Error(
         "Recomputed change commitment does not match the proof's newCommitment — vault would store an unspendable note.",
       );
@@ -175,46 +237,59 @@ export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult
   }
 
   // Rebuild the 16-leaf claims tree to extract per-recipient
-  // inclusion proofs. `buildClaimsTree` mirrors what the authorize
-  // circuit did internally; if the recomputed root disagrees with
-  // the proof's `claimsRoot`, the SDK's claim-leaf hashing has
-  // drifted from the circuit and the packages we emit would point
-  // at a settlement that doesn't exist.
-  const { root: claimsRootCheck, layers: claimsLayers } = await buildClaimsTree(batch.claims);
-  if (claimsRootCheck !== authResult.claimsRoot) {
+  // inclusion proofs. If the recomputed root disagrees with the
+  // proof's `claimsRoot`, the SDK's claim-leaf hashing has drifted
+  // from the circuit and the packages we emit would point at a
+  // settlement that doesn't exist.
+  const { root: claimsRootCheck, layers: claimsLayers } = await buildClaimsTree(ctx.batch.claims);
+  if (claimsRootCheck !== ctx.authResult.claimsRoot) {
     throw new Error(
       "Recomputed claimsRoot disagrees with the proof — packages would point at a settlement that doesn't exist.",
     );
   }
-  const claimsRootHex = toBytes32Hex(authResult.claimsRoot);
-  const claimPackages: ClaimPackage[] = batch.claims.map((c, i) => {
+  const claimsRootHex = toBytes32Hex(ctx.authResult.claimsRoot);
+  const claimPackages: ClaimPackage[] = ctx.batch.claims.map((c, i) => {
     const proof = getMerkleProof(claimsLayers, i);
     return {
       version: 1,
-      chainId: chain.chainId,
-      settlementAddress: chain.settlementAddress,
+      chainId: ctx.chainId,
+      settlementAddress: ctx.settlementAddress,
       claimsRoot: claimsRootHex,
       recipient: ethers.getAddress(c.recipient),
-      token: ethers.getAddress(tokenAddress),
-      tokenSymbol,
-      tokenDecimals,
+      token: ethers.getAddress(ctx.tokenAddress),
+      tokenSymbol: ctx.tokenSymbol,
+      tokenDecimals: ctx.tokenDecimals,
       amount: c.amount.toString(),
       releaseTime: c.releaseTime.toString(),
       secret: c.secret.toString(),
       leafIndex: i,
       pathElements: proof.pathElements.map((e) => e.toString()),
       pathIndices: proof.pathIndices,
-      ...(args.labels?.sender ? { senderLabel: args.labels.sender } : {}),
-      ...(args.labels?.run ? { runLabel: args.labels.run } : {}),
-      ...(relayer.url ? { relayerUrl: relayer.url } : {}),
+      ...(ctx.labels?.sender ? { senderLabel: ctx.labels.sender } : {}),
+      ...(ctx.labels?.run ? { runLabel: ctx.labels.run } : {}),
+      ...(ctx.relayerUrl ? { relayerUrl: ctx.relayerUrl } : {}),
     };
   });
 
   return {
     txHash: tx.hash,
-    nullifier: authResult.nullifier,
-    claimsRoot: authResult.claimsRoot,
+    nullifier: ctx.authResult.nullifier,
+    claimsRoot: ctx.authResult.claimsRoot,
     change,
     claimPackages,
   };
+}
+
+/** End-to-end single-batch settle. Mirrors zk-relayer/test/
+ *  e2e-scatter-direct-auth.ts steps 3–5: build merkle proof from the
+ *  on-chain tree, prove off-thread in the worker, pack the
+ *  AuthorizeProof tuple, submit `scatterDirectAuth`, and reconstruct
+ *  the change + per-recipient claim packages. Multi-batch callers
+ *  should drive {@link prepareRealSettle} / {@link submitRealSettle} /
+ *  {@link finalizeRealSettle} directly so prove and receipt waits
+ *  pipeline across batches. */
+export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult> {
+  const prep = await prepareRealSettle(args);
+  const { tx, ctx } = await submitRealSettle(prep, args.chain);
+  return finalizeRealSettle(tx, ctx);
 }

@@ -13,7 +13,12 @@ import {
   TIERS,
   type CircuitTier,
 } from "@zkscatter/sdk/zk";
-import { realSettle } from "../../_lib/realSettle";
+import {
+  finalizeRealSettle,
+  prepareRealSettle,
+  submitRealSettle,
+  type PreparedSettle,
+} from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
 import { encodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
@@ -406,58 +411,89 @@ function NewPayout() {
         // The zkey is ~19 MB; on cold cache its fetch dwarfs the
         // ECDSA-derive wallet round-trip.
         const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
-        // Each batch consumes one distinct source note (no change-
-        // UTXO chaining yet — change from batch i lands with
-        // leafIndex=-1 and isn't re-spendable until the reconciler
-        // back-fills it post-event). Per-batch vault ordering: add
-        // change → remove spent note (PR #539 crash-safety
-        // invariant). On mid-loop failure the catch below still
-        // saves a partial RunRecord so already-settled recipients
-        // keep their claim packages — `/payouts/detail`'s Copy-link
-        // button is gated on `claimPackage` so unprocessed
-        // recipients just can't share links until a resume flow
-        // ships.
-        const aggClaimPackages: ClaimPackage[] = [];
-        let lastTxHash: string | undefined;
+        // Multi-batch pipeline: prove (queued, single-threaded) → sign
+        // + send (sequential, signer-exclusive + monotonic nonces) →
+        // receipts (parallel). The previous serial loop blocked
+        // prove(i+1) on receipt(i); queueing all proves up front lets
+        // the worker drain them while user-sign + receipt waits run
+        // in the foreground. Each batch consumes a distinct source
+        // note (change from batch i lands with leafIndex=-1, not
+        // re-spendable in this run) so a reverted batch j doesn't
+        // forfeit batch k's source — every fulfilled finalize gets
+        // its vault update applied.
+        const settlementAddress = cfg.contracts.privateSettlement;
+        const settleArgs = (i: number) => ({
+          batch: batches[i]!,
+          tokenAddress,
+          tokenSymbol: token,
+          tokenDecimals: decimals,
+          source: multiBatchFit.byBatch[i]!,
+          relayer,
+          chain: { signer, settlementAddress, chainId: cfg.chainId },
+          maxFeeBps: safeMaxFeeBps,
+          eddsaPrivateKey: kp.privateKey,
+          tree,
+          labels: { sender: account ?? undefined, run: label },
+        });
+
+        const preparePromises: Promise<PreparedSettle>[] = batches.map((_, i) =>
+          prepareRealSettle(settleArgs(i)),
+        );
+        // Phase 2 may break before awaiting every prep promise; mark
+        // them all handled so a later prep failure isn't logged as
+        // an unhandled rejection. The actual error surfaces via the
+        // await in Phase 2.
+        preparePromises.forEach((p) => p.catch(() => undefined));
+
+        const submitted: {
+          tx: ethers.TransactionResponse;
+          ctx: PreparedSettle["ctx"];
+          spentNoteId: string;
+        }[] = [];
         let partialBatchError: Error | null = null;
         for (let i = 0; i < batches.length; i++) {
-          const batch = batches[i]!;
-          const sourcePick = multiBatchFit.byBatch[i]!;
           try {
-            const result = await realSettle({
-              batch,
-              tokenAddress,
-              tokenSymbol: token,
-              tokenDecimals: decimals,
-              source: sourcePick,
-              relayer,
-              chain: {
-                signer,
-                settlementAddress: cfg.contracts.privateSettlement,
-                chainId: cfg.chainId,
-              },
-              maxFeeBps: safeMaxFeeBps,
-              eddsaPrivateKey: kp.privateKey,
-              tree,
-              labels: { sender: account ?? undefined, run: label },
+            const prep = await preparePromises[i]!;
+            const sent = await submitRealSettle(prep, { signer, settlementAddress });
+            submitted.push({
+              tx: sent.tx,
+              ctx: sent.ctx,
+              spentNoteId: multiBatchFit.byBatch[i]!.note.id,
             });
-            lastTxHash = result.txHash;
-            aggClaimPackages.push(...result.claimPackages);
-            if (result.change) {
-              await vault.add({
-                symbol: token,
-                amount: ethers.formatUnits(result.change.amount, decimals),
-                note: result.change.note,
-                commitment: result.change.commitment,
-                txHash: result.txHash,
-              });
-            }
-            await vault.remove(sourcePick.note.id);
           } catch (err) {
             partialBatchError = err instanceof Error ? err : new Error(String(err));
             break;
           }
         }
+
+        const aggClaimPackages: ClaimPackage[] = [];
+        let lastTxHash: string | undefined;
+        const finalized = await Promise.allSettled(
+          submitted.map(({ tx, ctx }) => finalizeRealSettle(tx, ctx)),
+        );
+        for (let i = 0; i < finalized.length; i++) {
+          const r = finalized[i]!;
+          if (r.status !== "fulfilled") {
+            if (!partialBatchError) {
+              partialBatchError =
+                r.reason instanceof Error ? r.reason : new Error(String(r.reason));
+            }
+            continue;
+          }
+          lastTxHash = r.value.txHash;
+          aggClaimPackages.push(...r.value.claimPackages);
+          if (r.value.change) {
+            await vault.add({
+              symbol: token,
+              amount: ethers.formatUnits(r.value.change.amount, decimals),
+              note: r.value.change.note,
+              commitment: r.value.change.commitment,
+              txHash: r.value.txHash,
+            });
+          }
+          await vault.remove(submitted[i]!.spentNoteId);
+        }
+
         txHash = lastTxHash;
         claimPackages = aggClaimPackages;
         if (partialBatchError) {
