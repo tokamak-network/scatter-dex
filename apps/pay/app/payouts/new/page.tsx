@@ -69,7 +69,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseRecipientRows, toIsoDate } from "../../_lib/format";
+import { csvSafeLabel, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -97,7 +97,7 @@ const DEFAULT_MAX_FEE_BPS = 30;
 const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
-  return toIsoDate(new Date());
+  return toIsoDateTimeSec(new Date());
 }
 
 // `123,456.78` and `1_000` style separators are common in spreadsheets
@@ -217,13 +217,14 @@ function NewPayout() {
         setToken(r.tokenSymbol);
         setCsv(recipientsToCsv(unsettled));
         // `claimFrom` on RecipientRow is per-row Unix seconds set
-        // from `new Date("YYYY-MM-DD").getTime()` (UTC midnight).
-        // Round-trip with UTC getters so non-UTC operators don't
-        // see the date shift by a day. Any row carries the same
-        // value, so the first one with the field is enough.
+        // from `new Date("YYYY-MM-DDTHH:mm:ss").getTime()` (LOCAL time).
+        // Round-trip with local getters via `toIsoDateTimeSec` so a
+        // mid-day unlock displays at the operator's wall-clock time
+        // rather than drifting by their UTC offset. Any row carries
+        // the same value, so the first one with the field is enough.
         const firstClaimFrom = unsettled.find((u) => u.claimFrom)?.claimFrom;
         if (firstClaimFrom) {
-          setClaimFrom(new Date(firstClaimFrom * 1000).toISOString().slice(0, 10));
+          setClaimFrom(toIsoDateTimeSec(new Date(firstClaimFrom * 1000)));
         }
         setStep(4);
         setResume({ kind: "ready", record: r, unsettled });
@@ -792,12 +793,13 @@ function NewPayout() {
               <h3 className="text-sm font-semibold">Claim schedule</h3>
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">
                 When can recipients start claiming? All recipients use the same
-                date for now — per-row overrides arrive in a later release.
+                moment for now — per-row overrides arrive in a later release.
               </p>
               <div className="mt-3 max-w-xs">
                 <Field label="Available from">
                   <input
-                    type="date"
+                    type="datetime-local"
+                    step={1}
                     value={claimFrom ?? ""}
                     min={claimFrom ?? ""}
                     disabled={!!resumeRecord}
@@ -807,7 +809,7 @@ function NewPayout() {
                 </Field>
               </div>
               <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                Recipients can claim any time after this date — there is no expiry.
+                Recipients can claim any time after the date set above.
               </p>
             </div>
 

@@ -30,6 +30,19 @@ export function toIsoDate(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** Local-timezone `YYYY-MM-DDTHH:mm:ss` for `<input type="datetime-local"
+ *  step="1">` values. Mirrors `toIsoDate` but carries time-of-day so the
+ *  claim schedule can pin a recipient unlock to the second. */
+export function toIsoDateTimeSec(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
+}
+
 /** UTC `YYYY-MM-DD HH:mm UTC` stamp. Used wherever an SSR/client
  *  locale split would cause hydration mismatch. Empty string for
  *  undefined/zero so callers can render without conditional gating. */
