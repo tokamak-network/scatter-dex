@@ -229,7 +229,6 @@ export class PrivateOrderDB {
   private selectPeerStats: ReturnType<Database.Database["prepare"]>;
   private statsTotalOrders: ReturnType<Database.Database["prepare"]>;
   private statsSettledOrders: ReturnType<Database.Database["prepare"]>;
-  private statsCrossRelayer: ReturnType<Database.Database["prepare"]>;
   private statsTotalTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsAvgSettleTime: ReturnType<Database.Database["prepare"]>;
@@ -374,7 +373,11 @@ export class PrivateOrderDB {
     //     trade_offers, the cross-relayer audit trail.
     this.statsTotalOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history");
     this.statsSettledOrders = this.db.prepare("SELECT COUNT(*) as count FROM settlement_history WHERE status = 'confirmed'");
-    this.statsCrossRelayer = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
+    // crossRelayerSettled and settledTradeOffers are the same query —
+    // a trade_offer that reached `status='settled'` *is* a cross-relayer
+    // settlement. Prepared once, reused for both fields in
+    // `getRelayerStats()` so the API surface stays explicit while the
+    // SQL doesn't run twice.
     this.statsTotalTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers");
     this.statsSettledTradeOffers = this.db.prepare("SELECT COUNT(*) as count FROM trade_offers WHERE status = 'settled'");
     this.statsAvgSettleTime = this.db.prepare(
@@ -1197,6 +1200,15 @@ export class PrivateOrderDB {
   }
 
   /** Get relayer performance statistics for dashboard/profile. */
+  /** Stats are aggregated from `settlement_history` (full-table COUNTs
+   *  + AVG over `duration_ms`) and `trade_offers`. Both `/api/admin/status`
+   *  and `/metrics` poll this on a tight cadence; cache the result for
+   *  a few seconds so we're not repeating the aggregate scan back-to-back
+   *  as the table grows. The TTL is short enough that staleness is
+   *  invisible to a refreshing operator console. */
+  private statsCache: { at: number; value: ReturnType<PrivateOrderDB["getRelayerStats"]> } | null = null;
+  private static STATS_TTL_MS = 5_000;
+
   getRelayerStats(): {
     totalOrders: number;
     settledOrders: number;
@@ -1207,18 +1219,24 @@ export class PrivateOrderDB {
     avgSettleTimeMs: number | null;
     uptimeSince: number | null;
   } {
+    const now = Date.now();
+    if (this.statsCache && now - this.statsCache.at < PrivateOrderDB.STATS_TTL_MS) {
+      return this.statsCache.value;
+    }
     const total = (this.statsTotalOrders.get({}) as { count: number }).count;
     const settled = (this.statsSettledOrders.get({}) as { count: number }).count;
-    const crossRelayer = (this.statsCrossRelayer.get({}) as { count: number }).count;
     const tradeTotal = (this.statsTotalTradeOffers.get({}) as { count: number }).count;
     const tradeSettled = (this.statsSettledTradeOffers.get({}) as { count: number }).count;
+    // Trade offers reach `status='settled'` only via cross-relayer
+    // settlement; reuse the same count rather than running it twice.
+    const crossRelayer = tradeSettled;
     const avgRow = this.statsAvgSettleTime.get({}) as { avg_ms: number | null };
     const avgSettleTimeMs = avgRow.avg_ms !== null ? Math.round(avgRow.avg_ms) : null;
 
     const startedAtRaw = this.getMeta("started_at");
     const startedAt = startedAtRaw !== null ? Number(startedAtRaw) : NaN;
 
-    return {
+    const value = {
       totalOrders: total,
       settledOrders: settled,
       successRate: total > 0 ? Math.round((settled / total) * 100) : 0,
@@ -1228,6 +1246,8 @@ export class PrivateOrderDB {
       avgSettleTimeMs,
       uptimeSince: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
     };
+    this.statsCache = { at: now, value };
+    return value;
   }
 
   /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */

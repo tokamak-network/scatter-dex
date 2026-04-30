@@ -468,15 +468,20 @@ describe("PrivateOrderDB settlement history", () => {
   // because that table is dead-letter only; these now read from
   // settlement_history (the live indexer target).
   it("getRelayerStats reads from settlement_history (not private_orders)", () => {
+    // Production tokens are always 0x + 40 hex from publicSignalToAddress.
+    // Use real shapes here so a follow-on getSettledVolume() assertion
+    // (which BigInts the address) can't blow up on the same fixture.
+    const TOKEN_SELL = "0x" + "11".repeat(20);
+    const TOKEN_BUY = "0x" + "22".repeat(20);
     db.setMeta("started_at", "1700000000000");
     db.recordSettlementEvent({
       txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
-      blockNumber: 1, gasCostEth: "0.001", sellToken: "0xT", buyToken: "0xU",
+      blockNumber: 1, gasCostEth: "0.001", sellToken: TOKEN_SELL, buyToken: TOKEN_BUY,
       durationMs: 1000,
     });
     db.recordSettlementEvent({
       txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
-      blockNumber: 2, gasCostEth: "0.001", sellToken: "0xT", buyToken: "0xU",
+      blockNumber: 2, gasCostEth: "0.001", sellToken: TOKEN_SELL, buyToken: TOKEN_BUY,
       durationMs: 2000,
     });
     db.recordSettlementEvent({
@@ -489,6 +494,9 @@ describe("PrivateOrderDB settlement history", () => {
     expect(stats.successRate).toBe(67);
     expect(stats.avgSettleTimeMs).toBe(1500);
     expect(stats.uptimeSince).toBe(1700000000000);
+    // Sanity-check the volume aggregate works on this fixture too —
+    // guards against re-introducing non-hex token strings here.
+    expect(db.getSettledVolume()).toHaveLength(1);
   });
 
   it("getSettledVolume groups by sell_token across confirmed settlements", () => {
