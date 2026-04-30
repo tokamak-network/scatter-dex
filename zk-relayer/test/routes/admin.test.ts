@@ -378,8 +378,11 @@ describe("/api/admin/history.csv", () => {
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.headers["content-disposition"]).toMatch(/attachment; filename=".*\.csv"/);
 
-    const lines = res.text.trim().split("\n");
-    expect(lines[0]).toBe("id,tx_hash,type,status,block_number,gas_cost_eth,sell_token,buy_token,error_reason,duration_ms,created_at,created_at_iso");
+    // res.text — not .trim(), since trim strips the leading BOM that
+    // we want to verify. The BOM is what Excel reads to detect UTF-8.
+    expect(res.text.charCodeAt(0)).toBe(0xFEFF);
+    const lines = res.text.split("\n").filter((l) => l.length > 0);
+    expect(lines[0].slice(1)).toBe("id,tx_hash,type,status,block_number,gas_cost_eth,sell_token,buy_token,error_reason,duration_ms,created_at,created_at_iso");
     // Token with comma must be quoted; token with double-quote must be quoted + doubled-up.
     expect(lines[1]).toContain('"0xToken,with,comma"');
     expect(lines[1]).toContain('"0xToken""with""quote"');

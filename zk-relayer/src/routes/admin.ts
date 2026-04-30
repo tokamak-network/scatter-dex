@@ -307,7 +307,9 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     // backpressure on slow clients — without this, large exports
     // accumulate in Node's socket buffer regardless of consumer speed.
     function* csvLines(): Iterable<string> {
-      yield SETTLEMENT_CSV_HEADER + "\n";
+      // UTF-8 BOM so Windows Excel detects the encoding for non-ASCII
+      // cells (e.g. error_reason text from upstream RPC errors).
+      yield "﻿" + SETTLEMENT_CSV_HEADER + "\n";
       for (const row of db.iterateSettlementHistoryRange({ since, until, type, status })) {
         yield settlementRowToCsv(row);
       }
