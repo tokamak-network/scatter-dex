@@ -269,6 +269,7 @@ export class PrivateOrderDB {
   private countSettlementHistoryByType: ReturnType<Database.Database["prepare"]>;
   private countSettlementHistoryByStatus: ReturnType<Database.Database["prepare"]>;
   private countSettlementHistoryByTypeStatus: ReturnType<Database.Database["prepare"]>;
+  private selectSettlementHistoryRange: ReturnType<Database.Database["prepare"]>;
   private selectFeeHistory: ReturnType<Database.Database["prepare"]>;
   private selectFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
   private selectSettlementByTxHash: ReturnType<Database.Database["prepare"]>;
@@ -557,6 +558,19 @@ export class PrivateOrderDB {
     this.countSettlementHistoryByTypeStatus = this.db.prepare(
       "SELECT COUNT(*) as count FROM settlement_history WHERE type = @type AND status = @status",
     );
+    // CSV export: time-range scan with optional type/status filters
+    // applied via NULL-aware predicates so a single statement covers
+    // every filter combination. ORDER BY ASC because compliance
+    // exports are read chronologically. No LIMIT — the route streams
+    // via .iterate() to keep memory bounded regardless of row count.
+    this.selectSettlementHistoryRange = this.db.prepare(
+      `SELECT * FROM settlement_history
+        WHERE created_at >= @since
+          AND created_at < @until
+          AND (@type IS NULL OR type = @type)
+          AND (@status IS NULL OR status = @status)
+        ORDER BY created_at ASC, id ASC`,
+    );
     this.selectFeeHistory = this.db.prepare(
       `SELECT * FROM fee_history WHERE created_at >= @since ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`,
     );
@@ -690,6 +704,27 @@ export class PrivateOrderDB {
       total = (this.countSettlementHistory.get({}) as { count: number }).count;
     }
     return { rows, total };
+  }
+
+  /** Stream settlement_history rows in chronological order for a time
+   *  window. Used by the CSV export route — the iterator keeps memory
+   *  bounded even if the window covers millions of rows.
+   *
+   *  `since` is inclusive, `until` is exclusive. `type` / `status` are
+   *  optional; pass `undefined` to skip the filter. */
+  *iterateSettlementHistoryRange(opts: {
+    since: number;
+    until: number;
+    type?: SettlementHistoryRow["type"];
+    status?: SettlementHistoryRow["status"];
+  }): Iterable<SettlementHistoryRow> {
+    const params = {
+      since: opts.since,
+      until: opts.until,
+      type: opts.type ?? null,
+      status: opts.status ?? null,
+    };
+    yield* this.selectSettlementHistoryRange.iterate(params) as Iterable<SettlementHistoryRow>;
   }
 
   /** Single settlement + its fee rows + the authorize_orders rows that

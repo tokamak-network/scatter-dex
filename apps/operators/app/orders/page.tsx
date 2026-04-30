@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
-import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
+import { adminDownload, adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { formatRelative } from "../lib/format";
 
 type Auth = AdminAuth | null;
@@ -82,6 +82,7 @@ function OrdersTable({ auth }: { auth: NonNullable<Auth> }) {
   const [page, setPage] = useState(0);
   const [data, setData] = useState<{ rows: SettlementRow[]; total: number } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchPage = useCallback(
@@ -134,6 +135,26 @@ function OrdersTable({ auth }: { auth: NonNullable<Auth> }) {
     setPage(0);
   };
 
+  const onExportCsv = useCallback(async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const qs = params.toString();
+      await adminDownload(
+        auth,
+        `/api/admin/history.csv${qs ? `?${qs}` : ""}`,
+        "settlements.csv",
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }, [auth, typeFilter, statusFilter]);
+
   const lastPage = data ? Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) : 0;
 
   return (
@@ -159,13 +180,23 @@ function OrdersTable({ auth }: { auth: NonNullable<Auth> }) {
             { key: "failed", label: "Failed" },
           ]}
         />
-        <button
-          onClick={refresh}
-          disabled={loading}
-          className="ml-auto rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={onExportCsv}
+            disabled={exporting || loading}
+            title="Download the current type/status filter as CSV (compliance/finance export)."
+            className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+          <button
+            onClick={refresh}
+            disabled={loading}
+            className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {error && (

@@ -342,3 +342,88 @@ describe("/api/admin/webhook", () => {
     expect(res.body.error).toMatch(/WEBHOOK_URL/);
   });
 });
+
+describe("/api/admin/history.csv", () => {
+  const sampleRow = {
+    id: 1,
+    tx_hash: "0xabc",
+    type: "settleAuth",
+    status: "confirmed",
+    block_number: 100,
+    gas_cost_eth: "0.001",
+    sell_token: "0xToken,with,comma",
+    buy_token: "0xToken\"with\"quote",
+    error_reason: null,
+    duration_ms: 1500,
+    created_at: 1_700_000_000_000,
+  };
+
+  it("rejects missing admin key", async () => {
+    const res = await request(buildApp()).get("/api/admin/history.csv");
+    expect(res.status).toBe(401);
+  });
+
+  it("emits CSV with header + escaped cells, and Content-Disposition", async () => {
+    const calls: Array<{ since: number; until: number; type?: string; status?: string }> = [];
+    const db = makeDbStub({
+      iterateSettlementHistoryRange: (opts) => {
+        calls.push(opts);
+        return [sampleRow];
+      },
+    });
+    const res = await request(buildApp({ db }))
+      .get("/api/admin/history.csv?since=0&until=1700000001000")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.headers["content-disposition"]).toMatch(/attachment; filename=".*\.csv"/);
+
+    const lines = res.text.trim().split("\n");
+    expect(lines[0]).toBe("id,tx_hash,type,status,block_number,gas_cost_eth,sell_token,buy_token,error_reason,duration_ms,created_at,created_at_iso");
+    // Token with comma must be quoted; token with double-quote must be quoted + doubled-up.
+    expect(lines[1]).toContain('"0xToken,with,comma"');
+    expect(lines[1]).toContain('"0xToken""with""quote"');
+    // Null error_reason is rendered as empty cell.
+    expect(lines[1]).toMatch(/,,1500,/);
+    expect(calls[0]).toMatchObject({ since: 0, until: 1_700_000_001_000 });
+  });
+
+  it("forwards type/status filters to the iterator", async () => {
+    const calls: Array<{ type?: string; status?: string }> = [];
+    const db = makeDbStub({
+      iterateSettlementHistoryRange: (opts) => { calls.push(opts); return []; },
+    });
+    await request(buildApp({ db }))
+      .get("/api/admin/history.csv?type=settleAuth&status=failed")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(calls[0]).toMatchObject({ type: "settleAuth", status: "failed" });
+  });
+
+  it("ignores invalid type/status values (treats as undefined)", async () => {
+    const calls: Array<{ type?: string; status?: string }> = [];
+    const db = makeDbStub({
+      iterateSettlementHistoryRange: (opts) => { calls.push(opts); return []; },
+    });
+    await request(buildApp({ db }))
+      .get("/api/admin/history.csv?type=BOGUS&status=alsobogus")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(calls[0].type).toBeUndefined();
+    expect(calls[0].status).toBeUndefined();
+  });
+
+  it("returns 400 when until < since", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/history.csv?since=2000&until=1000")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/until/);
+  });
+
+  it("emits header + zero rows when window is empty", async () => {
+    const res = await request(buildApp())
+      .get("/api/admin/history.csv")
+      .set("x-admin-key", ADMIN_KEY);
+    expect(res.status).toBe(200);
+    expect(res.text.trim().split("\n")).toHaveLength(1);
+  });
+});

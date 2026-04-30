@@ -100,6 +100,35 @@ export async function adminFetch<T>(
   return (parsed ?? ({} as unknown)) as T;
 }
 
+/** Download a binary admin response (CSV, etc.) and trigger a browser
+ *  save dialog. Authenticated via `x-admin-key` like the JSON helpers,
+ *  so the same sessionStorage credentials work. The default filename
+ *  comes from `Content-Disposition` when the server sends one. */
+export async function adminDownload(
+  auth: AdminAuth,
+  path: string,
+  fallbackFilename: string,
+): Promise<void> {
+  const target = new URL(path, auth.url).toString();
+  const res = await fetch(target, { headers: { "x-admin-key": auth.key } });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text.slice(0, 160) || `HTTP ${res.status}`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match ? match[1] : fallbackFilename;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Read the cached auth from sessionStorage. Returns `null` when
  *  either field is missing — both fields must be present to be
  *  considered "connected". */
