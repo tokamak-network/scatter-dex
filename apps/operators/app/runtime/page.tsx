@@ -151,7 +151,7 @@ function StatusSection({
       {actionError && <ErrorLine text={actionError} />}
       {data && (
         <>
-          <div className="mb-3 rounded-md bg-[var(--color-bg)] px-3 py-2">
+          <div className="mb-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
             <div className="text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
               Relayer wallet
             </div>
