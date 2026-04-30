@@ -28,10 +28,7 @@ export const TEMPLATES: readonly Template[] = [
     defaultLabel: "April payroll",
     defaultToken: "USDC",
     identifierLabel: "Employee",
-    sampleCsv: `Alice,0xab12cd34ef56789012345678901234567890abcd,3500
-Bob,0xcd34ef56789012345678901234567890abcdef12,4200
-Carol,0xef56789012345678901234567890abcdef123456,3800
-Dan,0x789012345678901234567890abcdef1234567890,5000`,
+    sampleCsv: "",
     exportNote: "Payroll export includes per-employee breakdown for withholding reconciliation.",
   },
   {
@@ -43,9 +40,7 @@ Dan,0x789012345678901234567890abcdef1234567890,5000`,
     defaultToken: "USDC",
     identifierLabel: "Recipient",
     reasonLabel: "Proposal / Snapshot link",
-    sampleCsv: `Project Lighthouse,0xab12cd34ef56789012345678901234567890abcd,15000
-ZK Toolkit,0xcd34ef56789012345678901234567890abcdef12,8000
-Docs Crew,0xef56789012345678901234567890abcdef123456,4500`,
+    sampleCsv: "",
     exportNote: "Grants export pairs each transfer with its proposal link for transparency reports.",
   },
   {
@@ -57,9 +52,7 @@ Docs Crew,0xef56789012345678901234567890abcdef123456,4500`,
     defaultToken: "USDC",
     identifierLabel: "Employee",
     reasonLabel: "Reason / approver",
-    sampleCsv: `Alice,0xab12cd34ef56789012345678901234567890abcd,2000
-Bob,0xcd34ef56789012345678901234567890abcdef12,3500
-Carol,0xef56789012345678901234567890abcdef123456,1500`,
+    sampleCsv: "",
     exportNote: "Bonus export records the approver and reason against each line.",
   },
   {
@@ -71,9 +64,7 @@ Carol,0xef56789012345678901234567890abcdef123456,1500`,
     defaultToken: "USDC",
     identifierLabel: "Contractor",
     reasonLabel: "Invoice reference",
-    sampleCsv: `Studio North,0xab12cd34ef56789012345678901234567890abcd,6200
-J. Park (design),0xcd34ef56789012345678901234567890abcdef12,2400
-M. Lee (research),0xef56789012345678901234567890abcdef123456,3100`,
+    sampleCsv: "",
     exportNote: "Contractor export attaches invoice references for sole-proprietor accounting.",
   },
 ];
