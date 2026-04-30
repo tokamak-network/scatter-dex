@@ -1,9 +1,18 @@
 "use client";
 
 import { ethers } from "ethers";
-import { LAUNCH_TOKENS } from "@zkscatter/sdk";
+import { COMMITMENT_POOL_IFACE, ERC20_IFACE, LAUNCH_TOKENS } from "@zkscatter/sdk";
 import { generateNote, type CommitmentNote } from "@zkscatter/sdk/zk";
-import { ensureAllowance, callDeposit } from "@zkscatter/sdk/contracts";
+import {
+  callDeposit,
+  ensureAllowance,
+  Eip5792Unsupported,
+  fetchCapabilities,
+  sendCalls,
+  supportsAtomicBatch,
+  waitForCallsReceipt,
+  type SendCallsCall,
+} from "@zkscatter/sdk/contracts";
 import type { useEdDSAKey } from "@zkscatter/sdk/react";
 import { getNetworkConfig, isNetworkConfigured } from "./network";
 import { depositProver } from "./depositProver";
@@ -17,7 +26,8 @@ export type DepositPhaseKind =
   | "submitting"
   | "confirming"
   | "done"
-  | "error";
+  | "error"
+  | "cancelled";
 
 // Minimal WETH9 surface — `deposit() payable` to wrap native ETH and
 // `balanceOf` to skip the wrap when the operator already has enough
@@ -52,6 +62,11 @@ export interface RealDepositArgs {
   /** Reports phase transitions back to the wizard. The flow runs
    *  to completion regardless — `onPhase` is for UI only. */
   onPhase?: (phase: DepositPhase) => void;
+  /** Cooperative cancel. Checked at every await; on abort the flow
+   *  rejects with `DepositCancelled`. The on-chain side stops at
+   *  whatever the wallet had already broadcast — once a tx is in
+   *  the mempool we can't recall it. */
+  signal?: AbortSignal;
 }
 
 export interface RealDepositResult {
@@ -60,32 +75,44 @@ export interface RealDepositResult {
   note: CommitmentNote;
 }
 
+/** Thrown when the wizard cancels mid-flow. Distinct from a generic
+ *  `Error` so the caller can suppress the error banner — a user-
+ *  initiated cancel isn't a failure to surface. */
+export class DepositCancelled extends Error {
+  constructor() {
+    super("Deposit cancelled");
+    this.name = "DepositCancelled";
+  }
+}
+
 /** ERC-20 (or native-ETH-via-WETH) → CommitmentPool deposit.
- *  Sequential flow:
  *
- *  1. Derive (or unlock cached) EdDSA keypair.
- *  2. Native ETH only — wrap any shortfall: read the operator's
- *     existing WETH balance, then `weth.deposit{value: shortfall}()`
- *     for whatever's missing. Skips the wrap entirely when the
- *     operator already has enough WETH from a prior session.
- *  3. Build a fresh `CommitmentNote` bound to the pubkey. The
- *     commitment's `token` field is always the ERC-20 token (WETH
- *     for native), never `ZERO_ADDRESS` — the pool only knows
- *     ERC-20 tokens.
- *  4. Prove off-thread (deposit circuit).
- *  5. `ensureAllowance` — approve the pool to pull `amountRaw`.
- *     Skips when the existing allowance covers it; resets to 0
- *     first when a non-zero starting allowance can't be raised
- *     cleanly (USDT-style ERC-20s).
- *  6. `callDeposit` — submit `pool.deposit(...)`, wait for receipt.
- *  7. Vault add — record the note locally with `leafIndex = -1` so
- *     the funds picker shows it as `pendingRaw` until the
- *     IncrementalMerkleTree reconciler observes the on-chain
- *     `CommitmentInserted` event and back-fills the index.
+ *  Two paths:
+ *
+ *  - **Atomic batch (EIP-5792).** When the wallet declares
+ *    `atomicBatch.supported` for the active chain, wrap (if native
+ *    + short on WETH) + approve (if allowance < amount) + deposit
+ *    are bundled into a single `wallet_sendCalls` envelope —
+ *    operator sees one signature prompt, gas pays one base fee.
+ *    `wallet_getCallsStatus` polls for the batch receipt.
+ *
+ *  - **Sequential fallback.** Older wallets / unsupported chains
+ *    fall through to wrap (separate tx) → approve (separate tx) →
+ *    deposit (separate tx). USDT-style "must reset to 0 first"
+ *    quirks are handled by `ensureAllowance`.
+ *
+ *  Both paths derive the EdDSA keypair, prove off-thread, persist
+ *  the note speculatively *before* awaiting the final receipt
+ *  (browser-crash safety: lost secrets are unrecoverable, phantom
+ *  notes at leafIndex=-1 are recoverable). Both honour `signal`
+ *  cooperatively at every await.
  */
 export async function realDeposit(args: RealDepositArgs): Promise<RealDepositResult> {
-  const { tokenSymbol, amountRaw, account, signer, eddsa, vault, onPhase } = args;
+  const { tokenSymbol, amountRaw, account, signer, eddsa, vault, onPhase, signal } = args;
   const phase = (p: DepositPhase) => onPhase?.(p);
+  const checkAbort = () => {
+    if (signal?.aborted) throw new DepositCancelled();
+  };
 
   const cfg = getNetworkConfig();
   if (!isNetworkConfigured(cfg)) {
@@ -99,10 +126,6 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   if (!signer) throw new Error("Wallet signer not available.");
   if (amountRaw <= 0n) throw new Error("Deposit amount must be positive.");
 
-  // Resolve the on-chain ERC-20 address used for both the commitment
-  // and the pool's transferFrom. For native ETH this is WETH; the
-  // pool has no notion of a "native" token so the commitment must
-  // bind to WETH for the deposit / spend round-trip to work.
   const erc20Address = tokenInfo.isNative ? cfg.contracts.weth : tokenInfo.address;
   if (!erc20Address || erc20Address === ethers.ZeroAddress) {
     throw new Error(
@@ -114,38 +137,17 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
 
   phase({ kind: "preparing", message: "Deriving signing key…" });
   const kp = await eddsa.derive();
-
-  // Native ETH: wrap whatever WETH the operator is short of, in a
-  // separate tx that confirms before we kick off proving. Doing this
-  // before prove-time means the prover boot can run alongside the
-  // wrap's receipt wait.
-  if (tokenInfo.isNative) {
-    const weth = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
-    const wethBalance = (await weth.balanceOf(account)) as bigint;
-    if (wethBalance < amountRaw) {
-      const shortfall = amountRaw - wethBalance;
-      phase({
-        kind: "wrapping",
-        message: `Wrapping ${ethers.formatEther(shortfall)} ETH → WETH…`,
-      });
-      const wrapTx = (await weth.deposit({ value: shortfall })) as ethers.TransactionResponse;
-      const wrapReceipt = await wrapTx.wait();
-      if (!wrapReceipt || wrapReceipt.status !== 1) {
-        throw new Error(`WETH wrap tx failed: ${wrapTx.hash}`);
-      }
-    }
-  }
+  checkAbort();
 
   // Build the note + warm the prover in parallel — the deposit zkey
   // is ~7 MB; on a cold cache its fetch dwarfs the synchronous note
-  // construction. `Promise.resolve(generateNote(...))` would still
-  // run `generateNote` synchronously *before* `depositProver.ready()`
-  // even gets a turn, so we push it onto the microtask queue with
-  // `.then` so the prover's fetch can start in parallel.
+  // construction. Microtask-defer `generateNote` so `prover.ready()`
+  // gets a turn first.
   const [note] = await Promise.all([
     Promise.resolve().then(() => generateNote(erc20Address, amountRaw, kp.publicKey)),
     depositProver.ready(),
   ]);
+  checkAbort();
 
   phase({ kind: "proving", message: "Generating deposit proof…" });
   const proveResult = await depositProver.prove({
@@ -156,58 +158,209 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     throw new Error("deposit.worker returned no public signals — circuit/wasm mismatch?");
   }
   const commitment = proveResult.publicSignals[0]!;
+  checkAbort();
 
-  phase({ kind: "approving", message: "Checking ERC-20 allowance…" });
-  const allowanceTxs = await ensureAllowance(
-    signer,
-    erc20Address,
-    cfg.contracts.commitmentPool,
-    amountRaw,
-  );
-  // Wait for every approval tx in order so the deposit submit can't
-  // race the second `approve(spender, amount)` against the prior
-  // `approve(spender, 0)` reset.
-  for (const tx of allowanceTxs) {
-    phase({ kind: "approving", message: `Waiting for approve tx ${tx.hash.slice(0, 10)}…` });
-    const r = await tx.wait();
-    if (!r || r.status !== 1) throw new Error(`approve tx failed: ${tx.hash}`);
+  // Probe atomic-batch capability. ethers v6 BrowserProvider exposes
+  // `send` directly; non-browser signers (custom JsonRpc) won't match
+  // the type and we fall through to sequential.
+  const provider = signer.provider;
+  const browserProvider =
+    provider && "send" in provider
+      ? (provider as ethers.BrowserProvider)
+      : null;
+  let canBatch = false;
+  if (browserProvider) {
+    try {
+      const caps = await fetchCapabilities(browserProvider, account);
+      canBatch = supportsAtomicBatch(caps, cfg.chainId);
+    } catch {
+      // Probe failure → fall through to sequential. Real wallets that
+      // don't support 5792 just return null caps; only a misbehaving
+      // RPC throws here.
+      canBatch = false;
+    }
   }
+  checkAbort();
 
-  phase({ kind: "submitting", message: "Sign deposit in your wallet…" });
-  // The SDK helper expects `result.proof` + `result.commitment`; the
-  // worker returns `{ proof, publicSignals }`, so we re-pack to match.
-  const tx = await callDeposit(
-    signer,
-    cfg.contracts.commitmentPool,
-    { proof: proveResult.proof, publicSignals: proveResult.publicSignals, commitment },
-    erc20Address,
-    amountRaw,
-  );
-
-  // Persist the note BEFORE waiting for the receipt. If the browser
-  // crashes between broadcast and `tx.wait()` settling, the on-chain
-  // deposit can still confirm — and without the local note (its
-  // ownerSecret + salt) the operator could never spend the resulting
-  // commitment. Storing speculatively means a subsequent revert
-  // would leave a phantom note at `leafIndex = -1`, which the
-  // reconciler can't promote and the funds picker hides; an operator
-  // can clean it up manually if needed. Trading a recoverable
-  // phantom for an unrecoverable lost-secret on crash is the safer
-  // direction.
-  await vault.add({
-    symbol: tokenSymbol,
-    amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
-    note,
+  // Pre-compute the deposit calldata — both paths use it. The SDK
+  // helper expects `result.proof` + `result.commitment`; the worker
+  // returns `{ proof, publicSignals }`, so re-pack once.
+  const depositCalldata = COMMITMENT_POOL_IFACE.encodeFunctionData("deposit", [
+    proveResult.proof.a,
+    proveResult.proof.b,
+    proveResult.proof.c,
     commitment,
-    txHash: tx.hash,
-  });
+    erc20Address,
+    amountRaw,
+  ]);
 
-  phase({ kind: "confirming", message: `Waiting for ${tx.hash.slice(0, 10)}…` });
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`deposit tx failed: ${tx.hash}`);
+  // Read existing balances/allowance once so both paths can decide
+  // whether to skip the wrap / approve.
+  const weth = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
+  const wethBalance = tokenInfo.isNative ? ((await weth.balanceOf(account)) as bigint) : 0n;
+  const wrapShortfall = tokenInfo.isNative && wethBalance < amountRaw ? amountRaw - wethBalance : 0n;
+  const erc20Read = new ethers.Contract(erc20Address, ERC20_IFACE, signer);
+  const currentAllowance = (await erc20Read.allowance(
+    account,
+    cfg.contracts.commitmentPool,
+  )) as bigint;
+  const needsApprove = currentAllowance < amountRaw;
+  const needsZeroReset = needsApprove && currentAllowance > 0n;
+  checkAbort();
+
+  let txHash: string | undefined;
+
+  if (canBatch && browserProvider) {
+    // === Atomic batch path ===
+    phase({
+      kind: "submitting",
+      message: "Sign one batched transaction in your wallet…",
+    });
+    const calls: SendCallsCall[] = [];
+    if (wrapShortfall > 0n) {
+      calls.push({
+        to: erc20Address,
+        value: ethers.toQuantity(wrapShortfall),
+        data: WETH9_IFACE.encodeFunctionData("deposit", []),
+      });
+    }
+    if (needsZeroReset) {
+      calls.push({
+        to: erc20Address,
+        data: ERC20_IFACE.encodeFunctionData("approve", [
+          cfg.contracts.commitmentPool,
+          0n,
+        ]),
+      });
+    }
+    if (needsApprove) {
+      calls.push({
+        to: erc20Address,
+        data: ERC20_IFACE.encodeFunctionData("approve", [
+          cfg.contracts.commitmentPool,
+          amountRaw,
+        ]),
+      });
+    }
+    calls.push({
+      to: cfg.contracts.commitmentPool,
+      data: depositCalldata,
+    });
+    try {
+      const result = await sendCalls(browserProvider, {
+        from: account,
+        chainId: cfg.chainId,
+        calls,
+      });
+      checkAbort();
+      phase({ kind: "confirming", message: "Waiting for batch confirmation…" });
+      const status = await waitForCallsReceipt(browserProvider, result.id);
+      // Per EIP-5792 every included tx must individually report
+      // `0x1`; the last receipt corresponds to the deposit call and
+      // is the one we record on the vault note.
+      const receipts = status.receipts ?? [];
+      if (receipts.length === 0) {
+        throw new Error("Atomic batch completed but wallet returned no receipts.");
+      }
+      for (const r of receipts) {
+        if (r.status !== "0x1") {
+          throw new Error(`Atomic batch reverted on-chain (tx ${r.transactionHash})`);
+        }
+      }
+      txHash = receipts[receipts.length - 1]!.transactionHash;
+      // Persist before reporting done — we already have the deposit
+      // tx hash from the batch's last receipt.
+      await vault.add({
+        symbol: tokenSymbol,
+        amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
+        note,
+        commitment,
+        txHash,
+      });
+    } catch (err) {
+      // Wallet method-not-found at sendCalls time despite caps probe
+      // returning true — drop into sequential. Anything else is a
+      // real failure (user reject, on-chain revert, timeout).
+      if (err instanceof Eip5792Unsupported) {
+        canBatch = false;
+      } else {
+        throw err;
+      }
+    }
   }
 
-  phase({ kind: "done", txHash: tx.hash });
-  return { txHash: tx.hash, commitment, note };
+  if (!canBatch) {
+    // === Sequential fallback ===
+    if (wrapShortfall > 0n) {
+      phase({
+        kind: "wrapping",
+        message: `Wrapping ${ethers.formatEther(wrapShortfall)} ETH → WETH…`,
+      });
+      const wrapTx = (await weth.deposit({
+        value: wrapShortfall,
+      })) as ethers.TransactionResponse;
+      const wrapReceipt = await wrapTx.wait();
+      if (!wrapReceipt || wrapReceipt.status !== 1) {
+        throw new Error(`WETH wrap tx failed: ${wrapTx.hash}`);
+      }
+      checkAbort();
+    }
+
+    if (needsApprove) {
+      phase({ kind: "approving", message: "Approving ERC-20 allowance…" });
+      const allowanceTxs = await ensureAllowance(
+        signer,
+        erc20Address,
+        cfg.contracts.commitmentPool,
+        amountRaw,
+      );
+      for (const t of allowanceTxs) {
+        phase({
+          kind: "approving",
+          message: `Waiting for approve tx ${t.hash.slice(0, 10)}…`,
+        });
+        const r = await t.wait();
+        if (!r || r.status !== 1) throw new Error(`approve tx failed: ${t.hash}`);
+        checkAbort();
+      }
+    }
+
+    phase({ kind: "submitting", message: "Sign deposit in your wallet…" });
+    const tx = await callDeposit(
+      signer,
+      cfg.contracts.commitmentPool,
+      {
+        proof: proveResult.proof,
+        publicSignals: proveResult.publicSignals,
+        commitment,
+      },
+      erc20Address,
+      amountRaw,
+    );
+    txHash = tx.hash;
+    // Persist BEFORE waiting for the receipt — see the safety note in
+    // PR #592 review #3165458236. Crash recovery beats phantom notes.
+    await vault.add({
+      symbol: tokenSymbol,
+      amount: ethers.formatUnits(amountRaw, tokenInfo.decimals),
+      note,
+      commitment,
+      txHash,
+    });
+    phase({ kind: "confirming", message: `Waiting for ${txHash.slice(0, 10)}…` });
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error(`deposit tx failed: ${txHash}`);
+    }
+  }
+
+  if (!txHash) {
+    // Defensive: both paths set txHash. If we got here without one,
+    // something went silently wrong and we'd otherwise return a
+    // result with txHash="" — surface as an error instead.
+    throw new Error("deposit completed without producing a tx hash");
+  }
+
+  phase({ kind: "done", txHash });
+  return { txHash, commitment, note };
 }

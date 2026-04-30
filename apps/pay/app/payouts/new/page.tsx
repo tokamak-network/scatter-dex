@@ -31,7 +31,11 @@ import {
   Toggle,
 } from "./_components/wizardChrome";
 import { BalancePanel, FundsStep } from "./_components/FundsStep";
-import { realDeposit, type DepositPhase } from "../../_lib/realDeposit";
+import {
+  DepositCancelled,
+  realDeposit,
+  type DepositPhase,
+} from "../../_lib/realDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
 // transaction's anonymity set. With multi-batch (Phase 1d-α) each
@@ -185,6 +189,10 @@ function NewPayout() {
   // The ref flips before any await, so the second click bails out
   // immediately even though the corresponding state hasn't flushed.
   const depositInFlightRef = useRef(false);
+  // AbortController per attempt — Cancel from <DepositProgress>
+  // signals the in-flight realDeposit to bail at its next checkpoint.
+  // Null between attempts.
+  const depositAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setClaimFrom(today());
@@ -866,13 +874,10 @@ function NewPayout() {
               // Synchronous lock first — state-based checks would
               // race a same-frame double-click and start two flows.
               if (depositInFlightRef.current) return;
-              // The DepositButton inside FundsStep is already
-              // disabled when the network isn't configured or the
-              // wallet isn't connected, so we don't reach this
-              // handler in those cases. realDeposit's own throws
-              // backstop the contract.
               if (!signer || !account) return;
               depositInFlightRef.current = true;
+              const ctrl = new AbortController();
+              depositAbortRef.current = ctrl;
               setDepositPhase({ kind: "preparing" });
               realDeposit({
                 tokenSymbol: token,
@@ -882,8 +887,13 @@ function NewPayout() {
                 eddsa,
                 vault,
                 onPhase: setDepositPhase,
+                signal: ctrl.signal,
               })
                 .catch((err) => {
+                  if (err instanceof DepositCancelled) {
+                    setDepositPhase({ kind: "cancelled" });
+                    return;
+                  }
                   console.error("[Pay] realDeposit failed", err);
                   setDepositPhase({
                     kind: "error",
@@ -892,13 +902,18 @@ function NewPayout() {
                 })
                 .finally(() => {
                   depositInFlightRef.current = false;
+                  depositAbortRef.current = null;
                 });
             }}
           />
         )}
 
         {step === 4 && depositPhase && (
-          <DepositProgress phase={depositPhase} onDismiss={() => setDepositPhase(null)} />
+          <DepositProgress
+            phase={depositPhase}
+            onDismiss={() => setDepositPhase(null)}
+            onCancel={() => depositAbortRef.current?.abort()}
+          />
         )}
 
         {step === 5 && (
@@ -1030,17 +1045,28 @@ const DEPOSIT_PHASE_COPY: Record<DepositPhase["kind"], string> = {
   confirming: "Waiting for on-chain confirmation…",
   done: "Deposited",
   error: "Deposit failed",
+  cancelled: "Deposit cancelled",
 };
+
+const TERMINAL_DEPOSIT_PHASES = new Set<DepositPhase["kind"]>([
+  "done",
+  "error",
+  "cancelled",
+]);
 
 function DepositProgress({
   phase,
   onDismiss,
+  onCancel,
 }: {
   phase: DepositPhase;
   onDismiss: () => void;
+  onCancel: () => void;
 }) {
+  const terminal = TERMINAL_DEPOSIT_PHASES.has(phase.kind);
   const isDone = phase.kind === "done";
   const isError = phase.kind === "error";
+  const isCancelled = phase.kind === "cancelled";
   const tone = isDone
     ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
     : isError
@@ -1053,15 +1079,28 @@ function DepositProgress({
           {isDone ? "✓ " : ""}
           {DEPOSIT_PHASE_COPY[phase.kind]}
         </div>
-        {phase.message && !isDone && !isError && (
+        {phase.message && !terminal && (
           <div className="mt-0.5 text-[var(--color-text-subtle)]">{phase.message}</div>
         )}
         {isDone && phase.txHash && (
           <div className="mt-1 font-mono text-[10px]">{phase.txHash.slice(0, 18)}…</div>
         )}
         {isError && phase.error && <div className="mt-1">{phase.error}</div>}
+        {isCancelled && (
+          <div className="mt-0.5 text-[var(--color-text-subtle)]">
+            Any tx already broadcast keeps confirming on-chain — Cancel only
+            stops further steps.
+          </div>
+        )}
       </div>
-      {(isDone || isError) && (
+      {!terminal ? (
+        <button
+          onClick={onCancel}
+          className="rounded border border-current px-2 py-0.5 text-[10px]"
+        >
+          Cancel
+        </button>
+      ) : (
         <button
           onClick={onDismiss}
           className="rounded border border-current px-2 py-0.5 text-[10px]"
