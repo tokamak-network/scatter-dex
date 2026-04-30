@@ -365,9 +365,15 @@ export interface RunsIndexEntry {
 export const RUN_NOTES_PREVIEW_LIMIT = 160;
 
 interface RunsIndexFile {
-  version: 1;
+  /** v1 → v2 bump introduced `notesPreview`. Older indexes that
+   *  pass v1 schema validation are silently dropped via
+   *  `loadRunsIndex` so the next read forces a one-time full scan;
+   *  `saveRun` then writes v2 with the preview populated. */
+  version: 2;
   entries: RunsIndexEntry[];
 }
+
+const RUNS_INDEX_VERSION = 2;
 
 function summariseRecord(record: RunRecord): RunsIndexEntry {
   let claimed = 0;
@@ -417,8 +423,20 @@ function isValidIndexEntry(e: unknown): e is RunsIndexEntry {
     typeof v.claimedRecipients === "number" &&
     isOptionalString(v.settleGasPaid) &&
     (v.hasNotes === undefined || typeof v.hasNotes === "boolean") &&
-    isOptionalString(v.notesPreview)
+    isValidNotesPreview(v.notesPreview, v.hasNotes)
   );
+}
+
+/** Reject manually-edited / corrupted previews so a stuffed index
+ *  can't bloat the dashboard's in-memory list, and require
+ *  `hasNotes === true` whenever `notesPreview` is present so the
+ *  📝 indicator and the search filter never disagree. */
+function isValidNotesPreview(preview: unknown, hasNotes: unknown): boolean {
+  if (preview === undefined) return true;
+  if (typeof preview !== "string") return false;
+  if (preview.length > RUN_NOTES_PREVIEW_LIMIT) return false;
+  if (preview.length > 0 && hasNotes !== true) return false;
+  return true;
 }
 
 /** Read the on-disk index. Returns `null` when the file is missing,
@@ -435,7 +453,12 @@ async function loadRunsIndex(): Promise<RunsIndexEntry[] | null> {
   if (!text) return null;
   try {
     const parsed = JSON.parse(text) as { version?: unknown; entries?: unknown };
-    if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) return null;
+    if (parsed?.version !== RUNS_INDEX_VERSION || !Array.isArray(parsed.entries)) {
+      // v1 indexes lack `notesPreview` and would render note-search
+      // results blank; returning null forces a one-time full scan
+      // that rebuilds the index at v2 with the preview populated.
+      return null;
+    }
     if (!parsed.entries.every(isValidIndexEntry)) return null;
     return parsed.entries;
   } catch {
@@ -444,7 +467,7 @@ async function loadRunsIndex(): Promise<RunsIndexEntry[] | null> {
 }
 
 async function persistRunsIndex(entries: RunsIndexEntry[]): Promise<void> {
-  const payload: RunsIndexFile = { version: 1, entries };
+  const payload: RunsIndexFile = { version: RUNS_INDEX_VERSION, entries };
   await saveFile(RUNS_INDEX_FILENAME, JSON.stringify(payload, null, 2));
 }
 
