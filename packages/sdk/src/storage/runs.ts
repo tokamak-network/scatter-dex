@@ -49,6 +49,11 @@ export interface RecipientRow {
   email?: string;
   telegramHandle?: string;
   kakaoId?: string;
+  /** EIP-5564 ephemeral public key — set only for stealth recipients
+   *  whose `address` field is a one-time stealth address. Stored on
+   *  the operator side so a lost claim link can be re-issued with the
+   *  same ephPub. Never on-chain. */
+  ephemeralPubKey?: string;
   /** Base64url-encoded `ClaimPackage` (from `@zkscatter/sdk/notes`)
    *  the operator hands to the recipient. Populated for runs settled
    *  via Pay's real submit path; absent for env-not-configured demo
@@ -156,6 +161,7 @@ function isValidRecipient(r: unknown): r is RecipientRow {
   if (!isOptionalString(v.email)) return false;
   if (!isOptionalString(v.telegramHandle)) return false;
   if (!isOptionalString(v.kakaoId)) return false;
+  if (!isOptionalString(v.ephemeralPubKey)) return false;
   return true;
 }
 

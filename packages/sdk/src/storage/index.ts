@@ -20,4 +20,5 @@ export {
 export * from "./walletBook";
 export * from "./runs";
 export * from "./stealthKeys";
+export * from "./stealthInbox";
 export * from "./backup";

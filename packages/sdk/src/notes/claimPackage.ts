@@ -48,6 +48,15 @@ export interface ClaimPackage {
    *  in exchange for having settled the run. Absent for runs whose
    *  relayer was unreachable / offline at settle time. */
   relayerUrl?: string;
+  /** EIP-5564 ephemeral public key — set only for stealth recipients.
+   *  When present, `recipient` is the one-time stealth address (not
+   *  the recipient's normal EOA), and the receiver derives the
+   *  matching private key locally with their meta-address keys. Sent
+   *  alongside the package via the same off-chain channel (email /
+   *  messenger), never on-chain — stealth privacy depends on the
+   *  ephPub staying off-chain so a leaked viewing key alone doesn't
+   *  unmask all incoming claims. */
+  ephemeralPubKey?: string;
 }
 
 const VERSION = 1 as const;
@@ -133,6 +142,12 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
   )
     return false;
   if (o.relayerUrl !== undefined && !isPlausibleHttpUrl(o.relayerUrl)) return false;
+  if (
+    o.ephemeralPubKey !== undefined &&
+    !(typeof o.ephemeralPubKey === "string" && /^0x[0-9a-fA-F]{66}$/.test(o.ephemeralPubKey))
+  ) {
+    return false;
+  }
   return true;
 }
 
