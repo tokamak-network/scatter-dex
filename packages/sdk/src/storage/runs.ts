@@ -61,7 +61,16 @@ export interface RecipientRow {
   claimPackage?: string;
 }
 
-export type NotificationChannel = "email" | "telegram" | "kakao" | "slack";
+/** New logs are written as "email" | "telegram" | "kakao" | "slack".
+ *  `"discord"` is a legacy value that may appear in run files written
+ *  before the Telegram/Kakao migration; the parser still accepts it
+ *  so those runs stay readable. */
+export type NotificationChannel =
+  | "email"
+  | "telegram"
+  | "kakao"
+  | "slack"
+  | "discord";
 
 export interface NotificationLog {
   rowIndex: number;
@@ -137,7 +146,16 @@ const HEX_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const RUN_CATEGORY_SET = new Set<string>(RUN_CATEGORIES);
 
 const RECIPIENT_STATUSES = new Set(["claimed", "available", "locked"]);
-const NOTIFICATION_CHANNELS = new Set(["email", "telegram", "kakao", "slack"]);
+// `"discord"` is accepted only for backward-compat with run files
+// written before the Telegram/Kakao migration; new logs are written
+// as "telegram" / "kakao" / "email" / "slack".
+const NOTIFICATION_CHANNELS = new Set([
+  "email",
+  "telegram",
+  "kakao",
+  "slack",
+  "discord",
+]);
 const BOUNCE_KINDS = new Set(["hard", "soft"]);
 
 function isOptionalNumber(v: unknown): boolean {

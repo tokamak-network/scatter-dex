@@ -109,11 +109,11 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
   const add = useCallback(
     async (input: {
       label: string;
-      address: string;
+      address?: string;
       memo?: string;
       email?: string;
       telegramHandle?: string;
-    kakaoId?: string;
+      kakaoId?: string;
       metaAddress?: string;
       addressByChain?: Record<number, string>;
     }) => {
