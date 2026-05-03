@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import {
   listRunsSummary,
@@ -12,6 +12,11 @@ import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { parseAmount } from "../_lib/format";
+import {
+  clearWizardDraft,
+  loadAllWizardDrafts,
+  type WizardDraft,
+} from "../_lib/wizardDraft";
 
 type Tab = "all" | RunCategory;
 type SortKey = "date" | "total" | "recipients" | "claimed";
@@ -268,8 +273,90 @@ export default function Dashboard() {
           onSort={onSort}
         />
       </section>
+
+      <DraftsSection wallet={wallet} />
     </div>
   );
+}
+
+/** Surface localStorage-backed wizard drafts at the dashboard bottom
+ *  so the operator can pick up an in-progress payout without
+ *  guessing whether one exists. Currently the wizard saves at most
+ *  one draft per operator wallet (single localStorage key keyed by
+ *  account); the UI is a list to leave room for future
+ *  multi-draft expansion. */
+function DraftsSection({ wallet }: { wallet: ReturnType<typeof useWallet> }) {
+  const mounted = useMounted();
+  const folder = useFolderStorage();
+  const [drafts, setDrafts] = useState<WizardDraft[]>([]);
+
+  const refresh = useCallback(() => {
+    if (!folder.ready) return;
+    void loadAllWizardDrafts(wallet.account ?? null).then(setDrafts);
+  }, [folder.ready, wallet.account]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    refresh();
+    // Refresh on tab focus so a draft saved in another tab shows up
+    // without a manual reload.
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [mounted, refresh]);
+
+  if (!mounted) return null;
+  if (drafts.length === 0) return null;
+
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">
+        Drafts ({drafts.length})
+      </h2>
+      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+        {drafts.map((d) => (
+          <div
+            key={`${d.operatorAddress}:${d.label}`}
+            className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+          >
+            <div>
+              <div className="font-medium">{d.label || "(untitled)"}</div>
+              <div className="text-xs text-[var(--color-text-muted)]">
+                {d.templateId} · {d.token} · step {d.step}/5 · saved{" "}
+                {formatRelativeAgo(d.savedAt)}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Link
+                href={`/payouts/new?label=${encodeURIComponent(d.label)}`}
+                className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)]"
+              >
+                Continue →
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!window.confirm(`Discard draft "${d.label || "(untitled)"}"?`)) return;
+                  void clearWizardDraft(d.operatorAddress, d.label).then(refresh);
+                }}
+                className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-xs hover:bg-[var(--color-warning-soft)]"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatRelativeAgo(unixSec: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSec;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 function ScopeBar({

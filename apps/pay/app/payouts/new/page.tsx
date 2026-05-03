@@ -77,6 +77,11 @@ import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
+  clearWizardDraft,
+  loadWizardDraft,
+  saveWizardDraft,
+} from "../../_lib/wizardDraft";
+import {
   autoPickSourceNotes,
   pickFromSelectedNotes,
   describeBatchFitError,
@@ -127,6 +132,15 @@ function formatClaimFrom(iso: string): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return iso;
   return new Date(ms).toLocaleString();
+}
+
+function formatRelativeAgo(unixSec: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSec;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 /** Save the current run's recipient list as a CSV — same shape Step
@@ -262,6 +276,86 @@ function NewPayout() {
   const walletBook = useWalletBook();
   const folder = useFolderStorage();
   const [showBookPicker, setShowBookPicker] = useState(false);
+  const draftLabelParam = searchParams?.get("label") ?? null;
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const draftHydratedRef = useRef(false);
+  // Tracks the label the draft was last persisted under. When the user
+  // edits the label, the next save uses this to delete the old slot
+  // before writing the new one — no duplicate drafts on rename.
+  const lastSavedLabelRef = useRef<string | null>(null);
+
+  // ── Draft restore — runs once after the folder is mounted so
+  // FSA reads succeed. The resume-partial-run flow (?resume=<id>)
+  // takes precedence: a partial run already has its own RunRecord,
+  // hydrating a draft on top would double-stamp. When `?label=…`
+  // is present we hydrate that draft slot; otherwise this is a fresh
+  // wizard session and the defaults stand.
+  useEffect(() => {
+    if (draftHydratedRef.current) return;
+    if (resume.kind === "loading") return;
+    if (resume.kind === "ready") {
+      draftHydratedRef.current = true;
+      return;
+    }
+    if (!folder.ready) return;
+    if (!draftLabelParam) {
+      draftHydratedRef.current = true;
+      return;
+    }
+    void loadWizardDraft(account, draftLabelParam).then((d) => {
+      if (d) {
+        setTemplateId(d.templateId as TemplateId);
+        setLabel(d.label);
+        setToken(d.token);
+        setCsv(d.csv);
+        setReason(d.reason);
+        setClaimFrom(d.claimFrom);
+        setMaxFeeBps(d.maxFeeBps);
+        setStep(d.step);
+        setDraftSavedAt(d.savedAt);
+        lastSavedLabelRef.current = d.label;
+      }
+      draftHydratedRef.current = true;
+    });
+  }, [folder.ready, resume.kind, draftLabelParam, account]);
+
+  // ── Draft save — debounced 400ms so a fast-typing user doesn't
+  // hammer the folder. Only saves once the hydration pass is done
+  // so an empty in-memory state doesn't blow away a stored draft on
+  // mount.
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    if (resume.kind === "ready") return;
+    if (!folder.ready) return;
+    const t = window.setTimeout(() => {
+      void saveWizardDraft(account, lastSavedLabelRef.current, {
+        step,
+        templateId,
+        label,
+        token,
+        csv,
+        reason,
+        claimFrom,
+        maxFeeBps,
+      }).then((saved) => {
+        setDraftSavedAt(saved.savedAt);
+        lastSavedLabelRef.current = saved.label;
+      });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    folder.ready,
+    account,
+    resume.kind,
+    step,
+    templateId,
+    label,
+    token,
+    csv,
+    reason,
+    claimFrom,
+    maxFeeBps,
+  ]);
 
   const addressBookHint = !folder.ready
     ? "Pick a notes folder to load your address book."
@@ -614,6 +708,8 @@ function NewPayout() {
 
       const savedId = await persist(/* allowFailure */ false);
       if (savedId) {
+        const labelToClear = lastSavedLabelRef.current;
+        if (labelToClear !== null) void clearWizardDraft(account, labelToClear);
         router.push(`/payouts/detail?id=${encodeURIComponent(savedId)}`);
       }
     } catch (err) {
@@ -854,11 +950,9 @@ function NewPayout() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-        <Link href="/" className="hover:text-[var(--color-text)]">Payouts</Link>
-        <span>/</span>
-        <span>New</span>
-      </div>
+      <h1 className="text-2xl font-semibold">
+        {resume.kind === "ready" ? "Resume payout" : "New payout"}
+      </h1>
 
       <WorkspaceBar />
 
@@ -890,6 +984,41 @@ function NewPayout() {
       )}
 
       <Stepper step={step} onJump={setStep} />
+
+      <div className="flex items-end justify-between">
+        <h2 className="text-lg font-semibold text-[var(--color-text-muted)]">
+          {label || "(untitled)"}
+        </h2>
+        {draftSavedAt && resume.kind !== "ready" && (
+          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <span title={new Date(draftSavedAt * 1000).toLocaleString()}>
+              Draft saved {formatRelativeAgo(draftSavedAt)}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm("Discard this draft and start over?")) return;
+                const labelToClear = lastSavedLabelRef.current;
+                if (labelToClear !== null) void clearWizardDraft(account, labelToClear);
+                lastSavedLabelRef.current = null;
+                setDraftSavedAt(null);
+                setStep(1);
+                setTemplateId("payroll");
+                const t = TEMPLATES.find((x) => x.id === "payroll")!;
+                setLabel(t.defaultLabel);
+                setToken(t.defaultToken);
+                setCsv(t.sampleCsv);
+                setReason("");
+                setClaimFrom(undefined);
+                setMaxFeeBps(DEFAULT_MAX_FEE_BPS);
+              }}
+              className="rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-bg)]"
+            >
+              Discard
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         {step === 1 && (

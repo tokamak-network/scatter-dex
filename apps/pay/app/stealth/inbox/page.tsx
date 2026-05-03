@@ -471,13 +471,21 @@ function StatusPill({ status }: { status: InboxRowStatus }) {
     );
   }
   if (status.kind === "locked") {
-    const date = new Date(status.unlocksAt! * 1000).toLocaleString();
+    const d = new Date(status.unlocksAt! * 1000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
     return (
       <span
-        title={`Unlocks at ${date}`}
-        className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+        title={`Unlocks at ${d.toLocaleString()}`}
+        className="inline-flex items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
       >
-        Locked
+        <span>Locked</span>
+        <span className="font-normal opacity-80">
+          · opens {yyyy}-{mm}-{dd} {hh}:{mi}
+        </span>
       </span>
     );
   }
@@ -771,14 +779,7 @@ function ClaimedRowActions({
   const [showKey, setShowKey] = useState(false);
   return (
     <div className="flex items-center justify-end gap-2">
-      {entry.txHash && (
-        <span
-          className="font-mono text-[10px] text-[var(--color-text-muted)]"
-          title={entry.txHash}
-        >
-          {entry.txHash.slice(0, 10)}…
-        </span>
-      )}
+      {entry.txHash && <ClaimTxLink txHash={entry.txHash} />}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -958,6 +959,42 @@ function TransferOutModal({
     }
   }
 
+  /** Compute "max sendable" — for native: balance − (gas × gasPrice
+   *  buffered 20% so a slight gas-price spike between estimate and
+   *  broadcast doesn't bounce the tx). For ERC20: just the full token
+   *  balance (gas is paid in native, not the token being sent). */
+  async function fillMax() {
+    setError(null);
+    try {
+      if (!ethers.isAddress(to)) {
+        throw new Error("Recipient address required to estimate gas");
+      }
+      if (isNative) {
+        const [balance, fee] = await Promise.all([
+          provider.getBalance(stealthAddr),
+          provider.getFeeData(),
+        ]);
+        const gasPrice = fee.gasPrice ?? fee.maxFeePerGas ?? 0n;
+        // Standard value transfer is 21000 gas; pad 20% to absorb
+        // gas-price drift between estimate and confirmation.
+        const gasUnits = 21_000n;
+        const buffer = (gasPrice * gasUnits * 12n) / 10n;
+        if (balance <= buffer) {
+          throw new Error(
+            `Balance ${ethers.formatEther(balance)} too small to cover gas`,
+          );
+        }
+        setAmount(ethers.formatEther(balance - buffer));
+      } else {
+        const erc20 = new ethers.Contract(entry.pkg.token, ERC20_ABI, provider);
+        const tokenBal = (await erc20.balanceOf(stealthAddr)) as bigint;
+        setAmount(ethers.formatUnits(tokenBal, entry.pkg.tokenDecimals));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   const gasEmpty = gasBalance !== null && gasBalance === 0n;
 
   return (
@@ -986,7 +1023,22 @@ function TransferOutModal({
           />
         </label>
         <label className="block">
-          <span className="text-xs text-[var(--color-text-muted)]">Amount</span>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-[var(--color-text-muted)]">Amount</span>
+            <button
+              type="button"
+              onClick={() => void fillMax()}
+              disabled={busy || !to || !ethers.isAddress(to)}
+              title={
+                ethers.isAddress(to)
+                  ? "Send the entire balance minus estimated gas"
+                  : "Enter a recipient address first to estimate gas"
+              }
+              className="text-[10px] text-[var(--color-primary)] hover:underline disabled:opacity-40"
+            >
+              Send max
+            </button>
+          </div>
           <input
             type="text"
             value={amount}
@@ -1019,6 +1071,39 @@ function TransferOutModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** Link to the claim transaction on a block explorer. The chain
+ *  config carries the explorer base URL when available; for local
+ *  anvil there is no explorer, so we fall back to a copy-on-click
+ *  pill. Either way the user gets to inspect the on-chain proof of
+ *  the claim without staring at a raw hash. */
+function ClaimTxLink({ txHash }: { txHash: string }) {
+  const cfg = useMemo(() => getNetworkConfig(), []);
+  const base = cfg.explorerBase;
+  if (base) {
+    return (
+      <a
+        href={`${base.replace(/\/$/, "")}/tx/${txHash}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-[10px] text-[var(--color-primary)] underline decoration-dotted hover:decoration-solid"
+        title={`Claim tx · ${txHash}`}
+      >
+        Claim tx ↗
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void navigator.clipboard.writeText(txHash)}
+      className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+      title={`Copy claim tx · ${txHash}`}
+    >
+      Claim tx ⧉
+    </button>
   );
 }
 
