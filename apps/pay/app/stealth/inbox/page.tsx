@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useMetaAddress } from "@zkscatter/sdk/react";
 import { stealthWallet } from "@zkscatter/sdk/zk";
 import { CopyButton, StealthFolderGate } from "../_components";
+import { WorkspaceBar } from "../../_components/WorkspaceBar";
 
 interface DerivedClaim {
   ephemeralPubKey: string;
@@ -17,7 +18,7 @@ export default function StealthInboxPage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">Stealth inbox</h1>
-        <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Claim payouts that landed at one-time stealth addresses derived
           from your{" "}
           <Link href="/stealth/wallet" className="text-[var(--color-primary)] hover:underline">
@@ -28,6 +29,8 @@ export default function StealthInboxPage() {
           that one-time address.
         </p>
       </header>
+
+      <WorkspaceBar />
 
       <StealthFolderGate>
         <InboxBody />
