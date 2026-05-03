@@ -85,7 +85,7 @@ import { useWalletBook } from "../../_lib/walletBook";
 import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
-import type { WalletEntry } from "@zkscatter/sdk/storage";
+import { hasDefaultAddress, type WalletEntry } from "@zkscatter/sdk/storage";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
 import { REASON_PLACEHOLDER, TEMPLATES, type TemplateId } from "./_templates";
@@ -182,9 +182,9 @@ function NewPayout() {
     : !walletBook.loaded
       ? "Loading your address book…"
       : walletBook.corrupt
-        ? "Address book file is corrupt — repair it from /recipients."
+        ? "Address book file is corrupt — repair it from /address-book."
         : walletBook.entries.length === 0
-          ? "Add recipients in /recipients first."
+          ? "Add recipients in /address-book first."
           : null;
 
   // Deposit progress state — `null` between attempts, set by
@@ -473,6 +473,7 @@ function NewPayout() {
     // template adds quoted fields). `eqAddr` handles checksum / case.
     const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
     const rowsToAdd = picked
+      .filter(hasDefaultAddress)
       .filter((e) => !seen.has(e.address.toLowerCase()))
       .map((e) => `${csvSafeLabel(e.label)},${e.address},`);
     if (rowsToAdd.length === 0) return;

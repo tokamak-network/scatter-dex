@@ -9,6 +9,7 @@ import { FolderGate } from "../components/FolderGate";
 import { shortenAddress } from "../lib/utils";
 import {
   addWallet,
+  hasDefaultAddress,
   loadWalletBook,
   removeWallet,
   updateWallet,
@@ -211,7 +212,7 @@ export default function WalletsPage() {
                 No addresses yet. Add one above to get started.
               </div>
             )}
-            {entries.map((e) => {
+            {entries.filter(hasDefaultAddress).map((e) => {
               const isEditing = editingId === e.id;
               const isPending = pendingId === e.id;
               return (

@@ -35,7 +35,7 @@ export default function RecipientsPage() {
     return book.entries.filter(
       (e) =>
         e.label.toLowerCase().includes(q) ||
-        e.address.includes(q) ||
+        (e.address?.includes(q) ?? false) ||
         (e.memo?.toLowerCase().includes(q) ?? false) ||
         (e.email?.toLowerCase().includes(q) ?? false) ||
         (e.discordHandle?.toLowerCase().includes(q) ?? false) ||
@@ -70,7 +70,7 @@ export default function RecipientsPage() {
               onClick={() => setEditing({ mode: "new" })}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
             >
-              + Add recipient
+              + Add address
             </button>
           </div>
         )}
@@ -97,7 +97,7 @@ export default function RecipientsPage() {
           ) : filtered.length === 0 ? (
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-10 text-center text-sm text-[var(--color-text-muted)]">
               {book.entries.length === 0
-                ? "No recipients yet. Click \"Add recipient\" to get started."
+                ? "No addresses yet. Click \"Add address\" to get started."
                 : "No matches."}
             </div>
           ) : (
@@ -179,7 +179,11 @@ function RecipientTable({
                   </div>
                 </td>
                 <td className="px-5 py-3 font-mono text-xs">
-                  {shortAddr(e.address)}
+                  {e.address ? (
+                    shortAddr(e.address)
+                  ) : (
+                    <span className="text-[var(--color-text-muted)]">— stealth only</span>
+                  )}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
                   {e.email ?? "—"}
@@ -240,11 +244,12 @@ function RecipientForm({
       // Existing entries that already carry `addressByChain` keep
       // their map untouched on edit (we don't pass the field, so the
       // SDK's update helper leaves it as-is).
+      const trimmedAddress = address.trim();
       const ok = isNew
         ? Boolean(
             await book.add({
               label: trimmedLabel,
-              address,
+              address: trimmedAddress || undefined,
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,
               discordHandle: trimmedDiscord || undefined,
@@ -272,12 +277,25 @@ function RecipientForm({
   }
 
   const emailInvalid = email.trim().length > 0 && !EMAIL_RE.test(email.trim());
+  const missingTarget = isNew && !address.trim() && !metaAddress.trim();
 
   return (
-    <Modal open onClose={onClose} title={isNew ? "Add recipient" : "Edit recipient"}>
-      <div className="space-y-5 text-sm">
+    <Modal
+      open
+      onClose={onClose}
+      title={isNew ? "Add address" : "Edit address"}
+      maxWidthCls="max-w-2xl"
+    >
+      {isNew && (
+        <p className="-mt-1 mb-4 text-xs text-[var(--color-text-muted)]">
+          <span className="font-mono text-[var(--color-warning)]">*</span> required ·{" "}
+          <span className="font-mono text-[var(--color-warning)]">**</span> at least
+          one required (default wallet address or stealth meta-address)
+        </p>
+      )}
+      <div className="grid items-start gap-x-6 gap-y-5 text-sm md:grid-cols-2">
         <FormSection title="Identity">
-          <Field label="Label">
+          <Field label={"Label *"}>
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
@@ -286,13 +304,19 @@ function RecipientForm({
             />
           </Field>
           <Field
-            label="Default wallet address"
-            hint={
-              isNew
-                ? "Address used for every payout run to this recipient."
-                : initial?.addressByChain && Object.keys(initial.addressByChain).length > 0
-                  ? "Address is immutable. Remove and re-add to change it. This entry also carries per-chain overrides from an older app version (legacy field — not editable here)."
-                  : "Address is immutable. Remove and re-add to change it."
+            label={
+              <>
+                {isNew ? "Default wallet address **" : "Default wallet address"}
+                <InfoTip
+                  text={
+                    isNew
+                      ? "Address used for every payout run to this recipient."
+                      : initial?.addressByChain && Object.keys(initial.addressByChain).length > 0
+                        ? "Address is immutable. Remove and re-add to change it. This entry also carries per-chain overrides from an older app version (legacy field — not editable here)."
+                        : "Address is immutable. Remove and re-add to change it."
+                  }
+                />
+              </>
             }
           >
             <input
@@ -300,15 +324,23 @@ function RecipientForm({
               onChange={(e) => setAddress(e.target.value)}
               disabled={!isNew}
               placeholder="0x…"
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs disabled:bg-[var(--color-bg)]"
+              className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs disabled:bg-[var(--color-bg)] ${
+                missingTarget
+                  ? "border-[var(--color-warning)]"
+                  : "border-[var(--color-border-strong)]"
+              }`}
             />
           </Field>
         </FormSection>
 
         <FormSection title="Contact">
           <Field
-            label="Email (optional)"
-            hint="Pay copies this into the run record at send time so claim emails reach the right inbox."
+            label={
+              <>
+                Email (optional)
+                <InfoTip text="Pay copies this into the run record at send time so claim emails reach the right inbox." />
+              </>
+            }
           >
             <input
               value={email}
@@ -325,8 +357,12 @@ function RecipientForm({
             )}
           </Field>
           <Field
-            label="Discord handle (optional)"
-            hint="Reserved for the Discord delivery channel; mirrors the email field today."
+            label={
+              <>
+                Discord handle (optional)
+                <InfoTip text="Reserved for the Discord delivery channel; mirrors the email field today." />
+              </>
+            }
           >
             <input
               value={discordHandle}
@@ -341,12 +377,16 @@ function RecipientForm({
           title="Stealth"
           hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
         >
-          <Field label="Meta-address (optional)">
+          <Field label={isNew ? "Meta-address **" : "Meta-address"}>
             <input
               value={metaAddress}
               onChange={(e) => setMetaAddress(e.target.value)}
               placeholder="st:eth:0x…"
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+              className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs ${
+                missingTarget
+                  ? "border-[var(--color-warning)]"
+                  : "border-[var(--color-border-strong)]"
+              }`}
             />
             {metaAddress.trim().length > 0 &&
               !metaAddress.trim().startsWith("st:eth:0x") && (
@@ -370,7 +410,7 @@ function RecipientForm({
         </FormSection>
 
         {book.error && (
-          <div className="rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
+          <div className="rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)] md:col-span-2">
             {book.error}
           </div>
         )}
@@ -384,12 +424,7 @@ function RecipientForm({
         </button>
         <button
           onClick={() => void submit()}
-          disabled={
-            submitting ||
-            !label.trim() ||
-            (isNew && !address.trim()) ||
-            emailInvalid
-          }
+          disabled={submitting || !label.trim() || missingTarget || emailInvalid}
           className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         >
           {submitting ? "Saving…" : isNew ? "Add" : "Save"}
@@ -467,6 +502,26 @@ function CorruptBanner({ message }: { message: string }) {
 }
 
 
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group relative ml-1 inline-flex">
+      <span
+        aria-label={text}
+        tabIndex={0}
+        className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-[var(--color-border-strong)] text-[10px] font-semibold normal-case text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] focus:outline-none focus:border-[var(--color-primary)] focus:text-[var(--color-primary)]"
+      >
+        ?
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute bottom-full left-1/2 z-10 mb-2 w-64 -translate-x-1/2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left text-[11px] font-normal normal-case leading-snug tracking-normal text-[var(--color-text)] opacity-0 shadow-lg transition-opacity duration-100 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function FormSection({
   title,
   hint,
@@ -478,12 +533,10 @@ function FormSection({
 }) {
   return (
     <section>
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
-        {title}
+      <div className="mb-2 flex items-center text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+        <span>{title}</span>
+        {hint && <InfoTip text={hint} />}
       </div>
-      {hint && (
-        <p className="mb-2 text-xs text-[var(--color-text-muted)]">{hint}</p>
-      )}
       <div className="space-y-3">{children}</div>
     </section>
   );

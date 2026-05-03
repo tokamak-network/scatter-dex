@@ -66,7 +66,9 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
   const isFutureClaim = claimFromUnix !== null && claimFromUnix > now;
 
   const bookByAddress = new Map<string, WalletEntry>();
-  for (const e of input.walletBook) bookByAddress.set(e.address.toLowerCase(), e);
+  for (const e of input.walletBook) {
+    if (e.address) bookByAddress.set(e.address.toLowerCase(), e);
+  }
 
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
     const lower = r.address.toLowerCase();

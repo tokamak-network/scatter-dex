@@ -30,7 +30,7 @@ interface WalletBookState {
   error: string | null;
   add(input: {
     label: string;
-    address: string;
+    address?: string;
     memo?: string;
     email?: string;
     discordHandle?: string;

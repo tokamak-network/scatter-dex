@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Modal } from "@zkscatter/ui";
-import type { WalletEntry } from "@zkscatter/sdk/storage";
+import { hasDefaultAddress, type WalletEntry } from "@zkscatter/sdk/storage";
 
 /** Multi-select picker over the address book. The wizard's
  *  Recipients step calls this; future surfaces (claim-link
@@ -19,16 +19,19 @@ export function AddressBookPicker({
 }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Stealth-only entries can't ride the wizard's CSV-based row
+  // path; the recipients page manages those.
+  const sendable = useMemo(() => entries.filter(hasDefaultAddress), [entries]);
   const filtered = useMemo(() => {
-    if (!search.trim()) return entries;
+    if (!search.trim()) return sendable;
     const q = search.toLowerCase();
-    return entries.filter(
+    return sendable.filter(
       (e) =>
         e.label.toLowerCase().includes(q) ||
         e.address.includes(q) ||
         (e.memo?.toLowerCase().includes(q) ?? false),
     );
-  }, [entries, search]);
+  }, [sendable, search]);
 
   function toggle(id: string) {
     setSelected((prev) => {
