@@ -62,8 +62,12 @@ export interface WalletEntry {
   /** Email Pay copies into the run record at send time so the run
    *  stays valid even if the entry is later edited or removed. */
   email?: string;
-  /** Discord handle for the same reason as `email`. */
-  discordHandle?: string;
+  /** Telegram handle (e.g. `@alice`) — copied into the run record at
+   *  send time for the same reason as `email`. */
+  telegramHandle?: string;
+  /** KakaoTalk ID — copied into the run record at send time for the
+   *  same reason as `email`. */
+  kakaoId?: string;
   /** Optional free-form note (e.g. "engineering team / Q2"). */
   memo?: string;
   /** Recipient's stealth meta-address (`st:eth:0x…`). When set,
@@ -137,7 +141,8 @@ function isValidEntry(e: unknown): e is WalletEntry {
     typeof v.createdAt === "number" &&
     (v.memo === undefined || typeof v.memo === "string") &&
     (v.email === undefined || typeof v.email === "string") &&
-    (v.discordHandle === undefined || typeof v.discordHandle === "string") &&
+    (v.telegramHandle === undefined || typeof v.telegramHandle === "string") &&
+    (v.kakaoId === undefined || typeof v.kakaoId === "string") &&
     isValidAddressByChain(v.addressByChain)
   );
 }
@@ -259,7 +264,8 @@ export async function addWallet(input: {
   address?: string;
   memo?: string;
   email?: string;
-  discordHandle?: string;
+  telegramHandle?: string;
+  kakaoId?: string;
   metaAddress?: string;
   addressByChain?: Record<number, string>;
 }): Promise<WalletEntry> {
@@ -290,7 +296,8 @@ export async function addWallet(input: {
       address,
       memo: input.memo?.trim() || undefined,
       email: input.email?.trim() || undefined,
-      discordHandle: input.discordHandle?.trim() || undefined,
+      telegramHandle: input.telegramHandle?.trim() || undefined,
+      kakaoId: input.kakaoId?.trim() || undefined,
       metaAddress: trimmedMeta || undefined,
       addressByChain,
       createdAt: Math.floor(Date.now() / 1000),
@@ -306,7 +313,7 @@ export async function addWallet(input: {
 export async function updateWallet(
   id: string,
   patch: Partial<
-    Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle" | "metaAddress"> & {
+    Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId" | "metaAddress"> & {
       addressByChain?: Record<number, string>;
     }
   >,
@@ -342,15 +349,24 @@ export async function updateWallet(
           "Stealth-only entry requires a meta-address. Remove the entry instead of clearing it.",
         );
       }
+      // Drop the legacy `discordHandle` field so it doesn't ride along
+      // on subsequent writes. Pre-existing entries that carried it
+      // through earlier app versions are silently cleaned up the next
+      // time the user edits them.
+      const { discordHandle: _legacyDiscord, ...rest } = e as WalletEntry & {
+        discordHandle?: string;
+      };
       return {
-        ...e,
+        ...rest,
         label: patch.label !== undefined ? patch.label.trim() : e.label,
         memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
         email: patch.email !== undefined ? patch.email.trim() || undefined : e.email,
-        discordHandle:
-          patch.discordHandle !== undefined
-            ? patch.discordHandle.trim() || undefined
-            : e.discordHandle,
+        telegramHandle:
+          patch.telegramHandle !== undefined
+            ? patch.telegramHandle.trim() || undefined
+            : e.telegramHandle,
+        kakaoId:
+          patch.kakaoId !== undefined ? patch.kakaoId.trim() || undefined : e.kakaoId,
         metaAddress: nextMeta,
         addressByChain:
           patch.addressByChain !== undefined ? nextAddressByChain : e.addressByChain,

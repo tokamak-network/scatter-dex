@@ -85,7 +85,8 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       status: isFutureClaim ? "locked" : "available",
       ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
       ...(book?.email ? { email: book.email } : {}),
-      ...(book?.discordHandle ? { discordHandle: book.discordHandle } : {}),
+      ...(book?.telegramHandle ? { telegramHandle: book.telegramHandle } : {}),
+      ...(book?.kakaoId ? { kakaoId: book.kakaoId } : {}),
       ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };
   });

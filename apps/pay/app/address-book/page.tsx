@@ -38,7 +38,8 @@ export default function RecipientsPage() {
         (e.address?.includes(q) ?? false) ||
         (e.memo?.toLowerCase().includes(q) ?? false) ||
         (e.email?.toLowerCase().includes(q) ?? false) ||
-        (e.discordHandle?.toLowerCase().includes(q) ?? false) ||
+        (e.telegramHandle?.toLowerCase().includes(q) ?? false) ||
+        (e.kakaoId?.toLowerCase().includes(q) ?? false) ||
         (e.metaAddress?.toLowerCase().includes(q) ?? false),
     );
   }, [book.entries, search]);
@@ -86,7 +87,7 @@ export default function RecipientsPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, address, email, discord, or memo…"
+            placeholder="Search by name, address, email, telegram, kakao, or memo…"
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
           />
 
@@ -156,6 +157,7 @@ function RecipientTable({
           <tr>
             <th className="px-5 py-3 text-left">Label</th>
             <th className="px-5 py-3 text-left">Address</th>
+            <th className="px-5 py-3 text-left">Meta-address</th>
             <th className="px-5 py-3 text-left">Email</th>
             <th className="px-5 py-3 text-left">Memo</th>
             <th className="px-5 py-3 text-right">Actions</th>
@@ -182,7 +184,17 @@ function RecipientTable({
                   {e.address ? (
                     shortAddr(e.address)
                   ) : (
-                    <span className="text-[var(--color-text-muted)]">— stealth only</span>
+                    <span className="text-[var(--color-text-muted)]">—</span>
+                  )}
+                </td>
+                <td
+                  className="px-5 py-3 font-mono text-xs"
+                  title={e.metaAddress ?? undefined}
+                >
+                  {e.metaAddress ? (
+                    shortMeta(e.metaAddress)
+                  ) : (
+                    <span className="text-[var(--color-text-muted)]">—</span>
                   )}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
@@ -228,7 +240,8 @@ function RecipientForm({
   const [address, setAddress] = useState(initial?.address ?? "");
   const [memo, setMemo] = useState(initial?.memo ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
-  const [discordHandle, setDiscordHandle] = useState(initial?.discordHandle ?? "");
+  const [telegramHandle, setTelegramHandle] = useState(initial?.telegramHandle ?? "");
+  const [kakaoId, setKakaoId] = useState(initial?.kakaoId ?? "");
   const [metaAddress, setMetaAddress] = useState(initial?.metaAddress ?? "");
   const [submitting, setSubmitting] = useState(false);
 
@@ -238,12 +251,9 @@ function RecipientForm({
       const trimmedLabel = label.trim();
       const trimmedMemo = memo.trim();
       const trimmedEmail = email.trim();
-      const trimmedDiscord = discordHandle.trim();
+      const trimmedTelegram = telegramHandle.trim();
+      const trimmedKakao = kakaoId.trim();
       const trimmedMeta = metaAddress.trim();
-      // Per-chain overrides are not surfaced in the form anymore.
-      // Existing entries that already carry `addressByChain` keep
-      // their map untouched on edit (we don't pass the field, so the
-      // SDK's update helper leaves it as-is).
       const trimmedAddress = address.trim();
       const ok = isNew
         ? Boolean(
@@ -252,7 +262,8 @@ function RecipientForm({
               address: trimmedAddress || undefined,
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,
-              discordHandle: trimmedDiscord || undefined,
+              telegramHandle: trimmedTelegram || undefined,
+              kakaoId: trimmedKakao || undefined,
               metaAddress: trimmedMeta || undefined,
             }),
           )
@@ -263,11 +274,12 @@ function RecipientForm({
             // `updateWallet` treats `undefined` as "leave on-disk
             // value untouched" and `""` as "clear", so collapsing
             // empty strings to undefined would prevent the user
-            // from clearing memo / email / discord / metaAddress
+            // from clearing memo / email / handles / metaAddress
             // through the form.
             memo: trimmedMemo,
             email: trimmedEmail,
-            discordHandle: trimmedDiscord,
+            telegramHandle: trimmedTelegram,
+            kakaoId: trimmedKakao,
             metaAddress: trimmedMeta,
           });
       if (ok) onClose();
@@ -359,15 +371,31 @@ function RecipientForm({
           <Field
             label={
               <>
-                Discord handle (optional)
-                <InfoTip text="Reserved for the Discord delivery channel; mirrors the email field today." />
+                Telegram handle (optional)
+                <InfoTip text="Reserved for the Telegram delivery channel; mirrors the email field today." />
               </>
             }
           >
             <input
-              value={discordHandle}
-              onChange={(e) => setDiscordHandle(e.target.value)}
-              placeholder="alice#1234"
+              value={telegramHandle}
+              onChange={(e) => setTelegramHandle(e.target.value)}
+              placeholder="@alice"
+              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
+            />
+          </Field>
+          <Field
+            label={
+              <>
+                Kakao account (optional)
+                <InfoTip text="Email tied to the recipient's Kakao account (the same address Kakao uses for login). Reserved for the KakaoTalk delivery channel; mirrors the email field today." />
+              </>
+            }
+          >
+            <input
+              value={kakaoId}
+              onChange={(e) => setKakaoId(e.target.value)}
+              placeholder="alice@kakao.com"
+              type="email"
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
             />
           </Field>
@@ -522,6 +550,17 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
+function shortMeta(meta: string): string {
+  // st:eth:0x… → st:eth:0xABCD…WXYZ. The compressed-pubkey pair is
+  // long; truncating the inner hex while keeping the prefix lets
+  // users still recognise the chain tag.
+  const m = meta.match(/^(st:eth:0x)([0-9a-fA-F]+)$/);
+  if (!m) return meta.slice(0, 16) + (meta.length > 20 ? "…" : "");
+  const [, prefix, hex] = m;
+  if (hex.length <= 12) return meta;
+  return `${prefix}${hex.slice(0, 6)}…${hex.slice(-4)}`;
+}
+
 function FormSection({
   title,
   hint,
@@ -554,7 +593,8 @@ const CSV_COLUMNS = [
   "label",
   "address",
   "email",
-  "discordHandle",
+  "telegramHandle",
+  "kakaoId",
   "memo",
   "metaAddress",
 ] as const;
@@ -562,9 +602,10 @@ const CSV_COLUMNS = [
 function entryToCsvRow(e: WalletEntry): string {
   const cells = [
     e.label,
-    e.address,
+    e.address ?? "",
     e.email ?? "",
-    e.discordHandle ?? "",
+    e.telegramHandle ?? "",
+    e.kakaoId ?? "",
     e.memo ?? "",
     e.metaAddress ?? "",
   ];
