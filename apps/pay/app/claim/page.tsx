@@ -3,20 +3,16 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
-import { useWallet, shortAddr } from "@zkscatter/sdk/react";
+import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
 import {
-  callClaimWithProof,
-  type ClaimCallInputs,
-} from "@zkscatter/sdk/contracts";
-import {
-  PRIVATE_SETTLEMENT_ABI,
-} from "@zkscatter/sdk";
-import type { ClaimProofInput } from "@zkscatter/sdk/zk";
-import { RelayerClient, type GaslessClaimBody } from "@zkscatter/sdk/relayer";
-import { toBytes32Hex } from "@zkscatter/sdk/zk";
+  addStealthInboxEntry,
+  markStealthInboxEntryClaimed,
+} from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
-import { claimProver } from "../_lib/claimProver";
+import { submitClaim } from "../_lib/claimSubmit";
+import { useFolderStorage } from "../_lib/folderStorage";
+import { deriveStealthForPackage } from "../_lib/stealthDerive";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -69,6 +65,8 @@ function ClaimInner() {
   const searchParams = useSearchParams();
   const link = searchParams?.get("id") ?? "";
   const { account, chainId: walletChainId, signer, readProvider, connect, connectError } = useWallet();
+  const folder = useFolderStorage();
+  const { keys: metaKeys } = useMetaAddress();
   const [parsed, setParsed] = useState<ParsedClaim | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -77,6 +75,17 @@ function ClaimInner() {
    *  relayer error, or chose self-pay up front. Lets us fall through
    *  to the wallet path even when `pkg.relayerUrl` is set. */
   const [forceSelfPay, setForceSelfPay] = useState(false);
+  /** Set when the post-claim "save to inbox" step succeeds — drives a
+   *  small confirmation footer so the user knows where to find this
+   *  claim later. Stays null on the non-stealth / no-folder paths. */
+  const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
+
+  const stealthDerivation = useMemo(
+    () => (parsed ? deriveStealthForPackage(parsed.pkg, metaKeys) : null),
+    [parsed, metaKeys],
+  );
+  const isStealth = !!parsed?.pkg.ephemeralPubKey;
+  const stealthVerified = stealthDerivation?.matches === true;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -116,9 +125,23 @@ function ClaimInner() {
   const wrongAppChain = parsed && parsed.pkg.chainId !== cfg.chainId;
   const wrongWalletChain =
     !!parsed && walletChainId !== null && walletChainId !== parsed.pkg.chainId;
+  // Stealth claims bind to the one-time stealth address, not the
+  // user's connected EOA — comparing those would always fire even
+  // when the receiver has correctly derived the matching key. Skip
+  // the check whenever the local stealth derivation matches the
+  // package recipient.
   const wrongRecipient =
-    !!parsed && !!account && account.toLowerCase() !== parsed.recipientLower;
-  const gasless = !!parsed?.pkg.relayerUrl && !forceSelfPay;
+    !!parsed &&
+    !!account &&
+    !stealthVerified &&
+    account.toLowerCase() !== parsed.recipientLower;
+  // Stealth recipients have no native gas at the one-time address,
+  // so the relayer is the only path that actually works. When a
+  // verified stealth claim has a relayer URL, ignore the user's
+  // sticky `forceSelfPay` toggle (relayer-error fallback) — it's not
+  // recoverable through self-pay.
+  const gasless =
+    !!parsed?.pkg.relayerUrl && (!forceSelfPay || stealthVerified);
 
   // Phase 2b: prefer the operator's relayer to dispatch the claim
   // (no gas for the recipient). When the package has no relayerUrl,
@@ -127,113 +150,46 @@ function ClaimInner() {
   // proof generation, meta validation. Only the final submit differs.
   async function doClaim() {
     if (!parsed) return;
-    if (!gasless && !signer) return;
+    // For verified stealth claims, swap the connected wallet's
+    // signer for an in-memory wallet bound to the derived stealth
+    // private key. The connected EOA can't sign for a stealth
+    // address, so the self-pay fallback would otherwise fail with a
+    // recipient mismatch even when the proof is valid.
+    const claimSigner = stealthVerified && stealthDerivation && readProvider
+      ? new ethers.Wallet(stealthDerivation.privateKey, readProvider)
+      : (signer ?? undefined);
+    if (!gasless && !claimSigner) return;
     try {
-      setPhase({ kind: "validating" });
-      // Overlap the chain read with the prover boot — claimsGroups()
-      // is one eth_call (~hundreds of ms), prover.ready() does the
-      // worker spawn + ~3 MB asset prefetch. Independent work, so
-      // Promise.all here saves real wall-clock on first claim.
-      const settlement = new ethers.Contract(
-        parsed.pkg.settlementAddress,
-        PRIVATE_SETTLEMENT_ABI,
+      const { txHash } = await submitClaim({
+        pkg: parsed.pkg,
         readProvider,
-      );
-      const [group] = await Promise.all([
-        settlement.claimsGroups(parsed.pkg.claimsRoot) as Promise<{
-          token: string;
-          totalLocked: bigint;
-          totalClaimed: bigint;
-          tier: bigint;
-        }>,
-        claimProver.ready(),
-      ]);
-      if (group.token === ethers.ZeroAddress) {
-        throw new Error(
-          "On-chain claims group is missing — the settle tx may not have confirmed yet.",
-        );
-      }
-      if (group.token.toLowerCase() !== parsed.pkg.token.toLowerCase()) {
-        throw new Error(
-          "Claim package token disagrees with the on-chain claims group — refusing to submit.",
-        );
-      }
-
-      setPhase({ kind: "proving" });
-      const proofInput: ClaimProofInput = {
-        secret: BigInt(parsed.pkg.secret),
-        recipient: BigInt(parsed.pkg.recipient),
-        token: BigInt(parsed.pkg.token),
-        amount: parsed.amountRaw,
-        releaseTime: BigInt(parsed.pkg.releaseTime),
-        leafIndex: parsed.pkg.leafIndex,
-        // The package carried a pre-built proof — use the fast path
-        // so we don't re-hash 16 leaves on the recipient's device.
-        merkleProof: {
-          root: BigInt(parsed.pkg.claimsRoot),
-          pathElements: parsed.pkg.pathElements.map((e) => BigInt(e)),
-          pathIndices: parsed.pkg.pathIndices,
-        },
-        // `generateClaimProof` ignores `allClaimLeaves` when
-        // `merkleProof` is provided. Pass an empty array to satisfy
-        // the type without paying for tree construction.
-        allClaimLeaves: [],
-      };
-      const result = await claimProver.prove({
-        circuitId: "claim",
-        input: proofInput as unknown as Record<string, unknown>,
+        signer: claimSigner,
+        forceSelfPay: forceSelfPay && !stealthVerified,
+        onPhase: (kind) => setPhase({ kind }),
       });
-      const meta = result.meta;
-      if (!meta || typeof meta.claimsRoot !== "bigint" || typeof meta.nullifier !== "bigint") {
-        throw new Error("claim.worker returned no meta — extracted scalars are missing");
-      }
-
-      setPhase({ kind: "submitting" });
-      let txHash: string;
-      if (gasless && parsed.pkg.relayerUrl) {
-        const body: GaslessClaimBody = {
-          proofA: [result.proof.a[0].toString(), result.proof.a[1].toString()],
-          proofB: [
-            [result.proof.b[0][0].toString(), result.proof.b[0][1].toString()],
-            [result.proof.b[1][0].toString(), result.proof.b[1][1].toString()],
-          ],
-          proofC: [result.proof.c[0].toString(), result.proof.c[1].toString()],
-          claimsRoot: toBytes32Hex(meta.claimsRoot),
-          claimNullifier: toBytes32Hex(meta.nullifier),
-          amount: parsed.amountRaw.toString(),
-          token: parsed.pkg.token,
-          recipient: parsed.pkg.recipient,
-          releaseTime: parsed.pkg.releaseTime,
-        };
-        const client = new RelayerClient(parsed.pkg.relayerUrl);
-        const resp = await client.submitClaim(body);
-        txHash = resp.txHash;
-      } else {
-        if (!signer) throw new Error("Wallet disconnected mid-flow.");
-        const inputs: ClaimCallInputs = {
-          recipient: parsed.pkg.recipient,
-          token: parsed.pkg.token,
-          amount: parsed.amountRaw,
-          releaseTime: BigInt(parsed.pkg.releaseTime),
-        };
-        const tx = await callClaimWithProof(
-          signer,
-          parsed.pkg.settlementAddress,
-          {
-            proof: result.proof,
-            publicSignals: result.publicSignals,
-            claimsRoot: meta.claimsRoot,
-            nullifier: meta.nullifier,
-          },
-          inputs,
-        );
-        const receipt = await tx.wait();
-        if (!receipt || receipt.status !== 1) {
-          throw new Error(`claimWithProof tx failed: ${tx.hash}`);
-        }
-        txHash = tx.hash;
-      }
       setPhase({ kind: "done", txHash });
+      // Mirror the claim into the receiver's local stealth inbox so
+      // they can see it again next session — best-effort: the claim
+      // already succeeded on-chain, so a save failure shouldn't be
+      // surfaced as a claim error.
+      if (isStealth && folder.ready) {
+        try {
+          const inserted = await addStealthInboxEntry({
+            source: "link",
+            rawInput:
+              typeof window !== "undefined" ? window.location.href : "",
+            pkg: parsed.pkg,
+            ephemeralPubKey: parsed.pkg.ephemeralPubKey,
+          });
+          const id = inserted?.id;
+          if (id) {
+            await markStealthInboxEntryClaimed(id, txHash);
+            setSavedInboxId(id);
+          }
+        } catch (saveErr) {
+          console.warn("[Pay] save-to-inbox after claim failed", saveErr);
+        }
+      }
     } catch (err) {
       console.error("[Pay] claim failed", err);
       setPhase({
@@ -283,6 +239,37 @@ function ClaimInner() {
           </span>
         </div>
 
+        {isStealth && (
+          <div className="mt-3 rounded-md border border-dashed border-[var(--color-border-strong)] p-2 text-center text-[11px]">
+            {stealthVerified ? (
+              <span className="text-[var(--color-success)]">
+                ✓ Verified stealth claim — derived from your meta-address.
+                Funds land at the one-time stealth address; the matching
+                private key stays in your folder.
+              </span>
+            ) : metaKeys ? (
+              <span className="text-[var(--color-warning)]">
+                ⚠ This is a stealth claim, but your meta-address derives a
+                different stealth address than the one in this link. Either
+                the link belongs to someone else, or your keys don&apos;t
+                match the sender&apos;s records.
+              </span>
+            ) : (
+              <span className="text-[var(--color-text-muted)]">
+                This is a stealth claim. Open Pay on the device that holds
+                your meta-address (
+                <a
+                  href="/stealth/wallet"
+                  className="text-[var(--color-primary)] hover:underline"
+                >
+                  /stealth/wallet
+                </a>
+                ) so the page can derive your stealth key.
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
           {parsed === null ? (
             <span className="text-[var(--color-warning)]">
@@ -327,6 +314,18 @@ function ClaimInner() {
                 Tokens are on-chain at {shortAddr(parsed!.pkg.recipient)}. Refresh
                 your wallet if the balance hasn&apos;t updated yet.
               </div>
+              {savedInboxId && (
+                <div className="mt-2 text-[10px]">
+                  Saved to your{" "}
+                  <a
+                    href="/stealth/inbox"
+                    className="font-medium underline-offset-2 hover:underline"
+                  >
+                    Stealth inbox
+                  </a>
+                  .
+                </div>
+              )}
             </div>
           ) : (() => {
               // App-chain mismatch is terminal — neither path can

@@ -48,6 +48,12 @@ export interface BuildRunRecordInput {
   /** Per-recipient claim payloads from `realSettle`. Aligned with
    *  `rows` by index. Absent for env-not-configured demo runs. */
   claimPackages?: ClaimPackage[];
+  /** Stealth address → ephemeral pubkey map produced by
+   *  `applyStealthRouting`. When `rows[i].address` is a stealth
+   *  address present here, the matching ephPub is mirrored onto
+   *  `RecipientRow.ephemeralPubKey` so a re-issued claim link still
+   *  carries the right value. */
+  ephPubByAddress?: Record<string, string>;
 }
 
 /** Construct a `RunRecord` from the wizard's parsed state. The record
@@ -74,6 +80,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     const lower = r.address.toLowerCase();
     const book = bookByAddress.get(lower);
     const pkg = input.claimPackages?.[i];
+    const ephPub = input.ephPubByAddress?.[lower];
     return {
       rowIndex: i,
       name: r.name || book?.label || lower,
@@ -87,6 +94,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       ...(book?.email ? { email: book.email } : {}),
       ...(book?.telegramHandle ? { telegramHandle: book.telegramHandle } : {}),
       ...(book?.kakaoId ? { kakaoId: book.kakaoId } : {}),
+      ...(ephPub ? { ephemeralPubKey: ephPub } : {}),
       ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };
   });
