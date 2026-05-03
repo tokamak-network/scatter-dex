@@ -325,6 +325,8 @@ if [ "$MOCK_MODE" = true ]; then
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
+  USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
+  TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^  CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
@@ -447,8 +449,17 @@ if [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
 fi
 
 # TOKEN_LIST is empty in integration mode (no test tokens deployed).
+# Mock-mode adds USDT (6 dec) and TON (18 dec) so the wizard's
+# whitelist (LAUNCH_TOKENS) is fully exercisable; fork mode keeps
+# real WTON (27 dec) instead of TON.
 if [ -n "$WETH" ] && [ -n "$USDC" ]; then
-  TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:18"
+  TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:6"
+  if [ -n "$USDT" ]; then
+    TOKEN_LIST="$TOKEN_LIST,$USDT:USDT:6"
+  fi
+  if [ -n "$TON" ]; then
+    TOKEN_LIST="$TOKEN_LIST,$TON:TON:18"
+  fi
 else
   TOKEN_LIST=""
 fi
@@ -559,7 +570,11 @@ fi
 # ── 6. Start frontend (or selected apps via --apps) ────────
 echo ""
 TOKENS=""
-[ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
+if [ -n "$WETH" ] && [ -n "$USDC" ]; then
+  TOKENS="$WETH:WETH:18,$USDC:USDC:6"
+  [ -n "$USDT" ] && TOKENS="$TOKENS,$USDT:USDT:6"
+  [ -n "$TON" ] && TOKENS="$TOKENS,$TON:TON:18"
+fi
 
 # Write the same NEXT_PUBLIC_* env file to a target dir. Used for both
 # `frontend/` (legacy default) and `apps/*` (new --apps mode) so all
@@ -603,6 +618,9 @@ NEXT_PUBLIC_PAY_COMMITMENT_POOL=$COMMITMENT_POOL
 NEXT_PUBLIC_PAY_IDENTITY_GATE=$IDENTITY_GATE
 NEXT_PUBLIC_PAY_RELAYER_REGISTRY=$RELAYER_REGISTRY
 NEXT_PUBLIC_PAY_WETH=$WETH
+NEXT_PUBLIC_PAY_USDC=$USDC
+NEXT_PUBLIC_PAY_USDT=$USDT
+NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
 EOF

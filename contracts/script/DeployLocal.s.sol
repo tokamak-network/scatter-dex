@@ -98,16 +98,21 @@ contract DeployLocal is Script {
         //      Extracted into a helper to avoid "stack too deep".
         (CommitmentPool pool, PrivateSettlement privateSettlement) = _deployZkCore(wethAddr);
 
-        // 10. Authorize + whitelist
+        // 10. Authorize + whitelist — every token from
+        // `_deployOrPickTokens` (real-fork or mock) is whitelisted so
+        // the LAUNCH_TOKENS lineup (ETH/USDC/USDT/TON) is fully
+        // exercisable end-to-end on a fresh local stack.
         pool.setAuthorizedSettlement(address(privateSettlement));
         pool.setTokenWhitelist(wethAddr, true);
         pool.setTokenWhitelist(usdcAddr, true);
         privateSettlement.setTokenWhitelist(wethAddr, true);
         privateSettlement.setTokenWhitelist(usdcAddr, true);
-        if (useRealTokens) {
+        if (usdtAddr != address(0)) {
             pool.setTokenWhitelist(usdtAddr, true);
-            pool.setTokenWhitelist(wtonAddr, true);
             privateSettlement.setTokenWhitelist(usdtAddr, true);
+        }
+        if (wtonAddr != address(0)) {
+            pool.setTokenWhitelist(wtonAddr, true);
             privateSettlement.setTokenWhitelist(wtonAddr, true);
         }
 
@@ -151,9 +156,13 @@ contract DeployLocal is Script {
         d.relayerRegistry = address(relayerRegistry);
         d.weth = wethAddr;
         d.usdc = usdcAddr;
-        d.usdcDecimals = useRealTokens ? uint8(6) : uint8(18);
-        d.usdt = useRealTokens ? usdtAddr : address(0);
-        d.wton = useRealTokens ? wtonAddr : address(0);
+        d.usdcDecimals = uint8(6);
+        // Mock mode now also deploys USDT + TON (see _deployOrPickTokens),
+        // so propagate those addresses into the summary regardless of
+        // real-vs-mock — the summary line is what apps consume to wire
+        // up `NEXT_PUBLIC_TOKENS`.
+        d.usdt = usdtAddr;
+        d.wton = wtonAddr;
         d.pool = address(pool);
         d.privateSettlement = address(privateSettlement);
         d.gate = address(gate);
@@ -162,7 +171,7 @@ contract DeployLocal is Script {
         _printSummary(d);
     }
 
-    function _printSummary(Deployed memory d) internal view {
+    function _printSummary(Deployed memory d) internal {
         address relayerRegistry = d.relayerRegistry;
         address weth = d.weth;
         address usdc = d.usdc;
@@ -184,7 +193,11 @@ contract DeployLocal is Script {
             tokens = string.concat(tokens, ",", vm.toString(d.usdt), ":USDT:6");
         }
         if (d.wton != address(0)) {
-            tokens = string.concat(tokens, ",", vm.toString(d.wton), ":WTON:27");
+            // In real-fork mode this is the on-chain WTON (27 dec); in
+            // mock mode the slot holds a TON mock (18 dec) sized to
+            // match `LAUNCH_TOKENS["TON"]` so wizard `parseUnits`
+            // matches the contract's decimals.
+            tokens = string.concat(tokens, ",", _tonEntry(d.wton));
         }
         console.log(tokens);
         console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(pool)));
@@ -196,6 +209,16 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
         console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(authorizeVerifier)));
+    }
+
+    /// @dev Lifted out to keep `_printSummary`'s stack within the
+    ///      EVM's 16-slot limit. Returns `<addr>:<symbol>:<decimals>`.
+    function _tonEntry(address tonAddr) internal returns (string memory) {
+        bool useRealTokens = vm.envOr("USE_REAL_TOKENS", false);
+        return string.concat(
+            vm.toString(tonAddr), ":",
+            useRealTokens ? "WTON:27" : "TON:18"
+        );
     }
 
     function _deployCode(string memory what) internal returns (address addr) {
@@ -227,17 +250,40 @@ contract DeployLocal is Script {
             console.log("WTON:", wton);
             console.log("(using real mainnet token addresses)");
         } else {
+            // Mock branch — deploy a mock for every entry in
+            // `LAUNCH_TOKENS` so the apps don't need separate per-token
+            // env wiring and the deposit wizard's USDC/USDT/TON paths
+            // are exercisable end-to-end against anvil.
             MockWETH wethMock = new MockWETH();
-            MockToken usdcMock = new MockToken("USD Coin", "USDC");
+            MockToken usdcMock = new MockToken("USD Coin", "USDC", 6);
+            MockToken usdtMock = new MockToken("Tether USD", "USDT", 6);
+            MockToken tonMock = new MockToken("Tokamak Network", "TON", 18);
             weth = address(wethMock);
             usdc = address(usdcMock);
+            usdt = address(usdtMock);
+            wton = address(tonMock);
             console.log("WETH:", weth);
             console.log("USDC:", usdc);
-            // Mint USDC to anvil default accounts. Real USDC can't be minted;
-            // dev-fork.sh prefunds via impersonation instead.
-            usdcMock.mint(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1_000_000e18); // anvil #0
-            usdcMock.mint(0x70997970C51812dc3A010C7d01b50e0d17dc79C8, 1_000_000e18); // anvil #1
-            console.log("Minted USDC to Alice and Bob");
+            console.log("USDT:", usdt);
+            console.log("TON:", wton);
+
+            // Pre-fund the first five anvil accounts so deposit / settle
+            // / claim demos work for any tester without hand-minting.
+            // Real USDC can't be minted; dev-fork.sh prefunds via
+            // impersonation in fork mode.
+            address[5] memory testers = [
+                0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, // anvil #0
+                0x70997970C51812dc3A010C7d01b50e0d17dc79C8, // anvil #1
+                0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC, // anvil #2
+                0x90F79bf6EB2c4f870365E785982E1f101E93b906, // anvil #3
+                0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65  // anvil #4
+            ];
+            for (uint256 i = 0; i < testers.length; i++) {
+                usdcMock.mint(testers[i], 1_000_000e6);   // 1M USDC (6 dec)
+                usdtMock.mint(testers[i], 1_000_000e6);   // 1M USDT (6 dec)
+                tonMock.mint(testers[i], 100_000e18);     // 100k TON (18 dec)
+            }
+            console.log("Minted USDC/USDT/TON to anvil testers (5 accounts)");
         }
     }
 

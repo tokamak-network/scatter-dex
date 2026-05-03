@@ -792,7 +792,11 @@ function NewPayout() {
   // address for the native-ETH lookup below and `cfg.chainId` for
   // the chain-pill display elsewhere.
   const networkCfg = useMemo(() => getNetworkConfig(), []);
-  const tokenInfo = LAUNCH_TOKENS[token];
+  // Resolve the token via `networkCfg.tokens` (which overlays the
+  // env-driven on-chain addresses) so non-native lookups land on
+  // the deployed contract, not LAUNCH_TOKENS' ZERO sentinel.
+  const tokenInfo =
+    networkCfg.tokens.find((t) => t.symbol === token) ?? LAUNCH_TOKENS[token];
   // For native ETH the vault stores notes against WETH (the deposit
   // wraps ETH → WETH before escrow), so the wizard's lookup key has
   // to match. Without this the Funds step's `summarizeBalance`

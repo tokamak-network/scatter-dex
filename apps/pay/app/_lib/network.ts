@@ -31,6 +31,21 @@ function pick(value: string | undefined, fallback = ""): string {
 // server and the wrong-chain banner rendered on the client agreeing
 // on the same chain.
 export function getNetworkConfig(): NetworkConfig {
+  // Per-token contract addresses come from build-time env so the
+  // wizard can deposit / settle against whatever the local deploy
+  // produced. LAUNCH_TOKENS provides the marketing metadata
+  // (name, decimals, category) but its `address` is a ZERO sentinel
+  // — overlay the env value here so downstream consumers
+  // (`realDeposit`, picker) see the real on-chain address.
+  const usdcAddr = pick(process.env.NEXT_PUBLIC_PAY_USDC, ZERO);
+  const usdtAddr = pick(process.env.NEXT_PUBLIC_PAY_USDT, ZERO);
+  const tonAddr = pick(process.env.NEXT_PUBLIC_PAY_TON, ZERO);
+  const tokens = Object.values(LAUNCH_TOKENS).map((t) => {
+    if (t.symbol === "USDC" && usdcAddr !== ZERO) return { ...t, address: usdcAddr };
+    if (t.symbol === "USDT" && usdtAddr !== ZERO) return { ...t, address: usdtAddr };
+    if (t.symbol === "TON" && tonAddr !== ZERO) return { ...t, address: tonAddr };
+    return t;
+  });
   return {
     chainId: Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337")),
     rpcUrl: pick(process.env.NEXT_PUBLIC_PAY_RPC_URL, "http://127.0.0.1:8545"),
@@ -42,7 +57,7 @@ export function getNetworkConfig(): NetworkConfig {
       relayerRegistry: pick(process.env.NEXT_PUBLIC_PAY_RELAYER_REGISTRY, ZERO),
       weth: pick(process.env.NEXT_PUBLIC_PAY_WETH, ZERO),
     },
-    tokens: Object.values(LAUNCH_TOKENS),
+    tokens,
     relayer: process.env.NEXT_PUBLIC_PAY_RELAYER_URL
       ? { url: process.env.NEXT_PUBLIC_PAY_RELAYER_URL }
       : undefined,
