@@ -122,32 +122,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section>
-        <h2 className="mb-2 text-center text-2xl font-semibold">Pricing</h2>
-        <p className="mx-auto mb-3 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
-          Start free. Pay when you outgrow it.
-        </p>
-        <p className="mx-auto mb-10 inline-block max-w-2xl rounded-full bg-[var(--color-primary-soft)] px-3 py-1 text-center text-xs font-medium text-[var(--color-primary)]">
-          🎉 Launch event: every plan free until Dec 31, 2026 — no card on file.
-        </p>
-        <div className="grid grid-cols-3 gap-4">
-          <PriceCard plan="Free" price="$0" sub="3 payouts/mo, ≤ 16 recipients" features={["Stealth claim links", "Basic export"]} />
-          <PriceCard
-            plan="Team"
-            price="$19"
-            per="/mo"
-            sub="Unlimited payouts, ≤ 16 recipients/run (64+ on roadmap)"
-            features={["Everything in Free", "CSV + Safe import", "Email notifications"]}
-            featured
-          />
-          <PriceCard plan="Business" price="$79" per="/mo" sub="Unlimited + Safe deep integration" features={["Everything in Team", "Multi-sig approvals", "Audit-grade PDF export", "Priority support"]} />
-        </div>
-        <p className="mt-3 text-center text-xs text-[var(--color-text-muted)]">
-          Plus 0.05% of payout value per run (capped at $20). Enterprise / white-label available.
-        </p>
-      </section>
-
       {/* Final CTA */}
       <section className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-primary-soft)] to-[var(--color-surface)] p-10 text-center">
         <h2 className="text-2xl font-semibold">Ready to try?</h2>
@@ -212,25 +186,3 @@ function Compare({ label, left, mid, us }: { label: string; left?: boolean; mid?
   );
 }
 
-function PriceCard({
-  plan, price, per, sub, features, featured,
-}: { plan: string; price: string; per?: string; sub: string; features: string[]; featured?: boolean }) {
-  return (
-    <div className={`rounded-xl border p-6 ${featured ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
-      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{plan}</div>
-      <div className="mt-2 flex items-baseline gap-1">
-        <span className="text-3xl font-bold">{price}</span>
-        {per && <span className="text-sm text-[var(--color-text-muted)]">{per}</span>}
-      </div>
-      <div className="mt-1 text-xs text-[var(--color-text-muted)]">{sub}</div>
-      <ul className="mt-4 space-y-2 text-sm">
-        {features.map((f) => (
-          <li key={f} className="flex items-start gap-2">
-            <span className="mt-0.5 text-[var(--color-success)]">✓</span>
-            <span>{f}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}

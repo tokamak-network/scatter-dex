@@ -87,7 +87,7 @@ contract DeployLocal is Script {
         uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
         vm.stopBroadcast();
         vm.startBroadcast(zkRelayerKey);
-        relayerRegistry.register("http://localhost:3002", 30, 0);
+        relayerRegistry.register("http://localhost:3002", "Relayer-A", 30, 0);
         console.log("Account #1 registered as zk-relayer");
         vm.stopBroadcast();
         vm.startBroadcast(deployerKey);

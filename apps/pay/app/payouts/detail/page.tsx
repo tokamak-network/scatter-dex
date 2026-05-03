@@ -31,7 +31,7 @@ import { getNetworkConfig } from "../../_lib/network";
 import { partialRunStats } from "../../_lib/resumeRun";
 import { downloadRunCsv } from "../../_lib/exportRun";
 import { buildClaimUrl } from "../../_lib/claimUrl";
-import { formatUtcStamp } from "../../_lib/format";
+import { formatLocalStamp, formatUtcStamp } from "../../_lib/format";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -479,15 +479,22 @@ function SummaryStats({
   let available = 0;
   let locked = 0;
   let notified = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const r of record.recipients) {
-    if (r.status === "claimed") claimed++;
-    else if (r.status === "available") available++;
+    const eff = effectiveStatus(r, nowSec);
+    if (eff === "claimed") claimed++;
+    else if (eff === "available") available++;
     else locked++;
     if (logsByRow.get(r.rowIndex)?.sentAt) notified++;
   }
   return (
-    <section className="grid grid-cols-5 gap-4">
+    <section className="grid grid-cols-6 gap-4">
       <Stat label="Total" value={`${record.totalAmount} ${record.tokenSymbol}`} />
+      <Stat
+        label="Relayer fee"
+        value={record.relayerFee ? `${record.relayerFee} ${record.tokenSymbol}` : "—"}
+        sub="paid"
+      />
       <Stat label="Claimed" value={`${claimed} / ${total}`} />
       <Stat label="Available now" value={`${available}`} sub="not yet claimed" />
       <Stat label="Locked" value={`${locked}`} sub="claim-from in future" />
@@ -576,7 +583,7 @@ function RecipientTable({
   return (
     <section>
       <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
-      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="overflow-visible rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
             <tr>
@@ -612,7 +619,26 @@ function RecipientTable({
                       }
                       onClose={closeMenu}
                       onCopy={() => copyClaimLink(record, r)}
-                      onSend={() => void onMarkSent(r)}
+                      onSend={() => {
+                        if (!r.email) return;
+                        const url = buildClaimUrl(window.location.origin, record.id, r);
+                        const subject = `Your payment from ${record.label}`;
+                        const body = [
+                          `Hi ${r.name || ""},`,
+                          ``,
+                          `Your payment of ${r.amount} ${record.tokenSymbol} is ready.`,
+                          ``,
+                          `Claim it here:`,
+                          url,
+                          ``,
+                          `The link is private to you and never expires.`,
+                        ].join("\n");
+                        const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+                          r.email,
+                        )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                        window.open(gmail, "_blank", "noopener,noreferrer");
+                        void onMarkSent(r);
+                      }}
                       hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}
                       alreadySent={!!log?.sentAt}
@@ -635,15 +661,31 @@ function RecipientTable({
   );
 }
 
+/** Status persisted at run time can lag the wall clock — a row stamped
+ *  `locked` becomes claimable the moment its `claimFrom` passes. The
+ *  detail-page badge and stat counters re-derive against `now` so users
+ *  don't see a stale "Locked" badge after the unlock time. */
+function effectiveStatus(
+  row: RecipientRow,
+  nowSec: number,
+): "claimed" | "available" | "locked" {
+  if (row.status === "claimed") return "claimed";
+  if (row.status === "available") return "available";
+  if (row.claimFrom && row.claimFrom <= nowSec) return "available";
+  return "locked";
+}
+
 function ClaimStatusBadge({ row }: { row: RecipientRow }) {
-  if (row.status === "claimed") {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const status = effectiveStatus(row, nowSec);
+  if (status === "claimed") {
     return (
       <span className="rounded-full bg-[var(--color-success-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-success)]">
         Claimed
       </span>
     );
   }
-  if (row.status === "available") {
+  if (status === "available") {
     return (
       <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-primary)]">
         Available
@@ -651,8 +693,13 @@ function ClaimStatusBadge({ row }: { row: RecipientRow }) {
     );
   }
   return (
-    <span className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-warning)]">
-      Locked
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-warning)]">
+      <span>Locked</span>
+      {row.claimFrom && (
+        <span className="font-normal opacity-80">
+          · opens {formatLocalStamp(row.claimFrom)}
+        </span>
+      )}
     </span>
   );
 }
@@ -756,7 +803,7 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             title={!hasEmail ? "No email on file for this recipient" : undefined}
           >
-            {alreadySent ? "Resend claim email" : "Send claim email"}
+            {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
           </button>
           <Link
             href={payslipHref}

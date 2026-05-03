@@ -57,6 +57,63 @@ export interface SourceNotesPick {
  *
  *  Pure helper. The caller owns the actual proof building — this
  *  just decides *which* notes to spend. */
+/** Build a {@link SourceNotesPick} from a manually-selected set of
+ *  vault note ids. Skips pending notes (`leafIndex < 0`) so a stray
+ *  selection on a confirming deposit can't poison the settle path —
+ *  the panel disables those checkboxes anyway, this is the
+ *  defence-in-depth check. Returns `covered=false` when the
+ *  selection's total amount doesn't cover `totalRaw`. */
+export function pickFromSelectedNotes(
+  notes: readonly StoredNote[],
+  selectedIds: ReadonlySet<string>,
+  tokenAddress: string,
+  totalRaw: bigint,
+): SourceNotesPick {
+  const empty: SourceNotesPick = {
+    notes: [],
+    coveredRaw: 0n,
+    pickedRaw: 0n,
+    changeRaw: 0n,
+    covered: false,
+  };
+  if (totalRaw <= 0n || selectedIds.size === 0) return empty;
+  const tokenLower = tokenAddress.toLowerCase();
+  const eligible = notes
+    .filter(
+      (n) =>
+        selectedIds.has(n.id) &&
+        n.leafIndex >= 0 &&
+        tokenBigIntToAddress(n.note.token) === tokenLower,
+    )
+    // Spend largest first so the partial-spend lands on the smallest
+    // selected note, minimising the change UTXO.
+    .slice()
+    .sort((a, b) =>
+      a.note.amount === b.note.amount
+        ? 0
+        : a.note.amount < b.note.amount
+          ? 1
+          : -1,
+    );
+  const picked: PickedNote[] = [];
+  let pickedRaw = 0n;
+  for (const n of eligible) {
+    if (pickedRaw >= totalRaw) break;
+    const remaining = totalRaw - pickedRaw;
+    const spend = n.note.amount <= remaining ? n.note.amount : remaining;
+    picked.push({ note: n, spend });
+    pickedRaw += n.note.amount;
+  }
+  if (pickedRaw < totalRaw) return empty;
+  return {
+    notes: picked,
+    coveredRaw: totalRaw,
+    pickedRaw,
+    changeRaw: pickedRaw - totalRaw,
+    covered: true,
+  };
+}
+
 export function autoPickSourceNotes(
   notes: readonly StoredNote[],
   tokenAddress: string,

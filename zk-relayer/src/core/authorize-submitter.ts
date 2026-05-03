@@ -319,13 +319,29 @@ export class AuthorizeSubmitter {
     feeBps: bigint = 0n,
   ): Promise<string> {
     const ps = order.publicSignals;
-    // Scatter (same-token): on-chain cap is sellAmount × maxFee, not buyAmount
-    // × maxFee, so don't route through computeSideFee which targets the
-    // two-sided settle path.
+    // Scatter (same-token): the order's signed fee is `sellAmount −
+    // totalLocked` — that's the gap between what the sender authorized
+    // spending and what flows to recipients, and it's what the user saw
+    // and approved at signing. Charging that exact amount keeps pool
+    // accounting tight (no orphan dust) and matches the fee figure the
+    // wizard displayed. The contract still enforces the bps cap via
+    // FeeExceedsMax (`fee × 10000 ≤ sellAmount × maxFee`); the relayer's
+    // registered `feeBps` only acts as an opt-in rejection threshold so
+    // a relayer can refuse orders whose embedded fee is below its rate.
     const sellAmount = BigInt(ps.sellAmount);
+    const totalLocked = BigInt(ps.totalLocked);
+    const fee = sellAmount > totalLocked ? sellAmount - totalLocked : 0n;
     const sideMaxFee = BigInt(ps.maxFee);
-    const effectiveBps = feeBps < sideMaxFee ? feeBps : sideMaxFee;
-    const fee = (sellAmount * effectiveBps) / FEE_BPS_DENOMINATOR;
+    if (fee * FEE_BPS_DENOMINATOR > sellAmount * sideMaxFee) {
+      throw new Error(
+        `order fee ${fee} exceeds bps cap (sellAmount=${sellAmount}, maxFee=${sideMaxFee})`,
+      );
+    }
+    // The relayer accepts the user's signed fee verbatim — the order
+    // already carries the fee the sender agreed to (= sellAmount −
+    // totalLocked), and the contract enforces both the bps cap and the
+    // claims+fee invariant. Layering a relayer-side floor here would
+    // reject orders the user explicitly priced.
 
     const params = {
       proof: this.buildAuthProofStruct(order),

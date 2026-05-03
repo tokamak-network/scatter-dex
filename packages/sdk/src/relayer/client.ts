@@ -139,6 +139,88 @@ export class RelayerClient {
     if (!res.ok) throw await httpError("claim", res);
     return (await res.json()) as { status: string; txHash: string };
   }
+
+  /** Submit a same-token scatter authorize proof for the relayer to
+   *  dispatch via `scatterDirectAuth`. Pairs with `POST
+   *  /api/authorize-orders` on zk-relayer; the order is queued and
+   *  the relayer's settlement worker calls the contract once the
+   *  pre-flight checks pass. The endpoint returns a 202 with the
+   *  nullifier, which the caller polls via {@link pollAuthorizeOrder}
+   *  until `settleTxHash` lands. */
+  async submitAuthorizeOrder(
+    body: AuthorizeOrderBody,
+    signal?: AbortSignal,
+  ): Promise<AuthorizeOrderStatus> {
+    const res = await this.fetchImpl(`${this.baseUrl}/api/authorize-orders`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: timeoutSignal(this.timeoutMs, signal),
+    });
+    if (!res.ok) throw await httpError("authorize-order", res);
+    return (await res.json()) as AuthorizeOrderStatus;
+  }
+
+  /** Poll the order status. Used after {@link submitAuthorizeOrder}
+   *  to wait for the relayer to actually broadcast the
+   *  `scatterDirectAuth` tx. */
+  async pollAuthorizeOrder(
+    nullifier: string,
+    signal?: AbortSignal,
+  ): Promise<AuthorizeOrderStatus> {
+    const res = await this.fetchImpl(
+      `${this.baseUrl}/api/authorize-orders/${nullifier}`,
+      { signal: timeoutSignal(this.timeoutMs, signal) },
+    );
+    if (!res.ok) throw await httpError("authorize-order-status", res);
+    return (await res.json()) as AuthorizeOrderStatus;
+  }
+}
+
+/** Wire-format body for `POST /api/authorize-orders` — same shape
+ *  the legacy frontend sends. `publicSignals` is the named-field
+ *  view; `publicSignalsArray` mirrors the raw circom output that
+ *  the relayer re-verifies. */
+export interface AuthorizeOrderBody {
+  proof: {
+    a: [string, string];
+    b: [[string, string], [string, string]];
+    c: [string, string];
+  };
+  publicSignals: {
+    pubKeyBind: string;
+    commitmentRoot: string;
+    nullifier: string;
+    nonceNullifier: string;
+    newCommitment: string;
+    sellToken: string;
+    buyToken: string;
+    sellAmount: string;
+    buyAmount: string;
+    maxFee: string;
+    expiry: string;
+    claimsRoot: string;
+    totalLocked: string;
+    relayer: string;
+    orderHash: string;
+  };
+  publicSignalsArray: readonly string[];
+  tier: number;
+  pubKeyAx: string;
+  pubKeyAy: string;
+}
+
+export interface AuthorizeOrderStatus {
+  status: "pending" | "matched" | "submitted" | "confirmed" | "failed" | string;
+  submittedAt?: number;
+  updatedAt?: number;
+  attempt?: number;
+  /** Set once the relayer broadcasts the `scatterDirectAuth` tx. */
+  settleTxHash: string | null;
+  error?: string | null;
+  expiresAt?: number;
+  nullifier?: string;
+  pollUrl?: string;
 }
 
 /** Wire-format request body for `POST /api/private-claim`. The

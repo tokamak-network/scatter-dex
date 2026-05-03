@@ -52,12 +52,23 @@ export function RelayerPanel({
               onChange={(e) => select(e.target.value)}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-xs"
             >
-              {relayerOptions.map((r) => (
-                <option key={r.address} value={r.address}>
-                  {r.api?.name ?? r.address.slice(0, 10)}… · {r.fee} bps
-                  {r.online ? "" : " (offline)"}
-                </option>
-              ))}
+              {relayerOptions.map((r) => {
+                // Prefer the on-chain registry name (operator-set,
+                // immutable until updateInfo) over `/api/info` so two
+                // relayers serving the same product name still
+                // distinguish themselves. Fall back to api name and
+                // finally the truncated address for legacy entries
+                // that registered before the name field landed.
+                const label =
+                  (r.name && r.name.length > 0 ? r.name : null) ??
+                  r.api?.name ??
+                  `${r.address.slice(0, 10)}…`;
+                return (
+                  <option key={r.address} value={r.address}>
+                    {label} · {r.fee} bps{r.online ? "" : " (offline)"}
+                  </option>
+                );
+              })}
             </select>
           </Field>
           <Field label="Max fee (bps)">

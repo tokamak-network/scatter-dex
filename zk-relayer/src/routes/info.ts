@@ -21,7 +21,10 @@ export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB
 
   router.get("/", (_req: Request, res: Response) => {
     res.json({
-      name: "ScatterDEX ZK Relayer",
+      // `RELAYER_NAME` env distinguishes co-running relayers in the
+      // same dev stack (Relayer-A / Relayer-B). Falls back to the
+      // generic product name when the operator hasn't set one.
+      name: config.relayerName ?? "ScatterDEX ZK Relayer",
       version: "0.1.0",
       address: submitter.getAddress(),
       fee: config.relayerFee,

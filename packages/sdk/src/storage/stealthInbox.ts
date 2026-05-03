@@ -367,3 +367,21 @@ export async function removeStealthInboxEntry(id: string): Promise<void> {
     await writeInbox(entries.filter((e) => e.id !== id));
   });
 }
+
+/** Patch the `stealthPrivateKey` on an inbox entry. Used when the
+ *  receiver paste-imports a privkey for an entry whose URL didn't
+ *  carry an `ephemeralPubKey` (so auto-derivation isn't available).
+ *  Caller is expected to have validated the key against the entry's
+ *  recipient address before invoking. */
+export async function setStealthInboxEntryPrivateKey(
+  id: string,
+  privateKey: string,
+): Promise<void> {
+  return withLock(async () => {
+    const entries = await loadStealthInbox();
+    const next = entries.map((e) =>
+      e.id === id ? { ...e, stealthPrivateKey: privateKey } : e,
+    );
+    await writeInbox(next);
+  });
+}

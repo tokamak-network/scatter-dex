@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
-import { LAUNCH_TOKENS } from "@zkscatter/sdk";
+import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
 import {
   splitPayout,
   type PayoutBatch,
@@ -27,6 +27,7 @@ import { buildRunRecord } from "./_buildRunRecord";
 import {
   ConfirmLargeAmount,
   ReviewRow,
+  ReviewSection,
   Stepper,
   Toggle,
 } from "./_components/wizardChrome";
@@ -57,7 +58,7 @@ const MAX_RECIPIENTS_PER_RUN = MAX_TIER_CAP * MAX_BATCHES_PER_RUN;
 // the roadmap signal in user-facing validation messages without hard-
 // coding "64 / 128" copy that drifts as tiers ship.
 const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
-import { useWallet } from "@zkscatter/sdk/react";
+import { useWallet, type VaultNote } from "@zkscatter/sdk/react";
 import {
   loadRun,
   saveRun,
@@ -73,10 +74,11 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
+import { csvSafeLabel, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   autoPickSourceNotes,
+  pickFromSelectedNotes,
   describeBatchFitError,
   pickPerBatchNotes,
   summarizeBalance,
@@ -86,7 +88,8 @@ import { useWalletBook } from "../../_lib/walletBook";
 import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
-import { hasDefaultAddress, type WalletEntry } from "@zkscatter/sdk/storage";
+import { type WalletEntry } from "@zkscatter/sdk/storage";
+import { generateStealthAddress } from "@zkscatter/sdk/zk";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
 import { REASON_PLACEHOLDER, TEMPLATES, type TemplateId } from "./_templates";
@@ -103,6 +106,60 @@ const LARGE_AMOUNT_THRESHOLD = 50_000;
 
 function today(): string {
   return toIsoDateTimeSec(new Date());
+}
+
+/** Earliest claim moment the wizard accepts. The 10-minute buffer
+ *  gives the operator time to settle on-chain + the recipient time
+ *  to receive the link before the claim window opens; without it
+ *  users could pick "now" and the receiver would race the settle tx. */
+const CLAIM_FROM_BUFFER_MINUTES = 3;
+function claimFromMin(): string {
+  return toIsoDateTimeSec(
+    new Date(Date.now() + CLAIM_FROM_BUFFER_MINUTES * 60_000),
+  );
+}
+
+/** Render the wizard's `claimFrom` (local-time `datetime-local`
+ *  string) as a short human-readable timestamp for the preview row.
+ *  Falls back to the raw string when parsing fails so the operator
+ *  still sees their input rather than an empty cell. */
+function formatClaimFrom(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  return new Date(ms).toLocaleString();
+}
+
+/** Save the current run's recipient list as a CSV — same shape Step
+ *  3 accepts on import, plus a header row carrying the run-level
+ *  context (label / token / chain / claim time) so the file can be
+ *  archived as the canonical orderbook for an off-chain audit
+ *  trail. */
+function downloadOrderbook(
+  rows: readonly Row[],
+  label: string,
+  token: string,
+  chain: string,
+  claimFrom: string | null | undefined,
+): void {
+  const lines = [
+    `# label,${csvSafeLabel(label)}`,
+    `# token,${token}`,
+    `# chain,${chain}`,
+    `# claim_from,${claimFrom ?? ""}`,
+    `name,address,amount`,
+    ...rows.map((r) =>
+      `${csvSafeLabel(r.name)},${r.address},${r.amount}`,
+    ),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `orderbook-${csvSafeLabel(label) || "run"}-${Date.now()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /** Pay ships as a static export, so `useSearchParams` (used to read
@@ -142,10 +199,29 @@ function NewPayout() {
 
   const [label, setLabel] = useState(template.defaultLabel);
   const [token, setToken] = useState(template.defaultToken);
-  const [chain, setChain] = useState("Sepolia");
+  // Chain selection used to be a free-form dropdown across multiple
+  // testnets, but settle is wired to the build-time `cfg.chainId` —
+  // changing the dropdown didn't actually change anything. Lock the
+  // wizard to the configured chain so the displayed value matches the
+  // tx target. When we add a multi-chain switcher this becomes a
+  // dropdown again, sourced from `cfg.supportedChains`.
+  const chain = chainName(getNetworkConfig().chainId);
   const [csv, setCsv] = useState(template.sampleCsv);
-  const [stealth, setStealth] = useState(true);
-  const [notify, setNotify] = useState(true);
+  // Stealth toggle was removed from the UI — every recipient with a
+  // metaAddress in the address book is auto-routed to a one-time
+  // stealth address; entries without one fall through to their EOA.
+  // Kept as a constant so `applyStealthRouting` keeps its existing
+  // shape and a future per-run override can resurface here.
+  const stealth = true;
+  // Picker-time stealth derivations for entries that have ONLY a
+  // metaAddress (no default EOA). The picker generates a fresh
+  // one-time stealth address per pick and stows the matching
+  // ephemeral pubkey here keyed by lowercase stealth address; the
+  // map flows into `applyStealthRouting`'s output at submit time so
+  // the ClaimPackage gets the right ephPub. Walletbook entries with
+  // a default address still go through the per-render lookup path,
+  // so this map only carries the stealth-only pickups.
+  const [pickerEphPubs, setPickerEphPubs] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
   // Captured once on first render — used as the input's `min` so the
@@ -155,8 +231,17 @@ function NewPayout() {
   // value back earlier.
   const claimFromMinRef = useRef<string | null>(null);
   if (claimFromMinRef.current === null) {
-    claimFromMinRef.current = today();
+    claimFromMinRef.current = claimFromMin();
   }
+  // True when the picked claim moment is closer than the buffer to
+  // wall-clock now. Re-evaluated on every render rather than memoed
+  // so the warning lifts naturally as time advances past the
+  // threshold (without forcing a tick state).
+  const claimFromTooEarly =
+    !!claimFrom &&
+    Number.isFinite(Date.parse(claimFrom)) &&
+    Date.parse(claimFrom) - Date.now() <
+      CLAIM_FROM_BUFFER_MINUTES * 60_000;
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -205,7 +290,7 @@ function NewPayout() {
   const depositAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setClaimFrom(today());
+    setClaimFrom(claimFromMin());
   }, []);
 
   // Resume only starts once the notes folder is mounted — the run
@@ -269,6 +354,7 @@ function NewPayout() {
     setSubmitError(null);
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
+    let totalRelayerFeeRaw: bigint | undefined;
     let submittedRows: typeof rows | undefined;
     let submittedEphPubByAddress: Record<string, string> | undefined;
     try {
@@ -322,6 +408,9 @@ function NewPayout() {
               txHash,
               claimPackages,
               ephPubByAddress: submittedEphPubByAddress,
+              ...(totalRelayerFeeRaw !== undefined
+                ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
+                : {}),
             });
         try {
           await saveRun(record);
@@ -347,7 +436,15 @@ function NewPayout() {
           { stealth },
         );
         submittedRows = stealthRouted.rows;
-        submittedEphPubByAddress = stealthRouted.ephPubByAddress;
+        // Merge picker-time ephPubs (stealth-only entries the user
+        // added via the address book picker) with the routing pass's
+        // entries-with-metaAddress swaps. Both sets are keyed by
+        // lowercase stealth address and stealth addresses are
+        // unique per generation, so the union is well-defined.
+        submittedEphPubByAddress = {
+          ...pickerEphPubs,
+          ...stealthRouted.ephPubByAddress,
+        };
         // Rebuild batches for the actual settle path. Pre-flight
         // checks above (multiBatchFit / coverage) used the unrouted
         // batches so the user-shown coverage matches what they typed;
@@ -409,22 +506,30 @@ function NewPayout() {
           chain: { signer, settlementAddress, chainId: cfg.chainId },
           maxFeeBps: safeMaxFeeBps,
           eddsaPrivateKey: kp.privateKey,
+          eddsaPublicKey: kp.publicKey,
           tree,
           labels: { sender: account ?? undefined, run: label },
-          ephPubByAddress: stealthRouted.ephPubByAddress,
+          // Merge picker-time ephPubs (stealth-only address-book entries
+          // chosen via the recipient picker) with the routing pass's
+          // entries-with-metaAddress swaps. RunRecord's row-level
+          // `ephemeralPubKey` already used the union; sending the same
+          // union into the proof builder keeps the encoded
+          // `claimPackage` aligned so receivers can derive the
+          // per-claim privkey from the URL alone.
+          ephPubByAddress: submittedEphPubByAddress,
         });
 
         const preparePromises: Promise<PreparedSettle>[] = submitBatches.map((_, i) =>
           prepareRealSettle(settleArgs(i)),
         );
-        // Phase 2 may break before awaiting every prep promise; mark
-        // them all handled so a later prep failure isn't logged as
-        // an unhandled rejection. The actual error surfaces via the
-        // await in Phase 2.
         preparePromises.forEach((p) => p.catch(() => undefined));
 
+        const readProvider = signer.provider;
+        if (!readProvider) {
+          throw new Error("Wallet has no provider — can't observe relayer-broadcast tx receipt.");
+        }
         const submitted: {
-          tx: ethers.TransactionResponse;
+          txHash: string;
           ctx: PreparedSettle["ctx"];
           spentNoteId: string;
         }[] = [];
@@ -432,9 +537,9 @@ function NewPayout() {
         for (let i = 0; i < submitBatches.length; i++) {
           try {
             const prep = await preparePromises[i]!;
-            const sent = await submitRealSettle(prep, signer);
+            const sent = await submitRealSettle(prep, relayer.url);
             submitted.push({
-              tx: sent.tx,
+              txHash: sent.txHash,
               ctx: sent.ctx,
               spentNoteId: multiBatchFit.byBatch[i]!.note.id,
             });
@@ -446,8 +551,14 @@ function NewPayout() {
 
         const aggClaimPackages: ClaimPackage[] = [];
         let lastTxHash: string | undefined;
+        let aggFee = 0n;
+        // Hoist into the outer scope so persist() (declared above the
+        // settle branch) can read the running total.
+        totalRelayerFeeRaw = 0n;
         const finalized = await Promise.allSettled(
-          submitted.map(({ tx, ctx }) => finalizeRealSettle(tx, ctx)),
+          submitted.map(({ txHash, ctx }) =>
+            finalizeRealSettle(txHash, ctx, readProvider),
+          ),
         );
         for (let i = 0; i < finalized.length; i++) {
           const r = finalized[i]!;
@@ -460,6 +571,8 @@ function NewPayout() {
           }
           lastTxHash = r.value.txHash;
           aggClaimPackages.push(...r.value.claimPackages);
+          aggFee += r.value.relayerFee;
+          totalRelayerFeeRaw = aggFee;
           if (r.value.change) {
             await vault.add({
               symbol: token,
@@ -475,7 +588,18 @@ function NewPayout() {
         txHash = lastTxHash;
         claimPackages = aggClaimPackages;
         if (partialBatchError) {
-          await persist(/* allowFailure */ true);
+          // Only persist when at least one batch actually settled
+          // on-chain — otherwise the run is a draft (no nullifier
+          // consumed, source note still spendable) and a saved
+          // RunRecord with `txHash=undefined, claimPackages=[]`
+          // would pollute the dashboard with phantom payouts. The
+          // resume-existing path stays as-is so a partially-settled
+          // run keeps its record even if the resume attempt sends
+          // nothing new.
+          const anySettled = !!lastTxHash || aggClaimPackages.length > 0;
+          if (anySettled || resumeRecord) {
+            await persist(/* allowFailure */ true);
+          }
           throw partialBatchError;
         }
       }
@@ -502,15 +626,39 @@ function NewPayout() {
 
   function appendFromAddressBook(picked: WalletEntry[]) {
     if (picked.length === 0) return;
-    // Reuse the wizard's already-parsed `rows` so we don't re-derive
-    // the address column from raw CSV (which would shift if a future
-    // template adds quoted fields). `eqAddr` handles checksum / case.
     const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
-    const rowsToAdd = picked
-      .filter(hasDefaultAddress)
-      .filter((e) => !seen.has(e.address.toLowerCase()))
-      .map((e) => `${csvSafeLabel(e.label)},${e.address},`);
+    const rowsToAdd: string[] = [];
+    const newEphPubs: Record<string, string> = {};
+    for (const e of picked) {
+      if (e.address) {
+        // Regular path: a default EOA is in the book — use it
+        // verbatim. If the entry also has a metaAddress, the
+        // submit-time `applyStealthRouting` swap will replace this
+        // with a fresh stealth address based on the wizard toggle.
+        const lower = e.address.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        rowsToAdd.push(`${csvSafeLabel(e.label)},${e.address},`);
+      } else if (e.metaAddress) {
+        // Stealth-only entry: derive a one-time stealth address now
+        // so the CSV holds a 0x EOA the parser accepts. The matching
+        // ephPub goes into the wizard-side map; submit threads it
+        // through to the ClaimPackage so the receiver can derive
+        // the spending key with their meta-address keys.
+        const { stealthAddress, ephemeralPubKey } = generateStealthAddress(
+          e.metaAddress,
+        );
+        const lower = stealthAddress.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        newEphPubs[lower] = ephemeralPubKey;
+        rowsToAdd.push(`${csvSafeLabel(e.label)},${stealthAddress},`);
+      }
+    }
     if (rowsToAdd.length === 0) return;
+    if (Object.keys(newEphPubs).length > 0) {
+      setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
+    }
     const trimmed = csv.trimEnd();
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
   }
@@ -544,8 +692,19 @@ function NewPayout() {
     [rows],
   );
 
+  // Resolve the network config once; the wizard uses its WETH
+  // address for the native-ETH lookup below and `cfg.chainId` for
+  // the chain-pill display elsewhere.
+  const networkCfg = useMemo(() => getNetworkConfig(), []);
   const tokenInfo = LAUNCH_TOKENS[token];
-  const tokenAddress = tokenInfo?.address?.toLowerCase();
+  // For native ETH the vault stores notes against WETH (the deposit
+  // wraps ETH → WETH before escrow), so the wizard's lookup key has
+  // to match. Without this the Funds step's `summarizeBalance`
+  // misses a freshly-deposited ETH note and shows 0 even after
+  // a successful deposit.
+  const tokenAddress = (
+    tokenInfo?.isNative ? networkCfg.contracts.weth : tokenInfo?.address
+  )?.toLowerCase();
   const decimals = tokenInfo?.decimals ?? 18;
 
   const { availableRaw, pendingRaw } = useMemo(
@@ -570,19 +729,32 @@ function NewPayout() {
     return sum;
   }, [rows, decimals]);
 
-  // Fee at the user-set cap so "Required to escrow" never under-counts.
   // Sanitize first — browser number inputs can carry transient decimal
   // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws.
   const safeMaxFeeBps = Number.isFinite(maxFeeBps) ? Math.max(0, Math.trunc(maxFeeBps)) : 0;
+  // The relayer charges exactly `sellAmount − totalLocked` (see
+  // `submitScatterDirectAuth` in zk-relayer), so we can pick the
+  // cleanest possible split: fee = totalLocked × bps / 10000, then
+  // sellAmount = totalLocked + fee. The contract's bps cap
+  // (`fee × 10000 ≤ sellAmount × maxFee`) is satisfied by
+  // construction since fee/sellAmount = bps/(10000+bps) < bps/10000.
   const feeRaw = (requiredRaw * BigInt(safeMaxFeeBps)) / 10_000n;
   const totalEscrowRaw = requiredRaw + feeRaw;
-  const shortfallRaw = totalEscrowRaw > availableRaw ? totalEscrowRaw - availableRaw : 0n;
 
-  const sourcePick = useMemo<SourceNotesPick>(
-    // Pre-filter to reconciled notes so the displayed pick matches
-    // what `pickPerBatchNotes` + realSettle can actually spend; an
-    // unreconciled note in the auto-pick would silently advertise
-    // coverage the proof path has to reject.
+  // Operator-controlled checklist of vault notes to spend. Defaults
+  // to whatever auto-pick would have chosen but switches to manual
+  // mode the moment the operator toggles a checkbox — once manual,
+  // the wizard never re-syncs with auto-pick so a flipping
+  // totalEscrowRaw doesn't silently reset the selection mid-flow.
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
+  const [manualPick, setManualPick] = useState(false);
+  const tokenNotes = useMemo<VaultNote[]>(() => {
+    if (!tokenAddress) return [];
+    return notes.filter(
+      (n) => tokenBigIntToAddress(n.note.token).toLowerCase() === tokenAddress,
+    );
+  }, [notes, tokenAddress]);
+  const autoSourcePick = useMemo<SourceNotesPick>(
     () =>
       autoPickSourceNotes(
         notes.filter((n) => n.leafIndex >= 0),
@@ -591,6 +763,34 @@ function NewPayout() {
       ),
     [notes, tokenAddress, totalEscrowRaw],
   );
+  // Sync the checkbox selection with auto-pick until the operator
+  // overrides it; afterwards the selection is theirs to manage.
+  useEffect(() => {
+    if (manualPick) return;
+    const autoIds = new Set(autoSourcePick.notes.map((n) => n.note.id));
+    setSelectedNoteIds(autoIds);
+  }, [autoSourcePick, manualPick]);
+  const sourcePick = useMemo<SourceNotesPick>(
+    () =>
+      manualPick
+        ? pickFromSelectedNotes(notes, selectedNoteIds, tokenAddress ?? "", totalEscrowRaw)
+        : autoSourcePick,
+    [manualPick, notes, selectedNoteIds, tokenAddress, totalEscrowRaw, autoSourcePick],
+  );
+  const shortfallRaw = sourcePick.covered
+    ? 0n
+    : totalEscrowRaw > availableRaw
+      ? totalEscrowRaw - availableRaw
+      : totalEscrowRaw - sourcePick.pickedRaw;
+  const toggleNoteSelection = useCallback((id: string) => {
+    setManualPick(true);
+    setSelectedNoteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const batches = useMemo<PayoutBatch[]>(() => {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
@@ -735,17 +935,15 @@ function NewPayout() {
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </Field>
-              <Field label="Chain">
-                <select
+              <Field
+                label="Chain"
+                hint="Pay is wired to one chain per deployment. Multi-chain switching arrives once the contracts ship to additional networks."
+              >
+                <input
                   value={chain}
-                  onChange={(e) => setChain(e.target.value)}
-                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
-                >
-                  <option>Ethereum</option>
-                  <option>Sepolia</option>
-                  <option>Titan Sepolia</option>
-                  <option>Local:8545</option>
-                </select>
+                  disabled
+                  className="w-full cursor-not-allowed rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[var(--color-text-muted)]"
+                />
               </Field>
               <Field label="Token">
                 <select
@@ -790,17 +988,58 @@ function NewPayout() {
                 )}
               </div>
             </div>
-            <div className="text-xs text-[var(--color-text-muted)]">
-              Format: <span className="font-mono">{template.identifierLabel.toLowerCase()},address,amount</span> — one per line.
-            </div>
-            <textarea
-              value={csv}
-              readOnly={!!resumeRecord}
-              onChange={(e) => setCsv(e.target.value)}
-              rows={8}
-              className="w-full rounded-md border border-[var(--color-border-strong)] bg-white p-3 font-mono text-sm read-only:cursor-not-allowed read-only:opacity-70"
-              placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
-            />
+            {(() => {
+              const empty = rows.length === 0;
+              const missingAmount =
+                rows.length > 0 && rows.some((r) => !r.amount.trim());
+              const warnClass = "font-semibold text-[var(--color-warning)]";
+              return (
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  Format:{" "}
+                  <span className="font-mono">
+                    <span className={empty ? warnClass : ""}>
+                      {template.identifierLabel.toLowerCase()}
+                    </span>
+                    ,
+                    <span className={empty ? warnClass : ""}>address</span>
+                    ,
+                    <span className={empty || missingAmount ? warnClass : ""}>
+                      amount
+                    </span>
+                  </span>{" "}
+                  — one per line.
+                  {empty ? (
+                    <span className="ml-2 text-[var(--color-warning)]">
+                      ← add at least one recipient line below.
+                    </span>
+                  ) : missingAmount ? (
+                    <span className="ml-2 text-[var(--color-warning)]">
+                      ← fill the amount column on every row.
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })()}
+            {(() => {
+              const empty = rows.length === 0;
+              const missingAmount =
+                rows.length > 0 && rows.some((r) => !r.amount.trim());
+              const needsAttention = empty || missingAmount;
+              return (
+                <textarea
+                  value={csv}
+                  readOnly={!!resumeRecord}
+                  onChange={(e) => setCsv(e.target.value)}
+                  rows={8}
+                  className={`w-full rounded-md border bg-white p-3 font-mono text-sm read-only:cursor-not-allowed read-only:opacity-70 ${
+                    needsAttention
+                      ? "border-[var(--color-warning)]"
+                      : "border-[var(--color-border-strong)]"
+                  }`}
+                  placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
+                />
+              );
+            })()}
             {template.reasonLabel && (
               <Field label={template.reasonLabel}>
                 <input
@@ -811,6 +1050,44 @@ function NewPayout() {
                 />
               </Field>
             )}
+
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+              <h3 className="text-sm font-semibold">Claim schedule</h3>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                When can recipients start claiming? Pick a moment at least{" "}
+                {CLAIM_FROM_BUFFER_MINUTES} minutes from now so the settle tx
+                lands and the claim links reach recipients before the window
+                opens.
+              </p>
+              <div className="mt-3 max-w-xs">
+                <Field label="Available from">
+                  <input
+                    type="datetime-local"
+                    step={1}
+                    value={claimFrom ?? ""}
+                    min={claimFromMinRef.current ?? ""}
+                    disabled={!!resumeRecord}
+                    onChange={(e) => setClaimFrom(e.target.value)}
+                    className={`w-full rounded-md border bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60 ${
+                      claimFromTooEarly
+                        ? "border-[var(--color-warning)]"
+                        : "border-[var(--color-border-strong)]"
+                    }`}
+                  />
+                </Field>
+              </div>
+              {claimFromTooEarly ? (
+                <p className="mt-2 text-xs font-medium text-[var(--color-warning)]">
+                  Claim time must be at least {CLAIM_FROM_BUFFER_MINUTES} minutes
+                  from now.
+                </p>
+              ) : (
+                <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
+                  Recipients can claim any time after the moment set above — there is no expiry.
+                </p>
+              )}
+            </div>
+
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
               <div className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">Preview</div>
               <table className="w-full text-sm">
@@ -819,16 +1096,49 @@ function NewPayout() {
                     <th className="text-left">{template.identifierLabel}</th>
                     <th className="text-left">Address</th>
                     <th className="text-right">Amount</th>
+                    <th className="text-left pl-3">Available from</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
-                      <td className="py-1.5">{r.name}</td>
-                      <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
-                      <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
-                    </tr>
-                  ))}
+                  {rows.map((r, i) => {
+                    const lower = r.address.toLowerCase();
+                    // The row will go through stealth at settle when
+                    // either (a) the user picked a stealth-only book
+                    // entry — the picker-time derivation lives in
+                    // `pickerEphPubs`, or (b) a walletbook entry with
+                    // both default address + metaAddress is going to
+                    // be swapped at submit time, which only happens
+                    // when the global stealth toggle is on.
+                    const isStealth =
+                      Boolean(pickerEphPubs[lower]) ||
+                      (stealth &&
+                        walletBook.entries.some(
+                          (e) =>
+                            e.address?.toLowerCase() === lower && !!e.metaAddress,
+                        ));
+                    return (
+                      <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
+                        <td className="py-1.5">
+                          <div className="flex items-center gap-2">
+                            <span>{r.name}</span>
+                            {isStealth && (
+                              <span
+                                title="Will be sent to a one-time stealth address; recipient derives the spending key from their meta-address"
+                                className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
+                              >
+                                Stealth
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
+                        <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
+                        <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
+                          {claimFrom ? formatClaimFrom(claimFrom) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               <div className="mt-3 flex justify-between text-sm">
@@ -845,34 +1155,6 @@ function NewPayout() {
               </div>
             )}
 
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-              <h3 className="text-sm font-semibold">Claim schedule</h3>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                When can recipients start claiming? All recipients use the same
-                moment for now — per-row overrides arrive in a later release.
-              </p>
-              <div className="mt-3 max-w-xs">
-                <Field label="Available from">
-                  <input
-                    type="datetime-local"
-                    step={1}
-                    value={claimFrom ?? ""}
-                    min={claimFromMinRef.current ?? ""}
-                    disabled={!!resumeRecord}
-                    onChange={(e) => setClaimFrom(e.target.value)}
-                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                </Field>
-              </div>
-              <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                Recipients can claim any time after the moment set above — there is no expiry.
-              </p>
-            </div>
-
-            <div className="space-y-2 text-sm">
-              <Toggle checked={stealth} onChange={setStealth} label="Send via stealth address (recipients can't be linked on-chain)" />
-              <Toggle checked={notify} onChange={setNotify} label="Notify recipients by email / Discord" />
-            </div>
           </div>
         )}
 
@@ -888,7 +1170,14 @@ function NewPayout() {
               pendingRaw,
               shortfallRaw,
             }}
-            pick={{ sourcePick, batchCount: batches.length, multiBatchFit }}
+            pick={{
+              sourcePick,
+              batchCount: batches.length,
+              multiBatchFit,
+              tokenNotes,
+              selectedIds: selectedNoteIds,
+              onToggle: toggleNoteSelection,
+            }}
             wallet={{ account, vaultLoaded }}
             relayer={{
               list: relayers,
@@ -947,27 +1236,139 @@ function NewPayout() {
         {step === 5 && (
           <div className="space-y-5">
             <h2 className="text-lg font-semibold">Review & sign</h2>
-            <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
+
+            <ReviewSection title="Run">
               <ReviewRow k="Template" v={template.name} />
               <ReviewRow k="Label" v={label} />
               <ReviewRow k="Chain" v={chain} />
               <ReviewRow k="Token" v={token} />
               <ReviewRow k="Recipients" v={`${rows.length}`} />
-              <ReviewRow k="Total" v={`${total.toLocaleString()} ${token}`} />
-              <ReviewRow k="Available to claim from" v={claimFrom ?? "—"} />
               {template.reasonLabel && <ReviewRow k={template.reasonLabel} v={reason || "—"} />}
-              <ReviewRow k="Stealth" v={stealth ? "Yes" : "No"} />
-              <ReviewRow k="Notification" v={notify ? "Email + Discord" : "None"} />
+            </ReviewSection>
+
+            <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">
+                  Recipients ({rows.length})
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => downloadOrderbook(rows, label, token, chain, claimFrom)}
+                  className="rounded-md border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-bg)]"
+                >
+                  Download CSV
+                </button>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-[var(--color-text-muted)]">
+                    <tr>
+                      <th className="py-1 text-left font-normal">Name</th>
+                      <th className="py-1 text-left font-normal">Address</th>
+                      <th className="py-1 text-right font-normal">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {rows.map((r, i) => (
+                      <tr key={i}>
+                        <td className="py-1.5 pr-2">{r.name || "—"}</td>
+                        <td className="py-1.5 pr-2 font-mono text-xs">
+                          {r.address ? `${r.address.slice(0, 8)}…${r.address.slice(-4)}` : "—"}
+                        </td>
+                        <td className="py-1.5 text-right font-mono">
+                          {r.amount} {token}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <ReviewSection title="Amounts">
+              <ReviewRow
+                k="Recipients total"
+                v={`${ethers.formatUnits(requiredRaw, decimals)} ${token}`}
+              />
+              <ReviewRow
+                k="Relayer fee (max)"
+                v={`${ethers.formatUnits(feeRaw, decimals)} ${token}`}
+              />
+              <ReviewRow
+                k="Order amount (recipients + fee)"
+                v={
+                  <strong>
+                    {ethers.formatUnits(requiredRaw + feeRaw, decimals)} {token}
+                  </strong>
+                }
+              />
+            </ReviewSection>
+
+            <ReviewSection title="Schedule">
+              <ReviewRow
+                k="Available to claim from"
+                v={
+                  claimFromTooEarly ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <input
+                        type="datetime-local"
+                        step={1}
+                        value={claimFrom ?? ""}
+                        min={claimFromMin()}
+                        onChange={(e) => setClaimFrom(e.target.value)}
+                        className="rounded-md border border-[var(--color-warning)] bg-white px-3 py-1.5 text-sm"
+                      />
+                      <span className="text-xs text-[var(--color-warning)]">
+                        Claim time has passed (or is within {CLAIM_FROM_BUFFER_MINUTES} min). Pick a new moment.
+                      </span>
+                    </div>
+                  ) : (
+                    claimFrom ?? "—"
+                  )
+                }
+              />
+            </ReviewSection>
+
+            <ReviewSection title="Settlement">
+              <ReviewRow
+                k="Relayer"
+                v={
+                  relayer
+                    ? `${relayer.name && relayer.name.length > 0 ? relayer.name : relayer.api?.name ?? `${relayer.address.slice(0, 10)}…`}`
+                    : "—"
+                }
+              />
+              <ReviewRow
+                k="Relayer fee (actual)"
+                v={(() => {
+                  // Actual fee billed = relayer's on-chain rate, capped
+                  // by the user's max. The Amounts section above shows
+                  // the cap (max) so the user sees both the worst-case
+                  // escrow figure and the bill they should expect.
+                  const effectiveBps = relayer
+                    ? Math.min(relayer.fee, safeMaxFeeBps)
+                    : safeMaxFeeBps;
+                  const actualFee =
+                    (requiredRaw * BigInt(effectiveBps)) / 10_000n;
+                  return `${ethers.formatUnits(actualFee, decimals)} ${token}`;
+                })()}
+              />
+              <ReviewRow
+                k="Spent from deposits"
+                v={`${ethers.formatUnits(sourcePick.pickedRaw, decimals)} ${token}`}
+              />
+              {sourcePick.changeRaw > 0n && (
+                <ReviewRow
+                  k="Change returned"
+                  v={`${ethers.formatUnits(sourcePick.changeRaw, decimals)} ${token}`}
+                />
+              )}
               <ReviewRow k="Estimated gas" v="~$0.50 (one tx · varies by chain)" />
-              <ReviewRow k="Scatter Pay fee" v="Free (launch event until Dec 31, 2026 · normally 0.05%, capped at $20)" />
-            </dl>
+            </ReviewSection>
             <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
               <strong className="mb-0.5 block">This cannot be reversed.</strong>
               Once signed and settled, recipients can claim any time after the
               date above — forever. The sender cannot recall a settled run.
-            </div>
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-              {template.exportNote}
             </div>
             {tier && (
               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
@@ -994,7 +1395,14 @@ function NewPayout() {
               </div>
             )}
             <button
-              disabled={validation.length > 0 || submitting}
+              disabled={
+                validation.length > 0 || submitting || claimFromTooEarly
+              }
+              title={
+                claimFromTooEarly
+                  ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
+                  : undefined
+              }
               onClick={() => {
                 if (total >= LARGE_AMOUNT_THRESHOLD) setShowConfirm(true);
                 else void doSubmit();
@@ -1025,12 +1433,48 @@ function NewPayout() {
           Back
         </button>
         {step < 5 ? (
-          <button
-            onClick={() => setStep((s) => s + 1)}
-            className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-          >
-            Next
-          </button>
+          (() => {
+            // Steps 3 and 4 each have prerequisites that must be in
+            // place before the operator can move on. Step 3 covers the
+            // CSV / claim-time inputs; step 4 (Funds) covers the
+            // relayer pick + a covered-shortfall check so the Sign
+            // step doesn't open with a half-funded run.
+            const step3Block =
+              step === 3 &&
+              (rows.length === 0 ||
+                !claimFrom ||
+                claimFromTooEarly ||
+                validation.length > 0);
+            const step4Block =
+              step === 4 &&
+              (!relayer || !sourcePick.covered || !multiBatchFit?.covered);
+            const blockNext = step3Block || step4Block;
+            const reason = step3Block
+              ? rows.length === 0
+                ? "Add at least one recipient"
+                : !claimFrom
+                  ? "Pick the claim-schedule moment"
+                  : claimFromTooEarly
+                    ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
+                    : "Fix the CSV errors above before continuing"
+              : step4Block
+                ? !relayer
+                  ? "Pick a relayer to dispatch the settle tx"
+                  : !sourcePick.covered
+                    ? "Select deposits whose total covers the escrow amount"
+                    : "Top up the shortfall before advancing to Review"
+                : undefined;
+            return (
+              <button
+                onClick={() => setStep((s) => s + 1)}
+                disabled={blockNext}
+                title={reason}
+                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+              >
+                Next
+              </button>
+            );
+          })()
         ) : (
           <Link
             href="/payouts/detail?id=p_2026_04_payroll"

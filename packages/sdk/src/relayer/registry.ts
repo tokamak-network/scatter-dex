@@ -17,6 +17,7 @@ export async function loadActiveRelayers(
       return {
         address: addr,
         url: r.url,
+        name: r.name ?? "",
         fee: Number(r.fee),
         bond: r.bond,
         registeredAt: Number(r.registeredAt),

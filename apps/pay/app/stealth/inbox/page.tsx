@@ -15,12 +15,15 @@ import {
   markStealthInboxEntryClaimed,
   parseClaimInput,
   removeStealthInboxEntry,
+  setStealthInboxEntryPrivateKey,
   StealthInboxCorruptError,
   type StealthInboxEntry,
 } from "@zkscatter/sdk/storage";
 import { CopyButton, StealthFolderGate } from "../_components";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { submitClaim, type ClaimPhase } from "../../_lib/claimSubmit";
+import { getNetworkConfig } from "../../_lib/network";
+import { ERC20_ABI } from "@zkscatter/sdk";
 
 export default function StealthInboxPage() {
   return (
@@ -404,10 +407,10 @@ function InboxTable({
       <table className="w-full text-sm">
         <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
           <tr>
-            <th className="px-4 py-3 text-left">From</th>
             <th className="px-4 py-3 text-left">Run</th>
             <th className="px-4 py-3 text-right">Amount</th>
             <th className="px-4 py-3 text-left">Stealth address</th>
+            <th className="px-4 py-3 text-right">Balance</th>
             <th className="px-4 py-3 text-left">Status</th>
             <th className="px-4 py-3 text-right">Action</th>
           </tr>
@@ -417,11 +420,6 @@ function InboxTable({
             const status = rowStatus(e, now);
             return (
               <tr key={e.id} className="border-t border-[var(--color-border)]">
-                <td className="px-4 py-3 text-[var(--color-text)]">
-                  {e.pkg.senderLabel || (
-                    <span className="text-[var(--color-text-muted)]">—</span>
-                  )}
-                </td>
                 <td className="px-4 py-3 text-[var(--color-text-muted)]">
                   {e.pkg.runLabel ?? "—"}
                 </td>
@@ -431,11 +429,16 @@ function InboxTable({
                     {e.pkg.tokenSymbol}
                   </span>
                 </td>
-                <td
-                  className="px-4 py-3 font-mono text-xs"
-                  title={e.pkg.recipient}
-                >
-                  {shortAddr(e.pkg.recipient)}
+                <td className="px-4 py-3 font-mono text-xs">
+                  <CopyableAddress address={e.pkg.recipient} />
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-xs">
+                  <StealthBalance
+                    address={e.pkg.recipient}
+                    token={e.pkg.token}
+                    decimals={e.pkg.tokenDecimals}
+                    symbol={e.pkg.tokenSymbol}
+                  />
                 </td>
                 <td className="px-4 py-3 text-xs">
                   <StatusPill status={status} />
@@ -523,22 +526,12 @@ function RowActions({
 
   if (status.kind === "claimed") {
     return (
-      <div className="flex items-center justify-end gap-2">
-        {entry.txHash && (
-          <span
-            className="font-mono text-[10px] text-[var(--color-text-muted)]"
-            title={entry.txHash}
-          >
-            {entry.txHash.slice(0, 10)}…
-          </span>
-        )}
-        <button
-          onClick={onRemove}
-          className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-warning-soft)]"
-        >
-          Remove
-        </button>
-      </div>
+      <ClaimedRowActions
+        entry={entry}
+        spendingKey={spendingKey}
+        viewingKey={viewingKey}
+        onRemove={onRemove}
+      />
     );
   }
 
@@ -748,4 +741,364 @@ function phaseLabel(p: ClaimPhase): string {
     case "submitting":
       return "Submitting through the operator's relayer…";
   }
+}
+
+/** Actions cell for a claimed row: settle-tx hash (if any), a
+ *  Transfer-out button, and Remove. Transfer derives the stealth
+ *  privkey on demand and broadcasts an ERC20 transfer signed by it. */
+function ClaimedRowActions({
+  entry,
+  spendingKey,
+  viewingKey,
+  onRemove,
+}: {
+  entry: StealthInboxEntry;
+  spendingKey: string;
+  viewingKey: string;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Privkey is derivable when either: (a) the entry was hand-off-
+  // delivered with a pre-derived privkey, or (b) the package carries
+  // ephemeralPubKey and the user's meta-keys produce the matching
+  // stealth address.
+  const privkey = useMemo(() => {
+    if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
+    const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+    return derived?.matches ? derived.privateKey : null;
+  }, [entry, spendingKey, viewingKey]);
+
+  const [showKey, setShowKey] = useState(false);
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {entry.txHash && (
+        <span
+          className="font-mono text-[10px] text-[var(--color-text-muted)]"
+          title={entry.txHash}
+        >
+          {entry.txHash.slice(0, 10)}…
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={!privkey}
+        title={privkey ? undefined : "Cannot derive stealth privkey for this entry"}
+        className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
+      >
+        Transfer
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowKey(true)}
+        disabled={!privkey}
+        title={privkey ? "Reveal the stealth private key for this address" : "Cannot derive stealth privkey for this entry"}
+        className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-bg)] disabled:opacity-40"
+      >
+        Privkey
+      </button>
+      <button
+        onClick={onRemove}
+        className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-warning-soft)]"
+      >
+        Remove
+      </button>
+      {open && privkey && (
+        <TransferOutModal
+          entry={entry}
+          privkey={privkey}
+          onClose={() => setOpen(false)}
+        />
+      )}
+      {showKey && privkey && (
+        <PrivkeyRevealModal
+          address={entry.pkg.recipient}
+          privkey={privkey}
+          onClose={() => setShowKey(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Reveal the stealth private key + offer one-click copy. The key is
+ *  hidden behind a confirm step so a screenshot of the inbox doesn't
+ *  leak it. The user can paste this into MetaMask (Import Account →
+ *  Private Key) to take full custody of the stealth address. */
+function PrivkeyRevealModal({
+  address,
+  privkey,
+  onClose,
+}: {
+  address: string;
+  privkey: string;
+  onClose: () => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  return (
+    <Modal open onClose={onClose} title="Stealth private key">
+      <div className="space-y-3 text-sm">
+        <div className="rounded-md bg-[var(--color-bg)] p-3 text-xs">
+          <div className="text-[var(--color-text-muted)]">Address</div>
+          <div className="break-all font-mono">{address}</div>
+        </div>
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
+          This key controls the funds at the address above. Anyone with it can
+          drain the stealth wallet. Don't share it; import only into a wallet
+          you trust (e.g. MetaMask → Import Account → Private Key).
+        </div>
+        {!revealed ? (
+          <button
+            type="button"
+            onClick={() => setRevealed(true)}
+            className="w-full rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm font-medium"
+          >
+            Reveal private key
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <div className="rounded-md bg-[var(--color-bg)] p-3 text-xs">
+              <div className="mb-1 text-[var(--color-text-muted)]">Private key</div>
+              <div className="break-all font-mono">{privkey}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(privkey).then(() => {
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+              className="w-full rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white"
+            >
+              {copied ? "Copied ✓" : "Copy to clipboard"}
+            </button>
+          </div>
+        )}
+        <div className="flex justify-end pt-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Modal that signs an ERC20 (or wrapped-token) transfer from the
+ *  stealth address. Native ETH is held as WETH after a same-token
+ *  scatter, so the on-chain transfer is always an ERC20.transfer
+ *  call — no native send path needed. The stealth address must hold
+ *  enough native gas for the tx; the modal warns when its balance
+ *  is zero. */
+function TransferOutModal({
+  entry,
+  privkey,
+  onClose,
+}: {
+  entry: StealthInboxEntry;
+  privkey: string;
+  onClose: () => void;
+}) {
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState(
+    ethers.formatUnits(BigInt(entry.pkg.amount), entry.pkg.tokenDecimals),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [gasBalance, setGasBalance] = useState<bigint | null>(null);
+  const stealthAddr = entry.pkg.recipient;
+
+  const cfg = getNetworkConfig();
+  const provider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void provider.getBalance(stealthAddr).then((b) => {
+      if (!cancelled) setGasBalance(b);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, stealthAddr]);
+
+  // WETH claims auto-unwrap to native ETH on payout (see contract
+  // line 1019-1024), so the stealth address holds native ETH not the
+  // WETH ERC20. Transfers in that case are native value sends; for
+  // any other token the standard ERC20.transfer path applies.
+  const isNative =
+    cfg.contracts.weth &&
+    entry.pkg.token.toLowerCase() === cfg.contracts.weth.toLowerCase();
+
+  async function send() {
+    setError(null);
+    setBusy(true);
+    try {
+      if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
+      const wallet = new ethers.Wallet(privkey, provider);
+      const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+      let tx;
+      if (isNative) {
+        tx = await wallet.sendTransaction({ to, value: raw });
+      } else {
+        const token = new ethers.Contract(entry.pkg.token, ERC20_ABI, wallet);
+        tx = await token.transfer(to, raw);
+      }
+      setTxHash(tx.hash);
+      await tx.wait();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const gasEmpty = gasBalance !== null && gasBalance === 0n;
+
+  return (
+    <Modal open onClose={onClose} title="Transfer from stealth address">
+      <div className="space-y-3 text-sm">
+        <div className="rounded-md bg-[var(--color-bg)] p-3 text-xs">
+          <div className="text-[var(--color-text-muted)]">From (stealth)</div>
+          <div className="break-all font-mono">{stealthAddr}</div>
+          <div className="mt-2 text-[var(--color-text-muted)]">
+            Token: <span className="font-mono">{entry.pkg.tokenSymbol}</span>
+          </div>
+        </div>
+        {gasEmpty && (
+          <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
+            This stealth address has no native gas. Send a small amount of ETH to {shortAddr(stealthAddr)} first, then retry.
+          </div>
+        )}
+        <label className="block">
+          <span className="text-xs text-[var(--color-text-muted)]">Recipient address</span>
+          <input
+            type="text"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            placeholder="0x…"
+            className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono text-xs"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-[var(--color-text-muted)]">Amount</span>
+          <input
+            type="text"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
+          />
+        </label>
+        {error && (
+          <p className="text-xs text-[var(--color-warning)]">{error}</p>
+        )}
+        {txHash && (
+          <p className="break-all text-xs text-[var(--color-success)]">
+            ✓ Sent · <span className="font-mono">{txHash}</span>
+          </p>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm"
+          >
+            Close
+          </button>
+          <button
+            onClick={() => void send()}
+            disabled={busy || !to || !amount}
+            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+          >
+            {busy ? "Sending…" : "Send"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Live ERC20 balance of the stealth address for the row's token.
+ *  Polls every 30s so a Transfer or claim by the user reflects without
+ *  reload. Failures (rate-limit, RPC hiccup) render as "—" rather
+ *  than blocking the row. */
+function StealthBalance({
+  address,
+  token,
+  decimals,
+  symbol,
+}: {
+  address: string;
+  token: string;
+  decimals: number;
+  symbol: string;
+}) {
+  const cfg = useMemo(() => getNetworkConfig(), []);
+  const [bal, setBal] = useState<bigint | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+    // PrivateSettlement.claimWithProof unwraps WETH to native ETH on
+    // payout (contract line 1019-1024) — so when pkg.token is the
+    // chain's WETH, the recipient holds **native** ETH after the
+    // claim, not WETH. Querying ERC20.balanceOf(WETH) on that address
+    // would always return 0 even though funds did arrive.
+    const isWeth =
+      cfg.contracts.weth &&
+      token.toLowerCase() === cfg.contracts.weth.toLowerCase();
+    const erc20 = isWeth ? null : new ethers.Contract(token, ERC20_ABI, provider);
+    const tick = async () => {
+      try {
+        const v = isWeth
+          ? await provider.getBalance(address)
+          : ((await erc20!.balanceOf(address)) as bigint);
+        if (!cancelled) setBal(v);
+      } catch {
+        if (!cancelled) setBal(null);
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [address, token, cfg.rpcUrl, cfg.contracts.weth]);
+  if (bal === null) return <span className="text-[var(--color-text-muted)]">—</span>;
+  return (
+    <span>
+      {ethers.formatUnits(bal, decimals)}{" "}
+      <span className="text-[var(--color-text-muted)]">{symbol}</span>
+    </span>
+  );
+}
+
+/** Inbox-row stealth address: shown in full so the operator can match
+ *  it against their wallet, with a single-click copy button. The
+ *  address is wrapped to break inside the cell so wide tables don't
+ *  blow out horizontally. */
+function CopyableAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-2">
+      <span className="break-all">{address}</span>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard.writeText(address).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+          });
+        }}
+        className="rounded border border-[var(--color-border-strong)] px-1.5 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
+        title="Copy address"
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+    </div>
+  );
 }

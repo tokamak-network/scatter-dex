@@ -124,6 +124,11 @@ export interface RunRecord {
    *  transfer cost. Optional — old records and tx receipts that
    *  failed to capture this leave it `undefined`. */
   settleGasPaid?: string;
+  /** Token-units (decimal-string) paid to the relayer as the same-token
+   *  scatter fee. Equals `sellAmount − totalLocked` from the authorize
+   *  proof. Optional — older records without it render the fee row as
+   *  "—" on the detail page. */
+  relayerFee?: string;
   /** Operator-authored memo, edited from `/payouts/detail` after the
    *  fact. Plain text (no markdown rendering — keeps the detail page
    *  free of an MD parser dependency and avoids HTML-injection paths).
@@ -241,6 +246,7 @@ function isValidRecord(r: unknown): r is RunRecord {
   if (!isValidOperatorAddress(v.operatorAddress)) return false;
   if (typeof v.category !== "string" || !RUN_CATEGORY_SET.has(v.category)) return false;
   if (!isOptionalString(v.settleGasPaid)) return false;
+  if (!isOptionalString(v.relayerFee)) return false;
   if (!isOptionalString(v.notes)) return false;
   return true;
 }

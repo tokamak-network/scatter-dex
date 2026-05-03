@@ -2,6 +2,10 @@
 export interface RelayerOnChain {
   address: string;
   url: string;
+  /** Operator-set display name from the registry. May be the empty
+   *  string for legacy entries that registered before the name field
+   *  was added. */
+  name: string;
   /** Per-trade fee in basis points (100 = 1%). */
   fee: number;
   /** Bond posted to register, in wei. */

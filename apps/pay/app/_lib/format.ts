@@ -52,6 +52,22 @@ export function formatUtcStamp(unixSec: number | undefined): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 }
 
+/** Local-timezone `YYYY-MM-DD HH:mm` stamp. Used for user-facing
+ *  moments (claim time, etc.) where the operator expects to see their
+ *  own clock, not UTC. Renders nothing during SSR to avoid hydration
+ *  mismatch — callers should gate on the `mounted` flag pattern used
+ *  for `formatRelative`. */
+export function formatLocalStamp(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const d = new Date(unixSec * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
 /** Parse a free-form amount string into a JS number. Strips commas,
  *  underscores, and whitespace (all common in spreadsheet exports);
  *  returns NaN on anything that isn't a plain decimal so the caller

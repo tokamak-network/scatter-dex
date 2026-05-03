@@ -2,12 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { Modal } from "@zkscatter/ui";
-import { hasDefaultAddress, type WalletEntry } from "@zkscatter/sdk/storage";
+import type { WalletEntry } from "@zkscatter/sdk/storage";
 
 /** Multi-select picker over the address book. The wizard's
  *  Recipients step calls this; future surfaces (claim-link
  *  recipient, dashboard quick-send) will hit it too — that's why it
- *  lives in `_components/` rather than co-located with the wizard. */
+ *  lives in `_components/` rather than co-located with the wizard.
+ *
+ *  Stealth-only entries (only `metaAddress`, no default address) are
+ *  surfaced too — the wizard derives a one-time stealth address for
+ *  each pick and threads its ephemeralPubKey into the run record. */
 export function AddressBookPicker({
   entries,
   onCancel,
@@ -19,19 +23,17 @@ export function AddressBookPicker({
 }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Stealth-only entries can't ride the wizard's CSV-based row
-  // path; the recipients page manages those.
-  const sendable = useMemo(() => entries.filter(hasDefaultAddress), [entries]);
   const filtered = useMemo(() => {
-    if (!search.trim()) return sendable;
+    if (!search.trim()) return entries;
     const q = search.toLowerCase();
-    return sendable.filter(
+    return entries.filter(
       (e) =>
         e.label.toLowerCase().includes(q) ||
-        e.address.includes(q) ||
+        (e.address?.includes(q) ?? false) ||
+        (e.metaAddress?.toLowerCase().includes(q) ?? false) ||
         (e.memo?.toLowerCase().includes(q) ?? false),
     );
-  }, [sendable, search]);
+  }, [entries, search]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -66,9 +68,23 @@ export function AddressBookPicker({
                     onChange={() => toggle(e.id)}
                   />
                   <div className="flex-1 text-sm">
-                    <div className="font-medium">{e.label}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{e.label}</span>
+                      {e.metaAddress && (
+                        <span
+                          title={`Stealth meta-address: ${e.metaAddress}`}
+                          className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
+                        >
+                          Stealth
+                        </span>
+                      )}
+                    </div>
                     <div className="font-mono text-xs text-[var(--color-text-muted)]">
-                      {e.address.slice(0, 10)}…{e.address.slice(-4)}
+                      {e.address
+                        ? `${e.address.slice(0, 10)}…${e.address.slice(-4)}`
+                        : e.metaAddress
+                          ? `${e.metaAddress.slice(0, 14)}…${e.metaAddress.slice(-4)}`
+                          : "—"}
                       {e.memo ? ` · ${e.memo}` : ""}
                     </div>
                   </div>
