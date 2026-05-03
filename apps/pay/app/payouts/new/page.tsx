@@ -74,6 +74,7 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, parseAmount, parseRecipientRows, toIsoDateTimeSec } from "../../_lib/format";
+import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   autoPickSourceNotes,
   describeBatchFitError,
@@ -268,6 +269,8 @@ function NewPayout() {
     setSubmitError(null);
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
+    let submittedRows: typeof rows | undefined;
+    let submittedEphPubByAddress: Record<string, string> | undefined;
     try {
       const cfg = getNetworkConfig();
       // Real submit is only attempted when the network is wired AND
@@ -308,12 +311,17 @@ function NewPayout() {
               tokenAddress,
               operatorAddress: account,
               chainId,
-              rows,
+              // Persist the stealth-routed rows so RunRecord recipients
+              // mirror the on-chain claim recipients. `submittedRows`
+              // is set inside the settle branch below; default to the
+              // user-typed rows for the demo / no-settle path.
+              rows: submittedRows ?? rows,
               total,
               claimFrom,
               walletBook: walletBook.entries,
               txHash,
               claimPackages,
+              ephPubByAddress: submittedEphPubByAddress,
             });
         try {
           await saveRun(record);
@@ -325,10 +333,37 @@ function NewPayout() {
         }
       };
 
-      if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        if (batches.length > MAX_BATCHES_PER_RUN) {
+      // Resolve stealth meta-addresses once at submit time — the
+      // wizard's `batches` useMemo runs every keystroke so we can't
+      // generate fresh stealth addresses there without flicker. The
+      // routed rows replace each address-book recipient that has a
+      // metaAddress with a one-time stealth address; non-stealth
+      // recipients pass through unchanged.
+      const stealthRouted = applyStealthRouting(
+        rows,
+        walletBook.entries,
+        { stealth },
+      );
+      // Stash for the persist closure so the saved RunRecord rows /
+      // ephPub map agree with what was actually settled on-chain.
+      submittedRows = stealthRouted.rows;
+      submittedEphPubByAddress = stealthRouted.ephPubByAddress;
+      // Rebuild batches for the actual settle path. Pre-flight checks
+      // above (multiBatchFit / coverage) used the unrouted batches so
+      // the user-shown coverage matches the amounts they typed; the
+      // amounts/totals don't change here, only the recipient field.
+      const submitBatches: PayoutBatch[] =
+        stealthRouted.ephPubByAddress &&
+        Object.keys(stealthRouted.ephPubByAddress).length > 0
+          ? splitPayout(
+              parseRecipientRows(stealthRouted.rows, decimals, claimFrom!),
+              { token: tokenAddress! },
+            )
+          : batches;
+      if (isNetworkConfigured(cfg) && tokenAddress && submitBatches.length > 0) {
+        if (submitBatches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
-            `This run needs ${batches.length} settlement transactions; Pay caps at ${MAX_BATCHES_PER_RUN} per payout. Split into multiple runs.`,
+            `This run needs ${submitBatches.length} settlement transactions; Pay caps at ${MAX_BATCHES_PER_RUN} per payout. Split into multiple runs.`,
           );
         }
         // Block signing when no notes folder is picked. The settle
@@ -367,7 +402,7 @@ function NewPayout() {
         // its vault update applied.
         const settlementAddress = cfg.contracts.privateSettlement;
         const settleArgs = (i: number) => ({
-          batch: batches[i]!,
+          batch: submitBatches[i]!,
           tokenAddress,
           tokenSymbol: token,
           tokenDecimals: decimals,
@@ -378,9 +413,10 @@ function NewPayout() {
           eddsaPrivateKey: kp.privateKey,
           tree,
           labels: { sender: account ?? undefined, run: label },
+          ephPubByAddress: stealthRouted.ephPubByAddress,
         });
 
-        const preparePromises: Promise<PreparedSettle>[] = batches.map((_, i) =>
+        const preparePromises: Promise<PreparedSettle>[] = submitBatches.map((_, i) =>
           prepareRealSettle(settleArgs(i)),
         );
         // Phase 2 may break before awaiting every prep promise; mark
@@ -395,7 +431,7 @@ function NewPayout() {
           spentNoteId: string;
         }[] = [];
         let partialBatchError: Error | null = null;
-        for (let i = 0; i < batches.length; i++) {
+        for (let i = 0; i < submitBatches.length; i++) {
           try {
             const prep = await preparePromises[i]!;
             const sent = await submitRealSettle(prep, signer);
