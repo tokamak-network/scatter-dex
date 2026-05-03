@@ -48,8 +48,10 @@ export interface WalletEntry {
   id: string;
   label: string;
   /** Lowercase 0x-prefixed default address. Used when the run's
-   *  chain is not in `addressByChain`. Validated on add. */
-  address: string;
+   *  chain is not in `addressByChain`. Validated on add. Optional —
+   *  a stealth-only entry can omit it as long as `metaAddress` is
+   *  set; the wizard ignores such entries on the regular CSV path. */
+  address?: string;
   /** Per-chain address override. Pay's wizard picks
    *  `addressByChain[run.chainId] ?? address` so the same recipient
    *  can be paid on Ethereum and a different L2 without two book
@@ -60,8 +62,12 @@ export interface WalletEntry {
   /** Email Pay copies into the run record at send time so the run
    *  stays valid even if the entry is later edited or removed. */
   email?: string;
-  /** Discord handle for the same reason as `email`. */
-  discordHandle?: string;
+  /** Telegram handle (e.g. `@alice`) — copied into the run record at
+   *  send time for the same reason as `email`. */
+  telegramHandle?: string;
+  /** KakaoTalk ID — copied into the run record at send time for the
+   *  same reason as `email`. */
+  kakaoId?: string;
   /** Optional free-form note (e.g. "engineering team / Q2"). */
   memo?: string;
   /** Recipient's stealth meta-address (`st:eth:0x…`). When set,
@@ -113,27 +119,53 @@ function isValidAddressByChain(v: unknown): boolean {
 function isValidEntry(e: unknown): e is WalletEntry {
   if (!e || typeof e !== "object") return false;
   const v = e as Record<string, unknown>;
+  const addressOk =
+    v.address === undefined ||
+    (typeof v.address === "string" &&
+      ethers.isAddress(v.address) &&
+      v.address === (v.address as string).toLowerCase());
+  const metaOk =
+    v.metaAddress === undefined ||
+    (typeof v.metaAddress === "string" && isMetaAddress(v.metaAddress));
+  // Schema rule: an entry must carry at least one routing target —
+  // a default `address` for direct sends, or a `metaAddress` for
+  // stealth-only entries. Allowing both empty would let an unsendable
+  // record persist on disk.
+  const hasTarget = v.address !== undefined || v.metaAddress !== undefined;
   return (
     typeof v.id === "string" &&
     typeof v.label === "string" &&
-    typeof v.address === "string" &&
-    ethers.isAddress(v.address) &&
-    v.address === (v.address as string).toLowerCase() &&
+    addressOk &&
+    metaOk &&
+    hasTarget &&
     typeof v.createdAt === "number" &&
     (v.memo === undefined || typeof v.memo === "string") &&
     (v.email === undefined || typeof v.email === "string") &&
-    (v.discordHandle === undefined || typeof v.discordHandle === "string") &&
-    (v.metaAddress === undefined ||
-      (typeof v.metaAddress === "string" && isMetaAddress(v.metaAddress))) &&
+    (v.telegramHandle === undefined || typeof v.telegramHandle === "string") &&
+    (v.kakaoId === undefined || typeof v.kakaoId === "string") &&
     isValidAddressByChain(v.addressByChain)
   );
 }
 
 /** Resolve the address Pay should use for a run on `chainId`.
  *  Falls back to the entry's default `address` when no per-chain
- *  override is set. */
-export function entryAddressForChain(entry: WalletEntry, chainId: number): string {
+ *  override is set. Returns `undefined` for stealth-only entries
+ *  (no default address and no per-chain override). */
+export function entryAddressForChain(
+  entry: WalletEntry,
+  chainId: number,
+): string | undefined {
   return entry.addressByChain?.[chainId] ?? entry.address;
+}
+
+/** Type guard for entries reachable through the wizard's regular
+ *  CSV/address path. Stealth-only entries (no default `address`)
+ *  fail this guard so callers narrowing on it can safely use
+ *  `entry.address` without `!` or `?.`. */
+export function hasDefaultAddress(
+  entry: WalletEntry,
+): entry is WalletEntry & { address: string } {
+  return Boolean(entry.address);
 }
 
 /** Load the wallet book from the selected folder. Returns an empty
@@ -221,30 +253,41 @@ function normaliseAddressByChain(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Add a new entry. Throws when the address is invalid, the label is
- *  empty, or the address already exists in the book. */
+/** Add a new entry. Throws when the label is empty, neither
+ *  `address` nor `metaAddress` is provided, the address is malformed
+ *  or already in the book, or the meta-address is malformed. Either
+ *  routing target is sufficient: stealth-only entries (metaAddress
+ *  but no address) are accepted and the wizard skips them on the
+ *  regular CSV path. */
 export async function addWallet(input: {
   label: string;
-  address: string;
+  address?: string;
   memo?: string;
   email?: string;
-  discordHandle?: string;
+  telegramHandle?: string;
+  kakaoId?: string;
   metaAddress?: string;
   addressByChain?: Record<number, string>;
 }): Promise<WalletEntry> {
-  if (!ethers.isAddress(input.address)) throw new Error("Invalid address");
   const label = input.label.trim();
   if (!label) throw new Error("Label is required");
-  const address = input.address.toLowerCase();
-  const addressByChain = normaliseAddressByChain(input.addressByChain);
+  const trimmedAddress = input.address?.trim();
   const trimmedMeta = input.metaAddress?.trim();
+  if (!trimmedAddress && !trimmedMeta) {
+    throw new Error("Provide a default address or a stealth meta-address");
+  }
+  if (trimmedAddress && !ethers.isAddress(trimmedAddress)) {
+    throw new Error("Invalid address");
+  }
   if (trimmedMeta && !isStrictMetaAddress(trimmedMeta)) {
     throw new Error("Invalid meta-address (expected st:eth:0x… with two valid compressed pubkeys)");
   }
+  const address = trimmedAddress ? trimmedAddress.toLowerCase() : undefined;
+  const addressByChain = normaliseAddressByChain(input.addressByChain);
 
   return withLock(async () => {
     const entries = await loadWalletBook();
-    if (entries.some((e) => e.address === address)) {
+    if (address && entries.some((e) => e.address === address)) {
       throw new Error("Address already in book");
     }
     const entry: WalletEntry = {
@@ -253,7 +296,8 @@ export async function addWallet(input: {
       address,
       memo: input.memo?.trim() || undefined,
       email: input.email?.trim() || undefined,
-      discordHandle: input.discordHandle?.trim() || undefined,
+      telegramHandle: input.telegramHandle?.trim() || undefined,
+      kakaoId: input.kakaoId?.trim() || undefined,
       metaAddress: trimmedMeta || undefined,
       addressByChain,
       createdAt: Math.floor(Date.now() / 1000),
@@ -269,7 +313,7 @@ export async function addWallet(input: {
 export async function updateWallet(
   id: string,
   patch: Partial<
-    Pick<WalletEntry, "label" | "memo" | "email" | "discordHandle" | "metaAddress"> & {
+    Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId" | "metaAddress"> & {
       addressByChain?: Record<number, string>;
     }
   >,
@@ -292,19 +336,38 @@ export async function updateWallet(
     const entries = await loadWalletBook();
     const next = entries.map((e) => {
       if (e.id !== id) return e;
+      const nextMeta =
+        patch.metaAddress !== undefined
+          ? patch.metaAddress.trim() || undefined
+          : e.metaAddress;
+      // Clearing the meta-address on a stealth-only entry would leave
+      // it with no routing target and break the schema invariant
+      // (address || metaAddress required). Reject the edit so the
+      // user can decide whether to remove the entry instead.
+      if (!e.address && !nextMeta) {
+        throw new Error(
+          "Stealth-only entry requires a meta-address. Remove the entry instead of clearing it.",
+        );
+      }
+      // Drop the legacy `discordHandle` field so it doesn't ride along
+      // on subsequent writes. Pre-existing entries that carried it
+      // through earlier app versions are silently cleaned up the next
+      // time the user edits them.
+      const { discordHandle: _legacyDiscord, ...rest } = e as WalletEntry & {
+        discordHandle?: string;
+      };
       return {
-        ...e,
+        ...rest,
         label: patch.label !== undefined ? patch.label.trim() : e.label,
         memo: patch.memo !== undefined ? patch.memo.trim() || undefined : e.memo,
         email: patch.email !== undefined ? patch.email.trim() || undefined : e.email,
-        discordHandle:
-          patch.discordHandle !== undefined
-            ? patch.discordHandle.trim() || undefined
-            : e.discordHandle,
-        metaAddress:
-          patch.metaAddress !== undefined
-            ? patch.metaAddress.trim() || undefined
-            : e.metaAddress,
+        telegramHandle:
+          patch.telegramHandle !== undefined
+            ? patch.telegramHandle.trim() || undefined
+            : e.telegramHandle,
+        kakaoId:
+          patch.kakaoId !== undefined ? patch.kakaoId.trim() || undefined : e.kakaoId,
+        metaAddress: nextMeta,
         addressByChain:
           patch.addressByChain !== undefined ? nextAddressByChain : e.addressByChain,
       };

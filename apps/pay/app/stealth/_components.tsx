@@ -41,7 +41,7 @@ export function StealthFolderGate({ children }: { children: ReactNode }) {
             Dashboard
           </Link>
           ,{" "}
-          <Link href="/recipients" className="text-[var(--color-primary)] hover:underline">
+          <Link href="/address-book" className="text-[var(--color-primary)] hover:underline">
             Address book
           </Link>
           ).

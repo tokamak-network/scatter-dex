@@ -28,7 +28,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -110,10 +109,6 @@ export function MetaAddressProvider({
   const [keys, setKeys] = useState<MetaAddress | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Re-run the initial load when the folder readiness flips. The ref
-  // guards against duplicate loads from React Strict Mode's
-  // double-invocation of effects in dev.
-  const loadingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,8 +121,6 @@ export function MetaAddressProvider({
       setError(null);
       return;
     }
-    if (loadingRef.current) return;
-    loadingRef.current = true;
     (async () => {
       try {
         // 1. Try the canonical folder file.
@@ -149,7 +142,6 @@ export function MetaAddressProvider({
         }
       } finally {
         if (!cancelled) setReady(true);
-        loadingRef.current = false;
       }
     })();
     return () => {

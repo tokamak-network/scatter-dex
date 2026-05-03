@@ -3,7 +3,11 @@
 import type { ReactNode } from "react";
 
 interface FieldProps {
-  label: string;
+  /** Plain string for most fields; pass ReactNode when the label
+   *  needs an inline element (e.g. a tooltip icon next to the
+   *  text). Backward-compatible — string is assignable to
+   *  ReactNode. */
+  label: ReactNode;
   /** Optional subdued helper line under the input. */
   hint?: ReactNode;
   /** Optional error text — when set, replaces the hint and tints

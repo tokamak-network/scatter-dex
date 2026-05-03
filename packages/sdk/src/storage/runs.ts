@@ -47,7 +47,8 @@ export interface RecipientRow {
    *  so the run record stays valid even if the address book entry
    *  is edited or removed later. */
   email?: string;
-  discordHandle?: string;
+  telegramHandle?: string;
+  kakaoId?: string;
   /** Base64url-encoded `ClaimPackage` (from `@zkscatter/sdk/notes`)
    *  the operator hands to the recipient. Populated for runs settled
    *  via Pay's real submit path; absent for env-not-configured demo
@@ -55,12 +56,21 @@ export interface RecipientRow {
   claimPackage?: string;
 }
 
-export type NotificationChannel = "email" | "discord" | "slack";
+/** New logs are written as "email" | "telegram" | "kakao" | "slack".
+ *  `"discord"` is a legacy value that may appear in run files written
+ *  before the Telegram/Kakao migration; the parser still accepts it
+ *  so those runs stay readable. */
+export type NotificationChannel =
+  | "email"
+  | "telegram"
+  | "kakao"
+  | "slack"
+  | "discord";
 
 export interface NotificationLog {
   rowIndex: number;
   channel: NotificationChannel;
-  /** Rendered destination — email address or Discord handle. */
+  /** Rendered destination — email address, Telegram handle, etc. */
   toAddress: string;
   sentAt?: number;
   deliveredAt?: number;
@@ -131,7 +141,16 @@ const HEX_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const RUN_CATEGORY_SET = new Set<string>(RUN_CATEGORIES);
 
 const RECIPIENT_STATUSES = new Set(["claimed", "available", "locked"]);
-const NOTIFICATION_CHANNELS = new Set(["email", "discord", "slack"]);
+// `"discord"` is accepted only for backward-compat with run files
+// written before the Telegram/Kakao migration; new logs are written
+// as "telegram" / "kakao" / "email" / "slack".
+const NOTIFICATION_CHANNELS = new Set([
+  "email",
+  "telegram",
+  "kakao",
+  "slack",
+  "discord",
+]);
 const BOUNCE_KINDS = new Set(["hard", "soft"]);
 
 function isOptionalNumber(v: unknown): boolean {
@@ -153,7 +172,8 @@ function isValidRecipient(r: unknown): r is RecipientRow {
   if (!isOptionalNumber(v.claimedAt)) return false;
   if (!isOptionalNumber(v.claimFrom)) return false;
   if (!isOptionalString(v.email)) return false;
-  if (!isOptionalString(v.discordHandle)) return false;
+  if (!isOptionalString(v.telegramHandle)) return false;
+  if (!isOptionalString(v.kakaoId)) return false;
   return true;
 }
 

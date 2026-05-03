@@ -18,7 +18,8 @@ const HEADERS = [
   "claimed_at_utc",
   "claim_from_utc",
   "email",
-  "discord",
+  "telegram",
+  "kakao",
   "notified_at_utc",
   "claim_link",
 ] as const;
@@ -35,7 +36,8 @@ export function runRecordToCsv(record: RunRecord, origin: string): string {
     formatUtcStamp(r.claimedAt),
     formatUtcStamp(r.claimFrom),
     r.email ?? "",
-    r.discordHandle ?? "",
+    r.telegramHandle ?? "",
+    r.kakaoId ?? "",
     formatUtcStamp(logsByRow.get(r.rowIndex)?.sentAt),
     buildClaimUrl(origin, record.id, r),
   ]);
