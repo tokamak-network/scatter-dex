@@ -8,6 +8,7 @@
  */
 
 import { hasFolder, listFiles, loadFile, saveFile, removeFile } from "./folder";
+import { isCompressedPubkeyHex } from "../notes";
 
 const RUN_FILE_PREFIX = "zkscatter-run-";
 const RUN_FILE_SUFFIX = ".json";
@@ -179,7 +180,12 @@ function isValidRecipient(r: unknown): r is RecipientRow {
   if (!isOptionalString(v.email)) return false;
   if (!isOptionalString(v.telegramHandle)) return false;
   if (!isOptionalString(v.kakaoId)) return false;
-  if (!isOptionalString(v.ephemeralPubKey)) return false;
+  if (
+    v.ephemeralPubKey !== undefined &&
+    !isCompressedPubkeyHex(v.ephemeralPubKey)
+  ) {
+    return false;
+  }
   return true;
 }
 

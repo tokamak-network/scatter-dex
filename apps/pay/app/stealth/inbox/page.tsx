@@ -11,6 +11,7 @@ import { deriveStealthForPackage } from "../../_lib/stealthDerive";
 import {
   addStealthInboxEntry,
   loadStealthInbox,
+  markStealthInboxEntriesClaimed,
   markStealthInboxEntryClaimed,
   parseClaimInput,
   removeStealthInboxEntry,
@@ -94,10 +95,12 @@ function InboxBody() {
     setReconciling(true);
     try {
       // Group by settlement address so a single contract instance
-      // serves every entry on the same deployment; per-entry RPC and
-      // nullifier compute then run in parallel inside each group
-      // (ethers pipelines on the same provider). Sequential awaits
-      // would put a 50-entry refresh at ~10s+ on a public RPC.
+      // serves every entry on the same deployment; per-entry probes
+      // run in parallel inside each group (ethers pipelines on the
+      // same provider). `allSettled` keeps one bad RPC reply from
+      // dropping the whole batch, and the matched ids are collected
+      // into a single batch-write so a 50-pending refresh costs one
+      // disk write instead of N.
       const bySettlement = new Map<string, StealthInboxEntry[]>();
       for (const e of pending) {
         const key = e.pkg.settlementAddress.toLowerCase();
@@ -105,16 +108,15 @@ function InboxBody() {
         if (list) list.push(e);
         else bySettlement.set(key, [e]);
       }
-      let any = false;
-      for (const [addr, group] of bySettlement) {
-        const settlement = new ethers.Contract(
-          addr,
-          PRIVATE_SETTLEMENT_ABI,
-          readProvider,
-        );
-        const results = await Promise.all(
-          group.map(async (entry) => {
-            try {
+      const groups = await Promise.allSettled(
+        Array.from(bySettlement, async ([addr, group]) => {
+          const settlement = new ethers.Contract(
+            addr,
+            PRIVATE_SETTLEMENT_ABI,
+            readProvider,
+          );
+          const probes = await Promise.allSettled(
+            group.map(async (entry) => {
               const nullifier = await computeClaimNullifier(
                 BigInt(entry.pkg.secret),
                 BigInt(entry.pkg.leafIndex),
@@ -122,36 +124,46 @@ function InboxBody() {
               const used = (await settlement.claimNullifiers(
                 toBytes32Hex(nullifier),
               )) as boolean;
-              return { entry, used };
-            } catch (err) {
-              console.warn("[stealth-inbox] reconcile entry failed", entry.id, err);
-              return null;
-            }
-          }),
-        );
-        for (const r of results) {
-          if (r?.used) {
-            await markStealthInboxEntryClaimed(r.entry.id);
-            any = true;
+              return { id: entry.id, used };
+            }),
+          );
+          return probes;
+        }),
+      );
+      const claimedIds: string[] = [];
+      for (const groupResult of groups) {
+        if (groupResult.status !== "fulfilled") {
+          console.warn("[stealth-inbox] reconcile group failed", groupResult.reason);
+          continue;
+        }
+        for (const probe of groupResult.value) {
+          if (probe.status !== "fulfilled") {
+            console.warn("[stealth-inbox] reconcile entry failed", probe.reason);
+            continue;
           }
+          if (probe.value.used) claimedIds.push(probe.value.id);
         }
       }
-      if (any) await refresh();
+      if (claimedIds.length > 0) {
+        await markStealthInboxEntriesClaimed(claimedIds);
+        await refresh();
+      }
     } finally {
       setReconciling(false);
     }
   }, [entries, readProvider, refresh]);
 
-  // One-shot reconcile after the first inbox load. We bind through a
-  // ref instead of listing `reconcile` in the deps so the effect
-  // doesn't re-fire every time `entries` (and therefore the
-  // `useCallback` identity) changes — a fresh paste is already known
-  // to be `available` and doesn't need re-checking.
+  // One-shot reconcile after the first inbox load. The effect
+  // depends only on `loaded` so a fresh paste (which adds to
+  // `entries` and re-creates `reconcile`) doesn't trigger a redundant
+  // probe — the new entry is already known to be `available`. The
+  // ref keeps the latest reconcile available without listing it in
+  // the deps.
   const reconcileRef = useRef(reconcile);
   reconcileRef.current = reconcile;
   useEffect(() => {
-    if (loaded && entries.length > 0) void reconcileRef.current();
-  }, [loaded, entries.length]);
+    if (loaded) void reconcileRef.current();
+  }, [loaded]);
 
   if (!keysReady) {
     return (
@@ -667,7 +679,18 @@ function ClaimExecuteModal({
                 Stealth private key
               </span>
               <button
-                onClick={() => setRevealKey((v) => !v)}
+                onClick={() => {
+                  if (!revealKey) {
+                    const ok = window.confirm(
+                      "Reveal stealth private key?\n\n" +
+                        "Anyone with this key can spend the funds at the stealth " +
+                        "address. Only reveal it on a device you trust, with no " +
+                        "screen-sharing / recording active. Confirm to continue.",
+                    );
+                    if (!ok) return;
+                  }
+                  setRevealKey((v) => !v);
+                }}
                 className="text-[var(--color-primary)] hover:underline"
               >
                 {revealKey ? "Hide" : "Reveal"}

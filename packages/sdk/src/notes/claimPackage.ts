@@ -108,7 +108,7 @@ const DECIMAL_RE = /^\d+$/;
 const CLAIMS_PATH_LEN = 4;
 const CLAIMS_LEAF_COUNT = 16;
 
-function isClaimPackage(v: unknown): v is ClaimPackage {
+export function isClaimPackage(v: unknown): v is ClaimPackage {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
   if (o.version !== VERSION) return false;
@@ -144,11 +144,19 @@ function isClaimPackage(v: unknown): v is ClaimPackage {
   if (o.relayerUrl !== undefined && !isPlausibleHttpUrl(o.relayerUrl)) return false;
   if (
     o.ephemeralPubKey !== undefined &&
-    !(typeof o.ephemeralPubKey === "string" && /^0x[0-9a-fA-F]{66}$/.test(o.ephemeralPubKey))
+    !isCompressedPubkeyHex(o.ephemeralPubKey)
   ) {
     return false;
   }
   return true;
+}
+
+/** Shared shape check for an EIP-5564 compressed secp256k1 pubkey
+ *  (the `0x` + 33 hex bytes that goes into `ephemeralPubKey` and
+ *  similar fields). Exported so storage modules and ABI callers
+ *  share one definition. */
+export function isCompressedPubkeyHex(v: unknown): v is string {
+  return typeof v === "string" && /^0x[0-9a-fA-F]{66}$/.test(v);
 }
 
 /** Reject anything that won't reach a real HTTP(S) endpoint. Also

@@ -22,13 +22,15 @@
  * to last-writer-wins.
  */
 
-import { decodeClaimPackage, type ClaimPackage } from "../notes";
+import {
+  decodeClaimPackage,
+  isClaimPackage,
+  isCompressedPubkeyHex,
+  type ClaimPackage,
+} from "../notes";
 import { hasFolder, loadFile, saveFile } from "./folder";
 
 const STEALTH_INBOX_FILENAME = "zkscatter-stealth-inbox.json";
-/** 0x + 33 hex bytes = compressed secp256k1 point. Same shape used
- *  for `ClaimPackage.ephemeralPubKey` validation. */
-const PUBKEY_RE = /^0x[0-9a-fA-F]{66}$/;
 /** 0x + 32 hex bytes — raw secp256k1 scalar (no `0x04` prefix etc.).
  *  We persist private keys lower-case to match how `stealthWallet`
  *  emits them; the matcher tolerates either case on input but the
@@ -111,13 +113,14 @@ function isValidEntry(e: unknown): e is StealthInboxEntry {
   if (typeof v.rawInput !== "string") return false;
   if (v.source !== "link" && v.source !== "key") return false;
   if (v.status !== "available" && v.status !== "claimed") return false;
-  // pkg is structurally validated by `decodeClaimPackage` at load
-  // time; here we just confirm it's an object so the load doesn't
-  // crash later when consumers dereference its fields.
-  if (!v.pkg || typeof v.pkg !== "object") return false;
+  // Re-validate the persisted package against the canonical
+  // ClaimPackage schema — a hand-edited inbox file with a partial
+  // package would otherwise pass through and crash later when
+  // consumers dereference `pkg.claimsRoot` / `pkg.amount` / etc.
+  if (!isClaimPackage(v.pkg)) return false;
   if (
     v.ephemeralPubKey !== undefined &&
-    !(typeof v.ephemeralPubKey === "string" && PUBKEY_RE.test(v.ephemeralPubKey))
+    !isCompressedPubkeyHex(v.ephemeralPubKey)
   ) {
     return false;
   }
@@ -255,9 +258,26 @@ function decodePackageFromAnyForm(token: string): {
     }
     const hash = url.hash.replace(/^#/, "");
     if (!hash) throw new Error("Claim URL is missing the package fragment");
-    const pkg = decodeClaimPackage(hash);
-    const epk = pkg.ephemeralPubKey ?? url.searchParams.get("epk") ?? undefined;
-    return { pkg, ephemeralPubKey: epk ?? undefined };
+    const decoded = decodeClaimPackage(hash);
+    // Prefer the package's own field; fall back to a `?epk=` query
+    // string for older URL shapes. Any value coming from the query
+    // gets the same shape check the package validator applies to its
+    // field, so a malformed value is rejected at parse time rather
+    // than later at `loadStealthInbox` (which would surface as a
+    // corruption error on a file the user can't fix without editing
+    // JSON by hand).
+    const fromQuery = url.searchParams.get("epk");
+    if (fromQuery !== null && !isCompressedPubkeyHex(fromQuery)) {
+      throw new Error(
+        "Claim URL `epk=` query is not a valid compressed secp256k1 pubkey",
+      );
+    }
+    const epk = decoded.ephemeralPubKey ?? fromQuery ?? undefined;
+    // Mirror the URL-side ephPub onto the package so downstream
+    // consumers (`deriveStealthForPackage`, claim modal, etc.) only
+    // need to read one field instead of branching on parse origin.
+    const pkg: ClaimPackage = epk ? { ...decoded, ephemeralPubKey: epk } : decoded;
+    return { pkg, ephemeralPubKey: epk };
   }
   // Bare fragment / base64url payload.
   const stripped = token.replace(/^#/, "");
@@ -315,6 +335,26 @@ export async function markStealthInboxEntryClaimed(
             ...(txHash ? { txHash } : {}),
           }
         : e,
+    );
+    await writeInbox(next);
+  });
+}
+
+/** Mark several entries as claimed in a single read-modify-write so
+ *  the on-chain reconciler doesn't pay an O(N) write for each
+ *  matching nullifier. `claimedAt` is stamped from a single `Date.now()`
+ *  reading — close enough for a batch reconcile and avoids drift
+ *  between rows that all settled in the same probe. */
+export async function markStealthInboxEntriesClaimed(
+  ids: readonly string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  return withLock(async () => {
+    const entries = await loadStealthInbox();
+    const idSet = new Set(ids);
+    const claimedAt = Math.floor(Date.now() / 1000);
+    const next = entries.map((e) =>
+      idSet.has(e.id) ? { ...e, status: "claimed" as const, claimedAt } : e,
     );
     await writeInbox(next);
   });
