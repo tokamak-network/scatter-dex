@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { stealthWallet, computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
+import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { deriveStealthForPackage } from "../../_lib/stealthDerive";
 import {
   addStealthInboxEntry,
   loadStealthInbox,
@@ -84,20 +85,19 @@ function InboxBody() {
   // Cross-device reconciliation: for each "available" entry, compute
   // the claim nullifier locally (cheap — Poseidon of secret +
   // leafIndex, no proof) and ask the on-chain `claimNullifiers`
-  // mapping whether it's already burned. A `true` means somebody
-  // (this device or another) already claimed; flip the inbox row to
-  // `claimed`. Best-effort: a single entry's reconcile failure
-  // shouldn't block the rest, and a missing readProvider just skips.
+  // mapping whether it's already burned. `true` means somebody
+  // already claimed; flip the inbox row to `claimed`.
   const reconcile = useCallback(async () => {
     if (!readProvider || entries.length === 0) return;
     const pending = entries.filter((e) => e.status === "available");
     if (pending.length === 0) return;
     setReconciling(true);
     try {
-      // Group by settlement address — different runs can target
-      // different deployments, and constructing a contract per
-      // address keeps the call surface minimal without changing the
-      // single-chain assumption Pay already makes everywhere else.
+      // Group by settlement address so a single contract instance
+      // serves every entry on the same deployment; per-entry RPC and
+      // nullifier compute then run in parallel inside each group
+      // (ethers pipelines on the same provider). Sequential awaits
+      // would put a 50-entry refresh at ~10s+ on a public RPC.
       const bySettlement = new Map<string, StealthInboxEntry[]>();
       for (const e of pending) {
         const key = e.pkg.settlementAddress.toLowerCase();
@@ -112,21 +112,27 @@ function InboxBody() {
           PRIVATE_SETTLEMENT_ABI,
           readProvider,
         );
-        for (const entry of group) {
-          try {
-            const nullifier = await computeClaimNullifier(
-              BigInt(entry.pkg.secret),
-              BigInt(entry.pkg.leafIndex),
-            );
-            const used = (await settlement.claimNullifiers(
-              toBytes32Hex(nullifier),
-            )) as boolean;
-            if (used) {
-              await markStealthInboxEntryClaimed(entry.id);
-              any = true;
+        const results = await Promise.all(
+          group.map(async (entry) => {
+            try {
+              const nullifier = await computeClaimNullifier(
+                BigInt(entry.pkg.secret),
+                BigInt(entry.pkg.leafIndex),
+              );
+              const used = (await settlement.claimNullifiers(
+                toBytes32Hex(nullifier),
+              )) as boolean;
+              return { entry, used };
+            } catch (err) {
+              console.warn("[stealth-inbox] reconcile entry failed", entry.id, err);
+              return null;
             }
-          } catch (err) {
-            console.warn("[stealth-inbox] reconcile entry failed", entry.id, err);
+          }),
+        );
+        for (const r of results) {
+          if (r?.used) {
+            await markStealthInboxEntryClaimed(r.entry.id);
+            any = true;
           }
         }
       }
@@ -136,14 +142,16 @@ function InboxBody() {
     }
   }, [entries, readProvider, refresh]);
 
-  // Run a one-shot reconcile after the first entries load. The
-  // dependency on `loaded` (not `entries`) keeps it from re-running
-  // every time the user pastes a new entry — a fresh paste is
-  // already known to be "available" because it just came in.
+  // One-shot reconcile after the first inbox load. We bind through a
+  // ref instead of listing `reconcile` in the deps so the effect
+  // doesn't re-fire every time `entries` (and therefore the
+  // `useCallback` identity) changes — a fresh paste is already known
+  // to be `available` and doesn't need re-checking.
+  const reconcileRef = useRef(reconcile);
+  reconcileRef.current = reconcile;
   useEffect(() => {
-    if (loaded && entries.length > 0) void reconcile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
+    if (loaded && entries.length > 0) void reconcileRef.current();
+  }, [loaded, entries.length]);
 
   if (!keysReady) {
     return (
@@ -260,29 +268,22 @@ function PasteForm({
     setBusy(true);
     try {
       const parsed = parseClaimInput(input);
-      // Sanity-check: when we have an ephemeralPubKey, derive the
-      // expected stealth address with the user's keys and compare to
-      // the package recipient. Catches typos / cross-recipient pastes
-      // before they sit in the inbox unclaimable forever.
+      // Catches typos / cross-recipient pastes before they sit in the
+      // inbox unclaimable forever. Skipped when the paste has no
+      // ephPub (e.g. pre-derived privkey hand-off): we trust the
+      // sender's stated privkey there and verify it instead via the
+      // RowActions guard.
       if (parsed.ephemeralPubKey) {
-        let derivedAddr: string;
-        try {
-          derivedAddr = stealthWallet(
-            keys.spendingKey,
-            keys.viewingKey,
-            parsed.ephemeralPubKey,
-          ).address.toLowerCase();
-        } catch (e) {
+        const derived = deriveStealthForPackage(parsed.pkg, keys);
+        if (!derived) {
           throw new Error(
-            `Could not derive a stealth address from this ephemeral key: ${
-              e instanceof Error ? e.message : "unknown"
-            }`,
+            "Could not derive a stealth address from this ephemeral key.",
           );
         }
-        if (derivedAddr !== parsed.pkg.recipient.toLowerCase()) {
+        if (!derived.matches) {
           setMismatch(
             `This claim is addressed to ${shortAddr(parsed.pkg.recipient)}, ` +
-              `but your meta-address derives ${shortAddr(derivedAddr)} from ` +
+              `but your meta-address derives ${shortAddr(derived.address)} from ` +
               `the supplied ephemeral pubkey. The link may belong to a ` +
               `different recipient or your keys don't match the sender's records.`,
           );
@@ -489,8 +490,9 @@ function RowActions({
 }) {
   const canDeriveLocally =
     Boolean(entry.stealthPrivateKey) || Boolean(entry.ephemeralPubKey);
-  // Verify the derived stealth address actually matches the package
-  // recipient — guards against keys-don't-match-sender cases.
+  // Guards against keys-don't-match-sender cases: privkey path
+  // verifies via ethers.Wallet, ephPub path via the shared
+  // deriveStealthForPackage helper.
   const derivedMismatch = useMemo(() => {
     if (entry.stealthPrivateKey) {
       try {
@@ -501,12 +503,8 @@ function RowActions({
       }
     }
     if (entry.ephemeralPubKey) {
-      try {
-        const w = stealthWallet(spendingKey, viewingKey, entry.ephemeralPubKey);
-        return w.address.toLowerCase() !== entry.pkg.recipient.toLowerCase();
-      } catch {
-        return true;
-      }
+      const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+      return !derived || !derived.matches;
     }
     return false;
   }, [entry, spendingKey, viewingKey]);
@@ -587,21 +585,15 @@ function ClaimExecuteModal({
   const [error, setError] = useState<string | null>(null);
   const [revealKey, setRevealKey] = useState(false);
 
-  // Resolve the stealth privkey once per modal open. For "key" source
-  // entries it's already on disk; for "link" entries we derive on the
-  // fly. The privkey is shown post-claim so the user can import it
-  // into a wallet (the funds land at the stealth address, not their
-  // EOA).
+  // Resolve the stealth privkey once per modal open so the reveal UX
+  // can show it post-claim (funds land at the stealth address, not
+  // the user's EOA — they need the privkey to import).
   const stealthPriv = useMemo(() => {
     if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
-    if (entry.ephemeralPubKey) {
-      try {
-        return stealthWallet(spendingKey, viewingKey, entry.ephemeralPubKey).privateKey;
-      } catch {
-        return null;
-      }
-    }
-    return null;
+    return (
+      deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey })
+        ?.privateKey ?? null
+    );
   }, [entry, spendingKey, viewingKey]);
 
   async function run() {

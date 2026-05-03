@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
-import { stealthWallet } from "@zkscatter/sdk/zk";
 import {
   addStealthInboxEntry,
   markStealthInboxEntryClaimed,
@@ -13,6 +12,7 @@ import {
 import { getNetworkConfig } from "../_lib/network";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useFolderStorage } from "../_lib/folderStorage";
+import { deriveStealthForPackage } from "../_lib/stealthDerive";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -80,30 +80,10 @@ function ClaimInner() {
    *  claim later. Stays null on the non-stealth / no-folder paths. */
   const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
 
-  // Stealth wallet derivation: when the package carries an
-  // ephemeralPubKey AND the user has minted a meta-address on this
-  // device, ECDH the two against the stored viewing key to rebuild
-  // the spending key for the one-time stealth address. Falls back to
-  // null when either input is missing or the derivation throws (bad
-  // ephPub format), letting the page still render for receivers who
-  // are loading the link on a device without their keys.
-  const stealthDerivation = useMemo(() => {
-    if (!parsed?.pkg.ephemeralPubKey || !metaKeys) return null;
-    try {
-      const w = stealthWallet(
-        metaKeys.spendingKey,
-        metaKeys.viewingKey,
-        parsed.pkg.ephemeralPubKey,
-      );
-      return {
-        address: w.address.toLowerCase(),
-        privateKey: w.privateKey,
-        matches: w.address.toLowerCase() === parsed.recipientLower,
-      };
-    } catch {
-      return null;
-    }
-  }, [parsed, metaKeys]);
+  const stealthDerivation = useMemo(
+    () => (parsed ? deriveStealthForPackage(parsed.pkg, metaKeys) : null),
+    [parsed, metaKeys],
+  );
   const isStealth = !!parsed?.pkg.ephemeralPubKey;
   const stealthVerified = stealthDerivation?.matches === true;
 
