@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { stealthWallet } from "@zkscatter/sdk/zk";
+import { stealthWallet, computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
+import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import {
   addStealthInboxEntry,
   loadStealthInbox,
@@ -49,11 +50,13 @@ export default function StealthInboxPage() {
 
 function InboxBody() {
   const { keys, ready: keysReady, error: keysError } = useMetaAddress();
+  const { readProvider } = useWallet();
   const [entries, setEntries] = useState<StealthInboxEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [corrupt, setCorrupt] = useState<StealthInboxCorruptError | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeClaim, setActiveClaim] = useState<StealthInboxEntry | null>(null);
+  const [reconciling, setReconciling] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +80,70 @@ function InboxBody() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Cross-device reconciliation: for each "available" entry, compute
+  // the claim nullifier locally (cheap — Poseidon of secret +
+  // leafIndex, no proof) and ask the on-chain `claimNullifiers`
+  // mapping whether it's already burned. A `true` means somebody
+  // (this device or another) already claimed; flip the inbox row to
+  // `claimed`. Best-effort: a single entry's reconcile failure
+  // shouldn't block the rest, and a missing readProvider just skips.
+  const reconcile = useCallback(async () => {
+    if (!readProvider || entries.length === 0) return;
+    const pending = entries.filter((e) => e.status === "available");
+    if (pending.length === 0) return;
+    setReconciling(true);
+    try {
+      // Group by settlement address — different runs can target
+      // different deployments, and constructing a contract per
+      // address keeps the call surface minimal without changing the
+      // single-chain assumption Pay already makes everywhere else.
+      const bySettlement = new Map<string, StealthInboxEntry[]>();
+      for (const e of pending) {
+        const key = e.pkg.settlementAddress.toLowerCase();
+        const list = bySettlement.get(key);
+        if (list) list.push(e);
+        else bySettlement.set(key, [e]);
+      }
+      let any = false;
+      for (const [addr, group] of bySettlement) {
+        const settlement = new ethers.Contract(
+          addr,
+          PRIVATE_SETTLEMENT_ABI,
+          readProvider,
+        );
+        for (const entry of group) {
+          try {
+            const nullifier = await computeClaimNullifier(
+              BigInt(entry.pkg.secret),
+              BigInt(entry.pkg.leafIndex),
+            );
+            const used = (await settlement.claimNullifiers(
+              toBytes32Hex(nullifier),
+            )) as boolean;
+            if (used) {
+              await markStealthInboxEntryClaimed(entry.id);
+              any = true;
+            }
+          } catch (err) {
+            console.warn("[stealth-inbox] reconcile entry failed", entry.id, err);
+          }
+        }
+      }
+      if (any) await refresh();
+    } finally {
+      setReconciling(false);
+    }
+  }, [entries, readProvider, refresh]);
+
+  // Run a one-shot reconcile after the first entries load. The
+  // dependency on `loaded` (not `entries`) keeps it from re-running
+  // every time the user pastes a new entry — a fresh paste is
+  // already known to be "available" because it just came in.
+  useEffect(() => {
+    if (loaded && entries.length > 0) void reconcile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   if (!keysReady) {
     return (
@@ -130,16 +197,31 @@ function InboxBody() {
         </div>
       )}
       {entries.length > 0 && (
-        <InboxTable
-          entries={entries}
-          spendingKey={keys.spendingKey}
-          viewingKey={keys.viewingKey}
-          onClaim={setActiveClaim}
-          onRemove={async (id) => {
-            await removeStealthInboxEntry(id);
-            await refresh();
-          }}
-        />
+        <>
+          <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
+            <span>
+              {entries.filter((e) => e.status === "available").length} pending ·{" "}
+              {entries.filter((e) => e.status === "claimed").length} claimed
+            </span>
+            <button
+              onClick={() => void reconcile()}
+              disabled={reconciling}
+              className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
+            >
+              {reconciling ? "Refreshing…" : "Refresh status"}
+            </button>
+          </div>
+          <InboxTable
+            entries={entries}
+            spendingKey={keys.spendingKey}
+            viewingKey={keys.viewingKey}
+            onClaim={setActiveClaim}
+            onRemove={async (id) => {
+              await removeStealthInboxEntry(id);
+              await refresh();
+            }}
+          />
+        </>
       )}
       {activeClaim && (
         <ClaimExecuteModal

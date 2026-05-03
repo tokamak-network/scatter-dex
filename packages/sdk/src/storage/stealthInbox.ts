@@ -296,10 +296,13 @@ export async function addStealthInboxEntry(
   });
 }
 
-/** Mark an entry as claimed. No-op when the id isn't in the inbox. */
+/** Mark an entry as claimed. No-op when the id isn't in the inbox.
+ *  `txHash` is optional — pass it when the inbox itself executed the
+ *  claim, omit when reconciling from on-chain state and the tx hash
+ *  isn't known (e.g. the user claimed on a different device). */
 export async function markStealthInboxEntryClaimed(
   id: string,
-  txHash: string,
+  txHash?: string,
 ): Promise<void> {
   return withLock(async () => {
     const entries = await loadStealthInbox();
@@ -309,7 +312,7 @@ export async function markStealthInboxEntryClaimed(
             ...e,
             status: "claimed" as const,
             claimedAt: Math.floor(Date.now() / 1000),
-            txHash,
+            ...(txHash ? { txHash } : {}),
           }
         : e,
     );
