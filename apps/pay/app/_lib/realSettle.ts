@@ -148,14 +148,8 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     throw new Error(`maxFeeBps must be an integer in [0, 10000]; got ${maxFeeBps}`);
   }
 
-  // Same-token scatter: the order's literal fee is `sellAmount −
-  // totalLocked`, which is what the relayer ultimately charges (see
-  // `submitScatterDirectAuth` in zk-relayer). So we can pick any clean
-  // sellAmount we want — `totalLocked + clean_fee` — and the relayer
-  // will charge exactly `clean_fee`. Bps is folded into how we *derive*
-  // the clean fee from totalLocked, but it's not the literal on-chain
-  // fee anymore (the contract still enforces `fee × 10000 ≤
-  // sellAmount × maxFee` as an upper bound, satisfied by construction).
+  // sellAmount = totalLocked + fee. The relayer charges exactly
+  // `sellAmount − totalLocked`, so this lands as a clean token amount.
   const feeRaw = (batch.totalAmount * BigInt(maxFeeBps)) / 10_000n;
   const sellAmount = batch.totalAmount + feeRaw;
   const buyAmount = sellAmount;
@@ -164,13 +158,8 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
       `Source note (${stored.note.amount}) is smaller than sell amount (${sellAmount}).`,
     );
   }
-  // Settle must land before any recipient's releaseTime — otherwise
-  // the claim leaf isn't on-chain yet when the recipient is supposed
-  // to be able to claim. Anchor expiry to the earliest releaseTime in
-  // the batch so the invariant `settle.timestamp <= min(releaseTime)`
-  // is enforced by the contract (`block.timestamp > expiry` reverts
-  // OrderExpired). The wizard already gates claimFrom to `now + 3min`,
-  // so this leaves the relayer at least that long to settle.
+  // Settle must land before the earliest releaseTime — claim leaves
+  // become valid then. `block.timestamp > expiry` reverts OrderExpired.
   const minReleaseTime = batch.claims.reduce(
     (m, c) => (c.releaseTime < m ? c.releaseTime : m),
     batch.claims[0]!.releaseTime,

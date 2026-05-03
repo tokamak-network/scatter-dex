@@ -72,7 +72,7 @@ async function writeDrafts(drafts: WizardDraft[]): Promise<void> {
     return;
   }
   const file: DraftsFile = { version: 1, drafts };
-  await saveFile(WIZARD_DRAFTS_FILENAME, JSON.stringify(file, null, 2));
+  await saveFile(WIZARD_DRAFTS_FILENAME, JSON.stringify(file));
 }
 
 function matchSlot(d: WizardDraft, operator: string, label: string): boolean {

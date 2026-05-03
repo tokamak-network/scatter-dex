@@ -68,6 +68,16 @@ export function formatLocalStamp(unixSec: number | undefined): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
+/** "5m ago" / "2h ago" relative-time formatter. */
+export function formatRelativeAgo(unixSec: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSec;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 /** Parse a free-form amount string into a JS number. Strips commas,
  *  underscores, and whitespace (all common in spreadsheet exports);
  *  returns NaN on anything that isn't a plain decimal so the caller

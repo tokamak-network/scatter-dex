@@ -31,20 +31,17 @@ function pick(value: string | undefined, fallback = ""): string {
 // server and the wrong-chain banner rendered on the client agreeing
 // on the same chain.
 export function getNetworkConfig(): NetworkConfig {
-  // Per-token contract addresses come from build-time env so the
-  // wizard can deposit / settle against whatever the local deploy
-  // produced. LAUNCH_TOKENS provides the marketing metadata
-  // (name, decimals, category) but its `address` is a ZERO sentinel
-  // — overlay the env value here so downstream consumers
-  // (`realDeposit`, picker) see the real on-chain address.
-  const usdcAddr = pick(process.env.NEXT_PUBLIC_PAY_USDC, ZERO);
-  const usdtAddr = pick(process.env.NEXT_PUBLIC_PAY_USDT, ZERO);
-  const tonAddr = pick(process.env.NEXT_PUBLIC_PAY_TON, ZERO);
+  // Overlay env-provided contract addresses onto the LAUNCH_TOKENS
+  // metadata so non-native lookups resolve to the deployed contract
+  // (LAUNCH_TOKENS' address field is a ZERO sentinel).
+  const overlay: Record<string, string> = {
+    USDC: pick(process.env.NEXT_PUBLIC_PAY_USDC, ZERO),
+    USDT: pick(process.env.NEXT_PUBLIC_PAY_USDT, ZERO),
+    TON: pick(process.env.NEXT_PUBLIC_PAY_TON, ZERO),
+  };
   const tokens = Object.values(LAUNCH_TOKENS).map((t) => {
-    if (t.symbol === "USDC" && usdcAddr !== ZERO) return { ...t, address: usdcAddr };
-    if (t.symbol === "USDT" && usdtAddr !== ZERO) return { ...t, address: usdtAddr };
-    if (t.symbol === "TON" && tonAddr !== ZERO) return { ...t, address: tonAddr };
-    return t;
+    const addr = overlay[t.symbol];
+    return addr && addr !== ZERO ? { ...t, address: addr } : t;
   });
   return {
     chainId: Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337")),

@@ -74,13 +74,13 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
+import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
   loadWizardDraft,
   saveWizardDraft,
-} from "../../_lib/wizardDraft";
+} from "@zkscatter/sdk/storage";
 import {
   autoPickSourceNotes,
   pickFromSelectedNotes,
@@ -134,14 +134,6 @@ function formatClaimFrom(iso: string): string {
   return new Date(ms).toLocaleString();
 }
 
-function formatRelativeAgo(unixSec: number): string {
-  const diff = Math.floor(Date.now() / 1000) - unixSec;
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 /** Save the current run's recipient list as a CSV — same shape Step
  *  3 accepts on import, plus a header row carrying the run-level
@@ -645,9 +637,6 @@ function NewPayout() {
 
         const aggClaimPackages: ClaimPackage[] = [];
         let lastTxHash: string | undefined;
-        let aggFee = 0n;
-        // Hoist into the outer scope so persist() (declared above the
-        // settle branch) can read the running total.
         totalRelayerFeeRaw = 0n;
         const finalized = await Promise.allSettled(
           submitted.map(({ txHash, ctx }) =>
@@ -665,8 +654,7 @@ function NewPayout() {
           }
           lastTxHash = r.value.txHash;
           aggClaimPackages.push(...r.value.claimPackages);
-          aggFee += r.value.relayerFee;
-          totalRelayerFeeRaw = aggFee;
+          totalRelayerFeeRaw = (totalRelayerFeeRaw ?? 0n) + r.value.relayerFee;
           if (r.value.change) {
             await vault.add({
               symbol: token,

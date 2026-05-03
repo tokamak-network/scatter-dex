@@ -11,12 +11,12 @@ import {
 import { PoolBalanceCard } from "../_components/PoolBalanceCard";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
-import { parseAmount } from "../_lib/format";
+import { formatRelativeAgo, parseAmount } from "../_lib/format";
 import {
   clearWizardDraft,
   loadAllWizardDrafts,
   type WizardDraft,
-} from "../_lib/wizardDraft";
+} from "@zkscatter/sdk/storage";
 
 type Tab = "all" | RunCategory;
 type SortKey = "date" | "total" | "recipients" | "claimed";
@@ -279,12 +279,8 @@ export default function Dashboard() {
   );
 }
 
-/** Surface localStorage-backed wizard drafts at the dashboard bottom
- *  so the operator can pick up an in-progress payout without
- *  guessing whether one exists. Currently the wizard saves at most
- *  one draft per operator wallet (single localStorage key keyed by
- *  account); the UI is a list to leave room for future
- *  multi-draft expansion. */
+/** Surface workspace-folder wizard drafts so the operator can resume
+ *  an in-progress payout without guessing whether one exists. */
 function DraftsSection({ wallet }: { wallet: ReturnType<typeof useWallet> }) {
   const mounted = useMounted();
   const folder = useFolderStorage();
@@ -350,14 +346,6 @@ function DraftsSection({ wallet }: { wallet: ReturnType<typeof useWallet> }) {
   );
 }
 
-function formatRelativeAgo(unixSec: number): string {
-  const diff = Math.floor(Date.now() / 1000) - unixSec;
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function ScopeBar({
   scope,

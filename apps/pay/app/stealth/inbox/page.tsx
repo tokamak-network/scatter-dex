@@ -23,7 +23,29 @@ import { CopyButton, StealthFolderGate } from "../_components";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { submitClaim, type ClaimPhase } from "../../_lib/claimSubmit";
 import { getNetworkConfig } from "../../_lib/network";
-import { ERC20_ABI } from "@zkscatter/sdk";
+import { formatLocalStamp } from "../../_lib/format";
+import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
+
+/** True when `token` is the chain's WETH — claims auto-unwrap to
+ *  native ETH on payout, so native send-tx and `getBalance` are the
+ *  right primitives instead of ERC20 calls. */
+function isWrappedNative(token: string, cfg: NetworkConfig): boolean {
+  const weth = cfg.contracts.weth;
+  return Boolean(weth && token.toLowerCase() === weth.toLowerCase());
+}
+
+// One provider per RPC URL across the whole inbox. Without this each
+// row creates its own JsonRpcProvider + 30s interval, multiplying
+// connection overhead linearly with the number of claimed rows.
+const sharedProviders = new Map<string, ethers.JsonRpcProvider>();
+function getSharedProvider(rpcUrl: string): ethers.JsonRpcProvider {
+  let p = sharedProviders.get(rpcUrl);
+  if (!p) {
+    p = new ethers.JsonRpcProvider(rpcUrl);
+    sharedProviders.set(rpcUrl, p);
+  }
+  return p;
+}
 
 export default function StealthInboxPage() {
   return (
@@ -471,20 +493,14 @@ function StatusPill({ status }: { status: InboxRowStatus }) {
     );
   }
   if (status.kind === "locked") {
-    const d = new Date(status.unlocksAt! * 1000);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
     return (
       <span
-        title={`Unlocks at ${d.toLocaleString()}`}
+        title={`Unlocks at ${new Date(status.unlocksAt! * 1000).toLocaleString()}`}
         className="inline-flex items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
       >
         <span>Locked</span>
         <span className="font-normal opacity-80">
-          · opens {yyyy}-{mm}-{dd} {hh}:{mi}
+          · opens {formatLocalStamp(status.unlocksAt)}
         </span>
       </span>
     );
@@ -916,7 +932,7 @@ function TransferOutModal({
   const stealthAddr = entry.pkg.recipient;
 
   const cfg = getNetworkConfig();
-  const provider = useMemo(() => new ethers.JsonRpcProvider(cfg.rpcUrl), [cfg.rpcUrl]);
+  const provider = useMemo(() => getSharedProvider(cfg.rpcUrl), [cfg.rpcUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -932,9 +948,10 @@ function TransferOutModal({
   // line 1019-1024), so the stealth address holds native ETH not the
   // WETH ERC20. Transfers in that case are native value sends; for
   // any other token the standard ERC20.transfer path applies.
-  const isNative =
-    cfg.contracts.weth &&
-    entry.pkg.token.toLowerCase() === cfg.contracts.weth.toLowerCase();
+  // PrivateSettlement.claimWithProof unwraps WETH to native ETH on
+  // payout, so the recipient ends up holding native ETH rather than
+  // the WETH ERC20 — value transfers must use sendTransaction.
+  const isNative = isWrappedNative(entry.pkg.token, cfg);
 
   async function send() {
     setError(null);
@@ -1126,15 +1143,8 @@ function StealthBalance({
   const [bal, setBal] = useState<bigint | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
-    // PrivateSettlement.claimWithProof unwraps WETH to native ETH on
-    // payout (contract line 1019-1024) — so when pkg.token is the
-    // chain's WETH, the recipient holds **native** ETH after the
-    // claim, not WETH. Querying ERC20.balanceOf(WETH) on that address
-    // would always return 0 even though funds did arrive.
-    const isWeth =
-      cfg.contracts.weth &&
-      token.toLowerCase() === cfg.contracts.weth.toLowerCase();
+    const provider = getSharedProvider(cfg.rpcUrl);
+    const isWeth = isWrappedNative(token, cfg);
     const erc20 = isWeth ? null : new ethers.Contract(token, ERC20_ABI, provider);
     const tick = async () => {
       try {

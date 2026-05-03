@@ -271,19 +271,14 @@ export function createAuthorizeOrderRoutes(
       const pollUrl = `/api/authorize-orders/${nullifier}`;
 
       // ── 3. Idempotency — same nullifier maps to one outcome forever.
-      // Read the DB row (durable across restarts; the in-memory map is a
-      // cache). Re-verifying the proof on every retry would let an attacker
-      // force CPU work just by replaying old payloads — design §2.4.
-      // Exception: a `failed` outcome from a prior attempt is NOT
-      // permanent — the on-chain nullifier wasn't consumed (estimateGas
-      // reverted before broadcast), so the user can legitimately retry
-      // with a corrected order. Drop the failed row and treat the new
-      // POST as fresh. Other terminal states (`settled`, `expired`,
-      // `cancelled`, `dead_letter`) stay sticky.
+      // Failed orders are retryable (nullifier not consumed on a pre-
+      // broadcast revert); other terminal states stay sticky. Re-
+      // verifying the proof on every retry would let an attacker
+      // force CPU work just by replaying — design §2.4.
       const existing = _db?.getAuthorizeOrder(nullifier) ?? null;
       if (existing) {
         if (existing.status === "failed") {
-          _db?.deleteAuthorizeOrder?.(nullifier);
+          _db?.deleteAuthorizeOrder(nullifier);
           authorizeOrders.delete(nullifier);
         } else {
           // A replayed POST may carry a different `order` body than the one
