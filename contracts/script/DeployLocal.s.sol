@@ -24,7 +24,11 @@ contract MockIdentityRegistry is IIdentityRegistry {
 contract DeployLocal is Script {
     // Stored across helper calls so run()'s local variable count stays
     // below the EVM stack-depth limit when assembling the deploy summary.
+    // The summary surfaces all three live tiers so a dev sanity-checking
+    // the deploy can spot a missing tier registration.
     address internal _authorizeVerifier;
+    address internal _authorizeVerifier64;
+    address internal _authorizeVerifier128;
 
     struct Deployed {
         address relayerRegistry;
@@ -208,7 +212,13 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
+        // Surface every active tier's authorize verifier so a dev
+        // running `dev.sh` can spot a missing tier registration in the
+        // summary; the SDK reads addresses from the on-chain registry,
+        // so these env vars are informational rather than required.
         console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(authorizeVerifier)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_64_ADDRESS=", vm.toString(_authorizeVerifier64)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_128_ADDRESS=", vm.toString(_authorizeVerifier128)));
     }
 
     /// @dev Lifted out to keep `_printSummary`'s stack within the
@@ -223,10 +233,16 @@ contract DeployLocal is Script {
 
     function _deployCode(string memory what) internal returns (address addr) {
         bytes memory bytecode = vm.getCode(what);
+        // Surface the artifact name in both diagnostics. `getCode`
+        // returns empty bytes when the artifact is missing or
+        // misspelled (the `path:contract` format is exact-match);
+        // catching that early gives a clear "X.sol not found" error
+        // instead of the opaque `create` failure that follows.
+        require(bytecode.length != 0, string.concat("artifact not found: ", what));
         assembly {
             addr := create(0, add(bytecode, 0x20), mload(bytecode))
         }
-        require(addr != address(0), "deploy failed");
+        require(addr != address(0), string.concat("deploy failed: ", what));
     }
 
     /// @dev Pick token addresses (real mainnet or freshly-deployed mocks).
@@ -295,14 +311,24 @@ contract DeployLocal is Script {
     {
         address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
+        address claimVerifier64 = _deployCode("ClaimVerifier_64.sol:Groth16Verifier");
+        address claimVerifier128 = _deployCode("ClaimVerifier_128.sol:Groth16Verifier");
         address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
         address authorizeVerifier = _deployCode("AuthorizeVerifier.sol:Groth16Verifier");
+        address authorizeVerifier64 = _deployCode("AuthorizeVerifier_64.sol:Groth16Verifier");
+        address authorizeVerifier128 = _deployCode("AuthorizeVerifier_128.sol:Groth16Verifier");
         address cancelVerifier = _deployCode("CancelVerifier.sol:Groth16Verifier");
         _authorizeVerifier = authorizeVerifier;
+        _authorizeVerifier64 = authorizeVerifier64;
+        _authorizeVerifier128 = authorizeVerifier128;
         console.log("WithdrawVerifier:", withdrawVerifier);
-        console.log("ClaimVerifier:", claimVerifier);
+        console.log("ClaimVerifier (tier 16):", claimVerifier);
+        console.log("ClaimVerifier (tier 64):", claimVerifier64);
+        console.log("ClaimVerifier (tier 128):", claimVerifier128);
         console.log("DepositVerifier:", depositVerifier);
-        console.log("AuthorizeVerifier:", authorizeVerifier);
+        console.log("AuthorizeVerifier (tier 16):", authorizeVerifier);
+        console.log("AuthorizeVerifier (tier 64):", authorizeVerifier64);
+        console.log("AuthorizeVerifier (tier 128):", authorizeVerifier128);
         console.log("CancelVerifier:", cancelVerifier);
 
         pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
@@ -314,12 +340,19 @@ contract DeployLocal is Script {
         // settleAuth and scatterDirectAuth both require an authorize
         // verifier to be wired for the proof's tier before they accept
         // proofs; the constructor doesn't take it (set after deploy via
-        // setAuthorizeVerifier). Without this call every same-token order
-        // reverts with TierNotConfigured(16). Tier 16 is the only circuit
-        // shipped today; future 64 / 128 verifiers attach via the same
-        // setter without touching the deploy.
+        // setAuthorizeVerifier). All three live tiers (16 / 64 / 128)
+        // ship from the multi-tier ceremony — register each so a
+        // wizard run that picks tier-64 / tier-128 doesn't revert with
+        // TierNotConfigured. Same pattern for the matching claim
+        // verifiers; the constructor only seeds tier 16, so 64 / 128
+        // attach via setClaimVerifier(tier, …).
         privateSettlement.setAuthorizeVerifier(16, authorizeVerifier);
-        console.log("AuthorizeVerifier wired into PrivateSettlement");
+        privateSettlement.setAuthorizeVerifier(64, authorizeVerifier64);
+        privateSettlement.setAuthorizeVerifier(128, authorizeVerifier128);
+        privateSettlement.setClaimVerifier(64, claimVerifier64);
+        privateSettlement.setClaimVerifier(128, claimVerifier128);
+        console.log("AuthorizeVerifier (16/64/128) wired into PrivateSettlement");
+        console.log("ClaimVerifier (64/128) wired into PrivateSettlement");
         // cancelPrivate is gated the same way — without setCancelVerifier
         // every cancel reverts with `CancelVerifierNotSet()` (selector
         // 0xe5b08665), even though the user's wallet signed a perfectly
