@@ -295,14 +295,22 @@ contract DeployLocal is Script {
     {
         address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
+        address claimVerifier64 = _deployCode("ClaimVerifier_64.sol:Groth16Verifier");
+        address claimVerifier128 = _deployCode("ClaimVerifier_128.sol:Groth16Verifier");
         address depositVerifier = _deployCode("DepositVerifier.sol:Groth16Verifier");
         address authorizeVerifier = _deployCode("AuthorizeVerifier.sol:Groth16Verifier");
+        address authorizeVerifier64 = _deployCode("AuthorizeVerifier_64.sol:Groth16Verifier");
+        address authorizeVerifier128 = _deployCode("AuthorizeVerifier_128.sol:Groth16Verifier");
         address cancelVerifier = _deployCode("CancelVerifier.sol:Groth16Verifier");
         _authorizeVerifier = authorizeVerifier;
         console.log("WithdrawVerifier:", withdrawVerifier);
-        console.log("ClaimVerifier:", claimVerifier);
+        console.log("ClaimVerifier (tier 16):", claimVerifier);
+        console.log("ClaimVerifier (tier 64):", claimVerifier64);
+        console.log("ClaimVerifier (tier 128):", claimVerifier128);
         console.log("DepositVerifier:", depositVerifier);
-        console.log("AuthorizeVerifier:", authorizeVerifier);
+        console.log("AuthorizeVerifier (tier 16):", authorizeVerifier);
+        console.log("AuthorizeVerifier (tier 64):", authorizeVerifier64);
+        console.log("AuthorizeVerifier (tier 128):", authorizeVerifier128);
         console.log("CancelVerifier:", cancelVerifier);
 
         pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
@@ -314,12 +322,19 @@ contract DeployLocal is Script {
         // settleAuth and scatterDirectAuth both require an authorize
         // verifier to be wired for the proof's tier before they accept
         // proofs; the constructor doesn't take it (set after deploy via
-        // setAuthorizeVerifier). Without this call every same-token order
-        // reverts with TierNotConfigured(16). Tier 16 is the only circuit
-        // shipped today; future 64 / 128 verifiers attach via the same
-        // setter without touching the deploy.
+        // setAuthorizeVerifier). All three live tiers (16 / 64 / 128)
+        // ship from the multi-tier ceremony — register each so a
+        // wizard run that picks tier-64 / tier-128 doesn't revert with
+        // TierNotConfigured. Same pattern for the matching claim
+        // verifiers; the constructor only seeds tier 16, so 64 / 128
+        // attach via setClaimVerifier(tier, …).
         privateSettlement.setAuthorizeVerifier(16, authorizeVerifier);
-        console.log("AuthorizeVerifier wired into PrivateSettlement");
+        privateSettlement.setAuthorizeVerifier(64, authorizeVerifier64);
+        privateSettlement.setAuthorizeVerifier(128, authorizeVerifier128);
+        privateSettlement.setClaimVerifier(64, claimVerifier64);
+        privateSettlement.setClaimVerifier(128, claimVerifier128);
+        console.log("AuthorizeVerifier (16/64/128) wired into PrivateSettlement");
+        console.log("ClaimVerifier (64/128) wired into PrivateSettlement");
         // cancelPrivate is gated the same way — without setCancelVerifier
         // every cancel reverts with `CancelVerifierNotSet()` (selector
         // 0xe5b08665), even though the user's wallet signed a perfectly

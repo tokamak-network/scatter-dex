@@ -63,7 +63,7 @@ export const TIERS: readonly CircuitTier[] = [TIER_16, TIER_64, TIER_128];
  *  inserted in sorted position; the assertion below enforces it at
  *  module load to keep silent ordering bugs from changing tier
  *  selection. */
-export const ACTIVE_TIERS: readonly CircuitTier[] = [TIER_16];
+export const ACTIVE_TIERS: readonly CircuitTier[] = [TIER_16, TIER_64, TIER_128];
 
 for (let i = 1; i < ACTIVE_TIERS.length; i++) {
   if (ACTIVE_TIERS[i]!.cap <= ACTIVE_TIERS[i - 1]!.cap) {
