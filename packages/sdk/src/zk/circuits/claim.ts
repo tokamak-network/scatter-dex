@@ -85,7 +85,7 @@ export async function singleClaimTree(
   leafIndex: number,
   tier: CircuitTier = TIER_16,
 ): Promise<{ claimLeaf: bigint; allClaimLeaves: bigint[] }> {
-  const size = 1 << tier.claimsTreeDepth;
+  const size = tier.cap;
   if (leafIndex < 0 || leafIndex >= size) {
     throw new Error(
       `singleClaimTree: leafIndex ${leafIndex} out of range [0, ${size}) for tier ${tier.cap}`,
@@ -120,7 +120,7 @@ export async function buildClaimsTree(
   }>,
   tier: CircuitTier = TIER_16,
 ): Promise<{ root: bigint; layers: bigint[][]; leaves: bigint[] }> {
-  const size = 1 << tier.claimsTreeDepth;
+  const size = tier.cap;
   if (claims.length > size) {
     throw new Error(
       `buildClaimsTree: too many claims (${claims.length} > ${size}, tier ${tier.cap})`,
@@ -155,7 +155,7 @@ interface ResolvedTree {
 
 /** Fast path: caller already maintains an incremental tree. */
 function fromMerkleProof(p: MerkleProof, leafIndex: number, tier: CircuitTier): ResolvedTree {
-  const size = 1 << tier.claimsTreeDepth;
+  const size = tier.cap;
   if (leafIndex < 0 || leafIndex >= size) {
     throw new Error(
       `generateClaimProof: leafIndex ${leafIndex} out of range [0, ${size}) for tier ${tier.cap}`,
@@ -191,7 +191,7 @@ async function fromLeaves(
   expectedLeaf: bigint,
   tier: CircuitTier,
 ): Promise<ResolvedTree> {
-  const size = 1 << tier.claimsTreeDepth;
+  const size = tier.cap;
   if (allClaimLeaves.length !== size) {
     throw new Error(
       `generateClaimProof: allClaimLeaves length must be ${size} (got ${allClaimLeaves.length}, tier ${tier.cap})`,

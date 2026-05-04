@@ -9,19 +9,19 @@ export type TierAssetPaths = CircuitAssets;
 /** Resolve the per-tier authorize-circuit asset URLs for a given
  *  static-asset base directory.
  *
- *  Today only TIER_16 has compiled assets in `circuits/build/`; the
- *  TIER_64 / TIER_128 paths point at the same tier-16 files as a
- *  **placeholder** so consumer apps can already wire `pickActiveTier`
- *  through the worker layer without crashing on an unknown tier.
- *  When tier-64 / tier-128 ceremonies land, those entries flip to the
- *  real artifacts (`authorize_64.wasm` / `authorize_64_final.zkey`,
- *  etc.) and every caller picks them up automatically.
+ *  - TIER_16 → `<baseDir>/authorize.wasm` + `<baseDir>/authorize_final.zkey`
+ *    (legacy filename, present in every existing deploy).
+ *  - Higher tiers → `<baseDir>/authorize_<cap>.wasm` +
+ *    `<baseDir>/authorize_<cap>_final.zkey` (e.g. `authorize_64.wasm`).
  *
- *  The placeholder mapping is intentionally NOT silent — the
- *  `ACTIVE_TIERS` gate in production paths (Pay's `pickActiveTier`)
- *  prevents callers from ever requesting a tier whose verifier isn't
- *  on-chain, so the placeholder can only be reached via tests or
- *  manual overrides.
+ *  Today only the TIER_16 artifacts exist in `circuits/build/`; the
+ *  higher-tier paths will 404 until the corresponding ceremony ships
+ *  the matching `.wasm` / `.zkey` files. Production paths can't reach
+ *  those URLs accidentally — `pickActiveTier` only returns tiers in
+ *  {@link ACTIVE_TIERS}, which the deploy controls. The intentional
+ *  side effect: the moment a TIER_64 / TIER_128 ceremony drops the
+ *  files alongside the tier-16 ones and updates `ACTIVE_TIERS`, every
+ *  caller picks up the new artifacts with no code change.
  *
  *  Pass `baseDir` like `"/zk"` (Pay's `public/zk` static folder) or
  *  the per-app deploy path. No trailing slash. */

@@ -933,8 +933,8 @@ function NewPayout() {
       // smallest active tier that covers the run, falling back to
       // multi-batch on the largest active tier when no active tier
       // covers (today: only TIER_16, so 17+ recipients chunk into
-      // multiple tier-16 batches; ships of TIER_64 / TIER_128 collapse
-      // those into single batches automatically).
+      // multiple tier-16 batches; shipping TIER_64 / TIER_128 will
+      // collapse those into single batches automatically).
       return splitPayout(recipients, { token: tokenAddress });
     } catch {
       return [];

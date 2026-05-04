@@ -54,8 +54,24 @@ export const TIERS: readonly CircuitTier[] = [TIER_16, TIER_64, TIER_128];
 
 /** Tiers that have a live verifier today. Production code should
  *  validate against this list before submitting; everything outside
- *  it will revert on-chain with `TierNotConfigured(tier)`. */
+ *  it will revert on-chain with `TierNotConfigured(tier)`.
+ *
+ *  **Ordering invariant**: must stay sorted by `cap` ascending.
+ *  {@link pickActiveTier} relies on the order — the first match wins
+ *  (smallest tier that covers `n`), and the multi-batch fallback uses
+ *  the last entry as the largest available cap. New tiers must be
+ *  inserted in sorted position; the assertion below enforces it at
+ *  module load to keep silent ordering bugs from changing tier
+ *  selection. */
 export const ACTIVE_TIERS: readonly CircuitTier[] = [TIER_16];
+
+for (let i = 1; i < ACTIVE_TIERS.length; i++) {
+  if (ACTIVE_TIERS[i]!.cap <= ACTIVE_TIERS[i - 1]!.cap) {
+    throw new Error(
+      `ACTIVE_TIERS must be sorted by cap ascending: index ${i} (cap=${ACTIVE_TIERS[i]!.cap}) does not exceed index ${i - 1} (cap=${ACTIVE_TIERS[i - 1]!.cap})`,
+    );
+  }
+}
 
 /** Pick the smallest tier that fits `recipientCount`. Returns the
  *  matching {@link CircuitTier} or throws when no tier covers the
