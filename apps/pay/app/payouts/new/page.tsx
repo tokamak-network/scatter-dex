@@ -247,7 +247,17 @@ function NewPayout() {
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // `kind` distinguishes total failure (nothing landed on-chain — the
+  // wizard draft is the only artifact) from partial failure (≥ 1
+  // batch broadcast — the source notes are spent and a RunRecord
+  // should let the operator resume). `recoverable` flags whether the
+  // expected recovery artifact actually exists: for "total" that's a
+  // wizard draft on disk (requires `folder.ready`); for "partial"
+  // it's a successfully persisted RunRecord (the partial-path persist
+  // swallows save errors, so success is not guaranteed).
+  const [submitError, setSubmitError] = useState<
+    { kind: "total" | "partial"; message: string; recoverable: boolean } | null
+  >(null);
   const router = useRouter();
 
   const { account, chainId, signer } = useWallet();
@@ -439,6 +449,11 @@ function NewPayout() {
     let totalRelayerFeeRaw: bigint | undefined;
     let submittedRows: typeof rows | undefined;
     let submittedEphPubByAddress: Record<string, string> | undefined;
+    // Whether `persist(allowFailure: true)` succeeded on the partial
+    // path. The helper swallows save errors and returns null, so a
+    // partial banner promising "saved" must check this flag rather
+    // than assume the side effect happened.
+    let partialRecordSaved = false;
     try {
       const cfg = getNetworkConfig();
       // Real submit is only attempted when the network is wired AND
@@ -631,6 +646,18 @@ function NewPayout() {
           }
         }
 
+        // Reflect broadcast progress as soon as the relayer accepts a
+        // batch — `submitted` only holds entries the broadcast loop
+        // successfully sent. If `finalizeRealSettle` later fails (e.g.
+        // receipt timeout), `lastTxHash` will stay undefined but the
+        // outer `txHash` already records that something landed, so the
+        // catch block can classify the failure as partial rather than
+        // total. The finalize loop overwrites `txHash` with the last
+        // confirmed hash on the success path.
+        if (submitted.length > 0) {
+          txHash = submitted[submitted.length - 1]!.txHash;
+        }
+
         const aggClaimPackages: ClaimPackage[] = [];
         let lastTxHash: string | undefined;
         totalRelayerFeeRaw = 0n;
@@ -676,7 +703,8 @@ function NewPayout() {
           // nothing new.
           const anySettled = !!lastTxHash || aggClaimPackages.length > 0;
           if (anySettled || resumeRecord) {
-            await persist(/* allowFailure */ true);
+            const id = await persist(/* allowFailure */ true);
+            partialRecordSaved = id !== null;
           }
           throw partialBatchError;
         }
@@ -702,7 +730,24 @@ function NewPayout() {
       }
     } catch (err) {
       console.error("[Pay] settle failed", err);
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      // `txHash` / `claimPackages` are populated incrementally inside
+      // the settle branch — if either is set, at least one batch
+      // landed on-chain and a RunRecord was persisted (partial). With
+      // neither, nothing settled and the auto-saved wizard draft is
+      // the only artifact.
+      const anySettled =
+        !!txHash || (claimPackages?.length ?? 0) > 0 || !!resumeRecord;
+      const kind: "total" | "partial" = anySettled ? "partial" : "total";
+      // Total: the wizard draft only exists when a notes folder is
+      // attached (both draft hooks early-return on `!folder.ready`).
+      // Partial: the persist helper swallows save errors, so trust the
+      // flag rather than assume success.
+      const recoverable = kind === "total" ? folder.ready : partialRecordSaved;
+      setSubmitError({
+        kind,
+        recoverable,
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -1537,9 +1582,33 @@ function NewPayout() {
               {submitting ? "Proving + submitting…" : "Sign & submit"}
             </button>
             {submitError && (
-              <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-                <strong className="mb-0.5 block">Submit failed</strong>
-                {submitError}
+              <div className="space-y-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+                <strong className="block">Submit failed</strong>
+                <p>
+                  {submitError.kind === "total"
+                    ? submitError.recoverable
+                      ? "Nothing was sent on-chain. Your inputs are still saved as a draft — pick it back up from the dashboard whenever you want to retry."
+                      : "Nothing was sent on-chain. Your inputs were not saved (no notes folder attached) — keep this tab open and retry, or attach a folder to enable draft persistence."
+                    : submitError.recoverable
+                      ? "Some batches landed on-chain but the run did not finish. The partial result is saved — open it from the dashboard to resume the remaining recipients."
+                      : "Some batches landed on-chain but the run did not finish, and the partial record could not be saved. Copy the details below before navigating away — you'll need them to recover the run."}
+                </p>
+                {submitError.recoverable && (
+                  <Link
+                    href="/dashboard"
+                    className="inline-block rounded-md border border-[var(--color-warning)] px-2.5 py-1 font-medium hover:bg-[var(--color-warning)] hover:text-white"
+                  >
+                    {submitError.kind === "total" ? "Go to drafts" : "Go to dashboard"}
+                  </Link>
+                )}
+                <details className="text-[var(--color-text-muted)]">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wide">
+                    Details
+                  </summary>
+                  <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[10px]">
+                    {submitError.message}
+                  </pre>
+                </details>
               </div>
             )}
             <div className="text-center text-xs text-[var(--color-text-muted)]">
