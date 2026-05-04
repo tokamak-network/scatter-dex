@@ -3,7 +3,7 @@ import {
   poseidonHash,
   type MerkleProof,
 } from "../commitment";
-import { CLAIMS_TREE_DEPTH } from "../constants";
+import { type CircuitTier, TIER_16 } from "../constants";
 import { buildMerkleTree, getMerkleProof } from "../merkle";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
 import type { Groth16Proof } from "../types";
@@ -23,11 +23,11 @@ export interface ClaimProofInput {
   amount: bigint;
   /** Unix-seconds release time the original order set. */
   releaseTime: bigint;
-  /** Index of this claim within the settlement's 16-leaf tree. */
+  /** Index of this claim within the settlement's claims tree. */
   leafIndex: number;
-  /** All 16 leaves of the claims tree (padded with `0n`). Used to
-   *  re-derive `claimsRoot` and the inclusion proof. Ignored when
-   *  `merkleProof` is supplied. */
+  /** All `2^tier.claimsTreeDepth` leaves of the claims tree
+   *  (padded with `0n`). Used to re-derive `claimsRoot` and the
+   *  inclusion proof. Ignored when `merkleProof` is supplied. */
   allClaimLeaves: bigint[];
   /** Optional fast path: when supplied, `allClaimLeaves` is ignored
    *  and the circuit takes this proof's `pathElements` /
@@ -55,15 +55,21 @@ interface SnarkjsModule {
   };
 }
 
-/** Number of leaves in the claims tree (`2 ^ CLAIMS_TREE_DEPTH`).
- *  Exported so consumers building single-entry trees inline don't
- *  recompute the same constant. */
-export const CLAIMS_TREE_SIZE = 1 << CLAIMS_TREE_DEPTH;
+/** Tier-16 claims-tree size, kept as the historical export.
+ *
+ *  @deprecated Derive size from the picked tier
+ *  (`1 << tier.claimsTreeDepth`) so it follows the source settlement's
+ *  circuit; this constant is hard-pinned to TIER_16 and will silently
+ *  return the wrong value on a tier-64 / tier-128 settlement once
+ *  those ship. */
+export const CLAIMS_TREE_SIZE = 1 << TIER_16.claimsTreeDepth;
 
-/** Build a 16-leaf claims tree with a single entry at `leafIndex`,
- *  rest zero-padded. The shape every single-claim flow needs;
- *  centralised so the inline poseidonHash + Array(16).fill(0n)
- *  pattern lives in one place.
+/** Build an N-leaf claims tree with a single entry at `leafIndex`,
+ *  rest zero-padded. `tier` defaults to TIER_16 — the only live
+ *  authorize tier today — but a settlement produced by a higher tier
+ *  must pass that tier so the claims tree size matches. The shape
+ *  every single-claim flow needs; centralised so the inline
+ *  poseidonHash + Array(N).fill(0n) pattern lives in one place.
  *
  *  Note: `recipient` and `token` are passed as BigInt — call sites
  *  with 0x-prefixed hex strings should `BigInt(addr)` before
@@ -77,10 +83,12 @@ export async function singleClaimTree(
     releaseTime: bigint;
   },
   leafIndex: number,
+  tier: CircuitTier = TIER_16,
 ): Promise<{ claimLeaf: bigint; allClaimLeaves: bigint[] }> {
-  if (leafIndex < 0 || leafIndex >= CLAIMS_TREE_SIZE) {
+  const size = tier.cap;
+  if (leafIndex < 0 || leafIndex >= size) {
     throw new Error(
-      `singleClaimTree: leafIndex ${leafIndex} out of range [0, ${CLAIMS_TREE_SIZE})`,
+      `singleClaimTree: leafIndex ${leafIndex} out of range [0, ${size}) for tier ${tier.cap}`,
     );
   }
   const claimLeaf = await poseidonHash([
@@ -90,7 +98,7 @@ export async function singleClaimTree(
     entry.amount,
     entry.releaseTime,
   ]);
-  const allClaimLeaves = new Array<bigint>(CLAIMS_TREE_SIZE).fill(0n);
+  const allClaimLeaves = new Array<bigint>(size).fill(0n);
   allClaimLeaves[leafIndex] = claimLeaf;
   return { claimLeaf, allClaimLeaves };
 }
@@ -110,14 +118,16 @@ export async function buildClaimsTree(
     amount: bigint;
     releaseTime: bigint;
   }>,
+  tier: CircuitTier = TIER_16,
 ): Promise<{ root: bigint; layers: bigint[][]; leaves: bigint[] }> {
-  if (claims.length > CLAIMS_TREE_SIZE) {
+  const size = tier.cap;
+  if (claims.length > size) {
     throw new Error(
-      `buildClaimsTree: too many claims (${claims.length} > ${CLAIMS_TREE_SIZE})`,
+      `buildClaimsTree: too many claims (${claims.length} > ${size}, tier ${tier.cap})`,
     );
   }
   const leaves: bigint[] = [];
-  for (let i = 0; i < CLAIMS_TREE_SIZE; i++) {
+  for (let i = 0; i < size; i++) {
     if (i < claims.length) {
       const c = claims[i]!;
       leaves.push(
@@ -133,7 +143,7 @@ export async function buildClaimsTree(
       leaves.push(0n);
     }
   }
-  const { root, layers } = await buildMerkleTree(leaves, CLAIMS_TREE_DEPTH);
+  const { root, layers } = await buildMerkleTree(leaves, tier.claimsTreeDepth);
   return { root, layers, leaves };
 }
 
@@ -144,20 +154,21 @@ interface ResolvedTree {
 }
 
 /** Fast path: caller already maintains an incremental tree. */
-function fromMerkleProof(p: MerkleProof, leafIndex: number): ResolvedTree {
-  if (leafIndex < 0 || leafIndex >= CLAIMS_TREE_SIZE) {
+function fromMerkleProof(p: MerkleProof, leafIndex: number, tier: CircuitTier): ResolvedTree {
+  const size = tier.cap;
+  if (leafIndex < 0 || leafIndex >= size) {
     throw new Error(
-      `generateClaimProof: leafIndex ${leafIndex} out of range [0, ${CLAIMS_TREE_SIZE})`,
+      `generateClaimProof: leafIndex ${leafIndex} out of range [0, ${size}) for tier ${tier.cap}`,
     );
   }
-  if (p.pathElements.length !== CLAIMS_TREE_DEPTH) {
+  if (p.pathElements.length !== tier.claimsTreeDepth) {
     throw new Error(
-      `generateClaimProof: merkleProof.pathElements length must be ${CLAIMS_TREE_DEPTH} (got ${p.pathElements.length})`,
+      `generateClaimProof: merkleProof.pathElements length must be ${tier.claimsTreeDepth} (got ${p.pathElements.length})`,
     );
   }
-  if (p.pathIndices.length !== CLAIMS_TREE_DEPTH) {
+  if (p.pathIndices.length !== tier.claimsTreeDepth) {
     throw new Error(
-      `generateClaimProof: merkleProof.pathIndices length must be ${CLAIMS_TREE_DEPTH} (got ${p.pathIndices.length})`,
+      `generateClaimProof: merkleProof.pathIndices length must be ${tier.claimsTreeDepth} (got ${p.pathIndices.length})`,
     );
   }
   for (let i = 0; i < p.pathIndices.length; i++) {
@@ -178,10 +189,12 @@ async function fromLeaves(
   allClaimLeaves: bigint[],
   leafIndex: number,
   expectedLeaf: bigint,
+  tier: CircuitTier,
 ): Promise<ResolvedTree> {
-  if (allClaimLeaves.length !== CLAIMS_TREE_SIZE) {
+  const size = tier.cap;
+  if (allClaimLeaves.length !== size) {
     throw new Error(
-      `generateClaimProof: allClaimLeaves length must be ${CLAIMS_TREE_SIZE} (got ${allClaimLeaves.length})`,
+      `generateClaimProof: allClaimLeaves length must be ${size} (got ${allClaimLeaves.length}, tier ${tier.cap})`,
     );
   }
   if (leafIndex < 0 || leafIndex >= allClaimLeaves.length) {
@@ -194,7 +207,7 @@ async function fromLeaves(
       "generateClaimProof: claim data does not match the leaf at the given index — wrong claim file or settlement",
     );
   }
-  const { root, layers } = await buildMerkleTree(allClaimLeaves, CLAIMS_TREE_DEPTH);
+  const { root, layers } = await buildMerkleTree(allClaimLeaves, tier.claimsTreeDepth);
   const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
   return { claimsRoot: root, pathElements, pathIndices };
 }
@@ -206,14 +219,15 @@ async function fromLeaves(
  *  - claim data hashes to the leaf at `leafIndex` (slow path) —
  *    catches "wrong claim file" / "wrong settlement" mistakes
  *    loudly instead of after a 2 s proof
- *  - `allClaimLeaves.length === 2^CLAIMS_TREE_DEPTH` */
+ *  - `allClaimLeaves.length === 2^tier.claimsTreeDepth` */
 export async function generateClaimProof(
   input: ClaimProofInput,
   assets: CircuitAssets,
+  tier: CircuitTier = TIER_16,
 ): Promise<ClaimProofResult> {
   let resolved: ResolvedTree;
   if (input.merkleProof) {
-    resolved = fromMerkleProof(input.merkleProof, input.leafIndex);
+    resolved = fromMerkleProof(input.merkleProof, input.leafIndex, tier);
   } else {
     // Compute expectedLeaf only on the slow path — the fast path
     // doesn't consume it.
@@ -224,7 +238,7 @@ export async function generateClaimProof(
       input.amount,
       input.releaseTime,
     ]);
-    resolved = await fromLeaves(input.allClaimLeaves, input.leafIndex, expectedLeaf);
+    resolved = await fromLeaves(input.allClaimLeaves, input.leafIndex, expectedLeaf, tier);
   }
 
   const nullifier = await computeClaimNullifier(
