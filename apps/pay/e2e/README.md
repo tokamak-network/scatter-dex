@@ -57,9 +57,12 @@ apps/pay/
     └── wizard.spec.ts        # `/payouts/new` entry-screen smoke
 ```
 
-Per-spec parallelism is enabled (`fullyParallel: true`); each spec
-file gets its own browser context so they don't share workspace
-state.
+`fullyParallel: true` parallelises both **across** spec files AND
+**within** a single file — every test runs in its own worker /
+browser context, so a test that needs ordering with another test
+must opt in explicitly via `test.describe.serial(...)`. Today no
+spec shares state (each test navigates fresh, no workspace folder
+or vault is reused), so the default is correct as-is.
 
 ## Adding tests
 

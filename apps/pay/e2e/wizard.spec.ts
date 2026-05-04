@@ -19,12 +19,17 @@ test.describe("Payout wizard — entry screen", () => {
       .first();
     await expect(templateCard).toBeVisible();
 
-    // The Stepper renders all five stage labels (`STEPPER_LABELS`) —
-    // an early render error would drop the whole header. Anchor on
-    // "Template" + "Review & sign" so the assertion covers the two
-    // ends of the stepper, not just one button that happens to be
-    // visible during a partial render.
-    await expect(page.getByText(/Template/i).first()).toBeVisible();
-    await expect(page.getByText(/Review & sign/i).first()).toBeVisible();
+    // The Stepper renders each label as a `<button>` numbered
+    // `1 Template` … `5 Review & sign`. Anchor by role on both
+    // endpoints so the assertion covers the two ends of the stepper
+    // — a generic `getByText(/Template/i)` matches the step-1
+    // heading too and would stay green even if the Stepper itself
+    // failed to render.
+    await expect(
+      page.getByRole("button", { name: /1\s*Template/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /5\s*Review & sign/i }),
+    ).toBeVisible();
   });
 });

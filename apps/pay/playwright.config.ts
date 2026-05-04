@@ -15,8 +15,11 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  // Each spec file runs serial (its own browser context); files run
-  // in parallel — the smoke tests don't share workspace state today.
+  // `fullyParallel: true` parallelises both across spec files AND
+  // across tests within a single file — every test gets its own
+  // worker / browser context, so any test that needs ordering must
+  // opt in via `test.describe.serial(...)`. Today no spec shares
+  // state (each test navigates fresh), so this is the right default.
   fullyParallel: true,
   // CI gets one retry to absorb flakes from `next dev`'s first-paint
   // jitter; locally we surface failures immediately.
@@ -25,7 +28,13 @@ export default defineConfig({
   // is hosted alongside the test runner; locally the OS scheduler
   // handles the parallelism fine.
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "github" : "list",
+  // CI keeps the GitHub annotations reporter for inline failure
+  // surfacing AND emits the HTML report so the README's "upload
+  // playwright-report/" guidance produces a real artefact. Locally
+  // the list reporter is enough.
+  reporter: process.env.CI
+    ? [["github"], ["html", { open: "never" }]]
+    : "list",
   timeout: 30_000,
 
   use: {

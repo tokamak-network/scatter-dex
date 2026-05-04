@@ -11,17 +11,29 @@ test.describe("Landing page", () => {
       page.getByRole("heading", { name: /Send payroll, grants, and bonuses/i }),
     ).toBeVisible();
 
-    // The call-to-action that gates the full app — if it disappears,
-    // the dashboard route is unreachable from the landing.
-    const cta = page.getByRole("link", { name: /Start a payout|Open dashboard|Dashboard/i });
-    await expect(cta.first()).toBeVisible();
+    // Both hero CTAs — "Try a sample payout" routes into the wizard,
+    // "See dashboard" into the dashboard. Anchor on both so a regression
+    // that drops one but not the other is caught (a single-CTA assertion
+    // would be satisfied by the always-present header `Dashboard` nav).
+    await expect(
+      page.getByRole("link", { name: /Try a sample payout/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /See dashboard/i }),
+    ).toBeVisible();
   });
 
   test("dashboard route mounts without a wallet", async ({ page }) => {
     // Regression smoke for the wallet-less render path — a wallet
     // throw at module load would surface as an unhandled promise
-    // rejection here. Workspace bar should always render.
+    // rejection here. Anchor on the `Recent payouts` heading because
+    // it's rendered only by the dashboard route's own component tree;
+    // the previous `Workspace|Notes folder|Connect` selector matched
+    // strings that survive a client-side crash in the dashboard
+    // (header nav + workspace bar render in the layout shell).
     await page.goto("/dashboard");
-    await expect(page.getByText(/Workspace|Notes folder|Connect/i).first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Recent payouts/i }),
+    ).toBeVisible();
   });
 });
