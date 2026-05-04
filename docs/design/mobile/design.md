@@ -564,7 +564,7 @@ Hermes (RN)                        WebView (숨김)
 함의:
 - 모바일은 17명 이상 수신자 run을 거부하거나, 16명 단위로 분할(웹의 multi-batch fallback과 동일 패턴)해야 합니다. UI에서 `pickActiveTier`를 그대로 호출하면 안 되고, 모바일은 TIER_16을 단일 옵션으로 취급해야 합니다.
 - `mobile/scripts/copy-zk-assets.sh`의 `CIRCUITS` 목록과 `scripts/check-zk-artifacts.sh`의 `mobile_copies()` 술어가 이 정책을 코드에 반영합니다.
-- 향후 모바일에서 더 큰 티어를 띄우려면 (예: 진행 표시 UI를 갖춘 on-demand asset download), 본 README의 정책 + 두 스크립트 + 본 문서 절을 함께 갱신해야 합니다.
+- 향후 모바일에서 더 큰 티어를 띄우려면 (예: 진행 표시 UI를 갖춘 on-demand asset download), 다음 세 곳을 함께 갱신해야 합니다: `mobile/assets/zk-native/README.md`, `mobile/scripts/copy-zk-assets.sh` + `scripts/check-zk-artifacts.sh`, 그리고 본 문서의 § 10.1.
 
 ---
 

@@ -40,8 +40,9 @@ NATIVE_TEST_VECTORS="$MOBILE_DIR/native-prover/test-vectors/circom"
 # for the multi-tier rollout, but mobile does NOT bundle those
 # tiers — adding ~140 MB of zkey to the APK is not viable, and the
 # higher-tier prove time pushes past the foreground-UX budget on
-# mobile-class hardware. See `mobile/assets/zk/README.md` for the
-# full policy and the conditions that would let us reconsider.
+# mobile-class hardware. See `mobile/assets/zk-native/README.md`
+# for the full policy and the conditions that would let us
+# reconsider.
 CIRCUITS=(authorize cancel claim deposit withdraw)
 
 echo "=== Copying ZK circuit assets for mobile (native prover) ==="
