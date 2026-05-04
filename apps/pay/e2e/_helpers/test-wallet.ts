@@ -158,7 +158,7 @@ export async function installTestWallet(
           case "eth_signTypedData_v3":
           case "eth_sign":
             throw new Error(
-              `[test-wallet] ${method} not supported yet — see apps/pay/e2e/README.md "What this harness does NOT cover" + apps/pay/e2e/_helpers/test-wallet.ts (signing follow-up).`,
+              `[test-wallet] ${method} not supported yet — see apps/pay/e2e/README.md "What this harness does NOT cover (yet)" + apps/pay/e2e/_helpers/test-wallet.ts (signing follow-up).`,
             );
 
           // Chain switch — pretend success when the target is the
