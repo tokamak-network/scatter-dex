@@ -713,10 +713,10 @@ function NewPayout() {
       // landed on-chain and a RunRecord was persisted (partial). With
       // neither, nothing settled and the auto-saved wizard draft is
       // the only artifact.
-      const settledAnything =
+      const anySettled =
         !!txHash || (claimPackages?.length ?? 0) > 0 || !!resumeRecord;
       setSubmitError({
-        kind: settledAnything ? "partial" : "total",
+        kind: anySettled ? "partial" : "total",
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -1562,13 +1562,12 @@ function NewPayout() {
                       a draft — pick it back up from the dashboard whenever you
                       want to retry.
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => router.push("/dashboard")}
-                      className="rounded-md border border-[var(--color-warning)] px-2.5 py-1 font-medium hover:bg-[var(--color-warning)] hover:text-white"
+                    <Link
+                      href="/dashboard"
+                      className="inline-block rounded-md border border-[var(--color-warning)] px-2.5 py-1 font-medium hover:bg-[var(--color-warning)] hover:text-white"
                     >
                       Go to drafts
-                    </button>
+                    </Link>
                   </>
                 ) : (
                   <p>
