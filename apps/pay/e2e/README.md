@@ -12,30 +12,40 @@ caught in CI rather than at user time.
 - **Static-page smoke** — `/`, `/dashboard`, `/payouts/new` mount
   without a wallet (`landing.spec.ts`, `wizard.spec.ts`). Catches
   hydration / `useWallet`-throw-at-module-load regressions.
-- **Wallet bridge** — `wallet-bridge.spec.ts` exercises a hand-rolled
-  EIP-1193 stub (`_helpers/test-wallet.ts`) that injects
-  `window.ethereum` before React mounts. The stub answers
+- **Wallet bridge — read-only** — `wallet-bridge.spec.ts` exercises
+  a hand-rolled EIP-1193 stub (`_helpers/test-wallet.ts`) that
+  injects `window.ethereum` before React mounts. The stub answers
   `eth_accounts` / `eth_chainId` locally and forwards every other
-  method to a configured RPC URL (anvil by default), so any future
-  test that needs read-side on-chain state can lean on it without
-  Synpress.
+  method to a configured RPC URL (anvil by default).
+- **Wallet bridge — signing** — when `installTestWallet` is given
+  a `privateKey`, the bridge enables `personal_sign`,
+  `eth_signTypedData_v4`, and `eth_sendTransaction` by forwarding
+  to a node-side `ethers.Wallet` via Playwright's
+  `page.exposeFunction`. The browser stub stays free of any
+  signing crypto bundle. `wallet-bridge.spec.ts` recovers the
+  signer for both `personal_sign` and `eth_signTypedData_v4` to
+  prove the round-trip works.
 
 ## What this harness does NOT cover (yet)
 
-- **Signing methods** — `eth_sendTransaction`, `personal_sign`,
-  `eth_signTypedData_v4` intentionally throw in the bridge today.
-  The stub locks the contract loudly (the test fails with a
-  message pointing at this README) so a flow that ships before
-  the signer add-on doesn't silently green-light.
-- **Settle / claim / transfer-out scenarios** — they require the
-  signer add-on above plus a running anvil + zk-relayer
-  (`bash scripts/dev.sh --apps pay --mock`). Tracked as a
-  follow-up.
+- **Settle / claim / transfer-out scenarios** — the bridge can
+  sign now, but exercising the full Pay flows still needs a
+  running anvil + zk-relayer + the relayer's `/api/info`
+  reachable (`bash scripts/dev.sh --apps pay --mock`). Tracked
+  as a follow-up: write the first end-to-end spec that boots
+  the stack and walks a single-recipient payout.
 - **WETH end-to-end** — see the manual checklist at
-  `docs/operations/qa-pay-weth-transferout.md`. That doc is the
-  source of truth for the WETH stealth → claim → native-ETH
-  transfer-out path until the signer add-on lands.
-- **Multi-tier proving** — same gating (signer + dev.sh stack).
+  `docs/operations/qa-pay-weth-transferout.md`. The Playwright
+  conversion is gated on the dev.sh-driven follow-up above.
+- **Multi-tier proving** — same gating; once the dev.sh-driven
+  spec lands, vary the recipient count to exercise tier 64 / 128.
+
+## Permanently unsupported
+
+- **`eth_signTransaction` / raw `eth_sign`** — even with
+  `privateKey`, these throw on purpose. Pay doesn't use them;
+  any test that hits them is exercising a regression worth
+  failing loudly over.
 
 ## Setup
 
@@ -96,9 +106,13 @@ or vault is reused), so the default is correct as-is.
   `eth_accounts`; chain id is mocked locally; everything else
   forwards to the RPC URL you pass (defaults to `127.0.0.1:8545`,
   i.e. `dev.sh --mock`'s anvil).
-- **Wallet-needed (signing)**: not yet — see "does NOT cover" above.
-  When the signer follow-up lands, extend `test-wallet.ts` rather
-  than introducing a parallel bridge.
+- **Wallet-needed (signing)**: pass `privateKey` (matching
+  `account`) to `installTestWallet`; the bridge wires
+  `personal_sign` / `eth_signTypedData_v4` / `eth_sendTransaction`
+  through a node-side `ethers.Wallet`. `eth_sendTransaction`
+  populates + broadcasts via the configured `rpcUrl`, so any test
+  that hits it must be running against a live anvil (or another
+  RPC happy to accept the broadcast).
 
 ## CI
 

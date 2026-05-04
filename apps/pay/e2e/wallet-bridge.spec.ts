@@ -42,10 +42,10 @@ test.describe("Wallet bridge", () => {
     ).not.toBeVisible();
   });
 
-  test("signing methods throw a recognisable error", async ({ page }) => {
-    // Lock the contract: tests that need signing get a clear error
-    // pointing at the helper they should extend, instead of an
-    // opaque RPC failure that buries the diagnostic.
+  test("signing methods throw a recognisable error without a privateKey", async ({ page }) => {
+    // Read-only install (no privateKey) — every signing method
+    // must reject loudly so a test author who forgot the option
+    // gets a clear pointer at the right place to add it.
     await installTestWallet(page, {
       account: ANVIL_DEFAULT.account,
       chainId: ANVIL_DEFAULT.chainId,
@@ -61,6 +61,97 @@ test.describe("Wallet bridge", () => {
         return (e as Error).message;
       }
     });
-    expect(err).toContain("signing follow-up");
+    expect(err).toContain("install with { privateKey }");
+  });
+
+  test("personal_sign produces a recoverable signature", async ({ page }) => {
+    await installTestWallet(page, {
+      account: ANVIL_DEFAULT.account,
+      chainId: ANVIL_DEFAULT.chainId,
+      privateKey: ANVIL_DEFAULT.privateKey,
+    });
+    await page.goto("/");
+
+    // Sign "hello" via the bridge, then verify the signature
+    // recovers to ANVIL_DEFAULT.account so we know the bridge
+    // wired the node-side ethers signer correctly. Anchoring on
+    // recovery (not the bytes themselves) keeps the test stable
+    // across ethers patch versions that might tweak v normalisation.
+    const result = await page.evaluate(async () => {
+      const eth = (window as unknown as {
+        ethereum: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
+      }).ethereum;
+      const messageHex = "0x" +
+        Array.from(new TextEncoder().encode("hello"))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      const sig = (await eth.request({
+        method: "personal_sign",
+        params: [messageHex, "0x0"],
+      })) as string;
+      return { sig, messageHex };
+    });
+
+    expect(result.sig).toMatch(/^0x[0-9a-f]{130}$/i);
+    const { ethers } = await import("ethers");
+    const recovered = ethers.verifyMessage(
+      ethers.getBytes(result.messageHex),
+      result.sig,
+    );
+    expect(recovered.toLowerCase()).toBe(ANVIL_DEFAULT.account.toLowerCase());
+  });
+
+  test("install rejects a privateKey whose address doesn't match account", async ({ page }) => {
+    // Negative path for the address-mismatch precheck. A test
+    // author who hand-types a wrong account or copy-pastes the
+    // wrong key needs an immediate fail at install time, not a
+    // confusing signature-recovery mismatch deep in another spec.
+    await expect(
+      installTestWallet(page, {
+        account: "0x0000000000000000000000000000000000000001",
+        chainId: ANVIL_DEFAULT.chainId,
+        privateKey: ANVIL_DEFAULT.privateKey,
+      }),
+    ).rejects.toThrow(/derives.*but options\.account/);
+  });
+
+  test("eth_signTypedData_v4 produces a recoverable signature", async ({ page }) => {
+    await installTestWallet(page, {
+      account: ANVIL_DEFAULT.account,
+      chainId: ANVIL_DEFAULT.chainId,
+      privateKey: ANVIL_DEFAULT.privateKey,
+    });
+    await page.goto("/");
+
+    // Standard EIP-712 example — Mail with a single Person field —
+    // round-tripped through the bridge. Recovery via
+    // `verifyTypedData` confirms the node-side signer handled the
+    // domain + types stripping correctly.
+    const typedData = {
+      domain: { name: "Test", version: "1", chainId: ANVIL_DEFAULT.chainId },
+      types: {
+        Person: [{ name: "wallet", type: "address" }],
+      },
+      primaryType: "Person",
+      message: { wallet: ANVIL_DEFAULT.account },
+    };
+    const sig = await page.evaluate(async (td) => {
+      const eth = (window as unknown as {
+        ethereum: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
+      }).ethereum;
+      return (await eth.request({
+        method: "eth_signTypedData_v4",
+        params: ["0x0", JSON.stringify(td)],
+      })) as string;
+    }, typedData);
+
+    const { ethers } = await import("ethers");
+    const recovered = ethers.verifyTypedData(
+      typedData.domain,
+      typedData.types,
+      typedData.message,
+      sig,
+    );
+    expect(recovered.toLowerCase()).toBe(ANVIL_DEFAULT.account.toLowerCase());
   });
 });
