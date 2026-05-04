@@ -247,7 +247,13 @@ function NewPayout() {
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // `kind` distinguishes total failure (nothing landed on-chain — the
+  // wizard draft is still the source of truth) from partial failure
+  // (at least one batch settled — a RunRecord exists and can be
+  // resumed). The banner copy and recovery action differ.
+  const [submitError, setSubmitError] = useState<
+    { kind: "total" | "partial"; message: string } | null
+  >(null);
   const router = useRouter();
 
   const { account, chainId, signer } = useWallet();
@@ -702,7 +708,17 @@ function NewPayout() {
       }
     } catch (err) {
       console.error("[Pay] settle failed", err);
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      // `txHash` / `claimPackages` are populated incrementally inside
+      // the settle branch — if either is set, at least one batch
+      // landed on-chain and a RunRecord was persisted (partial). With
+      // neither, nothing settled and the auto-saved wizard draft is
+      // the only artifact.
+      const settledAnything =
+        !!txHash || (claimPackages?.length ?? 0) > 0 || !!resumeRecord;
+      setSubmitError({
+        kind: settledAnything ? "partial" : "total",
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -1537,9 +1553,38 @@ function NewPayout() {
               {submitting ? "Proving + submitting…" : "Sign & submit"}
             </button>
             {submitError && (
-              <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-                <strong className="mb-0.5 block">Submit failed</strong>
-                {submitError}
+              <div className="space-y-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+                <strong className="block">Submit failed</strong>
+                {submitError.kind === "total" ? (
+                  <>
+                    <p>
+                      Nothing was sent on-chain. Your inputs are still saved as
+                      a draft — pick it back up from the dashboard whenever you
+                      want to retry.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => router.push("/dashboard")}
+                      className="rounded-md border border-[var(--color-warning)] px-2.5 py-1 font-medium hover:bg-[var(--color-warning)] hover:text-white"
+                    >
+                      Go to drafts
+                    </button>
+                  </>
+                ) : (
+                  <p>
+                    Some batches landed on-chain but the run did not finish.
+                    The partial result is saved — open it from the dashboard to
+                    resume the remaining recipients.
+                  </p>
+                )}
+                <details className="text-[var(--color-text-muted)]">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wide">
+                    Details
+                  </summary>
+                  <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[10px]">
+                    {submitError.message}
+                  </pre>
+                </details>
               </div>
             )}
             <div className="text-center text-xs text-[var(--color-text-muted)]">
