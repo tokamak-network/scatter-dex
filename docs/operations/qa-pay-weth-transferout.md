@@ -37,20 +37,41 @@ The two UI invariants:
 
 ## Setup
 
-Bring up the local stack from a clean state:
+Bring up the local stack from a clean state. `dev.sh` defaults to
+the legacy `frontend/` on port 3000; this checklist needs the **Pay**
+app on port 4001, so pass `--apps pay`:
 
 ```bash
-# 1. Start anvil + deploy + relayer + Pay dev server.
-bash scripts/dev.sh
-
-# 2. Confirm WETH wired in the deploy summary:
-#    Look for both lines:
-#      NEXT_PUBLIC_PAY_WETH=0x…
-#      NEXT_PUBLIC_WETH_ADDRESS=0x…   (same address — both env vars
-#                                       point at the same contract)
+# Start anvil + deploy + zk-relayer + Pay dev server. Use --mock when
+# you don't have the production zk-X509 stack handy (the standard
+# case for QA reruns).
+bash scripts/dev.sh --mock --apps pay
 ```
 
-Address mismatch between the two env vars or a zero `NEXT_PUBLIC_PAY_WETH` is the **single most common** failure mode and produces no UI error — the modal silently falls into the ERC20 path and the `WETH.transfer(to, amount)` reverts with `ERC20InsufficientBalance` because the stealth address actually holds native ETH, not WETH. **Verify the env vars before proceeding.**
+The deploy summary in `dev.sh`'s stdout uses `Label: 0xAddress` lines
+(see `scripts/dev.sh:440-443`). Confirm WETH was deployed by looking
+for the `WETH:` line in the summary block:
+
+```
+  RelayerRegistry:     0x…
+  WETH:                0x…
+  USDC:                0x…
+  …
+```
+
+Then look at `apps/pay/.env.local` (also written by `dev.sh`). It
+carries **two** env vars pointing at the same WETH contract:
+`NEXT_PUBLIC_WETH_ADDRESS` (`dev.sh:600`) and `NEXT_PUBLIC_PAY_WETH`
+(`dev.sh:620`). The inbox's `isWrappedNative` check at
+`apps/pay/app/stealth/inbox/page.tsx:32` reads the second one
+through `cfg.contracts.weth`; if it's zero or missing, the modal
+silently falls into the ERC20 path and `WETH.transfer(to, amount)`
+reverts with `ERC20InsufficientBalance` because the stealth address
+actually holds native ETH, not WETH.
+
+**Verify `NEXT_PUBLIC_PAY_WETH` in `apps/pay/.env.local` is the same
+non-zero address as the deploy summary's `WETH:` line before
+proceeding.**
 
 ## Scenario
 
@@ -58,7 +79,7 @@ Address mismatch between the two env vars or a zero `NEXT_PUBLIC_PAY_WETH` is th
 
 In the operator browser profile:
 
-1. Connect the operator wallet to Pay (`http://localhost:4002`).
+1. Connect the operator wallet to Pay (`http://localhost:4001`).
 2. `Dashboard → New payout`.
 3. **Token**: `WETH`. **Recipients**: one row with the recipient
    wallet's plain (non-stealth) address and an amount that fits in
@@ -91,13 +112,17 @@ recipient browser profile.
 **Verify on-chain (CLI)**:
 
 ```bash
-# Replace <stealth> with the address rendered on the claim page.
+# Replace <stealth> with the address rendered on the claim page, and
+# <weth> with the WETH address from the deploy summary (or
+# `NEXT_PUBLIC_PAY_WETH` in apps/pay/.env.local). dev.sh doesn't
+# export these into the caller's shell, so they're literal arguments
+# here.
 cast balance <stealth> --rpc-url http://localhost:8545
 
 # Expect: ≥ the amount you settled (no fee on the recipient side
 # for self-pay) — minus any gas spent claiming. The balance is in
 # wei, NOT WETH-token units, because the contract already unwrapped.
-cast call $WETH "balanceOf(address)(uint256)" <stealth> \
+cast call <weth> "balanceOf(address)(uint256)" <stealth> \
   --rpc-url http://localhost:8545
 # Expect: 0  (the WETH was withdrawn during the claim)
 ```
@@ -166,11 +191,15 @@ tokens still use the ERC20 send.
 
 ## Edge cases worth covering once
 
-- **Operator deposits from native ETH**: confirm
-  `realDeposit.ts:161` wraps via `WETH.deposit{value:…}` before
-  the commitment-pool deposit. The wrap is invisible to the wizard
-  but matters because the source note's token must equal WETH for
-  the settle's `claim.token === buyToken` constraint to hold.
+- **Operator deposits from native ETH**: confirm `realDeposit.ts`
+  wraps via `WETH.deposit({value: amount})` before the
+  commitment-pool deposit. Two paths exist depending on wallet
+  capability — atomic-batch (5792) at `realDeposit.ts:259`
+  (`encodeFunctionData("deposit")` inside the batch) or sequential
+  fallback at `realDeposit.ts:340` (`weth.deposit({value: …})`).
+  Either way the wrap must happen before the deposit, otherwise
+  the source note's token is the user's wallet ETH (not WETH) and
+  the settle's `claim.token === buyToken` constraint fails.
 - **Multiple recipients in one run**: settle to two recipients
   with WETH; verify both stealth addresses receive native ETH and
   both rows of the inbox show the native-path modal.
