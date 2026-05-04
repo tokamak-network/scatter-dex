@@ -6,19 +6,38 @@ cd "$(dirname "$0")/.."
 BUILD=build
 SNARKJS=./node_modules/.bin/snarkjs
 
-# Circuits to build: deposit, withdraw, claim, authorize, cancel
-CIRCUITS=(deposit withdraw claim authorize cancel)
+# Circuits to build. The authorize / claim circuits are split per
+# tier (16 / 64 / 128) — same template body, different
+# `component main` parameters in each wrapper file. Tier-16 keeps the
+# legacy filename (`authorize` / `claim`) so existing deploys don't
+# need a rename; higher tiers compile to `authorize_<cap>` /
+# `claim_<cap>`.
+CIRCUITS=(
+  deposit
+  withdraw
+  claim
+  claim_64
+  claim_128
+  authorize
+  authorize_64
+  authorize_128
+  cancel
+)
 
 # Map circuit name → Solidity verifier contract name.
 # Kept as a function (rather than an associative array) so the script
 # runs under bash 3.2, which is what macOS ships as /bin/bash.
 verifier_name_for() {
   case "$1" in
-    deposit)   printf "DepositVerifier\n" ;;
-    withdraw)  printf "WithdrawVerifier\n" ;;
-    claim)     printf "ClaimVerifier\n" ;;
-    authorize) printf "AuthorizeVerifier\n" ;;
-    cancel)    printf "CancelVerifier\n" ;;
+    deposit)        printf "DepositVerifier\n" ;;
+    withdraw)       printf "WithdrawVerifier\n" ;;
+    claim)          printf "ClaimVerifier\n" ;;
+    claim_64)       printf "ClaimVerifier_64\n" ;;
+    claim_128)      printf "ClaimVerifier_128\n" ;;
+    authorize)      printf "AuthorizeVerifier\n" ;;
+    authorize_64)   printf "AuthorizeVerifier_64\n" ;;
+    authorize_128)  printf "AuthorizeVerifier_128\n" ;;
+    cancel)         printf "CancelVerifier\n" ;;
     *) printf "ERROR: no verifier mapping for circuit '%s'\n" "$1" >&2; return 1 ;;
   esac
 }
