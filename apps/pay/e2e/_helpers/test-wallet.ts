@@ -43,16 +43,32 @@ export interface TestWalletOptions {
 }
 
 /**
+ * Handle returned by {@link installTestWallet}. Lets a test trigger
+ * EIP-1193 events the SDK's wallet hook subscribes to (`accountsChanged`,
+ * `chainChanged`) without re-doing the `page.evaluate(() => window.…)`
+ * dance every time. The next-iteration signer add-on extends the
+ * same handle, so existing tests don't need to migrate. */
+export interface TestWalletHandle {
+  /** Fire an EIP-1193 event on the in-page provider. Routes to every
+   *  listener `eth.on(event, …)` ever registered. The SDK uses this
+   *  for `accountsChanged` (account swap) and `chainChanged` (network
+   *  swap); a test simulating either should call this method rather
+   *  than re-installing the bridge. */
+  emit(event: string, ...args: unknown[]): Promise<void>;
+}
+
+/**
  * Install the test wallet on `page` so it's available the moment
  * any document loads (including pre-mount React effects). Returns
- * a void promise so callers can `await` before navigating; this
- * matters because `addInitScript` resolves before the next page
- * load, but tests using `goto` after this resolve are guaranteed to
- * see the stub. */
+ * a {@link TestWalletHandle} for follow-up event injection; tests
+ * that don't need to swap accounts mid-run can ignore the return
+ * value. `addInitScript` resolves before the next page load, so
+ * `await`-ing this call is enough — every subsequent `goto` sees
+ * the stub. */
 export async function installTestWallet(
   page: Page,
   options: TestWalletOptions,
-): Promise<void> {
+): Promise<TestWalletHandle> {
   const opts: Required<TestWalletOptions> = {
     account: options.account,
     chainId: options.chainId,
@@ -68,23 +84,41 @@ export async function installTestWallet(
     const chainIdHex = "0x" + cfg.chainId.toString(16);
     const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
 
+    // Monotonic JSON-RPC request id. `Date.now()` collides when two
+    // requests happen within the same millisecond (common during a
+    // React render that fans out `eth_call` + `eth_chainId` from
+    // multiple effects in one tick).
+    let nextRpcId = 1;
+
     async function rpcPassthrough(method: string, params: unknown): Promise<unknown> {
       // Forward the method to the configured RPC. Read-side methods
       // (`eth_blockNumber`, `eth_call`, `eth_getLogs`, etc.) all land
       // here; the wallet doesn't need to know about them individually.
-      const res = await fetch(cfg.rpcUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method,
-          params: params ?? [],
-          id: Date.now(),
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(cfg.rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method,
+            params: params ?? [],
+            id: nextRpcId++,
+          }),
+        });
+      } catch (e) {
+        // Network-level failure — RPC server down, DNS, refused
+        // connection. Surface the URL so the test author knows
+        // exactly which target they're missing.
+        throw new Error(
+          `[test-wallet] RPC ${method} fetch failed against ${cfg.rpcUrl}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
       if (!res.ok) {
         throw new Error(
-          `[test-wallet] RPC ${method} HTTP ${res.status}: ${await res.text()}`,
+          `[test-wallet] RPC ${method} ${cfg.rpcUrl} HTTP ${res.status}: ${await res.text()}`,
         );
       }
       const json = (await res.json()) as { result?: unknown; error?: { message: string; code: number } };
@@ -156,18 +190,48 @@ export async function installTestWallet(
       },
     };
 
-    // Stash on window first, then announce it. The `ethereum#initialized`
-    // event lets late-injected wallets (the SDK has a bootstrap effect
-    // for them) re-bind without a page reload — it's harmless here
-    // because Pay's first effect already runs after init scripts, but
-    // it keeps the surface symmetric with real wallets.
+    // Required by the SDK: `packages/sdk/src/react/wallet.tsx`
+    // listens for `ethereum#initialized` to re-bind on a wallet that
+    // injects after first paint. Without dispatching this, late
+    // hydration paths would miss the bridge.
     Object.defineProperty(window, "ethereum", {
       value: provider,
       configurable: true,
       writable: true,
     });
+    // Stash a separate reference for the post-install handle. Tests
+    // reach this via `page.evaluate(...)` in the returned
+    // `TestWalletHandle.emit`. Kept distinct from `window.ethereum`
+    // so a future test that swaps the public provider (e.g. to
+    // simulate a wallet disconnect by reassigning `window.ethereum`)
+    // doesn't lose the bridge's event-emit channel.
+    (window as unknown as Record<string, unknown>).__testWallet = {
+      emit(event: string, ...args: unknown[]) {
+        const list = listeners[event];
+        if (!list) return;
+        for (const handler of list.slice()) {
+          try {
+            handler(...args);
+          } catch (err) {
+            console.error(`[test-wallet] listener for ${event} threw`, err);
+          }
+        }
+      },
+    };
     window.dispatchEvent(new Event("ethereum#initialized"));
   }, opts);
+
+  return {
+    async emit(event, ...args) {
+      await page.evaluate(
+        ({ event, args }) => {
+          const t = (window as unknown as { __testWallet?: { emit(e: string, ...a: unknown[]): void } }).__testWallet;
+          t?.emit(event, ...args);
+        },
+        { event, args },
+      );
+    },
+  };
 }
 
 /**
