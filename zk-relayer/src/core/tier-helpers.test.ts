@@ -28,8 +28,8 @@ describe("CircuitTier registry", () => {
     expect(1 << TIER_128.claimsTreeDepth).toBe(TIER_128.cap);
   });
 
-  it("only marks tier 16 active until the 64/128 ceremonies ship", () => {
-    expect(ACTIVE_TIERS).toEqual([TIER_16]);
+  it("activates all three tiers in ascending cap order", () => {
+    expect(ACTIVE_TIERS).toEqual([TIER_16, TIER_64, TIER_128]);
   });
 
   it("keeps the legacy constants pointing at tier 16", () => {
