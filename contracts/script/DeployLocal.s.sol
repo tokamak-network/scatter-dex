@@ -24,7 +24,11 @@ contract MockIdentityRegistry is IIdentityRegistry {
 contract DeployLocal is Script {
     // Stored across helper calls so run()'s local variable count stays
     // below the EVM stack-depth limit when assembling the deploy summary.
+    // The summary surfaces all three live tiers so a dev sanity-checking
+    // the deploy can spot a missing tier registration.
     address internal _authorizeVerifier;
+    address internal _authorizeVerifier64;
+    address internal _authorizeVerifier128;
 
     struct Deployed {
         address relayerRegistry;
@@ -208,7 +212,13 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
+        // Surface every active tier's authorize verifier so a dev
+        // running `dev.sh` can spot a missing tier registration in the
+        // summary; the SDK reads addresses from the on-chain registry,
+        // so these env vars are informational rather than required.
         console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(authorizeVerifier)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_64_ADDRESS=", vm.toString(_authorizeVerifier64)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_128_ADDRESS=", vm.toString(_authorizeVerifier128)));
     }
 
     /// @dev Lifted out to keep `_printSummary`'s stack within the
@@ -223,10 +233,16 @@ contract DeployLocal is Script {
 
     function _deployCode(string memory what) internal returns (address addr) {
         bytes memory bytecode = vm.getCode(what);
+        // Surface the artifact name in both diagnostics. `getCode`
+        // returns empty bytes when the artifact is missing or
+        // misspelled (the `path:contract` format is exact-match);
+        // catching that early gives a clear "X.sol not found" error
+        // instead of the opaque `create` failure that follows.
+        require(bytecode.length != 0, string.concat("artifact not found: ", what));
         assembly {
             addr := create(0, add(bytecode, 0x20), mload(bytecode))
         }
-        require(addr != address(0), "deploy failed");
+        require(addr != address(0), string.concat("deploy failed: ", what));
     }
 
     /// @dev Pick token addresses (real mainnet or freshly-deployed mocks).
@@ -303,6 +319,8 @@ contract DeployLocal is Script {
         address authorizeVerifier128 = _deployCode("AuthorizeVerifier_128.sol:Groth16Verifier");
         address cancelVerifier = _deployCode("CancelVerifier.sol:Groth16Verifier");
         _authorizeVerifier = authorizeVerifier;
+        _authorizeVerifier64 = authorizeVerifier64;
+        _authorizeVerifier128 = authorizeVerifier128;
         console.log("WithdrawVerifier:", withdrawVerifier);
         console.log("ClaimVerifier (tier 16):", claimVerifier);
         console.log("ClaimVerifier (tier 64):", claimVerifier64);

@@ -20,12 +20,11 @@ export const COMMIT_TREE_DEPTH = 20;
  *  shared across tiers (claimsRoot already aggregates the variable-
  *  length claims set inside the circuit).
  *
- *  **Migration status:** today only `generateAuthorizeProof` /
- *  `splitPayout` are wired against {@link MAX_CLAIMS_PER_SIDE} —
- *  those callers still resolve the tier-16 cap implicitly through
- *  the deprecated re-export. As tier 64 / 128 ship, the proof
- *  helpers will be re-shaped to take a {@link CircuitTier} so the
- *  cap is no longer derived from a module-level constant. */
+ *  All three protocol tiers (16 / 64 / 128) are live; the proof
+ *  helpers (`generateAuthorizeProof`, `generateClaimProof`,
+ *  `splitPayout`) take a {@link CircuitTier} parameter and default
+ *  to TIER_16 only for legacy callers. {@link MAX_CLAIMS_PER_SIDE}
+ *  stays as a deprecated re-export for the same reason. */
 export interface CircuitTier {
   /** Max claims per side (= 2^claimsTreeDepth). Doubles as the
    *  on-chain verifier registry key on PrivateSettlement. */
@@ -34,17 +33,22 @@ export interface CircuitTier {
   readonly claimsTreeDepth: 4 | 6 | 7;
 }
 
-/** Tier 16 — the only circuit live today. Claims tree depth 4 → 16
- *  leaves, ~15K constraints, ptau pot15 / pot16. */
+/** Tier 16 — depth 4 → 16 leaves, ~23K authorize constraints, ptau
+ *  pot15. The default + smallest tier; what every Pay run uses
+ *  for ≤ 16 recipients. */
 export const TIER_16: CircuitTier = { cap: 16, claimsTreeDepth: 4 };
 
-/** Tier 64 — planned. Depth 6 → 64 leaves. ~60K constraints. ptau
- *  pot17 covers it. Verifier registers via PrivateSettlement
- *  `setAuthorizeVerifier(64, addr)` once the ceremony ships. */
+/** Tier 64 — depth 6 → 64 leaves, ~56K authorize constraints, ptau
+ *  pot16. Picked by `pickActiveTier` for runs of 17–64 recipients.
+ *  Registered on `PrivateSettlement` via `setAuthorizeVerifier(64,
+ *  addr)` + `setClaimVerifier(64, addr)`. */
 export const TIER_64: CircuitTier = { cap: 64, claimsTreeDepth: 6 };
 
-/** Tier 128 — planned. Depth 7 → 128 leaves. ~120K constraints.
- *  Heaviest prove time, mobile-borderline. ptau pot18 covers it. */
+/** Tier 128 — depth 7 → 128 leaves, ~101K authorize constraints,
+ *  ptau pot17. Picked by `pickActiveTier` for runs of 65–128
+ *  recipients. Heaviest prove time (~6–12 s on a mid-tier laptop;
+ *  mobile-borderline) — Pay's wizard surfaces the trade-off in the
+ *  Privacy plan. */
 export const TIER_128: CircuitTier = { cap: 128, claimsTreeDepth: 7 };
 
 /** Public registry of every tier the SDK knows about, ordered by
