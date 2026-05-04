@@ -35,6 +35,14 @@ NATIVE_TEST_VECTORS="$MOBILE_DIR/native-prover/test-vectors/circom"
 # requires a matching `rust_witness::witness!(name)` +
 # `set_circom_circuits!` entry in mobile/native-prover/src/lib.rs and
 # a `CIRCUITS` row in mobile/src/services/NativeProverService.ts.
+# Tier-16 only. The web frontends (apps/pay, apps/pro, frontend/)
+# also ship `authorize_64` / `authorize_128` / `claim_64` / `claim_128`
+# for the multi-tier rollout, but mobile does NOT bundle those
+# tiers — adding ~140 MB of zkey to the APK is not viable, and the
+# higher-tier prove time pushes past the foreground-UX budget on
+# mobile-class hardware. See `mobile/assets/zk-native/README.md`
+# for the full policy and the conditions that would let us
+# reconsider.
 CIRCUITS=(authorize cancel claim deposit withdraw)
 
 echo "=== Copying ZK circuit assets for mobile (native prover) ==="

@@ -553,6 +553,19 @@ Hermes (RN)                        WebView (숨김)
 1. circomlibjs 브라우저 번들 (esbuild + 폴리필: `Buffer` / `process` / `Worker` stub / `crypto` / `stream`).
 2. snarkjs + zk-engine을 HTML에 인라인 → `zk-webview.html`.
 
+### 10.1 회로 티어 정책 — 모바일은 TIER_16 전용
+
+웹 프론트엔드(apps/pay, apps/pro)는 멀티-티어 인프라(TIER_16 / TIER_64 / TIER_128)를 지원하고 `pickActiveTier(recipientCount)`로 자동 라우팅하지만, **모바일은 TIER_16만 번들링**합니다.
+
+이유:
+- **번들 사이즈**: TIER_64 zkey ≈ 50 MB, TIER_128 zkey ≈ 90 MB. 두 티어를 합치면 APK/IPA에 ~140 MB가 추가되어 제품 코드 이전에 이미 모바일 설치 풋프린트가 무너집니다. 웹은 정적 호스팅 + 워커 lazy-load로 해결하지만 RN의 asset 파이프라인에는 직접 매핑되지 않습니다.
+- **프루빙 시간**: TIER_128은 미들급 노트북에서 ~6–12s. 모바일급 하드웨어는 더 느려서 foreground 작업으로 합리적인 시간을 넘기게 됩니다. TIER_16(~1–2s)도 이미 로딩 UX 한계입니다.
+
+함의:
+- 모바일은 17명 이상 수신자 run을 거부하거나, 16명 단위로 분할(웹의 multi-batch fallback과 동일 패턴)해야 합니다. UI에서 `pickActiveTier`를 그대로 호출하면 안 되고, 모바일은 TIER_16을 단일 옵션으로 취급해야 합니다.
+- `mobile/scripts/copy-zk-assets.sh`의 `CIRCUITS` 목록과 `scripts/check-zk-artifacts.sh`의 `mobile_copies()` 술어가 이 정책을 코드에 반영합니다.
+- 향후 모바일에서 더 큰 티어를 띄우려면 (예: 진행 표시 UI를 갖춘 on-demand asset download), 다음 세 곳을 함께 갱신해야 합니다: `mobile/assets/zk-native/README.md`, `mobile/scripts/copy-zk-assets.sh` + `scripts/check-zk-artifacts.sh`, 그리고 본 문서의 § 10.1.
+
 ---
 
 ## 11. WalletConnect 흐름

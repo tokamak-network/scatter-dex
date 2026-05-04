@@ -58,10 +58,13 @@ CIRCUITS=(
 
 mobile_copies() {
   case "$1" in
-    # Mobile only ships the tier-16 circuits today; tier-64 / tier-128
-    # zkeys are too large to bundle in an RN binary and are not exposed
-    # to mobile consumers yet (see mobile/scripts/copy-zk-assets.sh).
-    deposit|claim|authorize|cancel) return 0 ;;
+    # Mobile bundles the tier-16 circuits today (see
+    # mobile/scripts/copy-zk-assets.sh's `CIRCUITS` array — which is
+    # the source of truth). Tier-64 / tier-128 zkeys are too large to
+    # bundle in an RN binary and are deliberately not exposed to
+    # mobile consumers — `mobile/assets/zk-native/README.md` captures
+    # the full policy + the conditions that would let us reconsider.
+    deposit|withdraw|claim|authorize|cancel) return 0 ;;
     *) return 1 ;;
   esac
 }

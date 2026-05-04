@@ -1,20 +1,21 @@
-# ZK Circuit Assets
+# Legacy WebView ZK Assets — moved
 
-This directory holds compiled circuit files required at runtime:
-- `deposit.wasm` + `deposit_final.zkey` — deposit proof
-- `claim.wasm` + `claim_final.zkey` — claim proof
-- `authorize.wasm` + `authorize_final.zkey` — authorize proof (market + limit orders)
+The mobile prover migrated off the WebView path in Phase C-4
+(`mobile/scripts/build-zk-webview.mjs` still ships the engine bundle
+at `mobile/assets/zk-webview.html`, but the per-circuit zkeys + wasms
+no longer live here).
 
-These files are **not committed to git** (too large, ~5-19MB each).
+Active prover assets live at:
 
-## Setup
+- `mobile/assets/zk-native/` — Groth16 zkeys consumed by the Rust
+  native prover (`mobile/native-prover/`).
+- `mobile/native-prover/test-vectors/circom/` — same files in the
+  shape `rust_witness::transpile_wasm` expects at Cargo build time.
 
-```bash
-# 1. Build circuits (requires circom CLI)
-cd circuits && bash scripts/build.sh
+See `mobile/assets/zk-native/README.md` for the bundling policy
+(including the **mobile-is-TIER_16-only** rule on the multi-tier
+authorize / claim circuits) and the build commands.
 
-# 2. Copy to mobile assets
-cd ../mobile && npm run copy:circuits
-```
-
-Without these files, deposit, claim, and order proof generation will fail at runtime.
+This directory is kept around because it predates the migration and
+some tooling still scans it; remove once every cross-reference has
+been migrated.
