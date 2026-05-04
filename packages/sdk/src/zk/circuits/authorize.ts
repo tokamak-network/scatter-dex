@@ -10,9 +10,9 @@ import {
 import { signEdDSA, type EdDSASignature } from "../eddsa";
 import { buildMerkleTree, getMerkleProof } from "../merkle";
 import {
-  CLAIMS_TREE_DEPTH,
   COMMIT_TREE_DEPTH,
-  MAX_CLAIMS_PER_SIDE,
+  TIER_16,
+  type CircuitTier,
 } from "../constants";
 import { wipeBytes } from "../secureWipe";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
@@ -64,7 +64,7 @@ export interface AuthorizeProofInput {
   /** Baby Jubjub private key (from `deriveEdDSAKey`). The local
    *  copy is wiped after signing. */
   eddsaPrivateKey: Uint8Array;
-  /** Distribution of the proceeds. ≤ MAX_CLAIMS_PER_SIDE entries. */
+  /** Distribution of the proceeds. `claims.length ≤ tier.cap`. */
   claims: ClaimEntry[];
   /** Salt for the residual (change) commitment. The page that
    *  pre-computed `expectedChangeCommitment` for the note file
@@ -158,6 +158,7 @@ interface SnarkjsModule {
 export async function generateAuthorizeProof(
   input: AuthorizeProofInput,
   assets: CircuitAssets,
+  tier: CircuitTier = TIER_16,
 ): Promise<AuthorizeProofResult> {
   // ── Validate inputs ──
   // Cheap pre-checks for constraints that authorize.circom would also
@@ -166,9 +167,9 @@ export async function generateAuthorizeProof(
   if (input.claims.length === 0) {
     throw new Error("generateAuthorizeProof: at least one claim is required");
   }
-  if (input.claims.length > MAX_CLAIMS_PER_SIDE) {
+  if (input.claims.length > tier.cap) {
     throw new Error(
-      `generateAuthorizeProof: too many claims (${input.claims.length} > ${MAX_CLAIMS_PER_SIDE})`,
+      `generateAuthorizeProof: too many claims (${input.claims.length} > ${tier.cap}, tier ${tier.cap})`,
     );
   }
   if (input.sellAmount > input.note.amount) {
@@ -264,7 +265,7 @@ export async function generateAuthorizeProof(
   // ── 4. Claims tree ──
   const claimLeaves: bigint[] = [];
   let totalLocked = 0n;
-  for (let i = 0; i < MAX_CLAIMS_PER_SIDE; i++) {
+  for (let i = 0; i < tier.cap; i++) {
     if (i < input.claims.length) {
       const c = input.claims[i]!;
       const leaf = await poseidonHash([
@@ -280,7 +281,7 @@ export async function generateAuthorizeProof(
       claimLeaves.push(0n);
     }
   }
-  const { root: claimsRoot } = await buildMerkleTree(claimLeaves, CLAIMS_TREE_DEPTH);
+  const { root: claimsRoot } = await buildMerkleTree(claimLeaves, tier.claimsTreeDepth);
 
   // ── 5. Order hash + EdDSA signature ──
   const sellToken = input.note.token;
@@ -310,7 +311,7 @@ export async function generateAuthorizeProof(
   const claimTokens: string[] = [];
   const claimAmounts: string[] = [];
   const claimReleaseTimes: string[] = [];
-  for (let i = 0; i < MAX_CLAIMS_PER_SIDE; i++) {
+  for (let i = 0; i < tier.cap; i++) {
     if (i < input.claims.length) {
       const c = input.claims[i]!;
       claimSecrets.push(c.secret.toString());

@@ -1,3 +1,4 @@
+import type { CircuitTier } from "./constants";
 import type { Prover } from "./prover";
 import { wrapProverWithTimer, type ZkCircuit } from "./proveTimer";
 import type { Groth16Proof, ProveOpts, ProveRequest, ProveResult } from "./types";
@@ -19,6 +20,11 @@ export type ProverWorkerRequest = {
   jobId: number;
   circuitId: string;
   input: Record<string, unknown>;
+  /** Optional circuit tier hint. {@link CircuitTier} is a plain data
+   *  object (no methods), so it survives `postMessage`'s structured
+   *  clone unchanged. Worker handlers default to TIER_16 when omitted,
+   *  preserving the single-tier behavior pre-multi-tier callers expect. */
+  tier?: CircuitTier;
 };
 
 export type ProverWorkerResponse =
@@ -259,6 +265,7 @@ export function createWebWorkerProver(opts: WebWorkerProverOpts): Prover {
         jobId,
         circuitId: entry.req.circuitId,
         input: entry.req.input,
+        ...(entry.req.tier ? { tier: entry.req.tier } : {}),
       };
       w.postMessage(reqMsg);
     });

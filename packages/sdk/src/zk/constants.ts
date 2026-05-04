@@ -64,13 +64,16 @@ export const ACTIVE_TIERS: readonly CircuitTier[] = [TIER_16];
  *
  *  Callers should pad the actual claims array up to `tier.cap` with
  *  dummy entries (see {@link padClaims}) to keep per-tier batches
- *  visually identical and protect the per-tier anonymity set. */
+ *  visually identical and protect the per-tier anonymity set.
+ *
+ *  This is the **theoretical** picker — it considers every tier the
+ *  protocol defines, including ones whose verifier is not yet
+ *  deployed. Production callers want {@link pickActiveTier}, which
+ *  filters to {@link ACTIVE_TIERS} and falls back to the largest
+ *  active tier with multi-batch when no active tier covers the
+ *  request. */
 export function pickTier(recipientCount: number): CircuitTier {
-  if (!Number.isInteger(recipientCount) || recipientCount <= 0) {
-    throw new Error(
-      `pickTier: recipientCount must be a positive integer (got ${recipientCount})`,
-    );
-  }
+  validateRecipientCount("pickTier", recipientCount);
   for (const tier of TIERS) {
     if (recipientCount <= tier.cap) return tier;
   }
@@ -78,6 +81,45 @@ export function pickTier(recipientCount: number): CircuitTier {
     `pickTier: ${recipientCount} recipients exceeds the largest tier (${TIERS[TIERS.length - 1].cap}). ` +
       `Split the payout across multiple runs.`,
   );
+}
+
+/** Pick the smallest **active** tier that fits `recipientCount` —
+ *  i.e. one whose verifier is wired on-chain today (see
+ *  {@link ACTIVE_TIERS}). When no active tier covers the request, the
+ *  largest active tier is returned so the caller can chunk the
+ *  recipients into multiple batches of that tier; this is the
+ *  multi-batch fallback the Pay app uses while tier 64 / 128 are not
+ *  yet live.
+ *
+ *  Throws when `ACTIVE_TIERS` is empty (a misconfigured deployment).
+ *
+ *  Use this in production paths that actually generate proofs and
+ *  submit on-chain; reserve {@link pickTier} for design-level
+ *  reasoning that should ignore deployment status. */
+export function pickActiveTier(recipientCount: number): CircuitTier {
+  validateRecipientCount("pickActiveTier", recipientCount);
+  if (ACTIVE_TIERS.length === 0) {
+    throw new Error(
+      "pickActiveTier: ACTIVE_TIERS is empty — no authorize verifier is wired",
+    );
+  }
+  for (const tier of ACTIVE_TIERS) {
+    if (recipientCount <= tier.cap) return tier;
+  }
+  // No active tier fits — fall back to the largest active tier so the
+  // caller can multi-batch on it. The fallback intentionally does not
+  // throw: today (only TIER_16 active) a 17-recipient run still
+  // succeeds via two tier-16 batches, and the moment TIER_64 activates
+  // that same call returns TIER_64 as a single batch.
+  return ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!;
+}
+
+function validateRecipientCount(fn: string, n: number): void {
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(
+      `${fn}: recipientCount must be a positive integer (got ${n})`,
+    );
+  }
 }
 
 /** Pad a claims array up to `tier.cap` by appending the same `dummy`

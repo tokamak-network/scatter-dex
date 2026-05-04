@@ -7,7 +7,6 @@ import {
   computeCommitment,
   getMerkleProof,
   randomFieldElement,
-  TIER_16,
   toBytes32Hex,
   type CommitmentNote,
   type PayoutBatch,
@@ -185,6 +184,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
       claims: batch.claims,
       newSalt,
     },
+    tier: batch.tier,
   });
   const authResult = assembleAuthorizeProofResult(result);
 
@@ -197,7 +197,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     maxFee: BigInt(maxFeeBps),
     expiry,
     relayer: relayer.address,
-    tier: TIER_16.cap,
+    tier: batch.tier.cap,
   };
 
   const ctx: FinalizeContext = {
@@ -366,12 +366,15 @@ export async function finalizeRealSettle(
     change = { note: changeNote, commitment: changeCommitment, amount: changeAmount };
   }
 
-  // Rebuild the 16-leaf claims tree to extract per-recipient
-  // inclusion proofs. If the recomputed root disagrees with the
-  // proof's `claimsRoot`, the SDK's claim-leaf hashing has drifted
-  // from the circuit and the packages we emit would point at a
-  // settlement that doesn't exist.
-  const { root: claimsRootCheck, layers: claimsLayers } = await buildClaimsTree(ctx.batch.claims);
+  // Rebuild the claims tree (size = 2^batch.tier.claimsTreeDepth) to
+  // extract per-recipient inclusion proofs. If the recomputed root
+  // disagrees with the proof's `claimsRoot`, the SDK's claim-leaf
+  // hashing has drifted from the circuit and the packages we emit
+  // would point at a settlement that doesn't exist.
+  const { root: claimsRootCheck, layers: claimsLayers } = await buildClaimsTree(
+    ctx.batch.claims,
+    ctx.batch.tier,
+  );
   if (claimsRootCheck !== ctx.authResult.claimsRoot) {
     throw new Error(
       "Recomputed claimsRoot disagrees with the proof — packages would point at a settlement that doesn't exist.",

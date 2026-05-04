@@ -8,7 +8,7 @@ import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
 import {
   splitPayout,
   type PayoutBatch,
-  pickTier,
+  pickActiveTier,
   ACTIVE_TIERS,
   TIERS,
   type CircuitTier,
@@ -929,6 +929,12 @@ function NewPayout() {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
     try {
       const recipients = parseRecipientRows(rows, decimals, claimFrom);
+      // splitPayout defaults to `pickActiveTier(recipients.length)` —
+      // smallest active tier that covers the run, falling back to
+      // multi-batch on the largest active tier when no active tier
+      // covers (today: only TIER_16, so 17+ recipients chunk into
+      // multiple tier-16 batches; ships of TIER_64 / TIER_128 collapse
+      // those into single batches automatically).
       return splitPayout(recipients, { token: tokenAddress });
     } catch {
       return [];
@@ -947,13 +953,14 @@ function NewPayout() {
 
   // The tier governs each batch's anonymity set. Multi-batch runs
   // settle one batch per `scatterDirectAuth` tx; every batch shares
-  // the same tier (the largest available — TIER_16 today). Returns
-  // null only on an empty list; the `MAX_RECIPIENTS_PER_RUN` ceiling
-  // is enforced by `validation` below.
+  // the picked tier. `pickActiveTier` returns the smallest active
+  // tier that covers the run, falling back to the largest active
+  // tier when no single active tier fits — that's the multi-batch
+  // path. With only TIER_16 active today the picker always returns
+  // TIER_16; once TIER_64 ships, runs of 17–64 collapse to one batch.
   const tier = useMemo<CircuitTier | null>(() => {
     if (rows.length === 0) return null;
-    const picked = pickTier(Math.min(rows.length, MAX_TIER_CAP));
-    return ACTIVE_TIERS.includes(picked) ? picked : null;
+    return pickActiveTier(Math.min(rows.length, MAX_RECIPIENTS_PER_RUN));
   }, [rows.length]);
 
   const validation = useMemo(() => {
@@ -1542,23 +1549,36 @@ function NewPayout() {
             </div>
             {tier && (
               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
-                <div className="mb-1 font-semibold text-[var(--color-text-muted)]">
-                  Privacy plan
+                <div className="mb-1 flex items-center justify-between font-semibold text-[var(--color-text-muted)]">
+                  <span>Privacy plan</span>
+                  <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide">
+                    Tier {tier.cap}
+                  </span>
                 </div>
                 <div className="text-[var(--color-text-muted)]">
                   {batches.length === 1 ? (
                     <>
-                      Tier {tier.cap} settlement — one private transaction with{" "}
-                      <strong>{rows.length}</strong> real recipients hidden inside
-                      an anonymity set of <strong>{tier.cap}</strong>. One signature.
+                      One private transaction —{" "}
+                      <strong>{rows.length}</strong> real recipients hidden
+                      inside an anonymity set of <strong>{tier.cap}</strong>.
+                      One signature.
                     </>
                   ) : (
                     <>
-                      <strong>{batches.length}</strong> private transactions —
-                      tier {tier.cap} per settlement, with{" "}
-                      <strong>{rows.length}</strong> recipients spread across the
-                      batches. One signature per batch (
-                      <strong>{batches.length}</strong> total).
+                      <strong>{rows.length}</strong> recipients spread across{" "}
+                      <strong>{batches.length}</strong> tier-{tier.cap}{" "}
+                      settlements (one signature per batch). A larger circuit
+                      that covers all recipients in one batch
+                      {PLANNED_TIER_CAPS.length > 0 ? (
+                        <>
+                          {" "}
+                          (tier{" "}
+                          {PLANNED_TIER_CAPS.find((c) => c >= rows.length) ??
+                            PLANNED_TIER_CAPS[PLANNED_TIER_CAPS.length - 1]}
+                          )
+                        </>
+                      ) : null}{" "}
+                      is planned but not yet live.
                     </>
                   )}
                 </div>

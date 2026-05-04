@@ -1,3 +1,5 @@
+import type { CircuitTier } from "./constants";
+
 /** Identifier for a Groth16 circuit shipped with the protocol.
  *  Open string-literal union — the well-known names get IDE
  *  autocomplete, but any string is accepted so consumers shipping
@@ -49,4 +51,10 @@ export interface ProveRequest {
    *  implementation. Concrete shapes are exposed by per-circuit
    *  helpers in higher-level modules (e.g. `zk/deposit`). */
   input: Record<string, unknown>;
+  /** Optional circuit-tier hint for per-tier provers (e.g. authorize
+   *  16 / 64 / 128). `CircuitTier` is a plain data object so it
+   *  survives `postMessage`'s structured clone unchanged. Workers
+   *  fall back to TIER_16 when omitted, preserving the historical
+   *  single-tier behavior. */
+  tier?: CircuitTier;
 }
