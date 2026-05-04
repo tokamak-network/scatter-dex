@@ -253,11 +253,15 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
 
     // [H-5] claimCount range check: must be 0..maxClaimsPerSide.
     // Without this, a field-arithmetic overflow could bypass the
-    // LessThan(5) gate in the claim-used loop below.
-    // Num2Bits(5) constrains to 0..31; LessEqThan(5) tightens to 0..16.
-    component rcClaimCount = Num2Bits(5);
+    // LessThan gate in the claim-used loop below.
+    // Bit width 8 covers every active and planned tier (16 / 64 / 128
+    // = 0..128); the wider gate is one extra constraint per slot but
+    // future-proofs the template against larger tiers without another
+    // ceremony to retune the bit-width. The LessEqThan(8) tightens
+    // claimCount to the per-tier maxClaimsPerSide.
+    component rcClaimCount = Num2Bits(8);
     rcClaimCount.in <== claimCount;
-    component claimCountBound = LessEqThan(5);
+    component claimCountBound = LessEqThan(8);
     claimCountBound.in[0] <== claimCount;
     claimCountBound.in[1] <== maxClaimsPerSide;
     claimCountBound.out === 1;
@@ -389,9 +393,14 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     // releaseTime) and totalLocked is a pure sum. The constraint is
     // gated on `claimUsed[i].out` so padding slots (i ≥ claimCount) can
     // still carry their default zero token without failing.
+    // [PR #604 gemini HIGH] Bit width 8 supports every active and planned
+    // tier (i ranges 0..127 at TIER_128); the previous LessThan(5) silently
+    // overflowed for any tier above 16, breaking proofs at TIER_64 / TIER_128
+    // before any malicious input ever showed up. Wider bound = a couple of
+    // extra constraints per slot, free of charge.
     component claimUsed[maxClaimsPerSide];
     for (var i = 0; i < maxClaimsPerSide; i++) {
-        claimUsed[i] = LessThan(5);
+        claimUsed[i] = LessThan(8);
         claimUsed[i].in[0] <== i;
         claimUsed[i].in[1] <== claimCount;
         (1 - claimUsed[i].out) * claimAmounts[i] === 0;

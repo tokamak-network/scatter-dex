@@ -12,16 +12,27 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = resolve(here, "../../pro/public/zk");
 const dst = resolve(here, "../public/zk");
 
-const FILES = [
-  // Tier-16 (legacy filenames, used today).
+// Tier-16 + deposit must always be present — Pay's worker requires
+// them at runtime and a missing copy means the prover silently
+// 404s mid-flow. Fail the sync if any of these are absent from the
+// source tree.
+const REQUIRED = [
   "authorize.wasm",
   "authorize_final.zkey",
   "claim.wasm",
   "claim_final.zkey",
-  // Tier-64 / tier-128 — present once the per-tier ceremony lands.
-  // Listed unconditionally so they sync automatically as soon as the
-  // build script produces them; skipped silently below when missing
-  // from the source (a partially-built circuits/ tree is fine).
+  "deposit.wasm",
+  "deposit_final.zkey",
+];
+
+// Tier-64 / tier-128 — produced only once the per-tier ceremony has
+// run. Sync them when present; silently skip when absent so a
+// tier-16-only circuits/ tree (e.g. before PR-B's ACTIVE_TIERS flip
+// or on a clean clone that hasn't built circuits yet) still lets
+// Pay come up. `pickActiveTier` already filters to ACTIVE_TIERS, so
+// the 404 risk is bounded — Pay never asks for a tier whose verifier
+// isn't on-chain.
+const OPTIONAL = [
   "authorize_64.wasm",
   "authorize_64_final.zkey",
   "authorize_128.wasm",
@@ -30,10 +41,6 @@ const FILES = [
   "claim_64_final.zkey",
   "claim_128.wasm",
   "claim_128_final.zkey",
-  // Other circuits not yet exercised by Pay; kept for parity with
-  // apps/pro and to keep the file list in lock-step.
-  "deposit.wasm",
-  "deposit_final.zkey",
 ];
 
 if (!existsSync(src)) {
@@ -44,17 +51,18 @@ mkdirSync(dst, { recursive: true });
 
 const force = process.argv.includes("--force") || process.env.SYNC_ZK_FORCE === "1";
 
-for (const f of FILES) {
+function syncFile(f, { required }) {
   const s = resolve(src, f);
   const d = resolve(dst, f);
-  // Tolerate missing optional files — tier-64 / tier-128 assets
-  // appear only after their ceremony runs; before that the
-  // tier-16-only deploy is still valid.
   if (!existsSync(s)) {
+    if (required) {
+      console.error(`[sync-zk-assets] required asset missing in source: ${s}`);
+      process.exit(1);
+    }
     if (process.env.SYNC_ZK_VERBOSE === "1") {
       console.log(`[sync-zk-assets] skipped ${f} (not present in source)`);
     }
-    continue;
+    return;
   }
   // Skip the 19 MB re-write only when dst is byte-equivalent AND not
   // older than src. Size alone is not enough — if a circuit rebuild
@@ -65,8 +73,11 @@ for (const f of FILES) {
   if (!force && existsSync(d)) {
     const ss = statSync(s);
     const ds = statSync(d);
-    if (ss.size === ds.size && ds.mtimeMs >= ss.mtimeMs) continue;
+    if (ss.size === ds.size && ds.mtimeMs >= ss.mtimeMs) return;
   }
   copyFileSync(s, d);
   console.log(`[sync-zk-assets] copied ${f} (${statSync(d).size} bytes)`);
 }
+
+for (const f of REQUIRED) syncFile(f, { required: true });
+for (const f of OPTIONAL) syncFile(f, { required: false });

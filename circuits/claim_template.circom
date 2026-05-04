@@ -80,6 +80,27 @@ template Claim(depth) {
     }
     claimsRoot === merkle.root;
 
+    // [PR #605 gemini SECURITY-CRITICAL] Bind leafIndex to pathIndices.
+    // The nullifier below hashes `leafIndex` directly; the Merkle proof
+    // above uses `pathIndices` independently. Without this constraint
+    // a claimant could prove inclusion at position p (correct path bits
+    // for p) while feeding a different `leafIndex` value into the
+    // nullifier, producing as many distinct nullifiers as choices of
+    // `leafIndex` for the same on-chain leaf — i.e. unbounded
+    // re-claiming of the same payout. Reconstruct `leafIndex` as
+    // sum_i pathIndices[i] * 2^i and require equality.
+    //
+    // `pathIndices[i]` is already constrained to `{0,1}` inside
+    // `PoseidonMerkleProofClaim`, so the running sum cannot exceed
+    // `2^depth - 1` and the reconstruction is exact.
+    var leafIndexAcc = 0;
+    var pow = 1;
+    for (var i = 0; i < depth; i++) {
+        leafIndexAcc += pathIndices[i] * pow;
+        pow *= 2;
+    }
+    leafIndex === leafIndexAcc;
+
     // ════════════════════════════════════════
     //  3. NULLIFIER
     //  [M4] Domain-separated claim nullifier (tag 2). Tag value comes from
