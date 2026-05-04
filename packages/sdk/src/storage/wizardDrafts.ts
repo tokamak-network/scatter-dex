@@ -56,11 +56,16 @@ async function readFile(): Promise<DraftsFile> {
   const raw = await loadFile(WIZARD_DRAFTS_FILENAME);
   if (!raw) return { version: 1, drafts: [] };
   try {
-    const parsed = JSON.parse(raw) as DraftsFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.drafts)) {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      (parsed as { version?: unknown }).version !== 1 ||
+      !Array.isArray((parsed as { drafts?: unknown }).drafts)
+    ) {
       return { version: 1, drafts: [] };
     }
-    return parsed;
+    return parsed as DraftsFile;
   } catch {
     return { version: 1, drafts: [] };
   }

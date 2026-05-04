@@ -868,7 +868,13 @@ function PrivkeyRevealModal({
         {!revealed ? (
           <button
             type="button"
-            onClick={() => setRevealed(true)}
+            onClick={() => {
+              const ok = window.confirm(
+                "You're about to reveal a stealth private key. Anyone who sees it can drain the funds at this address. Make sure no one is watching your screen and that nothing is recording it.\n\nContinue?",
+              );
+              if (!ok) return;
+              setRevealed(true);
+            }}
             className="w-full rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm font-medium"
           >
             Reveal private key
@@ -906,12 +912,12 @@ function PrivkeyRevealModal({
   );
 }
 
-/** Modal that signs an ERC20 (or wrapped-token) transfer from the
- *  stealth address. Native ETH is held as WETH after a same-token
- *  scatter, so the on-chain transfer is always an ERC20.transfer
- *  call — no native send path needed. The stealth address must hold
- *  enough native gas for the tx; the modal warns when its balance
- *  is zero. */
+/** Modal that signs a transfer from the stealth address. The
+ *  contract auto-unwraps WETH to native ETH on claim, so WETH-routed
+ *  payouts land as native ETH and the modal sends them with
+ *  `sendTransaction({ value })`; every other token is a plain
+ *  `ERC20.transfer`. The stealth address must hold enough native gas
+ *  for the tx; the modal warns when its balance is zero. */
 function TransferOutModal({
   entry,
   privkey,

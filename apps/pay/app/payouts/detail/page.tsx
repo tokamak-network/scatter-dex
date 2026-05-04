@@ -637,7 +637,9 @@ function RecipientTable({
                           r.email,
                         )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                         window.open(gmail, "_blank", "noopener,noreferrer");
-                        void onMarkSent(r);
+                        onMarkSent(r).catch((err) =>
+                          console.error("Failed to mark recipient as sent", err),
+                        );
                       }}
                       hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}

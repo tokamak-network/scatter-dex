@@ -75,6 +75,7 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
+import { csvEscape, downloadCsv } from "../../_lib/csv";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
@@ -113,10 +114,10 @@ function today(): string {
   return toIsoDateTimeSec(new Date());
 }
 
-/** Earliest claim moment the wizard accepts. The 10-minute buffer
- *  gives the operator time to settle on-chain + the recipient time
- *  to receive the link before the claim window opens; without it
- *  users could pick "now" and the receiver would race the settle tx. */
+/** Earliest claim moment the wizard accepts. The buffer gives the
+ *  operator time to settle on-chain + the recipient time to receive
+ *  the link before the claim window opens; without it users could
+ *  pick "now" and the receiver would race the settle tx. */
 const CLAIM_FROM_BUFFER_MINUTES = 3;
 function claimFromMin(): string {
   return toIsoDateTimeSec(
@@ -148,24 +149,19 @@ function downloadOrderbook(
   claimFrom: string | null | undefined,
 ): void {
   const lines = [
-    `# label,${csvSafeLabel(label)}`,
-    `# token,${token}`,
-    `# chain,${chain}`,
-    `# claim_from,${claimFrom ?? ""}`,
+    `# label,${csvEscape(label)}`,
+    `# token,${csvEscape(token)}`,
+    `# chain,${csvEscape(chain)}`,
+    `# claim_from,${csvEscape(claimFrom ?? "")}`,
     `name,address,amount`,
     ...rows.map((r) =>
-      `${csvSafeLabel(r.name)},${r.address},${r.amount}`,
+      `${csvEscape(r.name)},${csvEscape(r.address)},${csvEscape(r.amount)}`,
     ),
   ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `orderbook-${csvSafeLabel(label) || "run"}-${Date.now()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadCsv(
+    lines.join("\n"),
+    `orderbook-${csvSafeLabel(label) || "run"}-${Date.now()}.csv`,
+  );
 }
 
 /** Pay ships as a static export, so `useSearchParams` (used to read
@@ -697,7 +693,11 @@ function NewPayout() {
       const savedId = await persist(/* allowFailure */ false);
       if (savedId) {
         const labelToClear = lastSavedLabelRef.current;
-        if (labelToClear !== null) void clearWizardDraft(account, labelToClear);
+        if (labelToClear !== null) {
+          clearWizardDraft(account, labelToClear).catch((err) =>
+            console.error("Failed to clear wizard draft", err),
+          );
+        }
         router.push(`/payouts/detail?id=${encodeURIComponent(savedId)}`);
       }
     } catch (err) {
@@ -991,7 +991,11 @@ function NewPayout() {
               onClick={() => {
                 if (!window.confirm("Discard this draft and start over?")) return;
                 const labelToClear = lastSavedLabelRef.current;
-                if (labelToClear !== null) void clearWizardDraft(account, labelToClear);
+                if (labelToClear !== null) {
+                  clearWizardDraft(account, labelToClear).catch((err) =>
+                    console.error("Failed to clear wizard draft", err),
+                  );
+                }
                 lastSavedLabelRef.current = null;
                 setDraftSavedAt(null);
                 setStep(1);

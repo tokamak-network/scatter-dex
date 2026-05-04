@@ -10,12 +10,14 @@ export const EXIT_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
 
 export interface UpdateRelayerInfoParams {
   url: string;
+  /** On-chain display name. Optional — defaults to empty when omitted. */
+  name?: string;
   feeBps: number;
 }
 
-/** Submit `updateInfo(url, fee)` — operator-self-service edit of
- *  endpoint URL + per-trade fee. Validates the fee range up front
- *  for the same UX reason `registerRelayer` does. */
+/** Submit `updateInfo(url, name, fee)` — operator-self-service edit
+ *  of endpoint URL, display name, and per-trade fee. Validates the
+ *  fee range up front for the same UX reason `registerRelayer` does. */
 export async function updateRelayerInfo(
   registryAddress: string,
   params: UpdateRelayerInfoParams,
@@ -28,7 +30,7 @@ export async function updateRelayerInfo(
     throw new Error("FeeTooHigh");
   }
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, signer);
-  return registry.updateInfo(params.url, BigInt(params.feeBps)) as Promise<ethers.TransactionResponse>;
+  return registry.updateInfo(params.url, params.name ?? "", BigInt(params.feeBps)) as Promise<ethers.TransactionResponse>;
 }
 
 /** Submit `addBond(bondAmount)`.

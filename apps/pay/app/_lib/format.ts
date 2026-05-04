@@ -54,9 +54,11 @@ export function formatUtcStamp(unixSec: number | undefined): string {
 
 /** Local-timezone `YYYY-MM-DD HH:mm` stamp. Used for user-facing
  *  moments (claim time, etc.) where the operator expects to see their
- *  own clock, not UTC. Renders nothing during SSR to avoid hydration
- *  mismatch — callers should gate on the `mounted` flag pattern used
- *  for `formatRelative`. */
+ *  own clock, not UTC. Reads `Date` directly — when the input depends
+ *  on the current wall clock (e.g. `Date.now()`), gate the call behind
+ *  a mounted/`useEffect` flag so server-rendered HTML matches the
+ *  client. Stamps derived from stable inputs (record timestamps) are
+ *  safe to render in SSR. */
 export function formatLocalStamp(unixSec: number | undefined): string {
   if (!unixSec) return "";
   const d = new Date(unixSec * 1000);

@@ -76,6 +76,7 @@ function OnChainSettings({ operator }: { operator: OperatorState }) {
   const write = useRegistryWrite({ onSuccess: refresh });
 
   const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
   const [feeBps, setFeeBps] = useState("");
   const seeded = useRef(false);
 
@@ -86,16 +87,17 @@ function OnChainSettings({ operator }: { operator: OperatorState }) {
   useEffect(() => {
     if (!row || seeded.current) return;
     setUrl(row.url);
+    setName(row.name);
     setFeeBps(String(row.feeBps));
     seeded.current = true;
   }, [row]);
 
   const onSave = () => {
     if (!signer) return;
-    write.run(() => updateRelayerInfo(REGISTRY, { url, feeBps: Number(feeBps) }, signer));
+    write.run(() => updateRelayerInfo(REGISTRY, { url, name, feeBps: Number(feeBps) }, signer));
   };
 
-  const dirty = !!row && (url !== row.url || feeBps !== String(row.feeBps));
+  const dirty = !!row && (url !== row.url || name !== row.name || feeBps !== String(row.feeBps));
   const disabled =
     !signer || !registryDeployed || !row || row.status !== "active" ||
     !dirty || write.phase.kind === "submitting";
@@ -114,6 +116,16 @@ function OnChainSettings({ operator }: { operator: OperatorState }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
+          />
+        </Field>
+        <Field label="Display name">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={64}
+            placeholder="Acme Relayer"
+            className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
           />
         </Field>
         <Field label="Fee (bps)">

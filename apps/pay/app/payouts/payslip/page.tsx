@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
+import { useMounted } from "@zkscatter/sdk/react";
 import { useRunRecord } from "../../_lib/runRecord";
 import { buildClaimUrl } from "../../_lib/claimUrl";
 import { formatLocalStamp } from "../../_lib/format";
@@ -66,10 +67,11 @@ function PayslipInner() {
   return <GenericPayslip record={record} row={row} claimUrl={claimUrl} />;
 }
 
-/** Korean-style 급여명세서 layout used for `category === "payroll"`.
- *  We don't have full HR fields (사원번호 / 부서 / 공제내역 등); show
- *  what RunRecord carries and label the gaps explicitly so a finance
- *  reviewer can fill them by hand if a more formal slip is needed. */
+/** Payroll-statement layout used for `category === "payroll"`. We
+ *  don't have full HR fields (employee ID / department / itemized
+ *  deductions); show what RunRecord carries and label the gaps
+ *  explicitly so a finance reviewer can fill them in by hand if a
+ *  more formal slip is needed. */
 function PayrollPayslip({
   record,
   row,
@@ -80,6 +82,8 @@ function PayrollPayslip({
   claimUrl: string;
 }) {
   const issued = formatLocalStamp(record.createdAt);
+  const mounted = useMounted();
+  const generatedAt = mounted ? formatLocalStamp(Math.floor(Date.now() / 1000)) : "";
   return (
     <div className="mx-auto max-w-2xl bg-white p-10 text-black">
       <header className="text-center">
@@ -157,11 +161,12 @@ function PayrollPayslip({
 
       <footer className="mt-8 border-t border-gray-300 pt-2 text-[10px] text-gray-500">
         Document ID <span className="font-mono">{record.id}</span> · Generated{" "}
-        {formatLocalStamp(Math.floor(Date.now() / 1000))}
+        {generatedAt}
       </footer>
     </div>
   );
 }
+
 
 function GenericPayslip({
   record,
@@ -172,6 +177,8 @@ function GenericPayslip({
   row: import("@zkscatter/sdk/storage").RecipientRow;
   claimUrl: string;
 }) {
+  const mounted = useMounted();
+  const generatedAt = mounted ? formatLocalStamp(Math.floor(Date.now() / 1000)) : "";
   return (
     <div className="mx-auto max-w-2xl bg-white p-10 text-black">
       <header className="border-b border-black pb-4">
@@ -209,7 +216,7 @@ function GenericPayslip({
       </section>
 
       <footer className="mt-10 border-t border-gray-300 pt-3 text-xs text-gray-500">
-        Generated {formatLocalStamp(Math.floor(Date.now() / 1000))}
+        Generated {generatedAt}
       </footer>
     </div>
   );
