@@ -32,9 +32,11 @@ export const DEV_STACK_ENDPOINTS: StackEndpoints = {
 };
 
 /** True when both anvil and the zk-relayer are reachable. Returns
- *  fast — a single GET each, no retries — because the "is dev.sh
- *  up?" question is binary; if it isn't, retries can't fix it.
- *  Network errors / non-2xx / parse failures all collapse to false. */
+ *  fast — a single request each (POST for the JSON-RPC chain-id
+ *  probe, GET for the relayer's `/api/info`), no retries — because
+ *  the "is dev.sh up?" question is binary; if it isn't, retries
+ *  can't fix it. Network errors / non-2xx / parse failures all
+ *  collapse to false. */
 export async function isStackReachable(): Promise<boolean> {
   const [anvilOk, relayerOk] = await Promise.all([
     isAnvilReachable(ANVIL_URL),
@@ -54,8 +56,11 @@ export async function isAnvilReachable(url: string = ANVIL_URL): Promise<boolean
       body: JSON.stringify({ jsonrpc: "2.0", method: "eth_chainId", params: [], id: 1 }),
     });
     if (!res.ok) return false;
-    const json = (await res.json()) as { result?: string };
-    return typeof json.result === "string";
+    const parsed: unknown = await res.json();
+    // `typeof null === "object"`, so a literal `null` body would
+    // crash the property access below; guard explicitly.
+    if (!parsed || typeof parsed !== "object") return false;
+    return typeof (parsed as { result?: unknown }).result === "string";
   } catch {
     return false;
   }

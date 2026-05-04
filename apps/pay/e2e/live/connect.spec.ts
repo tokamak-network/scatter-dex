@@ -52,10 +52,13 @@ test.describe("Live stack — wallet connect", () => {
     // Wrong-chain banner must be absent — its presence means the
     // bridge's chainId doesn't match `getNetworkConfig().chainId`
     // (a config-drift regression that breaks the wizard's submit
-    // gating). The banner is rendered by `WrongChainBanner.tsx`
-    // when `wrongChain === true`.
+    // gating). Match the actual copy in
+    // `packages/ui/src/components/ConnectWalletPill.tsx`'s
+    // `WrongChainBannerView` — the heading reads
+    // `⚠ Wrong chain — your wallet isn't on {networkLabel}.`,
+    // the action reads `Switch to {networkLabel}`.
     await expect(
-      page.getByText(/Wrong network|Switch your wallet/i),
+      page.getByText(/Wrong chain|Switch to/i),
     ).not.toBeVisible();
 
     // Dashboard heading present — proves we got past hydration into
